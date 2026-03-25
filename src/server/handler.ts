@@ -5,9 +5,11 @@
  * @module server/handler
  */
 
-import { decode } from '../core/codec.ts';
+import { decode, encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
 import type { ListFilter, WorkflowState, WorkflowStatus } from '../core/types.ts';
+import { UpdateCoordinator, UpdateTimeoutError } from '../core/updates.ts';
+import { METRICS } from '../observability/metrics.ts';
 import { KEYS } from '../storage/interface.ts';
 
 // ---------------------------------------------------------------------------
@@ -56,6 +58,36 @@ const ROUTE_PATTERNS: Array<{
     paramNames: ['id', 'name'],
   },
   {
+    method: 'POST',
+    pattern: /^\/v1\/workflows\/([^/]+)\/update\/([^/]+)$/,
+    handler: 'updateWorkflow',
+    paramNames: ['id', 'name'],
+  },
+  {
+    method: 'GET',
+    pattern: /^\/v1\/updates\/([^/]+)$/,
+    handler: 'getUpdateResult',
+    paramNames: ['updateId'],
+  },
+  {
+    method: 'GET',
+    pattern: /^\/v1\/workflows\/([^/]+)\/attributes$/,
+    handler: 'getAttributes',
+    paramNames: ['id'],
+  },
+  {
+    method: 'PATCH',
+    pattern: /^\/v1\/workflows\/([^/]+)\/attributes$/,
+    handler: 'setAttributes',
+    paramNames: ['id'],
+  },
+  {
+    method: 'GET',
+    pattern: /^\/v1\/metrics$/,
+    handler: 'getMetrics',
+    paramNames: [],
+  },
+  {
     method: 'GET',
     pattern: /^\/v1\/workflows\/([^/]+)$/,
     handler: 'getWorkflow',
@@ -102,6 +134,21 @@ function jsonResponse(body: unknown, status: number = 200): Response {
   });
 }
 
+function msgpackResponse(body: unknown, status: number = 200): Response {
+  return new Response(encode(body), {
+    status,
+    headers: { 'Content-Type': 'application/msgpack' },
+  });
+}
+
+function negotiatedResponse(request: Request, body: unknown, status: number = 200): Response {
+  const accept = request.headers.get('Accept') ?? '';
+  if (accept.includes('application/msgpack')) {
+    return msgpackResponse(body, status);
+  }
+  return jsonResponse(body, status);
+}
+
 function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
@@ -109,10 +156,6 @@ function errorResponse(message: string, status: number): Response {
 // ---------------------------------------------------------------------------
 // Route handlers
 // ---------------------------------------------------------------------------
-
-function handleHealthCheck(): Response {
-  return jsonResponse({ status: 'ok' });
-}
 
 async function handleStartWorkflow(request: Request, engine: Engine): Promise<Response> {
   let body: unknown;
@@ -282,6 +325,158 @@ async function handleGetWorkflowResult(engine: Engine, workflowId: string): Prom
 }
 
 // ---------------------------------------------------------------------------
+// Update routes
+// ---------------------------------------------------------------------------
+
+const DEFAULT_UPDATE_TIMEOUT_MS = 30_000;
+
+async function handleUpdateWorkflow(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+  updateName: string,
+): Promise<Response> {
+  let payload: unknown;
+  let timeout = DEFAULT_UPDATE_TIMEOUT_MS;
+  let idempotencyKey: string | undefined;
+
+  try {
+    const body = (await request.json()) as Record<string, unknown>;
+    payload = body['payload'];
+    if (typeof body['timeout'] === 'number') {
+      timeout = body['timeout'];
+    }
+    if (typeof body['idempotencyKey'] === 'string') {
+      idempotencyKey = body['idempotencyKey'];
+    }
+  } catch {
+    // No body or invalid JSON — payload stays undefined
+  }
+
+  const coordinator = new UpdateCoordinator(engine.storage);
+
+  // Check idempotency
+  if (idempotencyKey !== undefined) {
+    const existing = await coordinator.checkIdempotency(workflowId, idempotencyKey);
+    if (existing !== null) {
+      return jsonResponse({ updateId: existing.updateId, result: existing.result });
+    }
+  }
+
+  const requestOptions: { timeout: number; idempotencyKey?: string } = { timeout };
+  if (idempotencyKey !== undefined) {
+    requestOptions.idempotencyKey = idempotencyKey;
+  }
+
+  const updateId = await coordinator.createRequest(workflowId, updateName, payload, requestOptions);
+
+  try {
+    const response = await coordinator.waitForResponse(updateId, timeout);
+    if (response.error !== undefined) {
+      return errorResponse(response.error, 422);
+    }
+    return jsonResponse({ updateId: response.updateId, result: response.result });
+  } catch (error) {
+    if (error instanceof UpdateTimeoutError) {
+      return errorResponse(error.message, 408);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 500);
+  }
+}
+
+async function handleGetUpdateResult(engine: Engine, updateId: string): Promise<Response> {
+  const coordinator = new UpdateCoordinator(engine.storage);
+  const response = await coordinator.getResponse(updateId);
+
+  if (response === null) {
+    return jsonResponse({ status: 'pending' }, 202);
+  }
+
+  return jsonResponse({
+    status: 'completed',
+    result: response.result,
+    ...(response.error !== undefined ? { error: response.error } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Attributes routes
+// ---------------------------------------------------------------------------
+
+async function handleGetAttributes(engine: Engine, workflowId: string): Promise<Response> {
+  const bytes = await engine.storage.get(KEYS.attribute(workflowId));
+  if (bytes === null) {
+    return errorResponse(`Attributes for workflow "${workflowId}" not found`, 404);
+  }
+
+  const attributes = decode(bytes);
+  return jsonResponse(attributes);
+}
+
+async function handleSetAttributes(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+): Promise<Response> {
+  let incoming: Record<string, unknown>;
+  try {
+    const body = (await request.json()) as Record<string, unknown>;
+    incoming = (body['attributes'] as Record<string, unknown>) ?? {};
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  // Read existing attributes and merge
+  const existingBytes = await engine.storage.get(KEYS.attribute(workflowId));
+  let existing: Record<string, unknown> = {};
+  if (existingBytes !== null) {
+    existing = decode(existingBytes) as Record<string, unknown>;
+  }
+
+  const merged = { ...existing, ...incoming };
+
+  // Build batch: write attributes + rebuild index operations
+  const operations: Array<{ type: 'put'; key: string; value: Uint8Array }> = [
+    { type: 'put', key: KEYS.attribute(workflowId), value: encode(merged) },
+  ];
+
+  // Rebuild attribute index entries
+  for (const [attributeName, value] of Object.entries(incoming)) {
+    const encodedValue = String(value);
+    operations.push({
+      type: 'put',
+      key: KEYS.attributeIndex(attributeName, encodedValue, workflowId),
+      value: encode(value),
+    });
+  }
+
+  await engine.storage.batch(operations);
+
+  return jsonResponse({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
+// Metrics route
+// ---------------------------------------------------------------------------
+
+function handleGetMetrics(): Response {
+  const lines: string[] = [];
+
+  for (const metric of Object.values(METRICS)) {
+    const safeName = metric.name.replace(/\./g, '_');
+    lines.push(`# HELP ${safeName} ${metric.description}`);
+    lines.push(`# TYPE ${safeName} ${metric.type === 'counter' ? 'counter' : 'gauge'}`);
+    lines.push(`${safeName}${metric.type === 'counter' ? '_total' : ''} 0`);
+  }
+
+  return new Response(lines.join('\n') + '\n', {
+    status: 200,
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 
@@ -296,7 +491,7 @@ export async function handleRequest(request: Request, engine: Engine): Promise<R
 
   switch (route.handler) {
     case 'healthCheck':
-      return handleHealthCheck();
+      return negotiatedResponse(request, { status: 'ok' });
 
     case 'startWorkflow':
       return handleStartWorkflow(request, engine);
@@ -315,6 +510,21 @@ export async function handleRequest(request: Request, engine: Engine): Promise<R
 
     case 'getWorkflowResult':
       return handleGetWorkflowResult(engine, route.params['id']!);
+
+    case 'updateWorkflow':
+      return handleUpdateWorkflow(request, engine, route.params['id']!, route.params['name']!);
+
+    case 'getUpdateResult':
+      return handleGetUpdateResult(engine, route.params['updateId']!);
+
+    case 'getAttributes':
+      return handleGetAttributes(engine, route.params['id']!);
+
+    case 'setAttributes':
+      return handleSetAttributes(request, engine, route.params['id']!);
+
+    case 'getMetrics':
+      return handleGetMetrics();
 
     default:
       return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);

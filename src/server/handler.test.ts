@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
+import { UpdateCoordinator } from '../core/updates.ts';
+import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { handleRequest } from './handler.ts';
 
@@ -549,10 +552,7 @@ describe('handleRequest', () => {
     await flush();
 
     // Manually update the stored state to remove the error field
-    const { encode } = await import('../core/codec.ts');
-    const { KEYS } = await import('../storage/interface.ts');
     const bytes = await storage.get(KEYS.workflow(handle.id));
-    const { decode } = await import('../core/codec.ts');
     const state = decode(bytes!) as any;
     delete state.error;
     await storage.put(KEYS.workflow(handle.id), encode(state));
@@ -616,18 +616,8 @@ describe('handleRequest', () => {
     const { id } = (await json(startResponse)) as { id: string };
     await flush();
 
-    // Monkey-patch the getHandle to return a handle whose result never resolves
+    // Test the timeout path by making handle.result() reject with Timeout
     const originalGetHandle = engine.getHandle.bind(engine);
-    engine.getHandle = (workflowId: string) => {
-      const handle = originalGetHandle(workflowId);
-      const originalResult = handle.result.bind(handle);
-      handle.result = () => new Promise(() => {}); // never resolves
-      return handle;
-    };
-
-    // Use a short timeout by intercepting the handler's Promise.race timeout
-    // The handler uses a 30s timeout; we need to make it testable.
-    // Instead, let's test the timeout path by making handle.result() reject with Timeout
     engine.getHandle = (workflowId: string) => {
       const handle = originalGetHandle(workflowId);
       handle.result = async () => {
@@ -676,5 +666,263 @@ describe('handleRequest', () => {
     expect(body.error).toContain('some unexpected error');
 
     engine.getHandle = originalGetHandle;
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /v1/workflows/:id/update/:name — synchronous update
+  // -------------------------------------------------------------------------
+
+  describe('POST /v1/workflows/:id/update/:name', () => {
+    it('creates update and returns result when response is written quickly', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      // Start a background poller that watches for new update requests
+      // and immediately writes a response for them (simulating workflow processing)
+      const coordinator = new UpdateCoordinator(storage);
+      const control = { active: true };
+      const poller = (async () => {
+        while (control.active) {
+          const pending = await coordinator.getPendingUpdates('upd-wf-1');
+          for (const updateRequest of pending) {
+            const operations = coordinator.buildResponseOperations(
+              updateRequest.updateId,
+              'upd-wf-1',
+              { accepted: true },
+            );
+            await storage.batch(operations);
+          }
+          await Bun.sleep(10);
+        }
+      })();
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/upd-wf-1/update/setName', {
+          payload: { name: 'Alice' },
+          timeout: 2000,
+        }),
+        engine,
+      );
+
+      control.active = false;
+      await poller;
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { updateId: string; result: unknown };
+      expect(body.updateId).toBeDefined();
+      expect(body.result).toEqual({ accepted: true });
+    });
+
+    it('returns 408 when update times out', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      // No response is ever written, so the coordinator will time out
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/timeout-wf/update/setName', {
+          payload: { name: 'Alice' },
+          timeout: 100,
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(408);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('timed out');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /v1/updates/:updateId — poll update result
+  // -------------------------------------------------------------------------
+
+  describe('GET /v1/updates/:updateId', () => {
+    it('returns 202 pending when update has no response', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      // Create an update request but no response
+      const coordinator = new UpdateCoordinator(storage);
+      const updateId = await coordinator.createRequest('wf-poll-1', 'setName', { name: 'Alice' });
+
+      const response = await handleRequest(request('GET', `/v1/updates/${updateId}`), engine);
+
+      expect(response.status).toBe(202);
+      const body = (await json(response)) as { status: string };
+      expect(body.status).toBe('pending');
+    });
+
+    it('returns 200 completed when update response exists', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const coordinator = new UpdateCoordinator(storage);
+      const updateId = await coordinator.createRequest('wf-poll-2', 'setName', { name: 'Bob' });
+      const operations = coordinator.buildResponseOperations(updateId, 'wf-poll-2', {
+        accepted: true,
+      });
+      await storage.batch(operations);
+
+      const response = await handleRequest(request('GET', `/v1/updates/${updateId}`), engine);
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { status: string; result: unknown };
+      expect(body.status).toBe('completed');
+      expect(body.result).toEqual({ accepted: true });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /v1/workflows/:id/attributes — read attributes
+  // -------------------------------------------------------------------------
+
+  describe('GET /v1/workflows/:id/attributes', () => {
+    it('returns attributes for a workflow', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const attributes = { color: 'blue', count: 42 };
+      await storage.put(KEYS.attribute('wf-attr-1'), encode(attributes));
+
+      const response = await handleRequest(
+        request('GET', '/v1/workflows/wf-attr-1/attributes'),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as Record<string, unknown>;
+      expect(body['color']).toBe('blue');
+      expect(body['count']).toBe(42);
+    });
+
+    it('returns 404 when no attributes exist', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('GET', '/v1/workflows/nonexistent/attributes'),
+        engine,
+      );
+
+      expect(response.status).toBe(404);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // PATCH /v1/workflows/:id/attributes — set attributes
+  // -------------------------------------------------------------------------
+
+  describe('PATCH /v1/workflows/:id/attributes', () => {
+    it('sets attributes on a workflow', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const response = await handleRequest(
+        request('PATCH', '/v1/workflows/wf-patch-1/attributes', {
+          attributes: { priority: 'high', score: 99 },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { ok: boolean };
+      expect(body.ok).toBe(true);
+
+      // Verify attributes were written
+      const stored = await storage.get(KEYS.attribute('wf-patch-1'));
+      expect(stored).not.toBeNull();
+      const decoded = decode(stored!) as Record<string, unknown>;
+      expect(decoded['priority']).toBe('high');
+      expect(decoded['score']).toBe(99);
+    });
+
+    it('merges with existing attributes', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      // Write initial attributes
+      await storage.put(KEYS.attribute('wf-merge-1'), encode({ color: 'red', size: 'large' }));
+
+      const response = await handleRequest(
+        request('PATCH', '/v1/workflows/wf-merge-1/attributes', {
+          attributes: { color: 'blue', weight: 10 },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+
+      const stored = await storage.get(KEYS.attribute('wf-merge-1'));
+      const decoded = decode(stored!) as Record<string, unknown>;
+      expect(decoded['color']).toBe('blue');
+      expect(decoded['size']).toBe('large');
+      expect(decoded['weight']).toBe(10);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /v1/metrics — Prometheus metrics
+  // -------------------------------------------------------------------------
+
+  describe('GET /v1/metrics', () => {
+    it('returns Prometheus-formatted metrics', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(request('GET', '/v1/metrics'), engine);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('text/plain; charset=utf-8');
+
+      const text = await response.text();
+      expect(text).toContain('weft_workflow_started_total');
+      expect(text).toContain('weft_workflow_completed_total');
+      expect(text).toContain('weft_workflow_failed_total');
+      expect(text).toContain('weft_workflow_active');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Accept: application/msgpack content negotiation
+  // -------------------------------------------------------------------------
+
+  describe('Accept: application/msgpack', () => {
+    it('returns msgpack-encoded response when Accept header is set', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        new Request('http://localhost/v1/health', {
+          method: 'GET',
+          headers: { Accept: 'application/msgpack' },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('application/msgpack');
+
+      const buffer = await response.arrayBuffer();
+      const decoded = decode(new Uint8Array(buffer));
+      expect(decoded).toEqual({ status: 'ok' });
+    });
   });
 });

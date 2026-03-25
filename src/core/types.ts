@@ -135,6 +135,8 @@ export interface EngineOptions {
   checkpointHistory?: number;
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;
+  /** Enable BroadcastChannel for cross-worker event coordination. Default: false. */
+  broadcastEvents?: boolean;
 }
 
 // ---------------------------------------------------------------------------

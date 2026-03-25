@@ -262,4 +262,80 @@ describe('WorkerRegistry', () => {
     expect(worker.lastHeartbeat).toBeGreaterThanOrEqual(before);
     expect(worker.inFlight).toBe(0);
   });
+
+  // -------------------------------------------------------------------------
+  // Visibility timeout tracking
+  // -------------------------------------------------------------------------
+
+  describe('visibility timeout', () => {
+    it('assignTask tracks in-flight task with deadline', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', activities: ['doWork'], concurrency: 5 });
+
+      const now = Date.now();
+      registry.assignTask('w1', 'op-1', 30_000);
+
+      // Task just assigned — should not be expired yet
+      const expired = registry.checkExpiredTasks(now + 1000);
+      expect(expired).toHaveLength(0);
+    });
+
+    it('checkExpiredTasks returns overdue tasks', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', activities: ['doWork'], concurrency: 5 });
+
+      registry.assignTask('w1', 'op-1', 500);
+
+      // Check well past the deadline
+      const expired = registry.checkExpiredTasks(Date.now() + 60_000);
+      expect(expired).toHaveLength(1);
+      expect(expired[0]!.operationId).toBe('op-1');
+      expect(expired[0]!.workerId).toBe('w1');
+    });
+
+    it('extendVisibility extends the deadline', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', activities: ['doWork'], concurrency: 5 });
+
+      registry.assignTask('w1', 'op-1', 500);
+
+      // Extend by 60 seconds
+      registry.extendVisibility('op-1', 60_000);
+
+      // The original deadline would have been ~500ms from now.
+      // After extending by 60s, should not be expired even after 10s
+      const expired = registry.checkExpiredTasks(Date.now() + 10_000);
+      expect(expired).toHaveLength(0);
+    });
+
+    it('non-expired tasks are not returned by checkExpiredTasks', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', activities: ['doWork'], concurrency: 5 });
+      registry.register({ id: 'w2', activities: ['doWork'], concurrency: 5 });
+
+      registry.assignTask('w1', 'op-1', 60_000); // expires in 60s
+      registry.assignTask('w2', 'op-2', 100); // expires in 100ms
+
+      // Check at 10s from now — only op-2 should be expired
+      const expired = registry.checkExpiredTasks(Date.now() + 10_000);
+      expect(expired).toHaveLength(1);
+      expect(expired[0]!.operationId).toBe('op-2');
+    });
+
+    it('extendVisibility is a no-op for unknown operations', () => {
+      const registry = new WorkerRegistry();
+      // Should not throw
+      expect(() => registry.extendVisibility('nonexistent', 1000)).not.toThrow();
+    });
+
+    it('assignTask also increments worker inFlight count', () => {
+      const registry = new WorkerRegistry();
+      registry.register({ id: 'w1', activities: ['doWork'], concurrency: 5 });
+
+      registry.assignTask('w1', 'op-1', 30_000);
+
+      const worker = registry.getAll()[0]!;
+      expect(worker.inFlight).toBe(1);
+    });
+  });
 });

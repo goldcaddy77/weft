@@ -12,7 +12,7 @@ function createTestServer(options?: {
   return Bun.serve({
     port: 0,
     fetch(request, server) {
-      if (server.upgrade(request)) return undefined;
+      if (server.upgrade(request, { data: undefined })) return undefined;
       return new Response('ok');
     },
     websocket: {
