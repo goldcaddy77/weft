@@ -30,6 +30,17 @@ export interface OffloadReference {
   sizeBytes: number;
 }
 
+export interface StreamReference {
+  key: string;
+  workflowId: string;
+  chunkCount: number;
+  totalSizeBytes: number;
+}
+
+export interface StreamSink {
+  heartbeat(details?: unknown): void;
+}
+
 // ---------------------------------------------------------------------------
 // Agent context options
 // ---------------------------------------------------------------------------
@@ -126,6 +137,12 @@ export type ContextOperationRequest =
       type: 'agent';
       operationId: string;
       options: AgentContextOptions;
+    }
+  | {
+      type: 'stream';
+      operationId: string;
+      key: string;
+      fn: (sink: StreamSink) => AsyncGenerator<unknown, void, unknown>;
     };
 
 // ---------------------------------------------------------------------------
@@ -422,6 +439,34 @@ export class Context implements WorkflowContext {
     return result as OffloadReference;
   }
 
+  *stream(
+    key: string,
+    fn: (sink: StreamSink) => AsyncGenerator<unknown, void, unknown>,
+  ): Generator<ContextOperationRequest, StreamReference, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as StreamReference;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.stream("${key}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Streaming data for key "${key}" to external storage`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const result = yield {
+      type: 'stream' as const,
+      operationId,
+      key,
+      fn,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as StreamReference;
+  }
+
   *load<T>(reference: OffloadReference): Generator<ContextOperationRequest, T, unknown> {
     const step = this.#stepIndex++;
 
@@ -565,5 +610,9 @@ export class Context implements WorkflowContext {
     for (const [key, accessor] of Object.entries(accessors)) {
       this.#exposedValues.set(key, accessor);
     }
+  }
+
+  streamUrl(reference: StreamReference): string {
+    return `/v1/workflows/${encodeURIComponent(reference.workflowId)}/streams/${encodeURIComponent(reference.key)}`;
   }
 }

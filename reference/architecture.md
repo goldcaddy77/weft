@@ -5383,7 +5383,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [ ] **`ctx.runAll()` with named concurrent branches.** Per-branch error handling policies (`onError: "continue"`).
 - [ ] **`ctx.setBudget()` / `ctx.budgetRemaining()` for agent cost tracking.** Budget state stored in checkpoint, enforced via `AbortController`.
 - [ ] **Tool result caching across agent turns.** Cache keyed by tool name + serialized arguments, configurable TTL.
-- [ ] **`ctx.stream()` for large payloads.** Writes data to storage as chunks via `ReadableStream`, leaves lightweight reference in checkpoint.
+- [x] **`ctx.stream()` for large payloads.** Writes data to storage as chunks via `ReadableStream`, leaves lightweight reference in checkpoint.
 - [ ] **Automatic payload compression.** Transparent gzip/brotli compression above configurable threshold.
 - [ ] **Pluggable serialization.** Custom serializers for `BigInt`, `Decimal`, domain-specific types. Default: MessagePack with `structuredClone` semantics.
 

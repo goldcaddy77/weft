@@ -6,7 +6,7 @@ import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode } from './codec.ts';
-import type { Context } from './context.ts';
+import type { Context, StreamReference } from './context.ts';
 import { Engine, WorkflowHandle } from './engine.ts';
 import {
   DevelopmentWarningEvent,
@@ -1199,6 +1199,103 @@ describe('Engine', () => {
     expect(result['doubled']).toBe(10);
     expect(result['tripled']).toBe(15);
     expect(result['plusTen']).toBe(15);
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // ctx.stream() tests
+  // ---------------------------------------------------------------------------
+
+  it('ctx.stream() writes chunks to storage and returns StreamReference', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('export', async function* (ctx: WorkflowContext) {
+      const c = ctx as Context;
+      const reference = yield* c.stream('report', async function* (sink) {
+        yield { row: 1, data: 'first' };
+        sink.heartbeat({ processed: 1 });
+        yield { row: 2, data: 'second' };
+        sink.heartbeat({ processed: 2 });
+      });
+      return reference;
+    });
+
+    const handle = await engine.start('export', {});
+    const result = (await handle.result()) as StreamReference;
+
+    expect(result.key).toBe('report');
+    expect(result.workflowId).toBe(handle.id);
+    expect(result.chunkCount).toBe(2);
+    expect(result.totalSizeBytes).toBeGreaterThan(0);
+
+    // Verify chunks in storage
+    const chunk0 = await storage.get(KEYS.streamChunk(handle.id, 'report', 0));
+    expect(chunk0).not.toBeNull();
+    const chunk1 = await storage.get(KEYS.streamChunk(handle.id, 'report', 1));
+    expect(chunk1).not.toBeNull();
+
+    // Verify decoded data
+    expect(decode(chunk0!)).toEqual({ row: 1, data: 'first' });
+    expect(decode(chunk1!)).toEqual({ row: 2, data: 'second' });
+
+    // Verify metadata
+    const meta = await storage.get(KEYS.streamMetadata(handle.id, 'report'));
+    expect(meta).not.toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
+  it('ctx.stream() error mid-stream cleans up partial chunks', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    let streamError: Error | undefined;
+
+    engine.register('failing-export', async function* (ctx: WorkflowContext) {
+      const c = ctx as Context;
+      try {
+        yield* c.stream('report', async function* () {
+          yield { row: 1 };
+          throw new Error('Database connection lost');
+        });
+        return 'not-reached';
+      } catch (error) {
+        streamError = error as Error;
+        return 'handled';
+      }
+    });
+
+    const handle = await engine.start('failing-export', {});
+    const result = await handle.result();
+
+    expect(result).toBe('handled');
+    expect(streamError).toBeDefined();
+    expect(streamError!.message).toBe('Database connection lost');
+
+    // Partial chunks should be cleaned up
+    const chunk0 = await storage.get(KEYS.streamChunk(handle.id, 'report', 0));
+    expect(chunk0).toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
+  it('ctx.stream() with empty generator returns zero chunks', async () => {
+    const engine = new Engine();
+
+    engine.register('empty-stream', async function* (ctx: WorkflowContext) {
+      const c = ctx as Context;
+      const reference = yield* c.stream('empty', async function* () {
+        // No chunks yielded
+      });
+      return reference;
+    });
+
+    const handle = await engine.start('empty-stream', {});
+    const result = (await handle.result()) as StreamReference;
+
+    expect(result.chunkCount).toBe(0);
+    expect(result.totalSizeBytes).toBe(0);
+
     engine[Symbol.dispose]();
   });
 });

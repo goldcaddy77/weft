@@ -84,7 +84,13 @@ export { activity } from './core/activity';
 
 // Context
 export { Context } from './core/context';
-export type { ContextOperationRequest, ContextOptions, OffloadReference } from './core/context';
+export type {
+  ContextOperationRequest,
+  ContextOptions,
+  OffloadReference,
+  StreamReference,
+  StreamSink,
+} from './core/context';
 
 // Interceptors
 export { composeActivityInterceptors, composeWorkflowInterceptors } from './core/interceptor';
@@ -222,7 +228,6 @@ export {
   formatVersionCheckReport,
 } from './diagnostics/format';
 export { generateRecommendations } from './diagnostics/recommendations';
-export { runVersionCheck } from './diagnostics/version-check';
 export type {
   DatabaseHealth,
   DiagnosticReport,
@@ -233,7 +238,8 @@ export type {
   Recommendation,
   RecommendationSeverity,
   VersionCheckReport,
-  WorkflowStatusCounts,
   WorkflowStatistics,
+  WorkflowStatusCounts,
   WorkflowTypeReport,
 } from './diagnostics/types';
+export { runVersionCheck } from './diagnostics/version-check';

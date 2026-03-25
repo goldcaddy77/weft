@@ -6,6 +6,8 @@ import {
   type AgentContextOptions,
   type ContextOperationRequest,
   type OffloadReference,
+  type StreamReference,
+  type StreamSink,
 } from './context.ts';
 import type { SearchAttributeValue } from './types.ts';
 
@@ -578,6 +580,95 @@ describe('Context', () => {
     });
   });
 
+  describe('ctx.stream', () => {
+    it('yields a stream operation request', () => {
+      const context = createContext();
+      const fn = async function* (sink: StreamSink) {
+        yield { batch: 1 };
+        sink.heartbeat({ processed: 1 });
+        yield { batch: 2 };
+      };
+
+      const generator = context.stream('export-data', fn);
+      const request = expectRequest(generator.next(), 'stream');
+
+      expect(request.key).toBe('export-data');
+      expect(request.fn).toBe(fn);
+      expect(request.operationId).toMatch(UUID_PATTERN);
+    });
+
+    it('on recovery returns cached StreamReference without yielding', () => {
+      const cachedReference: StreamReference = {
+        key: 'export-data',
+        workflowId: 'wf-test-123',
+        chunkCount: 5,
+        totalSizeBytes: 2048,
+      };
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, cachedReference);
+      const context = createContext({ accumulatedResults });
+
+      const generator = context.stream('export-data', async function* () {});
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe(cachedReference);
+    });
+
+    it('returns the fed-back StreamReference', () => {
+      const context = createContext();
+      const reference: StreamReference = {
+        key: 'export-data',
+        workflowId: 'wf-test-123',
+        chunkCount: 3,
+        totalSizeBytes: 4096,
+      };
+
+      const generator = context.stream('export-data', async function* () {});
+      generator.next(); // yield
+      const result = generator.next(reference);
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe(reference);
+    });
+
+    it('increments step index', () => {
+      const context = createContext();
+      const generator = context.stream('key', async function* () {});
+      generator.next();
+      generator.next({});
+      expect(context.stepIndex).toBe(1);
+    });
+  });
+
+  describe('ctx.streamUrl', () => {
+    it('constructs a URL path from a StreamReference', () => {
+      const context = createContext();
+      const reference: StreamReference = {
+        key: 'export-data',
+        workflowId: 'wf-test-123',
+        chunkCount: 5,
+        totalSizeBytes: 2048,
+      };
+
+      const url = context.streamUrl(reference);
+      expect(url).toBe('/v1/workflows/wf-test-123/streams/export-data');
+    });
+
+    it('encodes special characters in key and workflowId', () => {
+      const context = createContext();
+      const reference: StreamReference = {
+        key: 'data/export',
+        workflowId: 'wf:special',
+        chunkCount: 1,
+        totalSizeBytes: 100,
+      };
+
+      const url = context.streamUrl(reference);
+      expect(url).toBe('/v1/workflows/wf%3Aspecial/streams/data%2Fexport');
+    });
+  });
+
   describe('ctx.explain', () => {
     afterEach(() => {
       mock.restore();
@@ -599,6 +690,19 @@ describe('Context', () => {
 
       context.explain(false);
       expect(context.explainEnabled).toBe(false);
+    });
+
+    it('logs stream operation details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.stream('export-data', async function* () {});
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('stream');
     });
 
     it('logs operation details when explain mode is enabled', () => {

@@ -17,7 +17,7 @@ import {
   validateCheckpointRoundTrip,
 } from './checkpoint.ts';
 import { decode, encode } from './codec.ts';
-import type { ContextOperationRequest } from './context.ts';
+import type { ContextOperationRequest, StreamReference, StreamSink } from './context.ts';
 import { Context } from './context.ts';
 import {
   DevelopmentWarningEvent,
@@ -838,6 +838,71 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'archive': {
         // TODO: persist archived data to external storage
         await this.#driveGenerator(workflowId, generator, undefined);
+        break;
+      }
+
+      case 'stream': {
+        const sink: StreamSink = {
+          heartbeat(_details?: unknown) {
+            // Future: emit heartbeat event for observability
+          },
+        };
+
+        const asyncGenerator = operation.fn(sink);
+        let chunkIndex = 0;
+        let totalSizeBytes = 0;
+        const writtenKeys: string[] = [];
+
+        try {
+          for await (const chunk of asyncGenerator) {
+            const encoded = encode(chunk);
+            const chunkKey = KEYS.streamChunk(workflowId, operation.key, chunkIndex);
+            await this.#storage.put(chunkKey, encoded);
+            writtenKeys.push(chunkKey);
+            totalSizeBytes += encoded.byteLength;
+            chunkIndex++;
+          }
+
+          const reference: StreamReference = {
+            key: operation.key,
+            workflowId,
+            chunkCount: chunkIndex,
+            totalSizeBytes,
+          };
+
+          const metadataKey = KEYS.streamMetadata(workflowId, operation.key);
+          await this.#storage.put(metadataKey, encode(reference));
+
+          await this.#driveGenerator(workflowId, generator, reference);
+        } catch (error) {
+          // Clean up any partially written chunks (best-effort)
+          if (writtenKeys.length > 0) {
+            const deleteOperations = [
+              ...writtenKeys.map((key) => ({ type: 'delete' as const, key })),
+              { type: 'delete' as const, key: KEYS.streamMetadata(workflowId, operation.key) },
+            ];
+            await this.#storage.batch(deleteOperations).catch(() => {});
+          }
+
+          // Propagate error to the workflow generator (same pattern as 'activity' case)
+          try {
+            const iterResult = await generator.throw(error);
+            if (iterResult.done) {
+              await this.#completeWorkflow(workflowId, iterResult.value);
+            } else {
+              await this.#processOperation(
+                workflowId,
+                generator,
+                iterResult.value as never as ContextOperationRequest,
+              );
+            }
+          } catch (innerError) {
+            await this.#failWorkflow(
+              workflowId,
+              innerError instanceof Error ? innerError : new Error(String(innerError)),
+            );
+          }
+        }
         break;
       }
 

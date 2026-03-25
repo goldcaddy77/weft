@@ -56,11 +56,30 @@ describe('KEYS', () => {
       KEYS.archive('wf', 'key'),
       KEYS.sharedState('wf', 'state'),
       KEYS.sharedStateVersion('wf', 'state'),
+      KEYS.streamChunk('wf', 'key', 0),
+      KEYS.streamMetadata('wf', 'key'),
     ];
 
     for (const result of results) {
       expect(typeof result).toBe('string');
     }
+  });
+
+  it('streamChunk key has correct zero-padded blob format', () => {
+    expect(KEYS.streamChunk('wf-1', 'export', 0)).toBe('blob:wf-1:export:chunk:0000000000');
+    expect(KEYS.streamChunk('wf-1', 'export', 42)).toBe('blob:wf-1:export:chunk:0000000042');
+  });
+
+  it('streamChunk keys sort lexicographically by index', () => {
+    const first = KEYS.streamChunk('wf-1', 'export', 1);
+    const second = KEYS.streamChunk('wf-1', 'export', 2);
+    const hundredth = KEYS.streamChunk('wf-1', 'export', 100);
+    expect(first < second).toBe(true);
+    expect(second < hundredth).toBe(true);
+  });
+
+  it('streamMetadata key has correct format', () => {
+    expect(KEYS.streamMetadata('wf-1', 'export')).toBe('blob:wf-1:export:meta');
   });
 
   it('zero-padding works for very large timestamps', () => {

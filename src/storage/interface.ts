@@ -55,4 +55,7 @@ export const KEYS = {
   sharedState: (workflowId: string, stateKey: string) => `shared:${workflowId}:${stateKey}`,
   sharedStateVersion: (workflowId: string, stateKey: string) =>
     `shared:${workflowId}:${stateKey}:version`,
+  streamChunk: (workflowId: string, key: string, chunkIndex: number) =>
+    `blob:${workflowId}:${key}:chunk:${String(chunkIndex).padStart(10, '0')}`,
+  streamMetadata: (workflowId: string, key: string) => `blob:${workflowId}:${key}:meta`,
 } as const;
