@@ -1,0 +1,112 @@
+/**
+ * Shared component styles used across multiple Svelte components.
+ * Individual component-specific styles live in scoped <style> blocks.
+ */
+
+@layer components {
+  /* ========================================
+   * Form Field Layout
+   * ======================================== */
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--field-gap);
+  }
+
+  .field-error {
+    font-size: var(--text-xs);
+    color: var(--field-error-color);
+  }
+
+  .field-description {
+    font-size: var(--text-xs);
+    color: var(--text-subtle);
+  }
+
+  /* ========================================
+   * Control (shared input/select/textarea)
+   * ======================================== */
+  .control {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    height: var(--control-height);
+    padding: var(--control-padding-y) var(--control-padding-x);
+    font-size: var(--control-font-size);
+    color: var(--control-text);
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
+    border-radius: var(--control-radius);
+    transition:
+      border-color var(--duration-fast) var(--ease-standard),
+      box-shadow var(--duration-fast) var(--ease-standard);
+  }
+
+  .control::placeholder {
+    color: var(--control-placeholder);
+  }
+
+  .control:hover:not(:disabled) {
+    border-color: var(--control-border-hover);
+  }
+
+  .control:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 var(--ring-width) var(--control-ring-color);
+  }
+
+  .control:disabled {
+    background: var(--control-bg-disabled);
+    border-color: var(--control-border-disabled);
+    color: var(--control-text-disabled);
+    cursor: not-allowed;
+  }
+
+  .control[data-error] {
+    border-color: var(--control-border-error);
+  }
+
+  .control[data-error]:focus-visible {
+    box-shadow: 0 0 0 var(--ring-width) var(--control-ring-color-error);
+  }
+
+  /* ========================================
+   * Surface
+   * ======================================== */
+  .surface {
+    background: var(--surface);
+  }
+
+  .surface[data-tone='raised'] {
+    background: var(--surface-raised);
+  }
+
+  .surface[data-tone='inset'] {
+    background: var(--surface-inset);
+  }
+
+  /* ========================================
+   * Overlay Close Button
+   * ======================================== */
+  .overlay-close {
+    position: absolute;
+    top: var(--space-3);
+    right: var(--space-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    color: var(--text-subtle);
+    border-radius: var(--radius-sm);
+    transition:
+      color var(--duration-fast) var(--ease-standard),
+      background var(--duration-fast) var(--ease-standard);
+  }
+
+  .overlay-close:hover {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+}

@@ -1,4 +1,5 @@
 import { $ } from 'bun';
+import sveltePlugin from 'bun-plugin-svelte';
 
 const entrypoints = ['./src/index.ts'];
 
@@ -27,6 +28,16 @@ await Bun.build({
   naming: '[dir]/[name].js',
   sourcemap: 'external',
   minify: true,
+});
+
+// Dashboard (Svelte SPA for /ui)
+await Bun.build({
+  entrypoints: ['./src/dashboard/index.html'],
+  outdir: './dist/dashboard',
+  target: 'browser',
+  minify: true,
+  sourcemap: 'external',
+  plugins: [sveltePlugin()],
 });
 
 await $`bunx tsc --declaration --emitDeclarationOnly --project tsconfig.build.json`;

@@ -3,3 +3,6 @@
 
 [run]
 bun = true
+
+[serve.static]
+plugins = ["bun-plugin-svelte"]
