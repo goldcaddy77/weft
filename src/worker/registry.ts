@@ -16,11 +16,19 @@ export interface RoutingOptions {
   queue?: string;
 }
 
+export interface InFlightTask {
+  operationId: string;
+  workerId: string;
+  deadline: number; // absolute timestamp
+}
+
 export class WorkerRegistry {
   #workers: Map<string, WorkerInfo>;
+  #inFlightTasks: Map<string, InFlightTask>;
 
   constructor() {
     this.#workers = new Map();
+    this.#inFlightTasks = new Map();
   }
 
   /** Register a worker. */
@@ -93,6 +101,40 @@ export class WorkerRegistry {
     // Return the least-loaded worker (lowest inFlight count).
     candidates.sort((a, b) => a.inFlight - b.inFlight);
     return candidates[0];
+  }
+
+  /** Track a task assignment with a visibility timeout deadline. */
+  assignTask(workerId: string, operationId: string, visibilityTimeout: number): void {
+    const deadline = Date.now() + visibilityTimeout;
+
+    this.#inFlightTasks.set(operationId, {
+      operationId,
+      workerId,
+      deadline,
+    });
+
+    this.taskAssigned(workerId);
+  }
+
+  /** Return tasks whose deadline has passed for reassignment. */
+  checkExpiredTasks(now: number): InFlightTask[] {
+    const expired: InFlightTask[] = [];
+
+    for (const task of this.#inFlightTasks.values()) {
+      if (task.deadline <= now) {
+        expired.push(task);
+      }
+    }
+
+    return expired;
+  }
+
+  /** Extend the visibility timeout deadline for an in-flight task (heartbeat). */
+  extendVisibility(operationId: string, extension: number): void {
+    const task = this.#inFlightTasks.get(operationId);
+    if (task !== undefined) {
+      task.deadline = Date.now() + extension;
+    }
   }
 
   /** Get all registered workers. */

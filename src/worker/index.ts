@@ -8,7 +8,7 @@ export { HeartbeatManager } from './heartbeat.ts';
 export { LongPollWorker } from './long-poll.ts';
 export type { LongPollWorkerOptions } from './long-poll.ts';
 export { WorkerRegistry } from './registry.ts';
-export type { RoutingOptions, WorkerInfo } from './registry.ts';
+export type { InFlightTask, RoutingOptions, WorkerInfo } from './registry.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,6 +48,7 @@ export class RemoteWorker implements Disposable {
   #inFlight: number;
   #abortController: AbortController;
   #heartbeat: HeartbeatManager;
+  #shuttingDown: boolean;
 
   constructor(options: RemoteWorkerOptions) {
     this.#options = {
@@ -59,6 +60,7 @@ export class RemoteWorker implements Disposable {
     this.#ws = null;
     this.#inFlight = 0;
     this.#abortController = new AbortController();
+    this.#shuttingDown = false;
     this.#heartbeat = new HeartbeatManager(() => {
       this.#sendMessage({ type: 'heartbeat', workerId: this.#options.workerId });
     }, HEARTBEAT_INTERVAL_MS);
@@ -140,6 +142,11 @@ export class RemoteWorker implements Disposable {
     return this.#ws !== null && this.#ws.readyState === WebSocket.OPEN;
   }
 
+  /** Whether the worker is in the process of shutting down. */
+  get shuttingDown(): boolean {
+    return this.#shuttingDown;
+  }
+
   [Symbol.dispose](): void {
     this.#abortController.abort();
     this.#heartbeat.stop();
@@ -154,12 +161,30 @@ export class RemoteWorker implements Disposable {
   // Internal
   // ---------------------------------------------------------------------------
 
+  async #gracefulShutdown(): Promise<void> {
+    this.#shuttingDown = true;
+    this.#heartbeat.stop();
+
+    // Drain in-flight work
+    while (this.#inFlight > 0) {
+      await Bun.sleep(50);
+    }
+
+    if (this.#ws !== null) {
+      this.#ws.close();
+      this.#ws = null;
+    }
+  }
+
   async #handleMessage(event: MessageEvent): Promise<void> {
     const data = JSON.parse(String(event.data)) as ServerMessage;
 
     if (data.type === 'task') {
+      if (this.#shuttingDown) return;
       const task = data as unknown as TaskMessage;
       await this.#executeTask(task);
+    } else if (data.type === 'shutdown') {
+      void this.#gracefulShutdown();
     }
   }
 

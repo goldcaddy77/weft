@@ -44,6 +44,12 @@ import type {
 } from './types.ts';
 import { UpdateCoordinator } from './updates.ts';
 
+declare global {
+  interface SymbolConstructor {
+    readonly observable: unique symbol;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -59,6 +65,7 @@ interface ResolvedOptions {
   checkpointHistory: number;
   checkpointSizeWarningThreshold: number;
   maxNestingDepth: number;
+  broadcastEvents: boolean;
   getNow: () => number;
 }
 
@@ -254,6 +261,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #activityInterceptors: ActivityInterceptor[];
   #updateCoordinator: UpdateCoordinator;
   #activeContexts: Map<string, Context>;
+  #broadcastChannel: BroadcastChannel | null;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -274,6 +282,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#activityInterceptors = [];
     this.#updateCoordinator = new UpdateCoordinator(storage);
     this.#activeContexts = new Map();
+    this.#broadcastChannel = null;
     this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
       this.#handleCache.delete(id);
     });
@@ -284,6 +293,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       checkpointHistory: options?.checkpointHistory ?? 10,
       checkpointSizeWarningThreshold: options?.checkpointSizeWarningThreshold ?? 65_536,
       maxNestingDepth: options?.maxNestingDepth ?? 10,
+      broadcastEvents: options?.broadcastEvents ?? false,
       getNow,
     };
 
@@ -509,6 +519,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.dispatchEvent(new SignalReceivedEvent(workflowId, name, payload));
 
+    this.#broadcast({ type: 'signal:received', workflowId, signalName: name });
+
     // Check if workflow is waiting for this signal
     const waiterKey = `${workflowId}:${name}`;
     const waiter = this.#signalWaiters.get(waiterKey);
@@ -624,6 +636,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#signalWaiters.clear();
     this.#sleepResolvers.clear();
     this.#activeContexts.clear();
+    this.#broadcastChannel?.close();
+    this.#broadcastChannel = null;
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -868,6 +882,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.dispatchEvent(event);
     this.#forwardEventToHandle(workflowId, event);
 
+    this.#broadcast({ type: 'workflow:completed', workflowId });
+
     const resolver = this.#resultResolvers.get(workflowId);
     if (resolver) {
       resolver.resolve(result);
@@ -942,7 +958,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async #executeActivity(
-    workflowId: string,
+    _workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'activity' }>,
   ): Promise<unknown> {
     // If there are activity interceptors, compose and run through them
@@ -989,11 +1005,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       const generator = composed.activity(interception, execute);
-      const outcome = generator.next();
+      let current: IteratorResult<unknown, unknown> = generator.next();
       // If the interceptor chain yields (most do), the value is the activity result
-      if (outcome.done) return outcome.value;
-      // Otherwise drive until done
-      let current = outcome;
       while (!current.done) {
         current = generator.next(current.value);
       }
@@ -1022,5 +1035,23 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const message = `Checkpoint at step ${step} has ${result.divergences.length} non-serializable field(s)`;
       this.dispatchEvent(new DevelopmentWarningEvent(workflowId, message, fieldPaths));
     }
+  }
+
+  /**
+   * Post a message to the BroadcastChannel for cross-worker coordination.
+   * Only active when `broadcastEvents` is enabled. Lazily creates the channel
+   * on first use to avoid overhead when unused.
+   */
+  #broadcast(message: Record<string, unknown>): void {
+    if (!this.#options.broadcastEvents) return;
+
+    if (this.#broadcastChannel === null) {
+      try {
+        this.#broadcastChannel = new BroadcastChannel('weft:events');
+      } catch {
+        return;
+      }
+    }
+    this.#broadcastChannel.postMessage(message);
   }
 }
