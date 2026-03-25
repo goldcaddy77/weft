@@ -32,11 +32,13 @@ import {
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
 import { Scheduler, parseDuration } from './scheduler.ts';
+import { compileStepWorkflow, isAsyncGeneratorFunction } from './step-context.ts';
 import type {
   EngineOptions,
   ListFilter,
   PaginatedResult,
   StartOptions,
+  StepWorkflowFunction,
   WorkflowFunction,
   WorkflowRegistration,
   WorkflowState,
@@ -310,9 +312,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // Registration
   // -------------------------------------------------------------------------
 
-  register(name: string, handler: WorkflowFunction): void;
+  register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void;
   register(name: string, registration: WorkflowRegistration): void;
-  register(name: string, handlerOrRegistration: WorkflowFunction | WorkflowRegistration): void {
+  register(
+    name: string,
+    handlerOrRegistration: WorkflowFunction | StepWorkflowFunction | WorkflowRegistration,
+  ): void {
     const isRegistration =
       typeof handlerOrRegistration === 'object' &&
       handlerOrRegistration !== null &&
@@ -325,8 +330,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         version: registration.version ?? '1',
       });
     } else {
+      // Auto-detect step-based (non-generator) workflow functions and compile them
+      let handler = handlerOrRegistration;
+      if (typeof handler === 'function' && !isAsyncGeneratorFunction(handler)) {
+        handler = compileStepWorkflow(handler as StepWorkflowFunction);
+      }
+
       this.#registrations.set(name, {
-        handler: handlerOrRegistration,
+        handler: handler as WorkflowFunction,
         version: '1',
       });
     }

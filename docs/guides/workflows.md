@@ -4,6 +4,27 @@ You have a multi-step business process---charge a card, reserve inventory, send 
 
 That is what a Weft workflow gives you.
 
+## Getting started without generators
+
+If you are not familiar with generators, Weft provides a simpler entry point. Register a plain `async` function and use `ctx.step()` for each durable operation:
+
+```typescript
+import { Engine } from 'weft';
+
+const engine = new Engine();
+
+engine.register('welcome', async (ctx, input) => {
+  const { name } = input as { name: string };
+  const greeting = await ctx.step('greet', () => greet(name));
+  await ctx.step('notify', () => notify(greeting));
+  return { greeting, notified: true };
+});
+```
+
+Each `ctx.step()` call is a checkpoint boundary, just like `yield*` in the generator API. The conversion happens automatically at registration time -- the engine always works with generators internally.
+
+The step-based API is a subset of the full API. It supports sequential steps only. When you need durable timers (`sleep()`), external signals (`waitForSignal()`), or parallel execution (`all()`, `race()`), graduate to the generator API described below.
+
 ## Generator functions as workflows
 
 A workflow is an `async function*` that receives a context and an input. The generator syntax is the key: every `yield*` expression is a **checkpoint boundary** where Weft snapshots your entire local scope.

@@ -92,6 +92,10 @@ export type {
   StreamSink,
 } from './core/context';
 
+// Step Context
+export { StepContext, compileStepWorkflow, isAsyncGeneratorFunction } from './core/step-context';
+export type { StepWorkflowContext, StepWorkflowFunction } from './core/types';
+
 // Interceptors
 export { composeActivityInterceptors, composeWorkflowInterceptors } from './core/interceptor';
 export type {

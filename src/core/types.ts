@@ -233,6 +233,21 @@ export type WorkflowFunction<TInput = unknown, TOutput = unknown> = (
 ) => AsyncGenerator<unknown, TOutput, unknown>;
 
 // ---------------------------------------------------------------------------
+// Step-based workflow types (progressive disclosure API)
+// ---------------------------------------------------------------------------
+
+export interface StepWorkflowContext {
+  readonly workflowId: string;
+  readonly signal: AbortSignal;
+  step<T>(name: string, fn: () => Promise<T> | T): Promise<T>;
+}
+
+export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
+  context: StepWorkflowContext,
+  input: TInput,
+) => Promise<TOutput>;
+
+// ---------------------------------------------------------------------------
 // Forward-declared WorkflowContext interface (full implementation in context.ts)
 // ---------------------------------------------------------------------------
 

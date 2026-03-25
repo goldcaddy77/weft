@@ -49,6 +49,38 @@ bun run index.ts
 
 That's a durable workflow. Let's break down what just happened.
 
+### Step-based alternative
+
+If generators are unfamiliar, you can write the same workflow with plain `async`/`await`:
+
+```typescript
+import { Engine, MemoryStorage } from 'weft';
+
+const engine = new Engine({ storage: new MemoryStorage() });
+
+async function greet(name: string) {
+  return `Hello, ${name}!`;
+}
+
+async function notify(message: string) {
+  return `Notified: ${message}`;
+}
+
+engine.register('welcome', async (ctx, input) => {
+  const { name } = input as { name: string };
+  const greeting = await ctx.step('greet', () => greet(name));
+  await ctx.step('notify', () => notify(greeting));
+  return { greeting, notified: true };
+});
+
+const handle = await engine.start('welcome', { name: 'World' });
+const result = await handle.result();
+console.log(result);
+// { greeting: "Hello, World!", notified: true }
+```
+
+Each `ctx.step()` call is a checkpoint boundary. The engine converts this to the generator form at registration time. When you need features like durable timers, signals, or parallel execution, switch to the generator API shown above.
+
 ## How It Works
 
 The workflow is a **generator function**---notice the `function*` and the `yield*` keywords. If you haven't used generators much, here's the mental model: every `yield*` is a checkpoint boundary. The engine runs the generator until it hits a `yield*`, records the result of that operation, and saves the workflow's position to storage. If the process dies and restarts, the engine loads the last checkpoint and resumes from that exact point.

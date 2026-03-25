@@ -417,6 +417,50 @@ Query the current budget state. Returns `undefined` if no budget is set.
 
 ---
 
+## Step-Based Workflows
+
+For workflows that do not need the full generator API, Weft offers a progressive disclosure alternative. Instead of writing `async function*` with `yield*`, you write a plain `async` function and call `ctx.step()` for each durable operation.
+
+### `StepWorkflowContext`
+
+```ts
+interface StepWorkflowContext {
+  readonly workflowId: string;
+  readonly signal: AbortSignal;
+  step<T>(name: string, fn: () => Promise<T> | T): Promise<T>;
+}
+```
+
+The step context is a subset of the full `Context`. It exposes `workflowId`, `signal`, and a single `step()` method. Features like `sleep()`, `waitForSignal()`, `all()`, and `race()` are not available -- when you need those, use the generator API.
+
+### `step()`
+
+```ts
+step<T>(name: string, fn: () => Promise<T> | T): Promise<T>
+```
+
+Execute a named step as a durable operation. Under the hood, each `step()` call compiles to a `yield` in the generator protocol. Steps execute sequentially -- one at a time.
+
+| Parameter | Type                    | Description                             |
+| --------- | ----------------------- | --------------------------------------- |
+| `name`    | `string`                | A descriptive name for the step         |
+| `fn`      | `() => Promise<T> \| T` | The function to execute (sync or async) |
+
+**Returns:** A promise that resolves with the step function's return value.
+
+```ts
+engine.register('onboard', async (ctx, input) => {
+  const { name } = input as { name: string };
+  const user = await ctx.step('create-user', () => createUser(name));
+  await ctx.step('send-email', () => sendWelcome(user));
+  return user;
+});
+```
+
+The conversion from step-based to generator-based happens at registration time. The engine always works with generators internally.
+
+---
+
 ## Types
 
 ### `ContextOptions`
