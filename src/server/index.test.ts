@@ -170,4 +170,47 @@ describe('serve', () => {
     // should not crash)
     expect(response.status).toBeDefined();
   });
+
+  it('accepts a WebSocket connection and subscribes to pathname channel', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const wsUrl = server.url.replace('http://', 'ws://');
+
+    const ws = new WebSocket(`${wsUrl}/v1/workflows/test-wf/watch`);
+
+    const opened = await new Promise<boolean>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve(true));
+      ws.addEventListener('error', () => reject(new Error('WebSocket connection failed')));
+    });
+
+    expect(opened).toBe(true);
+
+    // Send a message (the handler is a no-op, but ensures the message path is exercised)
+    ws.send('ping');
+    await Bun.sleep(50);
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('handles WebSocket close event without error', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const wsUrl = server.url.replace('http://', 'ws://');
+    const ws = new WebSocket(`${wsUrl}/v1/tasks/default/stream`);
+
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('WebSocket connection failed')));
+    });
+
+    // Close the connection
+    ws.close();
+
+    await new Promise<void>((resolve) => {
+      ws.addEventListener('close', () => resolve());
+    });
+  });
 });

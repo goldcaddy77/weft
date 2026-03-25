@@ -375,3 +375,104 @@ describe('handleCancelMessage', () => {
     expect(context.abortControllers.has('wf-cleanup')).toBe(false);
   });
 });
+
+describe('handleResumeMessage — error paths', () => {
+  it('returns failed when the generator throws on resume', async () => {
+    const context = createWorkflowRunnerContext();
+
+    const operationRequest: OperationRequest = {
+      id: 'op-1',
+      workflowId: 'wf-throw-on-resume',
+      kind: 'activity',
+      queue: 'default',
+      attempt: 1,
+      retryPolicy: {
+        maxAttempts: 3,
+        initialBackoff: 1000,
+        backoffMultiplier: 2,
+        maxBackoff: 30_000,
+      },
+      scheduledAt: Date.now(),
+    };
+
+    async function* throwOnResumeWorkflow() {
+      const _result: unknown = yield operationRequest;
+      throw new Error('resume exploded');
+    }
+
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-throw-on-resume', workflowType: 'throwing', input: null },
+      () => throwOnResumeWorkflow,
+    );
+
+    const result = await handleResumeMessage(context, {
+      workflowId: 'wf-throw-on-resume',
+      result: 'trigger',
+    });
+
+    expect(result.type).toBe('failed');
+    expect((result as { error: string }).error).toContain('resume exploded');
+
+    // Generator should be cleaned up
+    expect(context.generators.has('wf-throw-on-resume')).toBe(false);
+    expect(context.abortControllers.has('wf-throw-on-resume')).toBe(false);
+  });
+});
+
+describe('formatError', () => {
+  it('handles non-Error thrown values in handleRunMessage', async () => {
+    const context = createWorkflowRunnerContext();
+
+    async function* nonErrorThrow() {
+      throw 'string-error';
+    }
+
+    const result = await handleRunMessage(
+      context,
+      { workflowId: 'wf-non-error', workflowType: 'non-error', input: null },
+      () => nonErrorThrow,
+    );
+
+    expect(result.type).toBe('failed');
+    expect((result as { error: string }).error).toBe('string-error');
+  });
+
+  it('handles non-Error thrown values in handleResumeMessage', async () => {
+    const context = createWorkflowRunnerContext();
+
+    const operationRequest: OperationRequest = {
+      id: 'op-1',
+      workflowId: 'wf-non-error-resume',
+      kind: 'activity',
+      queue: 'default',
+      attempt: 1,
+      retryPolicy: {
+        maxAttempts: 3,
+        initialBackoff: 1000,
+        backoffMultiplier: 2,
+        maxBackoff: 30_000,
+      },
+      scheduledAt: Date.now(),
+    };
+
+    async function* nonErrorResumeThrow() {
+      const _result: unknown = yield operationRequest;
+      throw 42;
+    }
+
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-non-error-resume', workflowType: 'non-error-resume', input: null },
+      () => nonErrorResumeThrow,
+    );
+
+    const result = await handleResumeMessage(context, {
+      workflowId: 'wf-non-error-resume',
+      result: 'trigger',
+    });
+
+    expect(result.type).toBe('failed');
+    expect((result as { error: string }).error).toBe('42');
+  });
+});

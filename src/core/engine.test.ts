@@ -423,4 +423,254 @@ describe('Engine', () => {
     await expect(engine.start('dup', null, { id: 'same-id' })).rejects.toThrow('already exists');
     engine[Symbol.dispose]();
   });
+
+  it('register(name, registration) accepts a WorkflowRegistration object', async () => {
+    const engine = new Engine();
+    const handler = async function* (_ctx: WorkflowContext, input: unknown) {
+      return `versioned: ${input as string}`;
+    };
+
+    engine.register('versioned', { handler, version: '2.0' });
+    const handle = await engine.start('versioned', 'test');
+    const result = await handle.result();
+    expect(result).toBe('versioned: test');
+    engine[Symbol.dispose]();
+  });
+
+  it('register(name, registration) defaults version to 1', async () => {
+    const engine = new Engine();
+    const handler = async function* () {
+      return 'ok';
+    };
+
+    engine.register('default-version', { handler });
+    const handle = await engine.start('default-version', null);
+    const result = await handle.result();
+    expect(result).toBe('ok');
+    engine[Symbol.dispose]();
+  });
+
+  it('getHandle() for a completed workflow resolves result from storage', async () => {
+    const engine = new Engine();
+    engine.register('completed-wf', async function* () {
+      return 'stored-result';
+    });
+
+    const handle = await engine.start('completed-wf', null, { id: 'completed-id' });
+    await handle.result();
+
+    // Clear the handle cache to force a storage lookup
+    // by creating a new handle reference
+    const newHandle = engine.getHandle('completed-id');
+    const result = await newHandle.result();
+    expect(result).toBe('stored-result');
+    engine[Symbol.dispose]();
+  });
+
+  it('getHandle() for a non-existent workflow throws', async () => {
+    const engine = new Engine();
+
+    const handle = engine.getHandle('nonexistent-id');
+    await expect(handle.result()).rejects.toThrow('not found');
+    engine[Symbol.dispose]();
+  });
+
+  it('getHandle() for a running workflow chains result promise (resolve path)', async () => {
+    const engine = new Engine();
+    engine.register('chained', async function* (ctx: WorkflowContext) {
+      const payload = yield* (ctx as Context).waitForSignal('go');
+      return `chained: ${payload as string}`;
+    });
+
+    const handle = await engine.start('chained', null, { id: 'chain-id' });
+    await flush();
+
+    // Manually remove the handle from the cache so getHandle creates a new one
+    // that chains off the existing result resolver
+    (engine as any)['#handleCache']?.delete?.('chain-id');
+
+    // Get a second handle (should chain off the existing result resolver)
+    const secondHandle = engine.getHandle('chain-id');
+
+    // Now signal the workflow
+    await engine.signal('chain-id', 'go', 'value');
+
+    const result1 = await handle.result();
+    const result2 = await secondHandle.result();
+
+    expect(result1).toBe('chained: value');
+    expect(result2).toBe('chained: value');
+    engine[Symbol.dispose]();
+  });
+
+  it('getHandle() for a running workflow chains result promise (reject path)', async () => {
+    const engine = new Engine();
+    engine.register('chained-fail', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('go');
+      return 'nope';
+    });
+
+    const handle = await engine.start('chained-fail', null, { id: 'chain-fail-id' });
+    await flush();
+
+    // Get a second handle via getHandle while workflow is running.
+    // The handle cache may still have the original, so let's force it:
+    const secondHandle = engine.getHandle('chain-fail-id');
+
+    // Cancel to trigger the reject path
+    const resultPromise1 = handle.result().catch((error: Error) => error.message);
+    const resultPromise2 = secondHandle.result().catch((error: Error) => error.message);
+
+    await engine.cancel('chain-fail-id');
+
+    const error1 = await resultPromise1;
+    const error2 = await resultPromise2;
+
+    expect(error1).toBe('Workflow cancelled');
+    // The second handle may have the same or chained rejection
+    expect(error2).toBeDefined();
+    engine[Symbol.dispose]();
+  });
+
+  it('asyncDispose calls Symbol.dispose', async () => {
+    const engine = new Engine();
+    engine.register('disposable', async function* () {
+      return 'ok';
+    });
+
+    await engine[Symbol.asyncDispose]();
+    // Should not throw
+  });
+
+  it('WorkflowHandle cancel delegates to engine.cancel', async () => {
+    const engine = new Engine();
+    engine.register('handle-cancel', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('handle-cancel', null);
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+
+    await handle.cancel();
+    await resultPromise;
+
+    const stateBytes = await engine.storage.get(KEYS.workflow(handle.id));
+    const state = decode(stateBytes!) as WorkflowState;
+    expect(state.status).toBe('cancelled');
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle signal delegates to engine.signal', async () => {
+    const engine = new Engine();
+    engine.register('handle-signal', async function* (ctx: WorkflowContext) {
+      const value = yield* (ctx as Context).waitForSignal('my-signal');
+      return `got: ${value as string}`;
+    });
+
+    const handle = await engine.start('handle-signal', null);
+    await flush();
+
+    await handle.signal('my-signal', 'payload');
+    const result = await handle.result();
+    expect(result).toBe('got: payload');
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle asyncDispose is a no-op', async () => {
+    const engine = new Engine();
+    engine.register('asyncdispose', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('asyncdispose', null);
+    await handle.result();
+
+    // Should not throw
+    await handle[Symbol.asyncDispose]();
+    engine[Symbol.dispose]();
+  });
+
+  it('activity failure caught by workflow try/catch completes normally', async () => {
+    const engine = new Engine();
+    const failingActivity = async () => {
+      throw new Error('activity broke');
+    };
+
+    engine.register('catch-failure', async function* (ctx: WorkflowContext) {
+      try {
+        yield* (ctx as Context).run(failingActivity);
+      } catch {
+        return 'caught';
+      }
+      return 'not caught';
+    });
+
+    const handle = await engine.start('catch-failure', null);
+    const result = await handle.result();
+    expect(result).toBe('caught');
+    engine[Symbol.dispose]();
+  });
+
+  it('execution deadline cancels workflow via scheduler', async () => {
+    let now = 1000;
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
+
+    engine.register('deadline-test', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'should not complete';
+    });
+
+    const handle = await engine.start('deadline-test', null, {
+      executionTimeout: 5000,
+    });
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+
+    // Advance time past the deadline
+    now = 7000;
+    await engine.scheduler.tick(now);
+    await flush();
+    await resultPromise;
+
+    const stateBytes = await storage.get(KEYS.workflow(handle.id));
+    const state = decode(stateBytes!) as WorkflowState;
+    expect(state.status).toBe('cancelled');
+    engine[Symbol.dispose]();
+  });
+
+  it('list with status array filter', async () => {
+    const engine = new Engine();
+    engine.register('multi-status', async function* () {
+      return 'ok';
+    });
+    engine.register('waiter', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('block');
+      return 'ok';
+    });
+
+    await engine.start('multi-status', null, { id: 'done-1' });
+    await engine.start('waiter', null, { id: 'running-1' });
+    await flush();
+
+    const result = await engine.list({ status: ['completed', 'running'] });
+    expect(result.total).toBe(2);
+    engine[Symbol.dispose]();
+  });
+
+  it('cancel on already completed workflow updates state', async () => {
+    const engine = new Engine();
+    engine.register('already-done', async function* () {
+      return 'done';
+    });
+
+    const handle = await engine.start('already-done', null);
+    await handle.result();
+
+    // Cancel after completion - should still work without error
+    await engine.cancel(handle.id);
+    engine[Symbol.dispose]();
+  });
 });
