@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import { Context, type ContextOperationRequest, type OffloadReference } from './context.ts';
+import type { LLMProvider } from '../ai/providers/interface.ts';
+import {
+  Context,
+  type AgentContextOptions,
+  type ContextOperationRequest,
+  type OffloadReference,
+} from './context.ts';
 import type { SearchAttributeValue } from './types.ts';
 
 function createContext(overrides: Partial<ConstructorParameters<typeof Context>[0]> = {}) {
@@ -477,7 +483,85 @@ describe('Context', () => {
       expect(result.done).toBe(true);
       expect(result.value).toBe(cached);
     });
+  });
 
+  describe('ctx.agent', () => {
+    const mockProvider: LLMProvider = {
+      name: 'mock',
+      async chat() {
+        return {
+          content: 'mock response',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn' as const,
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens() {
+        return 100;
+      },
+    };
+
+    function createAgentOptions(overrides?: Partial<AgentContextOptions>): AgentContextOptions {
+      return {
+        model: 'test-model',
+        prompt: 'Hello agent',
+        provider: mockProvider,
+        ...overrides,
+      };
+    }
+
+    it('yields an agent operation request', () => {
+      const context = createContext();
+      const agentOptions = createAgentOptions();
+
+      const generator = context.agent(agentOptions);
+      const request = expectRequest(generator.next(), 'agent');
+
+      expect(request.operationId).toMatch(UUID_PATTERN);
+      expect(request.options).toBe(agentOptions);
+      expect(request.options.model).toBe('test-model');
+      expect(request.options.prompt).toBe('Hello agent');
+    });
+
+    it('on recovery returns cached result without yielding', () => {
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, 'cached-agent-result');
+      const context = createContext({ accumulatedResults });
+
+      const generator = context.agent(createAgentOptions());
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('cached-agent-result');
+    });
+
+    it('returns the fed-back result', () => {
+      const context = createContext();
+
+      const generator = context.agent(createAgentOptions());
+      generator.next(); // yield
+
+      const result = generator.next('agent-response-content');
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('agent-response-content');
+    });
+
+    it('increments step index', () => {
+      const context = createContext();
+
+      const generator = context.agent(createAgentOptions());
+      generator.next();
+      generator.next('result');
+
+      expect(context.stepIndex).toBe(1);
+    });
+  });
+
+  describe('ctx.runAll fed-back result', () => {
     it('returns the fed-back result', () => {
       const context = createContext();
       const branches = {
@@ -528,6 +612,53 @@ describe('Context', () => {
       expect(consoleSpy).toHaveBeenCalled();
       const calls = consoleSpy.mock.calls.flat().join(' ');
       expect(calls).toContain('run');
+    });
+  });
+
+  describe('ctx.setBudget', () => {
+    it('creates a budget tracker', () => {
+      const context = createContext();
+      expect(context.budgetRemaining()).toBeUndefined();
+
+      context.setBudget({
+        maxTokens: 10000,
+        maxCost: 5.0,
+        models: {
+          'gpt-4': { inputCostPer1K: 0.03, outputCostPer1K: 0.06 },
+        },
+      });
+
+      const state = context.budgetRemaining();
+      expect(state).toBeDefined();
+      expect(state!.tokensUsed).toBe(0);
+      expect(state!.tokensRemaining).toBe(10000);
+      expect(state!.costRemaining).toBe(5.0);
+    });
+  });
+
+  describe('ctx.budgetRemaining', () => {
+    it('returns undefined when no budget is set', () => {
+      const context = createContext();
+      expect(context.budgetRemaining()).toBeUndefined();
+    });
+
+    it('returns state after setBudget', () => {
+      const context = createContext();
+      context.setBudget({
+        maxTokens: 50000,
+        maxCost: 10.0,
+        models: {
+          'gpt-4': { inputCostPer1K: 0.03, outputCostPer1K: 0.06 },
+        },
+      });
+
+      const state = context.budgetRemaining();
+      expect(state).toBeDefined();
+      expect(state!.tokensUsed).toBe(0);
+      expect(state!.costUsed).toBe(0);
+      expect(state!.tokensRemaining).toBe(50000);
+      expect(state!.costRemaining).toBe(10.0);
+      expect(state!.breakdown).toEqual([]);
     });
   });
 });

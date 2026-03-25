@@ -11,6 +11,13 @@
 import type { BudgetTracker } from './budget';
 import { BudgetExceededError } from './budget';
 import type { ContextWindowManager } from './context-window';
+import {
+  AgentToolCalledEvent,
+  AgentToolReturnedEvent,
+  AgentTurnCompletedEvent,
+  AgentTurnStartedEvent,
+} from './events';
+import type { AgentHooks } from './hooks';
 import type { ModelRouter, RoutingContext } from './model-router';
 import type { ProviderHealthTracker } from './provider-health';
 import type { LLMProvider } from './providers/interface';
@@ -34,6 +41,10 @@ export interface AgentOptions {
   /** Tool result cache TTL in milliseconds. Defaults to 300 000 (5 minutes). */
   toolCacheTTL?: number | undefined;
   signal?: AbortSignal | undefined;
+  hooks?: AgentHooks | undefined;
+  eventTarget?: EventTarget | undefined;
+  workflowId?: string | undefined;
+  agentId?: string | undefined;
   onTurnStarted?: ((turn: TurnInfo) => void) | undefined;
   onTurnCompleted?: ((turn: TurnResult) => void) | undefined;
   onToolCalled?: ((call: ToolCallInfo) => void) | undefined;
@@ -113,11 +124,18 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     healthTracker,
     toolCacheTTL = 300_000,
     signal,
+    hooks,
+    eventTarget,
+    workflowId: optionsWorkflowId,
+    agentId: optionsAgentId,
     onTurnStarted,
     onTurnCompleted,
     onToolCalled,
     onToolReturned,
   } = options;
+
+  const resolvedWorkflowId = optionsWorkflowId ?? '';
+  const resolvedAgentId = optionsAgentId ?? '';
 
   // Build the tool lookup map and definition list
   const toolMap = new Map<string, AgentTool>();
@@ -194,6 +212,40 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       }
     }
 
+    // Run beforeTurn hook if provided
+    if (hooks?.beforeTurn) {
+      const hookResult = await hooks.beforeTurn({
+        turnIndex,
+        messages: messagesToSend,
+        model: currentModel,
+      });
+
+      if (hookResult.action === 'skip') {
+        // Use skip result as the final content and break
+        lastContent = hookResult.result ?? '';
+        break;
+      }
+
+      // If the hook returned modified messages, use them
+      if (hookResult.action === 'continue' && hookResult.messages) {
+        messagesToSend = hookResult.messages;
+      }
+    }
+
+    // Dispatch event to eventTarget if provided
+    if (eventTarget && resolvedWorkflowId) {
+      eventTarget.dispatchEvent(
+        new AgentTurnStartedEvent(
+          resolvedWorkflowId,
+          resolvedAgentId,
+          turnIndex,
+          currentModel,
+          0,
+          messagesToSend.length,
+        ),
+      );
+    }
+
     // Fire turn-started callback
     onTurnStarted?.({
       turnIndex,
@@ -256,6 +308,26 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
 
     // Exit path: final answer (no tool calls)
     if (response.toolCalls.length === 0) {
+      // Dispatch turn-completed event
+      if (eventTarget && resolvedWorkflowId) {
+        eventTarget.dispatchEvent(
+          new AgentTurnCompletedEvent(
+            resolvedWorkflowId,
+            resolvedAgentId,
+            turnIndex,
+            currentModel,
+            currentModel,
+            response.usage.inputTokens,
+            response.usage.outputTokens,
+            0,
+            totalCost,
+            turnDuration,
+            0,
+            0,
+            undefined,
+          ),
+        );
+      }
       // Fire turn-completed callback
       onTurnCompleted?.({
         turnIndex,
@@ -273,6 +345,23 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     const toolResults: Message['toolResults'] = [];
 
     for (const toolCall of response.toolCalls) {
+      const toolOperationId = crypto.randomUUID();
+
+      // Dispatch tool-called event
+      if (eventTarget && resolvedWorkflowId) {
+        eventTarget.dispatchEvent(
+          new AgentToolCalledEvent(
+            resolvedWorkflowId,
+            resolvedAgentId,
+            turnIndex,
+            toolCall.name,
+            toolCall.input,
+            'local',
+            toolOperationId,
+          ),
+        );
+      }
+
       // Fire tool-called callback
       onToolCalled?.({
         turnIndex,
@@ -311,7 +400,41 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
         }
       }
 
+      // Run afterToolCall hook if provided
+      if (hooks?.afterToolCall && success) {
+        const hookResult = await hooks.afterToolCall({
+          turnIndex,
+          toolCall,
+          result: output,
+        });
+
+        if (hookResult.action === 'reject') {
+          output = JSON.stringify({ error: hookResult.reason });
+          success = false;
+        } else if (hookResult.action === 'continue' && hookResult.result !== undefined) {
+          output =
+            typeof hookResult.result === 'string'
+              ? hookResult.result
+              : JSON.stringify(hookResult.result);
+        }
+      }
+
       const toolDuration = Date.now() - toolStart;
+
+      // Dispatch tool-returned event
+      if (eventTarget && resolvedWorkflowId) {
+        eventTarget.dispatchEvent(
+          new AgentToolReturnedEvent(
+            resolvedWorkflowId,
+            resolvedAgentId,
+            turnIndex,
+            toolCall.name,
+            toolDuration,
+            success,
+            toolOperationId,
+          ),
+        );
+      }
 
       // Fire tool-returned callback
       onToolReturned?.({
@@ -334,6 +457,27 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       content: '',
       toolResults,
     });
+
+    // Dispatch turn-completed event (with tool calls)
+    if (eventTarget && resolvedWorkflowId) {
+      eventTarget.dispatchEvent(
+        new AgentTurnCompletedEvent(
+          resolvedWorkflowId,
+          resolvedAgentId,
+          turnIndex,
+          currentModel,
+          currentModel,
+          response.usage.inputTokens,
+          response.usage.outputTokens,
+          0,
+          totalCost,
+          turnDuration,
+          response.toolCalls.length,
+          0,
+          undefined,
+        ),
+      );
+    }
 
     // Fire turn-completed callback
     onTurnCompleted?.({

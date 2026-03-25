@@ -1,3 +1,5 @@
+import type { WeftAgentEventMap } from '../ai/events.ts';
+
 export class WorkflowStartedEvent extends Event {
   static readonly type = 'workflow:started' as const;
   readonly workflowId: string;
@@ -232,7 +234,7 @@ export class DevelopmentWarningEvent extends Event {
   }
 }
 
-export interface WeftEventMap {
+export interface WeftEventMap extends WeftAgentEventMap {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
   'workflow:failed': WorkflowFailedEvent;

@@ -10,6 +10,13 @@
  * @module context
  */
 
+import type { AgentTool } from '../ai/agent.ts';
+import type { BudgetOptions, BudgetState } from '../ai/budget.ts';
+import { BudgetTracker } from '../ai/budget.ts';
+import type { ContextStrategy } from '../ai/context-window.ts';
+import type { AgentHooks } from '../ai/hooks.ts';
+import type { ModelRouter } from '../ai/model-router.ts';
+import type { LLMProvider } from '../ai/providers/interface.ts';
 import { parseDuration } from './scheduler.ts';
 import type { Duration, SearchAttributeValue, WorkflowContext } from './types.ts';
 
@@ -21,6 +28,23 @@ export interface OffloadReference {
   key: string;
   workflowId: string;
   sizeBytes: number;
+}
+
+// ---------------------------------------------------------------------------
+// Agent context options
+// ---------------------------------------------------------------------------
+
+export interface AgentContextOptions {
+  model: string;
+  prompt: string;
+  provider: LLMProvider;
+  tools?: AgentTool[];
+  maxTurns?: number;
+  systemPrompt?: string;
+  budget?: BudgetOptions;
+  modelRouter?: ModelRouter;
+  contextStrategy?: ContextStrategy;
+  hooks?: AgentHooks;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +121,11 @@ export type ContextOperationRequest =
       type: 'run-all';
       operationId: string;
       branches: Record<string, [Function, ...unknown[]]>;
+    }
+  | {
+      type: 'agent';
+      operationId: string;
+      options: AgentContextOptions;
     };
 
 // ---------------------------------------------------------------------------
@@ -135,6 +164,7 @@ export class Context implements WorkflowContext {
   #deadline: number | undefined;
   #getNow: () => number;
   #explainMode: boolean;
+  #budgetTracker: BudgetTracker | undefined;
 
   constructor(options: ContextOptions) {
     this.workflowId = options.workflowId;
@@ -152,6 +182,7 @@ export class Context implements WorkflowContext {
     this.#deadline = options.deadline;
     this.#getNow = options.getNow ?? Date.now;
     this.#explainMode = false;
+    this.#budgetTracker = undefined;
   }
 
   // -------------------------------------------------------------------------
@@ -470,6 +501,36 @@ export class Context implements WorkflowContext {
 
   explain(enabled: boolean = true): void {
     this.#explainMode = enabled;
+  }
+
+  *agent(options: AgentContextOptions): Generator<ContextOperationRequest, unknown, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step);
+    }
+
+    const operationId = crypto.randomUUID();
+    const result = yield {
+      type: 'agent' as const,
+      operationId,
+      options,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // Budget tracking
+  // -------------------------------------------------------------------------
+
+  setBudget(options: BudgetOptions): void {
+    this.#budgetTracker = new BudgetTracker(options);
+  }
+
+  budgetRemaining(): BudgetState | undefined {
+    return this.#budgetTracker?.budgetRemaining();
   }
 
   // -------------------------------------------------------------------------

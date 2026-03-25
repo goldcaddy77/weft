@@ -853,6 +853,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         break;
       }
 
+      case 'agent': {
+        const { executeAgentLoop } = await import('../ai/agent.ts');
+        const {
+          prompt,
+          budget: _budgetOptions,
+          contextStrategy: _contextStrategy,
+          ...rest
+        } = operation.options;
+        const agentResult = await executeAgentLoop(rest, prompt);
+        await this.#driveGenerator(workflowId, generator, agentResult.content);
+        break;
+      }
+
       default:
         throw new Error(`Unknown operation type: ${(operation as { type: string }).type}`);
     }

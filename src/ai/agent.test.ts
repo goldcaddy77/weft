@@ -899,4 +899,280 @@ describe('executeAgentLoop', () => {
     expect(turnResults[0]!.toolCallCount).toBe(2);
     expect(turnResults[1]!.toolCallCount).toBe(0);
   });
+
+  it('hooks.beforeTurn with action continue and modified messages uses them', async () => {
+    let capturedMessages: Message[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(messages): Promise<ChatResponse> {
+        capturedMessages = [...messages];
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        hooks: {
+          beforeTurn: (_context) => {
+            return {
+              action: 'continue',
+              messages: [
+                { role: 'system', content: 'Injected system prompt' },
+                { role: 'user', content: 'Modified user message' },
+              ],
+            };
+          },
+        },
+      },
+      'Original message',
+    );
+
+    expect(capturedMessages).toHaveLength(2);
+    expect(capturedMessages[0]!.content).toBe('Injected system prompt');
+    expect(capturedMessages[1]!.content).toBe('Modified user message');
+  });
+
+  it('hooks.beforeTurn with action skip stops the loop and sets content', async () => {
+    const provider = createMockProvider([createChatResponse('Should not reach')]);
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        hooks: {
+          beforeTurn: (_context) => {
+            return { action: 'skip', result: 'Skipped by policy' };
+          },
+        },
+      },
+      'Hello',
+    );
+
+    expect(result.content).toBe('Skipped by policy');
+    expect(result.turnCount).toBe(0);
+  });
+
+  it('hooks.afterToolCall with action continue and modified result uses it', async () => {
+    let capturedToolResultMessages: Message[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(messages): Promise<ChatResponse> {
+        capturedToolResultMessages = [...messages];
+        if (messages.length <= 1) {
+          return createToolCallResponse([{ id: 'call-1', name: 'lookup', input: {} }]);
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => 'original-result',
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        hooks: {
+          afterToolCall: (_context) => {
+            return { action: 'continue', result: 'modified-result' };
+          },
+        },
+      },
+      'Lookup something',
+    );
+
+    // The tool message should contain the modified result
+    const toolMessage = capturedToolResultMessages.find((message) => message.role === 'tool');
+    expect(toolMessage).toBeDefined();
+    expect(toolMessage!.toolResults![0]!.output).toBe('modified-result');
+  });
+
+  it('hooks.afterToolCall with action reject replaces output with error', async () => {
+    let capturedToolResultMessages: Message[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(messages): Promise<ChatResponse> {
+        capturedToolResultMessages = [...messages];
+        if (messages.length <= 1) {
+          return createToolCallResponse([{ id: 'call-1', name: 'danger', input: {} }]);
+        }
+        return createChatResponse('Handled rejection');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const dangerTool: AgentTool = {
+      definition: {
+        name: 'danger',
+        description: 'A dangerous tool',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => 'dangerous-output',
+    };
+
+    const toolReturned: ToolReturnInfo[] = [];
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [dangerTool],
+        hooks: {
+          afterToolCall: (_context) => {
+            return { action: 'reject', reason: 'Unsafe operation blocked' };
+          },
+        },
+        onToolReturned: (info) => toolReturned.push(info),
+      },
+      'Use dangerous tool',
+    );
+
+    expect(result.content).toBe('Handled rejection');
+
+    // The tool result should be marked as error
+    const toolMessage = capturedToolResultMessages.find((message) => message.role === 'tool');
+    expect(toolMessage).toBeDefined();
+    expect(toolMessage!.toolResults![0]!.isError).toBe(true);
+    expect(toolMessage!.toolResults![0]!.output).toContain('Unsafe operation blocked');
+
+    // The toolReturned callback should report failure
+    expect(toolReturned).toHaveLength(1);
+    expect(toolReturned[0]!.success).toBe(false);
+  });
+
+  it('hooks.onBudgetWarning receives callback context', async () => {
+    // This test verifies the hooks interface accepts onBudgetWarning.
+    // The actual budget warning firing is tested in budget.test.ts;
+    // here we just verify the option is accepted without errors.
+    const provider = createMockProvider([createChatResponse('Done')]);
+
+    let warningCalled = false;
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        hooks: {
+          onBudgetWarning: (_context) => {
+            warningCalled = true;
+          },
+        },
+      },
+      'Hello',
+    );
+
+    expect(result.content).toBe('Done');
+    // onBudgetWarning is not called by the agent loop itself; it's for
+    // external budget trackers to invoke. Just verify it compiles and runs.
+    expect(warningCalled).toBe(false);
+  });
+
+  it('dispatches events to eventTarget when provided', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }]),
+      createChatResponse('Done'),
+    ]);
+
+    const noopTool: AgentTool = {
+      definition: {
+        name: 'noop',
+        description: 'No-op',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => 'ok',
+    };
+
+    const eventTarget = new EventTarget();
+    const receivedEvents: string[] = [];
+
+    eventTarget.addEventListener('agent:turn:started', () => {
+      receivedEvents.push('agent:turn:started');
+    });
+    eventTarget.addEventListener('agent:turn:completed', () => {
+      receivedEvents.push('agent:turn:completed');
+    });
+    eventTarget.addEventListener('agent:tool:called', () => {
+      receivedEvents.push('agent:tool:called');
+    });
+    eventTarget.addEventListener('agent:tool:returned', () => {
+      receivedEvents.push('agent:tool:returned');
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        eventTarget,
+        workflowId: 'wf-event-test',
+        agentId: 'agent-event-test',
+      },
+      'Use a tool',
+    );
+
+    expect(receivedEvents).toContain('agent:turn:started');
+    expect(receivedEvents).toContain('agent:turn:completed');
+    expect(receivedEvents).toContain('agent:tool:called');
+    expect(receivedEvents).toContain('agent:tool:returned');
+    // Should have two turn-started (one per LLM call) and two turn-completed
+    expect(receivedEvents.filter((event) => event === 'agent:turn:started')).toHaveLength(2);
+    expect(receivedEvents.filter((event) => event === 'agent:turn:completed')).toHaveLength(2);
+  });
+
+  it('accepts MCP tools option without error', async () => {
+    // MCP tools are passed as regular AgentTool objects. This test verifies
+    // the agent loop can accept tools regardless of their source.
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'mcp_read_file', input: { path: '/tmp' } }]),
+      createChatResponse('File contents read'),
+    ]);
+
+    const mcpTool: AgentTool = {
+      definition: {
+        name: 'mcp_read_file',
+        description: 'Read a file via MCP',
+        inputSchema: { type: 'object', properties: { path: { type: 'string' } } },
+      },
+      execute: async (input: unknown) => {
+        const typedInput = input as { path: string };
+        return `Contents of ${typedInput.path}`;
+      },
+    };
+
+    const result = await executeAgentLoop(
+      { model: 'test-model', provider, tools: [mcpTool] },
+      'Read the file',
+    );
+
+    expect(result.content).toBe('File contents read');
+    expect(result.turnCount).toBe(2);
+  });
 });

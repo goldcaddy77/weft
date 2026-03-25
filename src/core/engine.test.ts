@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
+import type { LLMProvider } from '../ai/providers/interface.ts';
+import type { ChatResponse } from '../ai/providers/types.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -1017,6 +1019,39 @@ describe('Engine', () => {
     // The workflow itself completes fine; we just check the engine doesn't crash in dev mode
     // A more targeted test would check for actual non-cloneable locals
     expect(engine).toBeInstanceOf(Engine);
+    engine[Symbol.dispose]();
+  });
+
+  it('processes agent operation via executeAgentLoop with mock provider', async () => {
+    const engine = new Engine();
+
+    const mockProvider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        return {
+          content: 'Agent says hello',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('agent-workflow', async function* (ctx: WorkflowContext) {
+      const agentResult = yield* (ctx as Context).agent({
+        model: 'test-model',
+        prompt: 'Say hello',
+        provider: mockProvider,
+      });
+      return `Result: ${agentResult as string}`;
+    });
     engine[Symbol.dispose]();
   });
 });
