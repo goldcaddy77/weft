@@ -172,3 +172,77 @@ Route matching uses a table of regex patterns. Each route extracts named paramet
 ## Content negotiation
 
 All response-producing endpoints support content negotiation. If the `Accept` header includes `application/msgpack`, responses are serialized with MessagePack instead of JSON. This reduces payload size for binary-heavy responses. JSON is the default fallback.
+
+## Service Worker
+
+The same `handleRequest()` function that powers the Bun server also powers the Service Worker runtime. In the browser, a Service Worker intercepts `fetch` events and routes them through the engine---your client code calls `fetch("/weft/v1/workflows", ...)` and the Service Worker responds, no network required.
+
+The `weft/service-worker` module provides bootstrap functions that wire everything together.
+
+```typescript
+/// <reference lib="webworker" />
+import { Engine } from 'weft';
+import { IndexedDBStorage } from 'weft/storage/indexeddb';
+import {
+  createFetchHandler,
+  createLifecycleHandlers,
+  createPeriodicSyncHandler,
+  ServiceWorkerScheduler,
+} from 'weft/service-worker';
+
+const storage = new IndexedDBStorage('weft');
+const engine = new Engine({ storage });
+const scheduler = new ServiceWorkerScheduler({
+  storage,
+  onTimerFired: (entry) => engine.processTimer(entry),
+});
+
+const { install, activate } = createLifecycleHandlers();
+self.addEventListener('install', install);
+self.addEventListener('activate', activate);
+self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/' }));
+self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
+```
+
+### `createFetchHandler()`
+
+Creates a `fetch` event listener that intercepts requests matching the path prefix and routes them through `handleRequest()`. Non-matching requests pass through to the network.
+
+```typescript
+function createFetchHandler(options: ServiceWorkerOptions): (event: FetchEvent) => void;
+```
+
+| Option       | Type     | Default    | Description                                          |
+| ------------ | -------- | ---------- | ---------------------------------------------------- |
+| `engine`     | `Engine` | (required) | The engine instance to handle requests               |
+| `pathPrefix` | `string` | `'/weft/'` | URL path prefix that identifies Weft API requests    |
+
+### `createPeriodicSyncHandler()`
+
+Creates a `periodicsync` event listener that fires expired timers. Workflows that use `ctx.sleep()` or `ctx.timer()` depend on periodic wakeup to advance. The Periodic Background Sync API serves this role in the browser.
+
+```typescript
+function createPeriodicSyncHandler(
+  scheduler: ServiceWorkerScheduler,
+  tag?: string,
+): (event: PeriodicSyncEvent) => void;
+```
+
+The `tag` parameter defaults to `'weft-timers'` and must match the tag used when registering the periodic sync with the browser.
+
+### `createLifecycleHandlers()`
+
+Returns `install` and `activate` event handlers. The `install` handler calls `skipWaiting()` so the new Service Worker activates immediately. The `activate` handler calls `clients.claim()` so the Service Worker takes control of all open tabs without requiring a page reload.
+
+```typescript
+function createLifecycleHandlers(): {
+  install: (event: ExtendableEvent) => void;
+  activate: (event: ExtendableEvent) => void;
+};
+```
+
+### Limitations
+
+Service Workers have constrained execution time. Browsers terminate a Service Worker shortly after it finishes handling an event, so long-running synchronous work is not viable. For workflows that need hours or days of execution, use a server deployment.
+
+Periodic Background Sync support varies by browser. Chrome supports it; Firefox and Safari do not at the time of writing. The `ServiceWorkerScheduler` falls back to `setTimeout`-based polling when periodic sync is unavailable, but this only works while a tab is open.

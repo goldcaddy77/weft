@@ -46,37 +46,49 @@ The Weft HTTP handler is a pure `Request` to `Response` function. On the server,
 // weft-sw.ts — installed as a Service Worker
 /// <reference lib="webworker" />
 
-import { Engine } from 'weft/core';
+import { Engine } from 'weft';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
-import { handleHTTP } from 'weft/server/handler';
+import {
+  createFetchHandler,
+  createLifecycleHandlers,
+  createPeriodicSyncHandler,
+  ServiceWorkerScheduler,
+} from 'weft/service-worker';
 
-const engine = new Engine({
-  storage: new IndexedDBStorage('weft'),
+const storage = new IndexedDBStorage('weft');
+const engine = new Engine({ storage });
+const scheduler = new ServiceWorkerScheduler({
+  storage,
+  onTimerFired: (entry) => engine.processTimer(entry),
 });
 
-self.addEventListener('fetch', (event: FetchEvent) => {
-  const url = new URL(event.request.url);
-  if (url.pathname.startsWith('/weft/')) {
-    event.respondWith(handleHTTP(engine, event.request));
-  }
-});
+const { install, activate } = createLifecycleHandlers();
+self.addEventListener('install', install);
+self.addEventListener('activate', activate);
+self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/' }));
+self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
 ```
 
 The client library doesn't know or care whether its `fetch` calls hit a remote server or a local Service Worker. The API contract is identical.
+
+`createFetchHandler()` takes an `engine` and an optional `pathPrefix` (default `'/weft/'`). It returns a `fetch` event listener that intercepts matching requests and delegates to `handleRequest()`. Non-matching requests pass through to the network. `createLifecycleHandlers()` returns `install` and `activate` handlers that call `skipWaiting()` and `clients.claim()` respectively, ensuring the Service Worker takes control immediately.
 
 ## Durable timers with Periodic Background Sync
 
 Workflows need timers---`yield* ctx.sleep("1 hour")` has to actually wake up an hour later. In Bun, the scheduler polls the database. In the browser, the **Periodic Background Sync API** serves the same purpose.
 
-```typescript
-self.addEventListener('periodicsync', (event: PeriodicSyncEvent) => {
-  if (event.tag === 'weft-timers') {
-    event.waitUntil(engine.processExpiredTimers());
-  }
-});
-```
+`ServiceWorkerScheduler` manages timer wakeup. It checks IndexedDB for expired timers and advances waiting workflows. When Periodic Background Sync is available, the browser wakes the Service Worker at the registered interval. When it is not available (Firefox, Safari), the scheduler falls back to `setTimeout`-based polling---which only works while a tab is open.
 
-The browser periodically wakes the Service Worker, which checks IndexedDB for expired timers and advances any waiting workflows.
+```typescript
+const scheduler = new ServiceWorkerScheduler({
+  storage,
+  onTimerFired: (entry) => engine.processTimer(entry),
+  periodicSyncTag: 'weft-timers',          // default
+  fallbackIntervalMilliseconds: 1000,       // default
+});
+
+self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
+```
 
 ## What this enables
 
