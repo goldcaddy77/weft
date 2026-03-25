@@ -1,6 +1,6 @@
 <script lang="ts" module>
   import type { HTMLAttributes } from 'svelte/elements';
-  import type { ToastData } from './toast-state.svelte.js';
+  import type { ToastData } from './toast-state.svelte.ts';
 
   export type ToastPosition =
     | 'top-right'
@@ -22,7 +22,7 @@
 
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { cn } from '../utilities/class-names.js';
+  import { cn } from '../utilities/class-names.ts';
 
   let {
     class: className,

@@ -14,8 +14,8 @@
 </script>
 
 <script lang="ts">
-  import { cn } from '../utilities/class-names.js';
-  import { toastStore } from './toast-state.svelte.js';
+  import { cn } from '../utilities/class-names.ts';
+  import { toastStore } from './toast-state.svelte.ts';
   import Toast from './toast.svelte';
 
   let { class: className, position = 'bottom-right' }: ToastContainerProps = $props();

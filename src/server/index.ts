@@ -75,8 +75,14 @@ function serializeEvent(event: Event): string | null {
   return JSON.stringify(data);
 }
 
-/** Attach event listeners to the engine that broadcast events via WebSocket. */
-function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.serve>): void {
+/**
+ * Attach event listeners to the engine that broadcast events via WebSocket.
+ * Returns a cleanup function that removes all listeners.
+ */
+function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.serve>): () => void {
+  const controller = new AbortController();
+  const { signal } = controller;
+
   const eventTypes = [
     WorkflowStartedEvent.type,
     WorkflowCompletedEvent.type,
@@ -95,26 +101,32 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
   ] as const;
 
   for (const eventType of eventTypes) {
-    engine.addEventListener(eventType, (event) => {
-      const workflowId = (event as unknown as Record<string, unknown>)['workflowId'] as
-        | string
-        | undefined;
-      if (workflowId === undefined) return;
+    engine.addEventListener(
+      eventType,
+      (event) => {
+        const workflowId = (event as unknown as Record<string, unknown>)['workflowId'] as
+          | string
+          | undefined;
+        if (workflowId === undefined) return;
 
-      const message = serializeEvent(event);
-      if (message === null) return;
+        const message = serializeEvent(event);
+        if (message === null) return;
 
-      // Publish to the workflow's watch channel
-      const watchChannel = `/v1/workflows/${workflowId}/watch`;
-      server.publish(watchChannel, message);
+        // Publish to the workflow's watch channel
+        const watchChannel = `/v1/workflows/${workflowId}/watch`;
+        server.publish(watchChannel, message);
 
-      // For token events, also publish to the stream channel
-      if (eventType === TokenEvent.type) {
-        const streamChannel = `/v1/workflows/${workflowId}/stream`;
-        server.publish(streamChannel, message);
-      }
-    });
+        // For token events, also publish to the stream channel
+        if (eventType === TokenEvent.type) {
+          const streamChannel = `/v1/workflows/${workflowId}/stream`;
+          server.publish(streamChannel, message);
+        }
+      },
+      { signal },
+    );
   }
+
+  return () => controller.abort();
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +184,7 @@ export function serve(options: ServeOptions): WeftServer {
   });
 
   // Wire up engine events → WebSocket broadcasting
-  wireEventBroadcasting(options.engine, server);
+  const cleanupBroadcasting = wireEventBroadcasting(options.engine, server);
 
   const resolvedPort = server.port ?? port;
   const resolvedHostname = server.hostname ?? hostname;
@@ -182,9 +194,11 @@ export function serve(options: ServeOptions): WeftServer {
     hostname: resolvedHostname,
     url: `http://${resolvedHostname}:${resolvedPort}`,
     stop() {
+      cleanupBroadcasting();
       void server.stop();
     },
     [Symbol.dispose]() {
+      cleanupBroadcasting();
       void server.stop();
     },
   };

@@ -13,7 +13,7 @@
 
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { cn } from '../utilities/class-names.js';
+  import { cn } from '../utilities/class-names.ts';
 
   let {
     content,

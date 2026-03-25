@@ -18,7 +18,7 @@
 </script>
 
 <script lang="ts">
-  import { cn } from '../utilities/class-names.js';
+  import { cn } from '../utilities/class-names.ts';
 
   let {
     variant = 'default',
