@@ -97,8 +97,44 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
   const controller = new AbortController();
   const { signal } = controller;
 
-  /** Per-workflow monotonic sequence counter for event storage keys. */
+  /**
+   * Per-workflow monotonic sequence counter for event storage keys.
+   *
+   * On first access for a given workflow, the counter is initialized from
+   * storage by scanning for the highest existing event key. This prevents
+   * sequence numbers from resetting to 0 after a server restart, which would
+   * silently overwrite previously persisted events.
+   */
   const sequenceCounters = new Map<string, number>();
+  const sequenceInitPromises = new Map<string, Promise<void>>();
+
+  /** Ensure the sequence counter for a workflow is seeded from storage. */
+  function ensureSequenceInitialized(workflowId: string): Promise<void> {
+    const existing = sequenceInitPromises.get(workflowId);
+    if (existing) return existing;
+
+    const promise = (async () => {
+      if (sequenceCounters.has(workflowId)) return;
+
+      const prefix = `ev:${workflowId}:`;
+      let highestSequence = -1;
+
+      for await (const [key] of engine.storage.scan(prefix, { reverse: true, limit: 1 })) {
+        // Key format: ev:{workflowId}:{zero-padded sequence}
+        const parts = key.split(':');
+        const sequencePart = parts[parts.length - 1];
+        if (sequencePart !== undefined) {
+          highestSequence = parseInt(sequencePart, 10);
+        }
+      }
+
+      // Start after the highest existing sequence number.
+      sequenceCounters.set(workflowId, highestSequence + 1);
+    })();
+
+    sequenceInitPromises.set(workflowId, promise);
+    return promise;
+  }
 
   function nextSequence(workflowId: string): number {
     const current = sequenceCounters.get(workflowId) ?? 0;
@@ -136,15 +172,18 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
         if (message === null) return;
 
         // Persist the event to storage for the REST events endpoint.
-        // Parse once to get the structured payload we already serialized.
-        const parsed = JSON.parse(message) as {
-          type: string;
-          timestamp: number;
-          data: Record<string, unknown>;
-        };
-        const sequence = nextSequence(workflowId);
-        const storageKey = KEYS.event(workflowId, sequence);
-        void engine.storage.put(storageKey, encode(parsed));
+        // Sequence initialization is async (reads storage on first access per
+        // workflow), so chain the persistence behind it.
+        void ensureSequenceInitialized(workflowId).then(() => {
+          const parsed = JSON.parse(message) as {
+            type: string;
+            timestamp: number;
+            data: Record<string, unknown>;
+          };
+          const sequence = nextSequence(workflowId);
+          const storageKey = KEYS.event(workflowId, sequence);
+          return engine.storage.put(storageKey, encode(parsed));
+        });
 
         // Publish to the workflow's watch channel
         const watchChannel = `/v1/workflows/${workflowId}/watch`;
