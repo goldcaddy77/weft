@@ -184,37 +184,65 @@
 
   $effect(() => {
     loading = true;
+    streamingText = '';
     const generation = ++fetchGeneration;
-    fetchAll(generation);
+
+    // Buffer WS events that arrive while the initial fetch is in-flight so they
+    // are not silently discarded when fetchAll overwrites the events array.
+    let fetchSettled = false;
+    const pendingWebSocketEvents: WorkflowEvent[] = [];
+
+    function applyEvent(event: WorkflowEvent): void {
+      events = [...events, event];
+
+      // Accumulate streaming tokens
+      if (event.type === 'agent:token') {
+        streamingText += (event.data['token'] as string) ?? '';
+      }
+
+      // Clear streaming text on turn completion
+      if (event.type === 'agent:turn:completed') {
+        streamingText = '';
+      }
+
+      // Re-fetch workflow state on terminal events
+      if (
+        event.type === 'workflow:completed' ||
+        event.type === 'workflow:failed' ||
+        event.type === 'workflow:cancelled' ||
+        event.type === 'workflow:timed-out'
+      ) {
+        void apiClient.getWorkflow(id).then(
+          (updated) => {
+            workflow = updated;
+            return undefined;
+          },
+          () => undefined,
+        );
+      }
+    }
+
+    void fetchAll(generation).then(
+      () => {
+        if (generation !== fetchGeneration) return undefined;
+        fetchSettled = true;
+        // Replay any WS events that arrived while the fetch was in-flight.
+        for (const buffered of pendingWebSocketEvents) {
+          applyEvent(buffered);
+        }
+        pendingWebSocketEvents.length = 0;
+        return undefined;
+      },
+      () => undefined,
+    );
 
     const unsubscribe = websocketClient.subscribe(id, (event: WorkflowEvent) => {
       untrack(() => {
-        events = [...events, event];
-
-        // Accumulate streaming tokens
-        if (event.type === 'agent:token') {
-          streamingText += (event.data['token'] as string) ?? '';
-        }
-
-        // Clear streaming text on turn completion
-        if (event.type === 'agent:turn:completed') {
-          streamingText = '';
-        }
-
-        // Re-fetch workflow state on terminal events
-        if (
-          event.type === 'workflow:completed' ||
-          event.type === 'workflow:failed' ||
-          event.type === 'workflow:cancelled' ||
-          event.type === 'workflow:timed-out'
-        ) {
-          void apiClient.getWorkflow(id).then(
-            (updated) => {
-              workflow = updated;
-              return undefined;
-            },
-            () => undefined,
-          );
+        if (!fetchSettled) {
+          // Fetch hasn't resolved yet — buffer so we can merge after.
+          pendingWebSocketEvents.push(event);
+        } else {
+          applyEvent(event);
         }
       });
     });
