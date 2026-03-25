@@ -11,17 +11,26 @@
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { createCheckpoint, serializeCheckpoint } from './checkpoint.ts';
+import {
+  createCheckpoint,
+  serializeCheckpoint,
+  validateCheckpointRoundTrip,
+} from './checkpoint.ts';
 import { decode, encode } from './codec.ts';
 import type { ContextOperationRequest } from './context.ts';
 import { Context } from './context.ts';
 import {
+  DevelopmentWarningEvent,
   SignalReceivedEvent,
+  UpdateCompletedEvent,
+  UpdateReceivedEvent,
   WorkflowCancelledEvent,
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
   WorkflowStartedEvent,
 } from './events.ts';
+import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
+import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
 import { Scheduler, parseDuration } from './scheduler.ts';
 import type {
   EngineOptions,
@@ -33,6 +42,7 @@ import type {
   WorkflowState,
   WorkflowSummary,
 } from './types.ts';
+import { UpdateCoordinator } from './updates.ts';
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -108,6 +118,116 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
     return this.#engine.signal(this.id, name, payload);
   }
 
+  async update(name: string, payload?: unknown, options?: { timeout?: number }): Promise<unknown> {
+    return this.#engine.update(this.id, name, payload, options);
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterableIterator<Event> {
+    let resolver: (() => void) | undefined;
+    const events: Event[] = [];
+    const state = { done: false };
+
+    const listener = (event: Event) => {
+      events.push(event);
+      resolver?.();
+    };
+
+    const terminal = (event: Event) => {
+      state.done = true;
+      listener(event);
+    };
+
+    const types = [
+      'workflow:completed',
+      'workflow:failed',
+      'workflow:cancelled',
+      'activity:started',
+      'activity:completed',
+      'signal:received',
+    ];
+
+    for (const type of types) {
+      this.addEventListener(type, listener);
+    }
+
+    // Terminal events override the listener to also set done
+    this.addEventListener('workflow:completed', terminal);
+    this.addEventListener('workflow:failed', terminal);
+    this.addEventListener('workflow:cancelled', terminal);
+
+    try {
+      while (!state.done) {
+        if (events.length === 0) {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          resolver = resolve;
+          await promise;
+          resolver = undefined;
+        }
+        while (events.length > 0) {
+          yield events.shift()!;
+        }
+      }
+    } finally {
+      for (const type of types) {
+        this.removeEventListener(type, listener);
+      }
+      this.removeEventListener('workflow:completed', terminal);
+      this.removeEventListener('workflow:failed', terminal);
+      this.removeEventListener('workflow:cancelled', terminal);
+    }
+  }
+
+  [Symbol.observable](): {
+    subscribe: (observer: {
+      next?: (event: Event) => void;
+      complete?: () => void;
+      error?: (error: Error) => void;
+    }) => { unsubscribe: () => void };
+  } {
+    return {
+      subscribe: (observer: {
+        next?: (event: Event) => void;
+        complete?: () => void;
+        error?: (error: Error) => void;
+      }) => {
+        const listener = (event: Event) => observer.next?.(event);
+
+        const types = [
+          'workflow:completed',
+          'workflow:failed',
+          'workflow:cancelled',
+          'activity:started',
+          'activity:completed',
+        ];
+
+        for (const type of types) {
+          this.addEventListener(type, listener);
+        }
+
+        const completeListener = () => observer.complete?.();
+        this.addEventListener('workflow:completed', completeListener);
+
+        const failListener = (event: Event) => {
+          const failedEvent = event instanceof WorkflowFailedEvent ? event : undefined;
+          if (failedEvent) {
+            observer.error?.(failedEvent.error);
+          }
+        };
+        this.addEventListener('workflow:failed', failListener);
+
+        return {
+          unsubscribe: () => {
+            for (const type of types) {
+              this.removeEventListener(type, listener);
+            }
+            this.removeEventListener('workflow:completed', completeListener);
+            this.removeEventListener('workflow:failed', failListener);
+          },
+        };
+      },
+    };
+  }
+
   async [Symbol.asyncDispose](): Promise<void> {
     // No-op for now; handles are lightweight
   }
@@ -130,6 +250,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #workflowAbortControllers: Map<string, AbortController>;
   #signalWaiters: Map<string, (payload: unknown) => void>;
   #sleepResolvers: Map<string, () => void>;
+  #interceptors: WorkflowInterceptor[];
+  #activityInterceptors: ActivityInterceptor[];
+  #updateCoordinator: UpdateCoordinator;
+  #activeContexts: Map<string, Context>;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -146,6 +270,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowAbortControllers = new Map();
     this.#signalWaiters = new Map();
     this.#sleepResolvers = new Map();
+    this.#interceptors = [];
+    this.#activityInterceptors = [];
+    this.#updateCoordinator = new UpdateCoordinator(storage);
+    this.#activeContexts = new Map();
     this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
       this.#handleCache.delete(id);
     });
@@ -190,6 +318,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         version: '1',
       });
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Interceptor registration
+  // -------------------------------------------------------------------------
+
+  addInterceptor(interceptor: WorkflowInterceptor): void {
+    this.#interceptors.push(interceptor);
+  }
+
+  addActivityInterceptor(interceptor: ActivityInterceptor): void {
+    this.#activityInterceptors.push(interceptor);
   }
 
   // -------------------------------------------------------------------------
@@ -381,6 +521,53 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   // -------------------------------------------------------------------------
+  // Update
+  // -------------------------------------------------------------------------
+
+  async update(
+    workflowId: string,
+    name: string,
+    payload?: unknown,
+    options?: { timeout?: number },
+  ): Promise<unknown> {
+    const timeout = options?.timeout ?? 5000;
+
+    // Check if the workflow has an active context with an update handler
+    const context = this.#activeContexts.get(workflowId);
+    if (context) {
+      const handler = context.updateHandlers.get(name);
+      if (handler) {
+        const updateId = crypto.randomUUID();
+        this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
+
+        try {
+          const result = handler(payload);
+          this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
+          return result;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.dispatchEvent(
+            new UpdateCompletedEvent(updateId, workflowId, name, undefined, errorMessage),
+          );
+          throw error;
+        }
+      }
+    }
+
+    // If no active handler, use the UpdateCoordinator with polling
+    const updateId = await this.#updateCoordinator.createRequest(workflowId, name, payload);
+    this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
+
+    const response = await this.#updateCoordinator.waitForResponse(updateId, timeout);
+
+    if (response.error) {
+      throw new Error(response.error);
+    }
+
+    return response.result;
+  }
+
+  // -------------------------------------------------------------------------
   // Cancel
   // -------------------------------------------------------------------------
 
@@ -407,8 +594,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       status: 'cancelled',
     });
 
+    // Clean up context
+    this.#activeContexts.delete(workflowId);
+
     // Dispatch event
-    this.dispatchEvent(new WorkflowCancelledEvent(workflowId));
+    const event = new WorkflowCancelledEvent(workflowId);
+    this.dispatchEvent(event);
+    this.#forwardEventToHandle(workflowId, event);
 
     // Reject the result promise
     const resolver = this.#resultResolvers.get(workflowId);
@@ -431,6 +623,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowAbortControllers.clear();
     this.#signalWaiters.clear();
     this.#sleepResolvers.clear();
+    this.#activeContexts.clear();
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -470,6 +663,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       getNow: this.#options.getNow,
     });
 
+    // Store the context for update handler lookups
+    this.#activeContexts.set(workflowId, context);
+
     // Create the generator
     const generator = registration.handler(context, input);
     this.#activeGenerators.set(workflowId, generator);
@@ -496,6 +692,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return;
       }
 
+      // Development mode: validate checkpoint round-trip
+      this.#validateDevelopmentCheckpoint(workflowId);
+
       // Process the yielded operation request
       const operation = iterResult.value as never as ContextOperationRequest;
       await this.#processOperation(workflowId, generator, operation);
@@ -515,7 +714,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     switch (operation.type) {
       case 'activity': {
         try {
-          const result = await callActivityFunction(operation.fn, operation.args);
+          const result = await this.#executeActivity(workflowId, operation);
           await this.#driveGenerator(workflowId, generator, result);
         } catch (error) {
           // Propagate activity failure to the generator
@@ -663,8 +862,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#activeGenerators.delete(workflowId);
     this.#workflowAbortControllers.delete(workflowId);
+    this.#activeContexts.delete(workflowId);
 
-    this.dispatchEvent(new WorkflowCompletedEvent(workflowId, result, duration));
+    const event = new WorkflowCompletedEvent(workflowId, result, duration);
+    this.dispatchEvent(event);
+    this.#forwardEventToHandle(workflowId, event);
 
     const resolver = this.#resultResolvers.get(workflowId);
     if (resolver) {
@@ -681,8 +883,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#activeGenerators.delete(workflowId);
     this.#workflowAbortControllers.delete(workflowId);
+    this.#activeContexts.delete(workflowId);
 
-    this.dispatchEvent(new WorkflowFailedEvent(workflowId, error));
+    const event = new WorkflowFailedEvent(workflowId, error);
+    this.dispatchEvent(event);
+    this.#forwardEventToHandle(workflowId, event);
 
     const resolver = this.#resultResolvers.get(workflowId);
     if (resolver) {
@@ -718,5 +923,104 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (state.status === 'failed') throw new Error(state.error ?? 'Workflow failed');
     if (state.status === 'cancelled') throw new Error('Workflow cancelled');
     throw new Error(`Workflow "${workflowId}" is still ${state.status}`);
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: event forwarding to handles
+  // -------------------------------------------------------------------------
+
+  #forwardEventToHandle(workflowId: string, event: Event): void {
+    const weakRef = this.#handleCache.get(workflowId);
+    if (!weakRef) return;
+    const handle = weakRef.deref();
+    if (!handle) return;
+    handle.dispatchEvent(new Event(event.type));
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: activity execution through interceptors
+  // -------------------------------------------------------------------------
+
+  async #executeActivity(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'activity' }>,
+  ): Promise<unknown> {
+    // If there are activity interceptors, compose and run through them
+    if (this.#activityInterceptors.length > 0) {
+      const composed = composeActivityInterceptors(this.#activityInterceptors);
+      return composed.execute(
+        {
+          activityName: operation.activityName,
+          input: operation.args.length === 1 ? operation.args[0] : operation.args,
+          attempt: 1,
+          headers: new Map(),
+        },
+        async (interception) => {
+          // Reconstruct args from the interception input
+          const args = Array.isArray(interception.input)
+            ? interception.input
+            : [interception.input];
+          return callActivityFunction(operation.fn, args);
+        },
+      );
+    }
+
+    // If there are workflow interceptors with activity hooks, compose and run
+    if (this.#interceptors.length > 0) {
+      const composed = composeWorkflowInterceptors(this.#interceptors);
+      const interception = {
+        activityName: operation.activityName,
+        input: operation.args.length === 1 ? operation.args[0] : operation.args,
+        attempt: 1,
+        headers: new Map<string, string>(),
+      };
+
+      // The execute function is the terminal of the interceptor chain.
+      // It must be a generator per the composed interceptor interface.
+      // We yield a sentinel to satisfy require-yield, then return the result.
+      const activityFunction = operation.fn;
+      const activityArguments = operation.args;
+
+      function* execute(): Generator<unknown, unknown, unknown> {
+        const result = callActivityFunction(activityFunction, activityArguments);
+        // yield to satisfy the generator contract; the engine drives this synchronously
+        yield result;
+        return result;
+      }
+
+      const generator = composed.activity(interception, execute);
+      const outcome = generator.next();
+      // If the interceptor chain yields (most do), the value is the activity result
+      if (outcome.done) return outcome.value;
+      // Otherwise drive until done
+      let current = outcome;
+      while (!current.done) {
+        current = generator.next(current.value);
+      }
+      return current.value;
+    }
+
+    return callActivityFunction(operation.fn, operation.args);
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: development mode checkpoint validation
+  // -------------------------------------------------------------------------
+
+  #validateDevelopmentCheckpoint(workflowId: string): void {
+    if (!this.#options.development) return;
+
+    const context = this.#activeContexts.get(workflowId);
+    if (!context) return;
+
+    const step = context.stepIndex;
+    const checkpoint = createCheckpoint(workflowId, '1');
+    const result = validateCheckpointRoundTrip(checkpoint);
+
+    if (!result.valid) {
+      const fieldPaths = result.divergences.map((divergence) => divergence.path);
+      const message = `Checkpoint at step ${step} has ${result.divergences.length} non-serializable field(s)`;
+      this.dispatchEvent(new DevelopmentWarningEvent(workflowId, message, fieldPaths));
+    }
   }
 }

@@ -316,3 +316,30 @@ export const DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD = 65_536; // 64KB
 export const DEFAULT_MAX_NESTING_DEPTH = 10;
 export const DEFAULT_POLL_INTERVAL_MS = 1000;
 export const DEFAULT_VISIBILITY_TIMEOUT_MS = 30_000;
+
+// ---------------------------------------------------------------------------
+// activity() helper — wraps a function with colocated configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * Create an activity with colocated configuration.
+ * The returned value is both an ActivityDefinition and a callable function.
+ */
+export function activity<TInput, TOutput>(
+  options: ActivityDefinition<TInput, TOutput>,
+): ActivityDefinition<TInput, TOutput> & ((...args: [TInput]) => Promise<TOutput>) {
+  const fn = ((...args: [TInput]) => options.execute(...args)) as (
+    ...args: [TInput]
+  ) => Promise<TOutput>;
+
+  // Assign non-function-builtin properties from options to the function
+  const { name, execute, ...rest } = options;
+  Object.assign(fn, rest);
+
+  // Set name and execute as own properties (name is non-writable on functions,
+  // so we must use defineProperty)
+  Object.defineProperty(fn, 'name', { value: name, configurable: true });
+  Object.defineProperty(fn, 'execute', { value: execute, enumerable: true, configurable: true });
+
+  return fn as ActivityDefinition<TInput, TOutput> & ((...args: [TInput]) => Promise<TOutput>);
+}
