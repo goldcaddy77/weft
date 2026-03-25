@@ -5094,10 +5094,10 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Browser / Service Worker
 
-- [ ] **Core engine runs in browser Web Workers.** Same workflow code, IndexedDB storage.
+- [x] **Core engine runs in browser Web Workers.** Same workflow code, IndexedDB storage.
 - [x] **Service Worker intercepts `/weft/` fetch events.** Same `handleHTTP()` function as server.
 - [x] **IndexedDB storage passes all storage interface tests.** Same test suite as SQLite.
-- [ ] **Client library works with both remote server and local Service Worker.** Same `fetch()` calls, different routing.
+- [x] **Client library works with both remote server and local Service Worker.** Same `fetch()` calls, different routing.
 - [x] **Service Worker handles Periodic Background Sync for timers.** (Where browser supports it.)
 
 ### Agent-Native Engine: Dynamic Execution Shape

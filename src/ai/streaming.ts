@@ -1,4 +1,4 @@
-import { TokenEvent } from '@/core/events.ts';
+import { TokenEvent } from '../core/events.ts';
 
 import type { StreamChunk } from './providers/types.ts';
 

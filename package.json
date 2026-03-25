@@ -12,6 +12,21 @@
       "bun": "./dist/index.js",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./service-worker": {
+      "types": "./dist/service-worker/index.d.ts",
+      "import": "./dist/service-worker/index.js",
+      "default": "./dist/service-worker/index.js"
+    },
+    "./storage/indexeddb": {
+      "types": "./dist/storage/indexeddb.d.ts",
+      "import": "./dist/storage/indexeddb.js",
+      "default": "./dist/storage/indexeddb.js"
+    },
+    "./server/handler": {
+      "types": "./dist/server/handler.d.ts",
+      "import": "./dist/server/handler.js",
+      "default": "./dist/server/handler.js"
     }
   },
   "main": "./dist/index.js",
