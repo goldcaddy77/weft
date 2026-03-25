@@ -367,7 +367,7 @@ describe('supervise', () => {
     let callCount = 0;
     const provider: LLMProvider = {
       name: 'mock',
-      async chat(messages): Promise<ChatResponse> {
+      async chat(_messages): Promise<ChatResponse> {
         callCount++;
         if (callCount <= 2) {
           return createChatResponse(`worker-${callCount}-result`);

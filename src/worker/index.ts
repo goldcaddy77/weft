@@ -1,0 +1,206 @@
+// ---------------------------------------------------------------------------
+// Remote worker client — connects to the server via WebSocket
+// ---------------------------------------------------------------------------
+
+import { HeartbeatManager } from './heartbeat.ts';
+
+export { HeartbeatManager } from './heartbeat.ts';
+export { LongPollWorker } from './long-poll.ts';
+export type { LongPollWorkerOptions } from './long-poll.ts';
+export { WorkerRegistry } from './registry.ts';
+export type { RoutingOptions, WorkerInfo } from './registry.ts';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface RemoteWorkerOptions {
+  serverUrl: string;
+  workerId?: string;
+  activities: Record<string, (input: unknown) => Promise<unknown>>;
+  concurrency?: number; // default: 10
+  queue?: string; // default: 'default'
+}
+
+interface TaskMessage {
+  type: 'task';
+  operationId: string;
+  activityName: string;
+  input: unknown;
+}
+
+interface ServerMessage {
+  type: string;
+  [key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// RemoteWorker
+// ---------------------------------------------------------------------------
+
+const DEFAULT_CONCURRENCY = 10;
+const DEFAULT_QUEUE = 'default';
+const HEARTBEAT_INTERVAL_MS = 10_000;
+
+export class RemoteWorker implements Disposable {
+  #options: RemoteWorkerOptions;
+  #ws: WebSocket | null;
+  #inFlight: number;
+  #abortController: AbortController;
+  #heartbeat: HeartbeatManager;
+
+  constructor(options: RemoteWorkerOptions) {
+    this.#options = {
+      ...options,
+      concurrency: options.concurrency ?? DEFAULT_CONCURRENCY,
+      queue: options.queue ?? DEFAULT_QUEUE,
+      workerId: options.workerId ?? crypto.randomUUID(),
+    };
+    this.#ws = null;
+    this.#inFlight = 0;
+    this.#abortController = new AbortController();
+    this.#heartbeat = new HeartbeatManager(() => {
+      this.#sendMessage({ type: 'heartbeat', workerId: this.#options.workerId });
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  /** Connect to the server and start processing tasks. */
+  async connect(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(this.#options.serverUrl);
+
+      ws.addEventListener(
+        'open',
+        () => {
+          this.#ws = ws;
+          this.#sendMessage({
+            type: 'register',
+            workerId: this.#options.workerId,
+            activities: Object.keys(this.#options.activities),
+            concurrency: this.#options.concurrency,
+            queue: this.#options.queue,
+          });
+          this.#heartbeat.start();
+          resolve();
+        },
+        { signal: this.#abortController.signal },
+      );
+
+      ws.addEventListener(
+        'message',
+        (event: MessageEvent) => {
+          void this.#handleMessage(event);
+        },
+        { signal: this.#abortController.signal },
+      );
+
+      ws.addEventListener(
+        'error',
+        () => {
+          if (this.#ws === null) {
+            reject(new Error('WebSocket connection failed'));
+          }
+        },
+        { signal: this.#abortController.signal },
+      );
+
+      ws.addEventListener(
+        'close',
+        () => {
+          this.#heartbeat.stop();
+          this.#ws = null;
+        },
+        { signal: this.#abortController.signal },
+      );
+    });
+  }
+
+  /** Gracefully disconnect: finish in-flight, then close. */
+  async disconnect(): Promise<void> {
+    this.#heartbeat.stop();
+
+    // Wait for in-flight tasks to complete
+    while (this.#inFlight > 0) {
+      await Bun.sleep(50);
+    }
+
+    if (this.#ws !== null) {
+      this.#ws.close();
+      this.#ws = null;
+    }
+  }
+
+  /** Get the number of in-flight tasks. */
+  get inFlight(): number {
+    return this.#inFlight;
+  }
+
+  /** Whether the worker is connected. */
+  get connected(): boolean {
+    return this.#ws !== null && this.#ws.readyState === WebSocket.OPEN;
+  }
+
+  [Symbol.dispose](): void {
+    this.#abortController.abort();
+    this.#heartbeat.stop();
+
+    if (this.#ws !== null) {
+      this.#ws.close();
+      this.#ws = null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal
+  // ---------------------------------------------------------------------------
+
+  async #handleMessage(event: MessageEvent): Promise<void> {
+    const data = JSON.parse(String(event.data)) as ServerMessage;
+
+    if (data.type === 'task') {
+      const task = data as unknown as TaskMessage;
+      await this.#executeTask(task);
+    }
+  }
+
+  async #executeTask(task: TaskMessage): Promise<void> {
+    const activityFunction = this.#options.activities[task.activityName];
+    if (activityFunction === undefined) {
+      this.#sendMessage({
+        type: 'taskResult',
+        operationId: task.operationId,
+        status: 'failed',
+        error: `Unknown activity: ${task.activityName}`,
+      });
+      return;
+    }
+
+    this.#inFlight += 1;
+
+    try {
+      const result = await activityFunction(task.input);
+
+      this.#sendMessage({
+        type: 'taskResult',
+        operationId: task.operationId,
+        status: 'completed',
+        value: result,
+      });
+    } catch (error) {
+      this.#sendMessage({
+        type: 'taskResult',
+        operationId: task.operationId,
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.#inFlight -= 1;
+    }
+  }
+
+  #sendMessage(message: Record<string, unknown>): void {
+    if (this.#ws !== null && this.#ws.readyState === WebSocket.OPEN) {
+      this.#ws.send(JSON.stringify(message));
+    }
+  }
+}
