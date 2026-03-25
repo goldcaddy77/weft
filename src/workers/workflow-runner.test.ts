@@ -396,7 +396,7 @@ describe('handleResumeMessage — error paths', () => {
     };
 
     async function* throwOnResumeWorkflow() {
-      const _result: unknown = yield operationRequest;
+      yield operationRequest;
       throw new Error('resume exploded');
     }
 
@@ -457,7 +457,7 @@ describe('formatError', () => {
     };
 
     async function* nonErrorResumeThrow() {
-      const _result: unknown = yield operationRequest;
+      yield operationRequest;
       throw 42;
     }
 

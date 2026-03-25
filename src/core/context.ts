@@ -14,6 +14,16 @@ import { parseDuration } from './scheduler.ts';
 import type { Duration, SearchAttributeValue, WorkflowContext } from './types.ts';
 
 // ---------------------------------------------------------------------------
+// Offload reference — returned by ctx.offload(), consumed by ctx.load()
+// ---------------------------------------------------------------------------
+
+export interface OffloadReference {
+  key: string;
+  workflowId: string;
+  sizeBytes: number;
+}
+
+// ---------------------------------------------------------------------------
 // Operation request descriptors
 // ---------------------------------------------------------------------------
 
@@ -65,6 +75,28 @@ export type ContextOperationRequest =
       workflowType: string;
       input: unknown;
       options?: Record<string, unknown>;
+    }
+  | {
+      type: 'offload';
+      operationId: string;
+      key: string;
+      fn: () => Promise<unknown>;
+    }
+  | {
+      type: 'load';
+      operationId: string;
+      reference: OffloadReference;
+    }
+  | {
+      type: 'archive';
+      operationId: string;
+      key: string;
+      data: unknown;
+    }
+  | {
+      type: 'run-all';
+      operationId: string;
+      branches: Record<string, [Function, ...unknown[]]>;
     };
 
 // ---------------------------------------------------------------------------
@@ -102,6 +134,7 @@ export class Context implements WorkflowContext {
   #memoCache: Map<string, unknown>;
   #deadline: number | undefined;
   #getNow: () => number;
+  #explainMode: boolean;
 
   constructor(options: ContextOptions) {
     this.workflowId = options.workflowId;
@@ -118,6 +151,7 @@ export class Context implements WorkflowContext {
     this.#memoCache = new Map();
     this.#deadline = options.deadline;
     this.#getNow = options.getNow ?? Date.now;
+    this.#explainMode = false;
   }
 
   // -------------------------------------------------------------------------
@@ -149,6 +183,10 @@ export class Context implements WorkflowContext {
     return this.#updateHandlers;
   }
 
+  get explainEnabled(): boolean {
+    return this.#explainMode;
+  }
+
   // -------------------------------------------------------------------------
   // Durable operations (generators)
   // -------------------------------------------------------------------------
@@ -160,7 +198,18 @@ export class Context implements WorkflowContext {
     const step = this.#stepIndex++;
 
     if (this.#accumulatedResults.has(step)) {
+      if (this.#explainMode) {
+        console.log(
+          `[weft] ctx.run(${fn.name || 'anonymous'}) → Returning cached result from step ${step}`,
+        );
+      }
       return this.#accumulatedResults.get(step) as TResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.run(${fn.name || 'anonymous'}, ${JSON.stringify(args)})`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Dispatching activity "${fn.name || 'anonymous'}" to queue "default"`);
     }
 
     const operationId = crypto.randomUUID();
@@ -312,6 +361,115 @@ export class Context implements WorkflowContext {
     this.#memoCache.set(key, result);
     this.#accumulatedResults.set(step, result);
     return result as T;
+  }
+
+  *offload<T>(
+    key: string,
+    fn: () => Promise<T>,
+  ): Generator<ContextOperationRequest, OffloadReference, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as OffloadReference;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.offload("${key}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Offloading data for key "${key}" to external storage`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const result = yield {
+      type: 'offload' as const,
+      operationId,
+      key,
+      fn,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as OffloadReference;
+  }
+
+  *load<T>(reference: OffloadReference): Generator<ContextOperationRequest, T, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as T;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.load("${reference.key}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Loading offloaded data for key "${reference.key}"`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const result = yield {
+      type: 'load' as const,
+      operationId,
+      reference,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as T;
+  }
+
+  *archive(key: string, data: unknown): Generator<ContextOperationRequest, void, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) return;
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.archive("${key}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Archiving data for key "${key}"`);
+    }
+
+    const operationId = crypto.randomUUID();
+    yield {
+      type: 'archive' as const,
+      operationId,
+      key,
+      data,
+    };
+
+    this.#accumulatedResults.set(step, undefined);
+  }
+
+  *runAll<T extends Record<string, [Function, ...unknown[]]>>(
+    branches: T,
+  ): Generator<ContextOperationRequest, Record<keyof T, unknown>, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as Record<keyof T, unknown>;
+    }
+
+    if (this.#explainMode) {
+      const branchNames = Object.keys(branches).join(', ');
+      console.log(`[weft] ctx.runAll({ ${branchNames} })`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Running ${Object.keys(branches).length} named branches in parallel`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const result = yield {
+      type: 'run-all' as const,
+      operationId,
+      branches,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as Record<keyof T, unknown>;
+  }
+
+  // -------------------------------------------------------------------------
+  // Explain mode
+  // -------------------------------------------------------------------------
+
+  explain(enabled: boolean = true): void {
+    this.#explainMode = enabled;
   }
 
   // -------------------------------------------------------------------------

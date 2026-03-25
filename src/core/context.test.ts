@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
-import { Context, type ContextOperationRequest } from './context.ts';
+import { Context, type ContextOperationRequest, type OffloadReference } from './context.ts';
 import type { SearchAttributeValue } from './types.ts';
 
 function createContext(overrides: Partial<ConstructorParameters<typeof Context>[0]> = {}) {
@@ -338,6 +338,196 @@ describe('Context', () => {
       const context = createContext({ accumulatedResults });
       expect(context.accumulatedResults).toBe(accumulatedResults);
       expect(context.accumulatedResults.get(0)).toBe('value-0');
+    });
+  });
+
+  describe('ctx.offload', () => {
+    it('yields an offload operation request', () => {
+      const context = createContext();
+      const fn = async () => ({ large: 'data' });
+
+      const generator = context.offload('large-payload', fn);
+      const request = expectRequest(generator.next(), 'offload');
+
+      expect(request.key).toBe('large-payload');
+      expect(request.fn).toBe(fn);
+      expect(request.operationId).toMatch(UUID_PATTERN);
+    });
+
+    it('on recovery returns cached OffloadReference without yielding', () => {
+      const cachedReference: OffloadReference = {
+        key: 'large-payload',
+        workflowId: 'wf-test-123',
+        sizeBytes: 1024,
+      };
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, cachedReference);
+      const context = createContext({ accumulatedResults });
+
+      const generator = context.offload('large-payload', async () => 'data');
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe(cachedReference);
+    });
+
+    it('returns the fed-back OffloadReference', () => {
+      const context = createContext();
+      const reference: OffloadReference = {
+        key: 'large-payload',
+        workflowId: 'wf-test-123',
+        sizeBytes: 2048,
+      };
+
+      const generator = context.offload('large-payload', async () => 'data');
+      generator.next(); // yield
+      const result = generator.next(reference);
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe(reference);
+    });
+  });
+
+  describe('ctx.load', () => {
+    it('yields a load operation request', () => {
+      const context = createContext();
+      const reference: OffloadReference = {
+        key: 'large-payload',
+        workflowId: 'wf-test-123',
+        sizeBytes: 1024,
+      };
+
+      const generator = context.load(reference);
+      const request = expectRequest(generator.next(), 'load');
+
+      expect(request.reference).toBe(reference);
+      expect(request.operationId).toMatch(UUID_PATTERN);
+    });
+
+    it('on recovery returns cached value without yielding', () => {
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, { large: 'data' });
+      const context = createContext({ accumulatedResults });
+
+      const reference: OffloadReference = {
+        key: 'large-payload',
+        workflowId: 'wf-test-123',
+        sizeBytes: 1024,
+      };
+      const generator = context.load(reference);
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toEqual({ large: 'data' });
+    });
+  });
+
+  describe('ctx.archive', () => {
+    it('yields an archive operation request', () => {
+      const context = createContext();
+      const data = { order: 'completed', total: 99.99 };
+
+      const generator = context.archive('order-snapshot', data);
+      const request = expectRequest(generator.next(), 'archive');
+
+      expect(request.key).toBe('order-snapshot');
+      expect(request.data).toBe(data);
+      expect(request.operationId).toMatch(UUID_PATTERN);
+    });
+
+    it('on recovery skips without yielding', () => {
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, undefined);
+      const context = createContext({ accumulatedResults });
+
+      const generator = context.archive('order-snapshot', { some: 'data' });
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+    });
+  });
+
+  describe('ctx.runAll', () => {
+    it('yields a run-all operation request with named branches', () => {
+      const context = createContext();
+      const branches = {
+        charge: [taskA, 'arg1'] as [Function, ...unknown[]],
+        notify: [taskB] as [Function, ...unknown[]],
+      };
+
+      const generator = context.runAll(branches);
+      const request = expectRequest(generator.next(), 'run-all');
+
+      expect(request.branches).toBe(branches);
+      expect(request.operationId).toMatch(UUID_PATTERN);
+    });
+
+    it('on recovery returns cached result without yielding', () => {
+      const cached = { charge: 'paid', notify: 'sent' };
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, cached);
+      const context = createContext({ accumulatedResults });
+
+      const generator = context.runAll({
+        charge: [taskA] as [Function, ...unknown[]],
+        notify: [taskB] as [Function, ...unknown[]],
+      });
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe(cached);
+    });
+
+    it('returns the fed-back result', () => {
+      const context = createContext();
+      const branches = {
+        charge: [taskA] as [Function, ...unknown[]],
+        notify: [taskB] as [Function, ...unknown[]],
+      };
+
+      const generator = context.runAll(branches);
+      generator.next(); // yield
+
+      const result = generator.next({ charge: 'ok', notify: 'done' });
+      expect(result.done).toBe(true);
+      expect(result.value).toEqual({ charge: 'ok', notify: 'done' });
+    });
+  });
+
+  describe('ctx.explain', () => {
+    afterEach(() => {
+      mock.restore();
+    });
+
+    it('enables explain mode', () => {
+      const context = createContext();
+
+      // Should not throw
+      context.explain();
+      expect(context.explainEnabled).toBe(true);
+    });
+
+    it('can disable explain mode', () => {
+      const context = createContext();
+
+      context.explain(true);
+      expect(context.explainEnabled).toBe(true);
+
+      context.explain(false);
+      expect(context.explainEnabled).toBe(false);
+    });
+
+    it('logs operation details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.run(greet, 'Alice');
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('run');
     });
   });
 });

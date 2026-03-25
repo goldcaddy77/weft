@@ -620,7 +620,6 @@ describe('handleRequest', () => {
     const originalGetHandle = engine.getHandle.bind(engine);
     engine.getHandle = (workflowId: string) => {
       const handle = originalGetHandle(workflowId);
-      const originalResult = handle.result.bind(handle);
       handle.result = () => new Promise(() => {}); // never resolves
       return handle;
     };
