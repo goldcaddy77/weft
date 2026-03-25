@@ -11,7 +11,8 @@ import { Engine } from '../core/engine.ts';
 import type { StepWorkflowContext } from '../core/types.ts';
 import { serve } from '../server/index.ts';
 
-const dashboard: unknown = await import('./index.html');
+const dashboardModule = await import('./index.html');
+const dashboard: unknown = dashboardModule.default;
 
 const engine = new Engine();
 

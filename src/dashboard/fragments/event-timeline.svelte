@@ -14,7 +14,7 @@
 
 {#if events.length > 0}
   <div class="timeline">
-    {#each events as event (event.timestamp + event.type)}
+    {#each events as event, index (index + ':' + event.timestamp + ':' + event.type)}
       <EventTimelineItem {event} />
     {/each}
   </div>
