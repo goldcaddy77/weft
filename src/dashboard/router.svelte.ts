@@ -56,7 +56,10 @@ const ROUTE_TABLE: RouteDefinition[] = [
 // ---------------------------------------------------------------------------
 
 function stripPrefix(pathname: string): string {
-  if (pathname.startsWith('/ui')) {
+  if (pathname === '/ui') {
+    return '/';
+  }
+  if (pathname.startsWith('/ui/')) {
     return pathname.slice(3);
   }
   return pathname;

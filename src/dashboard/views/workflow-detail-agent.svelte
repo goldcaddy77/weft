@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-  import { getContext, untrack } from 'svelte';
+  import { getContext, onDestroy, untrack } from 'svelte';
 
   import type { ApiClient, WorkflowState, WorkflowEvent } from '../api-client.ts';
   import type { AgentTurnData } from '../fragments/agent-turn.svelte';
@@ -178,6 +178,10 @@
 
   const websocketClient = new WebSocketClient();
 
+  onDestroy(() => {
+    websocketClient.dispose();
+  });
+
   $effect(() => {
     loading = true;
     const generation = ++fetchGeneration;
@@ -217,7 +221,6 @@
 
     return () => {
       unsubscribe();
-      websocketClient.dispose();
     };
   });
 
