@@ -1,0 +1,316 @@
+// ---------------------------------------------------------------------------
+// Workflow identity
+// ---------------------------------------------------------------------------
+
+export type WorkflowId = string;
+export type OperationId = string;
+
+// ---------------------------------------------------------------------------
+// Workflow status state machine
+// ---------------------------------------------------------------------------
+
+export type WorkflowStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'timed-out';
+
+// ---------------------------------------------------------------------------
+// Workflow state persisted in storage
+// ---------------------------------------------------------------------------
+
+export interface WorkflowState {
+  id: WorkflowId;
+  type: string;
+  status: WorkflowStatus;
+  input: unknown;
+  result?: unknown;
+  error?: string;
+  version: string;
+  createdAt: number;
+  updatedAt: number;
+  executionDeadline?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Duration: number (milliseconds) or human-readable string
+// ---------------------------------------------------------------------------
+
+export type Duration = number | string;
+
+// ---------------------------------------------------------------------------
+// Checkpoint: snapshot of workflow at a yield* boundary
+// ---------------------------------------------------------------------------
+
+export interface Checkpoint {
+  workflowId: WorkflowId;
+  step: number;
+  locals: Record<string, unknown>;
+  pendingSignals: string[];
+  searchAttributes: Record<string, SearchAttributeValue>;
+  version: string;
+  createdAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Retry policy for activities
+// ---------------------------------------------------------------------------
+
+export interface RetryPolicy {
+  maxAttempts: number;
+  initialBackoff: Duration;
+  backoffMultiplier: number;
+  maxBackoff: Duration;
+  nonRetryableErrors?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Operation types
+// ---------------------------------------------------------------------------
+
+export type OperationKind = 'activity' | 'timer' | 'signal-wait' | 'child-workflow';
+
+export interface OperationRequest {
+  id: OperationId;
+  workflowId: WorkflowId;
+  kind: OperationKind;
+  queue: string;
+  activityName?: string;
+  input?: unknown;
+  attempt: number;
+  retryPolicy: RetryPolicy;
+  scheduledAt: number;
+  timeout?: Duration;
+  idempotencyKey?: string;
+}
+
+export type OperationOutcome =
+  | { status: 'completed'; value: unknown }
+  | { status: 'failed'; error: string };
+
+// ---------------------------------------------------------------------------
+// Search attributes
+// ---------------------------------------------------------------------------
+
+export type SearchAttributeValue = string | number | boolean | Date | string[];
+
+export interface SearchAttributeDefinition {
+  type: 'string' | 'number' | 'boolean' | 'datetime' | 'keyword_list';
+}
+
+export type SearchAttributeSchema = Record<string, SearchAttributeDefinition>;
+
+// ---------------------------------------------------------------------------
+// Start options for engine.start()
+// ---------------------------------------------------------------------------
+
+export interface StartOptions {
+  id?: string;
+  idempotencyKey?: string;
+  executionTimeout?: Duration;
+  searchAttributes?: Record<string, SearchAttributeValue>;
+}
+
+// ---------------------------------------------------------------------------
+// Serializer interface (pluggable serialization)
+// ---------------------------------------------------------------------------
+
+export interface Serializer {
+  serialize(value: unknown): Uint8Array;
+  deserialize(bytes: Uint8Array): unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Engine configuration
+// ---------------------------------------------------------------------------
+
+export interface EngineOptions {
+  storage?: Storage;
+  development?: boolean;
+  serializer?: Serializer;
+  checkpointHistory?: number;
+  checkpointSizeWarningThreshold?: number;
+  maxNestingDepth?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Activity function type
+// ---------------------------------------------------------------------------
+
+export type ActivityFunction<TInput = unknown, TOutput = unknown> = (
+  input: TInput,
+  context?: ActivityContext,
+) => Promise<TOutput> | TOutput;
+
+// ---------------------------------------------------------------------------
+// Activity context passed to activity functions
+// ---------------------------------------------------------------------------
+
+export interface ActivityContext {
+  signal: AbortSignal;
+  heartbeat(details?: unknown): void;
+}
+
+// ---------------------------------------------------------------------------
+// Per-invocation activity options
+// ---------------------------------------------------------------------------
+
+export interface ActivityCallOptions {
+  timeout?: Duration;
+  queue?: string;
+  retry?: Partial<RetryPolicy>;
+  idempotencyKey?: string;
+  sticky?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Activity metadata (from activity() helper)
+// ---------------------------------------------------------------------------
+
+export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
+  name: string;
+  execute: ActivityFunction<TInput, TOutput>;
+  retry?: RetryPolicy;
+  timeout?: Duration;
+  queue?: string;
+  idempotent?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Timer entry for scheduler
+// ---------------------------------------------------------------------------
+
+export interface TimerEntry {
+  id: string;
+  workflowId: WorkflowId;
+  fireAt: number;
+  kind: 'sleep' | 'visibility-timeout' | 'execution-deadline';
+}
+
+// ---------------------------------------------------------------------------
+// Worker message protocol (postMessage between main thread and Web Workers)
+// ---------------------------------------------------------------------------
+
+export type WorkerInboundMessage =
+  | {
+      type: 'run';
+      workflowId: WorkflowId;
+      workflowType: string;
+      checkpoint: ArrayBuffer;
+      input: unknown;
+    }
+  | {
+      type: 'resume';
+      workflowId: WorkflowId;
+      checkpoint: ArrayBuffer;
+      operationResult: OperationOutcome;
+    }
+  | { type: 'cancel'; workflowId: WorkflowId };
+
+export type WorkerOutboundMessage =
+  | {
+      type: 'checkpoint';
+      workflowId: WorkflowId;
+      checkpoint: ArrayBuffer;
+      operationRequest: OperationRequest;
+    }
+  | { type: 'completed'; workflowId: WorkflowId; result: unknown }
+  | { type: 'failed'; workflowId: WorkflowId; error: string };
+
+// ---------------------------------------------------------------------------
+// Workflow function signature
+// ---------------------------------------------------------------------------
+
+export type WorkflowFunction<TInput = unknown, TOutput = unknown> = (
+  context: WorkflowContext,
+  input: TInput,
+) => AsyncGenerator<unknown, TOutput, unknown>;
+
+// ---------------------------------------------------------------------------
+// Forward-declared WorkflowContext interface (full implementation in context.ts)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowContext {
+  readonly workflowId: WorkflowId;
+  readonly signal: AbortSignal;
+  readonly executionTimeRemaining: number;
+  readonly startedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Workflow registration
+// ---------------------------------------------------------------------------
+
+export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
+  version?: string;
+  handler: WorkflowFunction<TInput, TOutput>;
+  migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
+  searchAttributes?: SearchAttributeSchema;
+}
+
+// ---------------------------------------------------------------------------
+// Workflow registry for typed Engine<TRegistry>
+// ---------------------------------------------------------------------------
+
+export type WorkflowRegistry = Record<string, { input: unknown; output: unknown }>;
+
+// ---------------------------------------------------------------------------
+// List/filter options
+// ---------------------------------------------------------------------------
+
+export interface ListFilter {
+  status?: WorkflowStatus | WorkflowStatus[];
+  type?: string;
+  attributes?: AttributeFilter[];
+  limit?: number;
+  offset?: number;
+}
+
+export interface AttributeFilter {
+  key: string;
+  value?: SearchAttributeValue;
+  gte?: SearchAttributeValue;
+  lte?: SearchAttributeValue;
+}
+
+// ---------------------------------------------------------------------------
+// Paginated result
+// ---------------------------------------------------------------------------
+
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+// ---------------------------------------------------------------------------
+// Workflow summary (returned by list)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowSummary {
+  id: WorkflowId;
+  type: string;
+  status: WorkflowStatus;
+  version: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Default constants
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  maxAttempts: 3,
+  initialBackoff: 1000,
+  backoffMultiplier: 2,
+  maxBackoff: 30_000,
+};
+
+export const DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD = 65_536; // 64KB
+export const DEFAULT_MAX_NESTING_DEPTH = 10;
+export const DEFAULT_POLL_INTERVAL_MS = 1000;
+export const DEFAULT_VISIBILITY_TIMEOUT_MS = 30_000;
