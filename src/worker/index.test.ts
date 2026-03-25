@@ -498,4 +498,191 @@ describe('RemoteWorker', () => {
 
     await worker.disconnect();
   });
+
+  it('shuttingDown is false initially', () => {
+    const worker = new RemoteWorker({
+      serverUrl: 'ws://localhost:8080',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    expect(worker.shuttingDown).toBe(false);
+    worker[Symbol.dispose]();
+  });
+
+  it('handles shutdown message and gracefully shuts down', async () => {
+    const messages: any[] = [];
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          // Send a shutdown message
+          ws.send(JSON.stringify({ type: 'shutdown' }));
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'shutdown-test',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    // Wait for the shutdown message to be processed
+    await Bun.sleep(200);
+
+    // After shutdown, the worker should have set shuttingDown to true
+    // and eventually closed the connection
+    expect(worker.shuttingDown).toBe(true);
+    expect(worker.connected).toBe(false);
+
+    worker[Symbol.dispose]();
+  });
+
+  it('graceful shutdown waits for in-flight tasks before closing', async () => {
+    let resolveActivity: (() => void) | undefined;
+    const activityPromise = new Promise<void>((resolve) => {
+      resolveActivity = resolve;
+    });
+    const messages: any[] = [];
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          // Send a task first
+          ws.send(
+            JSON.stringify({
+              type: 'task',
+              operationId: 'op-shutdown-1',
+              activityName: 'slowActivity',
+              input: null,
+            }),
+          );
+
+          // Then send shutdown after a brief delay
+          setTimeout(() => {
+            ws.send(JSON.stringify({ type: 'shutdown' }));
+          }, 50);
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'graceful-shutdown-test',
+      activities: {
+        slowActivity: async () => {
+          await activityPromise;
+          return 'done';
+        },
+      },
+    });
+
+    await worker.connect();
+    await Bun.sleep(100);
+
+    // Task should be in-flight
+    expect(worker.inFlight).toBe(1);
+
+    // Wait for the shutdown message to arrive
+    await Bun.sleep(100);
+    expect(worker.shuttingDown).toBe(true);
+
+    // Worker should still be connected (waiting for in-flight task)
+    // The connection might be in process of closing, but inFlight > 0
+
+    // Resolve the activity so the graceful shutdown can complete
+    resolveActivity!();
+    await Bun.sleep(200);
+
+    expect(worker.inFlight).toBe(0);
+    expect(worker.connected).toBe(false);
+
+    // Verify the task result was sent
+    const taskResult = messages.find((m) => m.type === 'taskResult');
+    expect(taskResult).toBeDefined();
+    expect(taskResult.status).toBe('completed');
+
+    worker[Symbol.dispose]();
+  });
+
+  it('ignores task messages when shutting down', async () => {
+    const messages: any[] = [];
+    let tasksSentCount = 0;
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          // Send shutdown first
+          ws.send(JSON.stringify({ type: 'shutdown' }));
+
+          // Then try to send a task after shutdown is received
+          setTimeout(() => {
+            tasksSentCount++;
+            ws.send(
+              JSON.stringify({
+                type: 'task',
+                operationId: 'op-post-shutdown',
+                activityName: 'processOrder',
+                input: null,
+              }),
+            );
+          }, 100);
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'ignore-post-shutdown-test',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await worker.connect();
+    await Bun.sleep(300);
+
+    // Verify the task was sent by the server
+    expect(tasksSentCount).toBe(1);
+
+    // But no taskResult should have been produced for the post-shutdown task
+    const taskResults = messages.filter((m) => m.type === 'taskResult');
+    expect(taskResults.length).toBe(0);
+
+    worker[Symbol.dispose]();
+  });
+
+  it('[Symbol.dispose] closes connection when ws is open', async () => {
+    server = createTestServer();
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      activities: {},
+    });
+
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    worker[Symbol.dispose]();
+    expect(worker.connected).toBe(false);
+
+    // Calling dispose again should not throw
+    worker[Symbol.dispose]();
+  });
 });

@@ -284,17 +284,39 @@ describe('codec', () => {
 
   describe('asRecord fallback for non-object values', () => {
     it('decodes a RegExp from corrupted data gracefully (asRecord returns {})', () => {
-      // The asRecord function returns {} when given a non-object (like an array
-      // or primitive). We can't directly call it, but the RegExp decoder uses it.
-      // If msgpackDecode returns a non-object, asRecord falls through to {}.
-      // The Date encoder/decoder path is tested via round-trip. Lines 50-52, 56-57
-      // are the Date encode (create buffer, set float64, return Uint8Array) and
-      // Date decode (read float64, return new Date). These are covered by existing
-      // round-trip tests but may need a more explicit test.
       const date = new Date(1234567890123);
       const result = decode(encode(date)) as Date;
       expect(result).toBeInstanceOf(Date);
       expect(result.getTime()).toBe(1234567890123);
+    });
+  });
+
+  describe('Date extension codec encode and decode', () => {
+    it('encodes and decodes a Date standalone', () => {
+      const date = new Date('2025-06-15T00:00:00.000Z');
+      const bytes = encode(date);
+      const decoded = decode(bytes) as Date;
+      expect(decoded).toBeInstanceOf(Date);
+      expect(decoded.getTime()).toBe(date.getTime());
+    });
+
+    it('encodes and decodes a Date nested inside an object', () => {
+      const now = new Date();
+      const input = { createdAt: now, name: 'test' };
+      const bytes = encode(input);
+      const result = decode(bytes) as { createdAt: Date; name: string };
+      expect(result.createdAt).toBeInstanceOf(Date);
+      expect(result.createdAt.getTime()).toBe(now.getTime());
+      expect(result.name).toBe('test');
+    });
+
+    it('encodes and decodes a Date inside an array', () => {
+      const date = new Date(0);
+      const input = [date, 42, 'hello'];
+      const bytes = encode(input);
+      const result = decode(bytes) as [Date, number, string];
+      expect(result[0]).toBeInstanceOf(Date);
+      expect(result[0].getTime()).toBe(0);
     });
   });
 

@@ -1054,4 +1054,151 @@ describe('Engine', () => {
     });
     engine[Symbol.dispose]();
   });
+
+  // ---------------------------------------------------------------------------
+  // Symbol.observable error path (lines 217-220)
+  // ---------------------------------------------------------------------------
+
+  it('WorkflowHandle Symbol.observable calls observer.error on WorkflowFailedEvent', async () => {
+    const engine = new Engine();
+
+    engine.register('observable-for-error', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('observable-for-error', null);
+    await flush();
+
+    const receivedErrors: Error[] = [];
+    const receivedEvents: string[] = [];
+
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedEvents.push(event.type);
+      },
+      error: (error: Error) => {
+        receivedErrors.push(error);
+        resolve();
+      },
+    });
+
+    // Dispatch a WorkflowFailedEvent directly on the handle to exercise the failListener
+    const testError = new Error('observable failure test');
+    handle.dispatchEvent(new WorkflowFailedEvent(handle.id, testError));
+
+    await promise;
+
+    expect(receivedErrors.length).toBe(1);
+    expect(receivedErrors[0]!.message).toBe('observable failure test');
+    // The event should also have been received by the next handler
+    expect(receivedEvents).toContain('workflow:failed');
+
+    subscription.unsubscribe();
+    // Cancel the workflow to clean up
+    const resultPromise = handle.result().catch(() => {});
+    await engine.cancel(handle.id);
+    await resultPromise;
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // getHandle chained resolve/reject for running workflows (lines 448-453)
+  // ---------------------------------------------------------------------------
+
+  it('getHandle creates chained resolve callback when WeakRef is cleared', async () => {
+    const engine = new Engine();
+    engine.register('chain-gc-resolve', async function* (ctx: WorkflowContext) {
+      const payload = yield* (ctx as Context).waitForSignal('go');
+      return `resolved: ${payload as string}`;
+    });
+
+    // Start the workflow - the handle is stored in the cache via WeakRef
+    let handle: WorkflowHandle | null = await engine.start('chain-gc-resolve', null, {
+      id: 'chain-gc-resolve-id',
+    });
+    const resultPromiseOriginal = handle.result();
+    await flush();
+
+    // Drop the only strong reference to the handle and force GC
+    handle = null;
+    Bun.gc(true);
+    await flush();
+
+    // Now getHandle should not find the handle in the cache (WeakRef cleared),
+    // so it creates a new handle that chains off the existing result resolver.
+    const chainedHandle = engine.getHandle('chain-gc-resolve-id');
+
+    // Signal the workflow to complete, which triggers the chained resolve callback
+    await engine.signal('chain-gc-resolve-id', 'go', 'data');
+
+    const result = await chainedHandle.result();
+    expect(result).toBe('resolved: data');
+
+    // Also await the original to avoid unhandled rejections
+    await resultPromiseOriginal.catch(() => {});
+    engine[Symbol.dispose]();
+  });
+
+  it('getHandle creates chained reject callback when WeakRef is cleared', async () => {
+    const engine = new Engine();
+    engine.register('chain-gc-reject', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    let handle: WorkflowHandle | null = await engine.start('chain-gc-reject', null, {
+      id: 'chain-gc-reject-id',
+    });
+    const resultPromiseOriginal = handle.result().catch(() => {});
+    await flush();
+
+    // Drop the only strong reference and force GC
+    handle = null;
+    Bun.gc(true);
+    await flush();
+
+    // Get a new chained handle
+    const chainedHandle = engine.getHandle('chain-gc-reject-id');
+    const resultPromise = chainedHandle.result().catch((error: Error) => error.message);
+
+    await engine.cancel('chain-gc-reject-id');
+    await resultPromiseOriginal;
+
+    const error = await resultPromise;
+    expect(error).toBe('Workflow cancelled');
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // ctx.runAll operation (lines 847-848)
+  // ---------------------------------------------------------------------------
+
+  it('ctx.runAll executes named branches in parallel and returns results', async () => {
+    const engine = new Engine();
+
+    const double = async (...args: unknown[]) => (args[0] as number) * 2;
+    const triple = async (...args: unknown[]) => (args[0] as number) * 3;
+    const addTen = async (...args: unknown[]) => (args[0] as number) + 10;
+
+    engine.register('run-all-workflow', async function* (ctx: WorkflowContext) {
+      const results = yield* (ctx as Context).runAll({
+        doubled: [double, 5],
+        tripled: [triple, 5],
+        plusTen: [addTen, 5],
+      });
+      return results;
+    });
+
+    const handle = await engine.start('run-all-workflow', null);
+    const result = (await handle.result()) as Record<string, number>;
+
+    expect(result['doubled']).toBe(10);
+    expect(result['tripled']).toBe(15);
+    expect(result['plusTen']).toBe(15);
+    engine[Symbol.dispose]();
+  });
 });

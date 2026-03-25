@@ -925,4 +925,211 @@ describe('handleRequest', () => {
       expect(decoded).toEqual({ status: 'ok' });
     });
   });
+
+  // -------------------------------------------------------------------------
+  // POST /v1/workflows/:id/update/:name — idempotency and error paths
+  // -------------------------------------------------------------------------
+
+  describe('POST /v1/workflows/:id/update/:name (idempotency)', () => {
+    it('returns cached result for duplicate idempotency key', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const coordinator = new UpdateCoordinator(storage);
+
+      // Set up a completed update with an idempotency key
+      const updateId = await coordinator.createRequest(
+        'idem-wf',
+        'setName',
+        { name: 'Alice' },
+        {
+          idempotencyKey: 'unique-key-1',
+        },
+      );
+      const operations = coordinator.buildResponseOperations(
+        updateId,
+        'idem-wf',
+        { accepted: true },
+        undefined,
+        'unique-key-1',
+      );
+      await storage.batch(operations);
+
+      // Send request with the same idempotency key — should return cached result
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/idem-wf/update/setName', {
+          payload: { name: 'Alice' },
+          timeout: 2000,
+          idempotencyKey: 'unique-key-1',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { updateId: string; result: unknown };
+      expect(body.updateId).toBe(updateId);
+      expect(body.result).toEqual({ accepted: true });
+    });
+
+    it('passes idempotency key through to coordinator when no cached result exists', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const coordinator = new UpdateCoordinator(storage);
+      const control = { active: true };
+      const poller = (async () => {
+        while (control.active) {
+          const pending = await coordinator.getPendingUpdates('idem-wf-new');
+          for (const updateRequest of pending) {
+            const ops = coordinator.buildResponseOperations(
+              updateRequest.updateId,
+              'idem-wf-new',
+              { done: true },
+              undefined,
+              updateRequest.idempotencyKey,
+            );
+            await storage.batch(ops);
+          }
+          await Bun.sleep(10);
+        }
+      })();
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/idem-wf-new/update/setName', {
+          payload: { name: 'Bob' },
+          timeout: 2000,
+          idempotencyKey: 'new-key-1',
+        }),
+        engine,
+      );
+
+      control.active = false;
+      await poller;
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { updateId: string; result: unknown };
+      expect(body.updateId).toBeDefined();
+      expect(body.result).toEqual({ done: true });
+    });
+
+    it('returns 422 when update response contains an error', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const coordinator = new UpdateCoordinator(storage);
+      const control = { active: true };
+      const poller = (async () => {
+        while (control.active) {
+          const pending = await coordinator.getPendingUpdates('error-wf');
+          for (const updateRequest of pending) {
+            const ops = coordinator.buildResponseOperations(
+              updateRequest.updateId,
+              'error-wf',
+              undefined,
+              'Validation failed',
+            );
+            await storage.batch(ops);
+          }
+          await Bun.sleep(10);
+        }
+      })();
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/error-wf/update/setName', {
+          payload: { name: 'Bad' },
+          timeout: 2000,
+        }),
+        engine,
+      );
+
+      control.active = false;
+      await poller;
+
+      expect(response.status).toBe(422);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('Validation failed');
+    });
+
+    it('returns 500 when update throws a non-timeout error', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      // Override storage.get to throw during waitForResponse polling
+      const originalGet = storage.get.bind(storage);
+      let callCount = 0;
+      storage.get = async (key: string) => {
+        callCount++;
+        // Let the initial createRequest succeed (first few calls), then throw
+        // when waitForResponse polls for the response key
+        if (key.startsWith('upr:') && callCount > 2) {
+          throw new Error('Storage read failure');
+        }
+        return originalGet(key);
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/err-wf/update/setName', {
+          payload: { name: 'Fail' },
+          timeout: 500,
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(500);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('Storage read failure');
+
+      storage.get = originalGet;
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // PATCH /v1/workflows/:id/attributes — invalid JSON body
+  // -------------------------------------------------------------------------
+
+  describe('PATCH /v1/workflows/:id/attributes (error paths)', () => {
+    it('returns 400 when body is invalid JSON', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        new Request('http://localhost/v1/workflows/wf-bad-json/attributes', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: 'not valid json{',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('Invalid JSON body');
+    });
+
+    it('handles missing attributes field gracefully by using empty object', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const response = await handleRequest(
+        request('PATCH', '/v1/workflows/wf-no-attr/attributes', {}),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+    });
+  });
 });
