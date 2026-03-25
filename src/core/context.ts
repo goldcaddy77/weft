@@ -159,6 +159,7 @@ export interface ContextOptions {
   accumulatedResults?: Map<number, unknown>;
   searchAttributes?: Record<string, SearchAttributeValue>;
   getNow?: () => number;
+  nestingDepth?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +183,7 @@ export class Context implements WorkflowContext {
   #getNow: () => number;
   #explainMode: boolean;
   #budgetTracker: BudgetTracker | undefined;
+  #nestingDepth: number;
 
   constructor(options: ContextOptions) {
     this.workflowId = options.workflowId;
@@ -200,6 +202,7 @@ export class Context implements WorkflowContext {
     this.#getNow = options.getNow ?? Date.now;
     this.#explainMode = false;
     this.#budgetTracker = undefined;
+    this.#nestingDepth = options.nestingDepth ?? 0;
   }
 
   // -------------------------------------------------------------------------
@@ -213,6 +216,10 @@ export class Context implements WorkflowContext {
 
   get stepIndex(): number {
     return this.#stepIndex;
+  }
+
+  get nestingDepth(): number {
+    return this.#nestingDepth;
   }
 
   get accumulatedResults(): Map<number, unknown> {
@@ -538,6 +545,41 @@ export class Context implements WorkflowContext {
 
     this.#accumulatedResults.set(step, result);
     return result as Record<keyof T, unknown>;
+  }
+
+  *startChild<TResult = unknown>(
+    workflowType: string,
+    input: unknown,
+    options?: Record<string, unknown>,
+  ): Generator<ContextOperationRequest, TResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      if (this.#explainMode) {
+        console.log(
+          `[weft] ctx.startChild("${workflowType}") → Returning cached result from step ${step}`,
+        );
+      }
+      return this.#accumulatedResults.get(step) as TResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.startChild("${workflowType}", ${JSON.stringify(input)})`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Starting child workflow of type "${workflowType}"`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const result = yield {
+      type: 'child-workflow' as const,
+      operationId,
+      workflowType,
+      input,
+      options,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as TResult;
   }
 
   // -------------------------------------------------------------------------

@@ -4989,8 +4989,8 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [ ] **`ctx.memo(key, fn)` caches derived values in the checkpoint.** On recovery, returns cached value without re-executing `fn`.
 - [ ] **Cancellation uses `AbortController`.** `handle.cancel()` propagates an abort signal through the workflow. `finally` blocks execute cleanup. Cleanup can yield to durable operations.
 - [ ] **Retry policy supports exponential backoff.** Configurable per-activity: `maxAttempts`, `initialBackoff`, `backoffMultiplier`, `maxBackoff`, `nonRetryableErrors`.
-- [ ] **Child workflows are independently checkpointed.** Parent stores child workflow ID reference, not child state.
-- [ ] **Max nesting depth is configurable.** Default: 10 levels. Exceeding throws a clear error.
+- [x] **Child workflows are independently checkpointed.** Parent stores child workflow ID reference, not child state.
+- [x] **Max nesting depth is configurable.** Default: 10 levels. Exceeding throws a clear error.
 
 ### Event System
 

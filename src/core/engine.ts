@@ -262,6 +262,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #updateCoordinator: UpdateCoordinator;
   #activeContexts: Map<string, Context>;
   #broadcastChannel: BroadcastChannel | null;
+  #pendingNestingDepth: number | undefined;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -283,6 +284,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#updateCoordinator = new UpdateCoordinator(storage);
     this.#activeContexts = new Map();
     this.#broadcastChannel = null;
+    this.#pendingNestingDepth = undefined;
     this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
       this.#handleCache.delete(id);
     });
@@ -664,7 +666,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     registration: RegistrationEntry,
     input: unknown,
+    nestingDepth: number = 0,
   ): Promise<void> {
+    // Use pending depth if set (from child-workflow case), otherwise use parameter
+    const depth = this.#pendingNestingDepth ?? nestingDepth;
+    this.#pendingNestingDepth = undefined;
+
     const workflowAbort = new AbortController();
     this.#workflowAbortControllers.set(workflowId, workflowAbort);
 
@@ -675,6 +682,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       startedAt: this.#options.getNow(),
       abortController: workflowAbort,
       getNow: this.#options.getNow,
+      nestingDepth: depth,
     });
 
     // Store the context for update handler lookups
@@ -928,6 +936,63 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         } = operation.options;
         const agentResult = await executeAgentLoop(rest, prompt);
         await this.#driveGenerator(workflowId, generator, agentResult.content);
+        break;
+      }
+
+      case 'child-workflow': {
+        const currentContext = this.#activeContexts.get(workflowId);
+        const currentDepth = currentContext?.nestingDepth ?? 0;
+
+        if (currentDepth + 1 > this.#options.maxNestingDepth) {
+          const error = new Error(
+            `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
+              `Configure maxNestingDepth in engine options to increase the limit.`,
+          );
+          try {
+            const iterResult = await generator.throw(error);
+            if (iterResult.done) {
+              await this.#completeWorkflow(workflowId, iterResult.value);
+            } else {
+              await this.#processOperation(
+                workflowId,
+                generator,
+                iterResult.value as never as ContextOperationRequest,
+              );
+            }
+          } catch (innerError) {
+            await this.#failWorkflow(
+              workflowId,
+              innerError instanceof Error ? innerError : new Error(String(innerError)),
+            );
+          }
+          break;
+        }
+
+        try {
+          // Set pending nesting depth for the child workflow
+          this.#pendingNestingDepth = currentDepth + 1;
+          const childHandle = await this.start(operation.workflowType, operation.input);
+          const childResult = await childHandle.result();
+          await this.#driveGenerator(workflowId, generator, childResult);
+        } catch (error) {
+          try {
+            const iterResult = await generator.throw(error);
+            if (iterResult.done) {
+              await this.#completeWorkflow(workflowId, iterResult.value);
+            } else {
+              await this.#processOperation(
+                workflowId,
+                generator,
+                iterResult.value as never as ContextOperationRequest,
+              );
+            }
+          } catch (innerError) {
+            await this.#failWorkflow(
+              workflowId,
+              innerError instanceof Error ? innerError : new Error(String(innerError)),
+            );
+          }
+        }
         break;
       }
 

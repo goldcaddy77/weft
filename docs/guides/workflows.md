@@ -123,3 +123,52 @@ The `id` option is useful when you want idempotent starts---starting a workflow 
 Unlike systems that replay an ever-growing event history, Weft's checkpoint is a constant-size snapshot of current state. It does not grow with the number of activities executed. A workflow can run for years, execute millions of activities, and its checkpoint stays the same size as it was after the first `yield*`. There is no history limit, no `continueAsNew`, no manual state serialization.
 
 Long-running workflows just run.
+
+## Child workflows
+
+Sometimes a workflow needs to kick off a sub-process that should be independently checkpointed---with its own workflow ID, its own state in storage, and its own lifecycle. That is what child workflows are for.
+
+Use `yield* context.startChild()` to start a child workflow from within a parent. The parent suspends at the `yield*` boundary until the child completes or fails.
+
+```typescript
+engine.register('process-payment', async function* (ctx, input) {
+  const { amount } = input as { amount: number };
+  // ... payment logic ...
+  return { receiptId: 'rcpt-123', amount };
+});
+
+engine.register('order', async function* (ctx, input) {
+  const context = ctx as Context;
+  const { total, email } = input as { total: number; email: string };
+
+  const receipt = yield* context.startChild('process-payment', { amount: total });
+  yield* context.run(sendConfirmation, email, receipt);
+  return { receipt, confirmed: true };
+});
+```
+
+### Error handling
+
+If a child workflow throws, the error propagates into the parent. You can catch it with a standard `try/catch` block.
+
+```typescript
+engine.register('parent', async function* (ctx, input) {
+  const context = ctx as Context;
+  try {
+    yield* context.startChild('risky-child', input);
+  } catch (error) {
+    // Handle or compensate for the child failure
+    yield* context.run(handleFailure, error);
+  }
+});
+```
+
+### Nesting depth limits
+
+Child workflows can themselves start child workflows, creating a nesting hierarchy. To prevent runaway recursion, the engine enforces a maximum nesting depth. The default limit is 10 levels. You can configure it when creating the engine.
+
+```typescript
+const engine = new Engine({ maxNestingDepth: 5 });
+```
+
+When a child workflow would exceed the nesting limit, the engine throws an error into the parent workflow with a message indicating the depth exceeded the maximum.
