@@ -5,6 +5,12 @@ import type { Message } from './types';
 
 const originalFetch = globalThis.fetch;
 
+type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+function mockFetch(fn: FetchFn): void {
+  (globalThis as Record<string, unknown>)['fetch'] = fn;
+}
+
 describe('OpenAIProvider', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -32,7 +38,7 @@ describe('OpenAIProvider', () => {
       let capturedUrl = '';
       let capturedInit: RequestInit | undefined;
 
-      globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+      mockFetch(async (input, init) => {
         capturedUrl =
           input instanceof URL ? input.href : input instanceof Request ? input.url : input;
         capturedInit = init;
@@ -48,7 +54,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
       await provider.chat([{ role: 'user', content: 'Hi' }], { model: 'gpt-4o' });
@@ -63,7 +69,7 @@ describe('OpenAIProvider', () => {
     it('includes the organization header when provided', async () => {
       let capturedInit: RequestInit | undefined;
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedInit = init;
         return new Response(
           JSON.stringify({
@@ -77,7 +83,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({
         apiKey: 'sk-test-key',
@@ -92,7 +98,7 @@ describe('OpenAIProvider', () => {
     it('converts messages to OpenAI format with role and content', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -106,7 +112,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
       const messages: Message[] = [
@@ -116,7 +122,7 @@ describe('OpenAIProvider', () => {
       ];
       await provider.chat(messages, { model: 'gpt-4o' });
 
-      const apiMessages = capturedBody.messages as Array<{ role: string; content: string }>;
+      const apiMessages = capturedBody['messages'] as Array<{ role: string; content: string }>;
       expect(apiMessages).toHaveLength(3);
       expect(apiMessages[0]).toEqual({ role: 'system', content: 'You are helpful.' });
       expect(apiMessages[1]).toEqual({ role: 'user', content: 'Hello' });
@@ -126,7 +132,7 @@ describe('OpenAIProvider', () => {
     it('prepends systemPrompt from ChatOptions as a system message', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -140,7 +146,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
       await provider.chat([{ role: 'user', content: 'Hi' }], {
@@ -148,7 +154,7 @@ describe('OpenAIProvider', () => {
         systemPrompt: 'Be concise.',
       });
 
-      const apiMessages = capturedBody.messages as Array<{ role: string; content: string }>;
+      const apiMessages = capturedBody['messages'] as Array<{ role: string; content: string }>;
       expect(apiMessages[0]).toEqual({ role: 'system', content: 'Be concise.' });
       expect(apiMessages[1]).toEqual({ role: 'user', content: 'Hi' });
     });
@@ -156,7 +162,7 @@ describe('OpenAIProvider', () => {
     it('converts tool definitions to OpenAI function tools format', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -170,7 +176,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
       await provider.chat([{ role: 'user', content: 'Hi' }], {
@@ -184,7 +190,7 @@ describe('OpenAIProvider', () => {
         ],
       });
 
-      const tools = capturedBody.tools as Array<Record<string, unknown>>;
+      const tools = capturedBody['tools'] as Array<Record<string, unknown>>;
       expect(tools).toHaveLength(1);
       expect(tools[0]).toEqual({
         type: 'function',
@@ -199,7 +205,7 @@ describe('OpenAIProvider', () => {
     it('converts assistant messages with tool calls to OpenAI format', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -213,7 +219,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
       const messages: Message[] = [
@@ -231,13 +237,13 @@ describe('OpenAIProvider', () => {
       ];
       await provider.chat(messages, { model: 'gpt-4o' });
 
-      const apiMessages = capturedBody.messages as Array<Record<string, unknown>>;
+      const apiMessages = capturedBody['messages'] as Array<Record<string, unknown>>;
       expect(apiMessages).toHaveLength(3);
 
       // Assistant message with tool_calls
       const assistantMessage = apiMessages[1]!;
-      expect(assistantMessage.role).toBe('assistant');
-      const toolCalls = assistantMessage.tool_calls as Array<Record<string, unknown>>;
+      expect(assistantMessage['role']).toBe('assistant');
+      const toolCalls = assistantMessage['tool_calls'] as Array<Record<string, unknown>>;
       expect(toolCalls).toHaveLength(1);
       expect(toolCalls[0]).toEqual({
         id: 'call_123',
@@ -247,15 +253,15 @@ describe('OpenAIProvider', () => {
 
       // Tool result message
       const toolMessage = apiMessages[2]!;
-      expect(toolMessage.role).toBe('tool');
-      expect(toolMessage.tool_call_id).toBe('call_123');
-      expect(toolMessage.content).toBe('Found cats!');
+      expect(toolMessage['role']).toBe('tool');
+      expect(toolMessage['tool_call_id']).toBe('call_123');
+      expect(toolMessage['content']).toBe('Found cats!');
     });
 
     it('includes maxTokens and temperature in request body', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -269,7 +275,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
       await provider.chat([{ role: 'user', content: 'Hi' }], {
@@ -278,12 +284,12 @@ describe('OpenAIProvider', () => {
         temperature: 0.7,
       });
 
-      expect(capturedBody.max_tokens).toBe(4096);
-      expect(capturedBody.temperature).toBe(0.7);
+      expect(capturedBody['max_tokens']).toBe(4096);
+      expect(capturedBody['temperature']).toBe(0.7);
     });
 
     it('parses a text response correctly', async () => {
-      globalThis.fetch = async () => {
+      mockFetch(async () => {
         return new Response(
           JSON.stringify({
             choices: [
@@ -296,7 +302,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
       const response = await provider.chat([{ role: 'user', content: 'Hi' }], { model: 'gpt-4o' });
@@ -309,7 +315,7 @@ describe('OpenAIProvider', () => {
     });
 
     it('parses tool call response correctly', async () => {
-      globalThis.fetch = async () => {
+      mockFetch(async () => {
         return new Response(
           JSON.stringify({
             choices: [
@@ -332,7 +338,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
       const response = await provider.chat([{ role: 'user', content: 'Search weather' }], {
@@ -350,14 +356,14 @@ describe('OpenAIProvider', () => {
     });
 
     it('throws a descriptive error on non-200 response', async () => {
-      globalThis.fetch = async () => {
+      mockFetch(async () => {
         return new Response(
           JSON.stringify({
             error: { message: 'Invalid API key', type: 'invalid_request_error' },
           }),
           { status: 401, statusText: 'Unauthorized' },
         );
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'bad-key' });
       await expect(
@@ -368,7 +374,7 @@ describe('OpenAIProvider', () => {
     it('passes the abort signal to fetch', async () => {
       let capturedSignal: AbortSignal | undefined;
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedSignal = init?.signal ?? undefined;
         return new Response(
           JSON.stringify({
@@ -382,7 +388,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const controller = new AbortController();
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
@@ -397,7 +403,7 @@ describe('OpenAIProvider', () => {
     it('uses a custom baseUrl when provided', async () => {
       let capturedUrl = '';
 
-      globalThis.fetch = async (input: string | URL | Request) => {
+      mockFetch(async (input) => {
         capturedUrl =
           input instanceof URL ? input.href : input instanceof Request ? input.url : input;
         return new Response(
@@ -412,7 +418,7 @@ describe('OpenAIProvider', () => {
             model: 'gpt-4o',
           }),
         );
-      };
+      });
 
       const provider = new OpenAIProvider({
         apiKey: 'sk-test-key',
@@ -436,19 +442,19 @@ describe('OpenAIProvider', () => {
         'data: [DONE]\n\n',
       ].join('');
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(ssePayload, {
           headers: { 'content-type': 'text/event-stream' },
         });
-      };
+      });
 
       const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
       const stream = await provider.stream([{ role: 'user', content: 'Hi' }], {
         model: 'gpt-4o',
       });
 
-      expect(capturedBody.stream).toBe(true);
+      expect(capturedBody['stream']).toBe(true);
       expect(stream).toBeInstanceOf(ReadableStream);
 
       const reader = stream.getReader();

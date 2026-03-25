@@ -5,6 +5,12 @@ import type { Message } from './types';
 
 const originalFetch = globalThis.fetch;
 
+type FetchFn = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+function mockFetch(fn: FetchFn): void {
+  (globalThis as Record<string, unknown>)['fetch'] = fn;
+}
+
 describe('AnthropicProvider', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -32,7 +38,7 @@ describe('AnthropicProvider', () => {
       let capturedUrl = '';
       let capturedInit: RequestInit | undefined;
 
-      globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+      mockFetch(async (input, init) => {
         capturedUrl =
           input instanceof URL ? input.href : input instanceof Request ? input.url : input;
         capturedInit = init;
@@ -44,7 +50,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       await provider.chat([{ role: 'user', content: 'Hi' }], { model: 'claude-sonnet-4-20250514' });
@@ -60,7 +66,7 @@ describe('AnthropicProvider', () => {
     it('extracts system messages and sends them in the system parameter', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -70,7 +76,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       const messages: Message[] = [
@@ -79,8 +85,8 @@ describe('AnthropicProvider', () => {
       ];
       await provider.chat(messages, { model: 'claude-sonnet-4-20250514' });
 
-      expect(capturedBody.system).toBe('You are helpful.');
-      const apiMessages = capturedBody.messages as Array<{ role: string; content: string }>;
+      expect(capturedBody['system']).toBe('You are helpful.');
+      const apiMessages = capturedBody['messages'] as Array<{ role: string; content: string }>;
       expect(apiMessages).toHaveLength(1);
       expect(apiMessages[0]!.role).toBe('user');
     });
@@ -88,7 +94,7 @@ describe('AnthropicProvider', () => {
     it('uses systemPrompt from ChatOptions when provided', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -98,7 +104,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       await provider.chat([{ role: 'user', content: 'Hi' }], {
@@ -106,13 +112,13 @@ describe('AnthropicProvider', () => {
         systemPrompt: 'Be concise.',
       });
 
-      expect(capturedBody.system).toBe('Be concise.');
+      expect(capturedBody['system']).toBe('Be concise.');
     });
 
     it('converts user and assistant messages to Anthropic format', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -122,7 +128,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       const messages: Message[] = [
@@ -132,7 +138,7 @@ describe('AnthropicProvider', () => {
       ];
       await provider.chat(messages, { model: 'claude-sonnet-4-20250514' });
 
-      const apiMessages = capturedBody.messages as Array<{ role: string; content: string }>;
+      const apiMessages = capturedBody['messages'] as Array<{ role: string; content: string }>;
       expect(apiMessages).toHaveLength(3);
       expect(apiMessages[0]).toEqual({ role: 'user', content: 'Hello' });
       expect(apiMessages[1]).toEqual({ role: 'assistant', content: 'Hi there!' });
@@ -142,7 +148,7 @@ describe('AnthropicProvider', () => {
     it('converts tool messages with tool results to Anthropic format', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -152,7 +158,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       const messages: Message[] = [
@@ -170,21 +176,21 @@ describe('AnthropicProvider', () => {
       ];
       await provider.chat(messages, { model: 'claude-sonnet-4-20250514' });
 
-      const apiMessages = capturedBody.messages as Array<Record<string, unknown>>;
+      const apiMessages = capturedBody['messages'] as Array<Record<string, unknown>>;
       expect(apiMessages).toHaveLength(3);
 
       // The assistant message should include tool_use content blocks
       const assistantMessage = apiMessages[1]!;
-      expect(assistantMessage.role).toBe('assistant');
-      const assistantContent = assistantMessage.content as Array<Record<string, unknown>>;
+      expect(assistantMessage['role']).toBe('assistant');
+      const assistantContent = assistantMessage['content'] as Array<Record<string, unknown>>;
       expect(assistantContent).toEqual([
         { type: 'tool_use', id: 'tc-1', name: 'search', input: { query: 'cats' } },
       ]);
 
       // The tool message should be a user message with tool_result content blocks
       const toolMessage = apiMessages[2]!;
-      expect(toolMessage.role).toBe('user');
-      const toolContent = toolMessage.content as Array<Record<string, unknown>>;
+      expect(toolMessage['role']).toBe('user');
+      const toolContent = toolMessage['content'] as Array<Record<string, unknown>>;
       expect(toolContent).toEqual([
         { type: 'tool_result', tool_use_id: 'tc-1', content: 'Found cats!' },
       ]);
@@ -193,7 +199,7 @@ describe('AnthropicProvider', () => {
     it('converts tool definitions to Anthropic tools format', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -203,7 +209,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       await provider.chat([{ role: 'user', content: 'Hi' }], {
@@ -217,7 +223,7 @@ describe('AnthropicProvider', () => {
         ],
       });
 
-      const tools = capturedBody.tools as Array<Record<string, unknown>>;
+      const tools = capturedBody['tools'] as Array<Record<string, unknown>>;
       expect(tools).toHaveLength(1);
       expect(tools[0]).toEqual({
         name: 'search',
@@ -229,7 +235,7 @@ describe('AnthropicProvider', () => {
     it('includes maxTokens and temperature in the request body', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -239,7 +245,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       await provider.chat([{ role: 'user', content: 'Hi' }], {
@@ -248,12 +254,12 @@ describe('AnthropicProvider', () => {
         temperature: 0.5,
       });
 
-      expect(capturedBody.max_tokens).toBe(2048);
-      expect(capturedBody.temperature).toBe(0.5);
+      expect(capturedBody['max_tokens']).toBe(2048);
+      expect(capturedBody['temperature']).toBe(0.5);
     });
 
     it('parses a text response correctly', async () => {
-      globalThis.fetch = async () => {
+      mockFetch(async () => {
         return new Response(
           JSON.stringify({
             content: [{ type: 'text', text: 'Hello from Claude' }],
@@ -262,7 +268,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       const response = await provider.chat([{ role: 'user', content: 'Hi' }], {
@@ -277,7 +283,7 @@ describe('AnthropicProvider', () => {
     });
 
     it('parses tool_use content blocks as ToolCalls', async () => {
-      globalThis.fetch = async () => {
+      mockFetch(async () => {
         return new Response(
           JSON.stringify({
             content: [
@@ -294,7 +300,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'tool_use',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       const response = await provider.chat([{ role: 'user', content: 'Search weather' }], {
@@ -312,7 +318,7 @@ describe('AnthropicProvider', () => {
     });
 
     it('throws a descriptive error on non-200 response', async () => {
-      globalThis.fetch = async () => {
+      mockFetch(async () => {
         return new Response(
           JSON.stringify({
             type: 'error',
@@ -320,7 +326,7 @@ describe('AnthropicProvider', () => {
           }),
           { status: 401, statusText: 'Unauthorized' },
         );
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'bad-key' });
       await expect(
@@ -331,7 +337,7 @@ describe('AnthropicProvider', () => {
     it('passes the abort signal to fetch', async () => {
       let capturedSignal: AbortSignal | undefined;
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedSignal = init?.signal ?? undefined;
         return new Response(
           JSON.stringify({
@@ -341,7 +347,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const controller = new AbortController();
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
@@ -356,7 +362,7 @@ describe('AnthropicProvider', () => {
     it('uses the default model from options when none specified in chat', async () => {
       let capturedBody: Record<string, unknown> = {};
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(
           JSON.stringify({
@@ -366,7 +372,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({
         apiKey: 'sk-test-key',
@@ -376,13 +382,13 @@ describe('AnthropicProvider', () => {
         model: 'claude-3-haiku-20240307',
       });
 
-      expect(capturedBody.model).toBe('claude-3-haiku-20240307');
+      expect(capturedBody['model']).toBe('claude-3-haiku-20240307');
     });
 
     it('uses a custom baseUrl when provided', async () => {
       let capturedUrl = '';
 
-      globalThis.fetch = async (input: string | URL | Request) => {
+      mockFetch(async (input) => {
         capturedUrl =
           input instanceof URL ? input.href : input instanceof Request ? input.url : input;
         return new Response(
@@ -393,7 +399,7 @@ describe('AnthropicProvider', () => {
             stop_reason: 'end_turn',
           }),
         );
-      };
+      });
 
       const provider = new AnthropicProvider({
         apiKey: 'sk-test-key',
@@ -421,19 +427,19 @@ describe('AnthropicProvider', () => {
         'event: message_stop\ndata: {"type":"message_stop"}\n\n',
       ].join('');
 
-      globalThis.fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      mockFetch(async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
         return new Response(ssePayload, {
           headers: { 'content-type': 'text/event-stream' },
         });
-      };
+      });
 
       const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
       const stream = await provider.stream([{ role: 'user', content: 'Hi' }], {
         model: 'claude-sonnet-4-20250514',
       });
 
-      expect(capturedBody.stream).toBe(true);
+      expect(capturedBody['stream']).toBe(true);
       expect(stream).toBeInstanceOf(ReadableStream);
 
       const reader = stream.getReader();

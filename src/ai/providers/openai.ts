@@ -31,12 +31,17 @@ export class OpenAIProvider implements LLMProvider {
   async chat(messages: Message[], options: ChatOptions): Promise<ChatResponse> {
     const body = this.#buildRequestBody(messages, options);
 
-    const response = await fetch(`${this.#options.baseUrl}/chat/completions`, {
+    const init: RequestInit = {
       method: 'POST',
       headers: this.#buildHeaders(),
       body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    };
+
+    if (options.signal) {
+      init.signal = options.signal;
+    }
+
+    const response = await fetch(`${this.#options.baseUrl}/chat/completions`, init);
 
     if (!response.ok) {
       const errorBody = await response.text();
@@ -49,15 +54,20 @@ export class OpenAIProvider implements LLMProvider {
 
   async stream(messages: Message[], options: ChatOptions): Promise<ReadableStream<StreamChunk>> {
     const body = this.#buildRequestBody(messages, options);
-    body.stream = true;
-    body.stream_options = { include_usage: true };
+    body['stream'] = true;
+    body['stream_options'] = { include_usage: true };
 
-    const response = await fetch(`${this.#options.baseUrl}/chat/completions`, {
+    const init: RequestInit = {
       method: 'POST',
       headers: this.#buildHeaders(),
       body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    };
+
+    if (options.signal) {
+      init.signal = options.signal;
+    }
+
+    const response = await fetch(`${this.#options.baseUrl}/chat/completions`, init);
 
     if (!response.ok) {
       const errorBody = await response.text();
@@ -91,35 +101,36 @@ export class OpenAIProvider implements LLMProvider {
               if (!line.startsWith('data: ')) continue;
               const jsonString = line.slice(6).trim();
               if (jsonString === '[DONE]') {
-                controller.enqueue({
-                  type: 'done',
-                  usage: lastUsage,
-                });
+                const doneChunk: StreamChunk = { type: 'done' };
+                if (lastUsage) {
+                  doneChunk.usage = lastUsage;
+                }
+                controller.enqueue(doneChunk);
                 continue;
               }
               if (jsonString === '') continue;
 
               const event = JSON.parse(jsonString) as Record<string, unknown>;
-              const choices = event.choices as Array<Record<string, unknown>> | undefined;
+              const choices = event['choices'] as Array<Record<string, unknown>> | undefined;
 
               if (choices && choices.length > 0) {
                 const choice = choices[0]!;
-                const delta = choice.delta as Record<string, unknown> | undefined;
+                const delta = choice['delta'] as Record<string, unknown> | undefined;
 
                 if (delta) {
-                  const content = delta.content as string | undefined;
+                  const content = delta['content'] as string | undefined;
                   if (content) {
                     controller.enqueue({ type: 'token', token: content });
                   }
                 }
               }
 
-              const usage = event.usage as Record<string, number> | undefined;
+              const usage = event['usage'] as Record<string, number> | undefined;
               if (usage) {
                 lastUsage = {
-                  inputTokens: usage.prompt_tokens ?? 0,
-                  outputTokens: usage.completion_tokens ?? 0,
-                  totalTokens: usage.total_tokens ?? 0,
+                  inputTokens: usage['prompt_tokens'] ?? 0,
+                  outputTokens: usage['completion_tokens'] ?? 0,
+                  totalTokens: usage['total_tokens'] ?? 0,
                 };
               }
             }
@@ -155,11 +166,11 @@ export class OpenAIProvider implements LLMProvider {
     };
 
     if (options.maxTokens !== undefined) {
-      body.max_tokens = options.maxTokens;
+      body['max_tokens'] = options.maxTokens;
     }
 
     if (options.temperature !== undefined) {
-      body.temperature = options.temperature;
+      body['temperature'] = options.temperature;
     }
 
     const apiMessages: Array<Record<string, unknown>> = [];
@@ -173,10 +184,10 @@ export class OpenAIProvider implements LLMProvider {
       apiMessages.push(this.#convertMessage(message));
     }
 
-    body.messages = apiMessages;
+    body['messages'] = apiMessages;
 
     if (options.tools && options.tools.length > 0) {
-      body.tools = options.tools.map((tool) => this.#convertToolDefinition(tool));
+      body['tools'] = options.tools.map((tool) => this.#convertToolDefinition(tool));
     }
 
     return body;
@@ -225,25 +236,25 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   #parseResponse(data: Record<string, unknown>): ChatResponse {
-    const choices = data.choices as Array<Record<string, unknown>>;
-    const usage = data.usage as Record<string, number>;
-    const model = data.model as string;
+    const choices = data['choices'] as Array<Record<string, unknown>>;
+    const usage = data['usage'] as Record<string, number>;
+    const model = data['model'] as string;
 
     const choice = choices[0]!;
-    const message = choice.message as Record<string, unknown>;
-    const finishReason = choice.finish_reason as string;
+    const message = choice['message'] as Record<string, unknown>;
+    const finishReason = choice['finish_reason'] as string;
 
-    const content = (message.content as string | null) ?? '';
+    const content = (message['content'] as string | null) ?? '';
     const toolCalls: ToolCall[] = [];
 
-    const rawToolCalls = message.tool_calls as Array<Record<string, unknown>> | undefined;
+    const rawToolCalls = message['tool_calls'] as Array<Record<string, unknown>> | undefined;
     if (rawToolCalls) {
       for (const rawCall of rawToolCalls) {
-        const functionData = rawCall.function as Record<string, string>;
+        const functionData = rawCall['function'] as Record<string, string>;
         toolCalls.push({
-          id: rawCall.id as string,
-          name: functionData.name,
-          input: JSON.parse(functionData.arguments),
+          id: rawCall['id'] as string,
+          name: functionData['name']!,
+          input: JSON.parse(functionData['arguments']!),
         });
       }
     }
@@ -252,9 +263,9 @@ export class OpenAIProvider implements LLMProvider {
       content,
       toolCalls,
       usage: {
-        inputTokens: usage.prompt_tokens ?? 0,
-        outputTokens: usage.completion_tokens ?? 0,
-        totalTokens: usage.total_tokens ?? 0,
+        inputTokens: usage['prompt_tokens'] ?? 0,
+        outputTokens: usage['completion_tokens'] ?? 0,
+        totalTokens: usage['total_tokens'] ?? 0,
       },
       model,
       stopReason: this.#mapFinishReason(finishReason),

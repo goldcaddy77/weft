@@ -31,7 +31,7 @@ export class AnthropicProvider implements LLMProvider {
   async chat(messages: Message[], options: ChatOptions): Promise<ChatResponse> {
     const body = this.#buildRequestBody(messages, options);
 
-    const response = await fetch(`${this.#options.baseUrl}/v1/messages`, {
+    const init: RequestInit = {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -39,8 +39,13 @@ export class AnthropicProvider implements LLMProvider {
         'anthropic-version': this.#options.apiVersion,
       },
       body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    };
+
+    if (options.signal) {
+      init.signal = options.signal;
+    }
+
+    const response = await fetch(`${this.#options.baseUrl}/v1/messages`, init);
 
     if (!response.ok) {
       const errorBody = await response.text();
@@ -53,9 +58,9 @@ export class AnthropicProvider implements LLMProvider {
 
   async stream(messages: Message[], options: ChatOptions): Promise<ReadableStream<StreamChunk>> {
     const body = this.#buildRequestBody(messages, options);
-    body.stream = true;
+    body['stream'] = true;
 
-    const response = await fetch(`${this.#options.baseUrl}/v1/messages`, {
+    const init: RequestInit = {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -63,8 +68,13 @@ export class AnthropicProvider implements LLMProvider {
         'anthropic-version': this.#options.apiVersion,
       },
       body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    };
+
+    if (options.signal) {
+      init.signal = options.signal;
+    }
+
+    const response = await fetch(`${this.#options.baseUrl}/v1/messages`, init);
 
     if (!response.ok) {
       const errorBody = await response.text();
@@ -100,21 +110,21 @@ export class AnthropicProvider implements LLMProvider {
               if (jsonString === '' || jsonString === '[DONE]') continue;
 
               const event = JSON.parse(jsonString) as Record<string, unknown>;
-              const eventType = event.type as string;
+              const eventType = event['type'] as string;
 
               if (eventType === 'message_start') {
-                const message = event.message as Record<string, unknown>;
-                const usage = message.usage as Record<string, number>;
-                inputTokens = usage.input_tokens ?? 0;
+                const message = event['message'] as Record<string, unknown>;
+                const usage = message['usage'] as Record<string, number>;
+                inputTokens = usage['input_tokens'] ?? 0;
               } else if (eventType === 'content_block_delta') {
-                const delta = event.delta as Record<string, unknown>;
-                if (delta.type === 'text_delta') {
-                  controller.enqueue({ type: 'token', token: delta.text as string });
+                const delta = event['delta'] as Record<string, unknown>;
+                if (delta['type'] === 'text_delta') {
+                  controller.enqueue({ type: 'token', token: delta['text'] as string });
                 }
               } else if (eventType === 'message_delta') {
-                const usage = event.usage as Record<string, number> | undefined;
+                const usage = event['usage'] as Record<string, number> | undefined;
                 if (usage) {
-                  outputTokens = usage.output_tokens ?? 0;
+                  outputTokens = usage['output_tokens'] ?? 0;
                 }
               } else if (eventType === 'message_stop') {
                 controller.enqueue({
@@ -147,7 +157,7 @@ export class AnthropicProvider implements LLMProvider {
     };
 
     if (options.temperature !== undefined) {
-      body.temperature = options.temperature;
+      body['temperature'] = options.temperature;
     }
 
     // Extract system message from messages or use systemPrompt from options
@@ -155,15 +165,15 @@ export class AnthropicProvider implements LLMProvider {
     const nonSystemMessages = messages.filter((message) => message.role !== 'system');
 
     if (options.systemPrompt) {
-      body.system = options.systemPrompt;
+      body['system'] = options.systemPrompt;
     } else if (systemMessages.length > 0) {
-      body.system = systemMessages.map((message) => message.content).join('\n\n');
+      body['system'] = systemMessages.map((message) => message.content).join('\n\n');
     }
 
-    body.messages = nonSystemMessages.map((message) => this.#convertMessage(message));
+    body['messages'] = nonSystemMessages.map((message) => this.#convertMessage(message));
 
     if (options.tools && options.tools.length > 0) {
-      body.tools = options.tools.map((tool) => this.#convertToolDefinition(tool));
+      body['tools'] = options.tools.map((tool) => this.#convertToolDefinition(tool));
     }
 
     return body;
@@ -203,28 +213,28 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   #parseResponse(data: Record<string, unknown>): ChatResponse {
-    const contentBlocks = data.content as Array<Record<string, unknown>>;
-    const usage = data.usage as Record<string, number>;
-    const model = data.model as string;
-    const stopReason = data.stop_reason as string;
+    const contentBlocks = data['content'] as Array<Record<string, unknown>>;
+    const usage = data['usage'] as Record<string, number>;
+    const model = data['model'] as string;
+    const stopReason = data['stop_reason'] as string;
 
     let textContent = '';
     const toolCalls: ToolCall[] = [];
 
     for (const block of contentBlocks) {
-      if (block.type === 'text') {
-        textContent += block.text as string;
-      } else if (block.type === 'tool_use') {
+      if (block['type'] === 'text') {
+        textContent += block['text'] as string;
+      } else if (block['type'] === 'tool_use') {
         toolCalls.push({
-          id: block.id as string,
-          name: block.name as string,
-          input: block.input,
+          id: block['id'] as string,
+          name: block['name'] as string,
+          input: block['input'],
         });
       }
     }
 
-    const inputTokens = usage.input_tokens ?? 0;
-    const outputTokens = usage.output_tokens ?? 0;
+    const inputTokens = usage['input_tokens'] ?? 0;
+    const outputTokens = usage['output_tokens'] ?? 0;
 
     return {
       content: textContent,
