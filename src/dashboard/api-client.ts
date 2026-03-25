@@ -164,7 +164,10 @@ export class ApiClient {
 
   /** Get the event history for a workflow. */
   async getWorkflowEvents(id: string): Promise<WorkflowEvent[]> {
-    return request<WorkflowEvent[]>(`/workflows/${encodeURIComponent(id)}/events`);
+    const response = await request<{ events: WorkflowEvent[] }>(
+      `/workflows/${encodeURIComponent(id)}/events`,
+    );
+    return response.events;
   }
 
   /** Get search attributes for a workflow. */
@@ -174,12 +177,13 @@ export class ApiClient {
 
   /** List all pending human review requests. */
   async listPendingReviews(): Promise<ReviewRequest[]> {
-    return request<ReviewRequest[]>('/reviews');
+    const response = await request<{ items: ReviewRequest[] }>('/reviews');
+    return response.items;
   }
 
   /** Submit a decision for a pending review. */
   async submitReviewDecision(reviewId: string, decision: ReviewDecision): Promise<void> {
-    return request<void>(`/reviews/${encodeURIComponent(reviewId)}`, {
+    return request<void>(`/reviews/${encodeURIComponent(reviewId)}/decision`, {
       method: 'POST',
       body: JSON.stringify(decision),
     });
