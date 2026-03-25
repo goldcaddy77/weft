@@ -18,6 +18,6 @@ export function formatTokenCount(count: number | undefined | null): string | nul
 /** Format a USD cost for display (e.g., "$0.03", "$1.50"). */
 export function formatCost(cost: number | undefined | null): string {
   if (cost === undefined || cost === null) return '-';
-  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  if (cost > 0 && cost < 0.01) return `$${cost.toFixed(4)}`;
   return `$${cost.toFixed(2)}`;
 }
