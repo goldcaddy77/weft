@@ -53,6 +53,7 @@
     {
       "files": ["**/*.test.ts", "**/*.spec.ts", "**/test/**/*.ts", "**/__tests__/**/*.ts"],
       "rules": {
+        "require-yield": "off",
         "typescript/no-explicit-any": "off",
         "typescript/no-unsafe-argument": "off",
         "typescript/no-unsafe-assignment": "off",
@@ -64,6 +65,7 @@
         "typescript/no-non-null-assertion": "off",
         "typescript/unbound-method": "off",
         "typescript/require-await": "off",
+        "typescript/await-thenable": "off",
         "typescript/no-magic-numbers": "off",
         "typescript/no-empty-function": "off",
         "typescript/no-unused-expressions": "off",

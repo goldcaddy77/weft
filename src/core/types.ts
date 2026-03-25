@@ -1,3 +1,5 @@
+import type { Storage as WeftStorage } from '../storage/interface.ts';
+
 // ---------------------------------------------------------------------------
 // Workflow identity
 // ---------------------------------------------------------------------------
@@ -127,7 +129,7 @@ export interface Serializer {
 // ---------------------------------------------------------------------------
 
 export interface EngineOptions {
-  storage?: Storage;
+  storage?: WeftStorage;
   development?: boolean;
   serializer?: Serializer;
   checkpointHistory?: number;
