@@ -48,22 +48,10 @@
     "typescript/no-floating-promises": "error",
     "typescript/await-thenable": "error"
   },
-  "ignorePatterns": [
-    "dist/**",
-    "build/**",
-    "coverage/**",
-    ".bun/**",
-    "node_modules/**",
-    "*.lock"
-  ],
+  "ignorePatterns": ["dist/**", "build/**", "coverage/**", ".bun/**", "node_modules/**", "*.lock"],
   "overrides": [
     {
-      "files": [
-        "**/*.test.ts",
-        "**/*.spec.ts",
-        "**/test/**/*.ts",
-        "**/__tests__/**/*.ts"
-      ],
+      "files": ["**/*.test.ts", "**/*.spec.ts", "**/test/**/*.ts", "**/__tests__/**/*.ts"],
       "rules": {
         "typescript/no-explicit-any": "off",
         "typescript/no-unsafe-argument": "off",
