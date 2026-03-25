@@ -36,7 +36,6 @@
 
   function handleClose() {
     open = false;
-    onclose?.();
   }
 
   function handleDialogClose() {

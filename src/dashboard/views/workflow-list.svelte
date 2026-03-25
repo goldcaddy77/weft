@@ -28,12 +28,13 @@
   let total = $state(0);
   let loading = $state(true);
   let error: string | null = $state(null);
+  let fetchGeneration = 0;
 
   // ---------------------------------------------------------------------------
   // Fetching
   // ---------------------------------------------------------------------------
 
-  async function fetchWorkflows(): Promise<void> {
+  async function fetchWorkflows(generation: number): Promise<void> {
     try {
       const result = await apiClient.listWorkflows({
         status: statusFilter === 'all' ? undefined : statusFilter,
@@ -41,13 +42,17 @@
         limit: pageSize,
         offset: currentOffset,
       });
+      if (generation !== fetchGeneration) return;
       workflows = result.items;
       total = result.total;
       error = null;
     } catch (fetchError) {
+      if (generation !== fetchGeneration) return;
       error = fetchError instanceof Error ? fetchError.message : String(fetchError);
     } finally {
-      loading = false;
+      if (generation === fetchGeneration) {
+        loading = false;
+      }
     }
   }
 
@@ -60,21 +65,22 @@
     const _deps = [statusFilter, typeFilter, currentOffset];
 
     loading = true;
-    fetchWorkflows();
+    const generation = ++fetchGeneration;
+    fetchWorkflows(generation);
 
     let interval: ReturnType<typeof setInterval> | null = null;
 
     function startPolling(): void {
       interval = setInterval(() => {
         if (!document.hidden) {
-          fetchWorkflows();
+          fetchWorkflows(fetchGeneration);
         }
       }, 5_000);
     }
 
     function handleVisibility(): void {
       if (!document.hidden && interval === null) {
-        fetchWorkflows();
+        fetchWorkflows(fetchGeneration);
         startPolling();
       } else if (document.hidden && interval !== null) {
         clearInterval(interval);
@@ -109,7 +115,7 @@
   }
 
   function handleRefresh(): void {
-    fetchWorkflows();
+    fetchWorkflows(fetchGeneration);
   }
 
   const STATUS_OPTIONS: Array<{ value: WorkflowStatus | 'all'; label: string }> = [
