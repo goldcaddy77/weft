@@ -14,14 +14,13 @@ import type { DiagnosticReport, VersionCheckReport } from './types.ts';
 // ---------------------------------------------------------------------------
 
 const supportsColor =
-  typeof process !== 'undefined' && process.stdout?.isTTY && !process.env.NO_COLOR;
+  typeof process !== 'undefined' && process.stdout?.isTTY && !process.env['NO_COLOR'];
 
 const color = {
   green: (text: string) => (supportsColor ? `\x1b[32m${text}\x1b[0m` : text),
   yellow: (text: string) => (supportsColor ? `\x1b[33m${text}\x1b[0m` : text),
   red: (text: string) => (supportsColor ? `\x1b[31m${text}\x1b[0m` : text),
   bold: (text: string) => (supportsColor ? `\x1b[1m${text}\x1b[0m` : text),
-  dim: (text: string) => (supportsColor ? `\x1b[2m${text}\x1b[0m` : text),
 };
 
 // ---------------------------------------------------------------------------
@@ -111,9 +110,7 @@ export function formatDiagnosticReport(report: DiagnosticReport): string {
     }
     if (report.workflows.largestCheckpoint) {
       const largest = report.workflows.largestCheckpoint;
-      lines.push(
-        `  Largest checkpoint: ${largest.workflowId} (${formatBytes(largest.sizeBytes)})`,
-      );
+      lines.push(`  Largest checkpoint: ${largest.workflowId} (${formatBytes(largest.sizeBytes)})`);
     }
   }
 
@@ -171,14 +168,10 @@ export function formatVersionCheckReport(report: VersionCheckReport): string {
       lines.push(`Result: ${color.green('Safe to deploy.')}`);
       break;
     case 'needs-migration':
-      lines.push(
-        `Result: ${color.yellow('Needs migration. Migration functions provided.')}`,
-      );
+      lines.push(`Result: ${color.yellow('Needs migration. Migration functions provided.')}`);
       break;
     case 'unsafe':
-      lines.push(
-        `Result: ${color.red('UNSAFE: missing migration functions.')}`,
-      );
+      lines.push(`Result: ${color.red('UNSAFE: missing migration functions.')}`);
       break;
   }
 

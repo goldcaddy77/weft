@@ -59,12 +59,12 @@ describe('runVersionCheck', () => {
 
     expect(report.overallVerdict).toBe('safe');
     expect(report.workflowTypes).toHaveLength(1);
-    expect(report.workflowTypes[0].type).toBe('order');
-    expect(report.workflowTypes[0].storedVersion).toBe('1.0.0');
-    expect(report.workflowTypes[0].registeredVersion).toBe('1.0.0');
-    expect(report.workflowTypes[0].runningCount).toBe(2);
-    expect(report.workflowTypes[0].compatibility).toBe('compatible');
-    expect(report.workflowTypes[0].hasMigration).toBe(false);
+    expect(report.workflowTypes[0]!.type).toBe('order');
+    expect(report.workflowTypes[0]!.storedVersion).toBe('1.0.0');
+    expect(report.workflowTypes[0]!.registeredVersion).toBe('1.0.0');
+    expect(report.workflowTypes[0]!.runningCount).toBe(2);
+    expect(report.workflowTypes[0]!.compatibility).toBe('compatible');
+    expect(report.workflowTypes[0]!.hasMigration).toBe(false);
   });
 
   it('returns needs-migration when versions differ and migration is provided', async () => {
@@ -86,10 +86,10 @@ describe('runVersionCheck', () => {
 
     expect(report.overallVerdict).toBe('needs-migration');
     expect(report.workflowTypes).toHaveLength(1);
-    expect(report.workflowTypes[0].compatibility).toBe('needs-migration');
-    expect(report.workflowTypes[0].hasMigration).toBe(true);
-    expect(report.workflowTypes[0].storedVersion).toBe('1.0.0');
-    expect(report.workflowTypes[0].registeredVersion).toBe('2.0.0');
+    expect(report.workflowTypes[0]!.compatibility).toBe('needs-migration');
+    expect(report.workflowTypes[0]!.hasMigration).toBe(true);
+    expect(report.workflowTypes[0]!.storedVersion).toBe('1.0.0');
+    expect(report.workflowTypes[0]!.registeredVersion).toBe('2.0.0');
   });
 
   it('returns unsafe when versions differ and no migration is provided', async () => {
@@ -107,8 +107,8 @@ describe('runVersionCheck', () => {
 
     expect(report.overallVerdict).toBe('unsafe');
     expect(report.workflowTypes).toHaveLength(1);
-    expect(report.workflowTypes[0].compatibility).toBe('resume-as-is');
-    expect(report.workflowTypes[0].hasMigration).toBe(false);
+    expect(report.workflowTypes[0]!.compatibility).toBe('resume-as-is');
+    expect(report.workflowTypes[0]!.hasMigration).toBe(false);
   });
 
   it('uses the worst-case verdict when multiple workflow types have different compatibility', async () => {
@@ -168,7 +168,7 @@ describe('runVersionCheck', () => {
 
     // Only the registered type should appear in the report
     expect(report.workflowTypes).toHaveLength(1);
-    expect(report.workflowTypes[0].type).toBe('order');
+    expect(report.workflowTypes[0]!.type).toBe('order');
     expect(report.overallVerdict).toBe('safe');
   });
 
@@ -218,7 +218,7 @@ describe('runVersionCheck', () => {
     const report = await runVersionCheck(storage, registrations);
 
     expect(report.workflowTypes).toHaveLength(1);
-    expect(report.workflowTypes[0].runningCount).toBe(1);
+    expect(report.workflowTypes[0]!.runningCount).toBe(1);
   });
 
   it('uses DEFAULT_WORKFLOW_VERSION when registration has no version', async () => {
@@ -235,8 +235,8 @@ describe('runVersionCheck', () => {
     const report = await runVersionCheck(storage, registrations);
 
     expect(report.overallVerdict).toBe('safe');
-    expect(report.workflowTypes[0].registeredVersion).toBe('0.0.0');
-    expect(report.workflowTypes[0].compatibility).toBe('compatible');
+    expect(report.workflowTypes[0]!.registeredVersion).toBe('0.0.0');
+    expect(report.workflowTypes[0]!.compatibility).toBe('compatible');
   });
 
   it('picks the most common version when workflows of the same type have different stored versions', async () => {
@@ -265,7 +265,7 @@ describe('runVersionCheck', () => {
 
     const report = await runVersionCheck(storage, registrations);
 
-    expect(report.workflowTypes[0].storedVersion).toBe('1.0.0');
-    expect(report.workflowTypes[0].runningCount).toBe(4);
+    expect(report.workflowTypes[0]!.storedVersion).toBe('1.0.0');
+    expect(report.workflowTypes[0]!.runningCount).toBe(4);
   });
 });

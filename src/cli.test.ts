@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  type CliCommand,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
+  executeDoctor,
+  executeVersionCheck,
   parseCliArguments,
 } from './cli.ts';
+
+type ServeCommand = Extract<CliCommand, { command: 'serve' }>;
+type DoctorCommand = Extract<CliCommand, { command: 'doctor' }>;
+type VersionCheckCommand = Extract<CliCommand, { command: 'version:check' }>;
 
 describe('CLI argument parsing', () => {
   describe('default subcommand (serve)', () => {
@@ -15,19 +22,19 @@ describe('CLI argument parsing', () => {
     });
 
     it('parses --port flag', () => {
-      const result = parseCliArguments(['--port', '8080']);
+      const result = parseCliArguments(['--port', '8080']) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('8080');
     });
 
     it('parses -p short flag for port', () => {
-      const result = parseCliArguments(['-p', '9999']);
+      const result = parseCliArguments(['-p', '9999']) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('9999');
     });
 
     it('defaults port to 7233', () => {
-      const result = parseCliArguments([]);
+      const result = parseCliArguments([]) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('7233');
     });
@@ -63,7 +70,12 @@ describe('CLI argument parsing', () => {
     });
 
     it('parses multiple flags together', () => {
-      const result = parseCliArguments(['--port', '3000', '--database', '/var/weft.db']);
+      const result = parseCliArguments([
+        '--port',
+        '3000',
+        '--database',
+        '/var/weft.db',
+      ]) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('3000');
       expect(result.database).toBe('/var/weft.db');
@@ -76,13 +88,13 @@ describe('CLI argument parsing', () => {
     });
 
     it('allows positional arguments without error', () => {
-      const result = parseCliArguments(['positional-arg', '--port', '5000']);
+      const result = parseCliArguments(['positional-arg', '--port', '5000']) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('5000');
     });
 
     it('parses all flags combined', () => {
-      const result = parseCliArguments(['-p', '4000', '-d', '/tmp/all.db', '-h']);
+      const result = parseCliArguments(['-p', '4000', '-d', '/tmp/all.db', '-h']) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('4000');
       expect(result.database).toBe('/tmp/all.db');
@@ -94,7 +106,7 @@ describe('CLI argument parsing', () => {
     });
 
     it('treats an unknown subcommand as a positional for serve', () => {
-      const result = parseCliArguments(['something-else', '--port', '4444']);
+      const result = parseCliArguments(['something-else', '--port', '4444']) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('4444');
     });
@@ -143,25 +155,25 @@ describe('CLI argument parsing', () => {
     });
 
     it('parses --json flag', () => {
-      const result = parseCliArguments(['doctor', '--json']);
+      const result = parseCliArguments(['doctor', '--json']) as DoctorCommand;
       expect(result.command).toBe('doctor');
       expect(result.json).toBe(true);
     });
 
     it('parses -j short flag for json', () => {
-      const result = parseCliArguments(['doctor', '-j']);
+      const result = parseCliArguments(['doctor', '-j']) as DoctorCommand;
       expect(result.command).toBe('doctor');
       expect(result.json).toBe(true);
     });
 
     it('defaults json to false', () => {
-      const result = parseCliArguments(['doctor']);
+      const result = parseCliArguments(['doctor']) as DoctorCommand;
       expect(result.command).toBe('doctor');
       expect(result.json).toBe(false);
     });
 
     it('parses multiple flags together', () => {
-      const result = parseCliArguments(['doctor', '-d', '/tmp/doc.db', '--json']);
+      const result = parseCliArguments(['doctor', '-d', '/tmp/doc.db', '--json']) as DoctorCommand;
       expect(result.command).toBe('doctor');
       expect(result.database).toBe('/tmp/doc.db');
       expect(result.json).toBe(true);
@@ -197,19 +209,23 @@ describe('CLI argument parsing', () => {
     });
 
     it('parses --workflows flag', () => {
-      const result = parseCliArguments(['version:check', '--workflows', './workflows.ts']);
+      const result = parseCliArguments([
+        'version:check',
+        '--workflows',
+        './workflows.ts',
+      ]) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.workflows).toBe('./workflows.ts');
     });
 
     it('parses -w short flag for workflows', () => {
-      const result = parseCliArguments(['version:check', '-w', './wf.ts']);
+      const result = parseCliArguments(['version:check', '-w', './wf.ts']) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.workflows).toBe('./wf.ts');
     });
 
     it('defaults workflows to empty string', () => {
-      const result = parseCliArguments(['version:check']);
+      const result = parseCliArguments(['version:check']) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.workflows).toBe('');
     });
@@ -233,19 +249,19 @@ describe('CLI argument parsing', () => {
     });
 
     it('parses --json flag', () => {
-      const result = parseCliArguments(['version:check', '--json']);
+      const result = parseCliArguments(['version:check', '--json']) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.json).toBe(true);
     });
 
     it('parses -j short flag for json', () => {
-      const result = parseCliArguments(['version:check', '-j']);
+      const result = parseCliArguments(['version:check', '-j']) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.json).toBe(true);
     });
 
     it('defaults json to false', () => {
-      const result = parseCliArguments(['version:check']);
+      const result = parseCliArguments(['version:check']) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.json).toBe(false);
     });
@@ -259,7 +275,7 @@ describe('CLI argument parsing', () => {
         './wf.ts',
         '-j',
         '-h',
-      ]);
+      ]) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.database).toBe('/tmp/vc.db');
       expect(result.workflows).toBe('./wf.ts');
@@ -312,6 +328,39 @@ describe('help text', () => {
 
   it('VERSION_CHECK_HELP_TEXT contains --help flag', () => {
     expect(VERSION_CHECK_HELP_TEXT).toContain('--help');
+  });
+});
+
+describe('executeDoctor', () => {
+  it('returns a formatted report for an in-memory database', async () => {
+    const result = await executeDoctor({ database: ':memory:', json: false });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('Database:');
+    expect(result.stdout).toContain('Workflows:');
+    expect(result.stdout).toContain('Activities:');
+    expect(result.stdout).toContain('Recommendations:');
+  });
+
+  it('returns JSON when json option is true', async () => {
+    const result = await executeDoctor({ database: ':memory:', json: true });
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report).toHaveProperty('database');
+    expect(report).toHaveProperty('workflows');
+    expect(report).toHaveProperty('queues');
+    expect(report).toHaveProperty('recommendations');
+  });
+});
+
+describe('executeVersionCheck', () => {
+  it('returns an error when workflows path is empty', async () => {
+    const result = await executeVersionCheck({
+      database: ':memory:',
+      workflows: '',
+      json: false,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('--workflows');
   });
 });
 
@@ -376,6 +425,55 @@ describe('CLI direct execution', () => {
     expect(stdout).toContain('--database');
     expect(stdout).toContain('--workflows');
     expect(stdout).toContain('--json');
+  });
+
+  it('runs doctor against an in-memory database and exits 0', async () => {
+    const process = Bun.spawn(['bun', './src/cli.ts', 'doctor', '--database', ':memory:'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    const stdout = await new Response(process.stdout).text();
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('Database:');
+    expect(stdout).toContain('Workflows:');
+    expect(stdout).toContain('Activities:');
+    expect(stdout).toContain('Recommendations:');
+  });
+
+  it('runs doctor with --json flag and outputs valid JSON', async () => {
+    const process = Bun.spawn(
+      ['bun', './src/cli.ts', 'doctor', '--database', ':memory:', '--json'],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
+
+    const exitCode = await process.exited;
+    const stdout = await new Response(process.stdout).text();
+
+    expect(exitCode).toBe(0);
+    const report = JSON.parse(stdout);
+    expect(report).toHaveProperty('database');
+    expect(report).toHaveProperty('workflows');
+    expect(report).toHaveProperty('queues');
+    expect(report).toHaveProperty('recommendations');
+  });
+
+  it('exits with error when version:check is missing --workflows flag', async () => {
+    const process = Bun.spawn(['bun', './src/cli.ts', 'version:check', '--database', ':memory:'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    const stderr = await new Response(process.stderr).text();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('--workflows');
   });
 
   it('starts the server and responds to health check', async () => {

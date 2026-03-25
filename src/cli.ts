@@ -46,7 +46,7 @@ export function parseCliArguments(args: string[]): CliCommand {
   let subcommandIndex = -1;
 
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+    const arg = args[i]!;
     if (arg.startsWith('-')) {
       // If this flag takes a value, skip the next arg too.
       if (
@@ -62,7 +62,7 @@ export function parseCliArguments(args: string[]): CliCommand {
       continue;
     }
     // First non-flag argument found.
-    if (KNOWN_SUBCOMMANDS.has(arg)) {
+    if (arg && KNOWN_SUBCOMMANDS.has(arg)) {
       subcommand = arg;
       subcommandIndex = i;
     }
@@ -192,6 +192,64 @@ Options:
 `;
 
 // ---------------------------------------------------------------------------
+// Command execution (exported for testing)
+// ---------------------------------------------------------------------------
+
+export interface CommandOutput {
+  stdout: string;
+  exitCode: number;
+  stderr?: string;
+}
+
+export async function executeDoctor(options: {
+  database: string;
+  json: boolean;
+}): Promise<CommandOutput> {
+  const { collectDiagnostics } = await import('./diagnostics/doctor.ts');
+  const { formatDiagnosticReport } = await import('./diagnostics/format.ts');
+
+  const storage = new BunSQLiteStorage(options.database);
+
+  try {
+    const report = await collectDiagnostics(storage, options.database);
+    const stdout = options.json ? JSON.stringify(report, null, 2) : formatDiagnosticReport(report);
+    return { stdout, exitCode: 0 };
+  } finally {
+    storage[Symbol.dispose]();
+  }
+}
+
+export async function executeVersionCheck(options: {
+  database: string;
+  workflows: string;
+  json: boolean;
+}): Promise<CommandOutput> {
+  if (!options.workflows) {
+    return {
+      stdout: '',
+      stderr: 'Error: --workflows flag is required for version:check',
+      exitCode: 1,
+    };
+  }
+
+  const { runVersionCheck } = await import('./diagnostics/version-check.ts');
+  const { formatVersionCheckReport } = await import('./diagnostics/format.ts');
+
+  const storage = new BunSQLiteStorage(options.database);
+
+  try {
+    const registrations = await import(options.workflows);
+    const report = await runVersionCheck(storage, registrations.default);
+    const stdout = options.json
+      ? JSON.stringify(report, null, 2)
+      : formatVersionCheckReport(report);
+    return { stdout, exitCode: 0 };
+  } finally {
+    storage[Symbol.dispose]();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main (only runs when executed directly, not when imported for tests)
 // ---------------------------------------------------------------------------
 
@@ -217,7 +275,6 @@ if (isDirectExecution) {
     console.log(`Weft running on ${server.url}`);
     console.log(`Database: ${parsed.database}`);
 
-    // Graceful shutdown
     process.on('SIGINT', () => {
       console.log('\nShutting down...');
       server.stop();
@@ -236,53 +293,18 @@ if (isDirectExecution) {
       process.exit(0);
     }
 
-    const { collectDiagnostics } = await import('./diagnostics/doctor.ts');
-    const { formatDiagnosticReport } = await import('./diagnostics/format.ts');
-
-    const storage = new BunSQLiteStorage(parsed.database);
-
-    try {
-      const report = await collectDiagnostics(storage);
-
-      if (parsed.json) {
-        console.log(JSON.stringify(report, null, 2));
-      } else {
-        console.log(formatDiagnosticReport(report));
-      }
-    } finally {
-      storage[Symbol.dispose]();
-    }
-
-    process.exit(0);
+    const result = await executeDoctor(parsed);
+    console.log(result.stdout);
+    process.exit(result.exitCode);
   } else if (parsed.command === 'version:check') {
     if (parsed.help) {
       console.log(VERSION_CHECK_HELP_TEXT);
       process.exit(0);
     }
 
-    if (!parsed.workflows) {
-      console.error('Error: --workflows flag is required for version:check');
-      process.exit(1);
-    }
-
-    const { runVersionCheck } = await import('./diagnostics/version-check.ts');
-    const { formatVersionCheckReport } = await import('./diagnostics/format.ts');
-
-    const storage = new BunSQLiteStorage(parsed.database);
-
-    try {
-      const registrations = await import(parsed.workflows);
-      const report = await runVersionCheck(storage, registrations.default);
-
-      if (parsed.json) {
-        console.log(JSON.stringify(report, null, 2));
-      } else {
-        console.log(formatVersionCheckReport(report));
-      }
-    } finally {
-      storage[Symbol.dispose]();
-    }
-
-    process.exit(0);
+    const result = await executeVersionCheck(parsed);
+    if (result.stderr) console.error(result.stderr);
+    if (result.stdout) console.log(result.stdout);
+    process.exit(result.exitCode);
   }
 }
