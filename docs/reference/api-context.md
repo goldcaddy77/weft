@@ -213,7 +213,25 @@ const results =
 ): Generator<ContextOperationRequest, OffloadReference, unknown>
 ```
 
-Move large data out of the checkpoint by computing it and storing it externally. Returns an `OffloadReference` that can be passed to `load()` later.
+Move large data out of the checkpoint by computing it and storing it externally. The function `fn` is called to produce the data, which is then encoded with MessagePack and persisted at a storage key derived from the workflow ID and the provided `key`. Returns an `OffloadReference` that can be passed to `load()` later to retrieve the data.
+
+| Parameter | Type               | Description                                                      |
+| --------- | ------------------ | ---------------------------------------------------------------- |
+| `key`     | `string`           | A unique identifier for this offloaded data within the workflow. |
+| `fn`      | `() => Promise<T>` | An async function that produces the data to offload.             |
+
+**Returns:** `OffloadReference` — an object containing `key`, `workflowId`, and `sizeBytes` (the byte length of the encoded data).
+
+```ts
+const reference =
+  yield *
+  context.offload('large-dataset', async () => {
+    return await fetchLargeDataset();
+  });
+// reference.sizeBytes tells you how large the stored data is
+// Pass reference to load() when you need the data again
+const data = yield * context.load(reference);
+```
 
 ### `load()`
 
@@ -221,7 +239,19 @@ Move large data out of the checkpoint by computing it and storing it externally.
 *load<T>(reference: OffloadReference): Generator<ContextOperationRequest, T, unknown>
 ```
 
-Load data that was previously offloaded via `offload()`.
+Load data that was previously offloaded via `offload()`. Reads the encoded data from storage using the reference's `workflowId` and `key`, decodes it, and returns the original value. Throws if the data is not found in storage.
+
+| Parameter   | Type               | Description                                            |
+| ----------- | ------------------ | ------------------------------------------------------ |
+| `reference` | `OffloadReference` | The reference returned by a previous `offload()` call. |
+
+**Returns:** `T` — the decoded data that was originally offloaded.
+
+```ts
+const reference = yield * context.offload('large-dataset', async () => bigData);
+// ... later in the workflow, or even after recovery ...
+const data = yield * context.load<MyDataType>(reference);
+```
 
 ### `archive()`
 
@@ -229,7 +259,23 @@ Load data that was previously offloaded via `offload()`.
 *archive(key: string, data: unknown): Generator<ContextOperationRequest, void, unknown>
 ```
 
-Persist data to external archive storage, separate from the checkpoint.
+Persist data to external archive storage, separate from the checkpoint. The data is encoded with MessagePack and stored at a key derived from the workflow ID and the provided `key`. Unlike `offload()`, archive is write-only from the workflow's perspective — the data is meant for auditing, debugging, or external queries rather than retrieval within the same workflow.
+
+| Parameter | Type      | Description                                                     |
+| --------- | --------- | --------------------------------------------------------------- |
+| `key`     | `string`  | A unique identifier for this archived data within the workflow. |
+| `data`    | `unknown` | The data to archive. Must be structuredClone-compatible.        |
+
+**Returns:** `void`
+
+```ts
+yield *
+  context.archive('processing-result-batch-1', {
+    processedAt: new Date(),
+    recordCount: records.length,
+    summary: computeSummary(records),
+  });
+```
 
 ### `agent()`
 

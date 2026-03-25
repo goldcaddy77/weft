@@ -817,27 +817,95 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       case 'offload': {
-        const data = await (operation.fn as () => Promise<unknown>)();
-        const serialized = JSON.stringify(data);
-        const reference = {
-          key: operation.key,
-          workflowId,
-          sizeBytes: new TextEncoder().encode(serialized).byteLength,
-        };
-        // TODO: persist offloaded data to external storage
-        await this.#driveGenerator(workflowId, generator, reference);
+        try {
+          const data = await (operation.fn as () => Promise<unknown>)();
+          const encoded = encode(data);
+          await this.#storage.put(KEYS.offload(workflowId, operation.key), encoded);
+          const reference = {
+            key: operation.key,
+            workflowId,
+            sizeBytes: encoded.byteLength,
+          };
+          await this.#driveGenerator(workflowId, generator, reference);
+        } catch (error) {
+          try {
+            const iterResult = await generator.throw(error);
+            if (iterResult.done) {
+              await this.#completeWorkflow(workflowId, iterResult.value);
+            } else {
+              await this.#processOperation(
+                workflowId,
+                generator,
+                iterResult.value as never as ContextOperationRequest,
+              );
+            }
+          } catch (innerError) {
+            await this.#failWorkflow(
+              workflowId,
+              innerError instanceof Error ? innerError : new Error(String(innerError)),
+            );
+          }
+        }
         break;
       }
 
       case 'load': {
-        // TODO: load offloaded data from external storage
-        await this.#driveGenerator(workflowId, generator, undefined);
+        try {
+          const reference = operation.reference;
+          const raw = await this.#storage.get(KEYS.offload(reference.workflowId, reference.key));
+          if (raw === null) {
+            throw new Error(
+              `Offloaded data not found for key "${reference.key}" in workflow "${reference.workflowId}"`,
+            );
+          }
+          const data = decode(raw);
+          await this.#driveGenerator(workflowId, generator, data);
+        } catch (error) {
+          try {
+            const iterResult = await generator.throw(error);
+            if (iterResult.done) {
+              await this.#completeWorkflow(workflowId, iterResult.value);
+            } else {
+              await this.#processOperation(
+                workflowId,
+                generator,
+                iterResult.value as never as ContextOperationRequest,
+              );
+            }
+          } catch (innerError) {
+            await this.#failWorkflow(
+              workflowId,
+              innerError instanceof Error ? innerError : new Error(String(innerError)),
+            );
+          }
+        }
         break;
       }
 
       case 'archive': {
-        // TODO: persist archived data to external storage
-        await this.#driveGenerator(workflowId, generator, undefined);
+        try {
+          const encoded = encode(operation.data);
+          await this.#storage.put(KEYS.archive(workflowId, operation.key), encoded);
+          await this.#driveGenerator(workflowId, generator, undefined);
+        } catch (error) {
+          try {
+            const iterResult = await generator.throw(error);
+            if (iterResult.done) {
+              await this.#completeWorkflow(workflowId, iterResult.value);
+            } else {
+              await this.#processOperation(
+                workflowId,
+                generator,
+                iterResult.value as never as ContextOperationRequest,
+              );
+            }
+          } catch (innerError) {
+            await this.#failWorkflow(
+              workflowId,
+              innerError instanceof Error ? innerError : new Error(String(innerError)),
+            );
+          }
+        }
         break;
       }
 

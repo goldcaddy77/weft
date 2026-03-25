@@ -123,3 +123,60 @@ The `id` option is useful when you want idempotent starts---starting a workflow 
 Unlike systems that replay an ever-growing event history, Weft's checkpoint is a constant-size snapshot of current state. It does not grow with the number of activities executed. A workflow can run for years, execute millions of activities, and its checkpoint stays the same size as it was after the first `yield*`. There is no history limit, no `continueAsNew`, no manual state serialization.
 
 Long-running workflows just run.
+
+## Managing large state
+
+While Weft's checkpoints stay constant-size by default, the data _inside_ your checkpoint can still grow if your workflow accumulates large intermediate results. Two context methods help you manage this.
+
+### Offloading large intermediate data
+
+When a workflow produces a large value that it needs later --- a batch of 10,000 processed records, a large API response --- keeping it in a local variable bloats the checkpoint. Use `ctx.offload()` to store the data separately, leaving only a lightweight reference in the checkpoint:
+
+```typescript
+engine.register('process-batch', async function* (ctx, input) {
+  const { batchId } = input as { batchId: string };
+
+  // Offload the large result out of the checkpoint
+  const reference = yield* ctx.offload('batch-results', async () => {
+    return await fetchAndProcessBatch(batchId);
+  });
+
+  // reference.sizeBytes tells you how big the stored data is
+  yield* ctx.run(logMetrics, { batchId, bytes: reference.sizeBytes });
+
+  // Load it back when needed
+  const results = yield* ctx.load(reference);
+  yield* ctx.run(publishResults, results);
+
+  return { batchId, recordCount: results.length };
+});
+```
+
+The offloaded data survives engine recovery --- it is persisted to the same storage backend as checkpoints. The `OffloadReference` is small (just a key, workflow ID, and size) and serializes cleanly in the checkpoint.
+
+### Archiving historical data
+
+Use `ctx.archive()` when you want to preserve data for auditing or debugging but do not need it again in the workflow. Archived data is stored at `archive:{workflowId}:{key}` and can be queried externally, but the workflow does not load it back:
+
+```typescript
+engine.register('order-pipeline', async function* (ctx, input) {
+  const order = input as Order;
+
+  const validated = yield* ctx.run(validateOrder, order);
+
+  // Archive the validation snapshot for auditing
+  yield* ctx.archive('validation-snapshot', {
+    validatedAt: new Date(),
+    order,
+    result: validated,
+  });
+
+  const charged = yield* ctx.run(chargeCard, validated);
+  return { orderId: order.id, charged };
+});
+```
+
+**When to use which:**
+
+- **`offload` / `load`** --- large data you need again later in the same workflow. Keeps the checkpoint lean while preserving access.
+- **`archive`** --- data you want to persist for external consumption (dashboards, compliance, debugging) but never read back in the workflow.

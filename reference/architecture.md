@@ -5372,7 +5372,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`weft doctor` diagnostic command.** Reports database health, workflow statistics, queue depths, performance metrics, and recommendations.
 - [ ] **Built-in alerting with zero external dependencies.** Alert rules as engine event listeners, webhook notifications via `fetch()`.
 - [ ] **Automatic checkpoint size warnings.** `CheckpointSizeWarningEvent` emitted when checkpoints exceed configurable threshold (default: 64KB).
-- [ ] **`ctx.offload()` stores large data separately.** Leaves only a lightweight reference in the checkpoint. `ctx.load()` retrieves on demand.
+- [x] **`ctx.offload()` stores large data separately.** Leaves only a lightweight reference in the checkpoint. `ctx.load()` retrieves on demand.
 - [ ] **Built-in profiling mode.** `performance.now()`-based per-operation timing. Zero overhead when disabled.
 - [ ] **Typed workflow registry.** `Engine<WorkflowRegistry>` provides compile-time type safety on `engine.start()`, `handle.result()`, `handle.signal()`.
 - [ ] **`weft/testing` module with `TestEngine`.** Real engine with `MemoryStorage`, deterministic time control, crash simulation via `engine.recover()`.

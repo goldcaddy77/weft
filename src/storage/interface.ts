@@ -51,6 +51,7 @@ export const KEYS = {
   budget: (namespace: string, period: string, date: string) =>
     `budget:${namespace}:${period}:${date}`,
   review: (workflowId: string, reviewId: string) => `review:${workflowId}:${reviewId}`,
+  offload: (workflowId: string, key: string) => `offload:${workflowId}:${key}`,
   archive: (workflowId: string, key: string) => `archive:${workflowId}:${key}`,
   sharedState: (workflowId: string, stateKey: string) => `shared:${workflowId}:${stateKey}`,
   sharedStateVersion: (workflowId: string, stateKey: string) =>
