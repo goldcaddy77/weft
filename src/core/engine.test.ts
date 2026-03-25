@@ -673,4 +673,86 @@ describe('Engine', () => {
     await engine.cancel(handle.id);
     engine[Symbol.dispose]();
   });
+
+  it('advanceWorkflow catch handler fires when handler is not a valid generator', async () => {
+    const engine = new Engine();
+
+    // Register a handler that is a regular function (not an async generator).
+    // When the engine calls handler(context, input), it returns a non-generator
+    // value, and calling .next() on it throws, which is caught by driveGenerator.
+    // But if the handler itself throws synchronously before returning, the
+    // .catch on advanceWorkflow fires.
+    engine.register('bad-handler', (() => {
+      throw new Error('handler construction failed');
+    }) as any);
+
+    const events: WorkflowFailedEvent[] = [];
+    engine.addEventListener(WorkflowFailedEvent.type, (event) => {
+      events.push(event as WorkflowFailedEvent);
+    });
+
+    const handle = await engine.start('bad-handler', null);
+    await expect(handle.result()).rejects.toThrow();
+    await flush();
+
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('getHandle for a completed and resolved workflow loads result from storage', async () => {
+    const engine = new Engine();
+    engine.register('load-test', async function* () {
+      return 'stored-value';
+    });
+
+    const handle = await engine.start('load-test', null, { id: 'load-test-id' });
+    await handle.result();
+    await flush();
+
+    // After workflow completes, result resolvers are cleaned up.
+    // Calling getHandle creates a handle that loads from storage.
+    const newHandle = engine.getHandle('load-test-id');
+    const result = await newHandle.result();
+    expect(result).toBe('stored-value');
+    engine[Symbol.dispose]();
+  });
+
+  it('getHandle for a failed workflow that was loaded from storage throws', async () => {
+    const engine = new Engine();
+    engine.register('fail-test', async function* () {
+      throw new Error('stored failure');
+    });
+
+    const handle = await engine.start('fail-test', null, { id: 'fail-test-id' });
+    await handle.result().catch(() => {});
+    await flush();
+
+    const newHandle = engine.getHandle('fail-test-id');
+    await expect(newHandle.result()).rejects.toThrow('stored failure');
+    engine[Symbol.dispose]();
+  });
+
+  it('getHandle for a running workflow with no cached handle creates a chained promise', async () => {
+    const engine = new Engine();
+    engine.register('chain-test', async function* (ctx: WorkflowContext) {
+      const value = yield* (ctx as Context).waitForSignal('proceed');
+      return `chained: ${value as string}`;
+    });
+
+    const handle = await engine.start('chain-test', null, { id: 'chain-test-id' });
+    await flush();
+
+    // The first getHandle returns the cached handle (from start).
+    // Calling getHandle again while the workflow is running chains the resolve/reject.
+    const handle2 = engine.getHandle('chain-test-id');
+
+    // Now signal the workflow to complete
+    await engine.signal('chain-test-id', 'proceed', 'data');
+
+    const result1 = await handle.result();
+    const result2 = await handle2.result();
+    expect(result1).toBe('chained: data');
+    expect(result2).toBe('chained: data');
+    engine[Symbol.dispose]();
+  });
 });

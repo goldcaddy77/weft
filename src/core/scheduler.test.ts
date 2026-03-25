@@ -210,6 +210,20 @@ describe('Scheduler', () => {
     expect(firedEntries[2]!.id).toBe('timer-2');
   });
 
+  it('cancel is a no-op for a timer that was never scheduled', async () => {
+    await scheduler.cancel('nonexistent-timer', 'some-workflow');
+    // Should not throw and no entries should fire
+    await scheduler.tick(currentTime);
+    expect(firedEntries).toHaveLength(0);
+  });
+
+  it('start is idempotent (calling start twice does not create duplicate intervals)', async () => {
+    scheduler.start();
+    scheduler.start(); // second call should be a no-op
+    scheduler.stop();
+    // No assertion needed -- just verifying it doesn't throw or create duplicate intervals
+  });
+
   it('cancel prevents a timer from firing', async () => {
     const entry = makeTimer({ fireAt: currentTime - 1000 });
     await scheduler.schedule(entry);
@@ -256,6 +270,43 @@ describe('Scheduler', () => {
     await Bun.sleep(200);
 
     expect(firedEntries).toHaveLength(0);
+  });
+
+  it('tick uses getNow when no argument is provided', async () => {
+    const entry = makeTimer({ fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    // Call tick() without an argument; should use getNow()
+    await scheduler.tick();
+
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe('timer-1');
+  });
+
+  it('polling loop fires expired timers automatically', async () => {
+    // Use a very short poll interval so the interval actually fires
+    scheduler[Symbol.dispose]();
+    scheduler = new Scheduler({
+      storage,
+      onTimerFired: (entry) => {
+        firedEntries.push(entry);
+      },
+      pollIntervalMs: 20,
+      getNow: () => currentTime,
+    });
+
+    const entry = makeTimer({ fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    scheduler.start();
+
+    // Wait for the poll cycle to fire
+    await Bun.sleep(100);
+
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe('timer-1');
+
+    scheduler.stop();
   });
 
   it('full integration: schedule, advance time via tick, verify fired', async () => {

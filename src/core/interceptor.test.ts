@@ -337,6 +337,67 @@ describe('composeWorkflowInterceptors', () => {
       expect(outcome.value).toBe('signal-value');
       expect(capturedSignalName).toBe('approval');
     });
+
+    it('allows an interceptor to modify the signal payload before next()', () => {
+      const interceptor: WorkflowInterceptor = {
+        *waitForSignal(ctx, next) {
+          return yield* next({ ...ctx, payload: 'intercepted' });
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+      let capturedPayload: unknown;
+
+      function* execute(ctx: SignalInterception): Generator<unknown, unknown, unknown> {
+        capturedPayload = ctx.payload;
+        return 'done';
+      }
+
+      const generator = composed.waitForSignal(makeSignalInterception(), execute);
+      generator.next();
+
+      expect(capturedPayload).toBe('intercepted');
+    });
+
+    it('composes two waitForSignal interceptors in order', () => {
+      const order: string[] = [];
+
+      const first: WorkflowInterceptor = {
+        *waitForSignal(ctx, next) {
+          order.push('first:before');
+          const result = yield* next(ctx);
+          order.push('first:after');
+          return result;
+        },
+      };
+
+      const second: WorkflowInterceptor = {
+        *waitForSignal(ctx, next) {
+          order.push('second:before');
+          const result = yield* next(ctx);
+          order.push('second:after');
+          return result;
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([first, second]);
+
+      function* execute(_ctx: SignalInterception): Generator<unknown, unknown, unknown> {
+        order.push('execute');
+        return 'value';
+      }
+
+      const generator = composed.waitForSignal(makeSignalInterception(), execute);
+      generator.next();
+
+      expect(order).toEqual([
+        'first:before',
+        'second:before',
+        'execute',
+        'second:after',
+        'first:after',
+      ]);
+    });
   });
 
   describe('workflowStart hook', () => {

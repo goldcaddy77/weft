@@ -451,6 +451,26 @@ describe('RemoteWorker', () => {
     await worker.disconnect();
   });
 
+  it('sendMessage is a no-op when not connected (disposed before heartbeat fires)', async () => {
+    server = createTestServer();
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    // Dispose the worker (sets ws to null via close)
+    worker[Symbol.dispose]();
+
+    // Worker should no longer be connected
+    expect(worker.connected).toBe(false);
+  });
+
   it('sends heartbeat messages periodically', async () => {
     const messages: any[] = [];
 

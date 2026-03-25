@@ -330,4 +330,14 @@ describe('Context', () => {
       expect(context.stepIndex).toBe(5);
     });
   });
+
+  describe('accumulatedResults getter', () => {
+    it('returns the internal accumulated results map', () => {
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, 'value-0');
+      const context = createContext({ accumulatedResults });
+      expect(context.accumulatedResults).toBe(accumulatedResults);
+      expect(context.accumulatedResults.get(0)).toBe('value-0');
+    });
+  });
 });

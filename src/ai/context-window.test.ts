@@ -262,4 +262,19 @@ describe('ContextWindowManager', () => {
       expect(manager.shouldCompact(638)).toBe(true);
     });
   });
+
+  describe('default countTokens', () => {
+    it('uses the built-in token counter when none is provided', async () => {
+      const manager = new ContextWindowManager({
+        maxTokens: 10000,
+      });
+
+      const messages = createMessages(3);
+      const result = await manager.compact(messages);
+
+      // The default countTokens uses content.length / 4
+      expect(result.tokensBefore).toBeGreaterThan(0);
+      expect(result.messages).toHaveLength(3);
+    });
+  });
 });

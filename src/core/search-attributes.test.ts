@@ -58,6 +58,16 @@ describe('search-attributes', () => {
       const encodedLater = encodeAttributeValue(later);
       expect(encodedEarlier < encodedLater).toBe(true);
     });
+
+    it('encodes a Date value with d: prefix and ISO format', () => {
+      const date = new Date('2024-06-15T12:00:00.000Z');
+      const encoded = encodeAttributeValue(date);
+      expect(encoded).toBe('d:2024-06-15T12:00:00.000Z');
+    });
+
+    it('throws when encoding a keyword list (string array) directly', () => {
+      expect(() => encodeAttributeValue(['a', 'b'] as any)).toThrow('Cannot encode a keyword list');
+    });
   });
 
   describe('decodeAttributeValue (round-trip)', () => {
@@ -87,6 +97,18 @@ describe('search-attributes', () => {
       const decoded = decodeAttributeValue(encoded, 'datetime');
       expect(decoded).toBeInstanceOf(Date);
       expect((decoded as Date).toISOString()).toBe(original.toISOString());
+    });
+
+    it('round-trips a negative number value', () => {
+      const original = -7.5;
+      const encoded = encodeAttributeValue(original);
+      expect(decodeAttributeValue(encoded, 'number')).toBe(original);
+    });
+
+    it('throws for an unknown attribute type', () => {
+      expect(() => decodeAttributeValue('x:something', 'unknown-type')).toThrow(
+        'Unknown search attribute type: unknown-type',
+      );
     });
   });
 
@@ -167,6 +189,42 @@ describe('search-attributes', () => {
         { customerId: 'abc', price: 10, active: true },
       );
       expect(operations).toHaveLength(0);
+    });
+
+    it('produces no operations when Date values are equal', () => {
+      const date = new Date('2024-01-01T00:00:00.000Z');
+      const sameDateDifferentInstance = new Date('2024-01-01T00:00:00.000Z');
+      const operations = buildIndexOperations(
+        'wf-1',
+        { createdAt: date },
+        { createdAt: sameDateDifferentInstance },
+      );
+      expect(operations).toHaveLength(0);
+    });
+
+    it('produces DELETE and PUT when Date values differ', () => {
+      const oldDate = new Date('2024-01-01T00:00:00.000Z');
+      const newDate = new Date('2024-06-01T00:00:00.000Z');
+      const operations = buildIndexOperations(
+        'wf-1',
+        { createdAt: oldDate },
+        { createdAt: newDate },
+      );
+      expect(operations).toHaveLength(2);
+      expect(operations[0]!.type).toBe('delete');
+      expect(operations[1]!.type).toBe('put');
+    });
+
+    it('produces no operations when keyword list values are equal (same elements)', () => {
+      const operations = buildIndexOperations('wf-1', { tags: ['a', 'b'] }, { tags: ['b', 'a'] });
+      // Elements are the same (just reordered), so no additions or deletions
+      expect(operations).toHaveLength(0);
+    });
+
+    it('produces DELETE for all elements when keyword list is removed', () => {
+      const operations = buildIndexOperations('wf-1', { tags: ['a', 'b'] }, {});
+      expect(operations).toHaveLength(2);
+      expect(operations.every((operation) => operation.type === 'delete')).toBe(true);
     });
   });
 });
