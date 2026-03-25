@@ -59,6 +59,7 @@
         "typescript/no-unsafe-call": "off",
         "typescript/no-unsafe-member-access": "off",
         "typescript/no-unsafe-return": "off",
+        "typescript/no-unsafe-type-assertion": "off",
         "typescript/no-floating-promises": "off",
         "typescript/no-non-null-assertion": "off",
         "typescript/unbound-method": "off",
@@ -67,7 +68,8 @@
         "typescript/no-empty-function": "off",
         "typescript/no-unused-expressions": "off",
         "typescript/no-unused-vars": "off",
-        "no-unused-vars": "off"
+        "no-unused-vars": "off",
+        "unicorn/consistent-function-scoping": "off"
       }
     }
   ]
