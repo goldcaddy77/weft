@@ -79,9 +79,12 @@ export {
 // Scheduler
 export { Scheduler, calculateBackoff, parseDuration } from './core/scheduler';
 
+// Activity
+export { activity } from './core/activity';
+
 // Context
 export { Context } from './core/context';
-export type { ContextOperationRequest, ContextOptions } from './core/context';
+export type { ContextOperationRequest, ContextOptions, OffloadReference } from './core/context';
 
 // Interceptors
 export { composeActivityInterceptors, composeWorkflowInterceptors } from './core/interceptor';

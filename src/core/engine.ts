@@ -816,6 +816,43 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         break;
       }
 
+      case 'offload': {
+        const data = await (operation.fn as () => Promise<unknown>)();
+        const serialized = JSON.stringify(data);
+        const reference = {
+          key: operation.key,
+          workflowId,
+          sizeBytes: new TextEncoder().encode(serialized).byteLength,
+        };
+        // TODO: persist offloaded data to external storage
+        await this.#driveGenerator(workflowId, generator, reference);
+        break;
+      }
+
+      case 'load': {
+        // TODO: load offloaded data from external storage
+        await this.#driveGenerator(workflowId, generator, undefined);
+        break;
+      }
+
+      case 'archive': {
+        // TODO: persist archived data to external storage
+        await this.#driveGenerator(workflowId, generator, undefined);
+        break;
+      }
+
+      case 'run-all': {
+        const results: Record<string, unknown> = {};
+        const entries = Object.entries(operation.branches);
+        const promises = entries.map(async ([name, [fn, ...args]]) => {
+          const result = await callActivityFunction(fn, args);
+          results[name] = result;
+        });
+        await Promise.all(promises);
+        await this.#driveGenerator(workflowId, generator, results);
+        break;
+      }
+
       default:
         throw new Error(`Unknown operation type: ${(operation as { type: string }).type}`);
     }

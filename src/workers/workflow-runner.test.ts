@@ -396,8 +396,7 @@ describe('handleResumeMessage — error paths', () => {
     };
 
     async function* throwOnResumeWorkflow() {
-      // @ts-expect-error -- yield result is intentionally unused in this test
-      const _result: unknown = yield operationRequest;
+      yield operationRequest;
       throw new Error('resume exploded');
     }
 
@@ -458,8 +457,7 @@ describe('formatError', () => {
     };
 
     async function* nonErrorResumeThrow() {
-      // @ts-expect-error -- yield result is intentionally unused in this test
-      const _result: unknown = yield operationRequest;
+      yield operationRequest;
       throw 42;
     }
 

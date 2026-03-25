@@ -6,14 +6,12 @@ import { MCPClient, MCPServerUnavailableError, MCPToolTimeoutError } from './cli
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Bun's `typeof fetch` includes a static `preconnect` property that is
-// absent from plain function values. Casting through `any` avoids TS errors
-// when monkey-patching `globalThis.fetch` in test assertions.
-function setFetch(fn: (...args: any[]) => Promise<Response>): void {
-  globalThis.fetch = fn as typeof fetch;
-}
-
 const originalFetch = globalThis.fetch;
+
+function mockFetch(implementation: (...args: any[]) => Promise<Response>): void {
+  const mock = Object.assign(implementation, { preconnect: (_url: string) => {} });
+  globalThis.fetch = mock as typeof fetch;
+}
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -52,7 +50,7 @@ describe('MCPClient', () => {
         { name: 'calculate', description: 'Do math', inputSchema: {}, parameters: {} },
       ];
 
-      setFetch(async (input: any) => {
+      mockFetch(async (input: any) => {
         const url = typeof input === 'string' ? input : input.url;
         expect(url).toBe('https://mcp.example.com/tools');
         return new Response(JSON.stringify({ tools: mockTools }), { status: 200 });
@@ -65,7 +63,7 @@ describe('MCPClient', () => {
     });
 
     it('throws MCPServerUnavailableError when server returns non-ok', async () => {
-      setFetch(async () => {
+      mockFetch(async () => {
         return new Response('Internal Server Error', { status: 500 });
       });
 
@@ -77,7 +75,7 @@ describe('MCPClient', () => {
     it('includes auth headers when auth is configured', async () => {
       let capturedHeaders: Headers | undefined;
 
-      setFetch(async (_input: any, init: any) => {
+      mockFetch(async (_input: any, init: any) => {
         capturedHeaders = new Headers(init?.headers);
         return new Response(JSON.stringify({ tools: [] }), { status: 200 });
       });
@@ -95,7 +93,7 @@ describe('MCPClient', () => {
 
   describe('invokeTool', () => {
     it('invokes a tool and returns its result', async () => {
-      setFetch(async (_input: any, init: any) => {
+      mockFetch(async (_input: any, init: any) => {
         const body = JSON.parse(init?.body);
         expect(body.name).toBe('search');
         expect(body.input).toEqual({ query: 'hello' });
@@ -109,7 +107,7 @@ describe('MCPClient', () => {
     });
 
     it('throws MCPServerUnavailableError when server returns non-ok', async () => {
-      setFetch(async () => {
+      mockFetch(async () => {
         return new Response('Server Error', { status: 500 });
       });
 
@@ -119,7 +117,7 @@ describe('MCPClient', () => {
     });
 
     it('throws MCPToolTimeoutError when the request times out', async () => {
-      setFetch(async (_input: any, init: any) => {
+      mockFetch(async (_input: any, init: any) => {
         // Wait for the abort signal to fire
         await new Promise((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => {
@@ -138,7 +136,7 @@ describe('MCPClient', () => {
     });
 
     it('re-throws non-timeout errors from fetch', async () => {
-      setFetch(async () => {
+      mockFetch(async () => {
         throw new TypeError('Network error');
       });
 
@@ -150,7 +148,7 @@ describe('MCPClient', () => {
     it('respects external abort signal', async () => {
       const controller = new AbortController();
 
-      setFetch(async (_input: any, init: any) => {
+      mockFetch(async (_input: any, init: any) => {
         await new Promise((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => {
             reject(new DOMException('The operation was aborted.', 'AbortError'));
@@ -174,7 +172,7 @@ describe('MCPClient', () => {
     it('uses default timeout when none is specified', async () => {
       let receivedSignal: AbortSignal | undefined;
 
-      setFetch(async (_input: any, init: any) => {
+      mockFetch(async (_input: any, init: any) => {
         receivedSignal = init?.signal;
         return new Response(JSON.stringify({ result: 'ok' }), { status: 200 });
       });
@@ -190,7 +188,7 @@ describe('MCPClient', () => {
 
   describe('healthCheck', () => {
     it('returns true when server responds with ok', async () => {
-      setFetch(async () => {
+      mockFetch(async () => {
         return new Response('OK', { status: 200 });
       });
 
@@ -201,7 +199,7 @@ describe('MCPClient', () => {
     });
 
     it('returns false when server returns non-ok status', async () => {
-      setFetch(async () => {
+      mockFetch(async () => {
         return new Response('Service Unavailable', { status: 503 });
       });
 
@@ -212,7 +210,7 @@ describe('MCPClient', () => {
     });
 
     it('returns false when fetch throws', async () => {
-      setFetch(async () => {
+      mockFetch(async () => {
         throw new Error('Network failure');
       });
 
