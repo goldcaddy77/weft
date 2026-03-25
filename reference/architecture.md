@@ -5031,7 +5031,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [ ] **`BunSQLStorage` uses `WITHOUT ROWID` tables.** Verified in schema.
 - [ ] **`BunSQLStorage` sets WAL mode, `synchronous = NORMAL`, 64MB cache.** Verified by `PRAGMA` queries in tests.
 - [ ] **`LMDBStorage` uses `lmdb-js` with async write batching.** Reads are synchronous zero-copy.
-- [ ] **`IndexedDBStorage` works in browsers.** Tested in Chrome, Firefox, Safari.
+- [x] **`IndexedDBStorage` works in browsers.** Tested in Chrome, Firefox, Safari.
 - [ ] **`MemoryStorage` exists for testing.** Fast, no I/O, no dependencies.
 - [ ] **Turso adapter exists for distributed deployments.** Same interface, connection string change.
 - [ ] **All storage adapters implement `Disposable`.** `using storage = new XStorage(...)` works.
@@ -5096,7 +5096,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 - [ ] **Core engine runs in browser Web Workers.** Same workflow code, IndexedDB storage.
 - [ ] **Service Worker intercepts `/weft/` fetch events.** Same `handleHTTP()` function as server.
-- [ ] **IndexedDB storage passes all storage interface tests.** Same test suite as SQLite.
+- [x] **IndexedDB storage passes all storage interface tests.** Same test suite as SQLite.
 - [ ] **Client library works with both remote server and local Service Worker.** Same `fetch()` calls, different routing.
 - [ ] **Service Worker handles Periodic Background Sync for timers.** (Where browser supports it.)
 
