@@ -5367,7 +5367,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [ ] **Stack-trace-preserving errors.** Activity failure errors include the original workflow call site, not just the remote worker stack.
 - [x] **`weft version:check` CLI command.** Analyzes registered workflows against existing database, reports checkpoint compatibility before deployment.
 - [ ] **Automatic checkpoint schema inference.** Actionable error messages on version mismatch naming exact fields that changed.
-- [ ] **`ctx.step()` sugar for non-generator workflows.** Progressive disclosure — wraps checkpoint boundaries in a familiar async function.
+- [x] **`ctx.step()` sugar for non-generator workflows.** Progressive disclosure — wraps checkpoint boundaries in a familiar async function.
 - [ ] **`ctx.explain()` development mode.** Logs what each context operation does and why at runtime.
 - [x] **`weft doctor` diagnostic command.** Reports database health, workflow statistics, queue depths, performance metrics, and recommendations.
 - [ ] **Built-in alerting with zero external dependencies.** Alert rules as engine event listeners, webhook notifications via `fetch()`.
