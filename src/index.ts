@@ -212,3 +212,28 @@ export { HeartbeatManager } from './worker/heartbeat';
 export { RemoteWorker } from './worker/index';
 export { LongPollWorker } from './worker/long-poll';
 export { WorkerRegistry } from './worker/registry';
+
+// Diagnostics
+export { collectDiagnostics } from './diagnostics/doctor';
+export {
+  formatBytes,
+  formatDiagnosticReport,
+  formatDuration,
+  formatVersionCheckReport,
+} from './diagnostics/format';
+export { generateRecommendations } from './diagnostics/recommendations';
+export { runVersionCheck } from './diagnostics/version-check';
+export type {
+  DatabaseHealth,
+  DiagnosticReport,
+  HealthStatus,
+  LargestCheckpoint,
+  LongestRunningWorkflow,
+  QueueStatistics,
+  Recommendation,
+  RecommendationSeverity,
+  VersionCheckReport,
+  WorkflowStatusCounts,
+  WorkflowStatistics,
+  WorkflowTypeReport,
+} from './diagnostics/types';

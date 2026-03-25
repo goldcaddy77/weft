@@ -5365,11 +5365,11 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 - [ ] **Development mode detects non-cloneable checkpoint values.** Serializes/deserializes at each boundary, reports exact field paths that fail with fix suggestions.
 - [ ] **Stack-trace-preserving errors.** Activity failure errors include the original workflow call site, not just the remote worker stack.
-- [ ] **`weft version:check` CLI command.** Analyzes registered workflows against existing database, reports checkpoint compatibility before deployment.
+- [x] **`weft version:check` CLI command.** Analyzes registered workflows against existing database, reports checkpoint compatibility before deployment.
 - [ ] **Automatic checkpoint schema inference.** Actionable error messages on version mismatch naming exact fields that changed.
 - [ ] **`ctx.step()` sugar for non-generator workflows.** Progressive disclosure — wraps checkpoint boundaries in a familiar async function.
 - [ ] **`ctx.explain()` development mode.** Logs what each context operation does and why at runtime.
-- [ ] **`weft doctor` diagnostic command.** Reports database health, workflow statistics, queue depths, performance metrics, and recommendations.
+- [x] **`weft doctor` diagnostic command.** Reports database health, workflow statistics, queue depths, performance metrics, and recommendations.
 - [ ] **Built-in alerting with zero external dependencies.** Alert rules as engine event listeners, webhook notifications via `fetch()`.
 - [ ] **Automatic checkpoint size warnings.** `CheckpointSizeWarningEvent` emitted when checkpoints exceed configurable threshold (default: 64KB).
 - [ ] **`ctx.offload()` stores large data separately.** Leaves only a lightweight reference in the checkpoint. `ctx.load()` retrieves on demand.
