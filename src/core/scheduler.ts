@@ -1,0 +1,179 @@
+/**
+ * Timer/retry scheduling logic with durable persistence.
+ *
+ * Provides duration parsing, exponential backoff calculation,
+ * and a Scheduler class that manages durable timers backed by storage.
+ *
+ * @module scheduler
+ */
+
+import type { Storage } from '../storage/interface';
+import { KEYS } from '../storage/interface';
+import { decode, encode } from './codec';
+import type { Duration, RetryPolicy, TimerEntry } from './types';
+
+// ---------------------------------------------------------------------------
+// Duration parsing
+// ---------------------------------------------------------------------------
+
+const DURATION_PATTERN =
+  /^(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|seconds?|m|minutes?|h|hours?|d|days?)$/i;
+
+const UNIT_TO_MILLISECONDS: Record<string, number> = {
+  ms: 1,
+  millisecond: 1,
+  milliseconds: 1,
+  s: 1000,
+  second: 1000,
+  seconds: 1000,
+  m: 60_000,
+  minute: 60_000,
+  minutes: 60_000,
+  h: 3_600_000,
+  hour: 3_600_000,
+  hours: 3_600_000,
+  d: 86_400_000,
+  day: 86_400_000,
+  days: 86_400_000,
+};
+
+/** Parse a human-readable duration string or number to milliseconds. */
+export function parseDuration(duration: Duration): number {
+  if (typeof duration === 'number') {
+    return duration;
+  }
+
+  const match = DURATION_PATTERN.exec(duration.trim());
+
+  if (!match) {
+    throw new Error(
+      `Invalid duration string: "${duration}". Expected a number or a string like "30s", "5 minutes", "1 hour", etc.`,
+    );
+  }
+
+  const value = Number.parseFloat(match[1]!);
+  const unit = match[2]!.toLowerCase();
+  const multiplier = UNIT_TO_MILLISECONDS[unit];
+
+  if (multiplier === undefined) {
+    throw new Error(`Unknown duration unit: "${unit}"`);
+  }
+
+  return value * multiplier;
+}
+
+// ---------------------------------------------------------------------------
+// Backoff calculation
+// ---------------------------------------------------------------------------
+
+/** Calculate exponential backoff delay for a given retry attempt. */
+export function calculateBackoff(attempt: number, policy: RetryPolicy): number {
+  const initialMs = parseDuration(policy.initialBackoff);
+  const maxMs = parseDuration(policy.maxBackoff);
+  const raw = initialMs * Math.pow(policy.backoffMultiplier, attempt - 1);
+  return Math.min(raw, maxMs);
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler
+// ---------------------------------------------------------------------------
+
+export interface SchedulerOptions {
+  storage: Storage;
+  onTimerFired: (entry: TimerEntry) => void | Promise<void>;
+  pollIntervalMs?: number;
+  getNow?: () => number;
+}
+
+/** Scheduler manages durable timers and polls for expired deadlines. */
+export class Scheduler implements Disposable {
+  readonly #storage: Storage;
+  readonly #onTimerFired: (entry: TimerEntry) => void | Promise<void>;
+  readonly #pollIntervalMs: number;
+  readonly #getNow: () => number;
+  #intervalHandle: ReturnType<typeof setInterval> | null = null;
+
+  constructor(options: SchedulerOptions) {
+    this.#storage = options.storage;
+    this.#onTimerFired = options.onTimerFired;
+    this.#pollIntervalMs = options.pollIntervalMs ?? 1000;
+    this.#getNow = options.getNow ?? Date.now;
+  }
+
+  /** Start the polling loop. */
+  start(): void {
+    if (this.#intervalHandle !== null) return;
+
+    this.#intervalHandle = setInterval(() => {
+      void this.tick();
+    }, this.#pollIntervalMs);
+  }
+
+  /** Stop the polling loop. */
+  stop(): void {
+    if (this.#intervalHandle !== null) {
+      clearInterval(this.#intervalHandle);
+      this.#intervalHandle = null;
+    }
+  }
+
+  /** Schedule a durable timer (writes to storage). */
+  async schedule(entry: TimerEntry): Promise<void> {
+    const deadlineKey = KEYS.deadline(entry.fireAt, entry.id);
+    const indexKey = `timer-idx:${entry.id}`;
+
+    await this.#storage.batch([
+      { type: 'put', key: deadlineKey, value: encode(entry) },
+      { type: 'put', key: indexKey, value: encode(deadlineKey) },
+    ]);
+  }
+
+  /** Cancel a timer (removes from storage). */
+  async cancel(id: string, _workflowId: string): Promise<void> {
+    const indexKey = `timer-idx:${id}`;
+    const indexValue = await this.#storage.get(indexKey);
+
+    if (indexValue === null) return;
+
+    const deadlineKey = decode(indexValue) as string;
+
+    await this.#storage.batch([
+      { type: 'delete', key: deadlineKey },
+      { type: 'delete', key: indexKey },
+    ]);
+  }
+
+  /** Force an immediate scan for expired timers (for tests). */
+  async tick(now?: number): Promise<void> {
+    const currentTime = now ?? this.#getNow();
+    const upperBound = KEYS.deadline(currentTime, '\xff');
+
+    const expired: Array<{ key: string; entry: TimerEntry }> = [];
+
+    for await (const [key, value] of this.#storage.scan('wf-deadline:', { lte: upperBound })) {
+      const entry = decode(value) as TimerEntry;
+      expired.push({ key, entry });
+    }
+
+    // Fire callbacks and delete keys in chronological order (already sorted by scan)
+    for (const { key, entry } of expired) {
+      await this.#onTimerFired(entry);
+
+      const indexKey = `timer-idx:${entry.id}`;
+      await this.#storage.batch([
+        { type: 'delete', key },
+        { type: 'delete', key: indexKey },
+      ]);
+    }
+  }
+
+  /** Process all expired timers then stop. */
+  async flush(now?: number): Promise<void> {
+    await this.tick(now);
+    this.stop();
+  }
+
+  [Symbol.dispose](): void {
+    this.stop();
+  }
+}
