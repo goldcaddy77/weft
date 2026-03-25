@@ -1163,11 +1163,12 @@ describe('handleRequest', () => {
       const { id } = (await json(startResponse)) as { id: string };
       await flush();
 
-      // Insert events into storage so the endpoint has data to return
+      // Insert events into storage so the endpoint has data to return.
+      // Event types use colon-delimited names to match the engine's convention.
       const events = [
-        { type: 'workflow.started', timestamp: 1000, workflowId: id },
-        { type: 'activity.started', timestamp: 1500, workflowId: id },
-        { type: 'workflow.completed', timestamp: 2000, workflowId: id },
+        { type: 'workflow:started', timestamp: 1000, data: { workflowId: id } },
+        { type: 'activity:started', timestamp: 1500, data: { workflowId: id } },
+        { type: 'workflow:completed', timestamp: 2000, data: { workflowId: id } },
       ];
       for (let i = 0; i < events.length; i++) {
         await storage.put(KEYS.event(id, i), encode(events[i]!));
@@ -1183,8 +1184,8 @@ describe('handleRequest', () => {
       expect(body.events.length).toBeGreaterThanOrEqual(2);
 
       const types = body.events.map((e) => e.type);
-      expect(types).toContain('workflow.started');
-      expect(types).toContain('workflow.completed');
+      expect(types).toContain('workflow:started');
+      expect(types).toContain('workflow:completed');
 
       // Events should be in chronological order
       for (let i = 1; i < body.events.length; i++) {

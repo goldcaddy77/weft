@@ -4,6 +4,7 @@
  * @module server
  */
 
+import { encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
 import {
   ActivityCompletedEvent,
@@ -21,6 +22,7 @@ import {
   WorkflowStartedEvent,
   WorkflowTimedOutEvent,
 } from '../core/events.ts';
+import { KEYS } from '../storage/interface.ts';
 import { handleRequest } from './handler.ts';
 
 // ---------------------------------------------------------------------------
@@ -56,11 +58,16 @@ interface WebSocketData {
 // WebSocket event broadcasting
 // ---------------------------------------------------------------------------
 
-/** Serialize an engine event to a JSON message for WebSocket clients. */
+/**
+ * Serialize an engine event to a JSON message for WebSocket clients.
+ *
+ * The wire format matches the dashboard's `WorkflowEvent` interface:
+ * `{ type: string; timestamp: number; data: Record<string, unknown> }`.
+ */
 function serializeEvent(event: Event): string | null {
-  const data: Record<string, unknown> = { type: event.type };
+  const data: Record<string, unknown> = {};
 
-  // Extract all public properties from the event
+  // Extract all public properties from the event into the nested data bag
   for (const key of Object.keys(event)) {
     if (key === 'type') continue;
     const value = (event as unknown as Record<string, unknown>)[key];
@@ -72,16 +79,32 @@ function serializeEvent(event: Event): string | null {
     }
   }
 
-  return JSON.stringify(data);
+  const message: { type: string; timestamp: number; data: Record<string, unknown> } = {
+    type: event.type,
+    timestamp: Date.now(),
+    data,
+  };
+
+  return JSON.stringify(message);
 }
 
 /**
- * Attach event listeners to the engine that broadcast events via WebSocket.
+ * Attach event listeners to the engine that broadcast events via WebSocket
+ * and persist each event to storage so GET /v1/workflows/:id/events returns data.
  * Returns a cleanup function that removes all listeners.
  */
 function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.serve>): () => void {
   const controller = new AbortController();
   const { signal } = controller;
+
+  /** Per-workflow monotonic sequence counter for event storage keys. */
+  const sequenceCounters = new Map<string, number>();
+
+  function nextSequence(workflowId: string): number {
+    const current = sequenceCounters.get(workflowId) ?? 0;
+    sequenceCounters.set(workflowId, current + 1);
+    return current;
+  }
 
   const eventTypes = [
     WorkflowStartedEvent.type,
@@ -111,6 +134,17 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
 
         const message = serializeEvent(event);
         if (message === null) return;
+
+        // Persist the event to storage for the REST events endpoint.
+        // Parse once to get the structured payload we already serialized.
+        const parsed = JSON.parse(message) as {
+          type: string;
+          timestamp: number;
+          data: Record<string, unknown>;
+        };
+        const sequence = nextSequence(workflowId);
+        const storageKey = KEYS.event(workflowId, sequence);
+        void engine.storage.put(storageKey, encode(parsed));
 
         // Publish to the workflow's watch channel
         const watchChannel = `/v1/workflows/${workflowId}/watch`;

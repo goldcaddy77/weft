@@ -573,7 +573,8 @@ async function handleSubmitReviewDecision(
     return errorResponse(`Review "${reviewId}" not found`, 404);
   }
 
-  // Store the decision and signal the workflow
+  // Store the decision and remove the pending review.
+  // The workflow is expected to poll the review-decision key to unblock itself.
   const decisionData = {
     reviewId,
     decision,
