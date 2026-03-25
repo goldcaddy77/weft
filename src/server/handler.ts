@@ -529,18 +529,43 @@ async function handleSubmitReviewDecision(
 
   const decision = body['decision'];
   const reviewer = body['reviewer'];
+  const feedback = body['feedback'];
+
+  const workflowId = body['workflowId'];
 
   if (typeof decision !== 'string' || typeof reviewer !== 'string') {
     return errorResponse('Missing required fields: decision, reviewer', 400);
   }
 
-  // Find and resolve the review
+  const validDecisions = ['approved', 'rejected', 'needs-changes'] as const;
+  if (!validDecisions.includes(decision as (typeof validDecisions)[number])) {
+    return errorResponse(
+      `Invalid decision "${decision}". Must be one of: ${validDecisions.join(', ')}`,
+      400,
+    );
+  }
+
+  if (feedback !== undefined && typeof feedback !== 'string') {
+    return errorResponse('Field "feedback" must be a string when provided', 400);
+  }
+
+  // Look up the review by direct key when workflowId is provided (O(1)),
+  // otherwise fall back to scanning all review entries (O(n)).
   let reviewKey: string | null = null;
-  for await (const [key, value] of engine.storage.scan('review:')) {
-    const review = decode(value) as Record<string, unknown>;
-    if (review['reviewId'] === reviewId) {
-      reviewKey = key;
-      break;
+
+  if (typeof workflowId === 'string') {
+    const directKey = KEYS.review(workflowId, reviewId);
+    const existing = await engine.storage.get(directKey);
+    if (existing !== null) {
+      reviewKey = directKey;
+    }
+  } else {
+    for await (const [key, value] of engine.storage.scan('review:')) {
+      const review = decode(value) as Record<string, unknown>;
+      if (review['reviewId'] === reviewId) {
+        reviewKey = key;
+        break;
+      }
     }
   }
 
@@ -553,7 +578,7 @@ async function handleSubmitReviewDecision(
     reviewId,
     decision,
     reviewer,
-    feedback: body['feedback'],
+    feedback,
     timestamp: Date.now(),
   };
 

@@ -147,6 +147,7 @@ export function serve(options: ServeOptions): WeftServer {
   const routes: Record<string, unknown> = {};
   if (dashboard !== null) {
     routes['/ui'] = dashboard;
+    routes['/ui/*'] = dashboard;
   }
 
   const server = Bun.serve<WebSocketData>({

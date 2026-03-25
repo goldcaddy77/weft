@@ -78,13 +78,16 @@
   // ---------------------------------------------------------------------------
 
   async function handleApprove(reviewId: string): Promise<void> {
+    const review = reviews.find((r) => r.reviewId === reviewId);
+    if (!review) return;
+
     try {
-      await apiClient.submitReviewDecision(reviewId, {
+      await apiClient.submitReviewDecision(reviewId, review.workflowId, {
         decision: 'approved',
         reviewer: 'dashboard-user',
       });
       addToast('Review approved', 'success');
-      reviews = reviews.filter((review) => review.reviewId !== reviewId);
+      reviews = reviews.filter((r) => r.reviewId !== reviewId);
     } catch (approveError) {
       const message = approveError instanceof Error ? approveError.message : String(approveError);
       addToast(`Failed to approve: ${message}`, 'error');
@@ -92,13 +95,16 @@
   }
 
   async function handleReject(reviewId: string): Promise<void> {
+    const review = reviews.find((r) => r.reviewId === reviewId);
+    if (!review) return;
+
     try {
-      await apiClient.submitReviewDecision(reviewId, {
+      await apiClient.submitReviewDecision(reviewId, review.workflowId, {
         decision: 'rejected',
         reviewer: 'dashboard-user',
       });
       addToast('Review rejected', 'success');
-      reviews = reviews.filter((review) => review.reviewId !== reviewId);
+      reviews = reviews.filter((r) => r.reviewId !== reviewId);
     } catch (rejectError) {
       const message = rejectError instanceof Error ? rejectError.message : String(rejectError);
       addToast(`Failed to reject: ${message}`, 'error');

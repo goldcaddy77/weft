@@ -1150,7 +1150,11 @@ describe('handleRequest', () => {
     });
 
     it('returns ordered events for an existing workflow', async () => {
-      engine = createEngine();
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
 
       const startResponse = await handleRequest(
         request('POST', '/v1/workflows', { type: 'echo', input: 'hello' }),
@@ -1159,6 +1163,16 @@ describe('handleRequest', () => {
       const { id } = (await json(startResponse)) as { id: string };
       await flush();
 
+      // Insert events into storage so the endpoint has data to return
+      const events = [
+        { type: 'workflow.started', timestamp: 1000, workflowId: id },
+        { type: 'activity.started', timestamp: 1500, workflowId: id },
+        { type: 'workflow.completed', timestamp: 2000, workflowId: id },
+      ];
+      for (let i = 0; i < events.length; i++) {
+        await storage.put(KEYS.event(id, i), encode(events[i]!));
+      }
+
       const response = await handleRequest(request('GET', `/v1/workflows/${id}/events`), engine);
 
       expect(response.status).toBe(200);
@@ -1166,8 +1180,16 @@ describe('handleRequest', () => {
         events: Array<{ type: string; timestamp: number; data: Record<string, unknown> }>;
       };
       expect(Array.isArray(body.events)).toBe(true);
-      // The echo workflow should produce at least a started and completed event
-      expect(body.events.length).toBeGreaterThanOrEqual(0);
+      expect(body.events.length).toBeGreaterThanOrEqual(2);
+
+      const types = body.events.map((e) => e.type);
+      expect(types).toContain('workflow.started');
+      expect(types).toContain('workflow.completed');
+
+      // Events should be in chronological order
+      for (let i = 1; i < body.events.length; i++) {
+        expect(body.events[i]!.timestamp).toBeGreaterThanOrEqual(body.events[i - 1]!.timestamp);
+      }
     });
   });
 
@@ -1202,7 +1224,7 @@ describe('handleRequest', () => {
         reviewers: ['alice'],
         createdAt: Date.now(),
       };
-      await storage.put('review:rev-1', encode(review));
+      await storage.put(KEYS.review('wf-1', 'rev-1'), encode(review));
 
       const response = await handleRequest(request('GET', '/v1/reviews'), engine);
 
@@ -1246,6 +1268,39 @@ describe('handleRequest', () => {
       expect(body.error).toContain('decision');
     });
 
+    it('returns 400 for invalid decision value', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-1/decision', {
+          decision: 'maybe',
+          reviewer: 'alice',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('Invalid decision');
+    });
+
+    it('returns 400 when feedback is not a string', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-1/decision', {
+          decision: 'approved',
+          reviewer: 'alice',
+          feedback: 42,
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('feedback');
+    });
+
     it('returns 404 for non-existent review', async () => {
       engine = createEngine();
 
@@ -1260,14 +1315,14 @@ describe('handleRequest', () => {
       expect(response.status).toBe(404);
     });
 
-    it('resolves an existing review and returns success', async () => {
+    it('resolves an existing review via direct key lookup when workflowId is provided', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
       engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
         return input;
       });
 
-      // Insert a review
+      // Insert a review using the canonical key format
       const review = {
         reviewId: 'rev-2',
         workflowId: 'wf-2',
@@ -1276,12 +1331,13 @@ describe('handleRequest', () => {
         reviewers: ['bob'],
         createdAt: Date.now(),
       };
-      await storage.put('review:rev-2', encode(review));
+      await storage.put(KEYS.review('wf-2', 'rev-2'), encode(review));
 
       const response = await handleRequest(
         request('POST', '/v1/reviews/rev-2/decision', {
           decision: 'approved',
           reviewer: 'bob',
+          workflowId: 'wf-2',
           feedback: 'Looks good',
         }),
         engine,
@@ -1292,7 +1348,7 @@ describe('handleRequest', () => {
       expect(body.ok).toBe(true);
 
       // Verify the review was removed from storage
-      const reviewAfter = await storage.get('review:rev-2');
+      const reviewAfter = await storage.get(KEYS.review('wf-2', 'rev-2'));
       expect(reviewAfter).toBeNull();
 
       // Verify the decision was stored
@@ -1301,6 +1357,39 @@ describe('handleRequest', () => {
       const decisionData = decode(decisionBytes!) as { decision: string; reviewer: string };
       expect(decisionData.decision).toBe('approved');
       expect(decisionData.reviewer).toBe('bob');
+    });
+
+    it('falls back to scan when workflowId is not provided', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const review = {
+        reviewId: 'rev-3',
+        workflowId: 'wf-3',
+        artifact: { text: 'approve me' },
+        reviewType: 'manual',
+        reviewers: ['alice'],
+        createdAt: Date.now(),
+      };
+      await storage.put(KEYS.review('wf-3', 'rev-3'), encode(review));
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-3/decision', {
+          decision: 'rejected',
+          reviewer: 'alice',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { ok: boolean };
+      expect(body.ok).toBe(true);
+
+      const reviewAfter = await storage.get(KEYS.review('wf-3', 'rev-3'));
+      expect(reviewAfter).toBeNull();
     });
   });
 });

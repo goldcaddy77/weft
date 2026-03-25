@@ -7,7 +7,7 @@
 </script>
 
 <script lang="ts">
-  import { navigate } from '../router.ts';
+  import { navigate } from '../router.svelte.ts';
   import { truncate } from '../utilities/truncate.ts';
   import { formatRelativeTime } from '../utilities/format-date.ts';
   import WorkflowStatusBadge from './workflow-status-badge.svelte';

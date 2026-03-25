@@ -3,7 +3,7 @@
 
   import { ApiClient } from './api-client.ts';
   import { moon, sun, activity, inbox } from './icons.ts';
-  import { matchRoute, navigate, route } from './router.ts';
+  import { matchRoute, navigate, route } from './router.svelte.ts';
   import WorkflowList from './views/workflow-list.svelte';
   import WorkflowDetail from './views/workflow-detail.svelte';
   import WorkflowDetailAgent from './views/workflow-detail-agent.svelte';

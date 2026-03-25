@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { navigate } from '../router.ts';
+  import { navigate } from '../router.svelte.ts';
   import { search } from '../icons.ts';
   import EmptyState from '../components/empty-state.svelte';
   import Button from '../components/button.svelte';

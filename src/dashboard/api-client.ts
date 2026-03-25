@@ -188,10 +188,14 @@ export class ApiClient {
   }
 
   /** Submit a decision for a pending review. */
-  async submitReviewDecision(reviewId: string, decision: ReviewDecision): Promise<void> {
+  async submitReviewDecision(
+    reviewId: string,
+    workflowId: string,
+    decision: ReviewDecision,
+  ): Promise<void> {
     return request<void>(`/reviews/${encodeURIComponent(reviewId)}/decision`, {
       method: 'POST',
-      body: JSON.stringify(decision),
+      body: JSON.stringify({ ...decision, workflowId }),
     });
   }
 

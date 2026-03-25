@@ -8,9 +8,9 @@
   import { getContext, untrack } from 'svelte';
 
   import type { ApiClient, WorkflowState, WorkflowEvent } from '../api-client.ts';
-  import { WebSocketClient } from '../websocket-client.ts';
+  import { WebSocketClient } from '../websocket-client.svelte.ts';
   import { chevronLeft, xCircle } from '../icons.ts';
-  import { navigate } from '../router.ts';
+  import { navigate } from '../router.svelte.ts';
   import { formatRelativeTime, formatTimestamp } from '../utilities/format-date.ts';
   import { formatDuration } from '../utilities/format-duration.ts';
   import Page from '../components/page.svelte';
