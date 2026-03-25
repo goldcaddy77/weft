@@ -1,7 +1,30 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 import { LongPollWorker } from './long-poll.ts';
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 describe('LongPollWorker', () => {
+  let server: ReturnType<typeof Bun.serve> | undefined;
+
+  afterEach(() => {
+    if (server) {
+      server.stop(true);
+      server = undefined;
+    }
+  });
+
   it('constructor stores options with defaults', () => {
     const worker = new LongPollWorker({
       serverUrl: 'http://localhost:8080',
@@ -67,5 +90,330 @@ describe('LongPollWorker', () => {
 
     worker[Symbol.dispose]();
     expect(() => worker[Symbol.dispose]()).not.toThrow();
+  });
+
+  it('start() sets running to true and is idempotent', () => {
+    const worker = new LongPollWorker({
+      serverUrl: 'http://localhost:8080',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    worker.start();
+    expect(worker.running).toBe(true);
+
+    // Calling start again should be a no-op
+    worker.start();
+    expect(worker.running).toBe(true);
+
+    worker[Symbol.dispose]();
+  });
+
+  it('stop() sets running to false and aborts in-progress polls', async () => {
+    const worker = new LongPollWorker({
+      serverUrl: 'http://localhost:8080',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    worker.start();
+    expect(worker.running).toBe(true);
+
+    await worker.stop();
+    expect(worker.running).toBe(false);
+  });
+
+  it('polls a server for tasks and executes them', async () => {
+    const completedTasks: any[] = [];
+    let pollCount = 0;
+
+    server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+
+        if (url.pathname === '/poll' && request.method === 'POST') {
+          pollCount++;
+          // Return a task on the first poll, null on subsequent polls
+          if (pollCount === 1) {
+            return new Response(
+              JSON.stringify({
+                operationId: 'op-1',
+                activityName: 'processOrder',
+                input: { orderId: 42 },
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(JSON.stringify(null), { status: 200 });
+        }
+
+        if (url.pathname === '/complete' && request.method === 'POST') {
+          const body = await request.json();
+          completedTasks.push(body);
+          return new Response('ok', { status: 200 });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    const worker = new LongPollWorker({
+      serverUrl: `http://localhost:${server.port}`,
+      activities: {
+        processOrder: async (input: any) => ({ processed: true, orderId: input.orderId }),
+      },
+    });
+
+    worker.start();
+    await Bun.sleep(500);
+    await worker.stop();
+
+    expect(completedTasks.length).toBeGreaterThanOrEqual(1);
+    const taskCompletion = completedTasks.find((t) => t.operationId === 'op-1');
+    expect(taskCompletion).toBeDefined();
+    expect(taskCompletion.status).toBe('completed');
+    expect(taskCompletion.value).toEqual({ processed: true, orderId: 42 });
+  });
+
+  it('sends error completion when activity throws', async () => {
+    const completedTasks: any[] = [];
+    let pollCount = 0;
+
+    server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+
+        if (url.pathname === '/poll' && request.method === 'POST') {
+          pollCount++;
+          if (pollCount === 1) {
+            return new Response(
+              JSON.stringify({
+                operationId: 'op-err-1',
+                activityName: 'failingActivity',
+                input: null,
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(JSON.stringify(null), { status: 200 });
+        }
+
+        if (url.pathname === '/complete' && request.method === 'POST') {
+          const body = await request.json();
+          completedTasks.push(body);
+          return new Response('ok', { status: 200 });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    const worker = new LongPollWorker({
+      serverUrl: `http://localhost:${server.port}`,
+      activities: {
+        failingActivity: async () => {
+          throw new Error('activity failed');
+        },
+      },
+    });
+
+    worker.start();
+    await Bun.sleep(500);
+    await worker.stop();
+
+    const errorCompletion = completedTasks.find((t) => t.operationId === 'op-err-1');
+    expect(errorCompletion).toBeDefined();
+    expect(errorCompletion.status).toBe('failed');
+    expect(errorCompletion.error).toBe('activity failed');
+  });
+
+  it('handles non-ok poll responses by backing off', async () => {
+    let pollCount = 0;
+
+    server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+
+        if (url.pathname === '/poll') {
+          pollCount++;
+          return new Response('Server Error', { status: 500 });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    const worker = new LongPollWorker({
+      serverUrl: `http://localhost:${server.port}`,
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    worker.start();
+    await Bun.sleep(300);
+    await worker.stop();
+
+    // Should have attempted at least one poll
+    expect(pollCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('skips tasks for unknown activities', async () => {
+    const completedTasks: any[] = [];
+    let pollCount = 0;
+
+    server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+
+        if (url.pathname === '/poll' && request.method === 'POST') {
+          pollCount++;
+          if (pollCount === 1) {
+            return new Response(
+              JSON.stringify({
+                operationId: 'op-unknown',
+                activityName: 'nonExistent',
+                input: null,
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(JSON.stringify(null), { status: 200 });
+        }
+
+        if (url.pathname === '/complete' && request.method === 'POST') {
+          const body = await request.json();
+          completedTasks.push(body);
+          return new Response('ok', { status: 200 });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    const worker = new LongPollWorker({
+      serverUrl: `http://localhost:${server.port}`,
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    worker.start();
+    await Bun.sleep(500);
+    await worker.stop();
+
+    // Should not have sent a completion for an unknown activity
+    const unknownCompletion = completedTasks.find((t) => t.operationId === 'op-unknown');
+    expect(unknownCompletion).toBeUndefined();
+  });
+
+  it('handles error completion fetch failure gracefully', async () => {
+    let pollCount = 0;
+    let completeCallCount = 0;
+
+    server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+
+        if (url.pathname === '/poll' && request.method === 'POST') {
+          pollCount++;
+          if (pollCount === 1) {
+            return new Response(
+              JSON.stringify({
+                operationId: 'op-double-fail',
+                activityName: 'failingActivity',
+                input: null,
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(JSON.stringify(null), { status: 200 });
+        }
+
+        if (url.pathname === '/complete' && request.method === 'POST') {
+          completeCallCount++;
+          // Make the completion endpoint fail too
+          return new Response('Server Error', { status: 500 });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    const worker = new LongPollWorker({
+      serverUrl: `http://localhost:${server.port}`,
+      activities: {
+        failingActivity: async () => {
+          throw new Error('activity failed');
+        },
+      },
+    });
+
+    worker.start();
+    await Bun.sleep(500);
+    await worker.stop();
+
+    // Should not crash; worker should still stop cleanly
+    expect(worker.running).toBe(false);
+  });
+
+  it('handles non-Error throws in activities', async () => {
+    const completedTasks: any[] = [];
+    let pollCount = 0;
+
+    server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+
+        if (url.pathname === '/poll' && request.method === 'POST') {
+          pollCount++;
+          if (pollCount === 1) {
+            return new Response(
+              JSON.stringify({
+                operationId: 'op-string-throw',
+                activityName: 'stringThrow',
+                input: null,
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(JSON.stringify(null), { status: 200 });
+        }
+
+        if (url.pathname === '/complete' && request.method === 'POST') {
+          const body = await request.json();
+          completedTasks.push(body);
+          return new Response('ok', { status: 200 });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    const worker = new LongPollWorker({
+      serverUrl: `http://localhost:${server.port}`,
+      activities: {
+        stringThrow: async () => {
+          throw 'string error value';
+        },
+      },
+    });
+
+    worker.start();
+    await Bun.sleep(500);
+    await worker.stop();
+
+    const errorCompletion = completedTasks.find((t) => t.operationId === 'op-string-throw');
+    expect(errorCompletion).toBeDefined();
+    expect(errorCompletion.status).toBe('failed');
+    expect(errorCompletion.error).toBe('string error value');
   });
 });
