@@ -260,3 +260,599 @@ describe('custom serializer', () => {
     expect(restored.version).toBe('1.0.0');
   });
 });
+
+describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
+  it('throws when decoded value is not an object', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode('not-an-object');
+    expect(() => deserializeCheckpoint(bytes)).toThrow('expected an object');
+  });
+
+  it('throws when decoded value is null', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode(null);
+    expect(() => deserializeCheckpoint(bytes)).toThrow('expected an object');
+  });
+
+  it('throws when workflowId is missing', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      step: 0,
+      locals: {},
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    });
+    expect(() => deserializeCheckpoint(bytes)).toThrow('workflowId');
+  });
+
+  it('throws when step is missing', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-1',
+      locals: {},
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    });
+    expect(() => deserializeCheckpoint(bytes)).toThrow('step');
+  });
+
+  it('throws when locals is missing or null', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-1',
+      step: 0,
+      locals: null,
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    });
+    expect(() => deserializeCheckpoint(bytes)).toThrow('locals');
+  });
+
+  it('throws when pendingSignals is not an array', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-1',
+      step: 0,
+      locals: {},
+      pendingSignals: 'not-an-array',
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    });
+    expect(() => deserializeCheckpoint(bytes)).toThrow('pendingSignals');
+  });
+
+  it('throws when searchAttributes is missing or null', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-1',
+      step: 0,
+      locals: {},
+      pendingSignals: [],
+      searchAttributes: null,
+      version: '1.0.0',
+      createdAt: Date.now(),
+    });
+    expect(() => deserializeCheckpoint(bytes)).toThrow('searchAttributes');
+  });
+
+  it('throws when version is missing', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-1',
+      step: 0,
+      locals: {},
+      pendingSignals: [],
+      searchAttributes: {},
+      createdAt: Date.now(),
+    });
+    expect(() => deserializeCheckpoint(bytes)).toThrow('version');
+  });
+
+  it('throws when createdAt is missing', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-1',
+      step: 0,
+      locals: {},
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+    });
+    expect(() => deserializeCheckpoint(bytes)).toThrow('createdAt');
+  });
+});
+
+describe('compareValues (via validateCheckpointRoundTrip with custom serializer)', () => {
+  // Helper: a serializer that intentionally alters data to trigger divergence paths
+  function createAlteringSerializer(alteration: (checkpoint: any) => any): Serializer {
+    return {
+      serialize(value: unknown): Uint8Array {
+        return new TextEncoder().encode(JSON.stringify(value));
+      },
+      deserialize(bytes: Uint8Array): unknown {
+        const parsed = JSON.parse(new TextDecoder().decode(bytes));
+        return alteration(parsed);
+      },
+    };
+  }
+
+  it('detects null vs non-null divergence', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      checkpoint.locals.value = null;
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { value: 'hello' },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.path.includes('value'))).toBe(true);
+  });
+
+  it('detects type mismatch (string vs number)', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      checkpoint.locals.count = 'not-a-number';
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { count: 42 },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    const divergence = result.divergences.find((d) => d.path.includes('count'));
+    expect(divergence).toBeDefined();
+    expect(divergence!.suggestion).toContain('Type changed');
+  });
+
+  it('detects primitive value change', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      checkpoint.locals.name = 'altered';
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { name: 'original' },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.suggestion.includes('Primitive value changed'))).toBe(
+      true,
+    );
+  });
+
+  it('detects missing key in deserialized result', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      delete checkpoint.locals.important;
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { important: 'data', other: 'stuff' },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(
+      result.divergences.some((d) => d.suggestion.includes('Key missing from deserialized')),
+    ).toBe(true);
+  });
+
+  it('detects extra key in deserialized result', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      checkpoint.locals.extraKey = 'unexpected';
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { existing: 'data' },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.suggestion.includes('Extra key appeared'))).toBe(true);
+  });
+
+  it('detects array length differences (extra elements after round-trip)', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      checkpoint.locals.items.push('extra');
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { items: ['a', 'b'] },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.suggestion.includes('Extra array element'))).toBe(true);
+  });
+
+  it('detects array length differences (missing elements after round-trip)', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      checkpoint.locals.items.pop();
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { items: ['a', 'b', 'c'] },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.suggestion.includes('Array element missing'))).toBe(
+      true,
+    );
+  });
+
+  it('detects nested object divergence', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      checkpoint.locals.nested.deep.value = 99;
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { nested: { deep: { value: 42 } } },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(
+      result.divergences.some((d) => d.path.includes('nested') && d.path.includes('deep')),
+    ).toBe(true);
+  });
+
+  it('detects Date divergence in round-trip', () => {
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { timestamp: new Date('2025-01-15T10:30:00Z') },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    // Default codec preserves Dates, so this should pass cleanly
+    const result = validateCheckpointRoundTrip(checkpoint);
+    expect(result.valid).toBe(true);
+  });
+
+  it('detects Date time change via custom serializer', () => {
+    const { encode: codecEncode, decode: codecDecode } = require('./codec.ts');
+
+    const serializer: Serializer = {
+      serialize(value: unknown): Uint8Array {
+        return codecEncode(value);
+      },
+      deserialize(bytes: Uint8Array): unknown {
+        const decoded = codecDecode(bytes);
+        // Shift the Date by 1 second to cause divergence
+        if (decoded.locals?.timestamp instanceof Date) {
+          decoded.locals.timestamp = new Date(decoded.locals.timestamp.getTime() + 1000);
+        }
+        return decoded;
+      },
+    };
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { timestamp: new Date('2025-01-15T10:30:00Z') },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.suggestion.includes('Date value changed'))).toBe(true);
+  });
+
+  it('detects RegExp divergence via custom serializer', () => {
+    const { encode: codecEncode, decode: codecDecode } = require('./codec.ts');
+
+    const serializer: Serializer = {
+      serialize(value: unknown): Uint8Array {
+        return codecEncode(value);
+      },
+      deserialize(bytes: Uint8Array): unknown {
+        const decoded = codecDecode(bytes);
+        // Alter the RegExp flags to cause divergence
+        if (decoded.locals?.pattern instanceof RegExp) {
+          decoded.locals.pattern = new RegExp(decoded.locals.pattern.source, 'gi');
+        }
+        return decoded;
+      },
+    };
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { pattern: new RegExp('test', 'g') },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.suggestion.includes('RegExp value changed'))).toBe(
+      true,
+    );
+  });
+
+  it('detects Map key missing after round-trip', () => {
+    const { encode: codecEncode, decode: codecDecode } = require('./codec.ts');
+
+    const serializer: Serializer = {
+      serialize(value: unknown): Uint8Array {
+        return codecEncode(value);
+      },
+      deserialize(bytes: Uint8Array): unknown {
+        const decoded = codecDecode(bytes);
+        // Remove a key from the Map
+        if (decoded.locals?.myMap instanceof Map) {
+          decoded.locals.myMap.delete('alpha');
+        }
+        return decoded;
+      },
+    };
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: {
+        myMap: new Map([
+          ['alpha', 1],
+          ['beta', 2],
+        ]),
+      },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.suggestion.includes('Map key missing'))).toBe(true);
+  });
+
+  it('detects extra Map key after round-trip', () => {
+    const { encode: codecEncode, decode: codecDecode } = require('./codec.ts');
+
+    const serializer: Serializer = {
+      serialize(value: unknown): Uint8Array {
+        return codecEncode(value);
+      },
+      deserialize(bytes: Uint8Array): unknown {
+        const decoded = codecDecode(bytes);
+        if (decoded.locals?.myMap instanceof Map) {
+          decoded.locals.myMap.set('extra', 999);
+        }
+        return decoded;
+      },
+    };
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: {
+        myMap: new Map([['alpha', 1]]),
+      },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.suggestion.includes('Extra Map key'))).toBe(true);
+  });
+
+  it('detects Set size change after round-trip', () => {
+    const { encode: codecEncode, decode: codecDecode } = require('./codec.ts');
+
+    const serializer: Serializer = {
+      serialize(value: unknown): Uint8Array {
+        return codecEncode(value);
+      },
+      deserialize(bytes: Uint8Array): unknown {
+        const decoded = codecDecode(bytes);
+        if (decoded.locals?.mySet instanceof Set) {
+          decoded.locals.mySet.add('extra');
+        }
+        return decoded;
+      },
+    };
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: {
+        mySet: new Set([1, 2, 3]),
+      },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.suggestion.includes('Set size changed'))).toBe(true);
+  });
+
+  it('compares Set elements when same size', () => {
+    const { encode: codecEncode, decode: codecDecode } = require('./codec.ts');
+
+    const serializer: Serializer = {
+      serialize(value: unknown): Uint8Array {
+        return codecEncode(value);
+      },
+      deserialize(bytes: Uint8Array): unknown {
+        const decoded = codecDecode(bytes);
+        if (decoded.locals?.mySet instanceof Set) {
+          // Replace the set with one of the same size but different last element
+          decoded.locals.mySet = new Set(['a', 'b', 'altered']);
+        }
+        return decoded;
+      },
+    };
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: {
+        mySet: new Set(['a', 'b', 'c']),
+      },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.path.includes('Set'))).toBe(true);
+  });
+
+  it('compares Map values recursively', () => {
+    const { encode: codecEncode, decode: codecDecode } = require('./codec.ts');
+
+    const serializer: Serializer = {
+      serialize(value: unknown): Uint8Array {
+        return codecEncode(value);
+      },
+      deserialize(bytes: Uint8Array): unknown {
+        const decoded = codecDecode(bytes);
+        if (decoded.locals?.myMap instanceof Map) {
+          decoded.locals.myMap.set('key1', 'altered');
+        }
+        return decoded;
+      },
+    };
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: {
+        myMap: new Map([['key1', 'original']]),
+      },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+    expect(result.divergences.some((d) => d.path.includes('Map(key1)'))).toBe(true);
+  });
+
+  it('detects undefined vs non-undefined divergence', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      // Set a field to undefined where it was previously a value
+      checkpoint.locals.field = undefined;
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: { field: 'present' },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+  });
+
+  it('handles array comparison with recursive elements', () => {
+    const serializer = createAlteringSerializer((checkpoint: any) => {
+      checkpoint.locals.items[1].nested = 'changed';
+      return checkpoint;
+    });
+
+    const checkpoint: Checkpoint = {
+      workflowId: 'wf-1',
+      step: 1,
+      locals: {
+        items: [{ nested: 'original' }, { nested: 'original' }],
+      },
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    };
+
+    const result = validateCheckpointRoundTrip(checkpoint, serializer);
+    expect(result.valid).toBe(false);
+  });
+});

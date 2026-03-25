@@ -196,6 +196,44 @@ describe('TokenBridge', () => {
   });
 });
 
+describe('StreamMultiplexer consumer cancellation', () => {
+  it('removes the consumer when stream is cancelled via reader.cancel()', async () => {
+    // Create a source stream that stays open
+    let sourceController: ReadableStreamDefaultController<StreamChunk> | undefined;
+    const source = new ReadableStream<StreamChunk>({
+      start(controller) {
+        sourceController = controller;
+        controller.enqueue({ type: 'token', token: 'first' });
+      },
+    });
+
+    const multiplexer = new StreamMultiplexer(source);
+    const consumer = multiplexer.createConsumer();
+    const reader = consumer.getReader();
+
+    // Read one chunk to confirm consumer is active
+    const { value } = await reader.read();
+    expect(value).toEqual({ type: 'token', token: 'first' });
+    expect(multiplexer.consumerCount).toBe(1);
+
+    // Cancel the consumer's reader, which triggers the cancel callback (lines 57-59)
+    await reader.cancel();
+
+    // The consumer should have been removed
+    expect(multiplexer.consumerCount).toBe(0);
+
+    // Clean up: close the source and cancel the multiplexer
+    if (sourceController) {
+      try {
+        sourceController.close();
+      } catch {
+        // May already be closed
+      }
+    }
+    multiplexer.cancel();
+  });
+});
+
 describe('ReconnectionBuffer', () => {
   it('stores turns', () => {
     const buffer = new ReconnectionBuffer();

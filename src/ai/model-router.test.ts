@@ -206,3 +206,73 @@ describe('customRouter', () => {
     expect(selection.reason).toBe('User is premium');
   });
 });
+
+describe('costTierRouter edge cases', () => {
+  it('falls back to the first tier when no tier matches budget thresholds', () => {
+    // All tiers have cost thresholds that are above the budget
+    const tiers: CostTier[] = [
+      { model: 'expensive', maxCostRemaining: 100 },
+      { model: 'medium', maxCostRemaining: 50 },
+    ];
+
+    const router = costTierRouter(tiers);
+    const selection = router.select(
+      createContext({
+        budgetRemaining: { tokensRemaining: 0, costRemaining: 0 },
+      }),
+    );
+
+    // Both tiers require more cost than 0, so we hit the fallback on line 142
+    expect(selection.model).toBe('expensive');
+  });
+});
+
+describe('abTestRouter edge cases', () => {
+  it('falls back to the last variant when no variant is selected due to floating-point rounding', () => {
+    // Weights that don't quite sum to 1.0 due to floating-point representation
+    const variants: WeightedVariant[] = [
+      { model: 'model-a', weight: 0.1 },
+      { model: 'model-b', weight: 0.1 },
+      { model: 'model-c', weight: 0.1, fallback: ['model-a'] },
+    ];
+    // Weights sum to 0.3, so most hashes will exceed cumulative and hit the fallback
+    const router = abTestRouter(variants);
+
+    // Use a workflow ID that will produce a hash > 0.3
+    // We need to try many IDs to ensure we hit the fallback path
+    let hitFallback = false;
+    for (let i = 0; i < 100; i++) {
+      const selection = router.select(createContext({ workflowId: `wf-test-fallback-${i}` }));
+      if (selection.model === 'model-c' && selection.fallback?.includes('model-a')) {
+        hitFallback = true;
+        break;
+      }
+    }
+
+    // Since weights sum to 0.3, ~70% of hashes should fall through to the last variant
+    expect(hitFallback).toBe(true);
+  });
+
+  it('returns the last variant for a hash that exceeds all cumulative weights', () => {
+    // Use weights that sum to less than 1 so most hashes fall through
+    const variants: WeightedVariant[] = [
+      { model: 'rare', weight: 0.01 },
+      { model: 'fallback-variant', weight: 0.01, fallback: ['backup'] },
+    ];
+
+    const router = abTestRouter(variants);
+
+    // Try enough workflow IDs to find one that falls through all variants
+    let foundFallback = false;
+    for (let i = 0; i < 200; i++) {
+      const selection = router.select(createContext({ workflowId: `find-fallback-${i}` }));
+      if (selection.model === 'fallback-variant') {
+        foundFallback = true;
+        expect(selection.fallback).toEqual(['backup']);
+        break;
+      }
+    }
+
+    expect(foundFallback).toBe(true);
+  });
+});

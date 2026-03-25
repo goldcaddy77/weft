@@ -91,6 +91,22 @@ describe('ContextWindowManager', () => {
   });
 
   describe('slidingWindowStrategy', () => {
+    it('returns empty array when given empty messages', async () => {
+      const strategy = slidingWindowStrategy({ preserveRecentCount: 5 });
+
+      const generator = strategy.compact([], {
+        maxTokens: 1000,
+        reservedForOutput: 250,
+        currentTokenCount: 0,
+      });
+
+      const result = await generator.next();
+      const compacted = result.value;
+
+      expect(compacted).toEqual([]);
+      expect(compacted).toHaveLength(0);
+    });
+
     it('keeps system message and last N messages when preserveRecentCount=5', async () => {
       const messages = createMessages(20, { withSystem: true });
       const strategy = slidingWindowStrategy({ preserveRecentCount: 5 });
