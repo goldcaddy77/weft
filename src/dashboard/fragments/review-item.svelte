@@ -3,6 +3,7 @@
 
   export type ReviewItemProps = {
     review: ReviewRequest;
+    submittingReviewId: string | null;
     onApprove: (reviewId: string) => void;
     onReject: (reviewId: string) => void;
   };
@@ -16,7 +17,10 @@
   import Button from '../components/button.svelte';
   import Card from '../components/card.svelte';
 
-  let { review, onApprove, onReject }: ReviewItemProps = $props();
+  let { review, submittingReviewId, onApprove, onReject }: ReviewItemProps = $props();
+
+  const isSubmitting = $derived(submittingReviewId === review.reviewId);
+  const isAnySubmitting = $derived(submittingReviewId !== null);
 
   const artifactPreview = $derived.by(() => {
     if (review.artifact === null || review.artifact === undefined) return '-';
@@ -69,12 +73,16 @@
         variant="primary"
         size="sm"
         label="Approve"
+        loading={isSubmitting}
+        disabled={isAnySubmitting}
         onclick={() => onApprove(review.reviewId)}
       />
       <Button
         variant="danger"
         size="sm"
         label="Reject"
+        loading={isSubmitting}
+        disabled={isAnySubmitting}
         onclick={() => onReject(review.reviewId)}
       />
     </div>

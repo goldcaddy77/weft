@@ -21,39 +21,46 @@
   let reviews: ReviewRequest[] = $state([]);
   let loading = $state(true);
   let error: string | null = $state(null);
+  let fetchGeneration = 0;
 
   // ---------------------------------------------------------------------------
   // Fetching
   // ---------------------------------------------------------------------------
 
-  async function fetchReviews(): Promise<void> {
+  async function fetchReviews(generation: number): Promise<void> {
     try {
-      reviews = await apiClient.listPendingReviews();
+      const result = await apiClient.listPendingReviews();
+      if (generation !== fetchGeneration) return;
+      reviews = result;
       error = null;
     } catch (fetchError) {
+      if (generation !== fetchGeneration) return;
       error = fetchError instanceof Error ? fetchError.message : String(fetchError);
     } finally {
-      loading = false;
+      if (generation === fetchGeneration) {
+        loading = false;
+      }
     }
   }
 
   $effect(() => {
     loading = true;
-    fetchReviews();
+    const generation = ++fetchGeneration;
+    fetchReviews(generation);
 
     let interval: ReturnType<typeof setInterval> | null = null;
 
     function startPolling(): void {
       interval = setInterval(() => {
         if (!document.hidden) {
-          fetchReviews();
+          fetchReviews(generation);
         }
       }, 5_000);
     }
 
     function handleVisibility(): void {
       if (!document.hidden && interval === null) {
-        fetchReviews();
+        fetchReviews(generation);
         startPolling();
       } else if (document.hidden && interval !== null) {
         clearInterval(interval);
@@ -74,10 +81,14 @@
   // Actions
   // ---------------------------------------------------------------------------
 
+  let submittingReviewId: string | null = $state(null);
+
   async function handleApprove(reviewId: string): Promise<void> {
+    if (submittingReviewId !== null) return;
     const review = reviews.find((r) => r.reviewId === reviewId);
     if (!review) return;
 
+    submittingReviewId = reviewId;
     try {
       await apiClient.submitReviewDecision(reviewId, review.workflowId, {
         decision: 'approved',
@@ -88,13 +99,17 @@
     } catch (approveError) {
       const message = approveError instanceof Error ? approveError.message : String(approveError);
       addToast(`Failed to approve: ${message}`, 'error');
+    } finally {
+      submittingReviewId = null;
     }
   }
 
   async function handleReject(reviewId: string): Promise<void> {
+    if (submittingReviewId !== null) return;
     const review = reviews.find((r) => r.reviewId === reviewId);
     if (!review) return;
 
+    submittingReviewId = reviewId;
     try {
       await apiClient.submitReviewDecision(reviewId, review.workflowId, {
         decision: 'rejected',
@@ -105,6 +120,8 @@
     } catch (rejectError) {
       const message = rejectError instanceof Error ? rejectError.message : String(rejectError);
       addToast(`Failed to reject: ${message}`, 'error');
+    } finally {
+      submittingReviewId = null;
     }
   }
 </script>
@@ -127,7 +144,7 @@
   {:else}
     <div class="review-queue-list">
       {#each reviews as review (review.reviewId)}
-        <ReviewItem {review} onApprove={handleApprove} onReject={handleReject} />
+        <ReviewItem {review} {submittingReviewId} onApprove={handleApprove} onReject={handleReject} />
       {/each}
     </div>
   {/if}
