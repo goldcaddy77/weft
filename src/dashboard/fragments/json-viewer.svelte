@@ -32,7 +32,7 @@
 {:else}
   <div class="json-viewer">
     <button class="json-viewer-toggle" onclick={toggle} type="button">
-      <span class="json-viewer-chevron" class:expanded={!isCollapsed}>
+      <span class="json-viewer-chevron" data-expanded={!isCollapsed}>
         {@html chevronRight(14)}
       </span>
       {#if label}
@@ -71,7 +71,7 @@
     transition: transform var(--duration-fast, 150ms) var(--ease-standard, ease);
   }
 
-  .json-viewer-chevron.expanded {
+  .json-viewer-chevron[data-expanded='true'] {
     transform: rotate(90deg);
   }
 

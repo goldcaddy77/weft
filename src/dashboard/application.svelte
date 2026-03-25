@@ -2,8 +2,11 @@
   import { setContext } from 'svelte';
 
   import { ApiClient } from './api-client.ts';
+  import type { Toast } from './toast-context.ts';
   import { moon, sun, activity, inbox } from './icons.ts';
   import { matchRoute, navigate, route } from './router.svelte.ts';
+  import NavigationBar from './components/navigation-bar.svelte';
+  import NavigationItem from './components/navigation-item.svelte';
   import WorkflowList from './views/workflow-list.svelte';
   import WorkflowDetail from './views/workflow-detail.svelte';
   import WorkflowDetailAgent from './views/workflow-detail-agent.svelte';
@@ -17,9 +20,7 @@
   const apiClient = new ApiClient();
   setContext('api-client', apiClient);
 
-  // Toast store: an array of { id, message, variant } objects
-  const toasts: Array<{ id: string; message: string; variant: 'info' | 'success' | 'error' }> =
-    $state([]);
+  const toasts: Toast[] = $state([]);
 
   function addToast(message: string, variant: 'info' | 'success' | 'error' = 'info'): void {
     const id = crypto.randomUUID();
@@ -70,49 +71,47 @@
 
 <div class="dashboard-layout">
   <!-- Navigation Bar -->
-  <header class="navigation-bar">
-    <div class="navigation-bar-start">
-      <a
-        href="/ui"
-        class="navigation-bar-brand"
-        onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui')}
-      >
-        {@html activity(20)}
-        <span>Weft</span>
-      </a>
-    </div>
+  <header class="navigation-header">
+    <NavigationBar class="navigation-bar">
+      {#snippet start()}
+        <a
+          href="/ui"
+          class="navigation-bar-brand"
+          onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui')}
+        >
+          {@html activity(20)}
+          <span>Weft</span>
+        </a>
+      {/snippet}
 
-    <nav class="navigation-bar-center">
-      <a
+      <NavigationItem
         href="/ui/workflows"
-        class="navigation-bar-link"
-        class:active={currentMatch.view === 'workflow-list' ||
+        active={currentMatch.view === 'workflow-list' ||
           currentMatch.view === 'workflow-detail' ||
           currentMatch.view === 'workflow-detail-agent'}
         onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui/workflows')}
       >
         Workflows
-      </a>
-      <a
+      </NavigationItem>
+      <NavigationItem
         href="/ui/reviews"
-        class="navigation-bar-link"
-        class:active={currentMatch.view === 'human-review-queue'}
+        active={currentMatch.view === 'human-review-queue'}
         onclick={(event: MouseEvent) => handleNavigationClick(event, '/ui/reviews')}
       >
         {@html inbox(16)}
         Reviews
-      </a>
-    </nav>
+      </NavigationItem>
 
-    <div class="navigation-bar-end">
-      <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle theme">
-        {#if darkMode}
-          {@html sun(18)}
-        {:else}
-          {@html moon(18)}
-        {/if}
-      </button>
-    </div>
+      {#snippet end()}
+        <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle theme">
+          {#if darkMode}
+            {@html sun(18)}
+          {:else}
+            {@html moon(18)}
+          {/if}
+        </button>
+      {/snippet}
+    </NavigationBar>
   </header>
 
   <!-- Main Content -->
@@ -152,20 +151,11 @@
     min-height: 100vh;
   }
 
-  /* Navigation Bar */
-  .navigation-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 3.5rem;
+  /* Navigation Header */
+  .navigation-header {
     padding: 0 var(--space-4, 1rem);
     background: var(--surface, #fff);
     border-bottom: 1px solid var(--border, #e5e7eb);
-  }
-
-  .navigation-bar-start {
-    display: flex;
-    align-items: center;
   }
 
   .navigation-bar-brand {
@@ -180,41 +170,6 @@
 
   .navigation-bar-brand:hover {
     color: var(--accent, #2563eb);
-  }
-
-  .navigation-bar-center {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1, 0.25rem);
-  }
-
-  .navigation-bar-link {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1, 0.25rem);
-    padding: var(--space-1, 0.25rem) var(--space-3, 0.75rem);
-    font-size: var(--text-sm, 0.875rem);
-    color: var(--text-muted, #6b7280);
-    text-decoration: none;
-    border-radius: var(--radius-sm, 0.25rem);
-    transition:
-      color var(--duration-fast, 100ms) var(--ease-standard, ease),
-      background var(--duration-fast, 100ms) var(--ease-standard, ease);
-  }
-
-  .navigation-bar-link:hover {
-    color: var(--text, #111);
-    background: var(--surface-hover, #f3f4f6);
-  }
-
-  .navigation-bar-link.active {
-    color: var(--accent, #2563eb);
-    background: var(--surface-active, #eff6ff);
-  }
-
-  .navigation-bar-end {
-    display: flex;
-    align-items: center;
   }
 
   .theme-toggle {

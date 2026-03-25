@@ -43,7 +43,7 @@
   {#if deadline === undefined}
     <span class="text-muted">No deadline</span>
   {:else}
-    <span class="execution-deadline-value" class:is-expired={expired}>
+    <span class="execution-deadline-value" data-expired={expired}>
       {remaining}
     </span>
   {/if}
@@ -67,7 +67,7 @@
     font-family: var(--font-mono, monospace);
   }
 
-  .execution-deadline-value.is-expired {
+  .execution-deadline-value[data-expired='true'] {
     color: var(--danger, #dc2626);
   }
 </style>

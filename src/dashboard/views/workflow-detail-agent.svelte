@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-  import { getContext, onDestroy, untrack } from 'svelte';
+  import { getContext, untrack } from 'svelte';
 
   import type { ApiClient, WorkflowState, WorkflowEvent } from '../api-client.ts';
   import type { AgentTurnData } from '../fragments/agent-turn.svelte';
@@ -178,10 +178,6 @@
 
   const websocketClient = new WebSocketClient();
 
-  onDestroy(() => {
-    websocketClient.dispose();
-  });
-
   $effect(() => {
     loading = true;
     streamingText = '';
@@ -217,7 +213,10 @@
             workflow = updated;
             return undefined;
           },
-          () => undefined,
+          (refetchError) => {
+            console.warn('[workflow-detail-agent] Failed to re-fetch workflow on terminal event:', refetchError);
+            return undefined;
+          },
         );
       }
     }
@@ -249,6 +248,7 @@
 
     return () => {
       unsubscribe();
+      websocketClient.dispose();
     };
   });
 

@@ -34,13 +34,19 @@
   // Fetching
   // ---------------------------------------------------------------------------
 
-  async function fetchWorkflows(generation: number): Promise<void> {
+  interface FetchFilters {
+    status: WorkflowStatus | 'all';
+    type: string;
+    offset: number;
+  }
+
+  async function fetchWorkflows(generation: number, filters: FetchFilters): Promise<void> {
     try {
       const result = await apiClient.listWorkflows({
-        status: statusFilter === 'all' ? undefined : statusFilter,
-        type: typeFilter || undefined,
+        status: filters.status === 'all' ? undefined : filters.status,
+        type: filters.type || undefined,
         limit: pageSize,
-        offset: currentOffset,
+        offset: filters.offset,
       });
       if (generation !== fetchGeneration) return;
       workflows = result.items;
@@ -61,26 +67,30 @@
   // ---------------------------------------------------------------------------
 
   $effect(() => {
-    // Subscribe to filter/offset changes to re-fetch
-    const _deps = [statusFilter, typeFilter, currentOffset];
+    // Read reactive values synchronously so Svelte tracks them as dependencies.
+    const filters: FetchFilters = {
+      status: statusFilter,
+      type: typeFilter,
+      offset: currentOffset,
+    };
 
     loading = true;
     const generation = ++fetchGeneration;
-    fetchWorkflows(generation);
+    fetchWorkflows(generation, filters);
 
     let interval: ReturnType<typeof setInterval> | null = null;
 
     function startPolling(): void {
       interval = setInterval(() => {
         if (!document.hidden) {
-          fetchWorkflows(fetchGeneration);
+          fetchWorkflows(generation, filters);
         }
       }, 5_000);
     }
 
     function handleVisibility(): void {
       if (!document.hidden && interval === null) {
-        fetchWorkflows(fetchGeneration);
+        fetchWorkflows(generation, filters);
         startPolling();
       } else if (document.hidden && interval !== null) {
         clearInterval(interval);
@@ -115,7 +125,11 @@
   }
 
   function handleRefresh(): void {
-    fetchWorkflows(fetchGeneration);
+    fetchWorkflows(fetchGeneration, {
+      status: statusFilter,
+      type: typeFilter,
+      offset: currentOffset,
+    });
   }
 
   const STATUS_OPTIONS: Array<{ value: WorkflowStatus | 'all'; label: string }> = [

@@ -2,6 +2,7 @@
   import { getContext } from 'svelte';
 
   import type { ApiClient, ReviewRequest } from '../api-client.ts';
+  import type { ToastContext } from '../toast-context.ts';
   import { inbox } from '../icons.ts';
   import Page from '../components/page.svelte';
   import Skeleton from '../components/skeleton.svelte';
@@ -10,10 +11,6 @@
   import ReviewItem from '../fragments/review-item.svelte';
 
   const apiClient = getContext<ApiClient>('api-client');
-
-  interface ToastContext {
-    addToast: (message: string, variant: 'info' | 'success' | 'error') => void;
-  }
 
   const { addToast } = getContext<ToastContext>('toasts');
 

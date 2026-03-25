@@ -54,7 +54,7 @@
   {#if turn.toolCalls.length > 0}
     <div class="agent-turn-tool-calls">
       <button class="agent-turn-tool-calls-toggle" onclick={toggleToolCalls} type="button">
-        <span class="agent-turn-tool-calls-chevron" class:expanded={toolCallsExpanded}>
+        <span class="agent-turn-tool-calls-chevron" data-expanded={toolCallsExpanded}>
           {@html chevronRight(14)}
         </span>
         <span>
@@ -163,7 +163,7 @@
     transition: transform var(--duration-fast, 150ms) var(--ease-standard, ease);
   }
 
-  .agent-turn-tool-calls-chevron.expanded {
+  .agent-turn-tool-calls-chevron[data-expanded='true'] {
     transform: rotate(90deg);
   }
 

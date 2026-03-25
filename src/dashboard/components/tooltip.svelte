@@ -12,7 +12,6 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
   import { cn } from '../utilities/class-names.ts';
 
   let {
@@ -102,19 +101,17 @@
     }
   }
 
-  onDestroy(() => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      timeoutId = null;
-    }
-    cleanupTouchOutside();
-  });
-
-  onMount(() => {
+  $effect(() => {
     if (typeof document === 'undefined') return;
     document.addEventListener(TOOLTIP_OPEN_EVENT, handleTooltipOpen);
+
     return () => {
       document.removeEventListener(TOOLTIP_OPEN_EVENT, handleTooltipOpen);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      cleanupTouchOutside();
     };
   });
 </script>
