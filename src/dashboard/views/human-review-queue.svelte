@@ -82,6 +82,7 @@
   // ---------------------------------------------------------------------------
 
   let submittingReviewId: string | null = $state(null);
+  let submittingAction: 'approve' | 'reject' | null = $state(null);
 
   async function handleApprove(reviewId: string): Promise<void> {
     if (submittingReviewId !== null) return;
@@ -89,6 +90,7 @@
     if (!review) return;
 
     submittingReviewId = reviewId;
+    submittingAction = 'approve';
     try {
       await apiClient.submitReviewDecision(reviewId, review.workflowId, {
         decision: 'approved',
@@ -101,6 +103,7 @@
       addToast(`Failed to approve: ${message}`, 'error');
     } finally {
       submittingReviewId = null;
+      submittingAction = null;
     }
   }
 
@@ -110,6 +113,7 @@
     if (!review) return;
 
     submittingReviewId = reviewId;
+    submittingAction = 'reject';
     try {
       await apiClient.submitReviewDecision(reviewId, review.workflowId, {
         decision: 'rejected',
@@ -122,6 +126,7 @@
       addToast(`Failed to reject: ${message}`, 'error');
     } finally {
       submittingReviewId = null;
+      submittingAction = null;
     }
   }
 </script>
@@ -144,7 +149,7 @@
   {:else}
     <div class="review-queue-list">
       {#each reviews as review (review.reviewId)}
-        <ReviewItem {review} {submittingReviewId} onApprove={handleApprove} onReject={handleReject} />
+        <ReviewItem {review} {submittingReviewId} {submittingAction} onApprove={handleApprove} onReject={handleReject} />
       {/each}
     </div>
   {/if}
