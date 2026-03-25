@@ -254,10 +254,10 @@ function createPeriodicSyncHandler(
 
 Returns a `periodicsync` event listener. When the event tag matches (default `'weft-timers'`), the listener calls `event.waitUntil()` with the scheduler's timer processing.
 
-| Parameter   | Type                      | Default          | Description                                       |
-| ----------- | ------------------------- | ---------------- | ------------------------------------------------- |
-| `scheduler` | `ServiceWorkerScheduler`  | (required)       | The scheduler instance that manages timer wakeup  |
-| `tag`       | `string`                  | `'weft-timers'`  | Periodic sync tag to match against                |
+| Parameter   | Type                     | Default         | Description                                      |
+| ----------- | ------------------------ | --------------- | ------------------------------------------------ |
+| `scheduler` | `ServiceWorkerScheduler` | (required)      | The scheduler instance that manages timer wakeup |
+| `tag`       | `string`                 | `'weft-timers'` | Periodic sync tag to match against               |
 
 ```ts
 self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
@@ -312,14 +312,14 @@ interface ServiceWorkerSchedulerOptions {
 }
 ```
 
-| Option                         | Type                                           | Default          | Description                                                    |
-| ------------------------------ | ---------------------------------------------- | ---------------- | -------------------------------------------------------------- |
-| `storage`                      | `Storage`                                      | (required)       | Storage instance for reading timer entries                     |
-| `onTimerFired`                 | `(entry: TimerEntry) => void \| Promise<void>` | (required)       | Callback invoked when a timer expires                          |
-| `registration`                 | `ServiceWorkerRegistration`                    | `undefined`      | Service Worker registration for periodic sync                  |
-| `periodicSyncTag`              | `string`                                       | `'weft-timers'`  | Tag used when registering periodic background sync             |
-| `fallbackIntervalMilliseconds` | `number`                                       | `1000`           | Polling interval when periodic sync is not available           |
-| `getNow`                       | `() => number`                                 | `Date.now`       | Clock function for testing                                     |
+| Option                         | Type                                           | Default         | Description                                          |
+| ------------------------------ | ---------------------------------------------- | --------------- | ---------------------------------------------------- |
+| `storage`                      | `Storage`                                      | (required)      | Storage instance for reading timer entries           |
+| `onTimerFired`                 | `(entry: TimerEntry) => void \| Promise<void>` | (required)      | Callback invoked when a timer expires                |
+| `registration`                 | `ServiceWorkerRegistration`                    | `undefined`     | Service Worker registration for periodic sync        |
+| `periodicSyncTag`              | `string`                                       | `'weft-timers'` | Tag used when registering periodic background sync   |
+| `fallbackIntervalMilliseconds` | `number`                                       | `1000`          | Polling interval when periodic sync is not available |
+| `getNow`                       | `() => number`                                 | `Date.now`      | Clock function for testing                           |
 
 When Periodic Background Sync is available, the browser wakes the Service Worker at the registered interval. When it is not available (Firefox, Safari), the scheduler falls back to `setTimeout`-based polling, which only works while a tab is open.
 

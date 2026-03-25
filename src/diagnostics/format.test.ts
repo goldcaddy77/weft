@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { DiagnosticReport, VersionCheckReport } from './types.ts';
 import {
   formatBytes,
   formatDiagnosticReport,
   formatDuration,
   formatVersionCheckReport,
 } from './format.ts';
+import type { DiagnosticReport, VersionCheckReport } from './types.ts';
 
 describe('formatBytes', () => {
   it('formats 0 as "0 B"', () => {
@@ -171,7 +171,14 @@ describe('formatDiagnosticReport', () => {
       },
       workflows: {
         total: 0,
-        statusCounts: { pending: 0, running: 0, completed: 0, failed: 0, cancelled: 0, timedOut: 0 },
+        statusCounts: {
+          pending: 0,
+          running: 0,
+          completed: 0,
+          failed: 0,
+          cancelled: 0,
+          timedOut: 0,
+        },
         longestRunning: null,
         largestCheckpoint: null,
       },

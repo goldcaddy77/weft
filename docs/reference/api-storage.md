@@ -280,9 +280,9 @@ Browser consumers must use the subpath import `weft/storage/indexeddb`. The main
 new IndexedDBStorage(databaseName?: string)
 ```
 
-| Parameter      | Type     | Default  | Description                        |
-| -------------- | -------- | -------- | ---------------------------------- |
-| `databaseName` | `string` | `'weft'` | Name of the IndexedDB database     |
+| Parameter      | Type     | Default  | Description                    |
+| -------------- | -------- | -------- | ------------------------------ |
+| `databaseName` | `string` | `'weft'` | Name of the IndexedDB database |
 
 ```ts
 const storage = new IndexedDBStorage('my-app');
@@ -292,14 +292,14 @@ const storage = new IndexedDBStorage('my-app');
 
 All methods from the `Storage` interface are supported except `query()`. IndexedDB has no SQL engine, so raw queries are not available.
 
-| Method              | Supported | Notes                                          |
-| ------------------- | --------- | ---------------------------------------------- |
-| `get()`             | Yes       |                                                |
-| `put()`             | Yes       |                                                |
-| `delete()`          | Yes       |                                                |
-| `scan()`            | Yes       | Uses IndexedDB cursor iteration                |
-| `batch()`           | Yes       | Atomic via a single IndexedDB transaction      |
-| `query()`           | No        | Not available -- IndexedDB has no SQL           |
+| Method     | Supported | Notes                                     |
+| ---------- | --------- | ----------------------------------------- |
+| `get()`    | Yes       |                                           |
+| `put()`    | Yes       |                                           |
+| `delete()` | Yes       |                                           |
+| `scan()`   | Yes       | Uses IndexedDB cursor iteration           |
+| `batch()`  | Yes       | Atomic via a single IndexedDB transaction |
+| `query()`  | No        | Not available -- IndexedDB has no SQL     |
 
 #### `[Symbol.dispose]()`
 

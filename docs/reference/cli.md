@@ -21,11 +21,11 @@ weft serve --port 8080 --database /var/data/weft.db
 
 **Options:**
 
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--port` | `-p` | `7233` | Server port |
-| `--database` | `-d` | `./weft.db` | SQLite database file path |
-| `--help` | `-h` | | Show help message |
+| Flag         | Short | Default     | Description               |
+| ------------ | ----- | ----------- | ------------------------- |
+| `--port`     | `-p`  | `7233`      | Server port               |
+| `--database` | `-d`  | `./weft.db` | SQLite database file path |
+| `--help`     | `-h`  |             | Show help message         |
 
 ### doctor
 
@@ -38,11 +38,11 @@ weft doctor --database ./weft.db --json
 
 **Options:**
 
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--database` | `-d` | `./weft.db` | SQLite database file path |
-| `--json` | `-j` | `false` | Output as JSON instead of human-readable text |
-| `--help` | `-h` | | Show help message |
+| Flag         | Short | Default     | Description                                   |
+| ------------ | ----- | ----------- | --------------------------------------------- |
+| `--database` | `-d`  | `./weft.db` | SQLite database file path                     |
+| `--json`     | `-j`  | `false`     | Output as JSON instead of human-readable text |
+| `--help`     | `-h`  |             | Show help message                             |
 
 **Output sections:**
 
@@ -62,12 +62,12 @@ weft version:check --database ./weft.db --workflows ./src/workflows.ts --json
 
 **Options:**
 
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--database` | `-d` | `./weft.db` | SQLite database file path |
-| `--workflows` | `-w` | (required) | Path to module exporting workflow registrations |
-| `--json` | `-j` | `false` | Output as JSON instead of human-readable text |
-| `--help` | `-h` | | Show help message |
+| Flag          | Short | Default     | Description                                     |
+| ------------- | ----- | ----------- | ----------------------------------------------- |
+| `--database`  | `-d`  | `./weft.db` | SQLite database file path                       |
+| `--workflows` | `-w`  | (required)  | Path to module exporting workflow registrations |
+| `--json`      | `-j`  | `false`     | Output as JSON instead of human-readable text   |
+| `--help`      | `-h`  |             | Show help message                               |
 
 The workflows module must default-export a `Record<string, WorkflowRegistration>`:
 
@@ -91,7 +91,12 @@ export default {
 Both diagnostic commands are available as library functions:
 
 ```typescript
-import { collectDiagnostics, runVersionCheck, formatDiagnosticReport, formatVersionCheckReport } from 'weft';
+import {
+  collectDiagnostics,
+  runVersionCheck,
+  formatDiagnosticReport,
+  formatVersionCheckReport,
+} from 'weft';
 ```
 
 See the TypeScript types for `DiagnosticReport` and `VersionCheckReport` for the full data model.

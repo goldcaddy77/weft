@@ -212,10 +212,10 @@ Creates a `fetch` event listener that intercepts requests matching the path pref
 function createFetchHandler(options: ServiceWorkerOptions): (event: FetchEvent) => void;
 ```
 
-| Option       | Type     | Default    | Description                                          |
-| ------------ | -------- | ---------- | ---------------------------------------------------- |
-| `engine`     | `Engine` | (required) | The engine instance to handle requests               |
-| `pathPrefix` | `string` | `'/weft/'` | URL path prefix that identifies Weft API requests    |
+| Option       | Type     | Default    | Description                                       |
+| ------------ | -------- | ---------- | ------------------------------------------------- |
+| `engine`     | `Engine` | (required) | The engine instance to handle requests            |
+| `pathPrefix` | `string` | `'/weft/'` | URL path prefix that identifies Weft API requests |
 
 ### `createPeriodicSyncHandler()`
 

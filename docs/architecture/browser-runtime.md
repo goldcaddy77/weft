@@ -83,8 +83,8 @@ Workflows need timers---`yield* ctx.sleep("1 hour")` has to actually wake up an 
 const scheduler = new ServiceWorkerScheduler({
   storage,
   onTimerFired: (entry) => engine.processTimer(entry),
-  periodicSyncTag: 'weft-timers',          // default
-  fallbackIntervalMilliseconds: 1000,       // default
+  periodicSyncTag: 'weft-timers', // default
+  fallbackIntervalMilliseconds: 1000, // default
 });
 
 self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
