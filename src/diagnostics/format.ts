@@ -1,0 +1,186 @@
+/**
+ * Output formatters for diagnostic commands.
+ *
+ * Provides human-readable formatting for `weft doctor` and `weft version:check`
+ * reports, plus utility functions for byte sizes and durations.
+ *
+ * @module diagnostics/format
+ */
+
+import type { DiagnosticReport, VersionCheckReport } from './types.ts';
+
+// ---------------------------------------------------------------------------
+// ANSI color utilities (internal)
+// ---------------------------------------------------------------------------
+
+const supportsColor =
+  typeof process !== 'undefined' && process.stdout?.isTTY && !process.env.NO_COLOR;
+
+const color = {
+  green: (text: string) => (supportsColor ? `\x1b[32m${text}\x1b[0m` : text),
+  yellow: (text: string) => (supportsColor ? `\x1b[33m${text}\x1b[0m` : text),
+  red: (text: string) => (supportsColor ? `\x1b[31m${text}\x1b[0m` : text),
+  bold: (text: string) => (supportsColor ? `\x1b[1m${text}\x1b[0m` : text),
+  dim: (text: string) => (supportsColor ? `\x1b[2m${text}\x1b[0m` : text),
+};
+
+// ---------------------------------------------------------------------------
+// Exported helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a byte count into a human-readable string.
+ *
+ * - 0 returns '0 B'
+ * - Values under 1024 return '{n} B'
+ * - Values under 1024^2 return '{n} KB' (1 decimal place)
+ * - Values under 1024^3 return '{n} MB' (1 decimal place)
+ * - Otherwise returns '{n} GB' (1 decimal place)
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+/**
+ * Format a duration in milliseconds into a human-readable string.
+ *
+ * - Under 1000ms: '{n}ms'
+ * - Under 60000ms: '{n} seconds' (rounded)
+ * - Under 3600000ms: '{n} minutes' (rounded)
+ * - Under 86400000ms: '{n} hours' optionally with minutes
+ * - Otherwise: '{n} days' optionally with hours
+ */
+export function formatDuration(milliseconds: number): string {
+  if (milliseconds < 1000) return `${milliseconds}ms`;
+  if (milliseconds < 60000) return `${Math.round(milliseconds / 1000)} seconds`;
+  if (milliseconds < 3600000) return `${Math.round(milliseconds / 60000)} minutes`;
+  if (milliseconds < 86400000) {
+    const hours = Math.floor(milliseconds / 3600000);
+    const minutes = Math.round((milliseconds % 3600000) / 60000);
+    if (minutes > 0) return `${hours} hours ${minutes} minutes`;
+    return `${hours} hours`;
+  }
+  const days = Math.floor(milliseconds / 86400000);
+  const hours = Math.round((milliseconds % 86400000) / 3600000);
+  if (hours > 0) return `${days} days ${hours} hours`;
+  return `${days} days`;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic report formatter (weft doctor)
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a DiagnosticReport into a human-readable multi-section string.
+ */
+export function formatDiagnosticReport(report: DiagnosticReport): string {
+  const lines: string[] = [];
+
+  // Database section
+  lines.push(color.bold('Database:'));
+  lines.push(
+    `  Size: ${formatBytes(report.database.sizeBytes)} (of ${formatBytes(report.database.sizeLimitBytes)})`,
+  );
+  lines.push(
+    `  WAL size: ${report.database.walSizeBytes !== null ? formatBytes(report.database.walSizeBytes) : 'N/A'}`,
+  );
+  lines.push(
+    `  Integrity: ${report.database.integrityOk ? 'OK' : `FAILED: ${report.database.integrityError}`}`,
+  );
+  lines.push(`  Fragmentation: ${report.database.fragmentationPercent}%`);
+
+  // Workflows section
+  lines.push('');
+  lines.push(color.bold('Workflows:'));
+  if (report.workflows.total === 0) {
+    lines.push('  Total: 0 (no workflows)');
+  } else {
+    const counts = report.workflows.statusCounts;
+    lines.push(
+      `  Total: ${report.workflows.total} (${counts.running} running, ${counts.completed} completed, ${counts.failed} failed)`,
+    );
+    if (report.workflows.longestRunning) {
+      const longest = report.workflows.longestRunning;
+      lines.push(
+        `  Longest running: ${longest.id} (started ${formatDuration(longest.elapsedMilliseconds)} ago, step ${longest.currentStep})`,
+      );
+    }
+    if (report.workflows.largestCheckpoint) {
+      const largest = report.workflows.largestCheckpoint;
+      lines.push(
+        `  Largest checkpoint: ${largest.workflowId} (${formatBytes(largest.sizeBytes)})`,
+      );
+    }
+  }
+
+  // Activities section
+  lines.push('');
+  lines.push(color.bold('Activities:'));
+  if (report.queues.length === 0) {
+    lines.push('  No activity queues');
+  } else {
+    for (const queue of report.queues) {
+      lines.push(
+        `  Queue "${queue.name}": ${queue.pendingCount} pending, ${queue.inflightCount} in-flight`,
+      );
+    }
+  }
+
+  // Recommendations section
+  lines.push('');
+  lines.push(color.bold('Recommendations:'));
+  if (report.recommendations.length === 0) {
+    lines.push('  No issues found.');
+  } else {
+    for (const recommendation of report.recommendations) {
+      const icon = recommendation.severity === 'critical' ? '!!' : '!';
+      lines.push(`  ${icon} ${recommendation.message}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Version check report formatter (weft version:check)
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a VersionCheckReport into a human-readable string.
+ */
+export function formatVersionCheckReport(report: VersionCheckReport): string {
+  const lines: string[] = [];
+
+  for (const typeReport of report.workflowTypes) {
+    lines.push(
+      `${typeReport.type} (${typeReport.storedVersion} → ${typeReport.registeredVersion}):`,
+    );
+    lines.push(`  ${typeReport.runningCount} running workflows`);
+    lines.push(`  Compatibility: ${typeReport.compatibility}`);
+    lines.push(`  Migration: ${typeReport.hasMigration ? 'provided' : 'not provided'}`);
+    lines.push('');
+  }
+
+  // Overall result
+  switch (report.overallVerdict) {
+    case 'safe':
+      lines.push(`Result: ${color.green('Safe to deploy.')}`);
+      break;
+    case 'needs-migration':
+      lines.push(
+        `Result: ${color.yellow('Needs migration. Migration functions provided.')}`,
+      );
+      break;
+    case 'unsafe':
+      lines.push(
+        `Result: ${color.red('UNSAFE: missing migration functions.')}`,
+      );
+      break;
+  }
+
+  return lines.join('\n');
+}
