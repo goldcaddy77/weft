@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getContext, untrack } from 'svelte';
 
   import type { ApiClient, WorkflowState, WorkflowEvent } from '../api-client.ts';
   import { WebSocketClient } from '../websocket-client.ts';
@@ -89,23 +89,25 @@
     fetchAll();
 
     const unsubscribe = websocketClient.subscribe(id, (event: WorkflowEvent) => {
-      events = [...events, event];
+      untrack(() => {
+        events = [...events, event];
 
-      // Re-fetch workflow state on terminal events
-      if (
-        event.type === 'workflow:completed' ||
-        event.type === 'workflow:failed' ||
-        event.type === 'workflow:cancelled' ||
-        event.type === 'workflow:timed-out'
-      ) {
-        void apiClient.getWorkflow(id).then(
-          (updated) => {
-            workflow = updated;
-            return undefined;
-          },
-          () => undefined,
-        );
-      }
+        // Re-fetch workflow state on terminal events
+        if (
+          event.type === 'workflow:completed' ||
+          event.type === 'workflow:failed' ||
+          event.type === 'workflow:cancelled' ||
+          event.type === 'workflow:timed-out'
+        ) {
+          void apiClient.getWorkflow(id).then(
+            (updated) => {
+              workflow = updated;
+              return undefined;
+            },
+            () => undefined,
+          );
+        }
+      });
     });
 
     return () => {

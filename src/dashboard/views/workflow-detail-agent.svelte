@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-  import { getContext } from 'svelte';
+  import { getContext, untrack } from 'svelte';
 
   import type { ApiClient, WorkflowState, WorkflowEvent } from '../api-client.ts';
   import type { AgentTurnData } from '../fragments/agent-turn.svelte';
@@ -176,33 +176,35 @@
     fetchAll();
 
     const unsubscribe = websocketClient.subscribe(id, (event: WorkflowEvent) => {
-      events = [...events, event];
+      untrack(() => {
+        events = [...events, event];
 
-      // Accumulate streaming tokens
-      if (event.type === 'agent:token') {
-        streamingText += (event.data['token'] as string) ?? '';
-      }
+        // Accumulate streaming tokens
+        if (event.type === 'agent:token') {
+          streamingText += (event.data['token'] as string) ?? '';
+        }
 
-      // Clear streaming text on turn completion
-      if (event.type === 'agent:turn:completed') {
-        streamingText = '';
-      }
+        // Clear streaming text on turn completion
+        if (event.type === 'agent:turn:completed') {
+          streamingText = '';
+        }
 
-      // Re-fetch workflow state on terminal events
-      if (
-        event.type === 'workflow:completed' ||
-        event.type === 'workflow:failed' ||
-        event.type === 'workflow:cancelled' ||
-        event.type === 'workflow:timed-out'
-      ) {
-        void apiClient.getWorkflow(id).then(
-          (updated) => {
-            workflow = updated;
-            return undefined;
-          },
-          () => undefined,
-        );
-      }
+        // Re-fetch workflow state on terminal events
+        if (
+          event.type === 'workflow:completed' ||
+          event.type === 'workflow:failed' ||
+          event.type === 'workflow:cancelled' ||
+          event.type === 'workflow:timed-out'
+        ) {
+          void apiClient.getWorkflow(id).then(
+            (updated) => {
+              workflow = updated;
+              return undefined;
+            },
+            () => undefined,
+          );
+        }
+      });
     });
 
     return () => {

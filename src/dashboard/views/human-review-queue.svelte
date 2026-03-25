@@ -41,7 +41,36 @@
   }
 
   $effect(() => {
+    loading = true;
     fetchReviews();
+
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    function startPolling(): void {
+      interval = setInterval(() => {
+        if (!document.hidden) {
+          fetchReviews();
+        }
+      }, 5_000);
+    }
+
+    function handleVisibility(): void {
+      if (!document.hidden && interval === null) {
+        fetchReviews();
+        startPolling();
+      } else if (document.hidden && interval !== null) {
+        clearInterval(interval);
+        interval = null;
+      }
+    }
+
+    startPolling();
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      if (interval !== null) clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   });
 
   // ---------------------------------------------------------------------------
