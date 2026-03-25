@@ -107,7 +107,7 @@ describe('offload, load, and archive', () => {
       return reference;
     });
 
-    const handle = await engine.start('offload-step', {});
+    await engine.start('offload-step', {});
     // Let the offload complete and the workflow pause at waitForSignal
     await Bun.sleep(10);
 

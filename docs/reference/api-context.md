@@ -20,14 +20,15 @@ Typically constructed by the engine -- you will not create `Context` instances d
 
 ### Read-only Properties
 
-| Property                 | Type          | Description                                                              |
-| ------------------------ | ------------- | ------------------------------------------------------------------------ |
-| `workflowId`             | `string`      | The workflow's unique identifier                                         |
-| `workflowType`           | `string`      | The registered workflow type name                                        |
-| `startedAt`              | `number`      | Epoch timestamp when the workflow started                                |
-| `signal`                 | `AbortSignal` | Abort signal -- fires when the workflow is cancelled                     |
-| `executionTimeRemaining` | `number`      | Milliseconds until execution deadline. `Infinity` if no deadline is set. |
-| `stepIndex`              | `number`      | Current step counter (incremented by each durable operation)             |
+| Property                 | Type          | Description                                                                             |
+| ------------------------ | ------------- | --------------------------------------------------------------------------------------- |
+| `workflowId`             | `string`      | The workflow's unique identifier                                                        |
+| `workflowType`           | `string`      | The registered workflow type name                                                       |
+| `startedAt`              | `number`      | Epoch timestamp when the workflow started                                               |
+| `signal`                 | `AbortSignal` | Abort signal -- fires when the workflow is cancelled                                    |
+| `executionTimeRemaining` | `number`      | Milliseconds until execution deadline. `Infinity` if no deadline is set.                |
+| `stepIndex`              | `number`      | Current step counter (incremented by each durable operation)                            |
+| `nestingDepth`           | `number`      | How many levels deep this workflow is as a child workflow. `0` for top-level workflows. |
 
 ---
 
@@ -285,6 +286,52 @@ yield *
 
 Execute an AI agent loop as a durable operation. See the agent guides for details on `AgentContextOptions`.
 
+### `startChild()`
+
+```ts
+*startChild<TResult = unknown>(
+  workflowType: string,
+  input: unknown,
+  options?: Record<string, unknown>,
+): Generator<ContextOperationRequest, TResult, unknown>
+```
+
+Start a child workflow and wait for its result. The child workflow is independently checkpointed -- it has its own workflow ID, its own state in storage, and its own lifecycle. The parent workflow suspends at the `yield*` boundary until the child completes or fails.
+
+| Parameter      | Type                      | Description                               |
+| -------------- | ------------------------- | ----------------------------------------- |
+| `workflowType` | `string`                  | The registered name of the child workflow |
+| `input`        | `unknown`                 | Input to pass to the child workflow       |
+| `options`      | `Record<string, unknown>` | Optional configuration for the child      |
+
+**Returns:** The child workflow's return value, typed as `TResult`.
+
+If the child workflow throws, the error propagates into the parent and can be caught with `try/catch`.
+
+```ts
+async function* parentWorkflow(ctx: WorkflowContext, order: Order) {
+  const context = ctx as Context;
+
+  // Start a child workflow and wait for its result
+  const receipt = yield* context.startChild<Receipt>('process-payment', {
+    amount: order.total,
+    cardToken: order.cardToken,
+  });
+
+  // Child failures propagate to the parent
+  try {
+    yield* context.startChild('send-notification', { email: order.email, receipt });
+  } catch (error) {
+    // Handle child failure gracefully
+    yield* context.run(logFailure, error);
+  }
+
+  return { receipt, status: 'completed' };
+}
+```
+
+> **Nesting depth limit:** By default, child workflows can nest up to 10 levels deep. Configure `maxNestingDepth` in engine options to adjust this limit. Exceeding the limit throws an error into the parent workflow.
+
 ---
 
 ## Synchronous Operations
@@ -385,6 +432,7 @@ interface ContextOptions {
   accumulatedResults?: Map<number, unknown>;
   searchAttributes?: Record<string, SearchAttributeValue>;
   getNow?: () => number;
+  nestingDepth?: number;
 }
 ```
 
