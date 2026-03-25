@@ -104,6 +104,27 @@ If you do not pass a storage option to the `Engine` constructor, it defaults to 
 const engine = new Engine(); // uses MemoryStorage
 ```
 
+## IndexedDBStorage
+
+`IndexedDBStorage` is the browser equivalent of `BunSQLiteStorage`. It persists workflow state to IndexedDB, making it suitable for Service Worker deployments where the engine runs entirely inside the browser.
+
+```typescript
+import { IndexedDBStorage } from 'weft/storage/indexeddb';
+
+using storage = new IndexedDBStorage('weft');
+const engine = new Engine({ storage });
+```
+
+The constructor takes an optional database name (defaults to `'weft'`). Under the hood, it creates a single `kv` object store with string keys and `Uint8Array` values---the same logical structure as `BunSQLiteStorage`'s `kv` table.
+
+`IndexedDBStorage` implements the full `Storage` interface except for `query()`. IndexedDB has no SQL engine, so raw queries are not available. All other methods---`get`, `put`, `delete`, `scan`, and `batch`---work identically to the other adapters.
+
+The `batch()` method is atomic. All operations in a batch run inside a single IndexedDB transaction, so a batch that writes a workflow state and a checkpoint either both succeeds or neither does.
+
+The `using` pattern works for cleanup: `[Symbol.dispose]()` closes the underlying IndexedDB database connection.
+
+Browser consumers must use the subpath import `weft/storage/indexeddb` rather than importing from `'weft'` directly. The main `weft` entry point pulls in `bun:sqlite`, which is not available in browser environments.
+
 ## When to consider alternatives
 
 SQLite handles most workloads well (roughly 50K writes/sec in WAL mode, 100K reads/sec). But if you are pushing past 30K workflows per second and need maximum read throughput, consider building an adapter for a memory-mapped store like LMDB. Its zero-copy reads are unbeatable for hot-path operations like task claiming.

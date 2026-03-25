@@ -195,3 +195,137 @@ All errors return JSON with an `error` field:
 | `409`  | Conflict (duplicate workflow ID)                                  |
 | `422`  | Workflow failed or cancelled (result endpoint)                    |
 | `500`  | Internal server error                                             |
+
+---
+
+## Service Worker
+
+The `weft/service-worker` module provides bootstrap functions for running the Weft engine inside a Service Worker. These functions wire `handleRequest()` into the Service Worker event model.
+
+```ts
+import {
+  createFetchHandler,
+  createPeriodicSyncHandler,
+  createLifecycleHandlers,
+  ServiceWorkerScheduler,
+} from 'weft/service-worker';
+```
+
+---
+
+### `ServiceWorkerOptions`
+
+```ts
+interface ServiceWorkerOptions {
+  engine: Engine;
+  pathPrefix?: string;
+}
+```
+
+| Field        | Type     | Default    | Description                                       |
+| ------------ | -------- | ---------- | ------------------------------------------------- |
+| `engine`     | `Engine` | (required) | The engine instance to handle requests            |
+| `pathPrefix` | `string` | `'/weft/'` | URL path prefix that identifies Weft API requests |
+
+---
+
+### `createFetchHandler()`
+
+```ts
+function createFetchHandler(options: ServiceWorkerOptions): (event: FetchEvent) => void;
+```
+
+Returns a `fetch` event listener. When the request URL matches the `pathPrefix`, the listener calls `event.respondWith()` with the result of `handleRequest()`. Non-matching requests pass through to the network.
+
+```ts
+self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/' }));
+```
+
+---
+
+### `createPeriodicSyncHandler()`
+
+```ts
+function createPeriodicSyncHandler(
+  scheduler: ServiceWorkerScheduler,
+  tag?: string,
+): (event: PeriodicSyncEvent) => void;
+```
+
+Returns a `periodicsync` event listener. When the event tag matches (default `'weft-timers'`), the listener calls `event.waitUntil()` with the scheduler's timer processing.
+
+| Parameter   | Type                      | Default          | Description                                       |
+| ----------- | ------------------------- | ---------------- | ------------------------------------------------- |
+| `scheduler` | `ServiceWorkerScheduler`  | (required)       | The scheduler instance that manages timer wakeup  |
+| `tag`       | `string`                  | `'weft-timers'`  | Periodic sync tag to match against                |
+
+```ts
+self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
+```
+
+---
+
+### `createLifecycleHandlers()`
+
+```ts
+function createLifecycleHandlers(): {
+  install: (event: ExtendableEvent) => void;
+  activate: (event: ExtendableEvent) => void;
+};
+```
+
+Returns `install` and `activate` event handlers.
+
+- **`install`**: Calls `skipWaiting()` so the new Service Worker activates immediately without waiting for existing clients to close.
+- **`activate`**: Calls `clients.claim()` so the Service Worker takes control of all open tabs without requiring a page reload.
+
+```ts
+const { install, activate } = createLifecycleHandlers();
+self.addEventListener('install', install);
+self.addEventListener('activate', activate);
+```
+
+---
+
+### `ServiceWorkerScheduler`
+
+```ts
+class ServiceWorkerScheduler
+```
+
+Manages timer wakeup in the Service Worker environment. Checks storage for expired timers and fires them via the provided callback.
+
+#### Constructor
+
+```ts
+new ServiceWorkerScheduler(options: ServiceWorkerSchedulerOptions)
+```
+
+```ts
+interface ServiceWorkerSchedulerOptions {
+  storage: Storage;
+  onTimerFired: (entry: TimerEntry) => void | Promise<void>;
+  registration?: ServiceWorkerRegistration;
+  periodicSyncTag?: string;
+  fallbackIntervalMilliseconds?: number;
+  getNow?: () => number;
+}
+```
+
+| Option                         | Type                                           | Default          | Description                                                    |
+| ------------------------------ | ---------------------------------------------- | ---------------- | -------------------------------------------------------------- |
+| `storage`                      | `Storage`                                      | (required)       | Storage instance for reading timer entries                     |
+| `onTimerFired`                 | `(entry: TimerEntry) => void \| Promise<void>` | (required)       | Callback invoked when a timer expires                          |
+| `registration`                 | `ServiceWorkerRegistration`                    | `undefined`      | Service Worker registration for periodic sync                  |
+| `periodicSyncTag`              | `string`                                       | `'weft-timers'`  | Tag used when registering periodic background sync             |
+| `fallbackIntervalMilliseconds` | `number`                                       | `1000`           | Polling interval when periodic sync is not available           |
+| `getNow`                       | `() => number`                                 | `Date.now`       | Clock function for testing                                     |
+
+When Periodic Background Sync is available, the browser wakes the Service Worker at the registered interval. When it is not available (Firefox, Safari), the scheduler falls back to `setTimeout`-based polling, which only works while a tab is open.
+
+```ts
+const scheduler = new ServiceWorkerScheduler({
+  storage,
+  onTimerFired: (entry) => engine.processTimer(entry),
+});
+```

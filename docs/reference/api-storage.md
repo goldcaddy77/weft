@@ -257,3 +257,57 @@ Return a deep copy of all stored data. Useful for test assertions and engine rec
 #### `[Symbol.dispose]()`
 
 Clears all stored data.
+
+---
+
+## `IndexedDBStorage`
+
+```ts
+class IndexedDBStorage implements Storage
+```
+
+IndexedDB-backed storage for browser environments. Uses a single `kv` object store with string keys and `Uint8Array` values. Suitable for Service Worker deployments where the engine runs entirely in the browser.
+
+```ts
+import { IndexedDBStorage } from 'weft/storage/indexeddb';
+```
+
+Browser consumers must use the subpath import `weft/storage/indexeddb`. The main `weft` entry point pulls in `bun:sqlite`, which is not available in browser environments.
+
+### Constructor
+
+```ts
+new IndexedDBStorage(databaseName?: string)
+```
+
+| Parameter      | Type     | Default  | Description                        |
+| -------------- | -------- | -------- | ---------------------------------- |
+| `databaseName` | `string` | `'weft'` | Name of the IndexedDB database     |
+
+```ts
+const storage = new IndexedDBStorage('my-app');
+```
+
+### Methods
+
+All methods from the `Storage` interface are supported except `query()`. IndexedDB has no SQL engine, so raw queries are not available.
+
+| Method              | Supported | Notes                                          |
+| ------------------- | --------- | ---------------------------------------------- |
+| `get()`             | Yes       |                                                |
+| `put()`             | Yes       |                                                |
+| `delete()`          | Yes       |                                                |
+| `scan()`            | Yes       | Uses IndexedDB cursor iteration                |
+| `batch()`           | Yes       | Atomic via a single IndexedDB transaction      |
+| `query()`           | No        | Not available -- IndexedDB has no SQL           |
+
+#### `[Symbol.dispose]()`
+
+Closes the IndexedDB database connection. Supports the `using` pattern for automatic cleanup.
+
+```ts
+{
+  using storage = new IndexedDBStorage('weft');
+  // storage is open...
+} // database connection closed here
+```
