@@ -114,9 +114,9 @@ describe('LLMProvider', () => {
     }
 
     expect(chunks).toHaveLength(3);
-    expect(chunks[0].type).toBe('token');
-    expect(chunks[0].token).toBe('Hi');
-    expect(chunks[2].type).toBe('done');
+    expect(chunks[0]!.type).toBe('token');
+    expect(chunks[0]!.token).toBe('Hi');
+    expect(chunks[2]!.type).toBe('done');
   });
 
   it('mock provider countTokens returns a number', async () => {
