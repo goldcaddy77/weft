@@ -19,6 +19,7 @@
 
 <script lang="ts">
   import { cn } from '../utilities/class-names.ts';
+  import { truncate as truncateText } from '../utilities/truncate.ts';
 
   let {
     variant = 'default',
@@ -35,7 +36,7 @@
   const displayValue = $derived.by(() => {
     if (!label) return null;
     if (truncate && label.length > truncate) {
-      return label.slice(0, truncate);
+      return truncateText(label, truncate);
     }
     return label;
   });

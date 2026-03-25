@@ -77,10 +77,13 @@ export class WebSocketClient {
     subscription.callbacks.add(callback);
 
     return () => {
-      subscription.callbacks.delete(callback);
+      const current = this.#subscriptions.get(workflowId);
+      if (!current) return;
 
-      if (subscription.callbacks.size === 0) {
-        this.#teardown(subscription);
+      current.callbacks.delete(callback);
+
+      if (current.callbacks.size === 0) {
+        this.#teardown(current);
         this.#subscriptions.delete(workflowId);
         this.#updateConnectionState();
       }

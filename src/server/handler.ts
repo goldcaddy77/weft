@@ -493,7 +493,7 @@ async function handleGetWorkflowEvents(engine: Engine, workflowId: string): Prom
     events.push({
       type: (event['type'] as string) ?? 'unknown',
       timestamp: (event['timestamp'] as number) ?? 0,
-      data: event,
+      data: (event['data'] as Record<string, unknown>) ?? {},
     });
   }
 
