@@ -40,6 +40,7 @@
   let error: string | null = $state(null);
   let cancelling = $state(false);
   let streamingText = $state('');
+  let fetchGeneration = 0;
 
   // ---------------------------------------------------------------------------
   // Agent-specific derived state
@@ -149,20 +150,25 @@
   // Fetching
   // ---------------------------------------------------------------------------
 
-  async function fetchAll(): Promise<void> {
+  async function fetchAll(generation: number): Promise<void> {
     try {
       const [workflowResult, eventsResult] = await Promise.all([
         apiClient.getWorkflow(id),
         apiClient.getWorkflowEvents(id),
       ]);
 
+      if (generation !== fetchGeneration) return;
+
       workflow = workflowResult;
       events = Array.isArray(eventsResult) ? eventsResult : [];
       error = null;
     } catch (fetchError) {
+      if (generation !== fetchGeneration) return;
       error = fetchError instanceof Error ? fetchError.message : String(fetchError);
     } finally {
-      loading = false;
+      if (generation === fetchGeneration) {
+        loading = false;
+      }
     }
   }
 
@@ -173,7 +179,9 @@
   const websocketClient = new WebSocketClient();
 
   $effect(() => {
-    fetchAll();
+    loading = true;
+    const generation = ++fetchGeneration;
+    fetchAll(generation);
 
     const unsubscribe = websocketClient.subscribe(id, (event: WorkflowEvent) => {
       untrack(() => {

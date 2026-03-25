@@ -38,6 +38,7 @@
   let loading = $state(true);
   let error: string | null = $state(null);
   let cancelling = $state(false);
+  let fetchGeneration = 0;
 
   // ---------------------------------------------------------------------------
   // Derived
@@ -55,12 +56,14 @@
   // Fetching
   // ---------------------------------------------------------------------------
 
-  async function fetchAll(): Promise<void> {
+  async function fetchAll(generation: number): Promise<void> {
     try {
       const [workflowResult, eventsResult] = await Promise.all([
         apiClient.getWorkflow(id),
         apiClient.getWorkflowEvents(id),
       ]);
+
+      if (generation !== fetchGeneration) return;
 
       workflow = workflowResult;
       events = Array.isArray(eventsResult) ? eventsResult : [];
@@ -68,14 +71,21 @@
       try {
         attributes = await apiClient.getWorkflowAttributes(id);
       } catch {
-        attributes = {};
+        if (generation === fetchGeneration) {
+          attributes = {};
+        }
       }
 
-      error = null;
+      if (generation === fetchGeneration) {
+        error = null;
+      }
     } catch (fetchError) {
+      if (generation !== fetchGeneration) return;
       error = fetchError instanceof Error ? fetchError.message : String(fetchError);
     } finally {
-      loading = false;
+      if (generation === fetchGeneration) {
+        loading = false;
+      }
     }
   }
 
@@ -86,7 +96,9 @@
   const websocketClient = new WebSocketClient();
 
   $effect(() => {
-    fetchAll();
+    loading = true;
+    const generation = ++fetchGeneration;
+    fetchAll(generation);
 
     const unsubscribe = websocketClient.subscribe(id, (event: WorkflowEvent) => {
       untrack(() => {
