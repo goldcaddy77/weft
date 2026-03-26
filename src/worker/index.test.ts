@@ -31,6 +31,7 @@ function createTestServer(options?: {
 // ---------------------------------------------------------------------------
 
 describe('RemoteWorker', () => {
+  // eslint-disable-next-line typescript-eslint/no-redundant-type-constituents -- Bun.serve return type
   let server: ReturnType<typeof Bun.serve> | undefined;
 
   afterEach(() => {
