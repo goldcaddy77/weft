@@ -19,8 +19,11 @@ export class MemoryStorage implements Storage {
     const { limit, reverse, gt, lt, gte, lte } = options;
 
     // Compute the exclusive upper bound for the prefix range.
+    // When prefix is empty, use '\xff' to match all keys since all valid string keys sort before it.
     const prefixEnd =
-      prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+      prefix.length > 0
+        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
+        : '\xff';
 
     // Sort all keys lexicographically and filter to the prefix range.
     let keys = [...this.#data.keys()].filter((key) => key >= prefix && key < prefixEnd).toSorted();

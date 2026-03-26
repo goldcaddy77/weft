@@ -288,12 +288,18 @@ async function handleListWorkflows(request: Request, engine: Engine): Promise<Re
 
   const limit = url.searchParams.get('limit');
   if (limit !== null) {
-    filter.limit = Number(limit);
+    const parsed = Number(limit);
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      filter.limit = Math.min(Math.floor(parsed), 1000);
+    }
   }
 
   const offset = url.searchParams.get('offset');
   if (offset !== null) {
-    filter.offset = Number(offset);
+    const parsed = Number(offset);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      filter.offset = Math.floor(parsed);
+    }
   }
 
   // Parse attribute filters: attr.{name}={value}, attr.{name}.gte={value}, attr.{name}.lte={value}
@@ -446,9 +452,14 @@ async function handleUpdateWorkflow(
     requestOptions.idempotencyKey = idempotencyKey;
   }
 
-  const updateId = await coordinator.createRequest(workflowId, updateName, payload, requestOptions);
-
   try {
+    const updateId = await coordinator.createRequest(
+      workflowId,
+      updateName,
+      payload,
+      requestOptions,
+    );
+
     const response = await coordinator.waitForResponse(updateId, timeout);
     if (response.error !== undefined) {
       return errorResponse(response.error, 422);
@@ -679,53 +690,69 @@ export async function handleRequest(request: Request, engine: Engine): Promise<R
     return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
   }
 
-  switch (route.handler) {
-    case 'healthCheck':
-      return negotiatedResponse(request, { status: 'ok' });
+  const param = (name: string): string => {
+    const value = route.params[name];
+    if (value === undefined) {
+      throw new Error(`Missing route parameter: ${name}`);
+    }
+    return value;
+  };
 
-    case 'startWorkflow':
-      return handleStartWorkflow(request, engine);
+  try {
+    switch (route.handler) {
+      case 'healthCheck':
+        return negotiatedResponse(request, { status: 'ok' });
 
-    case 'listWorkflows':
-      return handleListWorkflows(request, engine);
+      case 'startWorkflow':
+        return handleStartWorkflow(request, engine);
 
-    case 'getWorkflow':
-      return handleGetWorkflow(engine, route.params['id']!);
+      case 'listWorkflows':
+        return handleListWorkflows(request, engine);
 
-    case 'cancelWorkflow':
-      return handleCancelWorkflow(engine, route.params['id']!);
+      case 'getWorkflow':
+        return handleGetWorkflow(engine, param('id'));
 
-    case 'signalWorkflow':
-      return handleSignalWorkflow(request, engine, route.params['id']!, route.params['name']!);
+      case 'cancelWorkflow':
+        return handleCancelWorkflow(engine, param('id'));
 
-    case 'getWorkflowResult':
-      return handleGetWorkflowResult(engine, route.params['id']!);
+      case 'signalWorkflow':
+        return handleSignalWorkflow(request, engine, param('id'), param('name'));
 
-    case 'updateWorkflow':
-      return handleUpdateWorkflow(request, engine, route.params['id']!, route.params['name']!);
+      case 'getWorkflowResult':
+        return handleGetWorkflowResult(engine, param('id'));
 
-    case 'getUpdateResult':
-      return handleGetUpdateResult(engine, route.params['updateId']!);
+      case 'updateWorkflow':
+        return handleUpdateWorkflow(request, engine, param('id'), param('name'));
 
-    case 'getAttributes':
-      return handleGetAttributes(engine, route.params['id']!);
+      case 'getUpdateResult':
+        return handleGetUpdateResult(engine, param('updateId'));
 
-    case 'setAttributes':
-      return handleSetAttributes(request, engine, route.params['id']!);
+      case 'getAttributes':
+        return handleGetAttributes(engine, param('id'));
 
-    case 'getMetrics':
-      return handleGetMetrics();
+      case 'setAttributes':
+        return handleSetAttributes(request, engine, param('id'));
 
-    case 'getWorkflowEvents':
-      return handleGetWorkflowEvents(engine, route.params['id']!);
+      case 'getMetrics':
+        return handleGetMetrics();
 
-    case 'listReviews':
-      return handleListReviews(engine);
+      case 'getWorkflowEvents':
+        return handleGetWorkflowEvents(engine, param('id'));
 
-    case 'submitReviewDecision':
-      return handleSubmitReviewDecision(request, engine, route.params['reviewId']!);
+      case 'listReviews':
+        return handleListReviews(engine);
 
-    default:
-      return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
+      case 'submitReviewDecision':
+        return handleSubmitReviewDecision(request, engine, param('reviewId'));
+
+      default:
+        return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith('Missing route parameter')) {
+      return errorResponse(message, 400);
+    }
+    throw error;
   }
 }

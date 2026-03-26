@@ -4,33 +4,33 @@ Last reviewed: 2026-03-26
 
 ## Critical
 
-- [ ] **Race condition in server event sequence counter initialization** (`src/server/index.ts:107-137`). `sequenceCounters` and `sequenceInitPromises` Maps are shared across concurrent event handlers. When multiple events for the same workflow fire simultaneously, two handlers can both find no entry in `sequenceInitPromises`, both create new promises, and both initialize the same counter. This can produce duplicate sequence numbers, causing silent data loss when events are persisted to storage.
+- [x] **Race condition in server event sequence counter initialization** (`src/server/index.ts:107-137`). Fixed: removed redundant `has` check, `nextSequence` now throws if counter uninitialized.
 
-- [ ] **Unhandled promise in server event persistence** (`src/server/index.ts:177-186`). The event persistence chain is prefixed with `void` but the async `.then()` chain can reject silently if `ensureSequenceInitialized()` or `engine.storage.put()` fails. Additionally, the WebSocket publish at line 190 happens synchronously before persistence is guaranteed, so clients may observe events that never get durably stored — violating durability guarantees.
+- [x] **Unhandled promise in server event persistence** (`src/server/index.ts:177-186`). Fixed: added `.catch()` handler, moved WebSocket publish after successful persistence.
 
 ## High
 
-- [ ] **Event listener cleanup gap on server init failure** (`src/server/index.ts:162-200, 261`). `wireEventBroadcasting` attaches 13 event listeners to the engine via an AbortController. If an error occurs during server initialization after listeners are attached but before `cleanupBroadcasting` is assigned, the listeners remain attached indefinitely. Use try/finally during server initialization to guarantee cleanup.
+- [x] **Event listener cleanup gap on server init failure** (`src/server/index.ts:162-200, 261`). Fixed: wrapped post-`Bun.serve()` setup in try/catch with cleanup on failure.
 
-- [ ] **Timer callback error stops processing remaining timers** (`src/core/scheduler.ts:159-167`). `await this.#onTimerFired(entry)` is not wrapped in try/catch. If the callback throws, subsequent timers in the already-loaded `expired` array are never processed. This breaks durability guarantees — timers after a failed callback are silently skipped.
+- [x] **Timer callback error stops processing remaining timers** (`src/core/scheduler.ts:159-167`). Fixed: wrapped callback in try/catch, remaining timers always processed.
 
-- [ ] **Missing error boundary in UpdateCoordinator lifecycle** (`src/server/handler.ts:434-463`). The UpdateCoordinator request lifecycle lacks a comprehensive try/catch. Unexpected errors from `createRequest`, `checkIdempotency`, or `waitForResponse` propagate as 500 responses without proper logging context.
+- [x] **Missing error boundary in UpdateCoordinator lifecycle** (`src/server/handler.ts:434-463`). Fixed: moved `createRequest` inside try/catch block.
 
 ## Medium
 
-- [ ] **IndexedDB cursor leak on early iteration termination** (`src/storage/indexeddb.ts:61-123`). The async generator for scan creates an IDBCursorWithValue that remains open if the consumer stops iterating early without consuming all items. There is no try/finally cleanup mechanism, so IndexedDB transactions can remain open indefinitely if async iteration is cancelled mid-stream.
+- [x] **IndexedDB cursor leak on early iteration termination** (`src/storage/indexeddb.ts:61-123`). Fixed: added try/finally with `transaction.abort()` on early termination.
 
-- [ ] **FinalizationRegistry cleanup not guaranteed before shutdown** (`src/core/engine.ts`). The engine uses `FinalizationRegistry` to clean up stale `WeakRef` entries in `#handleCache`. However, FinalizationRegistry callbacks are not guaranteed to run before process shutdown. If the engine is disposed before all handles are garbage collected, internal Maps may retain stale entries.
+- [x] **FinalizationRegistry cleanup not guaranteed before shutdown** (`src/core/engine.ts`). Already fixed: `[Symbol.dispose]()` clears all internal Maps.
 
-- [ ] **Empty string prefix causes invalid scan upper bound** (`src/storage/bun-sql.ts:50-51`). Prefix range calculation computes `prefixEnd` by incrementing the last character. If prefix is an empty string, `prefix.charCodeAt(prefix.length - 1)` returns `NaN` and `String.fromCharCode(NaN)` returns `"\0"`, creating an invalid upper bound. While unlikely in practice due to how key constants are constructed, this is a latent bug.
+- [x] **Empty string prefix causes invalid scan upper bound** (`src/storage/bun-sql.ts:50-51`). Fixed: guarded `prefixEnd` calculation in all three storage implementations.
 
-- [ ] **Unsafe type assertions in server event serialization** (`src/server/index.ts:166-168, 178, 189`). Multiple `as unknown as Record<string, unknown>` casts when extracting `workflowId` and other data from events. If an event class is modified and no longer includes `workflowId`, this code silently produces `undefined` values without any runtime error.
+- [x] **Unsafe type assertions in server event serialization** (`src/server/index.ts:166-168, 178, 189`). Fixed: replaced `as unknown as` casts with `in` + `typeof` narrowing.
 
 ## Low
 
-- [ ] **No bounds checking on `limit` query parameter** (`src/server/handler.ts:289-292`). The `limit` parameter from query strings is parsed via `Number(limit)` without validation. Values like `-1` or `99999999999` could cause unexpected behavior in storage scans. Add validation: clamp to a reasonable range (e.g., 1-1000).
+- [x] **No bounds checking on `limit` query parameter** (`src/server/handler.ts:289-292`). Fixed: validate, floor, and clamp to 1-1000. Also validated `offset`.
 
-- [ ] **Route parameter non-null assertions** (`src/server/handler.ts:693-726`). Throughout the handler switch statement, `route.params['id']!` uses non-null assertions. While the route regex guarantees the param exists, if routing logic changes without updating assertions, runtime errors will occur. Consider providing a default or explicit check.
+- [x] **Route parameter non-null assertions** (`src/server/handler.ts:693-726`). Fixed: replaced `!` assertions with `param()` helper that throws, caught at handler level.
 
 ## Architecture Doc Discrepancies
 

@@ -63,8 +63,11 @@ export class IndexedDBStorage implements Storage {
     const database = await this.#databasePromise;
 
     // Compute the exclusive upper bound for the prefix range.
+    // When prefix is empty, use '\xff' to match all keys since all valid string keys sort before it.
     const prefixEnd =
-      prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+      prefix.length > 0
+        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
+        : '\xff';
 
     const range = IDBKeyRange.bound(prefix, prefixEnd, false, true);
     const direction: IDBCursorDirection = reverse ? 'prev' : 'next';
@@ -94,31 +97,46 @@ export class IndexedDBStorage implements Storage {
       });
     };
 
-    // Get the first cursor position
-    let cursor = await nextCursor();
+    // Track whether iteration ran to completion so we can abort the transaction
+    // on early termination (e.g., consumer breaks out of the loop), releasing the cursor.
+    let completed = false;
+    try {
+      // Get the first cursor position
+      let cursor = await nextCursor();
 
-    while (cursor) {
-      if (limit !== undefined && count >= limit) break;
+      while (cursor) {
+        if (limit !== undefined && count >= limit) break;
 
-      const key = cursor.key as string;
+        const key = cursor.key as string;
 
-      // Apply bound filters
-      let include = true;
-      if (gt !== undefined && key <= gt) include = false;
-      if (gte !== undefined && key < gte) include = false;
-      if (lt !== undefined && key >= lt) include = false;
-      if (lte !== undefined && key > lte) include = false;
+        // Apply bound filters
+        let include = true;
+        if (gt !== undefined && key <= gt) include = false;
+        if (gte !== undefined && key < gte) include = false;
+        if (lt !== undefined && key >= lt) include = false;
+        if (lte !== undefined && key > lte) include = false;
 
-      if (include) {
-        yield [key, new Uint8Array(cursor.value)];
-        count++;
+        if (include) {
+          yield [key, new Uint8Array(cursor.value)];
+          count++;
+        }
+
+        // Advance the cursor
+        cursor.continue();
+        cursor = await new Promise<IDBCursorWithValue | null>((resolve) => {
+          resolveCurrent = resolve;
+        });
       }
 
-      // Advance the cursor
-      cursor.continue();
-      cursor = await new Promise<IDBCursorWithValue | null>((resolve) => {
-        resolveCurrent = resolve;
-      });
+      completed = true;
+    } finally {
+      if (!completed) {
+        try {
+          transaction.abort();
+        } catch {
+          // Transaction may already be finished
+        }
+      }
     }
   }
 
