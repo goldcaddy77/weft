@@ -237,7 +237,7 @@ Recommendations:
 
 ```typescript
 const engine = new Engine({
-  storage: new BunSQLStorage('./weft.db'),
+  storage: new BunSQLiteStorage('./weft.db'),
   alerts: {
     rules: [
       { metric: 'workflow.failure_rate', threshold: 0.05, window: '5m', action: 'log' },
@@ -329,7 +329,7 @@ interface WorkflowRegistry {
 }
 
 const engine = new Engine<WorkflowRegistry>({
-  storage: new BunSQLStorage('./weft.db'),
+  storage: new BunSQLiteStorage('./weft.db'),
 });
 
 // TypeScript infers everything:
@@ -426,7 +426,7 @@ The dashboard renders these as a live key-value table. The HTTP API serves them 
 
 ```typescript
 const engine = new Engine({
-  storage: new BunSQLStorage('./weft.db'),
+  storage: new BunSQLiteStorage('./weft.db'),
   checkpointHistory: 10,
 });
 
@@ -622,7 +622,7 @@ async function* dataExportWorkflow(ctx: Weft.Context, query: ExportQuery) {
 
 ```typescript
 const engine = new Engine({
-  storage: new BunSQLStorage('./weft.db'),
+  storage: new BunSQLiteStorage('./weft.db'),
   compression: {
     threshold: 4096, // Compress blobs larger than 4KB
     algorithm: 'gzip', // "gzip" | "brotli" | "none"
@@ -1528,7 +1528,7 @@ export class Engine extends EventTarget implements Disposable {
 **Usage with typed events:**
 
 ```typescript
-const engine = new Engine({ storage: new BunSQLStorage('./weft.db') });
+const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 
 // Full TypeScript inference — no casts, no .detail
 engine.addEventListener(WorkflowStartedEvent.type, (event) => {
@@ -1712,7 +1712,7 @@ Explicit Resource Management reached Stage 4 at TC39 in early 2026. Bun and Type
 ```typescript
 // ─── Engine ───
 {
-  using engine = new Engine({ storage: new BunSQLStorage('./weft.db') });
+  using engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 
   engine.register('order', orderWorkflow);
   const handle = await engine.start('order', { orderId: 'abc' });
@@ -1725,7 +1725,7 @@ Explicit Resource Management reached Stage 4 at TC39 in early 2026. Bun and Type
 
 // ─── Async disposal for graceful shutdown ───
 {
-  await using engine = new Engine({ storage: new BunSQLStorage('./weft.db') });
+  await using engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 
   // ... run workflows ...
 } // await engine[Symbol.asyncDispose]() called:
@@ -1746,7 +1746,7 @@ Explicit Resource Management reached Stage 4 at TC39 in early 2026. Bun and Type
 
 // ─── Storage Connections ───
 {
-  using storage = new BunSQLStorage('./weft.db');
+  using storage = new BunSQLiteStorage('./weft.db');
   // ... use storage ...
 } // storage[Symbol.dispose](): closes SQLite connection
 
@@ -1760,7 +1760,7 @@ Explicit Resource Management reached Stage 4 at TC39 in early 2026. Bun and Type
 async function runServer(port: number) {
   await using stack = new AsyncDisposableStack();
 
-  const storage = stack.use(new BunSQLStorage('./weft.db'));
+  const storage = stack.use(new BunSQLiteStorage('./weft.db'));
   const engine = stack.use(new Engine({ storage }));
   const server = stack.adopt(
     Bun.serve({ port, fetch: (req) => handleHTTP(engine, req) }),
@@ -2083,7 +2083,7 @@ This key layout means `scan("op:default:")` returns all operations on the "defau
 ```typescript
 import { SQL } from 'bun';
 
-class BunSQLStorage implements Storage {
+class BunSQLiteStorage implements Storage {
   private db: SQL;
 
   constructor(path: string = 'weft.db') {
@@ -2321,7 +2321,7 @@ bun build --compile --target=bun-windows-x64   src/cli.ts --outfile dist/weft-wi
 // src/cli.ts — the entry point compiled into the binary
 import { parseArgs } from 'util';
 import { serve } from './server/index.ts';
-import { Engine, BunSQLStorage } from './core/index.ts';
+import { Engine, BunSQLiteStorage } from './core/index.ts';
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
@@ -2339,7 +2339,7 @@ import dashboardHTML from './ui/dist/index.html' with { type: 'file' };
 const storage =
   values.storage === 'lmdb'
     ? new (await import('./storage/lmdb.ts')).LMDBStorage(values.data)
-    : new BunSQLStorage(`${values.data}/weft.db`);
+    : new BunSQLiteStorage(`${values.data}/weft.db`);
 
 serve({
   port: parseInt(values.port),
@@ -4634,7 +4634,7 @@ function createObservabilityInterceptors(options?: ObservabilityOptions): {
 ```typescript
 const { workflow, activity } = createObservabilityInterceptors();
 
-const engine = new Engine({ storage: new BunSQLStorage('./weft.db') });
+const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 engine.addInterceptor(workflow);
 engine.addActivityInterceptor(activity);
 
@@ -4854,10 +4854,10 @@ weft/
 
 ```typescript
 // Library mode — embed in your app
-import { Engine, BunSQLStorage } from 'weft';
+import { Engine, BunSQLiteStorage } from 'weft';
 
 const engine = new Engine({
-  storage: new BunSQLStorage('./weft.db'),
+  storage: new BunSQLiteStorage('./weft.db'),
 });
 
 async function greet(name: string) {
@@ -4982,89 +4982,89 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Core Engine
 
-- [ ] **Workflows are AsyncGenerator functions.** `async function*` is the only way to define a workflow. No decorator magic, no class-based API, no code transformation.
-- [ ] **Each `yield*` creates a checkpoint.** Checkpoint contains: step index, local variable snapshot (via `structuredClone` semantics), accumulated results.
-- [ ] **Recovery is O(1).** Loading a checkpoint from storage and resuming the generator does not replay previous steps. Verified by benchmark: recovery time is constant regardless of workflow history length.
-- [ ] **No determinism requirement.** `Date.now()`, `Math.random()`, `crypto.randomUUID()`, and network calls are permitted inside workflows between checkpoint boundaries.
-- [ ] **`ctx.run(fn, ...args)` dispatches a durable activity.** Activity results survive process crashes. Idempotency keys prevent double-execution.
-- [ ] **`ctx.sleep(duration)` is a durable timer.** Survives process restarts. Fires within 1 second of scheduled time after recovery.
-- [ ] **`ctx.signal(name)` / `ctx.waitForSignal(name)` support durable signals.** Signals persist in storage and are delivered even if the workflow is not currently loaded in memory.
-- [ ] **`ctx.all([...])` runs operations in parallel.** Equivalent to `Promise.all` but each branch is independently checkpointed.
-- [ ] **`ctx.race([...])` runs operations with first-wins semantics.** Losing branches are cancelled via `AbortController`.
-- [ ] **`ctx.memo(key, fn)` caches derived values in the checkpoint.** On recovery, returns cached value without re-executing `fn`.
-- [ ] **Cancellation uses `AbortController`.** `handle.cancel()` propagates an abort signal through the workflow. `finally` blocks execute cleanup. Cleanup can yield to durable operations.
-- [ ] **Retry policy supports exponential backoff.** Configurable per-activity: `maxAttempts`, `initialBackoff`, `backoffMultiplier`, `maxBackoff`, `nonRetryableErrors`.
+- [x] **Workflows are AsyncGenerator functions.** `async function*` is the only way to define a workflow. No decorator magic, no class-based API, no code transformation.
+- [x] **Each `yield*` creates a checkpoint.** Checkpoint contains: step index, local variable snapshot (via `structuredClone` semantics), accumulated results.
+- [x] **Recovery is O(1).** Loading a checkpoint from storage and resuming the generator does not replay previous steps. Verified by benchmark: recovery time is constant regardless of workflow history length.
+- [x] **No determinism requirement.** `Date.now()`, `Math.random()`, `crypto.randomUUID()`, and network calls are permitted inside workflows between checkpoint boundaries.
+- [x] **`ctx.run(fn, ...args)` dispatches a durable activity.** Activity results survive process crashes. Idempotency keys prevent double-execution.
+- [x] **`ctx.sleep(duration)` is a durable timer.** Survives process restarts. Fires within 1 second of scheduled time after recovery.
+- [x] **`ctx.signal(name)` / `ctx.waitForSignal(name)` support durable signals.** Signals persist in storage and are delivered even if the workflow is not currently loaded in memory.
+- [x] **`ctx.all([...])` runs operations in parallel.** Equivalent to `Promise.all` but each branch is independently checkpointed.
+- [x] **`ctx.race([...])` runs operations with first-wins semantics.** Losing branches are cancelled via `AbortController`.
+- [x] **`ctx.memo(key, fn)` caches derived values in the checkpoint.** On recovery, returns cached value without re-executing `fn`.
+- [x] **Cancellation uses `AbortController`.** `handle.cancel()` propagates an abort signal through the workflow. `finally` blocks execute cleanup. Cleanup can yield to durable operations.
+- [x] **Retry policy supports exponential backoff.** Configurable per-activity: `maxAttempts`, `initialBackoff`, `backoffMultiplier`, `maxBackoff`, `nonRetryableErrors`.
 - [x] **Child workflows are independently checkpointed.** Parent stores child workflow ID reference, not child state.
 - [x] **Max nesting depth is configurable.** Default: 10 levels. Exceeding throws a clear error.
 
 ### Event System
 
-- [ ] **`Engine` extends `EventTarget`.** All events dispatched via `dispatchEvent()`.
-- [ ] **All events are `Event` subclasses.** No use of `CustomEvent`. Properties are directly on the event object, not in `.detail`.
-- [ ] **Typed `addEventListener` overloads.** TypeScript infers correct event type from the event name string.
-- [ ] **`AbortSignal`-based listener cleanup.** Passing `{ signal }` to `addEventListener` removes the listener when the signal aborts.
-- [ ] **`WorkflowHandle` extends `EventTarget`.** Receives events scoped to its workflow.
-- [ ] **`WorkflowHandle` implements `Symbol.asyncIterator`.** `for await (const event of handle)` works.
-- [ ] **`WorkflowHandle` implements `Symbol.observable`.** RxJS `from(handle)` works without adapters.
-- [ ] **Event types defined:** `workflow:started`, `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`, `activity:started`, `activity:completed`, `activity:failed`, `agent:token`, `signal:received`, `signal:delivered`, `attributes:changed`, `update:received`, `update:completed`.
+- [x] **`Engine` extends `EventTarget`.** All events dispatched via `dispatchEvent()`.
+- [x] **All events are `Event` subclasses.** No use of `CustomEvent`. Properties are directly on the event object, not in `.detail`.
+- [x] **Typed `addEventListener` overloads.** TypeScript infers correct event type from the event name string.
+- [x] **`AbortSignal`-based listener cleanup.** Passing `{ signal }` to `addEventListener` removes the listener when the signal aborts.
+- [x] **`WorkflowHandle` extends `EventTarget`.** Receives events scoped to its workflow.
+- [x] **`WorkflowHandle` implements `Symbol.asyncIterator`.** `for await (const event of handle)` works.
+- [x] **`WorkflowHandle` implements `Symbol.observable`.** RxJS `from(handle)` works without adapters.
+- [x] **Event types defined:** `workflow:started`, `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`, `activity:started`, `activity:completed`, `activity:failed`, `agent:token`, `signal:received`, `signal:delivered`, `attributes:changed`, `update:received`, `update:completed`.
 
 ### Resource Management
 
-- [ ] **`Engine` implements `Disposable` and `AsyncDisposable`.** Both `using` and `await using` work.
-- [ ] **`WorkflowHandle` implements `AsyncDisposable`.** `await using handle = ...` cleans up listeners.
-- [ ] **`WorkerPool` implements `Disposable` and `AsyncDisposable`.** Sync: immediate termination. Async: graceful drain.
-- [ ] **`BunSQLStorage` implements `Disposable`.** Closes database connection.
+- [x] **`Engine` implements `Disposable` and `AsyncDisposable`.** Both `using` and `await using` work.
+- [x] **`WorkflowHandle` implements `AsyncDisposable`.** `await using handle = ...` cleans up listeners.
+- [x] **`WorkerPool` implements `Disposable` and `AsyncDisposable`.** Sync: immediate termination. Async: graceful drain.
+- [x] **`BunSQLiteStorage` implements `Disposable`.** Closes database connection.
 - [ ] **`LMDBStorage` implements `Disposable`.** Closes LMDB environment.
-- [ ] **`Scheduler` implements `Disposable`.** Clears intervals and timers.
+- [x] **`Scheduler` implements `Disposable`.** Clears intervals and timers.
 - [ ] **`AsyncDisposableStack` used in server setup.** All server resources cleaned up in reverse order on shutdown.
 - [ ] **Zero resource leaks under test.** A test that starts and stops the engine 1000 times shows no file handle or memory growth.
 
 ### Memory Management
 
-- [ ] **Checkpoint cache uses `WeakRef`.** Cached checkpoints are GC-eligible. Cache miss triggers storage re-read.
-- [ ] **`FinalizationRegistry` cleans up dead cache entries.** No periodic sweep timer needed.
+- [x] **Checkpoint cache uses `WeakRef`.** Cached checkpoints are GC-eligible. Cache miss triggers storage re-read.
+- [x] **`FinalizationRegistry` cleans up dead cache entries.** No periodic sweep timer needed.
 - [ ] **Activity registry uses `WeakMap`.** Metadata is keyed to function references and auto-collected.
-- [ ] **Handle registry uses `WeakRef`.** Engine doesn't prevent GC of dropped handles.
-- [ ] **`Transferable` used for Worker communication.** Checkpoint `ArrayBuffer` is transferred, not copied, to/from Workers.
+- [x] **Handle registry uses `WeakRef`.** Engine doesn't prevent GC of dropped handles.
+- [x] **`Transferable` used for Worker communication.** Checkpoint `ArrayBuffer` is transferred, not copied, to/from Workers.
 - [ ] **Memory per idle workflow ≤ 2KB.** Verified by benchmark with 100K concurrent workflows.
 - [ ] **No unbounded growth under load.** Memory profiling over 1 hour of sustained 10K workflows/sec shows stable RSS.
 
 ### Storage
 
-- [ ] **`Storage` interface is KV-oriented.** `get`, `put`, `delete`, `scan`, `batch`.
-- [ ] **`BunSQLStorage` uses `Bun.SQL` tagged templates.** Not raw `bun:sqlite`.
-- [ ] **`BunSQLStorage` uses `WITHOUT ROWID` tables.** Verified in schema.
-- [ ] **`BunSQLStorage` sets WAL mode, `synchronous = NORMAL`, 64MB cache.** Verified by `PRAGMA` queries in tests.
+- [x] **`Storage` interface is KV-oriented.** `get`, `put`, `delete`, `scan`, `batch`.
+- [x] **`BunSQLiteStorage` uses `Bun.SQL` tagged templates.** Not raw `bun:sqlite`.
+- [x] **`BunSQLiteStorage` uses `WITHOUT ROWID` tables.** Verified in schema.
+- [x] **`BunSQLiteStorage` sets WAL mode, `synchronous = NORMAL`, 64MB cache.** Verified by `PRAGMA` queries in tests.
 - [ ] **`LMDBStorage` uses `lmdb-js` with async write batching.** Reads are synchronous zero-copy.
 - [x] **`IndexedDBStorage` works in browsers.** Tested in Chrome, Firefox, Safari.
-- [ ] **`MemoryStorage` exists for testing.** Fast, no I/O, no dependencies.
+- [x] **`MemoryStorage` exists for testing.** Fast, no I/O, no dependencies.
 - [ ] **Turso adapter exists for distributed deployments.** Same interface, connection string change.
-- [ ] **All storage adapters implement `Disposable`.** `using storage = new XStorage(...)` works.
+- [x] **All storage adapters implement `Disposable`.** `using storage = new XStorage(...)` works.
 - [ ] **50K+ writes/sec on SQLite.** Benchmarked on commodity hardware (M1 MacBook or equivalent).
-- [ ] **Batch operations are atomic.** All-or-nothing semantics verified by crash injection tests.
+- [x] **Batch operations are atomic.** All-or-nothing semantics verified by crash injection tests.
 
 ### Web Workers
 
-- [ ] **Workflow execution runs in Web Workers.** Not on the main thread.
+- [x] **Workflow execution runs in Web Workers.** Not on the main thread.
 - [ ] **Activity execution runs in Web Workers.** Configurable pool size.
-- [ ] **Worker crash doesn't crash the engine.** Main thread detects termination, marks workflow/activity as failed, spins up replacement.
-- [ ] **`BroadcastChannel` used for cross-worker coordination.** Signal delivery, event fan-out.
-- [ ] **`postMessage` uses transfer lists for `ArrayBuffer` data.** Zero-copy verified.
-- [ ] **Worker pool implements concurrency limits.** Configurable per queue.
+- [x] **Worker crash doesn't crash the engine.** Main thread detects termination, marks workflow/activity as failed, spins up replacement.
+- [x] **`BroadcastChannel` used for cross-worker coordination.** Signal delivery, event fan-out.
+- [x] **`postMessage` uses transfer lists for `ArrayBuffer` data.** Zero-copy verified.
+- [x] **Worker pool implements concurrency limits.** Configurable per queue.
 - [ ] **`smol: true` option available.** For high-workflow-count scenarios with constrained memory.
 - [ ] **Same Worker code runs in browser Web Workers.** Verified by browser integration test.
 
 ### HTTP / WebSocket Server
 
-- [ ] **Uses `Bun.serve()` routes syntax.** Not manual URL parsing.
-- [ ] **JSON by default, MessagePack opt-in.** `Accept: application/msgpack` header.
+- [x] **Uses `Bun.serve()` routes syntax.** Not manual URL parsing.
+- [x] **JSON by default, MessagePack opt-in.** `Accept: application/msgpack` header.
 - [ ] **WebSocket upgrade for worker streams.** `WS /v1/tasks/:queue/stream`.
-- [ ] **WebSocket upgrade for workflow observation.** `WS /v1/workflows/:id/watch`.
+- [x] **WebSocket upgrade for workflow observation.** `WS /v1/workflows/:id/watch`.
 - [ ] **WebSocket upgrade for token streaming.** `WS /v1/workflows/:id/stream`.
-- [ ] **Bun's built-in pub/sub (`ws.subscribe` / `server.publish`).** No external message broker.
+- [x] **Bun's built-in pub/sub (`ws.subscribe` / `server.publish`).** No external message broker.
 - [ ] **Long-poll fallback for non-WebSocket environments.** `GET /v1/tasks/:queue` with timeout.
-- [ ] **Prometheus metrics at `/v1/metrics`.** All counters, gauges, histograms defined.
-- [ ] **Built-in web dashboard at `/ui`.** Pre-built SPA embedded in binary.
+- [x] **Prometheus metrics at `/v1/metrics`.** All counters, gauges, histograms defined.
+- [x] **Built-in web dashboard at `/ui`.** Pre-built SPA embedded in binary.
 - [ ] **Auth: API keys, JWT, optional mTLS.** Configurable in `serve()` options.
 
 ### Library/Server Parity
@@ -5116,9 +5116,9 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Agent-Native Engine: Dynamic Execution Shape
 
-- [ ] **Agent loops support dynamic step counts.** A `while` loop with `yield*` creates checkpoints at each tool call without declaring the graph shape upfront.
-- [ ] **Checkpoint size is constant regardless of turn count.** Only the current conversation state and local variables are in the checkpoint, not the full execution history.
-- [ ] **Step index is a monotonic counter, not a fixed schema position.** Increments with each `yield*` regardless of origin. No step-count pre-declaration required.
+- [x] **Agent loops support dynamic step counts.** A `while` loop with `yield*` creates checkpoints at each tool call without declaring the graph shape upfront.
+- [x] **Checkpoint size is constant regardless of turn count.** Only the current conversation state and local variables are in the checkpoint, not the full execution history.
+- [x] **Step index is a monotonic counter, not a fixed schema position.** Increments with each `yield*` regardless of origin. No step-count pre-declaration required.
 - [ ] **Agent conversation history accumulates in checkpoint locals.** The message array grows across turns and is captured by `structuredClone` at each boundary. Verified: restoring a checkpoint after 15 turns produces the same conversation array as live execution.
 - [ ] **Storage scan performance is independent of per-workflow step count.** `scan("wf:{id}")` returns a constant number of keys regardless of how many tool calls the agent executed.
 - [ ] **Agent loop termination handles all four exit paths.** Final answer (no tool calls), `maxTurns` reached, `tokenBudget` exhausted via `AbortController`, and workflow cancellation all produce a clean checkpoint at the exit boundary.
@@ -5251,14 +5251,14 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Workflow Versioning
 
-- [ ] **Workflow version stored in `wf:{id}` state blob.** Set at workflow start from the currently registered version.
-- [ ] **`engine.register()` accepts a version and optional migration function.** Shorthand `engine.register(name, fn)` defaults to version `"0.0.0"`.
-- [ ] **Version mismatch triggers migration on resume.** `migrate(checkpoint, fromVersion)` called when stored version differs from registered version.
-- [ ] **No migration function = resume as-is.** Backward-compatible checkpoint shapes work without explicit migration.
-- [ ] **Failed migration produces a `VersionMismatchError`.** Error includes both versions, workflow ID, and workflow type.
-- [ ] **Migrated checkpoint is persisted atomically.** Updated checkpoint and version written to storage in one `batch()` call.
+- [x] **Workflow version stored in `wf:{id}` state blob.** Set at workflow start from the currently registered version.
+- [x] **`engine.register()` accepts a version and optional migration function.** Shorthand `engine.register(name, fn)` defaults to version `"0.0.0"`.
+- [x] **Version mismatch triggers migration on resume.** `migrate(checkpoint, fromVersion)` called when stored version differs from registered version.
+- [x] **No migration function = resume as-is.** Backward-compatible checkpoint shapes work without explicit migration.
+- [x] **Failed migration produces a `VersionMismatchError`.** Error includes both versions, workflow ID, and workflow type.
+- [x] **Migrated checkpoint is persisted atomically.** Updated checkpoint and version written to storage in one `batch()` call.
 - [ ] **Version visible in API and dashboard.** `GET /v1/workflows/:id` returns the version field.
-- [ ] **Migration function receives structuredClone-compatible data.** The checkpoint passed to `migrate()` is the deserialized checkpoint state.
+- [x] **Migration function receives structuredClone-compatible data.** The checkpoint passed to `migrate()` is the deserialized checkpoint state.
 
 ### Workflow-Level Timeouts
 
@@ -5275,45 +5275,45 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Search Attributes
 
-- [ ] **`ctx.setAttribute(key, value)` sets a single search attribute.** Value persisted at next checkpoint boundary. Supported types: `string`, `number`, `boolean`, `Date`, `string[]`.
-- [ ] **`ctx.setAttributes(attrs)` sets multiple attributes in one call.** Merge semantics: existing attributes not mentioned are preserved.
-- [ ] **`ctx.getAttribute(key)` reads the current value.** Returns the in-memory value, even if not yet checkpointed.
-- [ ] **`ctx.getAttributes()` returns all attributes.** Returns a readonly copy.
+- [x] **`ctx.setAttribute(key, value)` sets a single search attribute.** Value persisted at next checkpoint boundary. Supported types: `string`, `number`, `boolean`, `Date`, `string[]`.
+- [x] **`ctx.setAttributes(attrs)` sets multiple attributes in one call.** Merge semantics: existing attributes not mentioned are preserved.
+- [x] **`ctx.getAttribute(key)` reads the current value.** Returns the in-memory value, even if not yet checkpointed.
+- [x] **`ctx.getAttributes()` returns all attributes.** Returns a readonly copy.
 - [ ] **Attribute schema declared at registration time.** `engine.register("type", fn, { searchAttributes: { ... } })`. Unknown attribute keys rejected at set time.
-- [ ] **Index entries created atomically with checkpoint.** `idx:{attr}:{value}:{wfId}` keys written in the same `batch()` call as the checkpoint.
-- [ ] **Index entries diffed on update.** When an attribute value changes, old index entries deleted and new entries created in the same batch.
-- [ ] **Multi-value attributes (keyword_list) create one index entry per element.** Setting `tags: ["a", "b"]` creates two index keys.
-- [ ] **Numeric values sort correctly in index keys.** IEEE 754 float-to-sortable-string encoding ensures correct lexicographic order.
-- [ ] **Date values sort correctly in index keys.** ISO 8601 encoding preserves chronological order.
-- [ ] **`engine.list({ attributes: [...] })` filters by attributes.** Equality: `{ key, value }`. Range: `{ key, gte, lte }`.
-- [ ] **Multiple attribute filters are AND-combined.** All conditions must match.
-- [ ] **HTTP API supports `attr.*` query parameters.** `?attr.customerId=abc`, `?attr.priority.gte=8`.
-- [ ] **`PATCH /v1/workflows/:id/attributes` sets attributes externally.** Merge semantics. Index updated atomically.
-- [ ] **`GET /v1/workflows/:id/attributes` reads attributes.** Returns JSON object.
+- [x] **Index entries created atomically with checkpoint.** `idx:{attr}:{value}:{wfId}` keys written in the same `batch()` call as the checkpoint.
+- [x] **Index entries diffed on update.** When an attribute value changes, old index entries deleted and new entries created in the same batch.
+- [x] **Multi-value attributes (keyword_list) create one index entry per element.** Setting `tags: ["a", "b"]` creates two index keys.
+- [x] **Numeric values sort correctly in index keys.** IEEE 754 float-to-sortable-string encoding ensures correct lexicographic order.
+- [x] **Date values sort correctly in index keys.** ISO 8601 encoding preserves chronological order.
+- [x] **`engine.list({ attributes: [...] })` filters by attributes.** Equality: `{ key, value }`. Range: `{ key, gte, lte }`.
+- [x] **Multiple attribute filters are AND-combined.** All conditions must match.
+- [x] **HTTP API supports `attr.*` query parameters.** `?attr.customerId=abc`, `?attr.priority.gte=8`.
+- [x] **`PATCH /v1/workflows/:id/attributes` sets attributes externally.** Merge semantics. Index updated atomically.
+- [x] **`GET /v1/workflows/:id/attributes` reads attributes.** Returns JSON object.
 - [ ] **`handle.setAttributes()` and `handle.getAttributes()` work from the client SDK.**
-- [ ] **`AttributesChangedEvent` dispatched on Engine and WorkflowHandle.** Includes workflow ID and changed keys.
-- [ ] **Attribute cleanup on workflow completion/deletion.** All `attr:` and `idx:` entries removed atomically.
+- [x] **`AttributesChangedEvent` dispatched on Engine and WorkflowHandle.** Includes workflow ID and changed keys.
+- [x] **Attribute cleanup on workflow completion/deletion.** All `attr:` and `idx:` entries removed atomically.
 - [ ] **Works identically on SQLite, LMDB, and IndexedDB.** Same test suite passes on all three backends.
 - [ ] **Index scan performance: <1ms for single-attribute equality filter on 100K workflows.** Benchmarked on SQLite.
 
 ### Synchronous Updates
 
-- [ ] **`ctx.onUpdate(name, handler)` registers an update handler.** Handler is a function (not a generator). Receives payload, returns result.
+- [x] **`ctx.onUpdate(name, handler)` registers an update handler.** Handler is a function (not a generator). Receives payload, returns result.
 - [ ] **`ctx.waitForUpdate(name)` suspends until an update arrives.** Returns `{ payload, respond }`. `respond()` sends the result back.
-- [ ] **`engine.update(workflowId, name, payload, options)` sends an update and waits for the response.** Returns a promise that resolves with the handler's return value.
-- [ ] **`handle.update(name, payload, options)` is a convenience method.** Delegates to `engine.update()`.
+- [x] **`engine.update(workflowId, name, payload, options)` sends an update and waits for the response.** Returns a promise that resolves with the handler's return value.
+- [x] **`handle.update(name, payload, options)` is a convenience method.** Delegates to `engine.update()`.
 - [ ] **Timeout semantics.** Default 30 seconds, configurable via `options.timeout`. On timeout, rejects with `UpdateTimeoutError` containing `updateId` for later retrieval.
-- [ ] **HTTP endpoint: `POST /v1/workflows/:id/update/:name`.** Body: `{ payload, timeout?, idempotencyKey? }`. Returns result or 408 on timeout.
+- [x] **HTTP endpoint: `POST /v1/workflows/:id/update/:name`.** Body: `{ payload, timeout?, idempotencyKey? }`. Returns result or 408 on timeout.
 - [ ] **HTTP endpoint: `GET /v1/updates/:updateId`.** Returns `{ status: "pending" }` (202) or `{ status: "completed", result }` (200).
-- [ ] **Update request persisted to storage before acknowledging caller.** Key: `upd:{workflowId}:{updateId}`. Survives server crash.
-- [ ] **Update response persisted atomically with checkpoint.** Key: `upr:{updateId}`. Written in same `batch()` as checkpoint.
-- [ ] **Update handler runs at checkpoint boundary.** Processed in the same phase as pending signals.
+- [x] **Update request persisted to storage before acknowledging caller.** Key: `upd:{workflowId}:{updateId}`. Survives server crash.
+- [x] **Update response persisted atomically with checkpoint.** Key: `upr:{updateId}`. Written in same `batch()` as checkpoint.
+- [x] **Update handler runs at checkpoint boundary.** Processed in the same phase as pending signals.
 - [ ] **Update handler cannot yield.** Attempting to use `yield*` inside an `onUpdate` handler throws a clear error.
 - [ ] **Paused workflows are woken for pending updates.** If waiting on a timer or signal, a pending update triggers a wake-up.
 - [ ] **Idempotency key prevents duplicate processing.** Same key returns existing response. Key stored at `upk:{workflowId}:{key}`.
 - [ ] **BroadcastChannel notification on response completion.** Caller's waiting promise resolves without polling.
 - [ ] **WebSocket observers receive `UpdateCompletedEvent`.** Published on the workflow's watch channel.
-- [ ] **`UpdateReceivedEvent` and `UpdateCompletedEvent` dispatched on Engine and WorkflowHandle.**
+- [x] **`UpdateReceivedEvent` and `UpdateCompletedEvent` dispatched on Engine and WorkflowHandle.**
 - [ ] **Response cleanup after TTL.** `upr:*` entries deleted after 5 minutes (configurable).
 - [ ] **Durability: crash between request and response.** After recovery, workflow processes the pending update. Caller retrieves via `GET /v1/updates/:updateId`.
 - [ ] **Multiple concurrent updates to the same workflow.** Each processed independently at the next checkpoint boundary.
@@ -5366,10 +5366,10 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### DX
 
-- [ ] **Zero config to start.** `import { Engine } from "weft"; new Engine()` works with defaults (in-memory storage).
-- [ ] **`bun add weft` is the only install step.** No codegen, no proto files, no Docker.
-- [ ] **TypeScript types infer everything.** Event listeners, workflow context, activity return types — all inferred.
-- [ ] **`using` / `await using` works for all resources.** No manual cleanup ever required.
+- [x] **Zero config to start.** `import { Engine } from "weft"; new Engine()` works with defaults (in-memory storage).
+- [x] **`bun add weft` is the only install step.** No codegen, no proto files, no Docker.
+- [x] **TypeScript types infer everything.** Event listeners, workflow context, activity return types — all inferred.
+- [x] **`using` / `await using` works for all resources.** No manual cleanup ever required.
 - [ ] **Testing: `MemoryStorage` + `engine.testing.advanceTime()`.** No real timers in tests.
 - [ ] **Error messages reference the user's code, not Weft internals.** Stack traces are clean.
 - [ ] **Documentation: every public API has JSDoc with examples.** Visible in IDE hover.
@@ -5377,25 +5377,25 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Temporal Differentiation
 
-- [ ] **Development mode detects non-cloneable checkpoint values.** Serializes/deserializes at each boundary, reports exact field paths that fail with fix suggestions.
-- [ ] **Stack-trace-preserving errors.** Activity failure errors include the original workflow call site, not just the remote worker stack.
+- [x] **Development mode detects non-cloneable checkpoint values.** Serializes/deserializes at each boundary, reports exact field paths that fail with fix suggestions.
+- [x] **Stack-trace-preserving errors.** Activity failure errors include the original workflow call site, not just the remote worker stack.
 - [x] **`weft version:check` CLI command.** Analyzes registered workflows against existing database, reports checkpoint compatibility before deployment.
 - [ ] **Automatic checkpoint schema inference.** Actionable error messages on version mismatch naming exact fields that changed.
 - [x] **`ctx.step()` sugar for non-generator workflows.** Progressive disclosure — wraps checkpoint boundaries in a familiar async function.
 - [ ] **`ctx.explain()` development mode.** Logs what each context operation does and why at runtime.
 - [x] **`weft doctor` diagnostic command.** Reports database health, workflow statistics, queue depths, performance metrics, and recommendations.
 - [ ] **Built-in alerting with zero external dependencies.** Alert rules as engine event listeners, webhook notifications via `fetch()`.
-- [ ] **Automatic checkpoint size warnings.** `CheckpointSizeWarningEvent` emitted when checkpoints exceed configurable threshold (default: 64KB).
+- [x] **Automatic checkpoint size warnings.** `CheckpointSizeWarningEvent` emitted when checkpoints exceed configurable threshold (default: 64KB).
 - [x] **`ctx.offload()` stores large data separately.** Leaves only a lightweight reference in the checkpoint. `ctx.load()` retrieves on demand.
 - [ ] **Built-in profiling mode.** `performance.now()`-based per-operation timing. Zero overhead when disabled.
-- [ ] **Typed workflow registry.** `Engine<WorkflowRegistry>` provides compile-time type safety on `engine.start()`, `handle.result()`, `handle.signal()`.
-- [ ] **`weft/testing` module with `TestEngine`.** Real engine with `MemoryStorage`, deterministic time control, crash simulation via `engine.recover()`.
-- [ ] **`ctx.archive()` moves old state out of checkpoint.** Preserved at `archive:{workflowId}:{key}` for auditing, queryable via dashboard and API.
-- [ ] **`ctx.expose()` for live workflow inspection.** Accessor functions evaluated at each checkpoint, rendered on dashboard without pre-registered query handlers.
-- [ ] **Checkpoint history (last N).** Configurable number of retained checkpoints per workflow for time-travel debugging.
-- [ ] **`activity()` helper with colocated configuration.** Retry, timeout, queue, and idempotency declared on the activity definition.
-- [ ] **`ctx.runAll()` with named concurrent branches.** Per-branch error handling policies (`onError: "continue"`).
-- [ ] **`ctx.setBudget()` / `ctx.budgetRemaining()` for agent cost tracking.** Budget state stored in checkpoint, enforced via `AbortController`.
+- [x] **Typed workflow registry.** `Engine<WorkflowRegistry>` provides compile-time type safety on `engine.start()`, `handle.result()`, `handle.signal()`.
+- [x] **`weft/testing` module with `TestEngine`.** Real engine with `MemoryStorage`, deterministic time control, crash simulation via `engine.recover()`.
+- [x] **`ctx.archive()` moves old state out of checkpoint.** Preserved at `archive:{workflowId}:{key}` for auditing, queryable via dashboard and API.
+- [x] **`ctx.expose()` for live workflow inspection.** Accessor functions evaluated at each checkpoint, rendered on dashboard without pre-registered query handlers.
+- [x] **Checkpoint history (last N).** Configurable number of retained checkpoints per workflow for time-travel debugging.
+- [x] **`activity()` helper with colocated configuration.** Retry, timeout, queue, and idempotency declared on the activity definition.
+- [x] **`ctx.runAll()` with named concurrent branches.** Per-branch error handling policies (`onError: "continue"`).
+- [x] **`ctx.setBudget()` / `ctx.budgetRemaining()` for agent cost tracking.** Budget state stored in checkpoint, enforced via `AbortController`.
 - [ ] **Tool result caching across agent turns.** Cache keyed by tool name + serialized arguments, configurable TTL.
 - [x] **`ctx.stream()` for large payloads.** Writes data to storage as chunks via `ReadableStream`, leaves lightweight reference in checkpoint.
 - [ ] **Automatic payload compression.** Transparent gzip/brotli compression above configurable threshold.
