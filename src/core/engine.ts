@@ -763,7 +763,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Run signalReceived interceptor hook wrapping actual delivery
     const composed = this.#getComposedWorkflowInterceptor();
     if (composed) {
-      let delivered = false;
+      let deliveryPromise: Promise<void> | undefined;
       composed.signalReceived(
         {
           workflowId,
@@ -772,12 +772,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           headers: new Map<string, string>(),
         },
         (interception) => {
-          delivered = true;
-          void deliverSignal(interception.payload);
+          deliveryPromise = deliverSignal(interception.payload);
         },
       );
       // If interceptor blocked delivery by not calling next, return early
-      if (!delivered) return;
+      if (!deliveryPromise) return;
+      await deliveryPromise;
     } else {
       await deliverSignal(payload);
     }

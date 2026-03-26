@@ -781,6 +781,61 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('signalReceived interceptor wraps actual delivery', async () => {
+    const engine = new Engine();
+    const observed: string[] = [];
+
+    engine.addInterceptor({
+      signalReceived(interception, next) {
+        observed.push(`signal:${interception.signalName}`);
+        next(interception);
+      },
+    });
+
+    engine.register('signal-intercept-test', async function* (ctx: WorkflowContext) {
+      const payload = yield* (ctx as Context).waitForSignal('go');
+      return payload;
+    });
+
+    const handle = await engine.start('signal-intercept-test', null);
+    await flush();
+
+    await engine.signal(handle.id, 'go', 'delivered');
+    await flush();
+
+    const result = await handle.result();
+    expect(result).toBe('delivered');
+    expect(observed).toEqual(['signal:go']);
+    engine[Symbol.dispose]();
+  });
+
+  it('signalReceived interceptor can block delivery', async () => {
+    const engine = new Engine();
+
+    engine.addInterceptor({
+      signalReceived() {
+        // deliberately does not call next — blocks the signal
+      },
+    });
+
+    engine.register('signal-block-test', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('blocked');
+      return 'should not reach';
+    });
+
+    const handle = await engine.start('signal-block-test', null);
+    await flush();
+
+    await engine.signal(handle.id, 'blocked', 'data');
+    await flush();
+
+    // Workflow should still be waiting since signal was blocked
+    const stateBytes = await engine.storage.get(KEYS.workflow(handle.id));
+    const state = decode(stateBytes!) as WorkflowState;
+    expect(state.status).toBe('running');
+    engine[Symbol.dispose]();
+  });
+
   it('list with status array filter', async () => {
     const engine = new Engine();
     engine.register('multi-status', async function* () {
