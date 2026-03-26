@@ -265,6 +265,54 @@ describe('crash recovery', () => {
     engine2[Symbol.dispose]();
   });
 
+  it('post-recovery sleeps use current time, not stale checkpoint time', async () => {
+    const { MemoryStorage: TestMemoryStorage } = await import('../storage/memory.ts');
+
+    const storage = new TestMemoryStorage();
+    let currentTime = 1000;
+
+    // Workflow: sleep 2s, then sleep 3s, return
+    const twoSleepWorkflow = async function* (ctx: WorkflowContext) {
+      const c = ctx as Context;
+      yield* c.sleep(2000);
+      yield* c.sleep(3000);
+      return 'both-done';
+    };
+
+    // First engine: start workflow, crash while the first sleep is pending.
+    const engine1 = new Engine({ storage, getNow: () => currentTime });
+    engine1.register('two-sleep', twoSleepWorkflow);
+
+    await engine1.start('two-sleep', null, { id: 'wf-two-sleep' });
+    await flush();
+
+    engine1[Symbol.dispose]();
+
+    // Simulate time passing during the crash: restart well past the first
+    // sleep's deadline (1000 + 2000 = 3000) but NOT past a hypothetical
+    // second sleep that starts at recovery time (10000 + 3000 = 13000).
+    currentTime = 10_000;
+
+    const engine2 = new Engine({ storage, getNow: () => currentTime });
+    engine2.register('two-sleep', twoSleepWorkflow);
+
+    const handles = await engine2.recoverAll();
+    expect(handles).toHaveLength(1);
+    await flush();
+
+    // The first sleep should have resolved immediately via the fast path.
+    // The second sleep should schedule at currentTime + 3000 = 13000.
+    // Advance time past the second sleep's deadline.
+    currentTime = 14_000;
+    await engine2.scheduler.tick(currentTime);
+    await flush();
+
+    const result = await handles[0]!.result();
+    expect(result).toBe('both-done');
+
+    engine2[Symbol.dispose]();
+  });
+
   it('does not resume completed workflows', async () => {
     const storage = new MemoryStorage();
 

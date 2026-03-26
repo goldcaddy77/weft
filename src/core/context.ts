@@ -298,8 +298,10 @@ export class Context implements WorkflowContext {
 
     // Use the sleep reference time (checkpoint createdAt on resume) so that
     // the engine's expired-timer fast path can detect sleeps whose original
-    // deadline has already passed.
+    // deadline has already passed. Consume it on first use so that any new
+    // sleeps created after the recovery point use the current time.
     const referenceTime = this.#sleepReferenceTime ?? this.#getNow();
+    this.#sleepReferenceTime = undefined;
 
     yield {
       type: 'sleep',
