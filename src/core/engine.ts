@@ -2,8 +2,10 @@
  * Core workflow engine. Orchestrates workflow execution, manages lifecycle
  * events, and coordinates storage, scheduling, and signal delivery.
  *
- * Workflows and activities run inline on the main thread (no Web Workers).
- * Worker-based execution is a separate layer added later.
+ * Execution is delegated to an {@link ExecutionStrategy}. By default the
+ * engine uses {@link InlineExecutionStrategy} which drives generators on
+ * the main thread. A {@link WorkerExecutionStrategy} can be supplied to
+ * run workflows in isolated Web Workers.
  *
  * @module core/engine
  */
@@ -11,6 +13,7 @@
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import { WorkerPool } from '../workers/pool.ts';
 import {
   advanceCheckpoint,
   createCheckpoint,
@@ -32,6 +35,8 @@ import {
   WorkflowResumedEvent,
   WorkflowStartedEvent,
 } from './events.ts';
+import type { ExecutionStrategy } from './execution-strategy.ts';
+import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
 import { Scheduler, parseDuration } from './scheduler.ts';
@@ -40,9 +45,11 @@ import type {
   Checkpoint,
   EngineOptions,
   ListFilter,
+  OperationOutcome,
   PaginatedResult,
   StartOptions,
   StepWorkflowFunction,
+  WorkerOutboundMessage,
   WorkflowFunction,
   WorkflowRegistration,
   WorkflowState,
@@ -50,6 +57,7 @@ import type {
 } from './types.ts';
 import { UpdateCoordinator } from './updates.ts';
 import { checkVersionCompatibility, migrateCheckpoint } from './versioning.ts';
+import { WorkerExecutionStrategy } from './worker-execution-strategy.ts';
 
 declare global {
   interface SymbolConstructor {
@@ -258,17 +266,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #abortController: AbortController;
   #scheduler: Scheduler;
   #options: ResolvedOptions;
-  #activeGenerators: Map<string, AsyncGenerator>;
+  #strategy: ExecutionStrategy;
+  #inlineStrategy: InlineExecutionStrategy | null;
   #handleCache: Map<string, WeakRef<WorkflowHandle>>;
   #finalizationRegistry: FinalizationRegistry<string>;
   #resultResolvers: Map<string, WorkflowResultResolver>;
-  #workflowAbortControllers: Map<string, AbortController>;
   #signalWaiters: Map<string, (payload: unknown) => void>;
   #sleepResolvers: Map<string, () => void>;
   #interceptors: WorkflowInterceptor[];
   #activityInterceptors: ActivityInterceptor[];
   #updateCoordinator: UpdateCoordinator;
-  #activeContexts: Map<string, Context>;
+  #activityRegistrations: Map<string, (...arguments_: unknown[]) => unknown>;
   #checkpoints: Map<string, Checkpoint>;
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
@@ -282,16 +290,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#storage = storage;
     this.#registrations = new Map();
     this.#abortController = new AbortController();
-    this.#activeGenerators = new Map();
     this.#handleCache = new Map();
     this.#resultResolvers = new Map();
-    this.#workflowAbortControllers = new Map();
     this.#signalWaiters = new Map();
     this.#sleepResolvers = new Map();
     this.#interceptors = [];
     this.#activityInterceptors = [];
     this.#updateCoordinator = new UpdateCoordinator(storage);
-    this.#activeContexts = new Map();
+    this.#activityRegistrations = new Map();
     this.#checkpoints = new Map();
     this.#broadcastChannel = null;
     this.#pendingNestingDepth = undefined;
@@ -314,6 +320,34 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       onTimerFired: (entry) => this.#handleTimerFired(entry),
       getNow,
     });
+
+    // Create the execution strategy
+    if (options?.workerExecution) {
+      const pool = new WorkerPool({
+        workerUrl: options.workerExecution.workerUrl,
+        concurrency: options.workerExecution.concurrency ?? 4,
+        smol: options.workerExecution.smol,
+      });
+
+      const workerStrategy = new WorkerExecutionStrategy(pool, {
+        broadcastEvents: this.#options.broadcastEvents,
+      });
+
+      this.#strategy = workerStrategy;
+      this.#inlineStrategy = null;
+    } else {
+      const inlineStrategy = new InlineExecutionStrategy({
+        getRegistration: (workflowType: string) => this.#registrations.get(workflowType),
+        getNow,
+        maxNestingDepth: this.#options.maxNestingDepth,
+      });
+
+      this.#strategy = inlineStrategy;
+      this.#inlineStrategy = inlineStrategy;
+    }
+
+    // Wire up the strategy message handler
+    this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
   }
 
   // -------------------------------------------------------------------------
@@ -365,6 +399,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   addActivityInterceptor(interceptor: ActivityInterceptor): void {
     this.#activityInterceptors.push(interceptor);
+  }
+
+  // -------------------------------------------------------------------------
+  // Activity registration (for worker-based execution)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Register a named activity function. In worker mode, the generator yields
+   * an operation request with `activityName` (not a function reference). The
+   * engine uses this registry to look up the function by name and execute it
+   * on the main thread.
+   */
+  registerActivity(name: string, fn: (...arguments_: unknown[]) => unknown): void {
+    this.#activityRegistrations.set(name, fn);
   }
 
   // -------------------------------------------------------------------------
@@ -438,13 +486,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#handleCache.set(workflowId, new WeakRef(handle));
     this.#finalizationRegistry.register(handle, workflowId);
 
-    // Begin execution (non-blocking)
-    this.#advanceWorkflow(workflowId, registration, input).catch((error: unknown) => {
-      // This should not normally happen since #advanceWorkflow handles its own errors
-      void this.#failWorkflow(
-        workflowId,
-        error instanceof Error ? error : new Error(String(error)),
-      );
+    // Begin execution (non-blocking) via the strategy
+    const nestingDepth = this.#pendingNestingDepth ?? 0;
+    this.#pendingNestingDepth = undefined;
+    this.#strategy.startWorkflow({
+      workflowId,
+      workflowType: type,
+      input,
+      checkpoint: serializeCheckpoint(checkpoint),
+      nestingDepth,
     });
 
     return handle;
@@ -571,7 +621,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const timeout = options?.timeout ?? 5000;
 
     // Check if the workflow has an active context with an update handler
-    const context = this.#activeContexts.get(workflowId);
+    const context = this.#inlineStrategy?.getContext(workflowId);
     if (context) {
       const handler = context.updateHandlers.get(name);
       if (handler) {
@@ -661,36 +711,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       await this.#storage.put(KEYS.checkpoint(workflowId), serializeCheckpoint(resumeCheckpoint));
     }
 
-    // Build accumulated results from checkpoint
-    const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
-
     // Store checkpoint for future persistence
     this.#checkpoints.set(workflowId, resumeCheckpoint);
-
-    // Create abort controller
-    const workflowAbort = new AbortController();
-    this.#workflowAbortControllers.set(workflowId, workflowAbort);
-
-    // Create context with recovery state. Pass the checkpoint's createdAt as
-    // the sleep reference time so that expired sleeps resolve immediately via
-    // the fast path instead of scheduling a brand-new full-duration timer.
-    const context = new Context({
-      workflowId,
-      workflowType: state.type,
-      startedAt: state.createdAt,
-      abortController: workflowAbort,
-      getNow: this.#options.getNow,
-      accumulatedResults,
-      searchAttributes: resumeCheckpoint.searchAttributes,
-      sleepReferenceTime: resumeCheckpoint.createdAt,
-      ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
-    });
-
-    this.#activeContexts.set(workflowId, context);
-
-    // Create generator from registration handler
-    const generator = registration.handler(context, state.input);
-    this.#activeGenerators.set(workflowId, generator);
 
     // Create result promise and handle
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
@@ -703,13 +725,41 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Dispatch resumed event
     this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
 
-    // Drive the generator (non-blocking)
-    this.#driveGenerator(workflowId, generator, undefined).catch((error: unknown) => {
-      void this.#failWorkflow(
+    if (this.#inlineStrategy) {
+      // Inline mode: create context and generator, adopt into strategy
+      const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
+      const workflowAbort = new AbortController();
+
+      // Create context with recovery state. Pass the checkpoint's createdAt as
+      // the sleep reference time so that expired sleeps resolve immediately via
+      // the fast path instead of scheduling a brand-new full-duration timer.
+      const context = new Context({
         workflowId,
-        error instanceof Error ? error : new Error(String(error)),
-      );
-    });
+        workflowType: state.type,
+        startedAt: state.createdAt,
+        abortController: workflowAbort,
+        getNow: this.#options.getNow,
+        accumulatedResults,
+        searchAttributes: resumeCheckpoint.searchAttributes,
+        sleepReferenceTime: resumeCheckpoint.createdAt,
+        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+      });
+
+      const generator = registration.handler(context, state.input);
+      this.#inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
+
+      // Drive the generator (non-blocking) via the strategy
+      this.#inlineStrategy.continueWorkflow(workflowId, undefined);
+    } else {
+      // Worker mode: send run message to the worker with the checkpoint
+      const serialized = serializeCheckpoint(resumeCheckpoint);
+      this.#strategy.startWorkflow({
+        workflowId,
+        workflowType: state.type,
+        input: state.input,
+        checkpoint: serialized,
+      });
+    }
 
     return handle;
   }
@@ -739,30 +789,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async cancel(workflowId: string): Promise<void> {
-    // Abort the workflow
-    const abortController = this.#workflowAbortControllers.get(workflowId);
-    if (abortController) {
-      abortController.abort();
-    }
-
-    // Clean up the generator
-    const generator = this.#activeGenerators.get(workflowId);
-    if (generator) {
-      try {
-        await generator.return(undefined);
-      } catch {
-        // Ignore errors during cleanup
-      }
-      this.#activeGenerators.delete(workflowId);
-    }
+    // Cancel via the strategy (aborts controller, cleans up generator/context)
+    this.#strategy.cancelWorkflow(workflowId);
 
     // Update state
     await this.#updateWorkflowState(workflowId, {
       status: 'cancelled',
     });
-
-    // Clean up context
-    this.#activeContexts.delete(workflowId);
 
     // Dispatch event
     const event = new WorkflowCancelledEvent(workflowId);
@@ -784,13 +817,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   [Symbol.dispose](): void {
     this.#abortController.abort();
     this.#scheduler[Symbol.dispose]();
-    this.#activeGenerators.clear();
+    this.#strategy[Symbol.dispose]();
+    this.#inlineStrategy = null;
     this.#handleCache.clear();
     this.#resultResolvers.clear();
-    this.#workflowAbortControllers.clear();
     this.#signalWaiters.clear();
     this.#sleepResolvers.clear();
-    this.#activeContexts.clear();
     this.#checkpoints.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
@@ -817,7 +849,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async #persistCheckpoint(workflowId: string): Promise<void> {
-    const context = this.#activeContexts.get(workflowId);
+    const context = this.#inlineStrategy?.getContext(workflowId);
     const current = this.#checkpoints.get(workflowId);
     if (!context || !current) return;
 
@@ -847,107 +879,71 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   // -------------------------------------------------------------------------
-  // Private: workflow advancement
+  // Private: strategy helpers
   // -------------------------------------------------------------------------
 
-  async #advanceWorkflow(
-    workflowId: string,
-    registration: RegistrationEntry,
-    input: unknown,
-    nestingDepth: number = 0,
-  ): Promise<void> {
-    // Use pending depth if set (from child-workflow case), otherwise use parameter
-    const depth = this.#pendingNestingDepth ?? nestingDepth;
-    this.#pendingNestingDepth = undefined;
-
-    const workflowAbort = new AbortController();
-    this.#workflowAbortControllers.set(workflowId, workflowAbort);
-
-    // Create the context
-    const context = new Context({
-      workflowId,
-      workflowType: '',
-      startedAt: this.#options.getNow(),
-      abortController: workflowAbort,
-      getNow: this.#options.getNow,
-      nestingDepth: depth,
-    });
-
-    // Store the context for update handler lookups
-    this.#activeContexts.set(workflowId, context);
-
-    // Create the generator
-    const generator = registration.handler(context, input);
-    this.#activeGenerators.set(workflowId, generator);
-
-    // Drive the generator
-    await this.#driveGenerator(workflowId, generator, undefined);
-  }
-
-  async #driveGenerator(
-    workflowId: string,
-    generator: AsyncGenerator,
-    lastResult: unknown,
-  ): Promise<void> {
-    try {
-      // Check if cancelled
-      const abortController = this.#workflowAbortControllers.get(workflowId);
-      if (abortController?.signal.aborted) return;
-
-      const iterResult = await generator.next(lastResult);
-
-      if (iterResult.done) {
-        // Workflow completed
-        await this.#completeWorkflow(workflowId, iterResult.value);
-        return;
+  /**
+   * Feed an operation result back into the workflow. Works for both inline
+   * and worker strategies by routing through the appropriate method.
+   */
+  #feedOperationResult(workflowId: string, outcome: OperationOutcome): void {
+    if (this.#inlineStrategy) {
+      // Inline: use the direct methods for efficiency
+      if (outcome.status === 'completed') {
+        this.#inlineStrategy.continueWorkflow(workflowId, outcome.value);
+      } else {
+        this.#inlineStrategy.throwIntoWorkflow(workflowId, new Error(outcome.error));
       }
-
-      // Persist checkpoint at this yield boundary
-      await this.#persistCheckpoint(workflowId);
-
-      // Development mode: validate checkpoint round-trip
-      this.#validateDevelopmentCheckpoint(workflowId);
-
-      // Process the yielded operation request
-      const operation = iterResult.value as never as ContextOperationRequest;
-      await this.#processOperation(workflowId, generator, operation);
-    } catch (error) {
-      await this.#failWorkflow(
+    } else {
+      // Worker: send resume message with the checkpoint
+      const checkpoint = this.#checkpoints.get(workflowId);
+      const serialized = checkpoint ? serializeCheckpoint(checkpoint) : new ArrayBuffer(0);
+      this.#strategy.resumeWorkflow({
         workflowId,
-        error instanceof Error ? error : new Error(String(error)),
-      );
+        checkpoint: serialized,
+        operationResult: outcome,
+      });
     }
   }
 
-  async #processOperation(
-    workflowId: string,
-    generator: AsyncGenerator,
-    operation: ContextOperationRequest,
-  ): Promise<void> {
+  // -------------------------------------------------------------------------
+  // Private: strategy message handling
+  // -------------------------------------------------------------------------
+
+  async #handleStrategyMessage(message: WorkerOutboundMessage): Promise<void> {
+    switch (message.type) {
+      case 'completed':
+        await this.#completeWorkflow(message.workflowId, message.result);
+        break;
+
+      case 'failed':
+        await this.#failWorkflow(message.workflowId, new Error(message.error));
+        break;
+
+      case 'checkpoint': {
+        // Persist checkpoint at this yield boundary
+        await this.#persistCheckpoint(message.workflowId);
+
+        // Development mode: validate checkpoint round-trip
+        this.#validateDevelopmentCheckpoint(message.workflowId);
+
+        // Process the yielded operation request
+        const operation = message.operationRequest as unknown as ContextOperationRequest;
+        await this.#processOperation(message.workflowId, operation);
+        break;
+      }
+    }
+  }
+
+  async #processOperation(workflowId: string, operation: ContextOperationRequest): Promise<void> {
     switch (operation.type) {
       case 'activity': {
         try {
           const result = await this.#executeActivity(workflowId, operation);
-          await this.#driveGenerator(workflowId, generator, result);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: result });
         } catch (error) {
-          // Propagate activity failure to the generator
-          try {
-            const iterResult = await generator.throw(error);
-            if (iterResult.done) {
-              await this.#completeWorkflow(workflowId, iterResult.value);
-            } else {
-              await this.#processOperation(
-                workflowId,
-                generator,
-                iterResult.value as never as ContextOperationRequest,
-              );
-            }
-          } catch (innerError) {
-            await this.#failWorkflow(
-              workflowId,
-              innerError instanceof Error ? innerError : new Error(String(innerError)),
-            );
-          }
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
         }
         break;
       }
@@ -955,7 +951,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'sleep': {
         // If the timer has already expired (e.g., resumed after crash), resolve immediately
         if (operation.scheduledFireAt <= this.#options.getNow()) {
-          await this.#driveGenerator(workflowId, generator, undefined);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
           break;
         }
 
@@ -973,7 +969,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.#sleepResolvers.set(operation.operationId, resolve);
 
         await promise;
-        await this.#driveGenerator(workflowId, generator, undefined);
+        this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
         break;
       }
 
@@ -981,7 +977,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // Check if signal already exists in storage
         const existingPayload = await this.#consumeSignal(workflowId, operation.signalName);
         if (existingPayload !== undefined) {
-          await this.#driveGenerator(workflowId, generator, existingPayload);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: existingPayload });
           return;
         }
 
@@ -991,7 +987,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.#signalWaiters.set(waiterKey, resolve);
 
         const payload = await promise;
-        await this.#driveGenerator(workflowId, generator, payload);
+        this.#feedOperationResult(workflowId, { status: 'completed', value: payload });
         break;
       }
 
@@ -1001,7 +997,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             this.#executeSubOperation(workflowId, subOperation),
           ),
         );
-        await this.#driveGenerator(workflowId, generator, results);
+        this.#feedOperationResult(workflowId, { status: 'completed', value: results });
         break;
       }
 
@@ -1011,13 +1007,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             this.#executeSubOperation(workflowId, subOperation),
           ),
         );
-        await this.#driveGenerator(workflowId, generator, result);
+        this.#feedOperationResult(workflowId, { status: 'completed', value: result });
         break;
       }
 
       case 'memo': {
         const result = await callMemoFunction(operation.fn);
-        await this.#driveGenerator(workflowId, generator, result);
+        this.#feedOperationResult(workflowId, { status: 'completed', value: result });
         break;
       }
 
@@ -1031,25 +1027,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             workflowId,
             sizeBytes: encoded.byteLength,
           };
-          await this.#driveGenerator(workflowId, generator, reference);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: reference });
         } catch (error) {
-          try {
-            const iterResult = await generator.throw(error);
-            if (iterResult.done) {
-              await this.#completeWorkflow(workflowId, iterResult.value);
-            } else {
-              await this.#processOperation(
-                workflowId,
-                generator,
-                iterResult.value as never as ContextOperationRequest,
-              );
-            }
-          } catch (innerError) {
-            await this.#failWorkflow(
-              workflowId,
-              innerError instanceof Error ? innerError : new Error(String(innerError)),
-            );
-          }
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
         }
         break;
       }
@@ -1064,25 +1045,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             );
           }
           const data = decode(raw);
-          await this.#driveGenerator(workflowId, generator, data);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: data });
         } catch (error) {
-          try {
-            const iterResult = await generator.throw(error);
-            if (iterResult.done) {
-              await this.#completeWorkflow(workflowId, iterResult.value);
-            } else {
-              await this.#processOperation(
-                workflowId,
-                generator,
-                iterResult.value as never as ContextOperationRequest,
-              );
-            }
-          } catch (innerError) {
-            await this.#failWorkflow(
-              workflowId,
-              innerError instanceof Error ? innerError : new Error(String(innerError)),
-            );
-          }
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
         }
         break;
       }
@@ -1091,25 +1057,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         try {
           const encoded = encode(operation.data);
           await this.#storage.put(KEYS.archive(workflowId, operation.key), encoded);
-          await this.#driveGenerator(workflowId, generator, undefined);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
         } catch (error) {
-          try {
-            const iterResult = await generator.throw(error);
-            if (iterResult.done) {
-              await this.#completeWorkflow(workflowId, iterResult.value);
-            } else {
-              await this.#processOperation(
-                workflowId,
-                generator,
-                iterResult.value as never as ContextOperationRequest,
-              );
-            }
-          } catch (innerError) {
-            await this.#failWorkflow(
-              workflowId,
-              innerError instanceof Error ? innerError : new Error(String(innerError)),
-            );
-          }
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
         }
         break;
       }
@@ -1146,7 +1097,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           const metadataKey = KEYS.streamMetadata(workflowId, operation.key);
           await this.#storage.put(metadataKey, encode(reference));
 
-          await this.#driveGenerator(workflowId, generator, reference);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: reference });
         } catch (error) {
           // Clean up any partially written chunks (best-effort)
           if (writtenKeys.length > 0) {
@@ -1157,24 +1108,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             await this.#storage.batch(deleteOperations).catch(() => {});
           }
 
-          // Propagate error to the workflow generator (same pattern as 'activity' case)
-          try {
-            const iterResult = await generator.throw(error);
-            if (iterResult.done) {
-              await this.#completeWorkflow(workflowId, iterResult.value);
-            } else {
-              await this.#processOperation(
-                workflowId,
-                generator,
-                iterResult.value as never as ContextOperationRequest,
-              );
-            }
-          } catch (innerError) {
-            await this.#failWorkflow(
-              workflowId,
-              innerError instanceof Error ? innerError : new Error(String(innerError)),
-            );
-          }
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
         }
         break;
       }
@@ -1187,7 +1122,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           results[name] = result;
         });
         await Promise.all(promises);
-        await this.#driveGenerator(workflowId, generator, results);
+        this.#feedOperationResult(workflowId, { status: 'completed', value: results });
         break;
       }
 
@@ -1200,36 +1135,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           ...rest
         } = operation.options;
         const agentResult = await executeAgentLoop(rest, prompt);
-        await this.#driveGenerator(workflowId, generator, agentResult.content);
+        this.#feedOperationResult(workflowId, { status: 'completed', value: agentResult.content });
         break;
       }
 
       case 'child-workflow': {
-        const currentContext = this.#activeContexts.get(workflowId);
+        const currentContext = this.#inlineStrategy?.getContext(workflowId);
         const currentDepth = currentContext?.nestingDepth ?? 0;
 
         if (currentDepth + 1 > this.#options.maxNestingDepth) {
-          const error = new Error(
+          const errorMessage =
             `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
-              `Configure maxNestingDepth in engine options to increase the limit.`,
-          );
-          try {
-            const iterResult = await generator.throw(error);
-            if (iterResult.done) {
-              await this.#completeWorkflow(workflowId, iterResult.value);
-            } else {
-              await this.#processOperation(
-                workflowId,
-                generator,
-                iterResult.value as never as ContextOperationRequest,
-              );
-            }
-          } catch (innerError) {
-            await this.#failWorkflow(
-              workflowId,
-              innerError instanceof Error ? innerError : new Error(String(innerError)),
-            );
-          }
+            `Configure maxNestingDepth in engine options to increase the limit.`;
+          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
           break;
         }
 
@@ -1238,25 +1156,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           this.#pendingNestingDepth = currentDepth + 1;
           const childHandle = await this.start(operation.workflowType, operation.input);
           const childResult = await childHandle.result();
-          await this.#driveGenerator(workflowId, generator, childResult);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: childResult });
         } catch (error) {
-          try {
-            const iterResult = await generator.throw(error);
-            if (iterResult.done) {
-              await this.#completeWorkflow(workflowId, iterResult.value);
-            } else {
-              await this.#processOperation(
-                workflowId,
-                generator,
-                iterResult.value as never as ContextOperationRequest,
-              );
-            }
-          } catch (innerError) {
-            await this.#failWorkflow(
-              workflowId,
-              innerError instanceof Error ? innerError : new Error(String(innerError)),
-            );
-          }
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
         }
         break;
       }
@@ -1319,9 +1222,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       result,
     });
 
-    this.#activeGenerators.delete(workflowId);
-    this.#workflowAbortControllers.delete(workflowId);
-    this.#activeContexts.delete(workflowId);
     this.#checkpoints.delete(workflowId);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
@@ -1343,9 +1243,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       error: error.message,
     });
 
-    this.#activeGenerators.delete(workflowId);
-    this.#workflowAbortControllers.delete(workflowId);
-    this.#activeContexts.delete(workflowId);
     this.#checkpoints.delete(workflowId);
 
     const event = new WorkflowFailedEvent(workflowId, error);
@@ -1470,7 +1367,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #validateDevelopmentCheckpoint(workflowId: string): void {
     if (!this.#options.development) return;
 
-    const context = this.#activeContexts.get(workflowId);
+    const context = this.#inlineStrategy?.getContext(workflowId);
     if (!context) return;
 
     const step = context.stepIndex;
