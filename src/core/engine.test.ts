@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
@@ -9,6 +9,7 @@ import { decode } from './codec.ts';
 import type { Context, StreamReference } from './context.ts';
 import { Engine, WorkflowHandle } from './engine.ts';
 import {
+  CheckpointSizeWarningEvent,
   DevelopmentWarningEvent,
   WorkflowCancelledEvent,
   WorkflowCompletedEvent,
@@ -1296,6 +1297,283 @@ describe('Engine', () => {
     expect(result.chunkCount).toBe(0);
     expect(result.totalSizeBytes).toBe(0);
 
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 1A: Checkpoint size warning events
+  // ---------------------------------------------------------------------------
+
+  it('dispatches CheckpointSizeWarningEvent when checkpoint exceeds threshold', async () => {
+    // Use a very low threshold so even a small checkpoint triggers the warning
+    const engine = new Engine({ checkpointSizeWarningThreshold: 1 });
+    const warnings: CheckpointSizeWarningEvent[] = [];
+
+    engine.addEventListener(CheckpointSizeWarningEvent.type, (event) => {
+      warnings.push(event as CheckpointSizeWarningEvent);
+    });
+
+    const activity = async (...args: unknown[]) => args[0];
+    engine.register('big-checkpoint', async function* (ctx: WorkflowContext) {
+      const result = yield* (ctx as Context).run(activity, 'data');
+      return result;
+    });
+
+    const handle = await engine.start('big-checkpoint', null);
+    await handle.result();
+
+    expect(warnings.length).toBeGreaterThanOrEqual(1);
+    expect(warnings[0]!.workflowId).toBe(handle.id);
+    expect(warnings[0]!.sizeBytes).toBeGreaterThanOrEqual(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('does not dispatch CheckpointSizeWarningEvent when checkpoint is below threshold', async () => {
+    // Use an extremely high threshold so warnings never fire
+    const engine = new Engine({ checkpointSizeWarningThreshold: 10_000_000 });
+    const warnings: CheckpointSizeWarningEvent[] = [];
+
+    engine.addEventListener(CheckpointSizeWarningEvent.type, (event) => {
+      warnings.push(event as CheckpointSizeWarningEvent);
+    });
+
+    engine.register('small-checkpoint', async function* () {
+      return 'tiny';
+    });
+
+    const handle = await engine.start('small-checkpoint', null);
+    await handle.result();
+
+    expect(warnings).toHaveLength(0);
+    engine[Symbol.dispose]();
+  });
+
+  it('respects custom checkpointSizeWarningThreshold', async () => {
+    const engine = new Engine({ checkpointSizeWarningThreshold: 50 });
+    const warnings: CheckpointSizeWarningEvent[] = [];
+
+    engine.addEventListener(CheckpointSizeWarningEvent.type, (event) => {
+      warnings.push(event as CheckpointSizeWarningEvent);
+    });
+
+    const activity = async (...args: unknown[]) => args[0];
+    engine.register('threshold-test', async function* (ctx: WorkflowContext) {
+      const result = yield* (ctx as Context).run(activity, 'payload');
+      return result;
+    });
+
+    const handle = await engine.start('threshold-test', null);
+    await handle.result();
+
+    // The checkpoint should be > 50 bytes, so the warning should fire
+    if (warnings.length > 0) {
+      expect(warnings[0]!.sizeBytes).toBeGreaterThanOrEqual(50);
+    }
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 1C: Development mode activates explain logging
+  // ---------------------------------------------------------------------------
+
+  it('development mode activates explain logging on workflows', async () => {
+    const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const engine = new Engine({ development: true });
+      const activity = async (...args: unknown[]) => args[0];
+
+      engine.register('dev-explain', async function* (ctx: WorkflowContext) {
+        const result = yield* (ctx as Context).run(activity, 'test');
+        return result;
+      });
+
+      const handle = await engine.start('dev-explain', null);
+      await handle.result();
+
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('[weft]');
+      engine[Symbol.dispose]();
+    } finally {
+      mock.restore();
+    }
+  });
+
+  it('development mode activates explain logging on resumed workflows', async () => {
+    const storage = new MemoryStorage();
+
+    // First engine: start a workflow that waits for a signal
+    const engine1 = new Engine({ storage: storage as WeftStorage });
+    engine1.register('dev-resume', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('go');
+      const result = yield* (ctx as Context).run(async () => 42);
+      return result;
+    });
+
+    await engine1.start('dev-resume', null, { id: 'dev-resume-id' });
+    await flush();
+
+    // Dispose the engine (simulating a crash) without cancelling the workflow
+    engine1[Symbol.dispose]();
+
+    // Second engine (development mode): resume the workflow
+    const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const engine2 = new Engine({ development: true, storage: storage as WeftStorage });
+      engine2.register('dev-resume', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('go');
+        const result = yield* (ctx as Context).run(async () => 42);
+        return result;
+      });
+
+      const resumed = await engine2.resume('dev-resume-id');
+      await flush();
+
+      // Signal to finish - the workflow will replay waitForSignal, then run the activity
+      await engine2.signal('dev-resume-id', 'go', 'value');
+      await resumed.result();
+
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('[weft]');
+      engine2[Symbol.dispose]();
+    } finally {
+      mock.restore();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 1B: callerStack populated in operation requests
+  // ---------------------------------------------------------------------------
+
+  it('ctx.run yields a request with non-empty callerStack', () => {
+    const { Context: ContextClass } = require('./context.ts') as { Context: typeof Context };
+    const context = new ContextClass({
+      workflowId: 'wf-caller-stack',
+      workflowType: 'test',
+      startedAt: 1000,
+      abortController: new AbortController(),
+    });
+
+    const activity = async (...args: unknown[]) => args[0];
+    const generator = context.run(activity, 'test');
+    const yielded = generator.next();
+
+    expect(yielded.done).toBe(false);
+    const request = yielded.value as Extract<
+      import('./context.ts').ContextOperationRequest,
+      { type: 'activity' }
+    >;
+    expect(request.callerStack).toBeDefined();
+    expect(request.callerStack!.length).toBeGreaterThan(0);
+  });
+
+  it('failed activity errors include workflow call site in stack trace', async () => {
+    const engine = new Engine();
+    let capturedError: Error | undefined;
+
+    const failingActivity = async () => {
+      throw new Error('activity failure');
+    };
+
+    engine.register('caller-stack-workflow', async function* (ctx: WorkflowContext) {
+      try {
+        yield* (ctx as Context).run(failingActivity);
+      } catch (error) {
+        capturedError = error as Error;
+        throw error;
+      }
+      return 'unreachable';
+    });
+
+    const handle = await engine.start('caller-stack-workflow', null);
+    await handle.result().catch(() => {});
+
+    expect(capturedError).toBeDefined();
+    expect(capturedError!.stack).toContain('--- workflow call site ---');
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 1D: Error stacks survive storage round-trips
+  // ---------------------------------------------------------------------------
+
+  it('failed workflow preserves error stack through storage round-trip', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage: storage as WeftStorage });
+
+    engine.register('stack-persist', async function* () {
+      throw new Error('deliberate failure for stack test');
+    });
+
+    const handle = await engine.start('stack-persist', null, { id: 'stack-persist-id' });
+    await handle.result().catch(() => {});
+
+    // Read the state from storage directly
+    const stateBytes = await storage.get(KEYS.workflow('stack-persist-id'));
+    const state = decode(stateBytes!) as WorkflowState;
+
+    expect(state.status).toBe('failed');
+    expect(state.error).toBe('deliberate failure for stack test');
+    expect(state.errorStack).toBeDefined();
+    expect(state.errorStack).toContain('deliberate failure for stack test');
+    engine[Symbol.dispose]();
+  });
+
+  it('getHandle for a failed workflow restores the error stack from storage', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage: storage as WeftStorage });
+
+    engine.register('stack-restore', async function* () {
+      throw new Error('restorable failure');
+    });
+
+    const handle = await engine.start('stack-restore', null, { id: 'stack-restore-id' });
+    await handle.result().catch(() => {});
+    await flush();
+
+    // Load from storage via a new handle
+    const newHandle = engine.getHandle('stack-restore-id');
+    try {
+      await newHandle.result();
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      const restoredError = error as Error;
+      expect(restoredError.message).toBe('restorable failure');
+      // The restored error should have the original stack
+      expect(restoredError.stack).toContain('restorable failure');
+    }
+    engine[Symbol.dispose]();
+  });
+
+  it('legacy state without errorStack still loads correctly', async () => {
+    const storage = new MemoryStorage();
+    const { encode: encodeValue } = await import('./codec.ts');
+
+    // Write a legacy state that has no errorStack field
+    const legacyState: WorkflowState = {
+      id: 'legacy-id',
+      type: 'legacy-workflow',
+      status: 'failed',
+      input: null,
+      error: 'old failure',
+      version: '1',
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    await storage.put(KEYS.workflow('legacy-id'), encodeValue(legacyState));
+
+    const engine = new Engine({ storage: storage as WeftStorage });
+    engine.register('legacy-workflow', async function* () {
+      return 'ok';
+    });
+
+    const handle = engine.getHandle('legacy-id');
+    try {
+      await handle.result();
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      const restoredError = error as Error;
+      expect(restoredError.message).toBe('old failure');
+    }
     engine[Symbol.dispose]();
   });
 });

@@ -30,6 +30,7 @@ export interface WorkflowState {
   input: unknown;
   result?: unknown;
   error?: string;
+  errorStack?: string;
   version: string;
   createdAt: number;
   updatedAt: number;
@@ -138,6 +139,19 @@ export interface EngineOptions {
   maxNestingDepth?: number;
   /** Enable BroadcastChannel for cross-worker event coordination. Default: false. */
   broadcastEvents?: boolean;
+  /**
+   * Enable worker-based execution. When provided, workflows run in isolated
+   * Web Workers instead of inline on the main thread. Activities are still
+   * executed on the main thread via the activity registry.
+   */
+  workerExecution?: {
+    /** URL of the worker script (created via `createWorkerEntryUrl`). */
+    workerUrl: string | URL;
+    /** Maximum number of concurrent workers. Default: 4. */
+    concurrency?: number;
+    /** Use Bun's `smol` worker option for smaller memory footprint. */
+    smol?: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +236,7 @@ export type WorkerOutboundMessage =
       operationRequest: OperationRequest;
     }
   | { type: 'completed'; workflowId: WorkflowId; result: unknown }
-  | { type: 'failed'; workflowId: WorkflowId; error: string };
+  | { type: 'failed'; workflowId: WorkflowId; error: string; errorStack?: string };
 
 // ---------------------------------------------------------------------------
 // Workflow function signature

@@ -1,4 +1,4 @@
-import type { OperationRequest, WorkerOutboundMessage } from '../core/types.ts';
+import type { OperationOutcome, OperationRequest, WorkerOutboundMessage } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow runner context: holds live generator state for in-flight workflows
@@ -59,7 +59,7 @@ export async function handleRunMessage(
 
 export async function handleResumeMessage(
   context: WorkflowRunnerContext,
-  message: { workflowId: string; result: unknown },
+  message: { workflowId: string; result: unknown; operationResult?: OperationOutcome },
 ): Promise<WorkerOutboundMessage> {
   const generator = context.generators.get(message.workflowId);
 
@@ -72,7 +72,13 @@ export async function handleResumeMessage(
   }
 
   try {
-    const step = await generator.next(message.result);
+    // If the operation failed, throw the error into the generator so the
+    // workflow can handle it via try/catch rather than silently continuing.
+    const outcome = message.operationResult;
+    const step =
+      outcome?.status === 'failed'
+        ? await generator.throw(new Error(outcome.error))
+        : await generator.next(message.result);
     return processGeneratorStep(context, message.workflowId, generator, step);
   } catch (error) {
     cleanup(context, message.workflowId);
