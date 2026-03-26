@@ -50,6 +50,7 @@ export interface Checkpoint {
   workflowId: WorkflowId;
   step: number;
   locals: Record<string, unknown>;
+  accumulatedResults: Array<[number, unknown]>;
   pendingSignals: string[];
   searchAttributes: Record<string, SearchAttributeValue>;
   version: string;

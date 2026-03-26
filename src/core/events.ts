@@ -64,6 +64,18 @@ export class WorkflowTimedOutEvent extends Event {
   }
 }
 
+export class WorkflowResumedEvent extends Event {
+  static readonly type = 'workflow:resumed' as const;
+  readonly workflowId: string;
+  readonly fromStep: number;
+
+  constructor(workflowId: string, fromStep: number) {
+    super(WorkflowResumedEvent.type);
+    this.workflowId = workflowId;
+    this.fromStep = fromStep;
+  }
+}
+
 export class ActivityStartedEvent extends Event {
   static readonly type = 'activity:started' as const;
   readonly operationId: string;
@@ -240,6 +252,7 @@ export interface WeftEventMap extends WeftAgentEventMap {
   'workflow:failed': WorkflowFailedEvent;
   'workflow:cancelled': WorkflowCancelledEvent;
   'workflow:timed-out': WorkflowTimedOutEvent;
+  'workflow:resumed': WorkflowResumedEvent;
   'activity:started': ActivityStartedEvent;
   'activity:completed': ActivityCompletedEvent;
   'activity:failed': ActivityFailedEvent;

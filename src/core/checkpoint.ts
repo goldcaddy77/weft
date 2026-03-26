@@ -56,15 +56,20 @@ export function deserializeCheckpoint(bytes: Uint8Array, serializer?: Serializer
 // ---------------------------------------------------------------------------
 
 /** Create a fresh checkpoint for a new workflow. */
-export function createCheckpoint(workflowId: WorkflowId, version: string): Checkpoint {
+export function createCheckpoint(
+  workflowId: WorkflowId,
+  version: string,
+  now?: number,
+): Checkpoint {
   return {
     workflowId,
     step: 0,
     locals: {},
+    accumulatedResults: [],
     pendingSignals: [],
     searchAttributes: {},
     version,
-    createdAt: Date.now(),
+    createdAt: now ?? Date.now(),
   };
 }
 
@@ -72,19 +77,24 @@ export function createCheckpoint(workflowId: WorkflowId, version: string): Check
 export function advanceCheckpoint(
   checkpoint: Checkpoint,
   locals: Record<string, unknown>,
-  options?: { searchAttributes?: Record<string, SearchAttributeValue> },
+  options?: {
+    searchAttributes?: Record<string, SearchAttributeValue>;
+    accumulatedResults?: Array<[number, unknown]>;
+    now?: number;
+  },
 ): Checkpoint {
   return {
     workflowId: checkpoint.workflowId,
     step: checkpoint.step + 1,
     locals,
+    accumulatedResults: options?.accumulatedResults ?? checkpoint.accumulatedResults,
     pendingSignals: checkpoint.pendingSignals,
     searchAttributes: {
       ...checkpoint.searchAttributes,
       ...options?.searchAttributes,
     },
     version: checkpoint.version,
-    createdAt: Date.now(),
+    createdAt: options?.now ?? Date.now(),
   };
 }
 
@@ -159,6 +169,13 @@ function validateCheckpointShape(value: unknown): asserts value is Checkpoint {
 
   if (typeof record['locals'] !== 'object' || record['locals'] === null) {
     throw new Error('Invalid checkpoint: missing or invalid "locals" (expected object)');
+  }
+
+  // Backwards compatibility: treat missing accumulatedResults as empty
+  if (!('accumulatedResults' in record)) {
+    record['accumulatedResults'] = [];
+  } else if (!Array.isArray(record['accumulatedResults'])) {
+    throw new Error('Invalid checkpoint: invalid "accumulatedResults" (expected array)');
   }
 
   if (!Array.isArray(record['pendingSignals'])) {
