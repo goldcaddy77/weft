@@ -30,6 +30,7 @@ export interface WorkflowState {
   input: unknown;
   result?: unknown;
   error?: string;
+  errorStack?: string;
   version: string;
   createdAt: number;
   updatedAt: number;

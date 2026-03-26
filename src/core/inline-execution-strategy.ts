@@ -25,6 +25,7 @@ export interface InlineExecutionDependencies {
   ) => { handler: WorkflowFunction; version: string } | undefined;
   getNow: () => number;
   maxNestingDepth: number;
+  development?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +83,10 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       getNow: this.#dependencies.getNow,
       nestingDepth: parameters.nestingDepth ?? 0,
     });
+
+    if (this.#dependencies.development) {
+      context.explain(true);
+    }
 
     this.#contexts.set(parameters.workflowId, context);
 

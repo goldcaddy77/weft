@@ -25,6 +25,7 @@ import { decode, encode } from './codec.ts';
 import type { ContextOperationRequest, StreamReference, StreamSink } from './context.ts';
 import { Context } from './context.ts';
 import {
+  CheckpointSizeWarningEvent,
   DevelopmentWarningEvent,
   SignalReceivedEvent,
   UpdateCompletedEvent,
@@ -326,7 +327,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const pool = new WorkerPool({
         workerUrl: options.workerExecution.workerUrl,
         concurrency: options.workerExecution.concurrency ?? 4,
-        smol: options.workerExecution.smol,
+        smol: options.workerExecution.smol ?? false,
       });
 
       const workerStrategy = new WorkerExecutionStrategy(pool, {
@@ -340,6 +341,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         getRegistration: (workflowType: string) => this.#registrations.get(workflowType),
         getNow,
         maxNestingDepth: this.#options.maxNestingDepth,
+        development: this.#options.development,
       });
 
       this.#strategy = inlineStrategy;
@@ -745,6 +747,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
       });
 
+      if (this.#options.development) {
+        context.explain(true);
+      }
+
       const generator = registration.handler(context, state.input);
       this.#inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
 
@@ -861,6 +867,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     });
 
     const serialized = serializeCheckpoint(advanced);
+
+    if (serialized.byteLength >= this.#options.checkpointSizeWarningThreshold) {
+      this.dispatchEvent(
+        new CheckpointSizeWarningEvent(workflowId, serialized.byteLength, advanced.step),
+      );
+    }
+
     const operations: import('../storage/interface.ts').BatchOperation[] = [
       { type: 'put', key: KEYS.checkpoint(workflowId), value: serialized },
     ];
@@ -886,13 +899,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * Feed an operation result back into the workflow. Works for both inline
    * and worker strategies by routing through the appropriate method.
    */
-  #feedOperationResult(workflowId: string, outcome: OperationOutcome): void {
+  #feedOperationResult(workflowId: string, outcome: OperationOutcome, originalError?: Error): void {
     if (this.#inlineStrategy) {
       // Inline: use the direct methods for efficiency
       if (outcome.status === 'completed') {
         this.#inlineStrategy.continueWorkflow(workflowId, outcome.value);
       } else {
-        this.#inlineStrategy.throwIntoWorkflow(workflowId, new Error(outcome.error));
+        this.#inlineStrategy.throwIntoWorkflow(
+          workflowId,
+          originalError ?? new Error(outcome.error),
+        );
       }
     } else {
       // Worker: send resume message with the checkpoint
@@ -942,8 +958,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           const result = await this.#executeActivity(workflowId, operation);
           this.#feedOperationResult(workflowId, { status: 'completed', value: result });
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
+          // Enrich error with workflow call site stack
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
         }
         break;
       }
@@ -1029,8 +1053,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           };
           this.#feedOperationResult(workflowId, { status: 'completed', value: reference });
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
         }
         break;
       }
@@ -1108,21 +1139,40 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             await this.#storage.batch(deleteOperations).catch(() => {});
           }
 
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
         }
         break;
       }
 
       case 'run-all': {
-        const results: Record<string, unknown> = {};
-        const entries = Object.entries(operation.branches);
-        const promises = entries.map(async ([name, [fn, ...args]]) => {
-          const result = await callActivityFunction(fn, args);
-          results[name] = result;
-        });
-        await Promise.all(promises);
-        this.#feedOperationResult(workflowId, { status: 'completed', value: results });
+        try {
+          const results: Record<string, unknown> = {};
+          const entries = Object.entries(operation.branches);
+          const promises = entries.map(async ([name, [fn, ...args]]) => {
+            const result = await callActivityFunction(fn, args);
+            results[name] = result;
+          });
+          await Promise.all(promises);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: results });
+        } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
         break;
       }
 
@@ -1158,8 +1208,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           const childResult = await childHandle.result();
           this.#feedOperationResult(workflowId, { status: 'completed', value: childResult });
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
         }
         break;
       }
@@ -1238,10 +1295,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #failWorkflow(workflowId: string, error: Error): Promise<void> {
-    await this.#updateWorkflowState(workflowId, {
+    const stateUpdate: Partial<WorkflowState> = {
       status: 'failed',
       error: error.message,
-    });
+    };
+    if (error.stack !== undefined) {
+      stateUpdate.errorStack = error.stack;
+    }
+    await this.#updateWorkflowState(workflowId, stateUpdate);
 
     this.#checkpoints.delete(workflowId);
 
@@ -1280,7 +1341,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const state = await this.#loadWorkflowState(workflowId);
     if (!state) throw new Error(`Workflow "${workflowId}" not found`);
     if (state.status === 'completed') return state.result;
-    if (state.status === 'failed') throw new Error(state.error ?? 'Workflow failed');
+    if (state.status === 'failed') {
+      const restoredError = new Error(state.error ?? 'Workflow failed');
+      if (state.errorStack) restoredError.stack = state.errorStack;
+      throw restoredError;
+    }
     if (state.status === 'cancelled') throw new Error('Workflow cancelled');
     throw new Error(`Workflow "${workflowId}" is still ${state.status}`);
   }

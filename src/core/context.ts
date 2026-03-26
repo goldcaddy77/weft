@@ -109,6 +109,7 @@ export type ContextOperationRequest =
       operationId: string;
       workflowType: string;
       input: unknown;
+      callerStack?: string;
       options?: Record<string, unknown>;
     }
   | {
@@ -116,6 +117,7 @@ export type ContextOperationRequest =
       operationId: string;
       key: string;
       fn: () => Promise<unknown>;
+      callerStack?: string;
     }
   | {
       type: 'load';
@@ -132,17 +134,20 @@ export type ContextOperationRequest =
       type: 'run-all';
       operationId: string;
       branches: Record<string, [Function, ...unknown[]]>;
+      callerStack?: string;
     }
   | {
       type: 'agent';
       operationId: string;
       options: AgentContextOptions;
+      callerStack?: string;
     }
   | {
       type: 'stream';
       operationId: string;
       key: string;
       fn: (sink: StreamSink) => AsyncGenerator<unknown, void, unknown>;
+      callerStack?: string;
     };
 
 // ---------------------------------------------------------------------------
@@ -191,6 +196,11 @@ export class Context implements WorkflowContext {
   #explainMode: boolean;
   #budgetTracker: BudgetTracker | undefined;
   #nestingDepth: number;
+
+  #captureCallerStack(): string {
+    const error = new Error();
+    return error.stack ?? '';
+  }
 
   constructor(options: ContextOptions) {
     this.workflowId = options.workflowId;
@@ -276,12 +286,14 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'activity',
       operationId,
       activityName: fn.name || 'anonymous',
       fn,
       args,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -450,11 +462,13 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'offload' as const,
       operationId,
       key,
       fn,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -478,11 +492,13 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'stream' as const,
       operationId,
       key,
       fn,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -552,10 +568,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'run-all' as const,
       operationId,
       branches,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -585,11 +603,13 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const request: ContextOperationRequest = {
       type: 'child-workflow' as const,
       operationId,
       workflowType,
       input,
+      callerStack,
       ...(options !== undefined ? { options } : {}),
     };
     const result = yield request;
@@ -614,10 +634,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'agent' as const,
       operationId,
       options,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);

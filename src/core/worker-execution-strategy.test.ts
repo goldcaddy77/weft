@@ -118,7 +118,7 @@ describe('WorkerExecutionStrategy', () => {
       expect(mockPool.acquire).toHaveBeenCalled();
       expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(1);
 
-      const sentMessage = (mockWorkers[0].postMessage as ReturnType<typeof mock>).mock.calls[0][0];
+      const sentMessage = mockWorkers[0].postMessage.mock.calls[0][0];
       expect(sentMessage.type).toBe('run');
       expect(sentMessage.workflowId).toBe('wf-1');
       expect(sentMessage.workflowType).toBe('test');
@@ -298,8 +298,7 @@ describe('WorkerExecutionStrategy', () => {
       // The first call is the 'run' message, the second is 'resume'
       expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(2);
 
-      const resumeMessage = (mockWorkers[0].postMessage as ReturnType<typeof mock>).mock
-        .calls[1][0];
+      const resumeMessage = mockWorkers[0].postMessage.mock.calls[1][0];
       expect(resumeMessage.type).toBe('resume');
       expect(resumeMessage.workflowId).toBe('wf-1');
       expect(resumeMessage.operationResult).toEqual({ status: 'completed', value: 42 });
@@ -342,8 +341,7 @@ describe('WorkerExecutionStrategy', () => {
       // First call is 'run', second is 'cancel'
       expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(2);
 
-      const cancelMessage = (mockWorkers[0].postMessage as ReturnType<typeof mock>).mock
-        .calls[1][0];
+      const cancelMessage = mockWorkers[0].postMessage.mock.calls[1][0];
       expect(cancelMessage.type).toBe('cancel');
       expect(cancelMessage.workflowId).toBe('wf-1');
 

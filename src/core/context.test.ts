@@ -719,6 +719,60 @@ describe('Context', () => {
     });
   });
 
+  describe('callerStack', () => {
+    it('ctx.run yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.run(greet, 'Alice');
+      const request = expectRequest(generator.next(), 'activity');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.startChild yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.startChild('child-type', { key: 'value' });
+      const request = expectRequest(generator.next(), 'child-workflow');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.offload yields a request with callerStack', () => {
+      const context = createContext();
+      const fn = async () => ({ large: 'data' });
+      const generator = context.offload('key', fn);
+      const request = expectRequest(generator.next(), 'offload');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+    });
+
+    it('ctx.stream yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.stream('key', async function* () {});
+      const request = expectRequest(generator.next(), 'stream');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+    });
+
+    it('ctx.runAll yields a request with callerStack', () => {
+      const context = createContext();
+      const branches = {
+        a: [taskA] as [Function, ...unknown[]],
+        b: [taskB] as [Function, ...unknown[]],
+      };
+      const generator = context.runAll(branches);
+      const request = expectRequest(generator.next(), 'run-all');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+    });
+  });
+
   describe('ctx.setBudget', () => {
     it('creates a budget tracker', () => {
       const context = createContext();

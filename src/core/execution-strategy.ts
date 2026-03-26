@@ -19,7 +19,7 @@ export interface ExecutionStrategy extends Disposable, AsyncDisposable {
     workflowId: string;
     workflowType: string;
     input: unknown;
-    checkpoint: ArrayBuffer;
+    checkpoint: ArrayBuffer | Uint8Array;
   }): void;
 
   /**
@@ -27,7 +27,7 @@ export interface ExecutionStrategy extends Disposable, AsyncDisposable {
    */
   resumeWorkflow(parameters: {
     workflowId: string;
-    checkpoint: ArrayBuffer;
+    checkpoint: ArrayBuffer | Uint8Array;
     operationResult: OperationOutcome;
   }): void;
 

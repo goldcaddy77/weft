@@ -212,8 +212,8 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
 
   #handleBroadcastMessage(data: Record<string, unknown>): void {
     // Forward signal-related messages to the appropriate worker
-    if (data.type === 'signal:received' && typeof data.workflowId === 'string') {
-      const worker = this.#workersByWorkflowId.get(data.workflowId);
+    if (data['type'] === 'signal:received' && typeof data['workflowId'] === 'string') {
+      const worker = this.#workersByWorkflowId.get(data['workflowId']);
       if (worker) {
         worker.postMessage(data);
       }
