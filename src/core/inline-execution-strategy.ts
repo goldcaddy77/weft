@@ -238,11 +238,15 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       });
     } catch (error) {
       this.#cleanup(workflowId);
-      this.#emit({
+      const failedMessage: WorkerOutboundMessage = {
         type: 'failed',
         workflowId,
         error: error instanceof Error ? error.message : String(error),
-      });
+      };
+      if (error instanceof Error && error.stack !== undefined) {
+        failedMessage.errorStack = error.stack;
+      }
+      this.#emit(failedMessage);
     }
   }
 
@@ -273,11 +277,15 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       });
     } catch (innerError) {
       this.#cleanup(workflowId);
-      this.#emit({
+      const failedMessage: WorkerOutboundMessage = {
         type: 'failed',
         workflowId,
         error: innerError instanceof Error ? innerError.message : String(innerError),
-      });
+      };
+      if (innerError instanceof Error && innerError.stack !== undefined) {
+        failedMessage.errorStack = innerError.stack;
+      }
+      this.#emit(failedMessage);
     }
   }
 

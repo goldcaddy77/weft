@@ -286,6 +286,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #checkpoints: Map<string, Checkpoint>;
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
+  #workflowNestingDepths: Map<string, number>;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -308,6 +309,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#checkpoints = new Map();
     this.#broadcastChannel = null;
     this.#pendingNestingDepth = undefined;
+    this.#workflowNestingDepths = new Map();
     this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
       this.#handleCache.delete(id);
     });
@@ -515,6 +517,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Begin execution (non-blocking) via the strategy
     const nestingDepth = this.#pendingNestingDepth ?? 0;
     this.#pendingNestingDepth = undefined;
+    this.#workflowNestingDepths.set(workflowId, nestingDepth);
     this.#strategy.startWorkflow({
       workflowId,
       workflowType: type,
@@ -730,7 +733,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   ): Promise<unknown> {
     const timeout = options?.timeout ?? 5000;
 
-    // Check if the workflow has an active context with an update handler
+    // Check if the workflow has an active context with an update handler.
+    // Note: in worker mode, #inlineStrategy is null so synchronous update
+    // handlers registered via ctx.onUpdate() are not available. Updates in
+    // worker mode go through the #updateWaiters or UpdateCoordinator paths.
     const context = this.#inlineStrategy?.getContext(workflowId);
     if (context) {
       const handler = context.updateHandlers.get(name);
@@ -957,6 +963,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#updateWaiters.clear();
     this.#sleepResolvers.clear();
     this.#checkpoints.clear();
+    this.#workflowNestingDepths.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
   }
@@ -1107,9 +1114,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         await this.#completeWorkflow(message.workflowId, message.result);
         break;
 
-      case 'failed':
-        await this.#failWorkflow(message.workflowId, new Error(message.error));
+      case 'failed': {
+        const failedError = new Error(message.error);
+        // Preserve the original error stack from the strategy if available,
+        // rather than using the stack pointing to engine internals.
+        if (message.errorStack) {
+          failedError.stack = message.errorStack;
+        }
+        await this.#failWorkflow(message.workflowId, failedError);
         break;
+      }
 
       case 'checkpoint': {
         // Persist checkpoint at this yield boundary
@@ -1504,8 +1518,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       case 'child-workflow': {
+        // Check nesting depth from inline context first, fall back to the
+        // engine-level tracking (needed for worker mode where there's no inline context).
         const currentContext = this.#inlineStrategy?.getContext(workflowId);
-        const currentDepth = currentContext?.nestingDepth ?? 0;
+        const currentDepth =
+          currentContext?.nestingDepth ?? this.#workflowNestingDepths.get(workflowId) ?? 0;
 
         if (currentDepth + 1 > this.#options.maxNestingDepth) {
           const errorMessage =
@@ -1590,6 +1607,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     for (const key of this.#updateWaiters.keys()) {
       if (key.startsWith(prefix)) this.#updateWaiters.delete(key);
     }
+    this.#workflowNestingDepths.delete(workflowId);
   }
 
   // -------------------------------------------------------------------------

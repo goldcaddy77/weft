@@ -236,7 +236,7 @@ export type WorkerOutboundMessage =
       operationRequest: OperationRequest;
     }
   | { type: 'completed'; workflowId: WorkflowId; result: unknown }
-  | { type: 'failed'; workflowId: WorkflowId; error: string };
+  | { type: 'failed'; workflowId: WorkflowId; error: string; errorStack?: string };
 
 // ---------------------------------------------------------------------------
 // Workflow function signature
