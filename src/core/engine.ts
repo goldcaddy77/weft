@@ -36,6 +36,7 @@ import {
   WorkflowFailedEvent,
   WorkflowResumedEvent,
   WorkflowStartedEvent,
+  WorkflowTimedOutEvent,
 } from './events.ts';
 import type { ExecutionStrategy } from './execution-strategy.ts';
 import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
@@ -44,6 +45,7 @@ import { composeActivityInterceptors, composeWorkflowInterceptors } from './inte
 import { Scheduler, parseDuration } from './scheduler.ts';
 import { buildIndexOperations, encodeAttributeValue } from './search-attributes.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from './step-context.ts';
+import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   AttributeFilter,
   Checkpoint,
@@ -169,6 +171,7 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
       'workflow:completed',
       'workflow:failed',
       'workflow:cancelled',
+      'workflow:timed-out',
       'activity:started',
       'activity:completed',
       'signal:received',
@@ -179,9 +182,15 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
     }
 
     // Terminal events override the listener to also set done
-    this.addEventListener('workflow:completed', terminal);
-    this.addEventListener('workflow:failed', terminal);
-    this.addEventListener('workflow:cancelled', terminal);
+    const terminalTypes = [
+      'workflow:completed',
+      'workflow:failed',
+      'workflow:cancelled',
+      'workflow:timed-out',
+    ];
+    for (const type of terminalTypes) {
+      this.addEventListener(type, terminal);
+    }
 
     try {
       while (!state.done) {
@@ -199,9 +208,9 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
       for (const type of types) {
         this.removeEventListener(type, listener);
       }
-      this.removeEventListener('workflow:completed', terminal);
-      this.removeEventListener('workflow:failed', terminal);
-      this.removeEventListener('workflow:cancelled', terminal);
+      for (const type of terminalTypes) {
+        this.removeEventListener(type, terminal);
+      }
     }
   }
 
@@ -224,6 +233,7 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
           'workflow:completed',
           'workflow:failed',
           'workflow:cancelled',
+          'workflow:timed-out',
           'activity:started',
           'activity:completed',
         ];
@@ -235,13 +245,17 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
         const completeListener = () => observer.complete?.();
         this.addEventListener('workflow:completed', completeListener);
 
-        const failListener = (event: Event) => {
-          const failedEvent = event instanceof WorkflowFailedEvent ? event : undefined;
-          if (failedEvent) {
-            observer.error?.(failedEvent.error);
+        const errorHandler = (event: Event) => {
+          if (event instanceof WorkflowFailedEvent) {
+            observer.error?.(event.error);
+          } else if (event instanceof WorkflowTimedOutEvent) {
+            observer.error?.(
+              new WorkflowTimeoutError(event.workflowId, event.timeoutType, event.elapsed),
+            );
           }
         };
-        this.addEventListener('workflow:failed', failListener);
+        this.addEventListener('workflow:failed', errorHandler);
+        this.addEventListener('workflow:timed-out', errorHandler);
 
         return {
           unsubscribe: () => {
@@ -249,7 +263,8 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
               this.removeEventListener(type, listener);
             }
             this.removeEventListener('workflow:completed', completeListener);
-            this.removeEventListener('workflow:failed', failListener);
+            this.removeEventListener('workflow:failed', errorHandler);
+            this.removeEventListener('workflow:timed-out', errorHandler);
           },
         };
       },
@@ -524,6 +539,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       input,
       checkpoint: serializeCheckpoint(checkpoint),
       nestingDepth,
+      ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
     });
 
     return handle;
@@ -890,6 +906,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         workflowType: state.type,
         input: state.input,
         checkpoint: serialized,
+        nestingDepth: this.#workflowNestingDepths.get(workflowId) ?? 0,
+        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
       });
     }
 
@@ -917,33 +935,43 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   // -------------------------------------------------------------------------
-  // Cancel
+  // Cancel / Timeout
   // -------------------------------------------------------------------------
 
   async cancel(workflowId: string): Promise<void> {
-    // Cancel via the strategy (aborts controller, cleans up generator/context)
+    await this.#terminateWorkflow(workflowId, 'cancelled');
+  }
+
+  async timeout(workflowId: string): Promise<void> {
+    await this.#terminateWorkflow(workflowId, 'timed-out');
+  }
+
+  async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#strategy.cancelWorkflow(workflowId);
 
-    // Update state
-    await this.#updateWorkflowState(workflowId, {
-      status: 'cancelled',
-    });
+    const state = await this.#loadWorkflowState(workflowId);
+    if (!state) return;
+    const elapsed = this.#options.getNow() - state.createdAt;
 
-    // Clean up attribute indexes
+    await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
-
-    // Clean up pending waiters so cancelled workflows cannot accept signals/updates
+    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
     this.#cleanupWaiters(workflowId);
 
-    // Dispatch event
-    const event = new WorkflowCancelledEvent(workflowId);
+    const event =
+      status === 'timed-out'
+        ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed)
+        : new WorkflowCancelledEvent(workflowId);
     this.dispatchEvent(event);
     this.#forwardEventToHandle(workflowId, event);
 
-    // Reject the result promise
     const resolver = this.#resultResolvers.get(workflowId);
     if (resolver) {
-      resolver.reject(new Error('Workflow cancelled'));
+      resolver.reject(
+        status === 'timed-out'
+          ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
+          : new Error('Workflow cancelled'),
+      );
       this.#resultResolvers.delete(workflowId);
     }
   }
@@ -1581,7 +1609,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         resolver();
       }
     } else if (entry.kind === 'execution-deadline') {
-      await this.cancel(entry.workflowId);
+      await this.timeout(entry.workflowId);
     }
   }
 
@@ -1626,8 +1654,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       result,
     });
 
-    // Clean up attribute indexes
+    // Clean up attribute indexes and deadline timer
     await this.#cleanupAttributeIndex(workflowId);
+    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);
@@ -1655,8 +1684,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     await this.#updateWorkflowState(workflowId, stateUpdate);
 
-    // Clean up attribute indexes
+    // Clean up attribute indexes and deadline timer
     await this.#cleanupAttributeIndex(workflowId);
+    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);
@@ -1702,6 +1732,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw restoredError;
     }
     if (state.status === 'cancelled') throw new Error('Workflow cancelled');
+    if (state.status === 'timed-out') {
+      const elapsed = state.executionDeadline ? state.executionDeadline - state.createdAt : 0;
+      throw new WorkflowTimeoutError(workflowId, 'execution', elapsed);
+    }
     throw new Error(`Workflow "${workflowId}" is still ${state.status}`);
   }
 
@@ -1714,7 +1748,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (!weakRef) return;
     const handle = weakRef.deref();
     if (!handle) return;
-    handle.dispatchEvent(new Event(event.type));
+    // Re-dispatch the typed event so handle listeners receive the full event
+    // with all custom properties (workflowId, timeoutType, error, etc.).
+    handle.dispatchEvent(event);
   }
 
   // -------------------------------------------------------------------------

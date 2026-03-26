@@ -59,8 +59,9 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     workflowId: string;
     workflowType: string;
     input: unknown;
-    checkpoint: ArrayBuffer;
+    checkpoint: ArrayBuffer | Uint8Array;
     nestingDepth?: number;
+    deadline?: number;
   }): void {
     const registration = this.#dependencies.getRegistration(parameters.workflowType);
     if (!registration) {
@@ -82,6 +83,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       abortController: workflowAbort,
       getNow: this.#dependencies.getNow,
       nestingDepth: parameters.nestingDepth ?? 0,
+      ...(parameters.deadline !== undefined && { deadline: parameters.deadline }),
     });
 
     if (this.#dependencies.development) {
@@ -99,7 +101,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
 
   resumeWorkflow(parameters: {
     workflowId: string;
-    checkpoint: ArrayBuffer;
+    checkpoint: ArrayBuffer | Uint8Array;
     operationResult: OperationOutcome;
   }): void {
     const generator = this.#generators.get(parameters.workflowId);

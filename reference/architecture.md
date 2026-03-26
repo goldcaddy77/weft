@@ -5262,14 +5262,14 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Workflow-Level Timeouts
 
-- [ ] **`executionTimeout` on `engine.start()` caps total workflow wall-clock time.** Includes all sleeps, signal waits, and activity executions.
-- [ ] **Timeout stored as absolute deadline in storage.** Survives process restarts. Scheduler detects expired deadline on recovery.
-- [ ] **Timeout fires mid-activity via `AbortController`.** In-flight activities receive abort signal. No orphaned work.
-- [ ] **`WorkflowTimeoutError` thrown on timeout.** Includes `timeoutType` and elapsed duration.
-- [ ] **`WorkflowTimedOutEvent` dispatched on timeout.** Added to `WeftEventMap`. Listeners receive `timeoutType` and `elapsed`.
-- [ ] **`ctx.signal` exposes the combined cancellation + timeout signal.** Activities that accept `{ signal }` automatically respect workflow timeouts.
-- [ ] **`ctx.executionTimeRemaining` returns milliseconds.** Workflows can make decisions based on remaining budget.
-- [ ] **Deadline keys are cleaned up on workflow completion.** `wf-deadline:*` entries deleted when workflow reaches terminal state.
+- [x] **`executionTimeout` on `engine.start()` caps total workflow wall-clock time.** Includes all sleeps, signal waits, and activity executions.
+- [x] **Timeout stored as absolute deadline in storage.** Survives process restarts. Scheduler detects expired deadline on recovery.
+- [x] **Timeout fires mid-activity via `AbortController`.** In-flight activities receive abort signal. No orphaned work.
+- [x] **`WorkflowTimeoutError` thrown on timeout.** Includes `timeoutType` and elapsed duration.
+- [x] **`WorkflowTimedOutEvent` dispatched on timeout.** Added to `WeftEventMap`. Listeners receive `timeoutType` and `elapsed`.
+- [x] **`ctx.signal` exposes the combined cancellation + timeout signal.** Activities that accept `{ signal }` automatically respect workflow timeouts.
+- [x] **`ctx.executionTimeRemaining` returns milliseconds.** Workflows can make decisions based on remaining budget.
+- [x] **Deadline keys are cleaned up on workflow completion.** `wf-deadline:*` entries deleted when workflow reaches terminal state.
 - [ ] **HTTP API accepts `executionTimeout` parameter.** `POST /v1/workflows` body includes `executionTimeout`.
 - [ ] **Dashboard shows timeout configuration and remaining time.** Elapsed time bar or countdown visible on workflow detail view.
 
@@ -5322,22 +5322,22 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Interceptors
 
-- [ ] **`WorkflowInterceptor` interface defined with typed hooks.** Hooks: `activity`, `sleep`, `waitForSignal`, `agent`, `workflowStart`, `signalReceived`, `query`.
-- [ ] **`ActivityInterceptor` interface defined.** Hook: `execute`.
-- [ ] **All interceptor hooks are optional.** An interceptor can implement only the hooks it cares about.
-- [ ] **`engine.addInterceptor(interceptor)` registers workflow interceptors.** Multiple registrations compose in order.
-- [ ] **`engine.addActivityInterceptor(interceptor)` registers activity interceptors for local workers.**
+- [x] **`WorkflowInterceptor` interface defined with typed hooks.** Hooks: `activity`, `sleep`, `waitForSignal`, `agent`, `workflowStart`, `signalReceived`, `query`.
+- [x] **`ActivityInterceptor` interface defined.** Hook: `execute`.
+- [x] **All interceptor hooks are optional.** An interceptor can implement only the hooks it cares about.
+- [x] **`engine.addInterceptor(interceptor)` registers workflow interceptors.** Multiple registrations compose in order.
+- [x] **`engine.addActivityInterceptor(interceptor)` registers activity interceptors for local workers.**
 - [ ] **Remote `Worker` accepts `interceptors` option.** Activity interceptors apply on the remote worker side.
-- [ ] **Interceptors compose via `next()` delegation.** First registered = outermost wrapper.
-- [ ] **Workflow interceptor hooks return generators.** Preserves `yield*` checkpoint semantics.
-- [ ] **Activity interceptor `execute` hook returns a Promise.**
-- [ ] **`headers` Map propagates across Worker boundaries.** Set in workflow interceptor, serialized into `postMessage`/WebSocket, read in activity interceptor.
+- [x] **Interceptors compose via `next()` delegation.** First registered = outermost wrapper.
+- [x] **Workflow interceptor hooks return generators.** Preserves `yield*` checkpoint semantics.
+- [x] **Activity interceptor `execute` hook returns a Promise.**
+- [x] **`headers` Map propagates across Worker boundaries.** Set in workflow interceptor, serialized into `postMessage`/WebSocket, read in activity interceptor.
 - [ ] **`headers` Map propagates across network boundaries (remote workers).** Serialized as part of the WebSocket `task` message.
-- [ ] **Interceptor errors propagate naturally.** An exception in an interceptor fails the operation as if the underlying operation failed.
-- [ ] **Zero overhead when no interceptors are registered.** Context operations call the underlying implementation directly.
-- [ ] **Workflow code does not need modification.** Interceptors are transparent to workflow definitions.
-- [ ] **Interceptor chain is constructed once per engine, not per operation.** Composition is cached.
-- [ ] **Interceptors cannot modify the checkpoint mechanism.** They wrap operations, not serialization.
+- [x] **Interceptor errors propagate naturally.** An exception in an interceptor fails the operation as if the underlying operation failed.
+- [x] **Zero overhead when no interceptors are registered.** Context operations call the underlying implementation directly.
+- [x] **Workflow code does not need modification.** Interceptors are transparent to workflow definitions.
+- [x] **Interceptor chain is constructed once per engine, not per operation.** Composition is cached.
+- [x] **Interceptors cannot modify the checkpoint mechanism.** They wrap operations, not serialization.
 
 ### Observability
 

@@ -619,7 +619,7 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
-  it('execution deadline cancels workflow via scheduler', async () => {
+  it('execution deadline times out workflow via scheduler', async () => {
     let now = 1000;
     const storage = new MemoryStorage();
     const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
@@ -643,7 +643,7 @@ describe('Engine', () => {
 
     const stateBytes = await storage.get(KEYS.workflow(handle.id));
     const state = decode(stateBytes!) as WorkflowState;
-    expect(state.status).toBe('cancelled');
+    expect(state.status).toBe('timed-out');
     engine[Symbol.dispose]();
   });
 
@@ -1313,9 +1313,9 @@ describe('Engine', () => {
       warnings.push(event as CheckpointSizeWarningEvent);
     });
 
-    const activity = async (...args: unknown[]) => args[0];
+    const echoActivity = async (...args: unknown[]) => args[0];
     engine.register('big-checkpoint', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(activity, 'data');
+      const result = yield* (ctx as Context).run(echoActivity, 'data');
       return result;
     });
 
@@ -1356,9 +1356,9 @@ describe('Engine', () => {
       warnings.push(event as CheckpointSizeWarningEvent);
     });
 
-    const activity = async (...args: unknown[]) => args[0];
+    const echoActivity = async (...args: unknown[]) => args[0];
     engine.register('threshold-test', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(activity, 'payload');
+      const result = yield* (ctx as Context).run(echoActivity, 'payload');
       return result;
     });
 
@@ -1380,10 +1380,10 @@ describe('Engine', () => {
     const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
     try {
       const engine = new Engine({ development: true });
-      const activity = async (...args: unknown[]) => args[0];
+      const echoActivity = async (...args: unknown[]) => args[0];
 
       engine.register('dev-explain', async function* (ctx: WorkflowContext) {
-        const result = yield* (ctx as Context).run(activity, 'test');
+        const result = yield* (ctx as Context).run(echoActivity, 'test');
         return result;
       });
 
@@ -1453,8 +1453,8 @@ describe('Engine', () => {
       abortController: new AbortController(),
     });
 
-    const activity = async (...args: unknown[]) => args[0];
-    const generator = context.run(activity, 'test');
+    const echoActivity = async (...args: unknown[]) => args[0];
+    const generator = context.run(echoActivity, 'test');
     const yielded = generator.next();
 
     expect(yielded.done).toBe(false);
