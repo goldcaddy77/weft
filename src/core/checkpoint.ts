@@ -56,7 +56,11 @@ export function deserializeCheckpoint(bytes: Uint8Array, serializer?: Serializer
 // ---------------------------------------------------------------------------
 
 /** Create a fresh checkpoint for a new workflow. */
-export function createCheckpoint(workflowId: WorkflowId, version: string): Checkpoint {
+export function createCheckpoint(
+  workflowId: WorkflowId,
+  version: string,
+  now?: number,
+): Checkpoint {
   return {
     workflowId,
     step: 0,
@@ -65,7 +69,7 @@ export function createCheckpoint(workflowId: WorkflowId, version: string): Check
     pendingSignals: [],
     searchAttributes: {},
     version,
-    createdAt: Date.now(),
+    createdAt: now ?? Date.now(),
   };
 }
 
@@ -76,6 +80,7 @@ export function advanceCheckpoint(
   options?: {
     searchAttributes?: Record<string, SearchAttributeValue>;
     accumulatedResults?: Array<[number, unknown]>;
+    now?: number;
   },
 ): Checkpoint {
   return {
@@ -89,7 +94,7 @@ export function advanceCheckpoint(
       ...options?.searchAttributes,
     },
     version: checkpoint.version,
-    createdAt: Date.now(),
+    createdAt: options?.now ?? Date.now(),
   };
 }
 

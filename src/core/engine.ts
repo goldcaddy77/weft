@@ -403,7 +403,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     // Create initial checkpoint
-    const checkpoint = createCheckpoint(workflowId, registration.version);
+    const checkpoint = createCheckpoint(workflowId, registration.version, this.#options.getNow());
     this.#checkpoints.set(workflowId, checkpoint);
 
     // Write state and checkpoint to storage
@@ -671,7 +671,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const workflowAbort = new AbortController();
     this.#workflowAbortControllers.set(workflowId, workflowAbort);
 
-    // Create context with recovery state
+    // Create context with recovery state. Pass the checkpoint's createdAt as
+    // the sleep reference time so that expired sleeps resolve immediately via
+    // the fast path instead of scheduling a brand-new full-duration timer.
     const context = new Context({
       workflowId,
       workflowType: state.type,
@@ -680,6 +682,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       getNow: this.#options.getNow,
       accumulatedResults,
       searchAttributes: resumeCheckpoint.searchAttributes,
+      sleepReferenceTime: resumeCheckpoint.createdAt,
       ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
     });
 
@@ -822,6 +825,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const advanced = advanceCheckpoint(current, current.locals, {
       searchAttributes: context.pendingAttributeChanges,
       accumulatedResults,
+      now: this.#options.getNow(),
     });
 
     const serialized = serializeCheckpoint(advanced);

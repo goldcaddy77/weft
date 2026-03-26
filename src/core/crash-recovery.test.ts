@@ -223,6 +223,48 @@ describe('crash recovery', () => {
     engine2[Symbol.dispose]();
   });
 
+  it('resolves expired sleep immediately on resume via fast path', async () => {
+    const { MemoryStorage: TestMemoryStorage } = await import('../storage/memory.ts');
+
+    const storage = new TestMemoryStorage();
+    let currentTime = 1000;
+
+    const sleepWorkflow = async function* (ctx: WorkflowContext) {
+      const c = ctx as Context;
+      yield* c.sleep(5000);
+      return 'fast-path-awake';
+    };
+
+    // First engine: start workflow, then "crash" while sleep is pending
+    const engine1 = new Engine({ storage, getNow: () => currentTime });
+    engine1.register('sleeper', sleepWorkflow);
+
+    await engine1.start('sleeper', null, { id: 'wf-sleep-fast' });
+    await flush();
+
+    // Workflow is now blocked on the sleep timer (scheduledFireAt = 1000 + 5000 = 6000).
+    // Simulate crash by disposing without letting the timer fire.
+    engine1[Symbol.dispose]();
+
+    // Simulate time passing during the crash: restart well past the sleep deadline.
+    currentTime = 20_000;
+
+    // Second engine: resume with the same storage at a time after the sleep expired.
+    const engine2 = new Engine({ storage, getNow: () => currentTime });
+    engine2.register('sleeper', sleepWorkflow);
+
+    const handles = await engine2.recoverAll();
+    expect(handles).toHaveLength(1);
+    await flush();
+
+    // The sleep should have resolved immediately via the expired-timer fast path
+    // without needing to schedule or fire a new timer.
+    const result = await handles[0]!.result();
+    expect(result).toBe('fast-path-awake');
+
+    engine2[Symbol.dispose]();
+  });
+
   it('does not resume completed workflows', async () => {
     const storage = new MemoryStorage();
 

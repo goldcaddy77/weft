@@ -160,6 +160,12 @@ export interface ContextOptions {
   searchAttributes?: Record<string, SearchAttributeValue>;
   getNow?: () => number;
   nestingDepth?: number;
+  /**
+   * Reference timestamp used to compute `scheduledFireAt` for sleep operations.
+   * When resuming from a checkpoint, this should be the checkpoint's `createdAt`
+   * so that expired sleeps resolve immediately via the engine's fast path.
+   */
+  sleepReferenceTime?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +187,7 @@ export class Context implements WorkflowContext {
   #memoCache: Map<string, unknown>;
   #deadline: number | undefined;
   #getNow: () => number;
+  #sleepReferenceTime: number | undefined;
   #explainMode: boolean;
   #budgetTracker: BudgetTracker | undefined;
   #nestingDepth: number;
@@ -200,6 +207,7 @@ export class Context implements WorkflowContext {
     this.#memoCache = new Map();
     this.#deadline = options.deadline;
     this.#getNow = options.getNow ?? Date.now;
+    this.#sleepReferenceTime = options.sleepReferenceTime;
     this.#explainMode = false;
     this.#budgetTracker = undefined;
     this.#nestingDepth = options.nestingDepth ?? 0;
@@ -288,11 +296,16 @@ export class Context implements WorkflowContext {
     const milliseconds = parseDuration(duration);
     const operationId = crypto.randomUUID();
 
+    // Use the sleep reference time (checkpoint createdAt on resume) so that
+    // the engine's expired-timer fast path can detect sleeps whose original
+    // deadline has already passed.
+    const referenceTime = this.#sleepReferenceTime ?? this.#getNow();
+
     yield {
       type: 'sleep',
       operationId,
       duration: milliseconds,
-      scheduledFireAt: this.#getNow() + milliseconds,
+      scheduledFireAt: referenceTime + milliseconds,
     };
 
     this.#accumulatedResults.set(step, undefined);
