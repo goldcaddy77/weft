@@ -29,6 +29,7 @@ function makeCheckpoint(overrides: Partial<Checkpoint> = {}): Checkpoint {
     workflowId: 'wf-1',
     step: 3,
     locals: {},
+    accumulatedResults: [],
     pendingSignals: [],
     searchAttributes: {},
     version: '1.0.0',

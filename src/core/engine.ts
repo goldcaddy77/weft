@@ -12,7 +12,9 @@ import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import {
+  advanceCheckpoint,
   createCheckpoint,
+  deserializeCheckpoint,
   serializeCheckpoint,
   validateCheckpointRoundTrip,
 } from './checkpoint.ts';
@@ -27,6 +29,7 @@ import {
   WorkflowCancelledEvent,
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
+  WorkflowResumedEvent,
   WorkflowStartedEvent,
 } from './events.ts';
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
@@ -34,6 +37,7 @@ import { composeActivityInterceptors, composeWorkflowInterceptors } from './inte
 import { Scheduler, parseDuration } from './scheduler.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from './step-context.ts';
 import type {
+  Checkpoint,
   EngineOptions,
   ListFilter,
   PaginatedResult,
@@ -45,6 +49,7 @@ import type {
   WorkflowSummary,
 } from './types.ts';
 import { UpdateCoordinator } from './updates.ts';
+import { checkVersionCompatibility, migrateCheckpoint } from './versioning.ts';
 
 declare global {
   interface SymbolConstructor {
@@ -59,6 +64,7 @@ declare global {
 interface RegistrationEntry {
   handler: WorkflowFunction;
   version: string;
+  migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
 }
 
 interface ResolvedOptions {
@@ -263,6 +269,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #activityInterceptors: ActivityInterceptor[];
   #updateCoordinator: UpdateCoordinator;
   #activeContexts: Map<string, Context>;
+  #checkpoints: Map<string, Checkpoint>;
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
 
@@ -285,6 +292,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#activityInterceptors = [];
     this.#updateCoordinator = new UpdateCoordinator(storage);
     this.#activeContexts = new Map();
+    this.#checkpoints = new Map();
     this.#broadcastChannel = null;
     this.#pendingNestingDepth = undefined;
     this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
@@ -325,10 +333,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     if (isRegistration) {
       const registration = handlerOrRegistration;
-      this.#registrations.set(name, {
+      const entry: RegistrationEntry = {
         handler: registration.handler,
         version: registration.version ?? '1',
-      });
+      };
+      if (registration.migrate) {
+        entry.migrate = registration.migrate;
+      }
+      this.#registrations.set(name, entry);
     } else {
       // Auto-detect step-based (non-generator) workflow functions and compile them
       let handler = handlerOrRegistration;
@@ -392,6 +404,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Create initial checkpoint
     const checkpoint = createCheckpoint(workflowId, registration.version);
+    this.#checkpoints.set(workflowId, checkpoint);
 
     // Write state and checkpoint to storage
     await this.#storage.batch([
@@ -593,6 +606,132 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   // -------------------------------------------------------------------------
+  // Resume / Recovery
+  // -------------------------------------------------------------------------
+
+  async resume(workflowId: string): Promise<WorkflowHandle> {
+    // Load workflow state
+    const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
+    if (!stateBytes) {
+      throw new Error(`Workflow "${workflowId}" not found in storage`);
+    }
+
+    const state = decodeWorkflowState(stateBytes);
+    if (state.status !== 'running') {
+      throw new Error(
+        `Cannot resume workflow "${workflowId}": status is "${state.status}", expected "running"`,
+      );
+    }
+
+    // Load checkpoint
+    const checkpointBytes = await this.#storage.get(KEYS.checkpoint(workflowId));
+    if (!checkpointBytes) {
+      throw new Error(`Checkpoint not found for workflow "${workflowId}"`);
+    }
+
+    const checkpoint = deserializeCheckpoint(checkpointBytes);
+
+    // Look up registration
+    const registration = this.#registrations.get(state.type);
+    if (!registration) {
+      throw new Error(
+        `No workflow registered with name "${state.type}" (needed to resume "${workflowId}")`,
+      );
+    }
+
+    // Check version compatibility
+    const compatibility = checkVersionCompatibility(
+      checkpoint.version,
+      registration.version,
+      !!registration.migrate,
+    );
+
+    let resumeCheckpoint = checkpoint;
+    if (compatibility === 'needs-migration' && registration.migrate) {
+      const migrated = migrateCheckpoint(
+        checkpoint,
+        checkpoint.version,
+        registration.version,
+        registration.migrate,
+      ) as import('./types.ts').Checkpoint;
+      migrated.version = registration.version;
+      resumeCheckpoint = migrated;
+
+      // Persist migrated checkpoint
+      await this.#storage.put(KEYS.checkpoint(workflowId), serializeCheckpoint(resumeCheckpoint));
+    }
+
+    // Build accumulated results from checkpoint
+    const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
+
+    // Store checkpoint for future persistence
+    this.#checkpoints.set(workflowId, resumeCheckpoint);
+
+    // Create abort controller
+    const workflowAbort = new AbortController();
+    this.#workflowAbortControllers.set(workflowId, workflowAbort);
+
+    // Create context with recovery state
+    const context = new Context({
+      workflowId,
+      workflowType: state.type,
+      startedAt: state.createdAt,
+      abortController: workflowAbort,
+      getNow: this.#options.getNow,
+      accumulatedResults,
+      searchAttributes: resumeCheckpoint.searchAttributes,
+      ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+    });
+
+    this.#activeContexts.set(workflowId, context);
+
+    // Create generator from registration handler
+    const generator = registration.handler(context, state.input);
+    this.#activeGenerators.set(workflowId, generator);
+
+    // Create result promise and handle
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    this.#resultResolvers.set(workflowId, { resolve, reject });
+
+    const handle = new WorkflowHandle(workflowId, this, promise);
+    this.#handleCache.set(workflowId, new WeakRef(handle));
+    this.#finalizationRegistry.register(handle, workflowId);
+
+    // Dispatch resumed event
+    this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
+
+    // Drive the generator (non-blocking)
+    this.#driveGenerator(workflowId, generator, undefined).catch((error: unknown) => {
+      void this.#failWorkflow(
+        workflowId,
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    });
+
+    return handle;
+  }
+
+  async recoverAll(): Promise<WorkflowHandle[]> {
+    const handles: WorkflowHandle[] = [];
+
+    for await (const [key, value] of this.#storage.scan('wf:')) {
+      // Skip checkpoint and history keys
+      if (key.includes(':ckpt') || key.includes(':offload') || key.includes(':archive')) continue;
+
+      const state = decodeWorkflowState(value);
+      if (state.status !== 'running') continue;
+
+      const registration = this.#registrations.get(state.type);
+      if (!registration) continue;
+
+      const handle = await this.resume(state.id);
+      handles.push(handle);
+    }
+
+    return handles;
+  }
+
+  // -------------------------------------------------------------------------
   // Cancel
   // -------------------------------------------------------------------------
 
@@ -649,6 +788,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#signalWaiters.clear();
     this.#sleepResolvers.clear();
     this.#activeContexts.clear();
+    this.#checkpoints.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
   }
@@ -667,6 +807,39 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   get scheduler(): Scheduler {
     return this.#scheduler;
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: checkpoint persistence
+  // -------------------------------------------------------------------------
+
+  async #persistCheckpoint(workflowId: string): Promise<void> {
+    const context = this.#activeContexts.get(workflowId);
+    const current = this.#checkpoints.get(workflowId);
+    if (!context || !current) return;
+
+    const accumulatedResults = Array.from(context.accumulatedResults.entries());
+    const advanced = advanceCheckpoint(current, current.locals, {
+      searchAttributes: context.pendingAttributeChanges,
+      accumulatedResults,
+    });
+
+    const serialized = serializeCheckpoint(advanced);
+    const operations: import('../storage/interface.ts').BatchOperation[] = [
+      { type: 'put', key: KEYS.checkpoint(workflowId), value: serialized },
+    ];
+
+    // Optionally store checkpoint history
+    if (this.#options.checkpointHistory > 0) {
+      operations.push({
+        type: 'put',
+        key: KEYS.checkpointHistory(workflowId, advanced.step),
+        value: serialized,
+      });
+    }
+
+    await this.#storage.batch(operations);
+    this.#checkpoints.set(workflowId, advanced);
   }
 
   // -------------------------------------------------------------------------
@@ -725,6 +898,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return;
       }
 
+      // Persist checkpoint at this yield boundary
+      await this.#persistCheckpoint(workflowId);
+
       // Development mode: validate checkpoint round-trip
       this.#validateDevelopmentCheckpoint(workflowId);
 
@@ -773,6 +949,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       case 'sleep': {
+        // If the timer has already expired (e.g., resumed after crash), resolve immediately
+        if (operation.scheduledFireAt <= this.#options.getNow()) {
+          await this.#driveGenerator(workflowId, generator, undefined);
+          break;
+        }
+
         const { promise, resolve } = Promise.withResolvers<void>();
 
         // Schedule via the scheduler's durable timer
@@ -1136,6 +1318,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#activeGenerators.delete(workflowId);
     this.#workflowAbortControllers.delete(workflowId);
     this.#activeContexts.delete(workflowId);
+    this.#checkpoints.delete(workflowId);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
     this.dispatchEvent(event);
@@ -1159,6 +1342,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#activeGenerators.delete(workflowId);
     this.#workflowAbortControllers.delete(workflowId);
     this.#activeContexts.delete(workflowId);
+    this.#checkpoints.delete(workflowId);
 
     const event = new WorkflowFailedEvent(workflowId, error);
     this.dispatchEvent(event);
@@ -1286,8 +1470,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (!context) return;
 
     const step = context.stepIndex;
-    const checkpoint = createCheckpoint(workflowId, '1');
-    const result = validateCheckpointRoundTrip(checkpoint);
+    const current = this.#checkpoints.get(workflowId);
+    if (!current) return;
+    const result = validateCheckpointRoundTrip(current);
 
     if (!result.valid) {
       const fieldPaths = result.divergences.map((divergence) => divergence.path);

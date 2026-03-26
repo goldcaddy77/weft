@@ -53,6 +53,7 @@ export {
   WorkflowCancelledEvent,
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
+  WorkflowResumedEvent,
   WorkflowStartedEvent,
   WorkflowTimedOutEvent,
 } from './core/events';
