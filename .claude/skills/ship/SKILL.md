@@ -122,7 +122,7 @@ After opening the PR, enter a monitoring loop:
 
    ```bash
    gh pr view <number> --json reviews,comments,reviewDecision
-   gh api repos/stevekinney/weft/pulls/<number>/comments
+   gh api "repos/$(gh repo view --json owner,name --jq '.owner.login + "/" + .name')/pulls/<number>/comments"
    ```
 
 2. **If there are unresolved review comments:** Address them. Push fixes. Return to step 1.
