@@ -94,7 +94,11 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       operationResult: parameters.operationResult,
     };
 
-    worker.postMessage(message, [parameters.checkpoint]);
+    const transferable =
+      parameters.checkpoint instanceof ArrayBuffer
+        ? parameters.checkpoint
+        : (parameters.checkpoint as Uint8Array).buffer;
+    worker.postMessage(message, [transferable]);
   }
 
   cancelWorkflow(workflowId: string): void {
@@ -116,16 +120,21 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
 
   [Symbol.dispose](): void {
     this.#broadcastChannel?.close();
-    this.#workersByWorkflowId.clear();
-    this.#workerListeners.clear();
+    // Release all active workers back to the pool before disposing
+    const activeWorkflowIds = Array.from(this.#workersByWorkflowId.keys());
+    for (const workflowId of activeWorkflowIds) {
+      this.#releaseWorker(workflowId);
+    }
     this.#messageHandler = null;
     this.#pool[Symbol.dispose]();
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     this.#broadcastChannel?.close();
-    this.#workersByWorkflowId.clear();
-    this.#workerListeners.clear();
+    const activeWorkflowIds = Array.from(this.#workersByWorkflowId.keys());
+    for (const workflowId of activeWorkflowIds) {
+      this.#releaseWorker(workflowId);
+    }
     this.#messageHandler = null;
     await this.#pool[Symbol.asyncDispose]();
   }
@@ -156,8 +165,14 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       worker.addEventListener('message', listeners.message as EventListener);
       worker.addEventListener('error', listeners.error as EventListener);
 
-      // Send the run message with checkpoint as Transferable
-      worker.postMessage(message, [message.checkpoint]);
+      // Send the run message with checkpoint as Transferable.
+      // Extract the underlying ArrayBuffer since only ArrayBuffer objects
+      // are valid Transferables (not Uint8Array or other typed arrays).
+      const transferable =
+        message.checkpoint instanceof ArrayBuffer
+          ? message.checkpoint
+          : (message.checkpoint as Uint8Array).buffer;
+      worker.postMessage(message, [transferable]);
     } catch (error) {
       this.#emit({
         type: 'failed',
