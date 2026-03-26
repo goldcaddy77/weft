@@ -741,9 +741,29 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async signal(workflowId: string, name: string, payload?: unknown): Promise<void> {
-    // Run signalReceived interceptor hook if interceptors are registered
+    const deliverSignal = async (signalPayload: unknown): Promise<void> => {
+      const signalId = crypto.randomUUID();
+      const signalKey = KEYS.signal(workflowId, name, signalId);
+      await this.#storage.put(signalKey, encode(signalPayload));
+
+      this.dispatchEvent(new SignalReceivedEvent(workflowId, name, signalPayload));
+
+      this.#broadcast({ type: 'signal:received', workflowId, signalName: name });
+
+      // Check if workflow is waiting for this signal
+      const waiterKey = `${workflowId}:${name}`;
+      const waiter = this.#signalWaiters.get(waiterKey);
+      if (waiter) {
+        this.#signalWaiters.delete(waiterKey);
+        await this.#storage.delete(signalKey);
+        waiter(signalPayload);
+      }
+    };
+
+    // Run signalReceived interceptor hook wrapping actual delivery
     const composed = this.#getComposedWorkflowInterceptor();
     if (composed) {
+      let delivered = false;
       composed.signalReceived(
         {
           workflowId,
@@ -751,28 +771,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           payload: payload ?? null,
           headers: new Map<string, string>(),
         },
-        () => {
-          // no-op execute — the hook is for observation/side effects
+        (interception) => {
+          delivered = true;
+          void deliverSignal(interception.payload);
         },
       );
-    }
-
-    const signalId = crypto.randomUUID();
-    const signalKey = KEYS.signal(workflowId, name, signalId);
-    await this.#storage.put(signalKey, encode(payload));
-
-    this.dispatchEvent(new SignalReceivedEvent(workflowId, name, payload));
-
-    this.#broadcast({ type: 'signal:received', workflowId, signalName: name });
-
-    // Check if workflow is waiting for this signal
-    const waiterKey = `${workflowId}:${name}`;
-    const waiter = this.#signalWaiters.get(waiterKey);
-    if (waiter) {
-      this.#signalWaiters.delete(waiterKey);
-      // Consume the signal from storage
-      await this.#storage.delete(signalKey);
-      waiter(payload);
+      // If interceptor blocked delivery by not calling next, return early
+      if (!delivered) return;
+    } else {
+      await deliverSignal(payload);
     }
   }
 

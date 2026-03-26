@@ -648,6 +648,8 @@ describe('Engine', () => {
     expect(state.status).toBe('timed-out');
     expect(error).toBeInstanceOf(WorkflowTimeoutError);
     expect((error as WorkflowTimeoutError).timeoutType).toBe('execution');
+    expect((error as WorkflowTimeoutError).workflowId).toBe(handle.id);
+    expect((error as WorkflowTimeoutError).elapsed).toBe(6000);
     engine[Symbol.dispose]();
   });
 
@@ -735,6 +737,12 @@ describe('Engine', () => {
       deadlineKeys.push(key);
     }
     expect(deadlineKeys).toHaveLength(0);
+
+    const timerKeys: string[] = [];
+    for await (const [key] of storage.scan('timer-idx:deadline:')) {
+      timerKeys.push(key);
+    }
+    expect(timerKeys).toHaveLength(0);
     engine[Symbol.dispose]();
   });
 
@@ -764,6 +772,12 @@ describe('Engine', () => {
       deadlineKeys.push(key);
     }
     expect(deadlineKeys).toHaveLength(0);
+
+    const timerKeys: string[] = [];
+    for await (const [key] of storage.scan('timer-idx:deadline:')) {
+      timerKeys.push(key);
+    }
+    expect(timerKeys).toHaveLength(0);
     engine[Symbol.dispose]();
   });
 

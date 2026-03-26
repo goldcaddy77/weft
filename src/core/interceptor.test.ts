@@ -676,6 +676,51 @@ describe('composeWorkflowInterceptors — agent hook', () => {
 
     expect(() => runGenerator(generator)).toThrow('agent interceptor error');
   });
+
+  it('interceptor can skip next() and return early', () => {
+    const interceptor: WorkflowInterceptor = {
+      *agent() {
+        return 'cached-response';
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let executeCalled = false;
+
+    const generator = composed.agent(makeAgentInterception(), function* () {
+      executeCalled = true;
+      return 'unreachable';
+    });
+
+    const result = runGenerator(generator);
+    expect(result).toBe('cached-response');
+    expect(executeCalled).toBe(false);
+  });
+
+  it('mixed interceptors where some define agent and some do not', () => {
+    const order: string[] = [];
+
+    const withHook: WorkflowInterceptor = {
+      *agent(interception, next) {
+        order.push('with:before');
+        const result = yield* next(interception);
+        order.push('with:after');
+        return result;
+      },
+    };
+
+    const withoutHook: WorkflowInterceptor = {};
+
+    const composed = composeWorkflowInterceptors([withHook, withoutHook]);
+
+    const generator = composed.agent(makeAgentInterception(), function* () {
+      order.push('execute');
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(order).toEqual(['with:before', 'execute', 'with:after']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -760,6 +805,62 @@ describe('composeWorkflowInterceptors — query hook', () => {
 
     const result = runGenerator(generator);
     expect(result).toBe('pass:getStatus');
+  });
+
+  it('propagates errors from interceptor', () => {
+    const interceptor: WorkflowInterceptor = {
+      *query() {
+        throw new Error('query interceptor error');
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+
+    const generator = composed.query(makeQueryInterception(), function* () {
+      return 'unreachable';
+    });
+
+    expect(() => runGenerator(generator)).toThrow('query interceptor error');
+  });
+
+  it('interceptor can skip next() and return early', () => {
+    const interceptor: WorkflowInterceptor = {
+      *query() {
+        return 'cached-result';
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let executeCalled = false;
+
+    const generator = composed.query(makeQueryInterception(), function* () {
+      executeCalled = true;
+      return 'unreachable';
+    });
+
+    const result = runGenerator(generator);
+    expect(result).toBe('cached-result');
+    expect(executeCalled).toBe(false);
+  });
+
+  it('propagates headers between interceptors', () => {
+    const interceptor: WorkflowInterceptor = {
+      *query(interception, next) {
+        interception.headers.set('x-query-trace', 'traced');
+        return yield* next(interception);
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let capturedHeaders: Map<string, string> | undefined;
+
+    const generator = composed.query(makeQueryInterception(), function* (ctx) {
+      capturedHeaders = ctx.headers;
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(capturedHeaders?.get('x-query-trace')).toBe('traced');
   });
 });
 
@@ -872,5 +973,43 @@ describe('composeWorkflowInterceptors — signalReceived hook', () => {
     });
 
     expect(capturedHeaders?.get('x-signal-trace')).toBe('traced');
+  });
+
+  it('interceptor can block delivery by not calling next', () => {
+    const interceptor: WorkflowInterceptor = {
+      signalReceived() {
+        // deliberately does not call next
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let executeCalled = false;
+
+    composed.signalReceived(makeSignalReceivedInterception(), () => {
+      executeCalled = true;
+    });
+
+    expect(executeCalled).toBe(false);
+  });
+
+  it('mixed interceptors where some define signalReceived and some do not', () => {
+    const order: string[] = [];
+
+    const withHook: WorkflowInterceptor = {
+      signalReceived(interception, next) {
+        order.push('with');
+        next(interception);
+      },
+    };
+
+    const withoutHook: WorkflowInterceptor = {};
+
+    const composed = composeWorkflowInterceptors([withHook, withoutHook]);
+
+    composed.signalReceived(makeSignalReceivedInterception(), () => {
+      order.push('execute');
+    });
+
+    expect(order).toEqual(['with', 'execute']);
   });
 });
