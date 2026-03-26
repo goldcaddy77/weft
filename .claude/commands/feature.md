@@ -1,8 +1,10 @@
-Implement the following feature for the weft durable execution engine:
-
-$ARGUMENTS
+Implement the following feature for the weft durable execution engine: $ARGUMENTS
 
 Follow this workflow:
+
+## 0. Get Context
+
+**DO THIS FIRST**: Read and review @reference/architecture.md.
 
 ## 1. Understand
 
