@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Ground Rules
+
+**Fix problems. Do not report them.** If you encounter pre-existing warnings, lint errors, type errors, failing tests, or any other issue in the codebase — fix it. Do not ask whether to fix it. Do not explain that it's pre-existing. Do not suggest workarounds like skipping hooks. Just fix it and move on.
+
 ## Essential Commands
 
 ### Development

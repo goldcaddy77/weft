@@ -69,11 +69,13 @@ export class RemoteWorker implements Disposable {
   /** Connect to the server and start processing tasks. */
   async connect(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      let settled = false;
       const ws = new WebSocket(this.#options.serverUrl);
 
       ws.addEventListener(
         'open',
         () => {
+          settled = true;
           this.#ws = ws;
           this.#sendMessage({
             type: 'register',
@@ -99,7 +101,8 @@ export class RemoteWorker implements Disposable {
       ws.addEventListener(
         'error',
         () => {
-          if (this.#ws === null) {
+          if (!settled) {
+            settled = true;
             reject(new Error('WebSocket connection failed'));
           }
         },
