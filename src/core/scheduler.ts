@@ -157,7 +157,11 @@ export class Scheduler implements Disposable {
 
     // Fire callbacks and delete keys in chronological order (already sorted by scan)
     for (const { key, entry } of expired) {
-      await this.#onTimerFired(entry);
+      try {
+        await this.#onTimerFired(entry);
+      } catch (error) {
+        console.error(`Timer callback failed for timer ${entry.id}:`, error);
+      }
 
       const indexKey = `timer-idx:${entry.id}`;
       await this.#storage.batch([

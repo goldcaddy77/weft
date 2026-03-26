@@ -114,8 +114,6 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     if (existing) return existing;
 
     const promise = (async () => {
-      if (sequenceCounters.has(workflowId)) return;
-
       const prefix = `ev:${workflowId}:`;
       let highestSequence = -1;
 
@@ -130,14 +128,24 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
 
       // Start after the highest existing sequence number.
       sequenceCounters.set(workflowId, highestSequence + 1);
-    })();
+    })().catch((error) => {
+      // Clear the cached promise so a subsequent event can retry initialization
+      // instead of perpetually reusing a rejected promise.
+      sequenceInitPromises.delete(workflowId);
+      throw error;
+    });
 
     sequenceInitPromises.set(workflowId, promise);
     return promise;
   }
 
   function nextSequence(workflowId: string): number {
-    const current = sequenceCounters.get(workflowId) ?? 0;
+    const current = sequenceCounters.get(workflowId);
+    if (current === undefined) {
+      throw new Error(
+        `Sequence counter for workflow "${workflowId}" accessed before initialization`,
+      );
+    }
     sequenceCounters.set(workflowId, current + 1);
     return current;
   }
@@ -163,9 +171,9 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     engine.addEventListener(
       eventType,
       (event) => {
-        const workflowId = (event as unknown as Record<string, unknown>)['workflowId'] as
-          | string
-          | undefined;
+        const raw =
+          'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
+        const workflowId = typeof raw === 'string' ? raw : undefined;
         if (workflowId === undefined) return;
 
         const message = serializeEvent(event);
@@ -173,27 +181,38 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
 
         // Persist the event to storage for the REST events endpoint.
         // Sequence initialization is async (reads storage on first access per
-        // workflow), so chain the persistence behind it.
-        void ensureSequenceInitialized(workflowId).then(() => {
-          const parsed = JSON.parse(message) as {
-            type: string;
-            timestamp: number;
-            data: Record<string, unknown>;
-          };
-          const sequence = nextSequence(workflowId);
-          const storageKey = KEYS.event(workflowId, sequence);
-          return engine.storage.put(storageKey, encode(parsed));
-        });
+        // workflow), so chain the persistence behind it. WebSocket publishing
+        // is deferred until persistence succeeds so clients never see events
+        // that failed to store.
+        void (async () => {
+          try {
+            await ensureSequenceInitialized(workflowId);
 
-        // Publish to the workflow's watch channel
-        const watchChannel = `/v1/workflows/${workflowId}/watch`;
-        server.publish(watchChannel, message);
+            const parsed = JSON.parse(message) as {
+              type: string;
+              timestamp: number;
+              data: Record<string, unknown>;
+            };
+            const sequence = nextSequence(workflowId);
+            const storageKey = KEYS.event(workflowId, sequence);
+            await engine.storage.put(storageKey, encode(parsed));
 
-        // For token events, also publish to the stream channel
-        if (eventType === TokenEvent.type) {
-          const streamChannel = `/v1/workflows/${workflowId}/stream`;
-          server.publish(streamChannel, message);
-        }
+            // Publish to the workflow's watch channel
+            const watchChannel = `/v1/workflows/${workflowId}/watch`;
+            server.publish(watchChannel, message);
+
+            // For token events, also publish to the stream channel
+            if (eventType === TokenEvent.type) {
+              const streamChannel = `/v1/workflows/${workflowId}/stream`;
+              server.publish(streamChannel, message);
+            }
+          } catch (error) {
+            console.error(
+              `[weft] Failed to persist event "${eventType}" for workflow "${workflowId}":`,
+              error,
+            );
+          }
+        })();
       },
       { signal },
     );
@@ -257,8 +276,16 @@ export function serve(options: ServeOptions): WeftServer {
     },
   });
 
-  // Wire up engine events → WebSocket broadcasting
-  const cleanupBroadcasting = wireEventBroadcasting(options.engine, server);
+  // Wire up engine events → WebSocket broadcasting.
+  // If wiring throws after the server is already listening, clean up both
+  // the server and listeners before propagating the error.
+  let cleanupBroadcasting: () => void;
+  try {
+    cleanupBroadcasting = wireEventBroadcasting(options.engine, server);
+  } catch (error) {
+    void server.stop();
+    throw error;
+  }
 
   const resolvedPort = server.port ?? port;
   const resolvedHostname = server.hostname ?? hostname;

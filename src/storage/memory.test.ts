@@ -112,6 +112,16 @@ describe('MemoryStorage', () => {
     expect(entries.map(([key]) => key)).toEqual(['p:b', 'p:c']);
   });
 
+  it('scan with empty prefix returns all keys', async () => {
+    const storage = new MemoryStorage();
+    await storage.put('alpha', encode('a'));
+    await storage.put('beta', encode('b'));
+    await storage.put('gamma', encode('c'));
+
+    const entries = await collect(storage.scan(''));
+    expect(entries.map(([key]) => key)).toEqual(['alpha', 'beta', 'gamma']);
+  });
+
   it('scan with no matches yields zero entries', async () => {
     const storage = new MemoryStorage();
     await storage.put('other:a', encode('a'));

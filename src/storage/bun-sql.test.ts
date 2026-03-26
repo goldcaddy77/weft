@@ -124,6 +124,17 @@ describe('BunSQLiteStorage', () => {
     storage[Symbol.dispose]();
   });
 
+  it('scan with empty prefix returns all keys', async () => {
+    const storage = new BunSQLiteStorage(':memory:');
+    await storage.put('alpha', encode('a'));
+    await storage.put('beta', encode('b'));
+    await storage.put('gamma', encode('c'));
+
+    const entries = await collect(storage.scan(''));
+    expect(entries.map(([key]) => key)).toEqual(['alpha', 'beta', 'gamma']);
+    storage[Symbol.dispose]();
+  });
+
   it('batch with multiple puts: all keys exist after', async () => {
     const storage = new BunSQLiteStorage(':memory:');
     await storage.batch([

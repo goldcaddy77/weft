@@ -47,8 +47,11 @@ export class BunSQLiteStorage implements Storage {
     const { limit, reverse, gt, lt, gte, lte } = options;
 
     // Compute the exclusive upper bound for the prefix range, same as MemoryStorage.
+    // When prefix is empty, use '\xff' to match all keys since all valid string keys sort before it.
     const prefixEnd =
-      prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+      prefix.length > 0
+        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
+        : '\xff';
 
     const conditions: string[] = ['key >= ? AND key < ?'];
     const parameters: SQLQueryBindings[] = [prefix, prefixEnd];
