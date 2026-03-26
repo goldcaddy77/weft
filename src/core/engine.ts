@@ -25,6 +25,7 @@ import { decode, encode } from './codec.ts';
 import type { ContextOperationRequest, StreamReference, StreamSink } from './context.ts';
 import { Context } from './context.ts';
 import {
+  AttributesChangedEvent,
   CheckpointSizeWarningEvent,
   DevelopmentWarningEvent,
   SignalReceivedEvent,
@@ -41,13 +42,16 @@ import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
 import { Scheduler, parseDuration } from './scheduler.ts';
+import { buildIndexOperations, encodeAttributeValue } from './search-attributes.ts';
 import { compileStepWorkflow, isAsyncGeneratorFunction } from './step-context.ts';
 import type {
+  AttributeFilter,
   Checkpoint,
   EngineOptions,
   ListFilter,
   OperationOutcome,
   PaginatedResult,
+  SearchAttributeValue,
   StartOptions,
   StepWorkflowFunction,
   WorkerOutboundMessage,
@@ -273,6 +277,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #finalizationRegistry: FinalizationRegistry<string>;
   #resultResolvers: Map<string, WorkflowResultResolver>;
   #signalWaiters: Map<string, (payload: unknown) => void>;
+  #updateWaiters: Map<string, (payload: unknown) => void>;
   #sleepResolvers: Map<string, () => void>;
   #interceptors: WorkflowInterceptor[];
   #activityInterceptors: ActivityInterceptor[];
@@ -294,6 +299,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#handleCache = new Map();
     this.#resultResolvers = new Map();
     this.#signalWaiters = new Map();
+    this.#updateWaiters = new Map();
     this.#sleepResolvers = new Map();
     this.#interceptors = [];
     this.#activityInterceptors = [];
@@ -454,17 +460,35 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Create initial checkpoint
     const checkpoint = createCheckpoint(workflowId, registration.version, this.#options.getNow());
+
+    // Apply initial search attributes if provided
+    if (options?.searchAttributes) {
+      checkpoint.searchAttributes = { ...options.searchAttributes };
+    }
+
     this.#checkpoints.set(workflowId, checkpoint);
 
     // Write state and checkpoint to storage
-    await this.#storage.batch([
+    const batchOperations: import('../storage/interface.ts').BatchOperation[] = [
       { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
       {
         type: 'put',
         key: KEYS.checkpoint(workflowId),
         value: serializeCheckpoint(checkpoint),
       },
-    ]);
+    ];
+
+    // Write attribute record and index entries for initial search attributes
+    if (options?.searchAttributes && Object.keys(options.searchAttributes).length > 0) {
+      batchOperations.push({
+        type: 'put',
+        key: KEYS.attribute(workflowId),
+        value: encode(options.searchAttributes),
+      });
+      batchOperations.push(...buildIndexOperations(workflowId, {}, options.searchAttributes));
+    }
+
+    await this.#storage.batch(batchOperations);
 
     // Set up execution deadline if needed
     if (state.executionDeadline !== undefined) {
@@ -548,6 +572,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
+    // If attribute filters are present, query the index first to get matching IDs
+    let constrainedIds: Set<string> | null = null;
+    if (filter?.attributes && filter.attributes.length > 0) {
+      const idSets = await Promise.all(
+        filter.attributes.map((attributeFilter) => this.#queryAttributeIndex(attributeFilter)),
+      );
+      // Intersect all sets
+      constrainedIds = idSets[0]!;
+      for (let i = 1; i < idSets.length; i++) {
+        const nextSet = idSets[i]!;
+        for (const id of constrainedIds) {
+          if (!nextSet.has(id)) constrainedIds.delete(id);
+        }
+      }
+    }
+
     const items: WorkflowSummary[] = [];
 
     for await (const [key, value] of this.#storage.scan('wf:')) {
@@ -555,6 +595,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (key.includes(':ckpt')) continue;
 
       const state = decodeWorkflowState(value);
+
+      // Constrain to attribute-matched IDs if present
+      if (constrainedIds !== null && !constrainedIds.has(state.id)) continue;
 
       // Apply filters
       if (filter?.status !== undefined) {
@@ -584,6 +627,69 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       offset,
       limit,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: attribute index queries
+  // -------------------------------------------------------------------------
+
+  async #queryAttributeIndex(filter: AttributeFilter): Promise<Set<string>> {
+    const ids = new Set<string>();
+    const prefix = `idx:${filter.key}:`;
+
+    if (filter.value !== undefined) {
+      // Exact match: scan idx:{name}:{encodedValue}: prefix
+      const encodedValue = encodeAttributeValue(filter.value);
+      const exactPrefix = `idx:${filter.key}:${encodedValue}:`;
+      for await (const [key] of this.#storage.scan(exactPrefix)) {
+        // Key format: idx:{name}:{encodedValue}:{workflowId}
+        const workflowId = key.slice(exactPrefix.length);
+        ids.add(workflowId);
+      }
+    } else {
+      // Range scan with gte/lte boundaries
+      const scanOptions: import('../storage/interface.ts').ScanOptions = {};
+      if (filter.gte !== undefined) {
+        scanOptions.gte = `idx:${filter.key}:${encodeAttributeValue(filter.gte)}:`;
+      }
+      if (filter.lte !== undefined) {
+        // Use a boundary that includes all workflow IDs for the lte value
+        const encodedLte = encodeAttributeValue(filter.lte);
+        // Append a character after the last ':' to ensure we include all IDs under this value
+        scanOptions.lte = `idx:${filter.key}:${encodedLte}:\xff`;
+      }
+
+      for await (const [key] of this.#storage.scan(prefix, scanOptions)) {
+        // Key format: idx:{name}:{encodedValue}:{workflowId}
+        // Extract workflowId: everything after the last ':'
+        const afterPrefix = key.slice(prefix.length);
+        const lastColon = afterPrefix.lastIndexOf(':');
+        if (lastColon >= 0) {
+          ids.add(afterPrefix.slice(lastColon + 1));
+        }
+      }
+    }
+
+    return ids;
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: attribute index cleanup
+  // -------------------------------------------------------------------------
+
+  async #cleanupAttributeIndex(workflowId: string): Promise<void> {
+    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+    if (!attributeBytes) return;
+
+    const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+    const deleteOperations = buildIndexOperations(workflowId, currentAttributes, {});
+
+    // Delete the attribute record itself along with all index entries
+    deleteOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
+
+    if (deleteOperations.length > 0) {
+      await this.#storage.batch(deleteOperations);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -642,6 +748,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           throw error;
         }
       }
+    }
+
+    // Check if workflow is waiting for this update via waitForUpdate
+    const waiterKey = `${workflowId}:${name}`;
+    const updateWaiter = this.#updateWaiters.get(waiterKey);
+    if (updateWaiter) {
+      this.#updateWaiters.delete(waiterKey);
+      const updateId = crypto.randomUUID();
+      this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
+      updateWaiter(payload);
+      this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, payload));
+      return payload;
     }
 
     // If no active handler, use the UpdateCoordinator with polling
@@ -803,6 +921,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       status: 'cancelled',
     });
 
+    // Clean up attribute indexes
+    await this.#cleanupAttributeIndex(workflowId);
+
+    // Clean up context
+    this.#activeContexts.delete(workflowId);
+
     // Dispatch event
     const event = new WorkflowCancelledEvent(workflowId);
     this.dispatchEvent(event);
@@ -828,6 +952,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#handleCache.clear();
     this.#resultResolvers.clear();
     this.#signalWaiters.clear();
+    this.#updateWaiters.clear();
     this.#sleepResolvers.clear();
     this.#checkpoints.clear();
     this.#broadcastChannel?.close();
@@ -859,6 +984,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const current = this.#checkpoints.get(workflowId);
     if (!context || !current) return;
 
+    // Capture previous attributes before advancing (for index diffing)
+    const previousAttributes = { ...current.searchAttributes };
+    const hasPendingAttributeChanges = Object.keys(context.pendingAttributeChanges).length > 0;
+
     const accumulatedResults = Array.from(context.accumulatedResults.entries());
     const advanced = advanceCheckpoint(current, current.locals, {
       searchAttributes: context.pendingAttributeChanges,
@@ -887,8 +1016,27 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       });
     }
 
+    // Persist attribute index entries when attributes changed
+    if (hasPendingAttributeChanges) {
+      operations.push({
+        type: 'put',
+        key: KEYS.attribute(workflowId),
+        value: encode(advanced.searchAttributes),
+      });
+      operations.push(
+        ...buildIndexOperations(workflowId, previousAttributes, advanced.searchAttributes),
+      );
+    }
+
     await this.#storage.batch(operations);
     this.#checkpoints.set(workflowId, advanced);
+
+    // Dispatch attribute change event
+    if (hasPendingAttributeChanges) {
+      this.dispatchEvent(
+        new AttributesChangedEvent(workflowId, { ...context.pendingAttributeChanges }),
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1012,6 +1160,70 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
         const payload = await promise;
         this.#feedOperationResult(workflowId, { status: 'completed', value: payload });
+        break;
+      }
+
+      case 'wait-update': {
+        // Check for pending update requests
+        const pendingUpdates = await this.#updateCoordinator.getPendingUpdates(workflowId);
+        const matchingUpdate = pendingUpdates.find(
+          (update) => update.name === operation.updateName,
+        );
+
+        if (matchingUpdate) {
+          // Consume the pending update immediately
+          this.dispatchEvent(
+            new UpdateReceivedEvent(
+              matchingUpdate.updateId,
+              workflowId,
+              operation.updateName,
+              matchingUpdate.payload,
+            ),
+          );
+
+          // Drive generator with the update payload
+          await this.#driveGenerator(workflowId, generator, matchingUpdate.payload);
+
+          // Build response operations to acknowledge the update
+          const context = this.#activeContexts.get(workflowId);
+          const updateHandler = context?.updateHandlers.get(operation.updateName);
+          let updateResult: unknown;
+          let updateError: string | undefined;
+          try {
+            updateResult = updateHandler
+              ? updateHandler(matchingUpdate.payload)
+              : matchingUpdate.payload;
+          } catch (error) {
+            updateError = error instanceof Error ? error.message : String(error);
+          }
+
+          const responseOperations = this.#updateCoordinator.buildResponseOperations(
+            matchingUpdate.updateId,
+            workflowId,
+            updateResult,
+            updateError,
+            matchingUpdate.idempotencyKey,
+          );
+          await this.#storage.batch(responseOperations);
+
+          this.dispatchEvent(
+            new UpdateCompletedEvent(
+              matchingUpdate.updateId,
+              workflowId,
+              operation.updateName,
+              updateResult,
+              updateError,
+            ),
+          );
+        } else {
+          // Wait for update to arrive
+          const { promise, resolve } = Promise.withResolvers<unknown>();
+          const waiterKey = `${workflowId}:${operation.updateName}`;
+          this.#updateWaiters.set(waiterKey, resolve);
+
+          const updatePayload = await promise;
+          await this.#driveGenerator(workflowId, generator, updatePayload);
+        }
         break;
       }
 
@@ -1279,6 +1491,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       result,
     });
 
+    // Clean up attribute indexes
+    await this.#cleanupAttributeIndex(workflowId);
+
+    this.#activeGenerators.delete(workflowId);
+    this.#workflowAbortControllers.delete(workflowId);
+    this.#activeContexts.delete(workflowId);
     this.#checkpoints.delete(workflowId);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
@@ -1304,6 +1522,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     await this.#updateWorkflowState(workflowId, stateUpdate);
 
+    // Clean up attribute indexes
+    await this.#cleanupAttributeIndex(workflowId);
+
+    this.#activeGenerators.delete(workflowId);
+    this.#workflowAbortControllers.delete(workflowId);
+    this.#activeContexts.delete(workflowId);
     this.#checkpoints.delete(workflowId);
 
     const event = new WorkflowFailedEvent(workflowId, error);

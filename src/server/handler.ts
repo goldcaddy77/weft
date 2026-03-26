@@ -7,9 +7,17 @@
 
 import { decode, encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
-import type { ListFilter, WorkflowState, WorkflowStatus } from '../core/types.ts';
+import { buildIndexOperations } from '../core/search-attributes.ts';
+import type {
+  AttributeFilter,
+  ListFilter,
+  SearchAttributeValue,
+  WorkflowState,
+  WorkflowStatus,
+} from '../core/types.ts';
 import { UpdateCoordinator, UpdateTimeoutError } from '../core/updates.ts';
 import { METRICS } from '../observability/metrics.ts';
+import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 
 // ---------------------------------------------------------------------------
@@ -218,6 +226,51 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
   }
 }
 
+function parseAttributeFilters(params: URLSearchParams): AttributeFilter[] {
+  const filterMap = new Map<string, AttributeFilter>();
+
+  for (const [key, value] of params) {
+    if (!key.startsWith('attr.')) continue;
+
+    const rest = key.slice(5); // strip "attr."
+    const dotIndex = rest.indexOf('.');
+
+    if (dotIndex === -1) {
+      // Exact match: attr.{name}={value}
+      const name = rest;
+      const existing = filterMap.get(name) ?? { key: name };
+      existing.value = inferAttributeValue(value);
+      filterMap.set(name, existing);
+    } else {
+      // Range: attr.{name}.gte={value} or attr.{name}.lte={value}
+      const name = rest.slice(0, dotIndex);
+      const operator = rest.slice(dotIndex + 1);
+      const existing = filterMap.get(name) ?? { key: name };
+
+      if (operator === 'gte') {
+        existing.gte = inferAttributeValue(value);
+      } else if (operator === 'lte') {
+        existing.lte = inferAttributeValue(value);
+      }
+
+      filterMap.set(name, existing);
+    }
+  }
+
+  return [...filterMap.values()];
+}
+
+/** Infer the type of an attribute value from its string representation. */
+function inferAttributeValue(raw: string): SearchAttributeValue {
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+
+  const asNumber = Number(raw);
+  if (!Number.isNaN(asNumber) && raw.trim() !== '') return asNumber;
+
+  return raw;
+}
+
 async function handleListWorkflows(request: Request, engine: Engine): Promise<Response> {
   const url = new URL(request.url);
   const filter: ListFilter = {};
@@ -240,6 +293,12 @@ async function handleListWorkflows(request: Request, engine: Engine): Promise<Re
   const offset = url.searchParams.get('offset');
   if (offset !== null) {
     filter.offset = Number(offset);
+  }
+
+  // Parse attribute filters: attr.{name}={value}, attr.{name}.gte={value}, attr.{name}.lte={value}
+  const attributeFilters = parseAttributeFilters(url.searchParams);
+  if (attributeFilters.length > 0) {
+    filter.attributes = attributeFilters;
   }
 
   const result = await engine.list(filter);
@@ -447,27 +506,22 @@ async function handleSetAttributes(
 
   // Read existing attributes and merge
   const existingBytes = await engine.storage.get(KEYS.attribute(workflowId));
-  let existing: Record<string, unknown> = {};
-  if (existingBytes !== null) {
-    existing = decode(existingBytes) as Record<string, unknown>;
-  }
+  const existing: Record<string, SearchAttributeValue> = existingBytes
+    ? (decode(existingBytes) as Record<string, SearchAttributeValue>)
+    : {};
 
-  const merged = { ...existing, ...incoming };
+  const merged: Record<string, SearchAttributeValue> = {
+    ...existing,
+    ...(incoming as Record<string, SearchAttributeValue>),
+  };
 
-  // Build batch: write attributes + rebuild index operations
-  const operations: Array<{ type: 'put'; key: string; value: Uint8Array }> = [
+  // Build diff-based index operations
+  const indexOperations = buildIndexOperations(workflowId, existing, merged);
+
+  const operations: BatchOperation[] = [
     { type: 'put', key: KEYS.attribute(workflowId), value: encode(merged) },
+    ...indexOperations,
   ];
-
-  // Rebuild attribute index entries
-  for (const [attributeName, value] of Object.entries(incoming)) {
-    const encodedValue = String(value);
-    operations.push({
-      type: 'put',
-      key: KEYS.attributeIndex(attributeName, encodedValue, workflowId),
-      value: encode(value),
-    });
-  }
 
   await engine.storage.batch(operations);
 
