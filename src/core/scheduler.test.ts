@@ -309,6 +309,41 @@ describe('Scheduler', () => {
     scheduler.stop();
   });
 
+  it('continues processing remaining timers when a callback throws on one', async () => {
+    let callCount = 0;
+    scheduler[Symbol.dispose]();
+    scheduler = new Scheduler({
+      storage,
+      onTimerFired: (entry) => {
+        callCount++;
+        firedEntries.push(entry);
+        if (callCount === 1) {
+          throw new Error('callback error on first timer');
+        }
+      },
+      pollIntervalMs: 100,
+      getNow: () => currentTime,
+    });
+
+    const entry1 = makeTimer({ id: 'timer-throw', fireAt: currentTime - 2000 });
+    const entry2 = makeTimer({ id: 'timer-ok', fireAt: currentTime - 1000 });
+
+    await scheduler.schedule(entry1);
+    await scheduler.schedule(entry2);
+
+    await scheduler.tick(currentTime);
+
+    // Both callbacks were invoked despite the first one throwing
+    expect(firedEntries).toHaveLength(2);
+    expect(firedEntries[0]!.id).toBe('timer-throw');
+    expect(firedEntries[1]!.id).toBe('timer-ok');
+
+    // Both deadline keys and index keys were cleaned up
+    const remainingKeys = storage.keys();
+    expect(remainingKeys.some((key) => key.startsWith('wf-deadline:'))).toBe(false);
+    expect(remainingKeys.some((key) => key.startsWith('timer-idx:'))).toBe(false);
+  });
+
   it('full integration: schedule, advance time via tick, verify fired', async () => {
     const entry = makeTimer({ fireAt: currentTime + 5000 });
     await scheduler.schedule(entry);

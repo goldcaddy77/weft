@@ -274,6 +274,96 @@ describe('handleRequest', () => {
     expect(body.limit).toBe(2);
   });
 
+  // Limit/offset boundary validation
+  it('GET /v1/workflows?limit=-1 returns all workflows (negative limit ignored)', async () => {
+    engine = createEngine();
+
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 1 }), engine);
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 2 }), engine);
+    await flush();
+
+    const response = await handleRequest(request('GET', '/v1/workflows?limit=-1'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { items: unknown[]; total: number };
+    expect(body.items.length).toBe(2);
+    expect(body.total).toBe(2);
+  });
+
+  it('GET /v1/workflows?limit=0 returns all workflows (zero limit ignored)', async () => {
+    engine = createEngine();
+
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 1 }), engine);
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 2 }), engine);
+    await flush();
+
+    const response = await handleRequest(request('GET', '/v1/workflows?limit=0'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { items: unknown[]; total: number };
+    expect(body.items.length).toBe(2);
+    expect(body.total).toBe(2);
+  });
+
+  it('GET /v1/workflows?limit=abc returns all workflows (NaN limit ignored)', async () => {
+    engine = createEngine();
+
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 1 }), engine);
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 2 }), engine);
+    await flush();
+
+    const response = await handleRequest(request('GET', '/v1/workflows?limit=abc'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { items: unknown[]; total: number };
+    expect(body.items.length).toBe(2);
+    expect(body.total).toBe(2);
+  });
+
+  it('GET /v1/workflows?limit=99999999999 does not crash (clamps to 1000)', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(request('GET', '/v1/workflows?limit=99999999999'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { items: unknown[] };
+    // No crash; 0 workflows exist so items is empty
+    expect(Array.isArray(body.items)).toBe(true);
+  });
+
+  it('GET /v1/workflows?limit=2.9 floors to 2', async () => {
+    engine = createEngine();
+
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 1 }), engine);
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 2 }), engine);
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 3 }), engine);
+    await flush();
+
+    const response = await handleRequest(request('GET', '/v1/workflows?limit=2.9'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { items: unknown[]; total: number; limit: number };
+    expect(body.items.length).toBe(2);
+    expect(body.total).toBe(3);
+    expect(body.limit).toBe(2);
+  });
+
+  it('GET /v1/workflows?offset=-5 is ignored (offset stays undefined)', async () => {
+    engine = createEngine();
+
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 1 }), engine);
+    await handleRequest(request('POST', '/v1/workflows', { type: 'echo', input: 2 }), engine);
+    await flush();
+
+    const response = await handleRequest(request('GET', '/v1/workflows?offset=-5'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { items: unknown[]; total: number };
+    // All items returned because the invalid offset was ignored
+    expect(body.items.length).toBe(2);
+    expect(body.total).toBe(2);
+  });
+
   it('GET /v1/workflows?type=echo filters by type', async () => {
     engine = createEngine();
 

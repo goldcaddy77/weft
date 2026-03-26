@@ -181,8 +181,10 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
         // workflow), so chain the persistence behind it. WebSocket publishing
         // is deferred until persistence succeeds so clients never see events
         // that failed to store.
-        ensureSequenceInitialized(workflowId)
-          .then(() => {
+        void (async () => {
+          try {
+            await ensureSequenceInitialized(workflowId);
+
             const parsed = JSON.parse(message) as {
               type: string;
               timestamp: number;
@@ -190,9 +192,8 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
             };
             const sequence = nextSequence(workflowId);
             const storageKey = KEYS.event(workflowId, sequence);
-            return engine.storage.put(storageKey, encode(parsed));
-          })
-          .then(() => {
+            await engine.storage.put(storageKey, encode(parsed));
+
             // Publish to the workflow's watch channel
             const watchChannel = `/v1/workflows/${workflowId}/watch`;
             server.publish(watchChannel, message);
@@ -202,15 +203,13 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
               const streamChannel = `/v1/workflows/${workflowId}/stream`;
               server.publish(streamChannel, message);
             }
-
-            return undefined;
-          })
-          .catch((error: unknown) => {
+          } catch (error) {
             console.error(
               `[weft] Failed to persist event "${eventType}" for workflow "${workflowId}":`,
               error,
             );
-          });
+          }
+        })();
       },
       { signal },
     );

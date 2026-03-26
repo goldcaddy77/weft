@@ -328,6 +328,9 @@ async function handleCancelWorkflow(engine: Engine, workflowId: string): Promise
     return new Response(null, { status: 204 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('not found')) {
+      return errorResponse(message, 404);
+    }
     return errorResponse(message, 500);
   }
 }
@@ -698,61 +701,53 @@ export async function handleRequest(request: Request, engine: Engine): Promise<R
     return value;
   };
 
-  try {
-    switch (route.handler) {
-      case 'healthCheck':
-        return negotiatedResponse(request, { status: 'ok' });
+  switch (route.handler) {
+    case 'healthCheck':
+      return negotiatedResponse(request, { status: 'ok' });
 
-      case 'startWorkflow':
-        return handleStartWorkflow(request, engine);
+    case 'startWorkflow':
+      return handleStartWorkflow(request, engine);
 
-      case 'listWorkflows':
-        return handleListWorkflows(request, engine);
+    case 'listWorkflows':
+      return handleListWorkflows(request, engine);
 
-      case 'getWorkflow':
-        return handleGetWorkflow(engine, param('id'));
+    case 'getWorkflow':
+      return handleGetWorkflow(engine, param('id'));
 
-      case 'cancelWorkflow':
-        return handleCancelWorkflow(engine, param('id'));
+    case 'cancelWorkflow':
+      return handleCancelWorkflow(engine, param('id'));
 
-      case 'signalWorkflow':
-        return handleSignalWorkflow(request, engine, param('id'), param('name'));
+    case 'signalWorkflow':
+      return handleSignalWorkflow(request, engine, param('id'), param('name'));
 
-      case 'getWorkflowResult':
-        return handleGetWorkflowResult(engine, param('id'));
+    case 'getWorkflowResult':
+      return handleGetWorkflowResult(engine, param('id'));
 
-      case 'updateWorkflow':
-        return handleUpdateWorkflow(request, engine, param('id'), param('name'));
+    case 'updateWorkflow':
+      return handleUpdateWorkflow(request, engine, param('id'), param('name'));
 
-      case 'getUpdateResult':
-        return handleGetUpdateResult(engine, param('updateId'));
+    case 'getUpdateResult':
+      return handleGetUpdateResult(engine, param('updateId'));
 
-      case 'getAttributes':
-        return handleGetAttributes(engine, param('id'));
+    case 'getAttributes':
+      return handleGetAttributes(engine, param('id'));
 
-      case 'setAttributes':
-        return handleSetAttributes(request, engine, param('id'));
+    case 'setAttributes':
+      return handleSetAttributes(request, engine, param('id'));
 
-      case 'getMetrics':
-        return handleGetMetrics();
+    case 'getMetrics':
+      return handleGetMetrics();
 
-      case 'getWorkflowEvents':
-        return handleGetWorkflowEvents(engine, param('id'));
+    case 'getWorkflowEvents':
+      return handleGetWorkflowEvents(engine, param('id'));
 
-      case 'listReviews':
-        return handleListReviews(engine);
+    case 'listReviews':
+      return handleListReviews(engine);
 
-      case 'submitReviewDecision':
-        return handleSubmitReviewDecision(request, engine, param('reviewId'));
+    case 'submitReviewDecision':
+      return handleSubmitReviewDecision(request, engine, param('reviewId'));
 
-      default:
-        return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.startsWith('Missing route parameter')) {
-      return errorResponse(message, 400);
-    }
-    throw error;
+    default:
+      return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
   }
 }
