@@ -1,0 +1,100 @@
+---
+name: verification-loop
+description: Full verification cycle for weft changes — build, typecheck, lint, test, export review, and diff review. Trigger before declaring work done.
+---
+
+# Verification Loop
+
+Run the full verification cycle before considering any feature, fix, or refactor complete. Each phase catches a different class of problem.
+
+## When to Activate
+
+- After completing a feature or bug fix
+- Before creating a commit
+- After a refactor that touches multiple files
+- When asked to verify or validate changes
+
+## Phases
+
+Run these in order. Fix failures before proceeding to the next phase.
+
+### Phase 1: Build
+
+```bash
+bun run build
+```
+
+Catches: compilation errors, missing modules, broken imports, declaration generation failures. The build outputs to `dist/` and includes both server (Bun target) and browser (browser target) entrypoints.
+
+### Phase 2: Typecheck
+
+```bash
+bun run typecheck
+```
+
+Catches: type errors across the full codebase that the build step may not surface (the build uses `bun build` which is less strict than `tsc`).
+
+### Phase 3: Lint
+
+```bash
+bun run lint
+```
+
+Catches: style violations, potential bugs, unused imports, promise handling mistakes. Uses Oxlint with type-aware rules and TypeScript/promise/unicorn/import plugins.
+
+### Phase 4: Test
+
+```bash
+bun test
+```
+
+Catches: regressions, broken behavior, incorrect logic. Tests use Bun's native test runner with colocated `.test.ts` files.
+
+For focused verification during development, run tests for just the affected area:
+
+```bash
+bun test src/core        # Core engine tests
+bun test src/storage     # Storage backend tests
+bun test src/ai          # AI/agent tests
+bun test src/server      # Server API tests
+bun test src/testing     # Testing infrastructure tests
+```
+
+### Phase 5: Export Review
+
+Check if `src/index.ts` was modified:
+
+```bash
+git diff src/index.ts
+```
+
+Every addition or removal in `src/index.ts` is a public API change. Verify:
+
+- New exports are intentional and properly typed
+- No internal types or implementation details leaked into the public surface
+- Removed exports are truly unused by consumers
+- Also check the secondary entrypoints: `./service-worker`, `./storage/indexeddb`, `./server/handler`
+
+### Phase 6: Diff Review
+
+```bash
+git diff
+```
+
+Check for:
+
+- Leftover `console.log` or debug statements
+- Unrelated changes that crept in
+- Hardcoded values that should be configurable
+- `any` types at trust boundaries (server routes, storage interfaces, public API)
+- Files that were accidentally modified
+
+## Quick Shortcut
+
+For a single command that covers phases 1-4:
+
+```bash
+bun run validate
+```
+
+This runs lint + typecheck + test. Follow up with a manual export review and diff review (phases 5-6).
