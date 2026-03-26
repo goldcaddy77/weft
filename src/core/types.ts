@@ -219,12 +219,14 @@ export type WorkerInboundMessage =
       workflowType: string;
       checkpoint: ArrayBuffer;
       input: unknown;
+      headers?: [string, string][];
     }
   | {
       type: 'resume';
       workflowId: WorkflowId;
       checkpoint: ArrayBuffer;
       operationResult: OperationOutcome;
+      headers?: [string, string][];
     }
   | { type: 'cancel'; workflowId: WorkflowId };
 

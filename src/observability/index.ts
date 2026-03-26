@@ -12,7 +12,9 @@ import type {
   ActivityExecutionInterception,
   ActivityInterception,
   ActivityInterceptor,
+  AgentInterception,
   SignalInterception,
+  SignalReceivedInterception,
   SleepInterception,
   WorkflowInterceptor,
   WorkflowStartInterception,
@@ -246,6 +248,78 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         onSpanEnd?.(span);
         throw error;
       }
+    },
+
+    *agent(
+      interception: AgentInterception,
+      next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
+    ): Generator<unknown, unknown, unknown> {
+      const childSpanId = generateSpanId();
+
+      injectTraceParent(interception.headers, {
+        version: '00',
+        traceId: currentTraceId || generateTraceId(),
+        spanId: childSpanId,
+        traceFlags: 1,
+      });
+
+      const span: SpanInfo = {
+        name: 'agent',
+        traceId: currentTraceId,
+        spanId: childSpanId,
+        parentSpanId: rootSpanId,
+        attributes: {
+          'agent.model': interception.model,
+        },
+        startTime: Date.now(),
+      };
+
+      if (recordPayloads && interception.prompt) {
+        span.attributes['agent.prompt'] = serializePayload(interception.prompt, maxPayloadSize);
+      }
+
+      onSpanStart?.(span);
+
+      try {
+        const result = yield* next(interception);
+        span.endTime = Date.now();
+        span.status = 'ok';
+        onSpanEnd?.(span);
+        return result;
+      } catch (error) {
+        span.endTime = Date.now();
+        span.status = 'error';
+        span.error = error instanceof Error ? error.message : String(error);
+        onSpanEnd?.(span);
+        throw error;
+      }
+    },
+
+    signalReceived(
+      interception: SignalReceivedInterception,
+      next: (interception: SignalReceivedInterception) => void,
+    ): void {
+      const childSpanId = generateSpanId();
+
+      const span: SpanInfo = {
+        name: `signal:received:${interception.signalName}`,
+        traceId: currentTraceId,
+        spanId: childSpanId,
+        parentSpanId: rootSpanId,
+        attributes: {
+          'signal.name': interception.signalName,
+          'signal.workflow_id': interception.workflowId,
+        },
+        startTime: Date.now(),
+      };
+
+      onSpanStart?.(span);
+
+      next(interception);
+
+      span.endTime = Date.now();
+      span.status = 'ok';
+      onSpanEnd?.(span);
     },
   };
 

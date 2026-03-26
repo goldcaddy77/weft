@@ -40,7 +40,12 @@ import {
 } from './events.ts';
 import type { ExecutionStrategy } from './execution-strategy.ts';
 import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
-import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
+import type {
+  ActivityInterceptor,
+  ComposedActivityInterceptor,
+  ComposedWorkflowInterceptor,
+  WorkflowInterceptor,
+} from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
 import { Scheduler, parseDuration } from './scheduler.ts';
 import { buildIndexOperations, encodeAttributeValue } from './search-attributes.ts';
@@ -296,6 +301,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #sleepResolvers: Map<string, () => void>;
   #interceptors: WorkflowInterceptor[];
   #activityInterceptors: ActivityInterceptor[];
+  #composedWorkflowInterceptor: ComposedWorkflowInterceptor | null;
+  #composedActivityInterceptor: ComposedActivityInterceptor | null;
   #updateCoordinator: UpdateCoordinator;
   #activityRegistrations: Map<string, (...arguments_: unknown[]) => unknown>;
   #checkpoints: Map<string, Checkpoint>;
@@ -319,6 +326,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#sleepResolvers = new Map();
     this.#interceptors = [];
     this.#activityInterceptors = [];
+    this.#composedWorkflowInterceptor = null;
+    this.#composedActivityInterceptor = null;
     this.#updateCoordinator = new UpdateCoordinator(storage);
     this.#activityRegistrations = new Map();
     this.#checkpoints = new Map();
@@ -420,10 +429,24 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   addInterceptor(interceptor: WorkflowInterceptor): void {
     this.#interceptors.push(interceptor);
+    this.#composedWorkflowInterceptor = null;
   }
 
   addActivityInterceptor(interceptor: ActivityInterceptor): void {
     this.#activityInterceptors.push(interceptor);
+    this.#composedActivityInterceptor = null;
+  }
+
+  #getComposedWorkflowInterceptor(): ComposedWorkflowInterceptor | null {
+    if (this.#interceptors.length === 0) return null;
+    this.#composedWorkflowInterceptor ??= composeWorkflowInterceptors(this.#interceptors);
+    return this.#composedWorkflowInterceptor;
+  }
+
+  #getComposedActivityInterceptor(): ComposedActivityInterceptor | null {
+    if (this.#activityInterceptors.length === 0) return null;
+    this.#composedActivityInterceptor ??= composeActivityInterceptors(this.#activityInterceptors);
+    return this.#composedActivityInterceptor;
   }
 
   // -------------------------------------------------------------------------
@@ -718,6 +741,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async signal(workflowId: string, name: string, payload?: unknown): Promise<void> {
+    // Run signalReceived interceptor hook if interceptors are registered
+    const composed = this.#getComposedWorkflowInterceptor();
+    if (composed) {
+      composed.signalReceived(
+        {
+          workflowId,
+          signalName: name,
+          payload: payload ?? null,
+          headers: new Map<string, string>(),
+        },
+        () => {
+          // no-op execute — the hook is for observation/side effects
+        },
+      );
+    }
+
     const signalId = crypto.randomUUID();
     const signalKey = KEYS.signal(workflowId, name, signalId);
     await this.#storage.put(signalKey, encode(payload));
@@ -1658,6 +1697,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
+    // Clean up deadline key if execution timeout was set
+    if (state.executionDeadline !== undefined) {
+      await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+    }
+
     this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
@@ -1675,6 +1719,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #failWorkflow(workflowId: string, error: Error): Promise<void> {
+    const state = await this.#loadWorkflowState(workflowId);
+
     const stateUpdate: Partial<WorkflowState> = {
       status: 'failed',
       error: error.message,
@@ -1687,6 +1733,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Clean up attribute indexes and deadline timer
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+
+    // Clean up deadline key if execution timeout was set
+    if (state?.executionDeadline !== undefined) {
+      await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+    }
 
     this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);
@@ -1781,10 +1832,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const activityFunction = this.#resolveActivityFunction(operation);
     const activityArguments = operation.args ?? [];
 
-    // If there are activity interceptors, compose and run through them
-    if (this.#activityInterceptors.length > 0) {
-      const composed = composeActivityInterceptors(this.#activityInterceptors);
-      return composed.execute(
+    // If there are activity interceptors, use cached composition
+    const composedActivity = this.#getComposedActivityInterceptor();
+    if (composedActivity) {
+      return composedActivity.execute(
         {
           activityName: operation.activityName,
           input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
@@ -1800,9 +1851,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
     }
 
-    // If there are workflow interceptors with activity hooks, compose and run
-    if (this.#interceptors.length > 0) {
-      const composed = composeWorkflowInterceptors(this.#interceptors);
+    // If there are workflow interceptors with activity hooks, use cached composition
+    const composedWorkflow = this.#getComposedWorkflowInterceptor();
+    if (composedWorkflow) {
       const interception = {
         activityName: operation.activityName,
         input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
@@ -1816,7 +1867,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return result;
       }
 
-      const generator = composed.activity(interception, execute);
+      const generator = composedWorkflow.activity(interception, execute);
       let current: IteratorResult<unknown, unknown> = generator.next();
       while (!current.done) {
         current = generator.next(current.value);

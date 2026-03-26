@@ -4,7 +4,10 @@ import type {
   ActivityExecutionInterception,
   ActivityInterception,
   ActivityInterceptor,
+  AgentInterception,
+  QueryInterception,
   SignalInterception,
+  SignalReceivedInterception,
   SleepInterception,
   WorkflowInterceptor,
   WorkflowStartInterception,
@@ -68,6 +71,44 @@ function makeActivityExecutionInterception(
     headers: makeHeaders(),
     ...overrides,
   };
+}
+
+function makeAgentInterception(overrides?: Partial<AgentInterception>): AgentInterception {
+  return {
+    model: 'claude-sonnet-4-20250514',
+    prompt: 'Summarize the data',
+    headers: makeHeaders(),
+    ...overrides,
+  };
+}
+
+function makeQueryInterception(overrides?: Partial<QueryInterception>): QueryInterception {
+  return {
+    queryName: 'getStatus',
+    headers: makeHeaders(),
+    ...overrides,
+  };
+}
+
+function makeSignalReceivedInterception(
+  overrides?: Partial<SignalReceivedInterception>,
+): SignalReceivedInterception {
+  return {
+    workflowId: 'wf-1',
+    signalName: 'approval',
+    payload: { approved: true },
+    headers: makeHeaders(),
+    ...overrides,
+  };
+}
+
+/** Drive a generator to completion, returning its final value. */
+function runGenerator(generator: Generator<unknown, unknown, unknown>): unknown {
+  let result = generator.next();
+  while (!result.done) {
+    result = generator.next(result.value);
+  }
+  return result.value;
 }
 
 // ---------------------------------------------------------------------------
@@ -513,5 +554,323 @@ describe('composeActivityInterceptors', () => {
     });
 
     expect(result).toBe('direct:fetchData');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Agent hook composition
+// ---------------------------------------------------------------------------
+
+describe('composeWorkflowInterceptors — agent hook', () => {
+  it('calls execute directly when interceptor array is empty', () => {
+    const composed = composeWorkflowInterceptors([]);
+
+    const generator = composed.agent(makeAgentInterception(), function* (ctx) {
+      return `result:${ctx.model}`;
+    });
+
+    const result = runGenerator(generator);
+    expect(result).toBe('result:claude-sonnet-4-20250514');
+  });
+
+  it('single interceptor can modify context before calling next', () => {
+    const interceptor: WorkflowInterceptor = {
+      *agent(interception, next) {
+        return yield* next({ ...interception, model: 'gpt-4o' });
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+
+    const generator = composed.agent(makeAgentInterception(), function* (ctx) {
+      return `result:${ctx.model}`;
+    });
+
+    const result = runGenerator(generator);
+    expect(result).toBe('result:gpt-4o');
+  });
+
+  it('two interceptors compose in correct order (first = outermost)', () => {
+    const order: string[] = [];
+
+    const first: WorkflowInterceptor = {
+      *agent(interception, next) {
+        order.push('first:before');
+        const result = yield* next(interception);
+        order.push('first:after');
+        return result;
+      },
+    };
+
+    const second: WorkflowInterceptor = {
+      *agent(interception, next) {
+        order.push('second:before');
+        const result = yield* next(interception);
+        order.push('second:after');
+        return result;
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([first, second]);
+
+    const generator = composed.agent(makeAgentInterception(), function* () {
+      order.push('execute');
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(order).toEqual([
+      'first:before',
+      'second:before',
+      'execute',
+      'second:after',
+      'first:after',
+    ]);
+  });
+
+  it('passes through when interceptor does not define agent hook', () => {
+    const empty: WorkflowInterceptor = {};
+
+    const composed = composeWorkflowInterceptors([empty]);
+
+    const generator = composed.agent(makeAgentInterception(), function* (ctx) {
+      return `pass:${ctx.prompt}`;
+    });
+
+    const result = runGenerator(generator);
+    expect(result).toBe('pass:Summarize the data');
+  });
+
+  it('propagates headers between interceptors', () => {
+    const interceptor: WorkflowInterceptor = {
+      *agent(interception, next) {
+        interception.headers.set('x-trace', 'abc');
+        return yield* next(interception);
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let capturedHeaders: Map<string, string> | undefined;
+
+    const generator = composed.agent(makeAgentInterception(), function* (ctx) {
+      capturedHeaders = ctx.headers;
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(capturedHeaders?.get('x-trace')).toBe('abc');
+  });
+
+  it('propagates errors from interceptor', () => {
+    const interceptor: WorkflowInterceptor = {
+      *agent() {
+        throw new Error('agent interceptor error');
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+
+    const generator = composed.agent(makeAgentInterception(), function* () {
+      return 'unreachable';
+    });
+
+    expect(() => runGenerator(generator)).toThrow('agent interceptor error');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Query hook composition
+// ---------------------------------------------------------------------------
+
+describe('composeWorkflowInterceptors — query hook', () => {
+  it('calls execute directly when interceptor array is empty', () => {
+    const composed = composeWorkflowInterceptors([]);
+
+    const generator = composed.query(makeQueryInterception(), function* (ctx) {
+      return `result:${ctx.queryName}`;
+    });
+
+    const result = runGenerator(generator);
+    expect(result).toBe('result:getStatus');
+  });
+
+  it('single interceptor can modify context before calling next', () => {
+    const interceptor: WorkflowInterceptor = {
+      *query(interception, next) {
+        return yield* next({ ...interception, queryName: 'getHealth' });
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+
+    const generator = composed.query(makeQueryInterception(), function* (ctx) {
+      return `result:${ctx.queryName}`;
+    });
+
+    const result = runGenerator(generator);
+    expect(result).toBe('result:getHealth');
+  });
+
+  it('two interceptors compose in correct order', () => {
+    const order: string[] = [];
+
+    const first: WorkflowInterceptor = {
+      *query(interception, next) {
+        order.push('first:before');
+        const result = yield* next(interception);
+        order.push('first:after');
+        return result;
+      },
+    };
+
+    const second: WorkflowInterceptor = {
+      *query(interception, next) {
+        order.push('second:before');
+        const result = yield* next(interception);
+        order.push('second:after');
+        return result;
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([first, second]);
+
+    const generator = composed.query(makeQueryInterception(), function* () {
+      order.push('execute');
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(order).toEqual([
+      'first:before',
+      'second:before',
+      'execute',
+      'second:after',
+      'first:after',
+    ]);
+  });
+
+  it('passes through when interceptor does not define query hook', () => {
+    const empty: WorkflowInterceptor = {};
+
+    const composed = composeWorkflowInterceptors([empty]);
+
+    const generator = composed.query(makeQueryInterception(), function* (ctx) {
+      return `pass:${ctx.queryName}`;
+    });
+
+    const result = runGenerator(generator);
+    expect(result).toBe('pass:getStatus');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SignalReceived hook composition
+// ---------------------------------------------------------------------------
+
+describe('composeWorkflowInterceptors — signalReceived hook', () => {
+  it('calls execute directly when interceptor array is empty', () => {
+    let called = false;
+    const composed = composeWorkflowInterceptors([]);
+
+    composed.signalReceived(makeSignalReceivedInterception(), () => {
+      called = true;
+    });
+
+    expect(called).toBe(true);
+  });
+
+  it('single interceptor can observe and pass through', () => {
+    const observed: string[] = [];
+
+    const interceptor: WorkflowInterceptor = {
+      signalReceived(interception, next) {
+        observed.push(`signal:${interception.signalName}`);
+        next(interception);
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let executeCalled = false;
+
+    composed.signalReceived(makeSignalReceivedInterception(), () => {
+      executeCalled = true;
+    });
+
+    expect(observed).toEqual(['signal:approval']);
+    expect(executeCalled).toBe(true);
+  });
+
+  it('two interceptors compose in correct order', () => {
+    const order: string[] = [];
+
+    const first: WorkflowInterceptor = {
+      signalReceived(interception, next) {
+        order.push('first');
+        next(interception);
+      },
+    };
+
+    const second: WorkflowInterceptor = {
+      signalReceived(interception, next) {
+        order.push('second');
+        next(interception);
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([first, second]);
+
+    composed.signalReceived(makeSignalReceivedInterception(), () => {
+      order.push('execute');
+    });
+
+    expect(order).toEqual(['first', 'second', 'execute']);
+  });
+
+  it('interceptor can modify payload before passing through', () => {
+    const interceptor: WorkflowInterceptor = {
+      signalReceived(interception, next) {
+        next({ ...interception, payload: { approved: false, reason: 'overridden' } });
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let capturedPayload: unknown;
+
+    composed.signalReceived(makeSignalReceivedInterception(), (ctx) => {
+      capturedPayload = ctx.payload;
+    });
+
+    expect(capturedPayload).toEqual({ approved: false, reason: 'overridden' });
+  });
+
+  it('passes through when interceptor does not define signalReceived', () => {
+    const empty: WorkflowInterceptor = {};
+
+    const composed = composeWorkflowInterceptors([empty]);
+    let called = false;
+
+    composed.signalReceived(makeSignalReceivedInterception(), () => {
+      called = true;
+    });
+
+    expect(called).toBe(true);
+  });
+
+  it('propagates headers between interceptors', () => {
+    const interceptor: WorkflowInterceptor = {
+      signalReceived(interception, next) {
+        interception.headers.set('x-signal-trace', 'traced');
+        next(interception);
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let capturedHeaders: Map<string, string> | undefined;
+
+    composed.signalReceived(makeSignalReceivedInterception(), (ctx) => {
+      capturedHeaders = ctx.headers;
+    });
+
+    expect(capturedHeaders?.get('x-signal-trace')).toBe('traced');
   });
 });
