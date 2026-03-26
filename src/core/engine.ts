@@ -171,6 +171,7 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
       'workflow:completed',
       'workflow:failed',
       'workflow:cancelled',
+      'workflow:timed-out',
       'activity:started',
       'activity:completed',
       'signal:received',
@@ -181,9 +182,15 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
     }
 
     // Terminal events override the listener to also set done
-    this.addEventListener('workflow:completed', terminal);
-    this.addEventListener('workflow:failed', terminal);
-    this.addEventListener('workflow:cancelled', terminal);
+    const terminalTypes = [
+      'workflow:completed',
+      'workflow:failed',
+      'workflow:cancelled',
+      'workflow:timed-out',
+    ];
+    for (const type of terminalTypes) {
+      this.addEventListener(type, terminal);
+    }
 
     try {
       while (!state.done) {
@@ -201,9 +208,9 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
       for (const type of types) {
         this.removeEventListener(type, listener);
       }
-      this.removeEventListener('workflow:completed', terminal);
-      this.removeEventListener('workflow:failed', terminal);
-      this.removeEventListener('workflow:cancelled', terminal);
+      for (const type of terminalTypes) {
+        this.removeEventListener(type, terminal);
+      }
     }
   }
 
@@ -226,6 +233,7 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
           'workflow:completed',
           'workflow:failed',
           'workflow:cancelled',
+          'workflow:timed-out',
           'activity:started',
           'activity:completed',
         ];
@@ -237,13 +245,17 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
         const completeListener = () => observer.complete?.();
         this.addEventListener('workflow:completed', completeListener);
 
-        const failListener = (event: Event) => {
-          const failedEvent = event instanceof WorkflowFailedEvent ? event : undefined;
-          if (failedEvent) {
-            observer.error?.(failedEvent.error);
+        const errorHandler = (event: Event) => {
+          if (event instanceof WorkflowFailedEvent) {
+            observer.error?.(event.error);
+          } else if (event instanceof WorkflowTimedOutEvent) {
+            observer.error?.(
+              new WorkflowTimeoutError(event.workflowId, event.timeoutType, event.elapsed),
+            );
           }
         };
-        this.addEventListener('workflow:failed', failListener);
+        this.addEventListener('workflow:failed', errorHandler);
+        this.addEventListener('workflow:timed-out', errorHandler);
 
         return {
           unsubscribe: () => {
@@ -251,7 +263,8 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
               this.removeEventListener(type, listener);
             }
             this.removeEventListener('workflow:completed', completeListener);
-            this.removeEventListener('workflow:failed', failListener);
+            this.removeEventListener('workflow:failed', errorHandler);
+            this.removeEventListener('workflow:timed-out', errorHandler);
           },
         };
       },
@@ -893,6 +906,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         workflowType: state.type,
         input: state.input,
         checkpoint: serialized,
+        nestingDepth: this.#workflowNestingDepths.get(workflowId) ?? 0,
+        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
       });
     }
 
@@ -1717,6 +1732,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw restoredError;
     }
     if (state.status === 'cancelled') throw new Error('Workflow cancelled');
+    if (state.status === 'timed-out') {
+      const elapsed = state.executionDeadline ? state.executionDeadline - state.createdAt : 0;
+      throw new WorkflowTimeoutError(workflowId, 'execution', elapsed);
+    }
     throw new Error(`Workflow "${workflowId}" is still ${state.status}`);
   }
 
