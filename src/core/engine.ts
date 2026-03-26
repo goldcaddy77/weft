@@ -1291,28 +1291,55 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       case 'parallel': {
-        const results = await Promise.all(
-          operation.operations.map((subOperation) =>
-            this.#executeSubOperation(workflowId, subOperation),
-          ),
-        );
-        this.#feedOperationResult(workflowId, { status: 'completed', value: results });
+        try {
+          const results = await Promise.all(
+            operation.operations.map((subOperation) =>
+              this.#executeSubOperation(workflowId, subOperation),
+            ),
+          );
+          this.#feedOperationResult(workflowId, { status: 'completed', value: results });
+        } catch (error) {
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
         break;
       }
 
       case 'race': {
-        const result = await Promise.race(
-          operation.operations.map((subOperation) =>
-            this.#executeSubOperation(workflowId, subOperation),
-          ),
-        );
-        this.#feedOperationResult(workflowId, { status: 'completed', value: result });
+        try {
+          const result = await Promise.race(
+            operation.operations.map((subOperation) =>
+              this.#executeSubOperation(workflowId, subOperation),
+            ),
+          );
+          this.#feedOperationResult(workflowId, { status: 'completed', value: result });
+        } catch (error) {
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
         break;
       }
 
       case 'memo': {
-        const result = await callMemoFunction(operation.fn);
-        this.#feedOperationResult(workflowId, { status: 'completed', value: result });
+        try {
+          const result = await callMemoFunction(operation.fn);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: result });
+        } catch (error) {
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
         break;
       }
 
@@ -1452,15 +1479,27 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       case 'agent': {
-        const { executeAgentLoop } = await import('../ai/agent.ts');
-        const {
-          prompt,
-          budget: _budgetOptions,
-          contextStrategy: _contextStrategy,
-          ...rest
-        } = operation.options;
-        const agentResult = await executeAgentLoop(rest, prompt);
-        this.#feedOperationResult(workflowId, { status: 'completed', value: agentResult.content });
+        try {
+          const { executeAgentLoop } = await import('../ai/agent.ts');
+          const {
+            prompt,
+            budget: _budgetOptions,
+            contextStrategy: _contextStrategy,
+            ...rest
+          } = operation.options;
+          const agentResult = await executeAgentLoop(rest, prompt);
+          this.#feedOperationResult(workflowId, {
+            status: 'completed',
+            value: agentResult.content,
+          });
+        } catch (error) {
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
         break;
       }
 
