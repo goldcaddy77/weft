@@ -920,73 +920,43 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   // -------------------------------------------------------------------------
-  // Cancel
+  // Cancel / Timeout
   // -------------------------------------------------------------------------
 
   async cancel(workflowId: string): Promise<void> {
-    // Cancel via the strategy (aborts controller, cleans up generator/context)
-    this.#strategy.cancelWorkflow(workflowId);
-
-    // Update state
-    await this.#updateWorkflowState(workflowId, {
-      status: 'cancelled',
-    });
-
-    // Clean up attribute indexes and deadline timer
-    await this.#cleanupAttributeIndex(workflowId);
-    await this.#cleanupDeadline(workflowId);
-
-    // Clean up pending waiters so cancelled workflows cannot accept signals/updates
-    this.#cleanupWaiters(workflowId);
-
-    // Dispatch event
-    const event = new WorkflowCancelledEvent(workflowId);
-    this.dispatchEvent(event);
-    this.#forwardEventToHandle(workflowId, event);
-
-    // Reject the result promise
-    const resolver = this.#resultResolvers.get(workflowId);
-    if (resolver) {
-      resolver.reject(new Error('Workflow cancelled'));
-      this.#resultResolvers.delete(workflowId);
-    }
+    await this.#terminateWorkflow(workflowId, 'cancelled');
   }
 
-  // -------------------------------------------------------------------------
-  // Timeout
-  // -------------------------------------------------------------------------
-
   async timeout(workflowId: string): Promise<void> {
-    // Abort via the strategy (same mechanism as cancel)
+    await this.#terminateWorkflow(workflowId, 'timed-out');
+  }
+
+  async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#strategy.cancelWorkflow(workflowId);
 
-    // Load state to compute elapsed time
     const state = await this.#loadWorkflowState(workflowId);
-    const elapsed = state ? this.#options.getNow() - state.createdAt : 0;
+    if (!state) return;
+    const elapsed = this.#options.getNow() - state.createdAt;
 
-    // Update state to timed-out
-    await this.#updateWorkflowState(workflowId, {
-      status: 'timed-out',
-    });
-
-    // Clean up attribute indexes
+    await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
-
-    // Clean up pending waiters
+    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
     this.#cleanupWaiters(workflowId);
 
-    // Clean up deadline timer
-    await this.#cleanupDeadline(workflowId);
-
-    // Dispatch event
-    const event = new WorkflowTimedOutEvent(workflowId, 'execution', elapsed);
+    const event =
+      status === 'timed-out'
+        ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed)
+        : new WorkflowCancelledEvent(workflowId);
     this.dispatchEvent(event);
     this.#forwardEventToHandle(workflowId, event);
 
-    // Reject the result promise with WorkflowTimeoutError
     const resolver = this.#resultResolvers.get(workflowId);
     if (resolver) {
-      resolver.reject(new WorkflowTimeoutError(workflowId, 'execution', elapsed));
+      resolver.reject(
+        status === 'timed-out'
+          ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
+          : new Error('Workflow cancelled'),
+      );
       this.#resultResolvers.delete(workflowId);
     }
   }
@@ -1642,11 +1612,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * memory leaks and ensures that cancelled/completed/failed workflows cannot
    * accept new signals or updates.
    */
-  /** Cancel any pending deadline timer for a workflow. */
-  async #cleanupDeadline(workflowId: string): Promise<void> {
-    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
-  }
-
   #cleanupWaiters(workflowId: string): void {
     const prefix = `${workflowId}:`;
     for (const key of this.#signalWaiters.keys()) {
@@ -1676,7 +1641,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Clean up attribute indexes and deadline timer
     await this.#cleanupAttributeIndex(workflowId);
-    await this.#cleanupDeadline(workflowId);
+    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);
@@ -1706,7 +1671,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Clean up attribute indexes and deadline timer
     await this.#cleanupAttributeIndex(workflowId);
-    await this.#cleanupDeadline(workflowId);
+    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);

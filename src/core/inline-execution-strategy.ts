@@ -59,7 +59,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     workflowId: string;
     workflowType: string;
     input: unknown;
-    checkpoint: ArrayBuffer;
+    checkpoint: ArrayBuffer | Uint8Array;
     nestingDepth?: number;
     deadline?: number;
   }): void {
@@ -101,7 +101,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
 
   resumeWorkflow(parameters: {
     workflowId: string;
-    checkpoint: ArrayBuffer;
+    checkpoint: ArrayBuffer | Uint8Array;
     operationResult: OperationOutcome;
   }): void {
     const generator = this.#generators.get(parameters.workflowId);

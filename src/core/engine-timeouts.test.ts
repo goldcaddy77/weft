@@ -81,7 +81,7 @@ describe('Execution Timeouts', () => {
     expect(events.length).toBe(1);
     expect(events[0]!.workflowId).toBe(handle.id);
     expect(events[0]!.timeoutType).toBe('execution');
-    expect(events[0]!.elapsed).toBeGreaterThan(0);
+    expect(events[0]!.elapsed).toBeGreaterThanOrEqual(5000);
 
     engine[Symbol.dispose]();
   });
@@ -109,7 +109,7 @@ describe('Execution Timeouts', () => {
     const timeoutError = error as WorkflowTimeoutError;
     expect(timeoutError.workflowId).toBe(handle.id);
     expect(timeoutError.timeoutType).toBe('execution');
-    expect(timeoutError.elapsed).toBeGreaterThan(0);
+    expect(timeoutError.elapsed).toBeGreaterThanOrEqual(1000);
 
     engine[Symbol.dispose]();
   });
@@ -267,8 +267,14 @@ describe('Execution Timeouts', () => {
       timedOutCount++;
     });
 
-    engine.register('failing', async function* (_ctx: WorkflowContext) {
+    const failingActivity = async () => {
       throw new Error('boom');
+    };
+
+    engine.register('failing', async function* (ctx: WorkflowContext) {
+      // Yield through an activity so the deadline timer is committed to storage
+      yield* (ctx as Context).run(failingActivity);
+      return 'never';
     });
 
     const handle = await engine.start('failing', undefined, {
@@ -288,6 +294,43 @@ describe('Execution Timeouts', () => {
     await flush();
 
     // Should not have timed out — was already failed
+    expect(timedOutCount).toBe(0);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('does not overwrite completed status if deadline fires after completion', async () => {
+    const engine = new TestEngine();
+    let timedOutCount = 0;
+
+    engine.addEventListener(WorkflowTimedOutEvent.type, () => {
+      timedOutCount++;
+    });
+
+    const fastActivity = async () => 'fast';
+
+    engine.register('completes-first', async function* (ctx: WorkflowContext) {
+      const result = yield* (ctx as Context).run(fastActivity);
+      return result;
+    });
+
+    const handle = await engine.start('completes-first', undefined, {
+      executionTimeout: '5 seconds',
+    });
+
+    // Wait for completion
+    const result = await handle.result();
+    expect(result).toBe('fast');
+    await flush();
+
+    // Manually fire the scheduler at a time past the deadline to simulate a race
+    await engine.advanceTime('10 seconds');
+    await flush();
+
+    // State must remain completed, not overwritten to timed-out
+    const stateBytes = await engine.storage.get(KEYS.workflow(handle.id));
+    const state = decode(stateBytes!) as WorkflowState;
+    expect(state.status).toBe('completed');
     expect(timedOutCount).toBe(0);
 
     engine[Symbol.dispose]();
