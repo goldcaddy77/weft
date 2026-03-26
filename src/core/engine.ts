@@ -1704,11 +1704,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
-    // Clean up deadline key if execution timeout was set
-    if (state.executionDeadline !== undefined) {
-      await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
-    }
-
     this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
@@ -1726,8 +1721,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #failWorkflow(workflowId: string, error: Error): Promise<void> {
-    const state = await this.#loadWorkflowState(workflowId);
-
     const stateUpdate: Partial<WorkflowState> = {
       status: 'failed',
       error: error.message,
@@ -1740,11 +1733,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Clean up attribute indexes and deadline timer
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
-
-    // Clean up deadline key if execution timeout was set
-    if (state?.executionDeadline !== undefined) {
-      await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
-    }
 
     this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);

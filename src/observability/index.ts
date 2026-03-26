@@ -315,11 +315,18 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
       onSpanStart?.(span);
 
-      next(interception);
-
-      span.endTime = Date.now();
-      span.status = 'ok';
-      onSpanEnd?.(span);
+      try {
+        next(interception);
+        span.endTime = Date.now();
+        span.status = 'ok';
+        onSpanEnd?.(span);
+      } catch (error) {
+        span.endTime = Date.now();
+        span.status = 'error';
+        span.error = error instanceof Error ? error.message : String(error);
+        onSpanEnd?.(span);
+        throw error;
+      }
     },
   };
 
