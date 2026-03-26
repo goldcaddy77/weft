@@ -37,6 +37,8 @@ The design constraints, in priority order:
 
 5. **Agent-native.** The engine is designed around agent workloads: dynamic execution graphs, durable streaming, cost enforcement, human oversight, multi-agent coordination, context window management, and model routing are built into the core — not bolted on as wrappers around generic activities.
 
+6. **Library/server parity.** Every capability exposed by the server's HTTP and WebSocket API is also available through the library's in-process `Engine` API — and vice versa. A developer who starts with `bun add weft` and later moves to the standalone server (or the reverse) should not lose features or change workflow code. The server is a deployment wrapper around the engine, not a superset of it.
+
 ---
 
 ## Why Not Temporal: Ten Design Failures Weft Eliminates
@@ -651,17 +653,18 @@ The default uses MessagePack with `structuredClone` semantics. Custom serializer
 
 Weft eliminates every userland pattern that has a platform-native equivalent:
 
-| Userland Pattern           | Platform Replacement                                    | Where in Weft                                                   |
-| -------------------------- | ------------------------------------------------------- | --------------------------------------------------------------- |
-| Node `EventEmitter`        | `EventTarget` + `Event` subclasses                      | Engine, WorkflowHandle, Worker                                  |
-| RxJS / custom Observable   | `Symbol.observable` protocol + `AsyncIterator`          | Workflow observation, token streaming                           |
-| Manual try/finally cleanup | `Symbol.dispose` / `using` declarations                 | Storage connections, Worker pools, Subscriptions                |
-| Manual cache invalidation  | `WeakRef` + `FinalizationRegistry`                      | Checkpoint cache, Worker pool, Activity registry                |
-| Custom deferred patterns   | `Promise.withResolvers()`                               | Signal waiting, result awaiting                                 |
-| Custom ID generation       | `crypto.randomUUID()`                                   | Everywhere                                                      |
-| Custom cloning             | `structuredClone()`                                     | Checkpoint serialization                                        |
-| Custom cancellation        | `AbortController` / `AbortSignal`                       | Workflow cancellation, budget limits, timeouts                  |
-| Custom streaming layer     | `ReadableStream` / `WritableStream` / `TransformStream` | Token streaming, context window management, stream multiplexing |
+| Userland Pattern             | Platform Replacement                                    | Where in Weft                                                           |
+| ---------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Node `EventEmitter`          | `EventTarget` + `Event` subclasses                      | Engine, WorkflowHandle, Worker                                          |
+| RxJS / custom Observable     | `Symbol.observable` protocol + `AsyncIterator`          | Workflow observation, token streaming                                   |
+| Manual try/finally cleanup   | `Symbol.dispose` / `using` declarations                 | Storage connections, Worker pools, Subscriptions                        |
+| Manual cache invalidation    | `WeakRef` + `FinalizationRegistry`                      | Checkpoint cache, Worker pool, Activity registry                        |
+| Custom deferred patterns     | `Promise.withResolvers()`                               | Signal waiting, result awaiting                                         |
+| Custom ID generation         | `crypto.randomUUID()`                                   | Everywhere                                                              |
+| Custom cloning               | `structuredClone()`                                     | Checkpoint serialization                                                |
+| Custom cancellation          | `AbortController` / `AbortSignal`                       | Workflow cancellation, budget limits, timeouts                          |
+| Custom streaming layer       | `ReadableStream` / `WritableStream` / `TransformStream` | Token streaming, context window management, stream multiplexing         |
+| Separate library/server APIs | Single engine, deployment-agnostic handler              | `server/handler.ts` wraps `Engine`; `client/local.ts` calls it directly |
 
 ---
 
@@ -4828,9 +4831,9 @@ weft/
 │   ├── propagation.ts     # W3C trace context helpers (headerMapGetter/Setter)
 │   └── metrics.ts         # OpenTelemetry metrics definitions (histograms, counters)
 │
-├── client/                # Client SDK (same API, two modes)
-│   ├── index.ts           # HTTP/WS client (works with any fetch implementation)
-│   └── local.ts           # Direct engine client (library mode, no network)
+├── client/                # Client SDK (library/server parity — same API, two modes)
+│   ├── index.ts           # HTTP/WS client (server mode: network calls to Weft server)
+│   └── local.ts           # Direct engine client (library mode: in-process, no network)
 │
 ├── testing/               # First-class test utilities
 │   ├── test-engine.ts     # TestEngine: real engine with MemoryStorage + time control
@@ -4842,6 +4845,8 @@ weft/
 ```
 
 **Key structural note:** `server/handler.ts` contains the pure `(Request) → Response` logic with zero Bun dependencies. The Bun-specific `server/index.ts` wraps it in `Bun.serve()`. The Service Worker's `sw.ts` wraps the exact same handler in `self.addEventListener("fetch", ...)`. One handler, two deployment targets.
+
+**Library/server parity:** The library mode and server mode examples below use different deployment wrappers, but the workflow code, engine API, and client interface are identical. Moving between modes is a configuration change, not a code change.
 
 ---
 
@@ -5061,6 +5066,15 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [ ] **Prometheus metrics at `/v1/metrics`.** All counters, gauges, histograms defined.
 - [ ] **Built-in web dashboard at `/ui`.** Pre-built SPA embedded in binary.
 - [ ] **Auth: API keys, JWT, optional mTLS.** Configurable in `serve()` options.
+
+### Library/Server Parity
+
+- [ ] **Every HTTP endpoint has a corresponding `Engine` method.** `POST /v1/workflows` → `engine.start()`, `GET /v1/workflows/:id` → `engine.get()`, etc. No server-only features.
+- [ ] **Every `Engine` method is exposed via HTTP.** No library-only features that server-mode users cannot access.
+- [ ] **`client/local.ts` and `client/index.ts` export the same interface.** Switching from library to server mode is a constructor change, not an API change.
+- [ ] **Workflow code is identical across modes.** The same `async function*` runs in library mode, server mode, and browser/Service Worker mode without modification.
+- [ ] **Event observation works in both modes.** Library mode uses `EventTarget` directly; server mode bridges events over WebSocket. Same event types, same semantics.
+- [ ] **Agent features (streaming, budget, human review) work in both modes.** No agent capability is server-only or library-only.
 
 ### Remote Workers
 
