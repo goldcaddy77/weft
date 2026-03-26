@@ -64,29 +64,6 @@ describe('Search Attributes Integration', () => {
     engine[Symbol.dispose]();
   });
 
-  it('ctx.setAttribute() generates correct idx: entries after checkpoint', async () => {
-    const storage = new MemoryStorage();
-    const engine = new Engine({ storage });
-
-    const setAttributeActivity = async () => 'done';
-
-    engine.register('set-attrs', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
-      context.setAttribute('region', 'us-east');
-      const result = yield* context.run(setAttributeActivity);
-      return result;
-    });
-
-    const handle = await engine.start('set-attrs', null, { id: 'wf-2' });
-    await handle.result();
-
-    // During workflow execution, setAttribute should have triggered index writes
-    // But since the workflow completed, cleanup would have removed them.
-    // Let's verify with a workflow that stays running instead.
-
-    engine[Symbol.dispose]();
-  });
-
   it('ctx.setAttribute() writes idx: entries while workflow is running', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });

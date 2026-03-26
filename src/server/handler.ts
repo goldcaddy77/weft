@@ -249,11 +249,12 @@ function parseAttributeFilters(params: URLSearchParams): AttributeFilter[] {
 
       if (operator === 'gte') {
         existing.gte = inferAttributeValue(value);
+        filterMap.set(name, existing);
       } else if (operator === 'lte') {
         existing.lte = inferAttributeValue(value);
+        filterMap.set(name, existing);
       }
-
-      filterMap.set(name, existing);
+      // Unknown operators are silently skipped to avoid unconstrained range scans.
     }
   }
 

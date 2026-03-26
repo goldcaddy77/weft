@@ -61,6 +61,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     workflowType: string;
     input: unknown;
     checkpoint: ArrayBuffer;
+    nestingDepth?: number;
   }): void {
     void this.#acquireAndSend(parameters.workflowId, {
       type: 'run',
@@ -183,8 +184,18 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       error: `Worker crashed: ${errorEvent.message ?? 'unknown error'}`,
     });
 
-    // The crashed worker should not be returned to the pool.
-    // Just remove the mappings.
+    // Clean up listeners and terminate the crashed worker so it cannot
+    // continue emitting events for an already-failed workflow.
+    const worker = this.#workersByWorkflowId.get(workflowId);
+    if (worker) {
+      const listeners = this.#workerListeners.get(workflowId);
+      if (listeners) {
+        worker.removeEventListener('message', listeners.message as EventListener);
+        worker.removeEventListener('error', listeners.error as EventListener);
+      }
+      worker.terminate();
+    }
+
     this.#workersByWorkflowId.delete(workflowId);
     this.#workerListeners.delete(workflowId);
   }

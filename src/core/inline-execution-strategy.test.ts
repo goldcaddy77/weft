@@ -37,6 +37,14 @@ describe('InlineExecutionStrategy', () => {
     strategy.onMessage((message) => messages.push(message));
   }
 
+  /** Return the first message, asserting it exists. */
+  function firstMessage(): WorkerOutboundMessage {
+    expect(messages).toHaveLength(1);
+    const message = messages[0];
+    expect(message).toBeDefined();
+    return message!;
+  }
+
   // -------------------------------------------------------------------------
   // startWorkflow
   // -------------------------------------------------------------------------
@@ -62,10 +70,10 @@ describe('InlineExecutionStrategy', () => {
       // Allow microtask to complete
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('completed');
-      if (messages[0].type === 'completed') {
-        expect(messages[0].result).toBe('done');
+      const message = firstMessage();
+      expect(message.type).toBe('completed');
+      if (message.type === 'completed') {
+        expect(message.result).toBe('done');
       }
     });
 
@@ -95,8 +103,8 @@ describe('InlineExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('checkpoint');
+      const message = firstMessage();
+      expect(message.type).toBe('checkpoint');
     });
 
     it('emits failed for unknown workflow types', async () => {
@@ -111,10 +119,10 @@ describe('InlineExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('failed');
-      if (messages[0].type === 'failed') {
-        expect(messages[0].error).toContain('No workflow registered');
+      const message = firstMessage();
+      expect(message.type).toBe('failed');
+      if (message.type === 'failed') {
+        expect(message.error).toContain('No workflow registered');
       }
     });
 
@@ -137,10 +145,10 @@ describe('InlineExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('failed');
-      if (messages[0].type === 'failed') {
-        expect(messages[0].error).toBe('boom');
+      const message = firstMessage();
+      expect(message.type).toBe('failed');
+      if (message.type === 'failed') {
+        expect(message.error).toBe('boom');
       }
     });
   });
@@ -162,7 +170,7 @@ describe('InlineExecutionStrategy', () => {
             fn: () => {},
             args: [],
           };
-          return `got:${value}`;
+          return `got:${String(value)}`;
         },
         version: '1',
       });
@@ -181,10 +189,10 @@ describe('InlineExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('completed');
-      if (messages[0].type === 'completed') {
-        expect(messages[0].result).toBe('got:42');
+      const message = firstMessage();
+      expect(message.type).toBe('completed');
+      if (message.type === 'completed') {
+        expect(message.result).toBe('got:42');
       }
     });
   });
@@ -225,10 +233,10 @@ describe('InlineExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('failed');
-      if (messages[0].type === 'failed') {
-        expect(messages[0].error).toBe('activity failed');
+      const message = firstMessage();
+      expect(message.type).toBe('failed');
+      if (message.type === 'failed') {
+        expect(message.error).toBe('activity failed');
       }
     });
 
@@ -267,10 +275,10 @@ describe('InlineExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('completed');
-      if (messages[0].type === 'completed') {
-        expect(messages[0].result).toBe('recovered');
+      const message = firstMessage();
+      expect(message.type).toBe('completed');
+      if (message.type === 'completed') {
+        expect(message.result).toBe('recovered');
       }
     });
   });
@@ -334,7 +342,7 @@ describe('InlineExecutionStrategy', () => {
             fn: () => {},
             args: [],
           };
-          return `result:${value}`;
+          return `result:${String(value)}`;
         },
         version: '1',
       });
@@ -357,10 +365,10 @@ describe('InlineExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('completed');
-      if (messages[0].type === 'completed') {
-        expect(messages[0].result).toBe('result:hello');
+      const message = firstMessage();
+      expect(message.type).toBe('completed');
+      if (message.type === 'completed') {
+        expect(message.result).toBe('result:hello');
       }
     });
 
@@ -398,10 +406,10 @@ describe('InlineExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('failed');
-      if (messages[0].type === 'failed') {
-        expect(messages[0].error).toBe('oops');
+      const message = firstMessage();
+      expect(message.type).toBe('failed');
+      if (message.type === 'failed') {
+        expect(message.error).toBe('oops');
       }
     });
   });

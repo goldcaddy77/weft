@@ -96,6 +96,21 @@ describe('WorkerExecutionStrategy', () => {
     strategy.onMessage((message) => messages.push(message));
   }
 
+  /** Return the first mock worker, asserting it exists. */
+  function firstWorker(): MockWorker {
+    const worker = mockWorkers[0];
+    expect(worker).toBeDefined();
+    return worker!;
+  }
+
+  /** Return the first message, asserting it exists. */
+  function firstMessage(): WorkerOutboundMessage {
+    expect(messages).toHaveLength(1);
+    const message = messages[0];
+    expect(message).toBeDefined();
+    return message!;
+  }
+
   // -------------------------------------------------------------------------
   // startWorkflow
   // -------------------------------------------------------------------------
@@ -115,10 +130,11 @@ describe('WorkerExecutionStrategy', () => {
       // Allow the async acquire to complete
       await Bun.sleep(10);
 
+      const worker = firstWorker();
       expect(mockPool.acquire).toHaveBeenCalled();
-      expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(1);
+      expect(worker.postMessage).toHaveBeenCalledTimes(1);
 
-      const sentMessage = mockWorkers[0].postMessage.mock.calls[0][0];
+      const sentMessage = worker.postMessage.mock.calls[0]![0];
       expect(sentMessage.type).toBe('run');
       expect(sentMessage.workflowId).toBe('wf-1');
       expect(sentMessage.workflowType).toBe('test');
@@ -137,8 +153,9 @@ describe('WorkerExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
+      const worker = firstWorker();
       // Verify that message listeners were added to the worker
-      expect(mockWorkers[0]._listeners.get('message')?.size).toBeGreaterThan(0);
+      expect(worker._listeners.get('message')?.size).toBeGreaterThan(0);
     });
 
     it('emits a failed message if pool acquisition fails', async () => {
@@ -157,9 +174,9 @@ describe('WorkerExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('failed');
-      expect(messages[0].workflowId).toBe('wf-fail');
+      const message = firstMessage();
+      expect(message.type).toBe('failed');
+      expect(message.workflowId).toBe('wf-fail');
     });
   });
 
@@ -179,6 +196,8 @@ describe('WorkerExecutionStrategy', () => {
       });
 
       await Bun.sleep(10);
+
+      const worker = firstWorker();
 
       // Simulate worker sending a checkpoint message
       const checkpointMessage: WorkerOutboundMessage = {
@@ -203,13 +222,13 @@ describe('WorkerExecutionStrategy', () => {
       };
 
       dispatchToMockWorker(
-        mockWorkers[0],
+        worker,
         'message',
         new MessageEvent('message', { data: checkpointMessage }),
       );
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0]).toEqual(checkpointMessage);
+      const message = firstMessage();
+      expect(message).toEqual(checkpointMessage);
     });
 
     it('releases the worker on completed messages', async () => {
@@ -224,6 +243,8 @@ describe('WorkerExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
+      const worker = firstWorker();
+
       const completedMessage: WorkerOutboundMessage = {
         type: 'completed',
         workflowId: 'wf-1',
@@ -231,13 +252,13 @@ describe('WorkerExecutionStrategy', () => {
       };
 
       dispatchToMockWorker(
-        mockWorkers[0],
+        worker,
         'message',
         new MessageEvent('message', { data: completedMessage }),
       );
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('completed');
+      const message = firstMessage();
+      expect(message.type).toBe('completed');
       expect(mockPool.release).toHaveBeenCalledTimes(1);
     });
 
@@ -253,20 +274,18 @@ describe('WorkerExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
+      const worker = firstWorker();
+
       const failedMessage: WorkerOutboundMessage = {
         type: 'failed',
         workflowId: 'wf-1',
         error: 'something broke',
       };
 
-      dispatchToMockWorker(
-        mockWorkers[0],
-        'message',
-        new MessageEvent('message', { data: failedMessage }),
-      );
+      dispatchToMockWorker(worker, 'message', new MessageEvent('message', { data: failedMessage }));
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('failed');
+      const message = firstMessage();
+      expect(message.type).toBe('failed');
       expect(mockPool.release).toHaveBeenCalledTimes(1);
     });
   });
@@ -288,6 +307,7 @@ describe('WorkerExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
+      const worker = firstWorker();
       const checkpoint = new ArrayBuffer(16);
       strategy.resumeWorkflow({
         workflowId: 'wf-1',
@@ -296,9 +316,9 @@ describe('WorkerExecutionStrategy', () => {
       });
 
       // The first call is the 'run' message, the second is 'resume'
-      expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(2);
+      expect(worker.postMessage).toHaveBeenCalledTimes(2);
 
-      const resumeMessage = mockWorkers[0].postMessage.mock.calls[1][0];
+      const resumeMessage = worker.postMessage.mock.calls[1]![0];
       expect(resumeMessage.type).toBe('resume');
       expect(resumeMessage.workflowId).toBe('wf-1');
       expect(resumeMessage.operationResult).toEqual({ status: 'completed', value: 42 });
@@ -313,9 +333,9 @@ describe('WorkerExecutionStrategy', () => {
         operationResult: { status: 'completed', value: null },
       });
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('failed');
-      expect(messages[0].workflowId).toBe('wf-unknown');
+      const message = firstMessage();
+      expect(message.type).toBe('failed');
+      expect(message.workflowId).toBe('wf-unknown');
     });
   });
 
@@ -338,10 +358,11 @@ describe('WorkerExecutionStrategy', () => {
 
       strategy.cancelWorkflow('wf-1');
 
+      const worker = firstWorker();
       // First call is 'run', second is 'cancel'
-      expect(mockWorkers[0].postMessage).toHaveBeenCalledTimes(2);
+      expect(worker.postMessage).toHaveBeenCalledTimes(2);
 
-      const cancelMessage = mockWorkers[0].postMessage.mock.calls[1][0];
+      const cancelMessage = worker.postMessage.mock.calls[1]![0];
       expect(cancelMessage.type).toBe('cancel');
       expect(cancelMessage.workflowId).toBe('wf-1');
 
@@ -374,19 +395,21 @@ describe('WorkerExecutionStrategy', () => {
 
       await Bun.sleep(10);
 
+      const worker = firstWorker();
+
       // Simulate worker crash
       const errorEvent = new ErrorEvent('error', {
         message: 'Worker crashed unexpectedly',
       });
 
-      dispatchToMockWorker(mockWorkers[0], 'error', errorEvent);
+      dispatchToMockWorker(worker, 'error', errorEvent);
 
-      expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('failed');
-      expect(messages[0].workflowId).toBe('wf-1');
+      const message = firstMessage();
+      expect(message.type).toBe('failed');
+      expect(message.workflowId).toBe('wf-1');
 
-      if (messages[0].type === 'failed') {
-        expect(messages[0].error).toContain('Worker crashed');
+      if (message.type === 'failed') {
+        expect(message.error).toContain('Worker crashed');
       }
 
       // Worker should NOT be released back to pool (it crashed)

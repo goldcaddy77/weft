@@ -49,7 +49,6 @@ export function initializeWorkerMessageLoop(getWorkflowHandler: WorkflowHandlerF
       }
 
       case 'resume': {
-        // Map the OperationOutcome to the result value expected by handleResumeMessage
         const resultValue =
           message.operationResult.status === 'completed'
             ? message.operationResult.value
@@ -58,6 +57,7 @@ export function initializeWorkerMessageLoop(getWorkflowHandler: WorkflowHandlerF
         const response = await handleResumeMessage(runnerContext, {
           workflowId: message.workflowId,
           result: resultValue,
+          operationResult: message.operationResult,
         });
         postOutboundMessage(response);
         break;

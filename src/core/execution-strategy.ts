@@ -20,6 +20,7 @@ export interface ExecutionStrategy extends Disposable, AsyncDisposable {
     workflowType: string;
     input: unknown;
     checkpoint: ArrayBuffer | Uint8Array;
+    nestingDepth?: number;
   }): void;
 
   /**

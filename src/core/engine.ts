@@ -591,8 +591,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const items: WorkflowSummary[] = [];
 
     for await (const [key, value] of this.#storage.scan('wf:')) {
-      // Skip checkpoint and history keys
-      if (key.includes(':ckpt')) continue;
+      // Only process top-level workflow state keys (wf:{id}).
+      // Skip any sub-keys like wf:{id}:ckpt, wf:{id}:ckpt:0000000001, etc.
+      const idPart = key.slice(3); // strip "wf:"
+      if (idPart.includes(':')) continue;
 
       const state = decodeWorkflowState(value);
 
@@ -924,8 +926,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Clean up attribute indexes
     await this.#cleanupAttributeIndex(workflowId);
 
-    // Clean up context
-    this.#activeContexts.delete(workflowId);
+    // Clean up pending waiters so cancelled workflows cannot accept signals/updates
+    this.#cleanupWaiters(workflowId);
 
     // Dispatch event
     const event = new WorkflowCancelledEvent(workflowId);
@@ -979,63 +981,88 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // Private: checkpoint persistence
   // -------------------------------------------------------------------------
 
-  async #persistCheckpoint(workflowId: string): Promise<void> {
+  async #persistCheckpoint(workflowId: string, workerCheckpointBytes?: ArrayBuffer): Promise<void> {
     const context = this.#inlineStrategy?.getContext(workflowId);
-    const current = this.#checkpoints.get(workflowId);
-    if (!context || !current) return;
 
-    // Capture previous attributes before advancing (for index diffing)
-    const previousAttributes = { ...current.searchAttributes };
-    const hasPendingAttributeChanges = Object.keys(context.pendingAttributeChanges).length > 0;
+    if (context) {
+      // Inline strategy: advance checkpoint from context state
+      const current = this.#checkpoints.get(workflowId);
+      if (!current) return;
 
-    const accumulatedResults = Array.from(context.accumulatedResults.entries());
-    const advanced = advanceCheckpoint(current, current.locals, {
-      searchAttributes: context.pendingAttributeChanges,
-      accumulatedResults,
-      now: this.#options.getNow(),
-    });
+      const previousAttributes = { ...current.searchAttributes };
+      const hasPendingAttributeChanges = Object.keys(context.pendingAttributeChanges).length > 0;
 
-    const serialized = serializeCheckpoint(advanced);
-
-    if (serialized.byteLength >= this.#options.checkpointSizeWarningThreshold) {
-      this.dispatchEvent(
-        new CheckpointSizeWarningEvent(workflowId, serialized.byteLength, advanced.step),
-      );
-    }
-
-    const operations: import('../storage/interface.ts').BatchOperation[] = [
-      { type: 'put', key: KEYS.checkpoint(workflowId), value: serialized },
-    ];
-
-    // Optionally store checkpoint history
-    if (this.#options.checkpointHistory > 0) {
-      operations.push({
-        type: 'put',
-        key: KEYS.checkpointHistory(workflowId, advanced.step),
-        value: serialized,
+      const accumulatedResults = Array.from(context.accumulatedResults.entries());
+      const advanced = advanceCheckpoint(current, current.locals, {
+        searchAttributes: context.pendingAttributeChanges,
+        accumulatedResults,
+        now: this.#options.getNow(),
       });
-    }
 
-    // Persist attribute index entries when attributes changed
-    if (hasPendingAttributeChanges) {
-      operations.push({
-        type: 'put',
-        key: KEYS.attribute(workflowId),
-        value: encode(advanced.searchAttributes),
-      });
-      operations.push(
-        ...buildIndexOperations(workflowId, previousAttributes, advanced.searchAttributes),
-      );
-    }
+      const serialized = serializeCheckpoint(advanced);
 
-    await this.#storage.batch(operations);
-    this.#checkpoints.set(workflowId, advanced);
+      if (serialized.byteLength >= this.#options.checkpointSizeWarningThreshold) {
+        this.dispatchEvent(
+          new CheckpointSizeWarningEvent(workflowId, serialized.byteLength, advanced.step),
+        );
+      }
 
-    // Dispatch attribute change event
-    if (hasPendingAttributeChanges) {
-      this.dispatchEvent(
-        new AttributesChangedEvent(workflowId, { ...context.pendingAttributeChanges }),
-      );
+      const operations: import('../storage/interface.ts').BatchOperation[] = [
+        { type: 'put', key: KEYS.checkpoint(workflowId), value: serialized },
+      ];
+
+      if (this.#options.checkpointHistory > 0) {
+        operations.push({
+          type: 'put',
+          key: KEYS.checkpointHistory(workflowId, advanced.step),
+          value: serialized,
+        });
+      }
+
+      if (hasPendingAttributeChanges) {
+        operations.push({
+          type: 'put',
+          key: KEYS.attribute(workflowId),
+          value: encode(advanced.searchAttributes),
+        });
+        operations.push(
+          ...buildIndexOperations(workflowId, previousAttributes, advanced.searchAttributes),
+        );
+      }
+
+      await this.#storage.batch(operations);
+      this.#checkpoints.set(workflowId, advanced);
+
+      if (hasPendingAttributeChanges) {
+        this.dispatchEvent(
+          new AttributesChangedEvent(workflowId, { ...context.pendingAttributeChanges }),
+        );
+      }
+    } else if (workerCheckpointBytes && workerCheckpointBytes.byteLength > 0) {
+      // Worker strategy: persist the checkpoint bytes sent from the worker
+      const serialized = new Uint8Array(workerCheckpointBytes);
+      const checkpoint = deserializeCheckpoint(serialized);
+
+      if (serialized.byteLength >= this.#options.checkpointSizeWarningThreshold) {
+        this.dispatchEvent(
+          new CheckpointSizeWarningEvent(workflowId, serialized.byteLength, checkpoint.step),
+        );
+      }
+
+      const operations: import('../storage/interface.ts').BatchOperation[] = [
+        { type: 'put', key: KEYS.checkpoint(workflowId), value: serialized },
+      ];
+
+      if (this.#options.checkpointHistory > 0) {
+        operations.push({
+          type: 'put',
+          key: KEYS.checkpointHistory(workflowId, checkpoint.step),
+          value: serialized,
+        });
+      }
+
+      await this.#storage.batch(operations);
+      this.#checkpoints.set(workflowId, checkpoint);
     }
   }
 
@@ -1086,17 +1113,63 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       case 'checkpoint': {
         // Persist checkpoint at this yield boundary
-        await this.#persistCheckpoint(message.workflowId);
+        await this.#persistCheckpoint(message.workflowId, message.checkpoint);
 
         // Development mode: validate checkpoint round-trip
         this.#validateDevelopmentCheckpoint(message.workflowId);
 
-        // Process the yielded operation request
-        const operation = message.operationRequest as unknown as ContextOperationRequest;
+        // Translate the operation request: worker protocol uses `kind` while the
+        // engine uses `type`. Inline strategy already emits ContextOperationRequest.
+        const operation = this.#translateOperationRequest(message.operationRequest);
         await this.#processOperation(message.workflowId, operation);
         break;
       }
     }
+  }
+
+  /**
+   * Translate an operation request from a strategy into a {@link ContextOperationRequest}.
+   *
+   * The inline strategy already produces `ContextOperationRequest` (with `type`).
+   * The worker protocol produces `OperationRequest` (with `kind`). This method
+   * normalizes both shapes so {@link #processOperation} can switch on `type`.
+   */
+  #translateOperationRequest(operationRequest: unknown): ContextOperationRequest {
+    const operation = operationRequest as Record<string, unknown>;
+
+    if (operation == null || typeof operation !== 'object') {
+      throw new Error('Invalid operation request received from execution strategy');
+    }
+
+    // Already in ContextOperationRequest shape (inline strategy)
+    if ('type' in operation && typeof operation['type'] === 'string') {
+      return operation as unknown as ContextOperationRequest;
+    }
+
+    // Worker OperationRequest uses `kind` — translate to `type`
+    if ('kind' in operation && typeof operation['kind'] === 'string') {
+      const kind = operation['kind'];
+
+      // Map OperationRequest.kind values to ContextOperationRequest.type values
+      const kindToType: Record<string, string> = {
+        activity: 'activity',
+        timer: 'sleep',
+        'signal-wait': 'wait-signal',
+        'child-workflow': 'child-workflow',
+      };
+
+      const type = kindToType[kind] ?? kind;
+
+      return {
+        ...operation,
+        type,
+        operationId: (operation['id'] as string) ?? crypto.randomUUID(),
+        activityName: (operation['activityName'] as string) ?? '',
+        args: operation['input'] !== undefined ? [operation['input']] : [],
+      } as unknown as ContextOperationRequest;
+    }
+
+    throw new Error('Unsupported operation request shape received from execution strategy');
   }
 
   async #processOperation(workflowId: string, operation: ContextOperationRequest): Promise<void> {
@@ -1181,27 +1254,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             ),
           );
 
-          // Drive generator with the update payload
-          await this.#driveGenerator(workflowId, generator, matchingUpdate.payload);
-
           // Build response operations to acknowledge the update
-          const context = this.#activeContexts.get(workflowId);
-          const updateHandler = context?.updateHandlers.get(operation.updateName);
-          let updateResult: unknown;
-          let updateError: string | undefined;
-          try {
-            updateResult = updateHandler
-              ? updateHandler(matchingUpdate.payload)
-              : matchingUpdate.payload;
-          } catch (error) {
-            updateError = error instanceof Error ? error.message : String(error);
-          }
-
           const responseOperations = this.#updateCoordinator.buildResponseOperations(
             matchingUpdate.updateId,
             workflowId,
-            updateResult,
-            updateError,
+            matchingUpdate.payload,
+            undefined,
             matchingUpdate.idempotencyKey,
           );
           await this.#storage.batch(responseOperations);
@@ -1211,10 +1269,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
               matchingUpdate.updateId,
               workflowId,
               operation.updateName,
-              updateResult,
-              updateError,
+              matchingUpdate.payload,
             ),
           );
+
+          // Feed update payload back as the operation result
+          this.#feedOperationResult(workflowId, {
+            status: 'completed',
+            value: matchingUpdate.payload,
+          });
         } else {
           // Wait for update to arrive
           const { promise, resolve } = Promise.withResolvers<unknown>();
@@ -1222,7 +1285,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           this.#updateWaiters.set(waiterKey, resolve);
 
           const updatePayload = await promise;
-          await this.#driveGenerator(workflowId, generator, updatePayload);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: updatePayload });
         }
         break;
       }
@@ -1475,6 +1538,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return undefined;
   }
 
+  /**
+   * Remove any pending signal and update waiters for a workflow. This prevents
+   * memory leaks and ensures that cancelled/completed/failed workflows cannot
+   * accept new signals or updates.
+   */
+  #cleanupWaiters(workflowId: string): void {
+    const prefix = `${workflowId}:`;
+    for (const key of this.#signalWaiters.keys()) {
+      if (key.startsWith(prefix)) this.#signalWaiters.delete(key);
+    }
+    for (const key of this.#updateWaiters.keys()) {
+      if (key.startsWith(prefix)) this.#updateWaiters.delete(key);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Private: state management
   // -------------------------------------------------------------------------
@@ -1494,10 +1572,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Clean up attribute indexes
     await this.#cleanupAttributeIndex(workflowId);
 
-    this.#activeGenerators.delete(workflowId);
-    this.#workflowAbortControllers.delete(workflowId);
-    this.#activeContexts.delete(workflowId);
     this.#checkpoints.delete(workflowId);
+    this.#cleanupWaiters(workflowId);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
     this.dispatchEvent(event);
@@ -1525,10 +1601,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Clean up attribute indexes
     await this.#cleanupAttributeIndex(workflowId);
 
-    this.#activeGenerators.delete(workflowId);
-    this.#workflowAbortControllers.delete(workflowId);
-    this.#activeContexts.delete(workflowId);
     this.#checkpoints.delete(workflowId);
+    this.#cleanupWaiters(workflowId);
 
     const event = new WorkflowFailedEvent(workflowId, error);
     this.dispatchEvent(event);
@@ -1590,26 +1664,45 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // Private: activity execution through interceptors
   // -------------------------------------------------------------------------
 
+  /**
+   * Resolve the activity function for a given operation. Checks the activity
+   * registry first (required for worker mode where `operation.fn` is undefined),
+   * then falls back to `operation.fn` for inline mode.
+   */
+  #resolveActivityFunction(
+    operation: Extract<ContextOperationRequest, { type: 'activity' }>,
+  ): (...arguments_: unknown[]) => unknown {
+    const registered = this.#activityRegistrations.get(operation.activityName);
+    if (registered) return registered;
+    if (operation.fn) return operation.fn as (...arguments_: unknown[]) => unknown;
+    throw new Error(
+      `No activity registered with name "${operation.activityName}". ` +
+        'In worker mode, activities must be registered via engine.registerActivity().',
+    );
+  }
+
   async #executeActivity(
     _workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'activity' }>,
   ): Promise<unknown> {
+    const activityFunction = this.#resolveActivityFunction(operation);
+    const activityArguments = operation.args ?? [];
+
     // If there are activity interceptors, compose and run through them
     if (this.#activityInterceptors.length > 0) {
       const composed = composeActivityInterceptors(this.#activityInterceptors);
       return composed.execute(
         {
           activityName: operation.activityName,
-          input: operation.args.length === 1 ? operation.args[0] : operation.args,
+          input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
           attempt: 1,
           headers: new Map(),
         },
         async (interception) => {
-          // Reconstruct args from the interception input
           const args = Array.isArray(interception.input)
             ? interception.input
             : [interception.input];
-          return callActivityFunction(operation.fn, args);
+          return callActivityFunction(activityFunction, args);
         },
       );
     }
@@ -1619,34 +1712,26 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const composed = composeWorkflowInterceptors(this.#interceptors);
       const interception = {
         activityName: operation.activityName,
-        input: operation.args.length === 1 ? operation.args[0] : operation.args,
+        input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
         attempt: 1,
         headers: new Map<string, string>(),
       };
 
-      // The execute function is the terminal of the interceptor chain.
-      // It must be a generator per the composed interceptor interface.
-      // We yield a sentinel to satisfy require-yield, then return the result.
-      const activityFunction = operation.fn;
-      const activityArguments = operation.args;
-
       function* execute(): Generator<unknown, unknown, unknown> {
         const result = callActivityFunction(activityFunction, activityArguments);
-        // yield to satisfy the generator contract; the engine drives this synchronously
         yield result;
         return result;
       }
 
       const generator = composed.activity(interception, execute);
       let current: IteratorResult<unknown, unknown> = generator.next();
-      // If the interceptor chain yields (most do), the value is the activity result
       while (!current.done) {
         current = generator.next(current.value);
       }
       return current.value;
     }
 
-    return callActivityFunction(operation.fn, operation.args);
+    return callActivityFunction(activityFunction, activityArguments);
   }
 
   // -------------------------------------------------------------------------

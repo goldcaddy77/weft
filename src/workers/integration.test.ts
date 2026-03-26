@@ -130,7 +130,7 @@ describe('workflow runner integration', () => {
           },
           scheduledAt: Date.now(),
         };
-        return `result:${value}`;
+        return `result:${String(value)}`;
       };
 
       // First, run to advance to the yield point
@@ -186,7 +186,7 @@ describe('workflow runner integration', () => {
           },
           scheduledAt: Date.now(),
         };
-        return `${first}-${second}`;
+        return `${String(first)}-${String(second)}`;
       };
 
       await handleRunMessage(
@@ -293,9 +293,13 @@ describe('workflow runner integration', () => {
 
       // Test that the worker can process messages
       const response = await new Promise<{ echo: string }>((resolve) => {
-        worker.addEventListener('message', (event: MessageEvent) => {
-          resolve(event.data);
-        });
+        worker.addEventListener(
+          'message',
+          (event: MessageEvent) => {
+            resolve(event.data);
+          },
+          { once: true },
+        );
         worker.postMessage('integration-test');
       });
 
