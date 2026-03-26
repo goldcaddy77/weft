@@ -267,12 +267,25 @@ if (isDirectExecution) {
     const storage = new BunSQLiteStorage(parsed.database);
     const engine = new Engine({ storage });
 
+    // Load the dashboard HTML if available
+    let dashboard: unknown = null;
+    try {
+      const dashboardModule = await import('./dashboard/index.html' as string);
+      dashboard = dashboardModule.default;
+    } catch {
+      // Dashboard not built — serve without it
+    }
+
     const server = serve({
       engine,
       port: Number(parsed.port),
+      dashboard,
     });
 
     console.log(`Weft running on ${server.url}`);
+    if (dashboard !== null) {
+      console.log(`Dashboard: ${server.url}/ui`);
+    }
     console.log(`Database: ${parsed.database}`);
 
     process.on('SIGINT', () => {

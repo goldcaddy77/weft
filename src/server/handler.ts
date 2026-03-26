@@ -89,6 +89,24 @@ const ROUTE_PATTERNS: Array<{
   },
   {
     method: 'GET',
+    pattern: /^\/v1\/workflows\/([^/]+)\/events$/,
+    handler: 'getWorkflowEvents',
+    paramNames: ['id'],
+  },
+  {
+    method: 'GET',
+    pattern: /^\/v1\/reviews$/,
+    handler: 'listReviews',
+    paramNames: [],
+  },
+  {
+    method: 'POST',
+    pattern: /^\/v1\/reviews\/([^/]+)\/decision$/,
+    handler: 'submitReviewDecision',
+    paramNames: ['reviewId'],
+  },
+  {
+    method: 'GET',
     pattern: /^\/v1\/workflows\/([^/]+)$/,
     handler: 'getWorkflow',
     paramNames: ['id'],
@@ -457,6 +475,123 @@ async function handleSetAttributes(
 }
 
 // ---------------------------------------------------------------------------
+// Events route
+// ---------------------------------------------------------------------------
+
+async function handleGetWorkflowEvents(engine: Engine, workflowId: string): Promise<Response> {
+  // Check workflow exists
+  const bytes = await engine.storage.get(KEYS.workflow(workflowId));
+  if (bytes === null) {
+    return errorResponse(`Workflow "${workflowId}" not found`, 404);
+  }
+
+  const events: Array<{ type: string; timestamp: number; data: Record<string, unknown> }> = [];
+  const prefix = `ev:${workflowId}:`;
+
+  for await (const [_key, value] of engine.storage.scan(prefix)) {
+    const event = decode(value) as Record<string, unknown>;
+    events.push({
+      type: (event['type'] as string) ?? 'unknown',
+      timestamp: (event['timestamp'] as number) ?? 0,
+      data: (event['data'] as Record<string, unknown>) ?? {},
+    });
+  }
+
+  return jsonResponse({ events });
+}
+
+// ---------------------------------------------------------------------------
+// Reviews routes
+// ---------------------------------------------------------------------------
+
+async function handleListReviews(engine: Engine): Promise<Response> {
+  const reviews: Array<Record<string, unknown>> = [];
+
+  for await (const [_key, value] of engine.storage.scan('review:')) {
+    const review = decode(value) as Record<string, unknown>;
+    reviews.push(review);
+  }
+
+  return jsonResponse({ items: reviews });
+}
+
+async function handleSubmitReviewDecision(
+  request: Request,
+  engine: Engine,
+  reviewId: string,
+): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  const decision = body['decision'];
+  const reviewer = body['reviewer'];
+  const feedback = body['feedback'];
+
+  const workflowId = body['workflowId'];
+
+  if (typeof decision !== 'string' || typeof reviewer !== 'string') {
+    return errorResponse('Missing required fields: decision, reviewer', 400);
+  }
+
+  const validDecisions = ['approved', 'rejected', 'needs-changes'] as const;
+  if (!validDecisions.includes(decision as (typeof validDecisions)[number])) {
+    return errorResponse(
+      `Invalid decision "${decision}". Must be one of: ${validDecisions.join(', ')}`,
+      400,
+    );
+  }
+
+  if (feedback !== undefined && typeof feedback !== 'string') {
+    return errorResponse('Field "feedback" must be a string when provided', 400);
+  }
+
+  // Look up the review by direct key when workflowId is provided (O(1)),
+  // otherwise fall back to scanning all review entries (O(n)).
+  let reviewKey: string | null = null;
+
+  if (typeof workflowId === 'string') {
+    const directKey = KEYS.review(workflowId, reviewId);
+    const existing = await engine.storage.get(directKey);
+    if (existing !== null) {
+      reviewKey = directKey;
+    }
+  } else {
+    for await (const [key, value] of engine.storage.scan('review:')) {
+      const review = decode(value) as Record<string, unknown>;
+      if (review['reviewId'] === reviewId) {
+        reviewKey = key;
+        break;
+      }
+    }
+  }
+
+  if (reviewKey === null) {
+    return errorResponse(`Review "${reviewId}" not found`, 404);
+  }
+
+  // Store the decision and remove the pending review.
+  // The workflow is expected to poll the review-decision key to unblock itself.
+  const decisionData = {
+    reviewId,
+    decision,
+    reviewer,
+    feedback,
+    timestamp: Date.now(),
+  };
+
+  await engine.storage.batch([
+    { type: 'put', key: `review-decision:${reviewId}`, value: encode(decisionData) },
+    { type: 'delete', key: reviewKey },
+  ]);
+
+  return jsonResponse({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
 // Metrics route
 // ---------------------------------------------------------------------------
 
@@ -525,6 +660,15 @@ export async function handleRequest(request: Request, engine: Engine): Promise<R
 
     case 'getMetrics':
       return handleGetMetrics();
+
+    case 'getWorkflowEvents':
+      return handleGetWorkflowEvents(engine, route.params['id']!);
+
+    case 'listReviews':
+      return handleListReviews(engine);
+
+    case 'submitReviewDecision':
+      return handleSubmitReviewDecision(request, engine, route.params['reviewId']!);
 
     default:
       return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);

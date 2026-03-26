@@ -1132,4 +1132,265 @@ describe('handleRequest', () => {
       expect(response.status).toBe(200);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // GET /v1/workflows/:id/events — workflow event history
+  // -------------------------------------------------------------------------
+
+  describe('GET /v1/workflows/:id/events', () => {
+    it('returns 404 for non-existent workflow', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('GET', '/v1/workflows/nonexistent/events'),
+        engine,
+      );
+
+      expect(response.status).toBe(404);
+    });
+
+    it('returns ordered events for an existing workflow', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const startResponse = await handleRequest(
+        request('POST', '/v1/workflows', { type: 'echo', input: 'hello' }),
+        engine,
+      );
+      const { id } = (await json(startResponse)) as { id: string };
+      await flush();
+
+      // Insert events into storage so the endpoint has data to return.
+      // Event types use colon-delimited names to match the engine's convention.
+      const events = [
+        { type: 'workflow:started', timestamp: 1000, data: { workflowId: id } },
+        { type: 'activity:started', timestamp: 1500, data: { workflowId: id } },
+        { type: 'workflow:completed', timestamp: 2000, data: { workflowId: id } },
+      ];
+      for (let i = 0; i < events.length; i++) {
+        await storage.put(KEYS.event(id, i), encode(events[i]!));
+      }
+
+      const response = await handleRequest(request('GET', `/v1/workflows/${id}/events`), engine);
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as {
+        events: Array<{ type: string; timestamp: number; data: Record<string, unknown> }>;
+      };
+      expect(Array.isArray(body.events)).toBe(true);
+      expect(body.events.length).toBeGreaterThanOrEqual(2);
+
+      const types = body.events.map((e) => e.type);
+      expect(types).toContain('workflow:started');
+      expect(types).toContain('workflow:completed');
+
+      // Events should be in chronological order
+      for (let i = 1; i < body.events.length; i++) {
+        expect(body.events[i]!.timestamp).toBeGreaterThanOrEqual(body.events[i - 1]!.timestamp);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /v1/reviews — list pending reviews
+  // -------------------------------------------------------------------------
+
+  describe('GET /v1/reviews', () => {
+    it('returns empty items when no reviews exist', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(request('GET', '/v1/reviews'), engine);
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { items: unknown[] };
+      expect(body.items).toEqual([]);
+    });
+
+    it('returns reviews that have been stored', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      // Manually insert a review into storage
+      const review = {
+        reviewId: 'rev-1',
+        workflowId: 'wf-1',
+        artifact: { text: 'review me' },
+        reviewType: 'manual',
+        reviewers: ['alice'],
+        createdAt: Date.now(),
+      };
+      await storage.put(KEYS.review('wf-1', 'rev-1'), encode(review));
+
+      const response = await handleRequest(request('GET', '/v1/reviews'), engine);
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { items: Array<{ reviewId: string }> };
+      expect(body.items.length).toBe(1);
+      expect(body.items[0]!.reviewId).toBe('rev-1');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /v1/reviews/:reviewId/decision — submit review decision
+  // -------------------------------------------------------------------------
+
+  describe('POST /v1/reviews/:reviewId/decision', () => {
+    it('returns 400 for invalid JSON body', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        new Request('http://localhost/v1/reviews/rev-1/decision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: 'not valid json',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+    });
+
+    it('returns 400 for missing required fields', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-1/decision', { decision: 'approved' }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('decision');
+    });
+
+    it('returns 400 for invalid decision value', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-1/decision', {
+          decision: 'maybe',
+          reviewer: 'alice',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('Invalid decision');
+    });
+
+    it('returns 400 when feedback is not a string', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-1/decision', {
+          decision: 'approved',
+          reviewer: 'alice',
+          feedback: 42,
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toContain('feedback');
+    });
+
+    it('returns 404 for non-existent review', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/nonexistent/decision', {
+          decision: 'approved',
+          reviewer: 'alice',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(404);
+    });
+
+    it('resolves an existing review via direct key lookup when workflowId is provided', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      // Insert a review using the canonical key format
+      const review = {
+        reviewId: 'rev-2',
+        workflowId: 'wf-2',
+        artifact: { text: 'approve me' },
+        reviewType: 'manual',
+        reviewers: ['bob'],
+        createdAt: Date.now(),
+      };
+      await storage.put(KEYS.review('wf-2', 'rev-2'), encode(review));
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-2/decision', {
+          decision: 'approved',
+          reviewer: 'bob',
+          workflowId: 'wf-2',
+          feedback: 'Looks good',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { ok: boolean };
+      expect(body.ok).toBe(true);
+
+      // Verify the review was removed from storage
+      const reviewAfter = await storage.get(KEYS.review('wf-2', 'rev-2'));
+      expect(reviewAfter).toBeNull();
+
+      // Verify the decision was stored
+      const decisionBytes = await storage.get('review-decision:rev-2');
+      expect(decisionBytes).not.toBeNull();
+      const decisionData = decode(decisionBytes!) as { decision: string; reviewer: string };
+      expect(decisionData.decision).toBe('approved');
+      expect(decisionData.reviewer).toBe('bob');
+    });
+
+    it('falls back to scan when workflowId is not provided', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const review = {
+        reviewId: 'rev-3',
+        workflowId: 'wf-3',
+        artifact: { text: 'approve me' },
+        reviewType: 'manual',
+        reviewers: ['alice'],
+        createdAt: Date.now(),
+      };
+      await storage.put(KEYS.review('wf-3', 'rev-3'), encode(review));
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-3/decision', {
+          decision: 'rejected',
+          reviewer: 'alice',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { ok: boolean };
+      expect(body.ok).toBe(true);
+
+      const reviewAfter = await storage.get(KEYS.review('wf-3', 'rev-3'));
+      expect(reviewAfter).toBeNull();
+    });
+  });
 });
