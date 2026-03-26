@@ -166,11 +166,9 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     engine.addEventListener(
       eventType,
       (event) => {
-        const workflowId =
-          'workflowId' in event &&
-          typeof (event as Record<string, unknown>)['workflowId'] === 'string'
-            ? ((event as Record<string, unknown>)['workflowId'] as string)
-            : undefined;
+        const raw =
+          'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
+        const workflowId = typeof raw === 'string' ? raw : undefined;
         if (workflowId === undefined) return;
 
         const message = serializeEvent(event);
@@ -274,31 +272,30 @@ export function serve(options: ServeOptions): WeftServer {
   });
 
   // Wire up engine events → WebSocket broadcasting.
-  // Wrap in try/catch so that if anything throws after the server is running,
-  // both the server and listeners are cleaned up before the error propagates.
-  let cleanupBroadcasting: (() => void) | undefined;
+  // If wiring throws after the server is already listening, clean up both
+  // the server and listeners before propagating the error.
+  let cleanupBroadcasting: () => void;
   try {
     cleanupBroadcasting = wireEventBroadcasting(options.engine, server);
-
-    const resolvedPort = server.port ?? port;
-    const resolvedHostname = server.hostname ?? hostname;
-
-    return {
-      port: resolvedPort,
-      hostname: resolvedHostname,
-      url: `http://${resolvedHostname}:${resolvedPort}`,
-      stop() {
-        cleanupBroadcasting!();
-        void server.stop();
-      },
-      [Symbol.dispose]() {
-        cleanupBroadcasting!();
-        void server.stop();
-      },
-    };
   } catch (error) {
-    cleanupBroadcasting?.();
     void server.stop();
     throw error;
   }
+
+  const resolvedPort = server.port ?? port;
+  const resolvedHostname = server.hostname ?? hostname;
+
+  return {
+    port: resolvedPort,
+    hostname: resolvedHostname,
+    url: `http://${resolvedHostname}:${resolvedPort}`,
+    stop() {
+      cleanupBroadcasting();
+      void server.stop();
+    },
+    [Symbol.dispose]() {
+      cleanupBroadcasting();
+      void server.stop();
+    },
+  };
 }
