@@ -46,7 +46,13 @@
 
     "typescript/no-unused-vars": "off",
     "typescript/no-floating-promises": "error",
-    "typescript/await-thenable": "error"
+    "typescript/await-thenable": "error",
+    "typescript/no-unsafe-type-assertion": "off",
+
+    "unicorn/require-post-message-target-origin": "off",
+    "unicorn/prefer-add-event-listener": "off",
+
+    "import/no-unassigned-import": "off"
   },
   "ignorePatterns": [
     "dist/**",
@@ -79,7 +85,8 @@
         "typescript/no-unused-expressions": "off",
         "typescript/no-unused-vars": "off",
         "no-unused-vars": "off",
-        "unicorn/consistent-function-scoping": "off"
+        "unicorn/consistent-function-scoping": "off",
+        "promise/always-return": "off"
       }
     }
   ]
