@@ -1,6 +1,13 @@
 ---
 name: security-review
-description: Security review checklist for weft covering server routes, MCP authentication, workflow trust boundaries, storage, activity isolation, and credential handling.
+description: >-
+  Security review checklist for weft covering server routes, MCP
+  authentication, workflow trust boundaries, storage, activity isolation,
+  and credential handling. Use when the user says "security review",
+  "check for vulnerabilities", "audit security", "review trust
+  boundaries", or when changes touch server routes, authentication,
+  storage, or any code that handles untrusted input. Also use proactively
+  when implementing features that cross trust boundaries.
 ---
 
 # Security Review

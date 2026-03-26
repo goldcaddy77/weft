@@ -1,6 +1,12 @@
 ---
 name: tdd-workflow
-description: Test-driven development for weft using Bun's test runner, TestEngine, TimeControl, and ActivityMockRegistry. Trigger when writing new features or fixing bugs.
+description: >-
+  Test-driven development workflow for weft using Bun's test runner,
+  TestEngine, TimeControl, and ActivityMockRegistry. Use when writing
+  new features, fixing bugs, or implementing acceptance criteria. Trigger
+  on: "write tests for", "TDD", "test-driven", "add tests", "implement
+  with tests", "red green refactor", or any task that involves writing
+  both tests and implementation code.
 ---
 
 # TDD Workflow

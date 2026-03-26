@@ -1,6 +1,12 @@
 ---
 name: verification-loop
-description: Full verification cycle for weft changes — build, typecheck, lint, test, export review, and diff review. Trigger before declaring work done.
+description: >-
+  Run the full verification cycle before declaring work done: build,
+  typecheck, lint, test, export review, diff review. Use when the user
+  says "verify", "validate", "check everything passes", "run the full
+  suite", "make sure it's ready", or before committing, opening a PR,
+  or finishing a feature. Also use proactively after completing any
+  non-trivial implementation work.
 ---
 
 # Verification Loop

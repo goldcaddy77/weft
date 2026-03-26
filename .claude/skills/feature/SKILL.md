@@ -1,10 +1,21 @@
+---
+name: feature
+description: >-
+  Implement a new feature for the weft durable execution engine following
+  a structured workflow. Use when the user asks to "implement", "add",
+  "build", or "create" a feature, capability, or acceptance criterion.
+  Trigger on: "implement X", "add support for X", "build the X feature",
+  "work on X from the architecture doc".
+argument-hint: <description of the feature to implement>
+---
+
 Implement the following feature for the weft durable execution engine: $ARGUMENTS
 
 Follow this workflow:
 
 ## 0. Get Context
 
-**DO THIS FIRST**: Read and review @reference/architecture.md.
+**DO THIS FIRST**: Read and review `reference/architecture.md`.
 
 ## 1. Understand
 

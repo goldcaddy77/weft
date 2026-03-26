@@ -66,6 +66,38 @@ They use `chalk` for color, `change-case` for headings, and Bun’s `$` and `Bun
 
 There is no shared `src/types.ts` in this template. Add shared or domain-specific types near their modules as needed.
 
+## TypeScript Conventions
+
+### `any` Is Forbidden Outside Test Files
+
+Do not use `any` in production code. Use proper types, generics, `unknown` with type narrowing, or Zod schemas. Test files (`.test.ts`, `.spec.ts`) are exempt — Oxlint relaxes this rule there.
+
+### Type Assertions (`as`) Are Suspect
+
+Treat every `as` cast with suspicion. The pattern `as unknown as SomeType` is a red flag that almost always means a type design problem — do not use it unless you can explain exactly why there is no better alternative.
+
+**Prefer type guards over assertions:**
+
+```typescript
+// Preferred: Zod schema validation
+const parsed = MySchema.parse(untrustedInput);
+
+// Preferred: type guard function
+function isWorkflowState(value: unknown): value is WorkflowState {
+  return typeof value === 'object' && value !== null && 'status' in value;
+}
+
+// Preferred: narrowing with typeof / in / instanceof
+if (typeof value === 'string') {
+  /* value is string here */
+}
+
+// Acceptable when justified: simple assertion on trusted data
+const state = decode(bytes) as WorkflowState; // bytes came from our own storage
+```
+
+If an `as` cast is genuinely necessary (e.g., deserializing from storage where the type is known by construction), add a brief comment explaining why. If it cannot be justified, refactor the types instead.
+
 ## Development Patterns
 
 ### Adding New Features

@@ -1,3 +1,14 @@
+---
+name: ship
+description: >-
+  Autonomous development loop that reads the architecture doc, picks the
+  next body of work, implements it with TDD, opens a PR, monitors for
+  reviews and CI, merges, and repeats. Use when the user says "ship",
+  "start the development loop", "work through the architecture",
+  "implement the next feature from the roadmap", or "keep building".
+disable-model-invocation: true
+---
+
 Autonomous development loop: analyze the architecture, pick the next work, implement it, ship it, repeat.
 
 ## Phase 1: Analyze — What's Next?
