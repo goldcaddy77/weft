@@ -173,6 +173,45 @@ describe('IndexedDBStorage', () => {
     expect(result).toEqual(binaryData);
   });
 
+  it('scan with empty prefix returns all keys', async () => {
+    const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+    await storage.put('alpha:1', encode('a1'));
+    await storage.put('beta:2', encode('b2'));
+    await storage.put('gamma:3', encode('g3'));
+
+    const entries = await collect(storage.scan(''));
+    expect(entries).toHaveLength(3);
+    expect(entries.map(([key]) => key)).toEqual(['alpha:1', 'beta:2', 'gamma:3']);
+  });
+
+  it('scan with empty prefix on empty storage returns no entries', async () => {
+    const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+    const entries = await collect(storage.scan(''));
+    expect(entries).toHaveLength(0);
+  });
+
+  it('early break from scan does not leak cursor or transaction', async () => {
+    const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+    await storage.put('k:a', encode('a'));
+    await storage.put('k:b', encode('b'));
+    await storage.put('k:c', encode('c'));
+    await storage.put('k:d', encode('d'));
+
+    // Break after consuming the first entry
+    const collected: string[] = [];
+    for await (const [key] of storage.scan('k:')) {
+      collected.push(key);
+      if (collected.length === 1) break;
+    }
+
+    expect(collected).toEqual(['k:a']);
+
+    // Verify the storage is still usable after early termination — a leaked
+    // transaction/cursor would cause subsequent operations to hang or fail.
+    const allEntries = await collect(storage.scan('k:'));
+    expect(allEntries).toHaveLength(4);
+  });
+
   it('large key count (1000 entries): scan returns all in correct order', async () => {
     const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
     const operations = Array.from({ length: 1000 }, (_, index) => ({

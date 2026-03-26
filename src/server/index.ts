@@ -128,7 +128,12 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
 
       // Start after the highest existing sequence number.
       sequenceCounters.set(workflowId, highestSequence + 1);
-    })();
+    })().catch((error) => {
+      // Clear the cached promise so a subsequent event can retry initialization
+      // instead of perpetually reusing a rejected promise.
+      sequenceInitPromises.delete(workflowId);
+      throw error;
+    });
 
     sequenceInitPromises.set(workflowId, promise);
     return promise;

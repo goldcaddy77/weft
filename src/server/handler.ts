@@ -752,7 +752,11 @@ export async function handleRequest(request: Request, engine: Engine): Promise<R
         return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 500);
+    console.error('Unhandled error in handleRequest', {
+      method: request.method,
+      path: url.pathname,
+      error,
+    });
+    return errorResponse('Internal server error', 500);
   }
 }

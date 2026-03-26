@@ -6,7 +6,7 @@ Last reviewed: 2026-03-26
 
 - [x] **Race condition in server event sequence counter initialization** (`src/server/index.ts:107-137`). Fixed: removed redundant `has` check, `nextSequence` now throws if counter uninitialized.
 
-- [x] **Unhandled promise in server event persistence** (`src/server/index.ts:177-186`). Fixed: added `.catch()` handler, moved WebSocket publish after successful persistence.
+- [x] **Unhandled promise in server event persistence** (`src/server/index.ts:177-186`). Fixed: wrapped persistence in try/catch inside async IIFE, moved WebSocket publish after successful persistence.
 
 ## High
 
