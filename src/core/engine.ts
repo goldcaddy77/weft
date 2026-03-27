@@ -1607,20 +1607,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             });
           }
 
-          // Check organization budget policies before starting agent.
-          // If budgetNamespace is specified, enforce only that namespace.
-          // If not specified and exactly one policy exists, use it.
-          // If multiple policies exist without a namespace, skip enforcement
-          // to avoid silently charging all namespaces.
-          if (this.#budgetPolicyEnforcer) {
-            const targetNamespace =
-              budgetNamespace ??
+          // Resolve the organization budget namespace once for both check
+          // and record. If budgetNamespace is specified, use it. If exactly
+          // one policy exists, use its namespace. Otherwise skip enforcement.
+          const resolvedBudgetNamespace = this.#budgetPolicyEnforcer
+            ? (budgetNamespace ??
               (this.#budgetPolicyEnforcer.policies.size === 1
                 ? this.#budgetPolicyEnforcer.policies.keys().next().value
-                : undefined);
-            if (targetNamespace) {
-              await this.#budgetPolicyEnforcer.checkBudget(targetNamespace);
-            }
+                : undefined))
+            : undefined;
+
+          if (this.#budgetPolicyEnforcer && resolvedBudgetNamespace) {
+            await this.#budgetPolicyEnforcer.checkBudget(resolvedBudgetNamespace);
           }
 
           // Expose tokenUsage query accessor
@@ -1642,9 +1640,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             prompt,
           );
 
-          // Set cost search attribute
+          // Accumulate cost search attribute across multiple agent calls
           if (context && agentResult.totalCost > 0) {
-            context.setAttribute('weft:tokenCost', agentResult.totalCost);
+            const previousCost = context.getAttribute<number>('weft:tokenCost') ?? 0;
+            context.setAttribute('weft:tokenCost', previousCost + agentResult.totalCost);
           }
 
           // Record cost against the resolved organization budget namespace.
@@ -1654,15 +1653,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           // checkpoint, the agent operation replays and double-charges the org
           // counter. Idempotent recording requires an operation-scoped marker,
           // which is deferred to a future iteration.
-          if (this.#budgetPolicyEnforcer && agentResult.totalCost > 0) {
-            const targetNamespace =
-              budgetNamespace ??
-              (this.#budgetPolicyEnforcer.policies.size === 1
-                ? this.#budgetPolicyEnforcer.policies.keys().next().value
-                : undefined);
-            if (targetNamespace) {
-              await this.#budgetPolicyEnforcer.recordCost(targetNamespace, agentResult.totalCost);
-            }
+          if (this.#budgetPolicyEnforcer && resolvedBudgetNamespace && agentResult.totalCost > 0) {
+            await this.#budgetPolicyEnforcer.recordCost(
+              resolvedBudgetNamespace,
+              agentResult.totalCost,
+            );
           }
 
           this.#feedOperationResult(workflowId, {
