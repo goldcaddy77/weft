@@ -1618,6 +1618,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             : undefined;
 
           if (this.#budgetPolicyEnforcer && resolvedBudgetNamespace) {
+            if (!budgetOptions) {
+              // Org budget enforcement requires per-workflow budget options
+              // with model pricing to compute cost. Without it, cost stays 0
+              // and the org counter is never incremented. Dispatch a warning.
+              this.dispatchEvent(
+                new DevelopmentWarningEvent(
+                  workflowId,
+                  'Organization budget policy is active but ctx.agent() was called ' +
+                    'without budget options. Provide budget with model pricing to ' +
+                    'enable cost tracking and org budget enforcement.',
+                  [],
+                ),
+              );
+            }
             await this.#budgetPolicyEnforcer.checkBudget(resolvedBudgetNamespace);
           }
 
