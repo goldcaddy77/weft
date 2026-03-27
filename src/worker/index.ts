@@ -125,27 +125,7 @@ export class RemoteWorker implements Disposable {
   /** Gracefully disconnect: finish in-flight, then close. */
   async disconnect(): Promise<void> {
     this.#heartbeat.stop();
-
-    // Wait for in-flight tasks to complete, but not forever
-    const timeout = this.#options.disconnectTimeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS;
-    const deadline = Date.now() + timeout;
-
-    while (this.#inFlight > 0) {
-      if (Date.now() >= deadline) {
-        console.warn(
-          `[weft] RemoteWorker disconnect timed out after ${timeout}ms with ${this.#inFlight} tasks still in-flight`,
-        );
-        break;
-      }
-      await Bun.sleep(50);
-    }
-
-    this.#abortController.abort();
-
-    if (this.#ws !== null) {
-      this.#ws.close();
-      this.#ws = null;
-    }
+    await this.#drainAndClose();
   }
 
   /** Get the number of in-flight tasks. */
@@ -165,6 +145,7 @@ export class RemoteWorker implements Disposable {
 
   [Symbol.dispose](): void {
     this.#abortController.abort();
+    this.#abortController = new AbortController();
     this.#heartbeat.stop();
 
     if (this.#ws !== null) {
@@ -180,15 +161,18 @@ export class RemoteWorker implements Disposable {
   async #gracefulShutdown(): Promise<void> {
     this.#shuttingDown = true;
     this.#heartbeat.stop();
+    await this.#drainAndClose();
+  }
 
-    // Drain in-flight work, but not forever
+  /** Drain in-flight tasks (with timeout), abort listeners, and close the socket. */
+  async #drainAndClose(): Promise<void> {
     const timeout = this.#options.disconnectTimeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS;
     const deadline = Date.now() + timeout;
 
     while (this.#inFlight > 0) {
       if (Date.now() >= deadline) {
         console.warn(
-          `[weft] RemoteWorker graceful shutdown timed out after ${timeout}ms with ${this.#inFlight} tasks still in-flight`,
+          `[weft] RemoteWorker timed out after ${timeout}ms with ${this.#inFlight} tasks still in-flight`,
         );
         break;
       }
@@ -196,6 +180,8 @@ export class RemoteWorker implements Disposable {
     }
 
     this.#abortController.abort();
+    // Replace the controller so a future connect() can attach fresh listeners
+    this.#abortController = new AbortController();
 
     if (this.#ws !== null) {
       this.#ws.close();

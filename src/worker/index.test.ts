@@ -808,4 +808,50 @@ describe('RemoteWorker', () => {
     // Calling dispose again should not throw
     worker[Symbol.dispose]();
   });
+
+  it('can reconnect after disconnect (AbortController is replaced)', async () => {
+    server = createTestServer();
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    await worker.disconnect();
+    expect(worker.connected).toBe(false);
+
+    // Reconnect — this would hang forever if the AbortController was not replaced
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    await worker.disconnect();
+  });
+
+  it('can reconnect after dispose (AbortController is replaced)', async () => {
+    server = createTestServer();
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    worker[Symbol.dispose]();
+    expect(worker.connected).toBe(false);
+
+    // Reconnect — this would hang forever if the AbortController was not replaced
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    await worker.disconnect();
+  });
 });
