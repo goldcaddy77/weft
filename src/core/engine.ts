@@ -741,17 +741,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async signal(workflowId: string, name: string, payload?: unknown): Promise<void> {
-    const deliverSignal = async (signalPayload: unknown): Promise<void> => {
+    const deliverSignal = async (
+      targetWorkflowId: string,
+      signalName: string,
+      signalPayload: unknown,
+    ): Promise<void> => {
       const signalId = crypto.randomUUID();
-      const signalKey = KEYS.signal(workflowId, name, signalId);
+      const signalKey = KEYS.signal(targetWorkflowId, signalName, signalId);
       await this.#storage.put(signalKey, encode(signalPayload));
 
-      this.dispatchEvent(new SignalReceivedEvent(workflowId, name, signalPayload));
+      this.dispatchEvent(new SignalReceivedEvent(targetWorkflowId, signalName, signalPayload));
 
-      this.#broadcast({ type: 'signal:received', workflowId, signalName: name });
+      this.#broadcast({ type: 'signal:received', workflowId: targetWorkflowId, signalName });
 
       // Check if workflow is waiting for this signal
-      const waiterKey = `${workflowId}:${name}`;
+      const waiterKey = `${targetWorkflowId}:${signalName}`;
       const waiter = this.#signalWaiters.get(waiterKey);
       if (waiter) {
         this.#signalWaiters.delete(waiterKey);
@@ -778,7 +782,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
               throw new Error('signalReceived interceptor called next() more than once');
             }
             nextCalled = true;
-            deliveryPromise = deliverSignal(interception.payload);
+            deliveryPromise = deliverSignal(
+              interception.workflowId,
+              interception.signalName,
+              interception.payload,
+            );
           },
         );
       } catch (error) {
@@ -791,7 +799,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (!deliveryPromise) return;
       await deliveryPromise;
     } else {
-      await deliverSignal(payload);
+      await deliverSignal(workflowId, name, payload);
     }
   }
 
