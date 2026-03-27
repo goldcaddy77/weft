@@ -1621,11 +1621,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             await this.#budgetPolicyEnforcer.checkBudget(resolvedBudgetNamespace);
           }
 
-          // Expose tokenUsage query accessor
+          // Expose tokenUsage query accessor that accumulates across
+          // multiple ctx.agent() calls in the same workflow.
           const context = this.#inlineStrategy?.getContext(workflowId);
           if (context && budgetTracker) {
+            const previousAccessor = context.exposedAccessors.get('tokenUsage');
             context.expose({
-              tokenUsage: () => budgetTracker.budgetRemaining(),
+              tokenUsage: () => {
+                const current = budgetTracker.budgetRemaining();
+                if (!previousAccessor) return current;
+                const previous = previousAccessor() as {
+                  tokensUsed: number;
+                  costUsed: number;
+                };
+                return {
+                  ...current,
+                  tokensUsed: current.tokensUsed + previous.tokensUsed,
+                  costUsed: current.costUsed + previous.costUsed,
+                };
+              },
             });
           }
 
