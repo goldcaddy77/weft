@@ -1,36 +1,28 @@
 # Code Review Findings
 
-Last reviewed: 2026-03-26
-
-## Critical
-
-- [x] **Race condition in server event sequence counter initialization** (`src/server/index.ts:107-137`). Fixed: removed redundant `has` check, `nextSequence` now throws if counter uninitialized.
-
-- [x] **Unhandled promise in server event persistence** (`src/server/index.ts:177-186`). Fixed: wrapped persistence in try/catch inside async IIFE, moved WebSocket publish after successful persistence.
-
-## High
-
-- [x] **Event listener cleanup gap on server init failure** (`src/server/index.ts:162-200, 261`). Fixed: wrapped post-`Bun.serve()` setup in try/catch with cleanup on failure.
-
-- [x] **Timer callback error stops processing remaining timers** (`src/core/scheduler.ts:159-167`). Fixed: wrapped callback in try/catch, remaining timers always processed.
-
-- [x] **Missing error boundary in UpdateCoordinator lifecycle** (`src/server/handler.ts:434-463`). Fixed: moved `createRequest` inside try/catch block.
+Last reviewed: 2026-03-27
 
 ## Medium
 
-- [x] **IndexedDB cursor leak on early iteration termination** (`src/storage/indexeddb.ts:61-123`). Fixed: added try/finally with `transaction.abort()` on early termination.
+- [ ] **Unsafe type assertion in `serializeEvent`** (`src/server/index.ts:73`). `(event as unknown as Record<string, unknown>)[key]` still uses the `as unknown as` cast pattern. Since `Object.keys(event)` already confirms the key exists, use an `in` check and index directly, or use a helper that narrows the type safely. If an event class is modified and a property changes type, this code silently produces wrong values.
 
-- [x] **FinalizationRegistry cleanup not guaranteed before shutdown** (`src/core/engine.ts`). Already fixed: `[Symbol.dispose]()` clears all internal Maps.
+- [ ] **BroadcastChannel listener never removed on disposal** (`src/core/worker-execution-strategy.ts:39-48, 121-140`). The constructor adds a `message` event listener to the BroadcastChannel at line 42. Both `[Symbol.dispose]()` and `[Symbol.asyncDispose]()` close the channel but never call `removeEventListener`. The listener closure holds a reference to `this` and `#workersByWorkflowId`, potentially keeping the entire `WorkerExecutionStrategy` alive longer than intended.
 
-- [x] **Empty string prefix causes invalid scan upper bound** (`src/storage/bun-sql.ts:50-51`). Fixed: guarded `prefixEnd` calculation in all three storage implementations.
+- [ ] **Missing `AbortController.abort()` in `RemoteWorker.disconnect()`** (`src/worker/index.ts:123-136`). The `disconnect()` method stops the heartbeat and closes the WebSocket but never calls `this.#abortController.abort()`. Event listeners registered with `{ signal: this.#abortController.signal }` at lines 75, 93, 101, 112 remain attached to the closed WebSocket. The `[Symbol.dispose]()` method at line 153 does abort, but disconnect alone does not.
 
-- [x] **Unsafe type assertions in server event serialization** (`src/server/index.ts:166-168, 178, 189`). Fixed: replaced `as unknown as` casts with `in` + `typeof` narrowing.
+- [ ] **`RemoteWorker.disconnect()` can hang indefinitely** (`src/worker/index.ts:127-130`). The `while (this.#inFlight > 0)` loop polls with `Bun.sleep(50)` but has no timeout. If a task hangs, `disconnect()` never resolves, blocking graceful shutdown. Add a configurable timeout that logs a warning and proceeds after a reasonable wait.
+
+- [ ] **Service Worker scheduler swallows periodic sync registration failure** (`src/service-worker/scheduler.ts:137-140`). `void periodicSync.register(...)` discards the promise. If registration fails, the scheduler reports as running (`#running = true` at line 132) but no polling fallback is activated. Timers persist in storage but are never processed.
+
+- [ ] **Service Worker scheduler polling loop stops on tick error** (`src/service-worker/scheduler.ts:167-172`). `void this.tick().then(...)` has no `.catch()` handler. If `tick()` rejects, `#schedulePoll()` is never called again and the polling loop dies silently.
+
+- [ ] **Timer callback can race with scheduler disposal** (`src/core/scheduler.ts:104-118, 147-172`). `stop()` sets `#intervalHandle` to `null` at line 116, but an already-dispatched `tick()` call at line 108 continues executing. It may access storage or fire callbacks after the scheduler (or engine) is disposed. Add a `#stopped` flag checked at the start of `tick()`.
+
+- [ ] **Update response cleanup leaves orphaned idempotency mappings** (`src/core/updates.ts:179-201`). `cleanupExpiredResponses()` only deletes `upr:` keys. Corresponding `upk:{workflowId}:{key}` entries that point to the deleted responses remain in storage indefinitely. While not functionally harmful (the idempotency check would fall through), they accumulate and waste space.
 
 ## Low
 
-- [x] **No bounds checking on `limit` query parameter** (`src/server/handler.ts:289-292`). Fixed: validate, floor, and clamp to 1-1000. Also validated `offset`.
-
-- [x] **Route parameter non-null assertions** (`src/server/handler.ts:693-726`). Fixed: replaced `!` assertions with `param()` helper that throws, caught at handler level.
+- [ ] **Worker error handler and release have overlapping cleanup** (`src/core/worker-execution-strategy.ts:195-233`). `#handleWorkerError()` manually removes listeners and terminates the worker, while `#releaseWorker()` also removes listeners and returns the worker to the pool. These two paths have duplicated cleanup logic. If both execute for the same workflow (e.g., error arrives during normal completion), the second pass operates on stale state.
 
 ## Architecture Doc Discrepancies
 
@@ -58,6 +50,6 @@ These are significant architecture doc features with no implementation:
 - [ ] **MCP server integration** for agent tools. Full section (lines 5170-5180) is unimplemented.
 - [ ] **Context window management strategies** (sliding-window, summarize, RAG). Full section (lines 5184-5194) is unimplemented.
 - [ ] **Multi-agent coordination** (handoff, debate, supervise, SharedState). Full section (lines 5198-5207) is unimplemented.
-- [ ] **Interceptor system** (WorkflowInterceptor, ActivityInterceptor). Full section (lines 5325-5340) is unimplemented.
+- [ ] **Interceptor system** (WorkflowInterceptor, ActivityInterceptor). Types defined but runtime wiring incomplete — remote worker interceptors not supported.
 - [ ] **OpenTelemetry integration** via interceptors. Full section (lines 5344-5365) is unimplemented.
 - [ ] **Model routing and fallback chains** for agents. Full section (lines 5229-5237) is unimplemented.
