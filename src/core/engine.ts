@@ -807,12 +807,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async query(workflowId: string, name: string): Promise<unknown> {
-    const context = this.#inlineStrategy?.getContext(workflowId);
-    if (context) {
-      const accessor = context.exposedAccessors.get(name);
-      if (accessor) return accessor();
+    if (!this.#inlineStrategy) {
+      throw new Error(
+        'Workflow queries are not supported when using the worker execution strategy.',
+      );
     }
-    return undefined;
+    const context = this.#inlineStrategy.getContext(workflowId);
+    if (!context) {
+      return undefined;
+    }
+    const accessor = context.exposedAccessors.get(name);
+    if (!accessor) return undefined;
+    return accessor();
   }
 
   async setBudgetPolicy(
@@ -1555,6 +1561,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           const {
             prompt,
             budget: budgetOptions,
+            budgetNamespace,
             contextStrategy: _contextStrategy,
             ...rest
           } = operation.options;
@@ -1565,12 +1572,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             budgetTracker = new BudgetTracker(budgetOptions, {
               onWarning: (state) => {
                 const threshold = budgetOptions.warningThreshold ?? 0.8;
-                const usedPercent =
+                const costFraction =
                   budgetOptions.maxCost !== undefined && budgetOptions.maxCost > 0
                     ? state.costUsed / budgetOptions.maxCost
-                    : budgetOptions.maxTokens !== undefined && budgetOptions.maxTokens > 0
-                      ? state.tokensUsed / budgetOptions.maxTokens
-                      : 0;
+                    : 0;
+                const tokenFraction =
+                  budgetOptions.maxTokens !== undefined && budgetOptions.maxTokens > 0
+                    ? state.tokensUsed / budgetOptions.maxTokens
+                    : 0;
+                const usedPercent = Math.max(costFraction, tokenFraction);
                 const event = new AgentBudgetWarningEvent(
                   workflowId,
                   operation.operationId,
@@ -1597,10 +1607,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             });
           }
 
-          // Check organization budget policies before starting agent
+          // Check organization budget policies before starting agent.
+          // If budgetNamespace is specified, enforce only that namespace.
+          // If not specified and exactly one policy exists, use it.
+          // If multiple policies exist without a namespace, skip enforcement
+          // to avoid silently charging all namespaces.
           if (this.#budgetPolicyEnforcer) {
-            for (const [namespace] of this.#budgetPolicyEnforcer.policies) {
-              await this.#budgetPolicyEnforcer.checkBudget(namespace);
+            const targetNamespace =
+              budgetNamespace ??
+              (this.#budgetPolicyEnforcer.policies.size === 1
+                ? this.#budgetPolicyEnforcer.policies.keys().next().value
+                : undefined);
+            if (targetNamespace) {
+              await this.#budgetPolicyEnforcer.checkBudget(targetNamespace);
             }
           }
 
@@ -1613,7 +1632,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           }
 
           const agentResult = await executeAgentLoop(
-            { ...rest, budget: budgetTracker, eventTarget: this, workflowId },
+            {
+              ...rest,
+              budget: budgetTracker,
+              eventTarget: this,
+              workflowId,
+              agentId: operation.operationId,
+            },
             prompt,
           );
 
@@ -1622,10 +1647,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             context.setAttribute('weft:tokenCost', agentResult.totalCost);
           }
 
-          // Record cost against organization budget policies
+          // Record cost against the resolved organization budget namespace.
+          // Note: org budget counter update and checkpoint are not in the same
+          // batch() call because the checkpoint happens at the next generator
+          // yield. If the process crashes after this write but before the next
+          // checkpoint, the agent operation replays and double-charges the org
+          // counter. Idempotent recording requires an operation-scoped marker,
+          // which is deferred to a future iteration.
           if (this.#budgetPolicyEnforcer && agentResult.totalCost > 0) {
-            for (const [namespace] of this.#budgetPolicyEnforcer.policies) {
-              await this.#budgetPolicyEnforcer.recordCost(namespace, agentResult.totalCost);
+            const targetNamespace =
+              budgetNamespace ??
+              (this.#budgetPolicyEnforcer.policies.size === 1
+                ? this.#budgetPolicyEnforcer.policies.keys().next().value
+                : undefined);
+            if (targetNamespace) {
+              await this.#budgetPolicyEnforcer.recordCost(targetNamespace, agentResult.totalCost);
             }
           }
 

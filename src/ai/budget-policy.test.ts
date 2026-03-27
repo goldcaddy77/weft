@@ -31,17 +31,13 @@ describe('BudgetPolicyEnforcer', () => {
 
     await enforcer.recordCost('default', 10.5);
 
-    await expect(enforcer.checkBudget('default')).rejects.toThrow(OrganizationBudgetExceededError);
-
-    try {
-      await enforcer.checkBudget('default');
-    } catch (error: unknown) {
-      const budgetError = error as OrganizationBudgetExceededError;
-      expect(budgetError.period).toBe('daily');
-      expect(budgetError.namespace).toBe('default');
-      expect(budgetError.costUsed).toBe(10.5);
-      expect(budgetError.limit).toBe(10.0);
-    }
+    const error = await enforcer.checkBudget('default').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OrganizationBudgetExceededError);
+    const budgetError = error as OrganizationBudgetExceededError;
+    expect(budgetError.period).toBe('daily');
+    expect(budgetError.namespace).toBe('default');
+    expect(budgetError.costUsed).toBe(10.5);
+    expect(budgetError.limit).toBe(10.0);
   });
 
   it('rejects agent calls when monthly budget exceeded', async () => {
@@ -50,14 +46,10 @@ describe('BudgetPolicyEnforcer', () => {
 
     await enforcer.recordCost('default', 101.0);
 
-    await expect(enforcer.checkBudget('default')).rejects.toThrow(OrganizationBudgetExceededError);
-
-    try {
-      await enforcer.checkBudget('default');
-    } catch (error: unknown) {
-      const budgetError = error as OrganizationBudgetExceededError;
-      expect(budgetError.period).toBe('monthly');
-    }
+    const error = await enforcer.checkBudget('default').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OrganizationBudgetExceededError);
+    const budgetError = error as OrganizationBudgetExceededError;
+    expect(budgetError.period).toBe('monthly');
   });
 
   it('persists budget counters to storage', async () => {
@@ -148,12 +140,9 @@ describe('BudgetPolicyEnforcer', () => {
 
     await enforcer.recordCost('default', 6.0);
 
-    try {
-      await enforcer.checkBudget('default');
-      expect(true).toBe(false); // Should not reach
-    } catch (error: unknown) {
-      const budgetError = error as OrganizationBudgetExceededError;
-      expect(budgetError.period).toBe('daily');
-    }
+    const error = await enforcer.checkBudget('default').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OrganizationBudgetExceededError);
+    const budgetError = error as OrganizationBudgetExceededError;
+    expect(budgetError.period).toBe('daily');
   });
 });

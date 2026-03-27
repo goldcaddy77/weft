@@ -53,6 +53,8 @@ export interface AgentContextOptions {
   maxTurns?: number;
   systemPrompt?: string;
   budget?: BudgetOptions;
+  /** Namespace for organization-level budget enforcement. */
+  budgetNamespace?: string;
   modelRouter?: ModelRouter;
   contextStrategy?: ContextStrategy;
   hooks?: AgentHooks;

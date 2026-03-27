@@ -54,6 +54,15 @@ export class OrganizationBudgetExceededError extends Error {
 // BudgetPolicyEnforcer
 // ---------------------------------------------------------------------------
 
+/**
+ * Tracks org-level budget counters with read-modify-write via in-memory cache.
+ *
+ * **Single-writer assumption:** `batch()` is atomic for a single engine
+ * instance, but concurrent engine processes sharing the same storage can lose
+ * increments due to stale reads. Multi-writer safety requires an atomic
+ * increment operation on the Storage interface (e.g., SQL UPSERT), which is
+ * deferred to a future iteration.
+ */
 export class BudgetPolicyEnforcer {
   #policies: Map<string, BudgetPolicyOptions> = new Map();
   #counters: Map<string, BudgetPolicyCounter> = new Map();
@@ -108,20 +117,17 @@ export class BudgetPolicyEnforcer {
     counter.dailyCost += cost;
     counter.monthlyCost += cost;
 
-    // Persist atomically
-    const now = new Date(this.#getNow());
-    const dailyDate = now.toISOString().slice(0, 10);
-    const monthlyDate = now.toISOString().slice(0, 7);
-
+    // Persist atomically using the same dates as the loaded counter to avoid
+    // a race where getNow() returns a different date between load and persist.
     await this.#storage.batch([
       {
         type: 'put',
-        key: KEYS.budget(namespace, 'daily', dailyDate),
+        key: KEYS.budget(namespace, 'daily', counter.dailyDate),
         value: encode({ cost: counter.dailyCost }),
       },
       {
         type: 'put',
-        key: KEYS.budget(namespace, 'monthly', monthlyDate),
+        key: KEYS.budget(namespace, 'monthly', counter.monthlyDate),
         value: encode({ cost: counter.monthlyCost }),
       },
     ]);
