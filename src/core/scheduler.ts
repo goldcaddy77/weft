@@ -149,6 +149,29 @@ export class Scheduler implements Disposable {
   /** Force an immediate scan for expired timers (for tests). */
   async tick(now?: number): Promise<void> {
     if (this.#stopped) return;
+    await this.#processExpiredTimers(now, { respectStopped: true });
+  }
+
+  /** Process all expired timers then stop.
+   *  Works even after stop() has been called — the intent is to drain remaining
+   *  timers before final shutdown. Bypasses the #stopped guard so a
+   *  stop()-then-flush() sequence works without re-enabling suspended interval
+   *  ticks that might race with this drain.
+   */
+  async flush(now?: number): Promise<void> {
+    await this.#processExpiredTimers(now, { respectStopped: false });
+    this.stop();
+  }
+
+  /** Scan storage for expired timers, fire callbacks, and clean up keys.
+   *  When `respectStopped` is true, an in-flight scan terminates early if
+   *  stop() is called concurrently. flush() passes false so it can drain
+   *  timers even after stop().
+   */
+  async #processExpiredTimers(
+    now: number | undefined,
+    { respectStopped }: { respectStopped: boolean },
+  ): Promise<void> {
     const currentTime = now ?? this.#getNow();
     const upperBound = KEYS.deadline(currentTime, '\xff');
 
@@ -160,10 +183,11 @@ export class Scheduler implements Disposable {
     }
 
     // Fire callbacks and delete keys in chronological order (already sorted by scan).
-    // Re-check #stopped before each callback so an in-flight tick terminates early
-    // when stop() or dispose is called concurrently.
     for (const { key, entry } of expired) {
-      if (this.#stopped) return;
+      // Re-check #stopped before each callback so an interval-dispatched tick
+      // terminates early when stop() or dispose is called concurrently. flush()
+      // skips this check because its purpose is to drain remaining timers.
+      if (respectStopped && this.#stopped) return;
 
       try {
         await this.#onTimerFired(entry);
@@ -177,19 +201,6 @@ export class Scheduler implements Disposable {
         { type: 'delete', key: indexKey },
       ]);
     }
-  }
-
-  /** Process all expired timers then stop.
-   *  Works even after stop() has been called — the intent is to drain remaining
-   *  timers before final shutdown.
-   */
-  async flush(now?: number): Promise<void> {
-    // Temporarily allow tick() to run, even if stop() was called earlier.
-    // A caller may reasonably call stop() (to halt the polling loop) followed
-    // by flush() (to drain remaining timers).
-    this.#stopped = false;
-    await this.tick(now);
-    this.stop();
   }
 
   [Symbol.dispose](): void {
