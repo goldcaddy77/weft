@@ -152,6 +152,10 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
     return this.#engine.update(this.id, name, payload, options);
   }
 
+  async query(name: string): Promise<unknown> {
+    return this.#engine.query(this.id, name);
+  }
+
   async *[Symbol.asyncIterator](): AsyncIterableIterator<Event> {
     let resolver: (() => void) | undefined;
     const events: Event[] = [];
@@ -302,6 +306,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
   #workflowNestingDepths: Map<string, number>;
+  #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -370,6 +375,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#strategy = inlineStrategy;
       this.#inlineStrategy = inlineStrategy;
     }
+
+    this.#budgetPolicyEnforcer = null;
 
     // Wire up the strategy message handler
     this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
@@ -797,6 +804,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     return response.result;
+  }
+
+  async query(workflowId: string, name: string): Promise<unknown> {
+    const context = this.#inlineStrategy?.getContext(workflowId);
+    if (context) {
+      const accessor = context.exposedAccessors.get(name);
+      if (accessor) return accessor();
+    }
+    return undefined;
+  }
+
+  async setBudgetPolicy(
+    options: import('../ai/budget-policy.ts').BudgetPolicyOptions,
+  ): Promise<void> {
+    if (!this.#budgetPolicyEnforcer) {
+      const { BudgetPolicyEnforcer } = await import('../ai/budget-policy.ts');
+      this.#budgetPolicyEnforcer = new BudgetPolicyEnforcer(this.#storage, this.#options.getNow);
+    }
+    this.#budgetPolicyEnforcer.setPolicy(options);
   }
 
   // -------------------------------------------------------------------------
@@ -1523,13 +1549,86 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'agent': {
         try {
           const { executeAgentLoop } = await import('../ai/agent.ts');
+          const { BudgetTracker } = await import('../ai/budget.ts');
+          const { AgentBudgetWarningEvent, AgentBudgetExceededEvent } =
+            await import('../ai/events.ts');
           const {
             prompt,
-            budget: _budgetOptions,
+            budget: budgetOptions,
             contextStrategy: _contextStrategy,
             ...rest
           } = operation.options;
-          const agentResult = await executeAgentLoop(rest, prompt);
+
+          // Construct BudgetTracker from options, wiring events to engine
+          let budgetTracker: InstanceType<typeof BudgetTracker> | undefined;
+          if (budgetOptions) {
+            budgetTracker = new BudgetTracker(budgetOptions, {
+              onWarning: (state) => {
+                const threshold = budgetOptions.warningThreshold ?? 0.8;
+                const usedPercent =
+                  budgetOptions.maxCost !== undefined && budgetOptions.maxCost > 0
+                    ? state.costUsed / budgetOptions.maxCost
+                    : budgetOptions.maxTokens !== undefined && budgetOptions.maxTokens > 0
+                      ? state.tokensUsed / budgetOptions.maxTokens
+                      : 0;
+                const event = new AgentBudgetWarningEvent(
+                  workflowId,
+                  operation.operationId,
+                  usedPercent,
+                  state.tokensRemaining,
+                  state.costRemaining,
+                  threshold,
+                );
+                this.dispatchEvent(event);
+                this.#forwardEventToHandle(workflowId, event);
+              },
+              onExceeded: (state) => {
+                const event = new AgentBudgetExceededEvent(
+                  workflowId,
+                  operation.operationId,
+                  state.tokensUsed,
+                  state.costUsed,
+                  budgetOptions.maxTokens ?? 0,
+                  budgetOptions.maxCost ?? 0,
+                );
+                this.dispatchEvent(event);
+                this.#forwardEventToHandle(workflowId, event);
+              },
+            });
+          }
+
+          // Check organization budget policies before starting agent
+          if (this.#budgetPolicyEnforcer) {
+            for (const [namespace] of this.#budgetPolicyEnforcer.policies) {
+              await this.#budgetPolicyEnforcer.checkBudget(namespace);
+            }
+          }
+
+          // Expose tokenUsage query accessor
+          const context = this.#inlineStrategy?.getContext(workflowId);
+          if (context && budgetTracker) {
+            context.expose({
+              tokenUsage: () => budgetTracker.budgetRemaining(),
+            });
+          }
+
+          const agentResult = await executeAgentLoop(
+            { ...rest, budget: budgetTracker, eventTarget: this, workflowId },
+            prompt,
+          );
+
+          // Set cost search attribute
+          if (context && agentResult.totalCost > 0) {
+            context.setAttribute('weft:tokenCost', agentResult.totalCost);
+          }
+
+          // Record cost against organization budget policies
+          if (this.#budgetPolicyEnforcer && agentResult.totalCost > 0) {
+            for (const [namespace] of this.#budgetPolicyEnforcer.policies) {
+              await this.#budgetPolicyEnforcer.recordCost(namespace, agentResult.totalCost);
+            }
+          }
+
           this.#feedOperationResult(workflowId, {
             status: 'completed',
             value: agentResult.content,

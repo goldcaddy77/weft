@@ -658,6 +658,12 @@ export class Context implements WorkflowContext {
     return this.#budgetTracker?.budgetRemaining();
   }
 
+  budgetProjection():
+    | { estimatedTurnsRemaining: number; estimatedCostAtCompletion: number }
+    | undefined {
+    return this.#budgetTracker?.budgetProjection();
+  }
+
   // -------------------------------------------------------------------------
   // Synchronous operations (non-yielding)
   // -------------------------------------------------------------------------

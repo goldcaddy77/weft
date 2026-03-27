@@ -254,6 +254,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     });
 
     const turnStart = Date.now();
+    const costBefore = budget?.budgetRemaining().costUsed ?? 0;
 
     // Call LLM provider
     let response: ChatResponse;
@@ -293,6 +294,9 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       budget.recordUsage(currentModel, response.usage.inputTokens, response.usage.outputTokens);
     }
 
+    const turnCost = (budget?.budgetRemaining().costUsed ?? 0) - costBefore;
+    totalCost += turnCost;
+
     turnCount++;
     lastContent = response.content;
 
@@ -319,7 +323,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
             currentModel,
             response.usage.inputTokens,
             response.usage.outputTokens,
-            0,
+            turnCost,
             totalCost,
             turnDuration,
             0,
@@ -334,7 +338,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
         model: currentModel,
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
-        cost: 0,
+        cost: turnCost,
         duration: turnDuration,
         toolCallCount: 0,
       });
@@ -469,7 +473,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
           currentModel,
           response.usage.inputTokens,
           response.usage.outputTokens,
-          0,
+          turnCost,
           totalCost,
           turnDuration,
           response.toolCalls.length,
@@ -485,7 +489,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       model: currentModel,
       inputTokens: response.usage.inputTokens,
       outputTokens: response.usage.outputTokens,
-      cost: 0,
+      cost: turnCost,
       duration: turnDuration,
       toolCallCount: response.toolCalls.length,
     });
