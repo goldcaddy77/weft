@@ -179,9 +179,14 @@ export class RemoteWorker implements Disposable {
       await Bun.sleep(50);
     }
 
-    this.#abortController.abort();
-    // Replace the controller so a future connect() can attach fresh listeners
+    // Swap to a fresh controller for future connections, but avoid aborting
+    // the controller currently in use by an in-flight connect() call.
+    const oldAbortController = this.#abortController;
     this.#abortController = new AbortController();
+
+    if (this.#ws !== null && this.#ws.readyState !== WebSocket.CONNECTING) {
+      oldAbortController.abort();
+    }
 
     if (this.#ws !== null) {
       this.#ws.close();

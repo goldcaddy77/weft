@@ -159,8 +159,12 @@ export class Scheduler implements Disposable {
       expired.push({ key, entry });
     }
 
-    // Fire callbacks and delete keys in chronological order (already sorted by scan)
+    // Fire callbacks and delete keys in chronological order (already sorted by scan).
+    // Re-check #stopped before each callback so an in-flight tick terminates early
+    // when stop() or dispose is called concurrently.
     for (const { key, entry } of expired) {
+      if (this.#stopped) return;
+
       try {
         await this.#onTimerFired(entry);
       } catch (error) {
@@ -175,8 +179,15 @@ export class Scheduler implements Disposable {
     }
   }
 
-  /** Process all expired timers then stop. */
+  /** Process all expired timers then stop.
+   *  Works even after stop() has been called — the intent is to drain remaining
+   *  timers before final shutdown.
+   */
   async flush(now?: number): Promise<void> {
+    // Temporarily allow tick() to run, even if stop() was called earlier.
+    // A caller may reasonably call stop() (to halt the polling loop) followed
+    // by flush() (to drain remaining timers).
+    this.#stopped = false;
     await this.tick(now);
     this.stop();
   }
