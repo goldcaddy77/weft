@@ -62,6 +62,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     checkpoint: ArrayBuffer | Uint8Array;
     nestingDepth?: number;
     deadline?: number;
+    headers?: [string, string][];
   }): void {
     const registration = this.#dependencies.getRegistration(parameters.workflowType);
     if (!registration) {

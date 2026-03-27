@@ -12,7 +12,9 @@ import type {
   ActivityExecutionInterception,
   ActivityInterception,
   ActivityInterceptor,
+  AgentInterception,
   SignalInterception,
+  SignalReceivedInterception,
   SleepInterception,
   WorkflowInterceptor,
   WorkflowStartInterception,
@@ -239,6 +241,89 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         span.status = 'ok';
         onSpanEnd?.(span);
         return result;
+      } catch (error) {
+        span.endTime = Date.now();
+        span.status = 'error';
+        span.error = error instanceof Error ? error.message : String(error);
+        onSpanEnd?.(span);
+        throw error;
+      }
+    },
+
+    *agent(
+      interception: AgentInterception,
+      next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
+    ): Generator<unknown, unknown, unknown> {
+      const childSpanId = generateSpanId();
+      const traceId = currentTraceId || generateTraceId();
+
+      injectTraceParent(interception.headers, {
+        version: '00',
+        traceId,
+        spanId: childSpanId,
+        traceFlags: 1,
+      });
+
+      const span: SpanInfo = {
+        name: 'agent',
+        traceId,
+        spanId: childSpanId,
+        parentSpanId: rootSpanId,
+        attributes: {
+          'agent.model': interception.model,
+        },
+        startTime: Date.now(),
+      };
+
+      if (recordPayloads && interception.prompt) {
+        span.attributes['agent.prompt'] = serializePayload(interception.prompt, maxPayloadSize);
+      }
+
+      onSpanStart?.(span);
+
+      try {
+        const result = yield* next(interception);
+        span.endTime = Date.now();
+        span.status = 'ok';
+        onSpanEnd?.(span);
+        return result;
+      } catch (error) {
+        span.endTime = Date.now();
+        span.status = 'error';
+        span.error = error instanceof Error ? error.message : String(error);
+        onSpanEnd?.(span);
+        throw error;
+      }
+    },
+
+    signalReceived(
+      interception: SignalReceivedInterception,
+      next: (interception: SignalReceivedInterception) => void,
+    ): void {
+      // signalReceived is invoked from engine.signal(), outside any workflow
+      // execution context. Generate a standalone trace rather than using the
+      // shared currentTraceId/rootSpanId which belong to the last-started workflow.
+      const spanId = generateSpanId();
+      const traceId = generateTraceId();
+
+      const span: SpanInfo = {
+        name: `signal:received:${interception.signalName}`,
+        traceId,
+        spanId,
+        attributes: {
+          'signal.name': interception.signalName,
+          'signal.workflow_id': interception.workflowId,
+        },
+        startTime: Date.now(),
+      };
+
+      onSpanStart?.(span);
+
+      try {
+        next(interception);
+        span.endTime = Date.now();
+        span.status = 'ok';
+        onSpanEnd?.(span);
       } catch (error) {
         span.endTime = Date.now();
         span.status = 'error';

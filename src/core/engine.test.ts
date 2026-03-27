@@ -15,8 +15,10 @@ import {
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
   WorkflowStartedEvent,
+  WorkflowTimedOutEvent,
 } from './events.ts';
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
+import { WorkflowTimeoutError } from './timeouts.ts';
 import type { WorkflowContext, WorkflowState } from './types.ts';
 import { activity } from './types.ts';
 
@@ -632,18 +634,205 @@ describe('Engine', () => {
     const handle = await engine.start('deadline-test', null, {
       executionTimeout: 5000,
     });
-    const resultPromise = handle.result().catch(() => {});
+    const resultPromise = handle.result().catch((error) => error);
     await flush();
 
     // Advance time past the deadline
     now = 7000;
     await engine.scheduler.tick(now);
     await flush();
-    await resultPromise;
+    const error = await resultPromise;
 
     const stateBytes = await storage.get(KEYS.workflow(handle.id));
     const state = decode(stateBytes!) as WorkflowState;
     expect(state.status).toBe('timed-out');
+    expect(error).toBeInstanceOf(WorkflowTimeoutError);
+    expect((error as WorkflowTimeoutError).timeoutType).toBe('execution');
+    expect((error as WorkflowTimeoutError).workflowId).toBe(handle.id);
+    expect((error as WorkflowTimeoutError).elapsed).toBe(6000);
+    engine[Symbol.dispose]();
+  });
+
+  it('execution deadline dispatches WorkflowTimedOutEvent', async () => {
+    let now = 1000;
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
+
+    engine.register('timeout-event-test', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'unreachable';
+    });
+
+    const handle = await engine.start('timeout-event-test', null, {
+      executionTimeout: 5000,
+    });
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+
+    const events: WorkflowTimedOutEvent[] = [];
+    engine.addEventListener('workflow:timed-out', (event) => {
+      events.push(event as WorkflowTimedOutEvent);
+    });
+
+    now = 7000;
+    await engine.scheduler.tick(now);
+    await flush();
+    await resultPromise;
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.workflowId).toBe(handle.id);
+    expect(events[0]!.timeoutType).toBe('execution');
+    expect(events[0]!.elapsed).toBe(6000);
+    engine[Symbol.dispose]();
+  });
+
+  it('deadline key is cleaned up on normal completion', async () => {
+    let now = 1000;
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
+
+    engine.register('deadline-cleanup-complete', async function* () {
+      return 'done';
+    });
+
+    const handle = await engine.start('deadline-cleanup-complete', null, {
+      executionTimeout: 60_000,
+    });
+    await handle.result();
+    await flush();
+
+    // Scan for deadline keys — should be empty
+    const deadlineKeys: string[] = [];
+    for await (const [key] of storage.scan('wf-deadline:')) {
+      deadlineKeys.push(key);
+    }
+    expect(deadlineKeys).toHaveLength(0);
+
+    // Also check scheduler timer index keys
+    const timerKeys: string[] = [];
+    for await (const [key] of storage.scan('timer-idx:deadline:')) {
+      timerKeys.push(key);
+    }
+    expect(timerKeys).toHaveLength(0);
+    engine[Symbol.dispose]();
+  });
+
+  it('deadline key is cleaned up on failure', async () => {
+    let now = 1000;
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
+
+    engine.register('deadline-cleanup-fail', async function* () {
+      throw new Error('boom');
+    });
+
+    const handle = await engine.start('deadline-cleanup-fail', null, {
+      executionTimeout: 60_000,
+    });
+    await handle.result().catch(() => {});
+    await flush();
+
+    const deadlineKeys: string[] = [];
+    for await (const [key] of storage.scan('wf-deadline:')) {
+      deadlineKeys.push(key);
+    }
+    expect(deadlineKeys).toHaveLength(0);
+
+    const timerKeys: string[] = [];
+    for await (const [key] of storage.scan('timer-idx:deadline:')) {
+      timerKeys.push(key);
+    }
+    expect(timerKeys).toHaveLength(0);
+    engine[Symbol.dispose]();
+  });
+
+  it('deadline key is cleaned up after timeout', async () => {
+    let now = 1000;
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage: storage as WeftStorage, getNow: () => now });
+
+    engine.register('deadline-cleanup-timeout', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'unreachable';
+    });
+
+    const handle = await engine.start('deadline-cleanup-timeout', null, {
+      executionTimeout: 5000,
+    });
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+
+    now = 7000;
+    await engine.scheduler.tick(now);
+    await flush();
+    await resultPromise;
+
+    const deadlineKeys: string[] = [];
+    for await (const [key] of storage.scan('wf-deadline:')) {
+      deadlineKeys.push(key);
+    }
+    expect(deadlineKeys).toHaveLength(0);
+
+    const timerKeys: string[] = [];
+    for await (const [key] of storage.scan('timer-idx:deadline:')) {
+      timerKeys.push(key);
+    }
+    expect(timerKeys).toHaveLength(0);
+    engine[Symbol.dispose]();
+  });
+
+  it('signalReceived interceptor wraps actual delivery', async () => {
+    const engine = new Engine();
+    const observed: string[] = [];
+
+    engine.addInterceptor({
+      signalReceived(interception, next) {
+        observed.push(`signal:${interception.signalName}`);
+        next(interception);
+      },
+    });
+
+    engine.register('signal-intercept-test', async function* (ctx: WorkflowContext) {
+      const payload = yield* (ctx as Context).waitForSignal('go');
+      return payload;
+    });
+
+    const handle = await engine.start('signal-intercept-test', null);
+    await flush();
+
+    await engine.signal(handle.id, 'go', 'delivered');
+    await flush();
+
+    const result = await handle.result();
+    expect(result).toBe('delivered');
+    expect(observed).toEqual(['signal:go']);
+    engine[Symbol.dispose]();
+  });
+
+  it('signalReceived interceptor can block delivery', async () => {
+    const engine = new Engine();
+
+    engine.addInterceptor({
+      signalReceived() {
+        // deliberately does not call next — blocks the signal
+      },
+    });
+
+    engine.register('signal-block-test', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('blocked');
+      return 'should not reach';
+    });
+
+    const handle = await engine.start('signal-block-test', null);
+    await flush();
+
+    await engine.signal(handle.id, 'blocked', 'data');
+    await flush();
+
+    // Workflow should still be waiting since signal was blocked
+    const stateBytes = await engine.storage.get(KEYS.workflow(handle.id));
+    const state = decode(stateBytes!) as WorkflowState;
+    expect(state.status).toBe('running');
     engine[Symbol.dispose]();
   });
 

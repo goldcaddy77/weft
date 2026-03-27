@@ -219,6 +219,8 @@ export type WorkerInboundMessage =
       workflowType: string;
       checkpoint: ArrayBuffer;
       input: unknown;
+      deadline?: number;
+      headers?: [string, string][];
     }
   | {
       type: 'resume';

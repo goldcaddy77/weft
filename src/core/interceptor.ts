@@ -45,6 +45,24 @@ export interface ActivityExecutionInterception {
   headers: Map<string, string>;
 }
 
+export interface AgentInterception {
+  model: string;
+  prompt: string;
+  headers: Map<string, string>;
+}
+
+export interface QueryInterception {
+  queryName: string;
+  headers: Map<string, string>;
+}
+
+export interface SignalReceivedInterception {
+  workflowId: string;
+  signalName: string;
+  payload: unknown;
+  headers: Map<string, string>;
+}
+
 // ---------------------------------------------------------------------------
 // Interceptor interfaces
 // ---------------------------------------------------------------------------
@@ -68,6 +86,21 @@ export interface WorkflowInterceptor {
   workflowStart?(
     interception: WorkflowStartInterception,
     next: (interception: WorkflowStartInterception) => void,
+  ): void;
+
+  agent?(
+    interception: AgentInterception,
+    next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
+  ): Generator<unknown, unknown, unknown>;
+
+  query?(
+    interception: QueryInterception,
+    next: (interception: QueryInterception) => Generator<unknown, unknown, unknown>,
+  ): Generator<unknown, unknown, unknown>;
+
+  signalReceived?(
+    interception: SignalReceivedInterception,
+    next: (interception: SignalReceivedInterception) => void,
   ): void;
 }
 
@@ -101,6 +134,21 @@ export interface ComposedWorkflowInterceptor {
   workflowStart(
     interception: WorkflowStartInterception,
     execute: (interception: WorkflowStartInterception) => void,
+  ): void;
+
+  agent(
+    interception: AgentInterception,
+    execute: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
+  ): Generator<unknown, unknown, unknown>;
+
+  query(
+    interception: QueryInterception,
+    execute: (interception: QueryInterception) => Generator<unknown, unknown, unknown>,
+  ): Generator<unknown, unknown, unknown>;
+
+  signalReceived(
+    interception: SignalReceivedInterception,
+    execute: (interception: SignalReceivedInterception) => void,
   ): void;
 }
 
@@ -239,6 +287,99 @@ function composeWorkflowStartHook(
   };
 }
 
+/**
+ * Compose the `agent` hooks of all workflow interceptors into a single
+ * generator chain.
+ */
+function composeAgentHook(
+  interceptors: WorkflowInterceptor[],
+): ComposedWorkflowInterceptor['agent'] {
+  return function* composedAgent(
+    interception: AgentInterception,
+    execute: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
+  ): Generator<unknown, unknown, unknown> {
+    type Next = (ctx: AgentInterception) => Generator<unknown, unknown, unknown>;
+
+    let chain: Next = execute;
+
+    for (let i = interceptors.length - 1; i >= 0; i--) {
+      const interceptor = interceptors[i]!;
+
+      if (interceptor.agent) {
+        const innerNext = chain;
+        const bound = interceptor.agent.bind(interceptor);
+        chain = function* (ctx: AgentInterception): Generator<unknown, unknown, unknown> {
+          return yield* bound(ctx, innerNext);
+        };
+      }
+    }
+
+    return yield* chain(interception);
+  };
+}
+
+/**
+ * Compose the `query` hooks of all workflow interceptors into a single
+ * generator chain.
+ */
+function composeQueryHook(
+  interceptors: WorkflowInterceptor[],
+): ComposedWorkflowInterceptor['query'] {
+  return function* composedQuery(
+    interception: QueryInterception,
+    execute: (interception: QueryInterception) => Generator<unknown, unknown, unknown>,
+  ): Generator<unknown, unknown, unknown> {
+    type Next = (ctx: QueryInterception) => Generator<unknown, unknown, unknown>;
+
+    let chain: Next = execute;
+
+    for (let i = interceptors.length - 1; i >= 0; i--) {
+      const interceptor = interceptors[i]!;
+
+      if (interceptor.query) {
+        const innerNext = chain;
+        const bound = interceptor.query.bind(interceptor);
+        chain = function* (ctx: QueryInterception): Generator<unknown, unknown, unknown> {
+          return yield* bound(ctx, innerNext);
+        };
+      }
+    }
+
+    return yield* chain(interception);
+  };
+}
+
+/**
+ * Compose the `signalReceived` hooks of all workflow interceptors into a
+ * single chain.
+ */
+function composeSignalReceivedHook(
+  interceptors: WorkflowInterceptor[],
+): ComposedWorkflowInterceptor['signalReceived'] {
+  return function composedSignalReceived(
+    interception: SignalReceivedInterception,
+    execute: (interception: SignalReceivedInterception) => void,
+  ): void {
+    type Next = (ctx: SignalReceivedInterception) => void;
+
+    let chain: Next = execute;
+
+    for (let i = interceptors.length - 1; i >= 0; i--) {
+      const interceptor = interceptors[i]!;
+
+      if (interceptor.signalReceived) {
+        const innerNext = chain;
+        const bound = interceptor.signalReceived.bind(interceptor);
+        chain = (ctx: SignalReceivedInterception): void => {
+          bound(ctx, innerNext);
+        };
+      }
+    }
+
+    chain(interception);
+  };
+}
+
 /** Compose multiple workflow interceptors into a single interceptor chain. */
 export function composeWorkflowInterceptors(
   interceptors: WorkflowInterceptor[],
@@ -248,6 +389,9 @@ export function composeWorkflowInterceptors(
     sleep: composeSleepHook(interceptors),
     waitForSignal: composeWaitForSignalHook(interceptors),
     workflowStart: composeWorkflowStartHook(interceptors),
+    agent: composeAgentHook(interceptors),
+    query: composeQueryHook(interceptors),
+    signalReceived: composeSignalReceivedHook(interceptors),
   };
 }
 

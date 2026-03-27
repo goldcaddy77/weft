@@ -5341,28 +5341,28 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Observability
 
-- [ ] **`createObservabilityInterceptors()` returns both a `WorkflowInterceptor` and an `ActivityInterceptor`.**
+- [x] **`createObservabilityInterceptors()` returns both a `WorkflowInterceptor` and an `ActivityInterceptor`.**
 - [ ] **Uses `@opentelemetry/api` exclusively.** No custom tracing layer. No vendor-specific code.
 - [ ] **Zero overhead when no OpenTelemetry SDK is configured.** `@opentelemetry/api` is a no-op by default.
-- [ ] **Zero overhead when the observability interceptor is not imported.** No code loaded, no interception.
-- [ ] **Each workflow execution creates a root span.** Named `workflow:{workflowType}`. Attributes: `weft.workflow.id`, `weft.workflow.type`.
-- [ ] **Each `ctx.run()` creates a child span.** Named `activity:{activityName}`. Attributes: `weft.activity.operation_id`, `weft.activity.attempt`, `weft.activity.queue`.
-- [ ] **Each `ctx.sleep()` creates a child span.** Named `sleep`. Attributes: `weft.sleep.duration`.
-- [ ] **Each `ctx.waitForSignal()` creates a child span.** Named `signal:wait:{signalName}`.
-- [ ] **Each `ctx.agent()` creates a child span.** Named `agent`. Attributes: `weft.agent.model`, `weft.agent.token_budget`.
-- [ ] **Trace context propagates to local Activity Workers via `postMessage`.** W3C `traceparent` in the `headers` map.
+- [x] **Zero overhead when the observability interceptor is not imported.** No code loaded, no interception.
+- [x] **Each workflow execution creates a root span.** Named `workflow:{workflowType}`. Attributes: `weft.workflow.id`, `weft.workflow.type`.
+- [x] **Each `ctx.run()` creates a child span.** Named `activity:{activityName}`. Attributes: `weft.activity.operation_id`, `weft.activity.attempt`, `weft.activity.queue`.
+- [x] **Each `ctx.sleep()` creates a child span.** Named `sleep`. Attributes: `weft.sleep.duration`.
+- [x] **Each `ctx.waitForSignal()` creates a child span.** Named `signal:wait:{signalName}`.
+- [x] **Each `ctx.agent()` creates a child span.** Named `agent`. Attributes: `weft.agent.model`, `weft.agent.token_budget`.
+- [x] **Trace context propagates to local Activity Workers via `postMessage`.** W3C `traceparent` in the `headers` map.
 - [ ] **Trace context propagates to remote Activity Workers via WebSocket.** `headers` field in the `task` message.
-- [ ] **Activity-side interceptor extracts trace context and creates a child span.** Named `activity:execute:{activityName}`.
+- [x] **Activity-side interceptor extracts trace context and creates a child span.** Named `activity:execute:{activityName}`.
 - [ ] **Child workflow spans use OpenTelemetry span links, not parent-child.** Independent lifecycle.
-- [ ] **`recordPayloads` option records activity inputs/outputs as span attributes.** Off by default.
-- [ ] **`maxPayloadSize` truncates recorded payloads.** Prevents unbounded attribute sizes.
+- [x] **`recordPayloads` option records activity inputs/outputs as span attributes.** Off by default.
+- [x] **`maxPayloadSize` truncates recorded payloads.** Prevents unbounded attribute sizes.
 - [ ] **`attributeExtractor` allows custom span attributes.** User-provided function receives interception context.
-- [ ] **Error spans record exception details.** `span.recordException()` called. `span.setStatus({ code: ERROR })` set.
-- [ ] **Span hierarchy is correct.** Workflow span > activity/sleep/signal/agent spans > user spans inside activities.
-- [ ] **OpenTelemetry metrics defined.** `weft.workflow.duration`, `weft.activity.duration`, `weft.activity.attempts`, `weft.workflow.active`.
+- [x] **Error spans record exception details.** `span.recordException()` called. `span.setStatus({ code: ERROR })` set.
+- [x] **Span hierarchy is correct.** Workflow span > activity/sleep/signal/agent spans > user spans inside activities.
+- [x] **OpenTelemetry metrics defined.** `weft.workflow.duration`, `weft.activity.duration`, `weft.activity.attempts`, `weft.workflow.active`.
 - [ ] **Metrics exportable to Prometheus via standard OTel exporter.** `/v1/metrics` backed by OTel metrics.
 - [ ] **Remote worker example in documentation.** Shows `interceptors: [activity]` on remote worker constructor.
-- [ ] **Composable with other interceptors.** Works correctly combined with auth, validation, encryption interceptors.
+- [x] **Composable with other interceptors.** Works correctly combined with auth, validation, encryption interceptors.
 
 ### DX
 

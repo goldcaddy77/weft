@@ -62,14 +62,23 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     input: unknown;
     checkpoint: ArrayBuffer;
     nestingDepth?: number;
+    deadline?: number;
+    headers?: [string, string][];
   }): void {
-    void this.#acquireAndSend(parameters.workflowId, {
+    const message: WorkerInboundMessage & { type: 'run' } = {
       type: 'run',
       workflowId: parameters.workflowId,
       workflowType: parameters.workflowType,
       checkpoint: parameters.checkpoint,
       input: parameters.input,
-    });
+    };
+    if (parameters.deadline !== undefined) {
+      message.deadline = parameters.deadline;
+    }
+    if (parameters.headers) {
+      message.headers = parameters.headers;
+    }
+    void this.#acquireAndSend(parameters.workflowId, message);
   }
 
   resumeWorkflow(parameters: {
