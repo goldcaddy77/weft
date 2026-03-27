@@ -176,30 +176,40 @@ export class UpdateCoordinator {
     throw new UpdateTimeoutError(updateId, timeout);
   }
 
-  /** Clean up expired responses. */
+  /** Clean up expired responses and their orphaned idempotency mappings. */
   async cleanupExpiredResponses(ttlMs?: number): Promise<number> {
     const effectiveTtl = ttlMs ?? DEFAULT_CLEANUP_TTL_MS;
     const cutoff = Date.now() - effectiveTtl;
-    let cleaned = 0;
 
-    const toDelete: string[] = [];
+    const expiredResponseKeys: string[] = [];
+    const expiredUpdateIds = new Set<string>();
 
     for await (const [key, value] of this.#storage.scan('upr:')) {
       const response = decode(value) as UpdateResponse;
       if (response.createdAt < cutoff) {
-        toDelete.push(key);
+        expiredResponseKeys.push(key);
+        expiredUpdateIds.add(response.updateId);
       }
     }
 
-    if (toDelete.length > 0) {
-      const operations: BatchOperation[] = toDelete.map((key) => ({
-        type: 'delete' as const,
-        key,
-      }));
-      await this.#storage.batch(operations);
-      cleaned = toDelete.length;
+    if (expiredResponseKeys.length === 0) return 0;
+
+    // Find orphaned idempotency mappings that reference expired responses
+    const orphanedIdempotencyKeys: string[] = [];
+    for await (const [key, value] of this.#storage.scan('upk:')) {
+      const mapping = decode(value) as { updateId: string };
+      if (expiredUpdateIds.has(mapping.updateId)) {
+        orphanedIdempotencyKeys.push(key);
+      }
     }
 
-    return cleaned;
+    const operations: BatchOperation[] = [
+      ...expiredResponseKeys.map((key) => ({ type: 'delete' as const, key })),
+      ...orphanedIdempotencyKeys.map((key) => ({ type: 'delete' as const, key })),
+    ];
+
+    await this.#storage.batch(operations);
+
+    return expiredResponseKeys.length;
   }
 }

@@ -205,6 +205,49 @@ describe('UpdateCoordinator', () => {
       expect(await storage.get('upr:old-1')).toBeNull();
       expect(await storage.get('upr:recent-1')).not.toBeNull();
     });
+
+    it('removes orphaned idempotency mappings for expired responses', async () => {
+      const oldTimestamp = Date.now() - 2 * 60 * 60 * 1000; // 2 hours ago
+      const recentTimestamp = Date.now();
+
+      // Expired response with an idempotency mapping
+      await storage.put(
+        'upr:old-1',
+        encode({ updateId: 'old-1', result: 'old', createdAt: oldTimestamp }),
+      );
+      await storage.put('upk:wf-1:idem-old', encode({ updateId: 'old-1' }));
+
+      // Recent response with an idempotency mapping (should be kept)
+      await storage.put(
+        'upr:recent-1',
+        encode({ updateId: 'recent-1', result: 'recent', createdAt: recentTimestamp }),
+      );
+      await storage.put('upk:wf-1:idem-recent', encode({ updateId: 'recent-1' }));
+
+      const cleaned = await coordinator.cleanupExpiredResponses(60 * 60 * 1000);
+
+      expect(cleaned).toBe(1);
+      expect(await storage.get('upr:old-1')).toBeNull();
+      expect(await storage.get('upk:wf-1:idem-old')).toBeNull();
+      expect(await storage.get('upr:recent-1')).not.toBeNull();
+      expect(await storage.get('upk:wf-1:idem-recent')).not.toBeNull();
+    });
+
+    it('returns zero when no responses are expired', async () => {
+      const recentTimestamp = Date.now();
+
+      await storage.put(
+        'upr:recent-1',
+        encode({ updateId: 'recent-1', result: 'recent', createdAt: recentTimestamp }),
+      );
+      await storage.put('upk:wf-1:idem-recent', encode({ updateId: 'recent-1' }));
+
+      const cleaned = await coordinator.cleanupExpiredResponses(60 * 60 * 1000);
+
+      expect(cleaned).toBe(0);
+      expect(await storage.get('upr:recent-1')).not.toBeNull();
+      expect(await storage.get('upk:wf-1:idem-recent')).not.toBeNull();
+    });
   });
 
   describe('multiple updates', () => {

@@ -92,6 +92,7 @@ export class Scheduler implements Disposable {
   readonly #pollIntervalMs: number;
   readonly #getNow: () => number;
   #intervalHandle: ReturnType<typeof setInterval> | null = null;
+  #stopped = false;
 
   constructor(options: SchedulerOptions) {
     this.#storage = options.storage;
@@ -103,6 +104,7 @@ export class Scheduler implements Disposable {
   /** Start the polling loop. */
   start(): void {
     if (this.#intervalHandle !== null) return;
+    this.#stopped = false;
 
     this.#intervalHandle = setInterval(() => {
       void this.tick();
@@ -111,6 +113,7 @@ export class Scheduler implements Disposable {
 
   /** Stop the polling loop. */
   stop(): void {
+    this.#stopped = true;
     if (this.#intervalHandle !== null) {
       clearInterval(this.#intervalHandle);
       this.#intervalHandle = null;
@@ -145,6 +148,7 @@ export class Scheduler implements Disposable {
 
   /** Force an immediate scan for expired timers (for tests). */
   async tick(now?: number): Promise<void> {
+    if (this.#stopped) return;
     const currentTime = now ?? this.#getNow();
     const upperBound = KEYS.deadline(currentTime, '\xff');
 

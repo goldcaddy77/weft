@@ -204,6 +204,40 @@ describe('ServiceWorkerScheduler', () => {
     expect(registerMock).toHaveBeenCalledWith('custom-tag', { minInterval: 60000 });
   });
 
+  it('start falls back to polling when periodic sync registration fails', async () => {
+    const registerMock = mock(() => Promise.reject(new Error('Not allowed')));
+    const registration = {
+      periodicSync: {
+        register: registerMock,
+      },
+    } as unknown as ServiceWorkerRegistration;
+
+    scheduler[Symbol.dispose]();
+    scheduler = new ServiceWorkerScheduler({
+      storage,
+      onTimerFired: (entry) => {
+        firedEntries.push(entry);
+      },
+      registration,
+      fallbackIntervalMilliseconds: 50,
+      getNow: () => currentTime,
+    });
+
+    const entry = makeTimer({ fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    scheduler.start();
+
+    // Allow microtask for the .catch() to run plus setTimeout polling
+    await Bun.sleep(300);
+
+    expect(registerMock).toHaveBeenCalledTimes(1);
+    expect(firedEntries.length).toBeGreaterThanOrEqual(1);
+    expect(firedEntries[0]!.id).toBe('timer-1');
+
+    scheduler.stop();
+  });
+
   it('start uses default periodic sync tag when none is provided', async () => {
     const registerMock = mock(() => Promise.resolve());
     const registration = {
@@ -251,6 +285,41 @@ describe('ServiceWorkerScheduler', () => {
 
     expect(firedEntries.length).toBeGreaterThanOrEqual(1);
     expect(firedEntries[0]!.id).toBe('timer-1');
+
+    scheduler.stop();
+  });
+
+  it('polling loop continues after a tick error', async () => {
+    let tickCount = 0;
+
+    scheduler[Symbol.dispose]();
+    scheduler = new ServiceWorkerScheduler({
+      storage,
+      onTimerFired: () => {
+        tickCount++;
+        if (tickCount === 1) {
+          throw new Error('Simulated tick failure');
+        }
+      },
+      fallbackIntervalMilliseconds: 50,
+      getNow: () => currentTime,
+    });
+
+    // Schedule two timers that are already expired
+    const entry1 = makeTimer({ id: 'timer-a', fireAt: currentTime - 2000 });
+    const entry2 = makeTimer({ id: 'timer-b', fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry1);
+    await scheduler.schedule(entry2);
+
+    scheduler.start();
+
+    // Wait long enough for multiple poll cycles
+    await Bun.sleep(400);
+
+    // The first tick fires timer-a (which throws) and timer-b.
+    // Despite the throw, the polling loop should continue and not die.
+    // tickCount should be >= 2 showing that the scheduler kept running.
+    expect(tickCount).toBeGreaterThanOrEqual(2);
 
     scheduler.stop();
   });

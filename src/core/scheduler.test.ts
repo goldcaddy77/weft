@@ -344,6 +344,35 @@ describe('Scheduler', () => {
     expect(remainingKeys.some((key) => key.startsWith('timer-idx:'))).toBe(false);
   });
 
+  it('tick is a no-op after stop, preventing callbacks on disposed scheduler', async () => {
+    const entry = makeTimer({ fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    scheduler.stop();
+
+    // Calling tick after stop should not fire any callbacks
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries).toHaveLength(0);
+  });
+
+  it('start resets the stopped flag so tick works again', async () => {
+    const entry = makeTimer({ fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    scheduler.stop();
+    await scheduler.tick(currentTime);
+    expect(firedEntries).toHaveLength(0);
+
+    // Restart and verify tick works again
+    scheduler.start();
+    await scheduler.tick(currentTime);
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe('timer-1');
+
+    scheduler.stop();
+  });
+
   it('full integration: schedule, advance time via tick, verify fired', async () => {
     const entry = makeTimer({ fireAt: currentTime + 5000 });
     await scheduler.schedule(entry);

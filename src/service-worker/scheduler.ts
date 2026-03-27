@@ -134,9 +134,14 @@ export class ServiceWorkerScheduler implements Disposable {
     const periodicSync = this.#registration?.periodicSync;
 
     if (periodicSync) {
-      void periodicSync.register(this.#periodicSyncTag, {
-        minInterval: DEFAULT_PERIODIC_SYNC_MIN_INTERVAL,
-      });
+      periodicSync
+        .register(this.#periodicSyncTag, {
+          minInterval: DEFAULT_PERIODIC_SYNC_MIN_INTERVAL,
+        })
+        .catch(() => {
+          // Periodic sync registration failed — fall back to polling
+          this.#schedulePoll();
+        });
       return;
     }
 
@@ -165,10 +170,13 @@ export class ServiceWorkerScheduler implements Disposable {
     if (!this.#running) return;
 
     this.#timeoutHandle = setTimeout(() => {
-      void this.tick().then(() => {
-        this.#schedulePoll();
-        return undefined;
-      });
+      void this.tick()
+        .catch((error: unknown) => {
+          console.error('[weft] ServiceWorkerScheduler tick failed:', error);
+        })
+        .finally(() => {
+          this.#schedulePoll();
+        });
     }, this.#fallbackIntervalMilliseconds);
   }
 }

@@ -20,6 +20,7 @@ export interface RemoteWorkerOptions {
   activities: Record<string, (input: unknown) => Promise<unknown>>;
   concurrency?: number; // default: 10
   queue?: string; // default: 'default'
+  disconnectTimeoutMs?: number; // default: 30_000
 }
 
 interface TaskMessage {
@@ -41,6 +42,7 @@ interface ServerMessage {
 const DEFAULT_CONCURRENCY = 10;
 const DEFAULT_QUEUE = 'default';
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const DEFAULT_DISCONNECT_TIMEOUT_MS = 30_000;
 
 export class RemoteWorker implements Disposable {
   #options: RemoteWorkerOptions;
@@ -124,10 +126,21 @@ export class RemoteWorker implements Disposable {
   async disconnect(): Promise<void> {
     this.#heartbeat.stop();
 
-    // Wait for in-flight tasks to complete
+    // Wait for in-flight tasks to complete, but not forever
+    const timeout = this.#options.disconnectTimeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
     while (this.#inFlight > 0) {
+      if (Date.now() >= deadline) {
+        console.warn(
+          `[weft] RemoteWorker disconnect timed out after ${timeout}ms with ${this.#inFlight} tasks still in-flight`,
+        );
+        break;
+      }
       await Bun.sleep(50);
     }
+
+    this.#abortController.abort();
 
     if (this.#ws !== null) {
       this.#ws.close();
@@ -168,10 +181,21 @@ export class RemoteWorker implements Disposable {
     this.#shuttingDown = true;
     this.#heartbeat.stop();
 
-    // Drain in-flight work
+    // Drain in-flight work, but not forever
+    const timeout = this.#options.disconnectTimeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
     while (this.#inFlight > 0) {
+      if (Date.now() >= deadline) {
+        console.warn(
+          `[weft] RemoteWorker graceful shutdown timed out after ${timeout}ms with ${this.#inFlight} tasks still in-flight`,
+        );
+        break;
+      }
       await Bun.sleep(50);
     }
+
+    this.#abortController.abort();
 
     if (this.#ws !== null) {
       this.#ws.close();

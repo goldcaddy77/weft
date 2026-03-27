@@ -68,9 +68,8 @@ function serializeEvent(event: Event): string | null {
   const data: Record<string, unknown> = {};
 
   // Extract all public properties from the event into the nested data bag
-  for (const key of Object.keys(event)) {
+  for (const [key, value] of Object.entries(event)) {
     if (key === 'type') continue;
-    const value = (event as unknown as Record<string, unknown>)[key];
     // Serialize Error objects to plain strings
     if (value instanceof Error) {
       data[key] = value.message;
