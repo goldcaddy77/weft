@@ -1630,14 +1630,37 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
               tokenUsage: () => {
                 const current = budgetTracker.budgetRemaining();
                 if (!previousAccessor) return current;
-                const previous = previousAccessor() as {
-                  tokensUsed: number;
-                  costUsed: number;
-                };
+                const previous = previousAccessor() as typeof current;
+
+                // Merge per-model breakdowns
+                const mergedBreakdown = new Map<
+                  string,
+                  { model: string; inputTokens: number; outputTokens: number; cost: number }
+                >();
+                for (const entry of previous.breakdown) {
+                  mergedBreakdown.set(entry.model, { ...entry });
+                }
+                for (const entry of current.breakdown) {
+                  const existing = mergedBreakdown.get(entry.model);
+                  if (existing) {
+                    existing.inputTokens += entry.inputTokens;
+                    existing.outputTokens += entry.outputTokens;
+                    existing.cost += entry.cost;
+                  } else {
+                    mergedBreakdown.set(entry.model, { ...entry });
+                  }
+                }
+
+                const tokensUsed = current.tokensUsed + previous.tokensUsed;
+                const costUsed = current.costUsed + previous.costUsed;
+
                 return {
-                  ...current,
-                  tokensUsed: current.tokensUsed + previous.tokensUsed,
-                  costUsed: current.costUsed + previous.costUsed,
+                  tokensUsed,
+                  costUsed,
+                  // Remaining values are only meaningful for the latest call's budget
+                  tokensRemaining: current.tokensRemaining,
+                  costRemaining: current.costRemaining,
+                  breakdown: [...mergedBreakdown.values()],
                 };
               },
             });
