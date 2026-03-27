@@ -832,6 +832,64 @@ describe('RemoteWorker', () => {
     await worker.disconnect();
   });
 
+  it('can reconnect after graceful shutdown and accept new tasks', async () => {
+    const messages: any[] = [];
+    let connectionCount = 0;
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          connectionCount++;
+
+          if (connectionCount === 1) {
+            // First connection: trigger a graceful shutdown
+            ws.send(JSON.stringify({ type: 'shutdown' }));
+          } else if (connectionCount === 2) {
+            // Second connection: send a task to prove messages are not dropped
+            ws.send(
+              JSON.stringify({
+                type: 'task',
+                operationId: 'op-post-reconnect',
+                activityName: 'processOrder',
+                input: { orderId: 42 },
+              }),
+            );
+          }
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'reconnect-after-shutdown-test',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    // First connection — server triggers shutdown
+    await worker.connect();
+    await Bun.sleep(300);
+    expect(worker.shuttingDown).toBe(true);
+    expect(worker.connected).toBe(false);
+
+    // Reconnect — connect() should reset #shuttingDown so tasks are accepted
+    await worker.connect();
+    expect(worker.shuttingDown).toBe(false);
+    await Bun.sleep(300);
+
+    // The task sent on the second connection should have been processed
+    const taskResult = messages.find((m) => m.type === 'taskResult');
+    expect(taskResult).toBeDefined();
+    expect(taskResult.operationId).toBe('op-post-reconnect');
+    expect(taskResult.status).toBe('completed');
+
+    await worker.disconnect();
+  });
+
   it('can reconnect after dispose (AbortController is replaced)', async () => {
     server = createTestServer();
 

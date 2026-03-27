@@ -122,34 +122,31 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   // -------------------------------------------------------------------------
 
   [Symbol.dispose](): void {
+    this.#teardown();
+    this.#pool[Symbol.dispose]();
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    this.#teardown();
+    await this.#pool[Symbol.asyncDispose]();
+  }
+
+  /** Shared cleanup for both sync and async disposal paths. */
+  #teardown(): void {
     if (this.#broadcastChannel) {
       if (this.#broadcastListener) {
         this.#broadcastChannel.removeEventListener('message', this.#broadcastListener);
       }
       this.#broadcastChannel.close();
     }
+
     // Release all active workers back to the pool before disposing
     const activeWorkflowIds = Array.from(this.#workersByWorkflowId.keys());
     for (const workflowId of activeWorkflowIds) {
       this.#releaseWorker(workflowId);
     }
-    this.#messageHandler = null;
-    this.#pool[Symbol.dispose]();
-  }
 
-  async [Symbol.asyncDispose](): Promise<void> {
-    if (this.#broadcastChannel) {
-      if (this.#broadcastListener) {
-        this.#broadcastChannel.removeEventListener('message', this.#broadcastListener);
-      }
-      this.#broadcastChannel.close();
-    }
-    const activeWorkflowIds = Array.from(this.#workersByWorkflowId.keys());
-    for (const workflowId of activeWorkflowIds) {
-      this.#releaseWorker(workflowId);
-    }
     this.#messageHandler = null;
-    await this.#pool[Symbol.asyncDispose]();
   }
 
   // -------------------------------------------------------------------------

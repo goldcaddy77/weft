@@ -70,6 +70,11 @@ export class RemoteWorker implements Disposable {
 
   /** Connect to the server and start processing tasks. */
   async connect(): Promise<void> {
+    // Reset shutdown flag so a reconnection after graceful shutdown can
+    // accept new tasks (the flag is set by #gracefulShutdown and never
+    // cleared elsewhere).
+    this.#shuttingDown = false;
+
     return new Promise<void>((resolve, reject) => {
       let settled = false;
       const ws = new WebSocket(this.#options.serverUrl);
