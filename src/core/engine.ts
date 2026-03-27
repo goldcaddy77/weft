@@ -765,21 +765,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (composed) {
       let deliveryPromise: Promise<void> | undefined;
       let nextCalled = false;
-      composed.signalReceived(
-        {
-          workflowId,
-          signalName: name,
-          payload: payload,
-          headers: new Map<string, string>(),
-        },
-        (interception) => {
-          if (nextCalled) {
-            throw new Error('signalReceived interceptor called next() more than once');
-          }
-          nextCalled = true;
-          deliveryPromise = deliverSignal(interception.payload);
-        },
-      );
+      try {
+        composed.signalReceived(
+          {
+            workflowId,
+            signalName: name,
+            payload: payload,
+            headers: new Map<string, string>(),
+          },
+          (interception) => {
+            if (nextCalled) {
+              throw new Error('signalReceived interceptor called next() more than once');
+            }
+            nextCalled = true;
+            deliveryPromise = deliverSignal(interception.payload);
+          },
+        );
+      } catch (error) {
+        // Always await the delivery promise even if the interceptor threw after
+        // calling next, to avoid orphaned unhandled promise rejections.
+        if (deliveryPromise) await deliveryPromise;
+        throw error;
+      }
       // If interceptor blocked delivery by not calling next, return early
       if (!deliveryPromise) return;
       await deliveryPromise;

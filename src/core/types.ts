@@ -227,7 +227,6 @@ export type WorkerInboundMessage =
       workflowId: WorkflowId;
       checkpoint: ArrayBuffer;
       operationResult: OperationOutcome;
-      headers?: [string, string][];
     }
   | { type: 'cancel'; workflowId: WorkflowId };
 
