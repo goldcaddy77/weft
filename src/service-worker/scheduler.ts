@@ -60,6 +60,7 @@ export class ServiceWorkerScheduler implements Disposable {
   readonly #getNow: () => number;
   #timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   #running = false;
+  #generation = 0;
 
   constructor(options: ServiceWorkerSchedulerOptions) {
     this.#storage = options.storage;
@@ -110,7 +111,11 @@ export class ServiceWorkerScheduler implements Disposable {
     }
 
     for (const { key, entry } of expired) {
-      await this.#onTimerFired(entry);
+      try {
+        await this.#onTimerFired(entry);
+      } catch (error) {
+        console.error(`Timer callback failed for timer ${entry.id}:`, error);
+      }
 
       const indexKey = `timer-idx:${entry.id}`;
       await this.#storage.batch([
@@ -130,13 +135,25 @@ export class ServiceWorkerScheduler implements Disposable {
   start(): void {
     if (this.#running) return;
     this.#running = true;
+    this.#generation++;
 
     const periodicSync = this.#registration?.periodicSync;
 
     if (periodicSync) {
-      void periodicSync.register(this.#periodicSyncTag, {
-        minInterval: DEFAULT_PERIODIC_SYNC_MIN_INTERVAL,
-      });
+      // Capture the generation so the async .catch() handler can detect a
+      // stop()/start() cycle that happened while the registration was pending.
+      // Without this, the deferred handler could create a duplicate polling loop.
+      const startGeneration = this.#generation;
+
+      void periodicSync
+        .register(this.#periodicSyncTag, {
+          minInterval: DEFAULT_PERIODIC_SYNC_MIN_INTERVAL,
+        })
+        .catch(() => {
+          if (this.#generation !== startGeneration) return;
+          // Periodic sync registration failed — fall back to polling
+          this.#schedulePoll();
+        });
       return;
     }
 
@@ -146,6 +163,7 @@ export class ServiceWorkerScheduler implements Disposable {
   /** Stop the scheduler and clear all timeout handles. */
   stop(): void {
     this.#running = false;
+    this.#generation++;
 
     if (this.#timeoutHandle !== null) {
       clearTimeout(this.#timeoutHandle);
@@ -164,11 +182,20 @@ export class ServiceWorkerScheduler implements Disposable {
   #schedulePoll(): void {
     if (!this.#running) return;
 
+    // Capture the generation so the async .finally() handler can detect a
+    // stop()/start() cycle that happened while a tick was in-flight. Without
+    // this, the old tick's .finally() could create a duplicate polling loop.
+    const pollGeneration = this.#generation;
+
     this.#timeoutHandle = setTimeout(() => {
-      void this.tick().then(() => {
-        this.#schedulePoll();
-        return undefined;
-      });
+      void this.tick()
+        .catch((error: unknown) => {
+          console.error('[weft] ServiceWorkerScheduler tick failed:', error);
+        })
+        .finally(() => {
+          if (this.#generation !== pollGeneration) return;
+          this.#schedulePoll();
+        });
     }, this.#fallbackIntervalMilliseconds);
   }
 }

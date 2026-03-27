@@ -383,6 +383,51 @@ describe('WorkerExecutionStrategy', () => {
   // -------------------------------------------------------------------------
 
   describe('worker errors', () => {
+    it('is a no-op when the worker was already released by a racing completion', async () => {
+      setup();
+
+      strategy.startWorkflow({
+        workflowId: 'wf-1',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await Bun.sleep(10);
+
+      const worker = firstWorker();
+
+      // Step 1: simulate the worker sending a completed message, which triggers
+      // #releaseWorker and removes the worker from the internal map.
+      const completedMessage: WorkerOutboundMessage = {
+        type: 'completed',
+        workflowId: 'wf-1',
+        result: 'done',
+      };
+
+      dispatchToMockWorker(
+        worker,
+        'message',
+        new MessageEvent('message', { data: completedMessage }),
+      );
+
+      // Step 2: now fire an error event for the same workflowId — the race
+      // guard should detect the worker is already gone and return early.
+      const errorEvent = new ErrorEvent('error', {
+        message: 'Late crash after completion',
+      });
+
+      dispatchToMockWorker(worker, 'error', errorEvent);
+
+      // Only the completed message should have been emitted; no failed message.
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.type).toBe('completed');
+
+      // terminate() must not have been called — the worker was cleanly released,
+      // not crashed.
+      expect(worker.terminate).not.toHaveBeenCalled();
+    });
+
     it('emits a failed message when the worker crashes', async () => {
       setup();
 

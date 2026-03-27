@@ -669,6 +669,128 @@ describe('RemoteWorker', () => {
     worker[Symbol.dispose]();
   });
 
+  it('disconnect resolves after timeout when tasks are still in-flight', async () => {
+    // A task that never resolves — it holds the in-flight counter at 1 forever
+    const neverResolves = new Promise<never>(() => {});
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+
+        if (parsed.type === 'register') {
+          ws.send(
+            JSON.stringify({
+              type: 'task',
+              operationId: 'op-timeout-1',
+              activityName: 'hangingActivity',
+              input: null,
+            }),
+          );
+        }
+      },
+    });
+
+    const disconnectTimeoutMs = 200;
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'disconnect-timeout-test',
+      activities: {
+        hangingActivity: async () => {
+          await neverResolves;
+        },
+      },
+      disconnectTimeoutMs,
+    });
+
+    await worker.connect();
+
+    // Wait for the task to be picked up so inFlight increments
+    await Bun.sleep(100);
+    expect(worker.inFlight).toBe(1);
+
+    const startTime = Date.now();
+
+    // disconnect() must not hang — it should break out of the polling loop after the timeout
+    await worker.disconnect();
+
+    const elapsed = Date.now() - startTime;
+
+    // Should have resolved within the timeout plus generous tolerance for CI jitter
+    expect(elapsed).toBeLessThan(disconnectTimeoutMs + 500);
+
+    // The connection should be closed even though a task is still technically "in-flight"
+    expect(worker.connected).toBe(false);
+  });
+
+  it('graceful shutdown resolves after timeout when tasks are still in-flight', async () => {
+    // A task that never resolves
+    const neverResolves = new Promise<never>(() => {});
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+
+        if (parsed.type === 'register') {
+          // Dispatch a task that will never finish
+          ws.send(
+            JSON.stringify({
+              type: 'task',
+              operationId: 'op-shutdown-timeout-1',
+              activityName: 'hangingActivity',
+              input: null,
+            }),
+          );
+
+          // Send the shutdown command shortly after so the worker starts draining
+          setTimeout(() => {
+            ws.send(JSON.stringify({ type: 'shutdown' }));
+          }, 50);
+        }
+      },
+    });
+
+    const disconnectTimeoutMs = 200;
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'graceful-shutdown-timeout-test',
+      activities: {
+        hangingActivity: async () => {
+          await neverResolves;
+        },
+      },
+      disconnectTimeoutMs,
+    });
+
+    await worker.connect();
+
+    // Wait for the task to start and the shutdown message to be received
+    await Bun.sleep(100);
+    expect(worker.inFlight).toBe(1);
+
+    // Wait for the shutdown to be acknowledged
+    await Bun.sleep(50);
+    expect(worker.shuttingDown).toBe(true);
+
+    const startTime = Date.now();
+
+    // Wait for the graceful shutdown to time out and complete
+    // The shutdown runs async inside #handleMessage, so we poll until connected goes false
+    const shutdownTimeoutMs = disconnectTimeoutMs + 500;
+    while (worker.connected && Date.now() - startTime < shutdownTimeoutMs) {
+      await Bun.sleep(50);
+    }
+
+    const elapsed = Date.now() - startTime;
+
+    // Should have closed within the timeout plus generous tolerance
+    expect(elapsed).toBeLessThan(shutdownTimeoutMs);
+    expect(worker.connected).toBe(false);
+
+    worker[Symbol.dispose]();
+  });
+
   it('[Symbol.dispose] closes connection when ws is open', async () => {
     server = createTestServer();
 
@@ -685,5 +807,109 @@ describe('RemoteWorker', () => {
 
     // Calling dispose again should not throw
     worker[Symbol.dispose]();
+  });
+
+  it('can reconnect after disconnect (AbortController is replaced)', async () => {
+    server = createTestServer();
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    await worker.disconnect();
+    expect(worker.connected).toBe(false);
+
+    // Reconnect — this would hang forever if the AbortController was not replaced
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    await worker.disconnect();
+  });
+
+  it('can reconnect after graceful shutdown and accept new tasks', async () => {
+    const messages: any[] = [];
+    let connectionCount = 0;
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          connectionCount++;
+
+          if (connectionCount === 1) {
+            // First connection: trigger a graceful shutdown
+            ws.send(JSON.stringify({ type: 'shutdown' }));
+          } else if (connectionCount === 2) {
+            // Second connection: send a task to prove messages are not dropped
+            ws.send(
+              JSON.stringify({
+                type: 'task',
+                operationId: 'op-post-reconnect',
+                activityName: 'processOrder',
+                input: { orderId: 42 },
+              }),
+            );
+          }
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'reconnect-after-shutdown-test',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    // First connection — server triggers shutdown
+    await worker.connect();
+    await Bun.sleep(300);
+    expect(worker.shuttingDown).toBe(true);
+    expect(worker.connected).toBe(false);
+
+    // Reconnect — connect() should reset #shuttingDown so tasks are accepted
+    await worker.connect();
+    expect(worker.shuttingDown).toBe(false);
+    await Bun.sleep(300);
+
+    // The task sent on the second connection should have been processed
+    const taskResult = messages.find((m) => m.type === 'taskResult');
+    expect(taskResult).toBeDefined();
+    expect(taskResult.operationId).toBe('op-post-reconnect');
+    expect(taskResult.status).toBe('completed');
+
+    await worker.disconnect();
+  });
+
+  it('can reconnect after dispose (AbortController is replaced)', async () => {
+    server = createTestServer();
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    worker[Symbol.dispose]();
+    expect(worker.connected).toBe(false);
+
+    // Reconnect — this would hang forever if the AbortController was not replaced
+    await worker.connect();
+    expect(worker.connected).toBe(true);
+
+    await worker.disconnect();
   });
 });

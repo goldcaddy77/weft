@@ -344,6 +344,80 @@ describe('Scheduler', () => {
     expect(remainingKeys.some((key) => key.startsWith('timer-idx:'))).toBe(false);
   });
 
+  it('tick is a no-op after stop, preventing callbacks on disposed scheduler', async () => {
+    const entry = makeTimer({ fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    scheduler.stop();
+
+    // Calling tick after stop should not fire any callbacks
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries).toHaveLength(0);
+  });
+
+  it('start resets the stopped flag so tick works again', async () => {
+    const entry = makeTimer({ fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    scheduler.stop();
+    await scheduler.tick(currentTime);
+    expect(firedEntries).toHaveLength(0);
+
+    // Restart and verify tick works again
+    scheduler.start();
+    await scheduler.tick(currentTime);
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe('timer-1');
+
+    scheduler.stop();
+  });
+
+  it('flush works after stop (drains remaining timers)', async () => {
+    const entry = makeTimer({ fireAt: currentTime - 1000 });
+    await scheduler.schedule(entry);
+
+    // Stop the scheduler (halts the polling loop)
+    scheduler.stop();
+
+    // flush() should still process expired timers despite stop() having been called
+    await scheduler.flush(currentTime);
+
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe('timer-1');
+  });
+
+  it('tick terminates early when stop is called during callback processing', async () => {
+    // Create a scheduler where the first callback calls stop()
+    scheduler[Symbol.dispose]();
+
+    const fired: string[] = [];
+    scheduler = new Scheduler({
+      storage,
+      onTimerFired: (entry) => {
+        fired.push(entry.id);
+        if (entry.id === 'timer-a') {
+          // Calling stop() mid-tick should prevent subsequent callbacks
+          scheduler.stop();
+        }
+      },
+      pollIntervalMs: 100,
+      getNow: () => currentTime,
+    });
+
+    const entryA = makeTimer({ id: 'timer-a', fireAt: currentTime - 2000 });
+    const entryB = makeTimer({ id: 'timer-b', fireAt: currentTime - 1000 });
+
+    await scheduler.schedule(entryA);
+    await scheduler.schedule(entryB);
+
+    await scheduler.tick(currentTime);
+
+    // Only timer-a should have fired; timer-b should be skipped because
+    // stop() was called during the first callback
+    expect(fired).toEqual(['timer-a']);
+  });
+
   it('full integration: schedule, advance time via tick, verify fired', async () => {
     const entry = makeTimer({ fireAt: currentTime + 5000 });
     await scheduler.schedule(entry);

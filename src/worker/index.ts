@@ -20,6 +20,7 @@ export interface RemoteWorkerOptions {
   activities: Record<string, (input: unknown) => Promise<unknown>>;
   concurrency?: number; // default: 10
   queue?: string; // default: 'default'
+  disconnectTimeoutMs?: number; // default: 30_000
 }
 
 interface TaskMessage {
@@ -41,6 +42,7 @@ interface ServerMessage {
 const DEFAULT_CONCURRENCY = 10;
 const DEFAULT_QUEUE = 'default';
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const DEFAULT_DISCONNECT_TIMEOUT_MS = 30_000;
 
 export class RemoteWorker implements Disposable {
   #options: RemoteWorkerOptions;
@@ -68,6 +70,11 @@ export class RemoteWorker implements Disposable {
 
   /** Connect to the server and start processing tasks. */
   async connect(): Promise<void> {
+    // Reset shutdown flag so a reconnection after graceful shutdown can
+    // accept new tasks (the flag is set by #gracefulShutdown and never
+    // cleared elsewhere).
+    this.#shuttingDown = false;
+
     return new Promise<void>((resolve, reject) => {
       let settled = false;
       const ws = new WebSocket(this.#options.serverUrl);
@@ -123,16 +130,7 @@ export class RemoteWorker implements Disposable {
   /** Gracefully disconnect: finish in-flight, then close. */
   async disconnect(): Promise<void> {
     this.#heartbeat.stop();
-
-    // Wait for in-flight tasks to complete
-    while (this.#inFlight > 0) {
-      await Bun.sleep(50);
-    }
-
-    if (this.#ws !== null) {
-      this.#ws.close();
-      this.#ws = null;
-    }
+    await this.#drainAndClose();
   }
 
   /** Get the number of in-flight tasks. */
@@ -152,6 +150,7 @@ export class RemoteWorker implements Disposable {
 
   [Symbol.dispose](): void {
     this.#abortController.abort();
+    this.#abortController = new AbortController();
     this.#heartbeat.stop();
 
     if (this.#ws !== null) {
@@ -167,11 +166,30 @@ export class RemoteWorker implements Disposable {
   async #gracefulShutdown(): Promise<void> {
     this.#shuttingDown = true;
     this.#heartbeat.stop();
+    await this.#drainAndClose();
+  }
 
-    // Drain in-flight work
+  /** Drain in-flight tasks (with timeout), abort listeners, and close the socket. */
+  async #drainAndClose(): Promise<void> {
+    const timeout = this.#options.disconnectTimeoutMs ?? DEFAULT_DISCONNECT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
     while (this.#inFlight > 0) {
+      if (Date.now() >= deadline) {
+        console.warn(
+          `[weft] RemoteWorker timed out after ${timeout}ms with ${this.#inFlight} tasks still in-flight`,
+        );
+        break;
+      }
       await Bun.sleep(50);
     }
+
+    // Always abort the old controller to detach event listeners, even if the
+    // remote end already closed the connection (which sets #ws to null via the
+    // close listener). Then swap to a fresh controller for future connect() calls.
+    const oldAbortController = this.#abortController;
+    this.#abortController = new AbortController();
+    oldAbortController.abort();
 
     if (this.#ws !== null) {
       this.#ws.close();

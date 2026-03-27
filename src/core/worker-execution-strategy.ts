@@ -27,6 +27,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   readonly #workersByWorkflowId: Map<string, Worker>;
   readonly #workerListeners: Map<string, WorkerListeners>;
   readonly #broadcastChannel: BroadcastChannel | null;
+  readonly #broadcastListener: ((event: MessageEvent) => void) | null;
   #messageHandler: ((message: WorkerOutboundMessage) => void) | null;
 
   constructor(pool: WorkerPool, options?: { broadcastEvents?: boolean }) {
@@ -35,13 +36,15 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     this.#workerListeners = new Map();
     this.#messageHandler = null;
     this.#broadcastChannel = null;
+    this.#broadcastListener = null;
 
     if (options?.broadcastEvents) {
       try {
         this.#broadcastChannel = new BroadcastChannel('weft:events');
-        this.#broadcastChannel.addEventListener('message', (event: MessageEvent) => {
+        this.#broadcastListener = (event: MessageEvent) => {
           this.#handleBroadcastMessage(event.data as Record<string, unknown>);
-        });
+        };
+        this.#broadcastChannel.addEventListener('message', this.#broadcastListener);
       } catch {
         // BroadcastChannel may not be available in all environments
       }
@@ -128,24 +131,31 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   // -------------------------------------------------------------------------
 
   [Symbol.dispose](): void {
-    this.#broadcastChannel?.close();
+    this.#teardown();
+    this.#pool[Symbol.dispose]();
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    this.#teardown();
+    await this.#pool[Symbol.asyncDispose]();
+  }
+
+  /** Shared cleanup for both sync and async disposal paths. */
+  #teardown(): void {
+    if (this.#broadcastChannel) {
+      if (this.#broadcastListener) {
+        this.#broadcastChannel.removeEventListener('message', this.#broadcastListener);
+      }
+      this.#broadcastChannel.close();
+    }
+
     // Release all active workers back to the pool before disposing
     const activeWorkflowIds = Array.from(this.#workersByWorkflowId.keys());
     for (const workflowId of activeWorkflowIds) {
       this.#releaseWorker(workflowId);
     }
-    this.#messageHandler = null;
-    this.#pool[Symbol.dispose]();
-  }
 
-  async [Symbol.asyncDispose](): Promise<void> {
-    this.#broadcastChannel?.close();
-    const activeWorkflowIds = Array.from(this.#workersByWorkflowId.keys());
-    for (const workflowId of activeWorkflowIds) {
-      this.#releaseWorker(workflowId);
-    }
     this.#messageHandler = null;
-    await this.#pool[Symbol.asyncDispose]();
   }
 
   // -------------------------------------------------------------------------
@@ -202,26 +212,26 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   }
 
   #handleWorkerError(workflowId: string, errorEvent: ErrorEvent): void {
+    const worker = this.#workersByWorkflowId.get(workflowId);
+    if (!worker) return; // Already cleaned up by a racing completion
+
     this.#emit({
       type: 'failed',
       workflowId,
       error: `Worker crashed: ${errorEvent.message ?? 'unknown error'}`,
     });
 
-    // Clean up listeners and terminate the crashed worker so it cannot
-    // continue emitting events for an already-failed workflow.
-    const worker = this.#workersByWorkflowId.get(workflowId);
-    if (worker) {
-      const listeners = this.#workerListeners.get(workflowId);
-      if (listeners) {
-        worker.removeEventListener('message', listeners.message as EventListener);
-        worker.removeEventListener('error', listeners.error as EventListener);
-      }
-      worker.terminate();
+    // Remove from maps first to prevent racing with #handleWorkerMessage
+    this.#workersByWorkflowId.delete(workflowId);
+    const listeners = this.#workerListeners.get(workflowId);
+    if (listeners) {
+      worker.removeEventListener('message', listeners.message as EventListener);
+      worker.removeEventListener('error', listeners.error as EventListener);
+      this.#workerListeners.delete(workflowId);
     }
 
-    this.#workersByWorkflowId.delete(workflowId);
-    this.#workerListeners.delete(workflowId);
+    // Terminate the crashed worker (do not return to pool)
+    worker.terminate();
   }
 
   #releaseWorker(workflowId: string): void {
