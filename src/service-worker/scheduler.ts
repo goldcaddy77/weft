@@ -182,12 +182,18 @@ export class ServiceWorkerScheduler implements Disposable {
   #schedulePoll(): void {
     if (!this.#running) return;
 
+    // Capture the generation so the async .finally() handler can detect a
+    // stop()/start() cycle that happened while a tick was in-flight. Without
+    // this, the old tick's .finally() could create a duplicate polling loop.
+    const pollGeneration = this.#generation;
+
     this.#timeoutHandle = setTimeout(() => {
       void this.tick()
         .catch((error: unknown) => {
           console.error('[weft] ServiceWorkerScheduler tick failed:', error);
         })
         .finally(() => {
+          if (this.#generation !== pollGeneration) return;
           this.#schedulePoll();
         });
     }, this.#fallbackIntervalMilliseconds);
