@@ -316,9 +316,10 @@ describe('ServiceWorkerScheduler', () => {
     // Wait long enough for multiple poll cycles
     await Bun.sleep(400);
 
-    // The first tick processes timer-a (which throws), aborting that tick
-    // before reaching timer-b. The .finally() in #schedulePoll reschedules,
-    // so the next tick picks up timer-b. tickCount >= 2 confirms the loop survived.
+    // The first tick processes timer-a (callback throws, caught by try/catch
+    // in tick) then continues to timer-b. The .finally() in #schedulePoll
+    // ensures subsequent poll cycles also run. tickCount >= 2 confirms both
+    // timers were processed despite the error.
     expect(tickCount).toBeGreaterThanOrEqual(2);
 
     scheduler.stop();

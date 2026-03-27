@@ -110,7 +110,11 @@ export class ServiceWorkerScheduler implements Disposable {
     }
 
     for (const { key, entry } of expired) {
-      await this.#onTimerFired(entry);
+      try {
+        await this.#onTimerFired(entry);
+      } catch (error) {
+        console.error(`Timer callback failed for timer ${entry.id}:`, error);
+      }
 
       const indexKey = `timer-idx:${entry.id}`;
       await this.#storage.batch([
