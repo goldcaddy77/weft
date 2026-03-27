@@ -255,17 +255,18 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
     ): Generator<unknown, unknown, unknown> {
       const childSpanId = generateSpanId();
+      const traceId = currentTraceId || generateTraceId();
 
       injectTraceParent(interception.headers, {
         version: '00',
-        traceId: currentTraceId || generateTraceId(),
+        traceId,
         spanId: childSpanId,
         traceFlags: 1,
       });
 
       const span: SpanInfo = {
         name: 'agent',
-        traceId: currentTraceId,
+        traceId,
         spanId: childSpanId,
         parentSpanId: rootSpanId,
         attributes: {
@@ -299,13 +300,16 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: SignalReceivedInterception,
       next: (interception: SignalReceivedInterception) => void,
     ): void {
-      const childSpanId = generateSpanId();
+      // signalReceived is invoked from engine.signal(), outside any workflow
+      // execution context. Generate a standalone trace rather than using the
+      // shared currentTraceId/rootSpanId which belong to the last-started workflow.
+      const spanId = generateSpanId();
+      const traceId = generateTraceId();
 
       const span: SpanInfo = {
         name: `signal:received:${interception.signalName}`,
-        traceId: currentTraceId,
-        spanId: childSpanId,
-        parentSpanId: rootSpanId,
+        traceId,
+        spanId,
         attributes: {
           'signal.name': interception.signalName,
           'signal.workflow_id': interception.workflowId,

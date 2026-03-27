@@ -62,6 +62,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     input: unknown;
     checkpoint: ArrayBuffer;
     nestingDepth?: number;
+    deadline?: number;
     headers?: [string, string][];
   }): void {
     const message: WorkerInboundMessage & { type: 'run' } = {
@@ -71,6 +72,9 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
       checkpoint: parameters.checkpoint,
       input: parameters.input,
     };
+    if (parameters.deadline !== undefined) {
+      message.deadline = parameters.deadline;
+    }
     if (parameters.headers) {
       message.headers = parameters.headers;
     }

@@ -764,14 +764,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const composed = this.#getComposedWorkflowInterceptor();
     if (composed) {
       let deliveryPromise: Promise<void> | undefined;
+      let nextCalled = false;
       composed.signalReceived(
         {
           workflowId,
           signalName: name,
-          payload: payload ?? null,
+          payload: payload,
           headers: new Map<string, string>(),
         },
         (interception) => {
+          if (nextCalled) {
+            throw new Error('signalReceived interceptor called next() more than once');
+          }
+          nextCalled = true;
           deliveryPromise = deliverSignal(interception.payload);
         },
       );
