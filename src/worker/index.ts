@@ -184,14 +184,14 @@ export class RemoteWorker implements Disposable {
       await Bun.sleep(50);
     }
 
-    // Swap to a fresh controller so a future connect() can attach listeners.
-    // #ws is only assigned inside the 'open' handler, so when non-null it is
-    // always past the CONNECTING state — safe to abort the old controller.
+    // Always abort the old controller to detach event listeners, even if the
+    // remote end already closed the connection (which sets #ws to null via the
+    // close listener). Then swap to a fresh controller for future connect() calls.
     const oldAbortController = this.#abortController;
     this.#abortController = new AbortController();
+    oldAbortController.abort();
 
     if (this.#ws !== null) {
-      oldAbortController.abort();
       this.#ws.close();
       this.#ws = null;
     }

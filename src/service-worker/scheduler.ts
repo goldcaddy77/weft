@@ -60,6 +60,7 @@ export class ServiceWorkerScheduler implements Disposable {
   readonly #getNow: () => number;
   #timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   #running = false;
+  #generation = 0;
 
   constructor(options: ServiceWorkerSchedulerOptions) {
     this.#storage = options.storage;
@@ -134,15 +135,22 @@ export class ServiceWorkerScheduler implements Disposable {
   start(): void {
     if (this.#running) return;
     this.#running = true;
+    this.#generation++;
 
     const periodicSync = this.#registration?.periodicSync;
 
     if (periodicSync) {
+      // Capture the generation so the async .catch() handler can detect a
+      // stop()/start() cycle that happened while the registration was pending.
+      // Without this, the deferred handler could create a duplicate polling loop.
+      const startGeneration = this.#generation;
+
       void periodicSync
         .register(this.#periodicSyncTag, {
           minInterval: DEFAULT_PERIODIC_SYNC_MIN_INTERVAL,
         })
         .catch(() => {
+          if (this.#generation !== startGeneration) return;
           // Periodic sync registration failed — fall back to polling
           this.#schedulePoll();
         });
@@ -155,6 +163,7 @@ export class ServiceWorkerScheduler implements Disposable {
   /** Stop the scheduler and clear all timeout handles. */
   stop(): void {
     this.#running = false;
+    this.#generation++;
 
     if (this.#timeoutHandle !== null) {
       clearTimeout(this.#timeoutHandle);
