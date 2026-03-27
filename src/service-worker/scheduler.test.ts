@@ -316,9 +316,9 @@ describe('ServiceWorkerScheduler', () => {
     // Wait long enough for multiple poll cycles
     await Bun.sleep(400);
 
-    // The first tick fires timer-a (which throws) and timer-b.
-    // Despite the throw, the polling loop should continue and not die.
-    // tickCount should be >= 2 showing that the scheduler kept running.
+    // The first tick processes timer-a (which throws), aborting that tick
+    // before reaching timer-b. The .finally() in #schedulePoll reschedules,
+    // so the next tick picks up timer-b. tickCount >= 2 confirms the loop survived.
     expect(tickCount).toBeGreaterThanOrEqual(2);
 
     scheduler.stop();

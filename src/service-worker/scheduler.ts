@@ -134,7 +134,7 @@ export class ServiceWorkerScheduler implements Disposable {
     const periodicSync = this.#registration?.periodicSync;
 
     if (periodicSync) {
-      periodicSync
+      void periodicSync
         .register(this.#periodicSyncTag, {
           minInterval: DEFAULT_PERIODIC_SYNC_MIN_INTERVAL,
         })

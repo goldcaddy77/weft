@@ -233,6 +233,32 @@ describe('UpdateCoordinator', () => {
       expect(await storage.get('upk:wf-1:idem-recent')).not.toBeNull();
     });
 
+    it('removes orphaned idempotency mappings across different workflows', async () => {
+      const oldTimestamp = Date.now() - 2 * 60 * 60 * 1000; // 2 hours ago
+
+      // wf-1: expired response with its idempotency mapping
+      await storage.put(
+        'upr:upd-wf1',
+        encode({ updateId: 'upd-wf1', result: 'result-wf1', createdAt: oldTimestamp }),
+      );
+      await storage.put('upk:wf-1:idem-wf1', encode({ updateId: 'upd-wf1' }));
+
+      // wf-2: expired response with its idempotency mapping
+      await storage.put(
+        'upr:upd-wf2',
+        encode({ updateId: 'upd-wf2', result: 'result-wf2', createdAt: oldTimestamp }),
+      );
+      await storage.put('upk:wf-2:idem-wf2', encode({ updateId: 'upd-wf2' }));
+
+      const cleaned = await coordinator.cleanupExpiredResponses(60 * 60 * 1000); // 1 hour TTL
+
+      expect(cleaned).toBe(2);
+      expect(await storage.get('upr:upd-wf1')).toBeNull();
+      expect(await storage.get('upk:wf-1:idem-wf1')).toBeNull();
+      expect(await storage.get('upr:upd-wf2')).toBeNull();
+      expect(await storage.get('upk:wf-2:idem-wf2')).toBeNull();
+    });
+
     it('returns zero when no responses are expired', async () => {
       const recentTimestamp = Date.now();
 
