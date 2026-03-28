@@ -63,6 +63,7 @@ export type { TypedEventTarget, WeftEventMap } from './core/events';
 export { BunSQLiteStorage } from './storage/bun-sql';
 export { KEYS } from './storage/interface';
 export type { BatchOperation, ScanOptions, Storage } from './storage/interface';
+export { LMDBStorage } from './storage/lmdb';
 export { MemoryStorage } from './storage/memory';
 
 // Codec
