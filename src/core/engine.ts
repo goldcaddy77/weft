@@ -14,6 +14,8 @@ import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { WorkerPool } from '../workers/pool.ts';
+import type { ActivityRegistrationOptions } from './activity-registry.ts';
+import { ActivityRegistry } from './activity-registry.ts';
 import {
   advanceCheckpoint,
   createCheckpoint,
@@ -308,7 +310,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #composedWorkflowInterceptor: ComposedWorkflowInterceptor | null;
   #composedActivityInterceptor: ComposedActivityInterceptor | null;
   #updateCoordinator: UpdateCoordinator;
-  #activityRegistrations: Map<string, (...arguments_: unknown[]) => unknown>;
+  #activityRegistry: ActivityRegistry;
   #checkpoints: Map<string, Checkpoint>;
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
@@ -334,7 +336,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#composedWorkflowInterceptor = null;
     this.#composedActivityInterceptor = null;
     this.#updateCoordinator = new UpdateCoordinator(storage);
-    this.#activityRegistrations = new Map();
+    this.#activityRegistry = new ActivityRegistry();
     this.#checkpoints = new Map();
     this.#broadcastChannel = null;
     this.#pendingNestingDepth = undefined;
@@ -465,9 +467,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * an operation request with `activityName` (not a function reference). The
    * engine uses this registry to look up the function by name and execute it
    * on the main thread.
+   *
+   * If `fn` was created via the `activity()` helper, metadata (retry, timeout,
+   * queue, idempotent) is auto-extracted from its colocated properties.
+   * Explicit `options` take precedence over auto-extracted values.
    */
-  registerActivity(name: string, fn: (...arguments_: unknown[]) => unknown): void {
-    this.#activityRegistrations.set(name, fn);
+  registerActivity(
+    name: string,
+    fn: (...arguments_: unknown[]) => unknown,
+    options?: ActivityRegistrationOptions,
+  ): void {
+    this.#activityRegistry.register(name, fn, options);
   }
 
   // -------------------------------------------------------------------------
@@ -2012,7 +2022,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #resolveActivityFunction(
     operation: Extract<ContextOperationRequest, { type: 'activity' }>,
   ): (...arguments_: unknown[]) => unknown {
-    const registered = this.#activityRegistrations.get(operation.activityName);
+    const registered = this.#activityRegistry.resolve(operation.activityName);
     if (registered) return registered;
     if (operation.fn) return operation.fn as (...arguments_: unknown[]) => unknown;
     throw new Error(

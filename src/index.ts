@@ -82,6 +82,8 @@ export { Scheduler, calculateBackoff, parseDuration } from './core/scheduler';
 
 // Activity
 export { activity } from './core/activity';
+export { ActivityRegistry } from './core/activity-registry';
+export type { ActivityMetadata, ActivityRegistrationOptions } from './core/activity-registry';
 
 // Context
 export { Context } from './core/context';
