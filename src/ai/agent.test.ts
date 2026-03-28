@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { BudgetTracker } from './budget';
 import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message } from './providers/types';
 
 import type { AgentTool, ToolCallInfo, ToolReturnInfo, TurnInfo, TurnResult } from './agent';
 import { executeAgentLoop } from './agent';
-import { BudgetExceededError } from './budget';
+import { BudgetExceededError, BudgetTracker } from './budget';
+import { AgentTurnCompletedEvent } from './events';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1174,5 +1174,96 @@ describe('executeAgentLoop', () => {
 
     expect(result.content).toBe('File contents read');
     expect(result.turnCount).toBe(2);
+  });
+
+  it('tracks per-turn cost in AgentTurnCompletedEvent', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }], {
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      }),
+      createChatResponse('Done', {
+        usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+      }),
+    ]);
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const budget = new BudgetTracker({
+      maxCost: 10,
+      models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
+    });
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        budget,
+        eventTarget,
+        workflowId: 'wf-cost-test',
+        agentId: 'agent-cost-test',
+      },
+      'Do something',
+    );
+
+    expect(turnEvents).toHaveLength(2);
+
+    // Turn 0: 100 input * $1/1K + 50 output * $2/1K = $0.10 + $0.10 = $0.20
+    expect(turnEvents[0]!.cost).toBeCloseTo(0.2, 4);
+    expect(turnEvents[0]!.cumulativeCost).toBeCloseTo(0.2, 4);
+
+    // Turn 1: 200 input * $1/1K + 100 output * $2/1K = $0.20 + $0.20 = $0.40
+    expect(turnEvents[1]!.cost).toBeCloseTo(0.4, 4);
+    expect(turnEvents[1]!.cumulativeCost).toBeCloseTo(0.6, 4);
+
+    // Total cost in result
+    expect(result.totalCost).toBeCloseTo(0.6, 4);
+  });
+
+  it('reports per-turn cost in onTurnCompleted callback', async () => {
+    const provider = createMockProvider([
+      createChatResponse('Done', {
+        usage: { inputTokens: 500, outputTokens: 200, totalTokens: 700 },
+      }),
+    ]);
+
+    const budget = new BudgetTracker({
+      maxCost: 10,
+      models: { 'test-model': { inputCostPer1K: 2, outputCostPer1K: 4 } },
+    });
+
+    const turnResults: TurnResult[] = [];
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        budget,
+        onTurnCompleted: (turn) => turnResults.push(turn),
+      },
+      'Hello',
+    );
+
+    expect(turnResults).toHaveLength(1);
+    // 500 input * $2/1K + 200 output * $4/1K = $1.00 + $0.80 = $1.80
+    expect(turnResults[0]!.cost).toBeCloseTo(1.8, 4);
+  });
+
+  it('returns zero cost when no budget tracker is provided', async () => {
+    const provider = createMockProvider([createChatResponse('Done')]);
+
+    const result = await executeAgentLoop({ model: 'test-model', provider }, 'Hello');
+
+    expect(result.totalCost).toBe(0);
   });
 });

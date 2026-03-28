@@ -819,4 +819,24 @@ describe('Context', () => {
       expect(state!.breakdown).toEqual([]);
     });
   });
+
+  describe('ctx.budgetProjection', () => {
+    it('returns undefined when no budget is set', () => {
+      const context = createContext();
+      expect(context.budgetProjection()).toBeUndefined();
+    });
+
+    it('returns zero estimates before any usage', () => {
+      const context = createContext();
+      context.setBudget({
+        maxCost: 10.0,
+        models: { 'gpt-4': { inputCostPer1K: 0.03, outputCostPer1K: 0.06 } },
+      });
+
+      const projection = context.budgetProjection();
+      expect(projection).toBeDefined();
+      expect(projection!.estimatedTurnsRemaining).toBe(0);
+      expect(projection!.estimatedCostAtCompletion).toBe(0);
+    });
+  });
 });

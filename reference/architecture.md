@@ -5138,18 +5138,18 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 
 ### Agent-Native Engine: Cost Enforcement
 
-- [ ] **`ctx.setBudget()` configures workflow-level cost constraints.** Accepts `maxTokens`, `maxCost` (USD), `warningThreshold`, and per-model pricing. Budget state persists in checkpoint and survives restarts.
-- [ ] **`ctx.budgetRemaining()` returns current budget state.** Returns `tokensRemaining`, `costRemaining`, `tokensUsed`, `costUsed`, and per-model `breakdown`.
-- [ ] **`tokenBudget` on `ctx.agent()` enforced via `AbortController`.** `budgetController.abort(new BudgetExceededError(usage))` fires when cumulative usage exceeds budget. Signal propagates to in-flight `fetch()`.
-- [ ] **`engine.setBudgetPolicy()` sets organization-level budgets.** Daily and monthly limits per namespace. Stored at `budget:{namespace}:daily:{date}` and `budget:{namespace}:monthly:{month}`.
-- [ ] **Organization budget enforcement is real-time.** Token usage written to budget counter atomically with agent turn checkpoint via `batch()`. Exceeding rejects new `ctx.agent()` calls with `OrganizationBudgetExceededError`.
-- [ ] **Cost-aware retry skips retries when budget insufficient.** Before retrying, engine checks `ctx.budgetRemaining()`. If estimated retry cost exceeds remaining budget, `BudgetExceededError` thrown instead.
-- [ ] **Cost queryable via `handle.query("tokenUsage")`.** Returns cumulative token usage breakdown per agent call and per model.
-- [ ] **`AgentBudgetWarningEvent` dispatched at configurable threshold.** Default: 80% of budget consumed. Dispatched on both `WorkflowHandle` and `Engine`.
-- [ ] **`AgentBudgetExceededEvent` dispatched when budget exhausted.** Includes breakdown by model and turn.
-- [ ] **Cost observable as search attribute.** `ctx.agent()` automatically updates `weft:tokenCost` search attribute with cumulative USD cost.
-- [ ] **Per-turn cost recorded in `AgentTurnCompletedEvent`.** Includes `inputTokens`, `outputTokens`, `cost`, and `cumulativeCost`.
-- [ ] **`ctx.budgetProjection()` estimates remaining capacity.** Based on average per-turn cost and burn rate.
+- [x] **`ctx.setBudget()` configures workflow-level cost constraints.** Accepts `maxTokens`, `maxCost` (USD), `warningThreshold`, and per-model pricing. Budget state persists in checkpoint and survives restarts.
+- [x] **`ctx.budgetRemaining()` returns current budget state.** Returns `tokensRemaining`, `costRemaining`, `tokensUsed`, `costUsed`, and per-model `breakdown`.
+- [x] **`tokenBudget` on `ctx.agent()` enforced via `AbortController`.** `budgetController.abort(new BudgetExceededError(usage))` fires when cumulative usage exceeds budget. Signal propagates to in-flight `fetch()`.
+- [x] **`engine.setBudgetPolicy()` sets organization-level budgets.** Daily and monthly limits per namespace. Stored at `budget:{namespace}:daily:{date}` and `budget:{namespace}:monthly:{month}`.
+- [x] **Organization budget enforcement is real-time.** Token usage written to budget counter atomically with agent turn checkpoint via `batch()`. Exceeding rejects new `ctx.agent()` calls with `OrganizationBudgetExceededError`.
+- [x] **Cost-aware retry skips retries when budget insufficient.** Before retrying, engine checks `ctx.budgetRemaining()`. If estimated retry cost exceeds remaining budget, `BudgetExceededError` thrown instead.
+- [x] **Cost queryable via `handle.query("tokenUsage")`.** Returns cumulative token usage breakdown per agent call and per model.
+- [x] **`AgentBudgetWarningEvent` dispatched at configurable threshold.** Default: 80% of budget consumed. Dispatched on both `WorkflowHandle` and `Engine`.
+- [x] **`AgentBudgetExceededEvent` dispatched when budget exhausted.** Includes breakdown by model and turn.
+- [x] **Cost observable as search attribute.** `ctx.agent()` automatically updates `weft:tokenCost` search attribute with cumulative USD cost.
+- [x] **Per-turn cost recorded in `AgentTurnCompletedEvent`.** Includes `inputTokens`, `outputTokens`, `cost`, and `cumulativeCost`.
+- [x] **`ctx.budgetProjection()` estimates remaining capacity.** Based on average per-turn cost and burn rate.
 
 ### Agent-Native Engine: Human-in-the-Loop Protocol
 

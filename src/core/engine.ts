@@ -157,6 +157,10 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
     return this.#engine.update(this.id, name, payload, options);
   }
 
+  async query(name: string): Promise<unknown> {
+    return this.#engine.query(this.id, name);
+  }
+
   async *[Symbol.asyncIterator](): AsyncIterableIterator<Event> {
     let resolver: (() => void) | undefined;
     const events: Event[] = [];
@@ -309,6 +313,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
   #workflowNestingDepths: Map<string, number>;
+  #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -379,6 +384,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#strategy = inlineStrategy;
       this.#inlineStrategy = inlineStrategy;
     }
+
+    this.#budgetPolicyEnforcer = null;
 
     // Wire up the strategy message handler
     this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
@@ -863,6 +870,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     return response.result;
+  }
+
+  async query(workflowId: string, name: string): Promise<unknown> {
+    if (!this.#inlineStrategy) {
+      throw new Error(
+        'Workflow queries are not supported when using the worker execution strategy.',
+      );
+    }
+    const context = this.#inlineStrategy.getContext(workflowId);
+    if (!context) {
+      return undefined;
+    }
+    const accessor = context.exposedAccessors.get(name);
+    if (!accessor) return undefined;
+    return accessor();
+  }
+
+  async setBudgetPolicy(
+    options: import('../ai/budget-policy.ts').BudgetPolicyOptions,
+  ): Promise<void> {
+    if (!this.#budgetPolicyEnforcer) {
+      const { BudgetPolicyEnforcer } = await import('../ai/budget-policy.ts');
+      this.#budgetPolicyEnforcer = new BudgetPolicyEnforcer(this.#storage, this.#options.getNow);
+    }
+    this.#budgetPolicyEnforcer.setPolicy(options);
   }
 
   // -------------------------------------------------------------------------
@@ -1589,13 +1621,162 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'agent': {
         try {
           const { executeAgentLoop } = await import('../ai/agent.ts');
+          const { BudgetTracker } = await import('../ai/budget.ts');
+          const { AgentBudgetWarningEvent, AgentBudgetExceededEvent } =
+            await import('../ai/events.ts');
           const {
             prompt,
-            budget: _budgetOptions,
+            budget: budgetOptions,
+            budgetNamespace,
             contextStrategy: _contextStrategy,
             ...rest
           } = operation.options;
-          const agentResult = await executeAgentLoop(rest, prompt);
+
+          // Construct BudgetTracker from options, wiring events to engine
+          let budgetTracker: InstanceType<typeof BudgetTracker> | undefined;
+          if (budgetOptions) {
+            budgetTracker = new BudgetTracker(budgetOptions, {
+              onWarning: (state) => {
+                const threshold = budgetOptions.warningThreshold ?? 0.8;
+                const costFraction =
+                  budgetOptions.maxCost !== undefined && budgetOptions.maxCost > 0
+                    ? state.costUsed / budgetOptions.maxCost
+                    : 0;
+                const tokenFraction =
+                  budgetOptions.maxTokens !== undefined && budgetOptions.maxTokens > 0
+                    ? state.tokensUsed / budgetOptions.maxTokens
+                    : 0;
+                const usedPercent = Math.max(costFraction, tokenFraction);
+                const event = new AgentBudgetWarningEvent(
+                  workflowId,
+                  operation.operationId,
+                  usedPercent,
+                  state.tokensRemaining,
+                  state.costRemaining,
+                  threshold,
+                );
+                this.dispatchEvent(event);
+                this.#forwardEventToHandle(workflowId, event);
+              },
+              onExceeded: (state) => {
+                const event = new AgentBudgetExceededEvent(
+                  workflowId,
+                  operation.operationId,
+                  state.tokensUsed,
+                  state.costUsed,
+                  budgetOptions.maxTokens ?? 0,
+                  budgetOptions.maxCost ?? 0,
+                );
+                this.dispatchEvent(event);
+                this.#forwardEventToHandle(workflowId, event);
+              },
+            });
+          }
+
+          // Resolve the organization budget namespace once for both check
+          // and record. If budgetNamespace is specified, use it. If exactly
+          // one policy exists, use its namespace. Otherwise skip enforcement.
+          const resolvedBudgetNamespace = this.#budgetPolicyEnforcer
+            ? (budgetNamespace ??
+              (this.#budgetPolicyEnforcer.policies.size === 1
+                ? this.#budgetPolicyEnforcer.policies.keys().next().value
+                : undefined))
+            : undefined;
+
+          if (this.#budgetPolicyEnforcer && resolvedBudgetNamespace) {
+            if (!budgetOptions) {
+              // Org budget enforcement requires per-workflow budget options
+              // with model pricing to compute cost. Without it, cost stays 0
+              // and the org counter is never incremented. Dispatch a warning.
+              this.dispatchEvent(
+                new DevelopmentWarningEvent(
+                  workflowId,
+                  'Organization budget policy is active but ctx.agent() was called ' +
+                    'without budget options. Provide budget with model pricing to ' +
+                    'enable cost tracking and org budget enforcement.',
+                  [],
+                ),
+              );
+            }
+            await this.#budgetPolicyEnforcer.checkBudget(resolvedBudgetNamespace);
+          }
+
+          // Expose tokenUsage query accessor that accumulates across
+          // multiple ctx.agent() calls in the same workflow.
+          const context = this.#inlineStrategy?.getContext(workflowId);
+          if (context && budgetTracker) {
+            const previousAccessor = context.exposedAccessors.get('tokenUsage');
+            context.expose({
+              tokenUsage: () => {
+                const current = budgetTracker.budgetRemaining();
+                if (!previousAccessor) return current;
+                const previous = previousAccessor() as typeof current;
+
+                // Merge per-model breakdowns
+                const mergedBreakdown = new Map<
+                  string,
+                  { model: string; inputTokens: number; outputTokens: number; cost: number }
+                >();
+                for (const entry of previous.breakdown) {
+                  mergedBreakdown.set(entry.model, { ...entry });
+                }
+                for (const entry of current.breakdown) {
+                  const existing = mergedBreakdown.get(entry.model);
+                  if (existing) {
+                    existing.inputTokens += entry.inputTokens;
+                    existing.outputTokens += entry.outputTokens;
+                    existing.cost += entry.cost;
+                  } else {
+                    mergedBreakdown.set(entry.model, { ...entry });
+                  }
+                }
+
+                const tokensUsed = current.tokensUsed + previous.tokensUsed;
+                const costUsed = current.costUsed + previous.costUsed;
+
+                return {
+                  tokensUsed,
+                  costUsed,
+                  // Remaining values are only meaningful for the latest call's budget
+                  tokensRemaining: current.tokensRemaining,
+                  costRemaining: current.costRemaining,
+                  breakdown: [...mergedBreakdown.values()],
+                };
+              },
+            });
+          }
+
+          const agentResult = await executeAgentLoop(
+            {
+              ...rest,
+              budget: budgetTracker,
+              eventTarget: this,
+              workflowId,
+              agentId: operation.operationId,
+            },
+            prompt,
+          );
+
+          // Accumulate cost search attribute across multiple agent calls
+          if (context && agentResult.totalCost > 0) {
+            const previousCost = context.getAttribute<number>('weft:tokenCost') ?? 0;
+            context.setAttribute('weft:tokenCost', previousCost + agentResult.totalCost);
+          }
+
+          // Record cost against the resolved organization budget namespace.
+          // Note: org budget counter update and checkpoint are not in the same
+          // batch() call because the checkpoint happens at the next generator
+          // yield. If the process crashes after this write but before the next
+          // checkpoint, the agent operation replays and double-charges the org
+          // counter. Idempotent recording requires an operation-scoped marker,
+          // which is deferred to a future iteration.
+          if (this.#budgetPolicyEnforcer && resolvedBudgetNamespace && agentResult.totalCost > 0) {
+            await this.#budgetPolicyEnforcer.recordCost(
+              resolvedBudgetNamespace,
+              agentResult.totalCost,
+            );
+          }
+
           this.#feedOperationResult(workflowId, {
             status: 'completed',
             value: agentResult.content,
