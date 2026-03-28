@@ -126,7 +126,7 @@ export class WorkerRegistry {
     this.taskAssigned(workerId);
   }
 
-  /** Return tasks whose deadline has passed for reassignment. */
+  /** Remove and return tasks whose deadline has passed for reassignment. */
   checkExpiredTasks(now: number): InFlightTask[] {
     const expired: InFlightTask[] = [];
 
@@ -136,6 +136,11 @@ export class WorkerRegistry {
       }
     }
 
+    for (const task of expired) {
+      this.#inFlightTasks.delete(task.operationId);
+      this.taskCompleted(task.workerId);
+    }
+
     return expired;
   }
 
@@ -143,7 +148,7 @@ export class WorkerRegistry {
   extendVisibility(operationId: string, extension: number): void {
     const task = this.#inFlightTasks.get(operationId);
     if (task !== undefined) {
-      task.deadline = Date.now() + extension;
+      task.deadline = Math.max(task.deadline, Date.now() + extension);
     }
   }
 

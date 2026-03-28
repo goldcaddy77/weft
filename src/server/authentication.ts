@@ -358,8 +358,12 @@ export async function createAuthenticator(config: AuthConfig): Promise<Authentic
 
   return async (request: Request): Promise<AuthResult> => {
     const url = new URL(request.url);
+    const pathname =
+      url.pathname.endsWith('/') && url.pathname.length > 1
+        ? url.pathname.slice(0, -1)
+        : url.pathname;
 
-    if (publicPaths.has(url.pathname)) {
+    if (publicPaths.has(pathname)) {
       return { authenticated: true, method: 'public' };
     }
 
@@ -378,8 +382,11 @@ export async function createAuthenticator(config: AuthConfig): Promise<Authentic
         try {
           const claims = await verifyJWT(token, jwtKey, config.jwt);
           return { authenticated: true, method: 'jwt', claims };
-        } catch {
-          // JWT verification failed — fall through to next method
+        } catch (error) {
+          console.warn(
+            '[weft] JWT verification failed:',
+            error instanceof Error ? error.message : String(error),
+          );
         }
       }
     }

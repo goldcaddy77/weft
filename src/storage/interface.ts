@@ -52,6 +52,7 @@ export const KEYS = {
   updateIdempotency: (workflowId: string, key: string) => `upk:${workflowId}:${key}`,
   budget: (namespace: string, period: string, date: string) =>
     `budget:${namespace}:${period}:${date}`,
+  budgetCharged: (operationId: string) => `budget:charged:${operationId}`,
   review: (workflowId: string, reviewId: string) => `review:${workflowId}:${reviewId}`,
   offload: (workflowId: string, key: string) => `offload:${workflowId}:${key}`,
   archive: (workflowId: string, key: string) => `archive:${workflowId}:${key}`,

@@ -100,7 +100,7 @@ export class LongPollWorker implements Disposable {
     const pollUrl = this.#buildPollUrl();
     const resultUrl = this.#buildResultUrl();
 
-    while (this.#running) {
+    while (this.#running && !this.#abortController.signal.aborted) {
       // Only poll when we have capacity
       if (this.#inFlight >= (this.#options.concurrency ?? DEFAULT_CONCURRENCY)) {
         await Bun.sleep(100);
@@ -144,6 +144,20 @@ export class LongPollWorker implements Disposable {
   ): Promise<void> {
     const activityFunction = this.#options.activities[task.activityName];
     if (activityFunction === undefined) {
+      try {
+        await fetch(resultUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operationId: task.operationId,
+            status: 'failed',
+            error: `Unknown activity: ${task.activityName}`,
+          }),
+          signal: this.#abortController.signal,
+        });
+      } catch {
+        // Best-effort error reporting; server will eventually time out the task
+      }
       return;
     }
 

@@ -8,6 +8,7 @@ export interface PendingTask {
   activityName: string;
   input: unknown;
   attempt?: number | undefined;
+  enqueuedAt?: number | undefined;
 }
 
 /** Result reported by a long-poll worker after executing a task. */
@@ -52,6 +53,7 @@ export class TaskQueue {
       return false;
     }
 
+    task.enqueuedAt ??= Date.now();
     this.#dispatched.add(task.operationId);
 
     if (onComplete) {
@@ -169,5 +171,45 @@ export class TaskQueue {
   /** Number of pending (unclaimed) tasks in a queue. */
   pendingCount(queue: string): number {
     return this.#pending.get(queue)?.length ?? 0;
+  }
+
+  /**
+   * Remove and return pending tasks older than `maxAge` milliseconds.
+   * Cleans up associated entries in `#dispatched` and `#completionCallbacks`.
+   */
+  removeStale(maxAge: number): PendingTask[] {
+    const cutoff = Date.now() - maxAge;
+    const stale: PendingTask[] = [];
+
+    for (const [queue, tasks] of this.#pending) {
+      const remaining: PendingTask[] = [];
+
+      for (const task of tasks) {
+        if ((task.enqueuedAt ?? 0) < cutoff) {
+          stale.push(task);
+          this.#dispatched.delete(task.operationId);
+
+          const callback = this.#completionCallbacks.get(task.operationId);
+          if (callback) {
+            this.#completionCallbacks.delete(task.operationId);
+            callback({
+              operationId: task.operationId,
+              status: 'failed',
+              error: 'Task expired: no worker claimed it within the allowed time',
+            });
+          }
+        } else {
+          remaining.push(task);
+        }
+      }
+
+      if (remaining.length === 0) {
+        this.#pending.delete(queue);
+      } else {
+        this.#pending.set(queue, remaining);
+      }
+    }
+
+    return stale;
   }
 }

@@ -19,6 +19,18 @@ export type ActivityHandlerLookup = (
   name: string,
 ) => ((...arguments_: unknown[]) => unknown) | undefined;
 
+/**
+ * Return value from {@link createActivityWorkerEntryUrl}. Holds the Blob URL
+ * for the worker entry script together with a `revoke` callback that releases
+ * the underlying object URL via `URL.revokeObjectURL`.
+ */
+export type ActivityWorkerEntryUrl = {
+  /** Blob URL suitable for the `activityExecution.workerUrl` option. */
+  url: string;
+  /** Revoke the Blob URL. Call this when the worker pool is disposed. */
+  revoke: () => void;
+};
+
 // ---------------------------------------------------------------------------
 // Worker bootstrap
 // ---------------------------------------------------------------------------
@@ -60,11 +72,13 @@ export function initializeActivityWorkerMessageLoop(getActivity: ActivityHandler
  *
  * @param registrations - Map of activity names to handler functions. The
  *   handlers must be serializable (no closures over local state).
- * @returns A Blob URL suitable for the `activityExecution.workerUrl` option.
+ * @returns An {@link ActivityWorkerEntryUrl} containing the Blob URL and a
+ *   `revoke` callback. Call `revoke()` when the worker pool is disposed to
+ *   free the underlying object URL registration.
  */
 export function createActivityWorkerEntryUrl(
   registrations: Map<string, (...arguments_: unknown[]) => unknown>,
-): string {
+): ActivityWorkerEntryUrl {
   const registrationEntries = [...registrations.entries()]
     .map(([name, handler]) => `  activities.set(${JSON.stringify(name)}, ${handler.toString()});`)
     .join('\n');
@@ -78,5 +92,10 @@ initializeActivityWorkerMessageLoop((name) => activities.get(name));
 `;
 
   const blob = new Blob([script], { type: 'application/javascript' });
-  return URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
+
+  return {
+    url,
+    revoke: () => URL.revokeObjectURL(url),
+  };
 }

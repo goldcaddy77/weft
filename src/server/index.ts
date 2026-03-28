@@ -116,6 +116,7 @@ const TASK_RESULT_RE = /^\/v1\/tasks\/([\w-]+)\/result$/;
 const MAX_POLL_TIMEOUT = 60_000;
 const DEFAULT_POLL_TIMEOUT = 30_000;
 const DEFAULT_VISIBILITY_TIMEOUT = 30_000;
+const MAX_WORKER_CONCURRENCY = 100;
 
 function isWorkerConnection(pathname: string): boolean {
   return WORKER_STREAM_RE.test(pathname);
@@ -342,6 +343,7 @@ export function serve(options: ServeOptions): WeftServer {
   const workerSockets = new Map<string, ServerWebSocket<WebSocketData>>();
   /** Tracks per-workflow worker affinity for sticky routing. Maps workflowId → workerId. */
   const workerAffinity = new Map<string, string>();
+  const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   /**
    * Send existing token events from storage as replay messages to a newly
@@ -533,11 +535,15 @@ export function serve(options: ServeOptions): WeftServer {
             const concurrency = parsed['concurrency'];
 
             ws.data.workerId = workerId;
+            const clampedConcurrency =
+              typeof concurrency === 'number'
+                ? Math.min(Math.max(1, concurrency), MAX_WORKER_CONCURRENCY)
+                : 10;
             registry.register({
               id: workerId,
               queue: ws.data.queue ?? 'default',
               activities: Array.isArray(activities) ? (activities as string[]) : [],
-              concurrency: typeof concurrency === 'number' ? concurrency : 10,
+              concurrency: clampedConcurrency,
             });
             workerSockets.set(workerId, ws);
             break;
@@ -626,12 +632,16 @@ export function serve(options: ServeOptions): WeftServer {
 
                   // Check maxAttempts — if exceeded, the task permanently fails (no re-dispatch).
                   if (policy && nextAttempt > policy.maxAttempts) {
-                    // Transition to resolved (permanent failure).
                     await transitionInflightToResolved(
                       options.engine.storage,
                       task.operationId,
                       'failed',
                     );
+                    taskQueue.complete({
+                      operationId: task.operationId,
+                      status: 'failed',
+                      error: `Max attempts (${policy.maxAttempts}) exceeded`,
+                    });
                     return;
                   }
 
@@ -665,7 +675,11 @@ export function serve(options: ServeOptions): WeftServer {
                   // Apply backoff delay before re-dispatching.
                   if (policy) {
                     const delay = calculateBackoff(record.attempt ?? 1, policy);
-                    setTimeout(() => dispatchTaskImpl(taskDispatch), delay);
+                    const handle = setTimeout(() => {
+                      pendingTimers.delete(handle);
+                      dispatchTaskImpl(taskDispatch);
+                    }, delay);
+                    pendingTimers.add(handle);
                   } else {
                     dispatchTaskImpl(taskDispatch);
                   }
@@ -770,8 +784,12 @@ export function serve(options: ServeOptions): WeftServer {
 
         // Check maxAttempts — if exceeded, the task permanently fails (no re-dispatch).
         if (policy && nextAttempt > policy.maxAttempts) {
-          // Atomically transition inflight → resolved (permanent failure).
           await transitionInflightToResolved(options.engine.storage, record.operationId, 'failed');
+          taskQueue.complete({
+            operationId: record.operationId,
+            status: 'failed',
+            error: `Max attempts (${policy.maxAttempts}) exceeded`,
+          });
           continue;
         }
 
@@ -801,7 +819,11 @@ export function serve(options: ServeOptions): WeftServer {
         // Apply backoff delay before re-dispatching.
         if (policy) {
           const delay = calculateBackoff(record.attempt ?? 1, policy);
-          setTimeout(() => dispatchTaskImpl(taskDispatch), delay);
+          const handle = setTimeout(() => {
+            pendingTimers.delete(handle);
+            dispatchTaskImpl(taskDispatch);
+          }, delay);
+          pendingTimers.add(handle);
         } else {
           dispatchTaskImpl(taskDispatch);
         }
@@ -818,6 +840,10 @@ export function serve(options: ServeOptions): WeftServer {
   // Registered last — disposed first (reverse order).
   stack.defer(() => {
     clearInterval(visibilityPollHandle);
+    for (const handle of pendingTimers) {
+      clearTimeout(handle);
+    }
+    pendingTimers.clear();
   });
 
   function dispatchTaskImpl(task: TaskDispatch): boolean {

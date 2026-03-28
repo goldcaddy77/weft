@@ -307,6 +307,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #signalWaiters: Map<string, (payload: unknown) => void>;
   #updateWaiters: Map<string, (payload: unknown) => void>;
   #sleepResolvers: Map<string, () => void>;
+  #sleepResolversByWorkflow: Map<string, Set<string>>;
   #interceptors: WorkflowInterceptor[];
   #activityInterceptors: ActivityInterceptor[];
   #composedWorkflowInterceptor: ComposedWorkflowInterceptor | null;
@@ -320,6 +321,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #workflowNestingDepths: Map<string, number>;
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   #heartbeatDetails: Map<string, unknown>;
+  #startingWorkflows: Set<string>;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -335,6 +337,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#signalWaiters = new Map();
     this.#updateWaiters = new Map();
     this.#sleepResolvers = new Map();
+    this.#sleepResolversByWorkflow = new Map();
     this.#interceptors = [];
     this.#activityInterceptors = [];
     this.#composedWorkflowInterceptor = null;
@@ -394,6 +397,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#budgetPolicyEnforcer = null;
     this.#heartbeatDetails = new Map();
+    this.#startingWorkflows = new Set();
 
     // Create the activity worker pool (optional)
     if (options?.activityExecution) {
@@ -500,9 +504,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const workflowId = options?.id ?? crypto.randomUUID();
 
-    // Check for duplicate
-    const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
+    // Guard against concurrent start() calls with the same ID.
+    if (this.#startingWorkflows.has(workflowId)) {
+      throw new Error(`Workflow with id "${workflowId}" already exists`);
+    }
+    this.#startingWorkflows.add(workflowId);
+
+    // Check for duplicate in storage
+    let existingBytes: Uint8Array | null;
+    try {
+      existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
+    } catch (error) {
+      this.#startingWorkflows.delete(workflowId);
+      throw error;
+    }
     if (existingBytes !== null) {
+      this.#startingWorkflows.delete(workflowId);
       throw new Error(`Workflow with id "${workflowId}" already exists`);
     }
 
@@ -590,6 +607,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
     });
 
+    this.#startingWorkflows.delete(workflowId);
     return handle;
   }
 
@@ -1299,6 +1317,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#signalWaiters.clear();
     this.#updateWaiters.clear();
     this.#sleepResolvers.clear();
+    this.#sleepResolversByWorkflow.clear();
     this.#checkpoints.clear();
     this.#workflowNestingDepths.clear();
     this.#broadcastChannel?.close();
@@ -1563,6 +1582,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
         // Store the resolution function for when the timer fires
         this.#sleepResolvers.set(operation.operationId, resolve);
+        let workflowOps = this.#sleepResolversByWorkflow.get(workflowId);
+        if (!workflowOps) {
+          workflowOps = new Set();
+          this.#sleepResolversByWorkflow.set(workflowId, workflowOps);
+        }
+        workflowOps.add(operation.operationId);
 
         await promise;
         this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
@@ -1975,17 +2000,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           }
 
           // Record cost against the resolved organization budget namespace.
-          // Note: org budget counter update and checkpoint are not in the same
-          // batch() call because the checkpoint happens at the next generator
-          // yield. If the process crashes after this write but before the next
-          // checkpoint, the agent operation replays and double-charges the org
-          // counter. Idempotent recording requires an operation-scoped marker,
-          // which is deferred to a future iteration.
+          // An idempotent marker prevents double-charging if the process crashes
+          // after this write but before the next checkpoint (which would cause
+          // the agent operation to replay).
           if (this.#budgetPolicyEnforcer && resolvedBudgetNamespace && agentResult.totalCost > 0) {
-            await this.#budgetPolicyEnforcer.recordCost(
-              resolvedBudgetNamespace,
-              agentResult.totalCost,
-            );
+            const chargedKey = KEYS.budgetCharged(operation.operationId);
+            const alreadyCharged = await this.#storage.get(chargedKey);
+            if (!alreadyCharged) {
+              await this.#budgetPolicyEnforcer.recordCost(
+                resolvedBudgetNamespace,
+                agentResult.totalCost,
+              );
+              await this.#storage.put(chargedKey, encode(true));
+            }
           }
 
           this.#feedOperationResult(workflowId, {
@@ -2064,6 +2091,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const resolver = this.#sleepResolvers.get(operationId);
       if (resolver) {
         this.#sleepResolvers.delete(operationId);
+        const workflowOps = this.#sleepResolversByWorkflow.get(entry.workflowId);
+        if (workflowOps) {
+          workflowOps.delete(operationId);
+          if (workflowOps.size === 0) this.#sleepResolversByWorkflow.delete(entry.workflowId);
+        }
         resolver();
       }
     } else if (entry.kind === 'execution-deadline') {
@@ -2092,6 +2124,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     for (const key of this.#updateWaiters.keys()) {
       if (key.startsWith(prefix)) this.#updateWaiters.delete(key);
+    }
+    const sleepOps = this.#sleepResolversByWorkflow.get(workflowId);
+    if (sleepOps) {
+      for (const operationId of sleepOps) {
+        this.#sleepResolvers.delete(operationId);
+      }
+      this.#sleepResolversByWorkflow.delete(workflowId);
     }
     this.#workflowNestingDepths.delete(workflowId);
   }
