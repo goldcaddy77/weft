@@ -326,6 +326,57 @@ describe('TaskQueue', () => {
     });
   });
 
+  describe('removeStale', () => {
+    it('removes tasks older than maxAge and invokes completion callbacks with failed status', () => {
+      const queue = new TaskQueue();
+      const results: TaskResult[] = [];
+
+      const task = makeTask({ operationId: 'stale-1' });
+      // Backdate the enqueuedAt so the task appears old
+      task.enqueuedAt = Date.now() - 10_000;
+
+      queue.enqueue('default', task, (result) => results.push(result));
+
+      const removed = queue.removeStale(5_000);
+
+      expect(removed).toHaveLength(1);
+      expect(removed[0]?.operationId).toBe('stale-1');
+      expect(results).toHaveLength(1);
+      expect(results[0]?.status).toBe('failed');
+      expect(results[0]?.error).toContain('expired');
+      expect(queue.pendingCount('default')).toBe(0);
+      expect(queue.isTracked('stale-1')).toBe(false);
+    });
+
+    it('does not remove tasks younger than maxAge', () => {
+      const queue = new TaskQueue();
+      const task = makeTask({ operationId: 'fresh-1' });
+
+      queue.enqueue('default', task);
+
+      const removed = queue.removeStale(60_000);
+
+      expect(removed).toHaveLength(0);
+      expect(queue.pendingCount('default')).toBe(1);
+      expect(queue.isTracked('fresh-1')).toBe(true);
+    });
+
+    it('allows re-enqueue of a stale operationId after removal', () => {
+      const queue = new TaskQueue();
+      const task = makeTask({ operationId: 'reuse-stale' });
+      task.enqueuedAt = Date.now() - 10_000;
+
+      queue.enqueue('default', task);
+      queue.removeStale(5_000);
+
+      expect(queue.isTracked('reuse-stale')).toBe(false);
+
+      const reEnqueued = queue.enqueue('default', makeTask({ operationId: 'reuse-stale' }));
+      expect(reEnqueued).toBe(true);
+      expect(queue.pendingCount('default')).toBe(1);
+    });
+  });
+
   describe('pendingCount', () => {
     it('tracks the number of pending tasks', () => {
       const queue = new TaskQueue();
