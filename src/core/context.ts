@@ -171,8 +171,10 @@ const ACTIVITY_CALL_OPTION_KEYS = new Set<string>([
 ]);
 
 /**
- * Keys specific enough to unambiguously identify an ActivityCallOptions object.
- * `timeout` is excluded because `{ timeout: 5000 }` could be plain activity input.
+ * Strict subset of ACTIVITY_CALL_OPTION_KEYS that unambiguously identify an
+ * ActivityCallOptions object. `timeout` is excluded because `{ timeout: 5000 }`
+ * could be plain activity input. When adding a new option key, add it to both
+ * sets if it should act as a discriminator.
  */
 const DISCRIMINATOR_KEYS = new Set<string>([
   'queue',

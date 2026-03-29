@@ -501,6 +501,39 @@ describe('createAuthenticator — mTLS', () => {
     expect(result.authenticated).toBe(false);
   });
 
+  it('rejects invalid JWT even when mTLS is also configured', async () => {
+    const authenticate = await createAuthenticator({
+      jwt: { secret: TEST_SECRET, clockTolerance: 0 },
+      mtls: { ca: 'ca-pem', cert: 'cert-pem', key: 'key-pem' },
+    });
+
+    const pastExpiry = Math.floor(Date.now() / 1000) - 3600;
+    const token = await signJWT({ sub: 'user-1', exp: pastExpiry }, TEST_SECRET);
+    const result = await authenticate(
+      makeRequest('http://localhost/v1/workflows', {
+        Authorization: `Bearer ${token}`,
+      }),
+    );
+
+    expect(result.authenticated).toBe(false);
+  });
+
+  it('rejects non-JWT Bearer token even when mTLS is also configured', async () => {
+    const authenticate = await createAuthenticator({
+      jwt: { secret: TEST_SECRET },
+      mtls: { ca: 'ca-pem', cert: 'cert-pem', key: 'key-pem' },
+    });
+
+    // A Bearer token without dots is not a JWT — still counts as explicit auth
+    const result = await authenticate(
+      makeRequest('http://localhost/v1/workflows', {
+        Authorization: 'Bearer not-a-jwt-token',
+      }),
+    );
+
+    expect(result.authenticated).toBe(false);
+  });
+
   it('falls through to mTLS when no credentials are provided', async () => {
     const authenticate = await createAuthenticator({
       apiKeys: [TEST_API_KEY],

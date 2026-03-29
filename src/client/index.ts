@@ -122,9 +122,10 @@ class HttpHandle implements ClientHandle {
   /** Start polling for events if not already running. */
   #ensurePolling(): void {
     if (this.#closed || this.#pollTimer !== null) return;
-    // Fire an immediate first poll so events aren't delayed by the interval.
-    void this.#pollEvents();
+    // Set the timer before the immediate poll so close() can clear it even if
+    // called during the first poll's microtask execution (e.g., terminal event).
     this.#pollTimer = setInterval(() => void this.#pollEvents(), 2_000);
+    void this.#pollEvents();
   }
 
   static readonly #TERMINAL_EVENTS = new Set([
@@ -139,9 +140,9 @@ class HttpHandle implements ClientHandle {
     this.#pollInFlight = true;
     try {
       const events = await this.#client.getEvents(this.id);
-      // getEvents returns [] on 404, so check if the workflow still exists
-      // when we've never seen any events — an empty array from a missing
-      // workflow is indistinguishable from a workflow with no events yet.
+      // getEvents returns [] on 404. Only check for workflow deletion after
+      // we've already seen events (#lastEventIndex > 0) — before that, an
+      // empty array is indistinguishable from a workflow that hasn't emitted yet.
       if (events.length === 0 && this.#lastEventIndex > 0) {
         const state = await this.#client.get(this.id);
         if (state === null) {

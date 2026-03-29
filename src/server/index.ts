@@ -42,6 +42,34 @@ import {
 } from './task-state.ts';
 
 // ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+/** Fields needed to requeue a task after worker disconnect or visibility expiry. */
+interface ReassignableTask {
+  operationId: string;
+  activityName: string;
+  input: unknown;
+  queue: string;
+  attempt: number;
+  visibilityTimeout: number;
+  retryPolicy?: RetryPolicy;
+}
+
+/** Type guard for decoded storage records used in task reassignment. */
+function isReassignableTask(value: unknown): value is ReassignableTask {
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record['operationId'] === 'string' &&
+    typeof record['activityName'] === 'string' &&
+    typeof record['queue'] === 'string' &&
+    typeof record['attempt'] === 'number' &&
+    typeof record['visibilityTimeout'] === 'number'
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -648,7 +676,13 @@ export function serve(options: ServeOptions): WeftServer {
                 const existing = await options.engine.storage.get(inflightKey);
 
                 if (existing) {
-                  const record = decode(existing) as ReassignableTask;
+                  const record = decode(existing);
+                  if (!isReassignableTask(record)) {
+                    console.error(
+                      `[weft] Corrupt inflight record for task "${task.operationId}" — skipping reassignment`,
+                    );
+                    return;
+                  }
                   await reassignTask(record, workerId);
                 } else {
                   // Storage write hadn't committed — clean up the key just in case.
@@ -732,72 +766,56 @@ export function serve(options: ServeOptions): WeftServer {
   // Shared retry/requeue helper (used by both the close handler and the scanner)
   // ---------------------------------------------------------------------------
 
-  interface ReassignableTask {
-    operationId: string;
-    activityName: string;
-    input: unknown;
-    queue: string;
-    attempt: number;
-    visibilityTimeout: number;
-    retryPolicy?: RetryPolicy;
-  }
-
   /**
    * Requeue a task with incremented attempt, respecting retry policy and backoff.
    * Shared between the WebSocket close handler and the visibility timeout scanner.
+   * Throws on failure — callers are responsible for error handling.
    */
-  async function reassignTask(task: ReassignableTask, previousWorkerId: string): Promise<void> {
-    try {
-      const nextAttempt = (task.attempt ?? 1) + 1;
-      const policy = task.retryPolicy;
+  async function reassignTask(task: ReassignableTask, _previousWorkerId: string): Promise<void> {
+    const nextAttempt = (task.attempt ?? 1) + 1;
+    const policy = task.retryPolicy;
 
-      // Check maxAttempts — if exceeded, the task permanently fails (no re-dispatch).
-      if (policy && nextAttempt > policy.maxAttempts) {
-        await transitionInflightToResolved(options.engine.storage, task.operationId, 'failed');
-        return;
-      }
+    // Check maxAttempts — if exceeded, the task permanently fails (no re-dispatch).
+    if (policy && nextAttempt > policy.maxAttempts) {
+      await transitionInflightToResolved(options.engine.storage, task.operationId, 'failed');
+      return;
+    }
 
-      // Atomically transition inflight → queued before re-dispatch.
-      const queuedRecord: QueuedRecord = {
-        operationId: task.operationId,
-        activityName: task.activityName,
-        input: task.input,
-        queue: task.queue,
-        attempt: nextAttempt,
-        visibilityTimeout: task.visibilityTimeout,
-        retryPolicy: policy,
-        queuedAt: Date.now(),
-      };
-      await transitionInflightToQueued(options.engine.storage, task.operationId, queuedRecord);
+    // Atomically transition inflight → queued before re-dispatch.
+    const queuedRecord: QueuedRecord = {
+      operationId: task.operationId,
+      activityName: task.activityName,
+      input: task.input,
+      queue: task.queue,
+      attempt: nextAttempt,
+      visibilityTimeout: task.visibilityTimeout,
+      retryPolicy: policy,
+      queuedAt: Date.now(),
+    };
+    await transitionInflightToQueued(options.engine.storage, task.operationId, queuedRecord);
 
-      const taskDispatch: TaskDispatch = {
-        operationId: task.operationId,
-        activityName: task.activityName,
-        input: task.input,
-        queue: task.queue,
-        attempt: nextAttempt,
-        visibilityTimeout: task.visibilityTimeout,
-        ...(policy ? { retryPolicy: policy } : {}),
-      };
+    const taskDispatch: TaskDispatch = {
+      operationId: task.operationId,
+      activityName: task.activityName,
+      input: task.input,
+      queue: task.queue,
+      attempt: nextAttempt,
+      visibilityTimeout: task.visibilityTimeout,
+      ...(policy ? { retryPolicy: policy } : {}),
+    };
 
-      // Apply backoff delay before re-dispatching.
-      if (policy) {
-        const delay = calculateBackoff(task.attempt ?? 1, policy);
-        setTimeout(
-          () =>
-            void dispatchTaskImpl(taskDispatch).catch((err) =>
-              console.error(`[weft] Backoff redispatch failed for "${task.operationId}":`, err),
-            ),
-          delay,
-        );
-      } else {
-        await dispatchTaskImpl(taskDispatch);
-      }
-    } catch (error) {
-      console.error(
-        `[weft] Failed to reassign task "${task.operationId}" after worker "${previousWorkerId}" disconnected:`,
-        error,
+    // Apply backoff delay before re-dispatching.
+    if (policy) {
+      const delay = calculateBackoff(task.attempt ?? 1, policy);
+      setTimeout(
+        () =>
+          void dispatchTaskImpl(taskDispatch).catch((err) =>
+            console.error(`[weft] Backoff redispatch failed for "${task.operationId}":`, err),
+          ),
+        delay,
       );
+    } else {
+      await dispatchTaskImpl(taskDispatch);
     }
   }
 
@@ -816,24 +834,23 @@ export function serve(options: ServeOptions): WeftServer {
       const now = Date.now();
 
       for await (const [, value] of options.engine.storage.scan('op:inflight:')) {
-        const record = decode(value) as {
-          operationId: string;
-          workerId: string;
-          deadline: number;
-          activityName: string;
-          queue: string;
-          input: unknown;
-          attempt: number;
-          visibilityTimeout: number;
-          retryPolicy?: RetryPolicy;
-        };
+        const record = decode(value) as Record<string, unknown>;
+        const deadline = record['deadline'] as number | undefined;
+        const workerId = record['workerId'] as string | undefined;
 
-        if (record.deadline > now) continue;
+        if (deadline === undefined || deadline > now) continue;
+
+        if (!isReassignableTask(record)) {
+          console.error(
+            `[weft] Corrupt inflight record for task "${String(record['operationId'])}" — skipping`,
+          );
+          continue;
+        }
 
         // Expired — remove from registry.
         registry.completeTask(record.operationId);
 
-        await reassignTask(record, record.workerId);
+        await reassignTask(record, workerId ?? 'unknown');
       }
     } catch (error) {
       console.error('[weft] Visibility timeout scanner error:', error);
