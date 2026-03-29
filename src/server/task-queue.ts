@@ -11,6 +11,7 @@ export interface PendingTask {
   input: unknown;
   attempt?: number | undefined;
   retryPolicy?: RetryPolicy | undefined;
+  visibilityTimeout?: number | undefined;
 }
 
 /** Result reported by a long-poll worker after executing a task. */

@@ -435,15 +435,16 @@ export function serve(options: ServeOptions): WeftServer {
 
           // Transition queued → inflight when a long-poll worker claims a task.
           if (task) {
+            const vt = task.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT_MS;
             const inflightRecord: InflightRecord = {
               operationId: task.operationId,
               workerId: `longpoll-${crypto.randomUUID().slice(0, 8)}`,
-              deadline: Date.now() + DEFAULT_VISIBILITY_TIMEOUT_MS,
+              deadline: Date.now() + vt,
               activityName: task.activityName,
               queue,
               input: task.input,
               attempt: task.attempt ?? 1,
-              visibilityTimeout: DEFAULT_VISIBILITY_TIMEOUT_MS,
+              visibilityTimeout: vt,
               retryPolicy: task.retryPolicy,
             };
             void transitionQueuedToInflight(
@@ -582,10 +583,15 @@ export function serve(options: ServeOptions): WeftServer {
                 // Capture the operationId to check against the registry after the async gap.
                 const opId = task.operationId;
                 const timeout = task.visibilityTimeout;
+                const heartbeatWorkerId = ws.data.workerId;
                 void (async () => {
-                  // Guard: if the task completed during the async gap, skip the write
-                  // to avoid resurrecting a deleted inflight record.
+                  // Guard: if the task completed or was reassigned during the async gap,
+                  // skip the write to avoid resurrecting or corrupting another worker's record.
                   if (!registry.isAssigned(opId)) return;
+                  const currentTask = registry
+                    .getWorkerTasks(heartbeatWorkerId ?? '')
+                    .find((t) => t.operationId === opId);
+                  if (!currentTask) return;
 
                   const inflightKey = KEYS.operationInflight(opId);
                   const existing = await options.engine.storage.get(inflightKey);
@@ -934,6 +940,7 @@ export function serve(options: ServeOptions): WeftServer {
       input: task.input,
       attempt: task.attempt ?? 1,
       retryPolicy: task.retryPolicy,
+      visibilityTimeout: task.visibilityTimeout,
     });
   }
 

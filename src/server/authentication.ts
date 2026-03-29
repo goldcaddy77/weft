@@ -378,16 +378,20 @@ export async function createAuthenticator(config: AuthConfig): Promise<Authentic
       }
     }
 
-    // Try JWT verification on Bearer tokens that look like JWTs (contain dots)
+    // Try JWT verification on Bearer tokens that look like JWTs (contain dots).
+    // Any Bearer token counts as an explicit auth attempt — even non-JWT tokens —
+    // to prevent falling through to mTLS with invalid credentials.
     if (jwtKey && config.jwt) {
       const token = extractBearerToken(request);
-      if (token && token.includes('.')) {
+      if (token) {
         explicitAuthAttempted = true;
-        try {
-          const claims = await verifyJWT(token, jwtKey, config.jwt);
-          return { authenticated: true, method: 'jwt', claims };
-        } catch {
-          // JWT verification failed — fall through to next method
+        if (token.includes('.')) {
+          try {
+            const claims = await verifyJWT(token, jwtKey, config.jwt);
+            return { authenticated: true, method: 'jwt', claims };
+          } catch {
+            // JWT verification failed — fall through to next method
+          }
         }
       }
     }

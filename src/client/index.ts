@@ -111,6 +111,7 @@ class HttpHandle implements ClientHandle {
   readonly #events = new EventTarget();
   #pollTimer: ReturnType<typeof setInterval> | null = null;
   #lastEventIndex = 0;
+  #pollInFlight = false;
 
   constructor(id: string, client: HttpClient) {
     this.id = id;
@@ -131,6 +132,8 @@ class HttpHandle implements ClientHandle {
   ]);
 
   async #pollEvents(): Promise<void> {
+    if (this.#pollInFlight) return;
+    this.#pollInFlight = true;
     try {
       const events = await this.#client.getEvents(this.id);
       // getEvents returns [] on 404, so check if the workflow still exists
@@ -155,6 +158,8 @@ class HttpHandle implements ClientHandle {
       }
     } catch (error) {
       console.warn('[weft] Event poll error:', error);
+    } finally {
+      this.#pollInFlight = false;
     }
   }
 
