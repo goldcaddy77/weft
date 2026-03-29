@@ -272,16 +272,32 @@ export class HttpClient implements WeftClient {
     const params = new URLSearchParams();
 
     if (filter?.status !== undefined) {
-      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+      const statuses = (Array.isArray(filter.status) ? filter.status : [filter.status]).filter(
+        Boolean,
+      );
+      // Server reads searchParams.getAll('status'), so append each separately.
       for (const s of statuses) {
-        if (s) params.append('status', s);
+        params.append('status', s);
       }
     }
     if (filter?.type !== undefined) params.set('type', filter.type);
     if (filter?.limit !== undefined) params.set('limit', String(filter.limit));
     if (filter?.offset !== undefined) params.set('offset', String(filter.offset));
-    if (filter?.attributes !== undefined)
-      params.set('attributes', JSON.stringify(filter.attributes));
+    // Encode attributes in the format the server expects: attr.{name}={value},
+    // attr.{name}.gte={value}, attr.{name}.lte={value}.
+    if (filter?.attributes !== undefined) {
+      for (const attr of filter.attributes) {
+        if (attr.value !== undefined) {
+          params.set(`attr.${attr.key}`, String(attr.value));
+        }
+        if (attr.gte !== undefined) {
+          params.set(`attr.${attr.key}.gte`, String(attr.gte));
+        }
+        if (attr.lte !== undefined) {
+          params.set(`attr.${attr.key}.lte`, String(attr.lte));
+        }
+      }
+    }
 
     const query = params.toString();
     const path = query ? `/workflows?${query}` : '/workflows';

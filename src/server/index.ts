@@ -940,19 +940,10 @@ export function serve(options: ServeOptions): WeftServer {
     }
 
     // Fall back to long-poll task queue.
-    // Enqueue synchronously first so the operationId is tracked immediately,
-    // preventing TOCTOU races where a concurrent dispatch could pass the
-    // duplicate check during an async gap.
-    const enqueued = taskQueue.enqueue(queue, {
-      operationId: task.operationId,
-      activityName: task.activityName,
-      input: task.input,
-      attempt: task.attempt ?? 1,
-      retryPolicy: task.retryPolicy,
-      visibilityTimeout: task.visibilityTimeout,
-    });
-
-    // Persist a durable queued record so the task survives server restart.
+    // Persist the durable queued record BEFORE enqueuing to the in-memory queue.
+    // enqueue() may resolve a waiting long-poll request immediately, and the
+    // GET handler transitions queued→inflight. If markQueued() ran after enqueue(),
+    // it could recreate a stale op:queued:* record after the inflight transition.
     const queuedRecord: QueuedRecord = {
       operationId: task.operationId,
       activityName: task.activityName,
@@ -965,7 +956,17 @@ export function serve(options: ServeOptions): WeftServer {
     };
     await markQueued(options.engine.storage, queuedRecord);
 
-    return enqueued;
+    // Now enqueue to the in-memory queue. The operationId is tracked immediately,
+    // preventing TOCTOU races where a concurrent dispatch could pass the
+    // duplicate check during an async gap.
+    return taskQueue.enqueue(queue, {
+      operationId: task.operationId,
+      activityName: task.activityName,
+      input: task.input,
+      attempt: task.attempt ?? 1,
+      retryPolicy: task.retryPolicy,
+      visibilityTimeout: task.visibilityTimeout,
+    });
   }
 
   const resolvedPort = server.port ?? port;
