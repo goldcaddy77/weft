@@ -1,0 +1,1 @@
+- In `pull_request_target` workflows, never interpolate PR-controlled strings directly into `run:` blocks; pass them through `env:` and read them from shell variables instead.

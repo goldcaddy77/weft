@@ -56,6 +56,7 @@ jobs:
       - name: Auto-fix malformed PR title
         if: steps.analyze.outputs.safe_to_autofix == 'true' && steps.analyze.outputs.changed == 'true'
         env:
+          CURRENT_TITLE: ${{ steps.analyze.outputs.current_title }}
           GITHUB_TOKEN: ${{ github.token }}
           NORMALIZED_TITLE: ${{ steps.analyze.outputs.normalized_title }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -75,18 +76,23 @@ jobs:
           {
             echo "### PR title auto-fixed"
             echo
-            echo "- Old title: \`${{ steps.analyze.outputs.current_title }}\`"
+            echo "- Old title: \`$CURRENT_TITLE\`"
             echo "- New title: \`$NORMALIZED_TITLE\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Compute final title
         id: final
+        env:
+          CHANGED: ${{ steps.analyze.outputs.changed }}
+          CURRENT_TITLE: ${{ steps.analyze.outputs.current_title }}
+          NORMALIZED_TITLE: ${{ steps.analyze.outputs.normalized_title }}
+          SAFE_TO_AUTOFIX: ${{ steps.analyze.outputs.safe_to_autofix }}
         shell: bash
         run: |
-          final_title="${{ steps.analyze.outputs.current_title }}"
+          final_title="$CURRENT_TITLE"
 
-          if [[ "${{ steps.analyze.outputs.safe_to_autofix }}" == "true" && "${{ steps.analyze.outputs.changed }}" == "true" ]]; then
-            final_title="${{ steps.analyze.outputs.normalized_title }}"
+          if [[ "$SAFE_TO_AUTOFIX" == "true" && "$CHANGED" == "true" ]]; then
+            final_title="$NORMALIZED_TITLE"
           fi
 
           {
