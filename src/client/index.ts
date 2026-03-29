@@ -115,6 +115,8 @@ class HttpHandle implements ClientHandle {
   #closed = false;
   /** Track registered listeners to detect when all are removed. */
   readonly #listeners = new Set<EventListenerOrEventListenerObject>();
+  /** Map original once-listeners to their wrappers for correct removeEventListener. */
+  readonly #onceWrappers = new Map<EventListenerOrEventListenerObject, EventListener>();
 
   constructor(id: string, client: HttpClient) {
     this.id = id;
@@ -223,6 +225,7 @@ class HttpHandle implements ClientHandle {
       // Wrap once-listeners so the Set is updated when EventTarget auto-removes them.
       const wrapper: EventListener = (event) => {
         this.#listeners.delete(listener);
+        this.#onceWrappers.delete(listener);
         if (typeof listener === 'function') {
           listener(event);
         } else {
@@ -230,6 +233,7 @@ class HttpHandle implements ClientHandle {
         }
         if (this.#listeners.size === 0) this.close();
       };
+      this.#onceWrappers.set(listener, wrapper);
       this.#events.addEventListener(type, wrapper, options);
     } else {
       this.#events.addEventListener(type, listener, options);
@@ -242,7 +246,14 @@ class HttpHandle implements ClientHandle {
     options?: boolean | EventListenerOptions,
   ): void {
     this.#listeners.delete(listener);
-    this.#events.removeEventListener(type, listener, options);
+    // For once-listeners, the EventTarget holds the wrapper, not the original.
+    const wrapper = this.#onceWrappers.get(listener);
+    if (wrapper) {
+      this.#onceWrappers.delete(listener);
+      this.#events.removeEventListener(type, wrapper, options);
+    } else {
+      this.#events.removeEventListener(type, listener, options);
+    }
     if (this.#listeners.size === 0) {
       this.close();
     }
