@@ -81,6 +81,14 @@ export class ActivityRegistry {
    */
   #nameIndex = new Map<string, object>();
 
+  /** Check whether `fn` is still referenced by any name other than `excludeName`. */
+  #isReferencedByOtherName(fn: object, excludeName: string): boolean {
+    for (const [name, ref] of this.#nameIndex) {
+      if (name !== excludeName && ref === fn) return true;
+    }
+    return false;
+  }
+
   /**
    * Register an activity function with associated metadata.
    *
@@ -96,9 +104,10 @@ export class ActivityRegistry {
     options?: ActivityRegistrationOptions,
   ): void {
     // Clean up any previous registration under this name to avoid leaking
-    // the old function in #metadata.
+    // the old function in #metadata. Only delete metadata if no other name
+    // still references the same function.
     const existingFn = this.#nameIndex.get(name);
-    if (existingFn && existingFn !== fn) {
+    if (existingFn && existingFn !== fn && !this.#isReferencedByOtherName(existingFn, name)) {
       this.#metadata.delete(existingFn);
     }
 
@@ -150,10 +159,10 @@ export class ActivityRegistry {
   /** Remove an activity registration by name. */
   unregister(name: string): void {
     const fn = this.#nameIndex.get(name);
-    if (fn) {
+    this.#nameIndex.delete(name);
+    if (fn && !this.#isReferencedByOtherName(fn, name)) {
       this.#metadata.delete(fn);
     }
-    this.#nameIndex.delete(name);
   }
 
   /** Iterate over all registered activity names. */
