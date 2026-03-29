@@ -112,6 +112,7 @@ class HttpHandle implements ClientHandle {
   #pollTimer: ReturnType<typeof setInterval> | null = null;
   #lastEventIndex = 0;
   #pollInFlight = false;
+  #closed = false;
 
   constructor(id: string, client: HttpClient) {
     this.id = id;
@@ -120,7 +121,9 @@ class HttpHandle implements ClientHandle {
 
   /** Start polling for events if not already running. */
   #ensurePolling(): void {
-    if (this.#pollTimer !== null) return;
+    if (this.#closed || this.#pollTimer !== null) return;
+    // Fire an immediate first poll so events aren't delayed by the interval.
+    void this.#pollEvents();
     this.#pollTimer = setInterval(() => void this.#pollEvents(), 2_000);
   }
 
@@ -163,8 +166,9 @@ class HttpHandle implements ClientHandle {
     }
   }
 
-  /** Stop event polling and release resources. */
+  /** Stop event polling and release resources. Cannot be restarted. */
   close(): void {
+    this.#closed = true;
     if (this.#pollTimer !== null) {
       clearInterval(this.#pollTimer);
       this.#pollTimer = null;
