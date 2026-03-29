@@ -88,6 +88,8 @@ export interface OperationRequest {
   scheduledAt: number;
   timeout?: Duration;
   idempotencyKey?: string;
+  /** Visibility timeout in milliseconds. Defaults to 30 000. */
+  visibilityTimeout?: number;
 }
 
 export type OperationOutcome =
@@ -142,13 +144,28 @@ export interface EngineOptions {
   /**
    * Enable worker-based execution. When provided, workflows run in isolated
    * Web Workers instead of inline on the main thread. Activities are still
-   * executed on the main thread via the activity registry.
+   * executed on the main thread via the activity registry (unless
+   * `activityExecution` is also configured).
    */
   workerExecution?: {
     /** URL of the worker script (created via `createWorkerEntryUrl`). */
     workerUrl: string | URL;
     /** Maximum number of concurrent workers. Default: 4. */
     concurrency?: number;
+    /** Use Bun's `smol` worker option for smaller memory footprint. */
+    smol?: boolean;
+  };
+
+  /**
+   * Enable worker-based activity execution. When provided, activity functions
+   * run in isolated Web Workers instead of on the main thread. Activities must
+   * be pre-registered in the worker via `createActivityWorkerEntryUrl`.
+   */
+  activityExecution?: {
+    /** URL of the activity worker script (created via `createActivityWorkerEntryUrl`). */
+    workerUrl: string | URL;
+    /** Maximum number of concurrent activity workers. Default: 4. */
+    poolSize?: number;
     /** Use Bun's `smol` worker option for smaller memory footprint. */
     smol?: boolean;
   };
@@ -182,6 +199,8 @@ export interface ActivityCallOptions {
   retry?: Partial<RetryPolicy>;
   idempotencyKey?: string;
   sticky?: boolean;
+  /** Override the default visibility timeout for this invocation. */
+  visibilityTimeout?: Duration;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +214,8 @@ export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
   timeout?: Duration;
   queue?: string;
   idempotent?: boolean;
+  /** Visibility timeout for this activity. Defaults to 30 seconds. */
+  visibilityTimeout?: Duration;
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +354,40 @@ export interface WorkflowSummary {
   version: string;
   createdAt: number;
   updatedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Workflow event (returned by engine.getEvents)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowEvent {
+  type: string;
+  timestamp: number;
+  data: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Review decision types (for engine.submitReview)
+// ---------------------------------------------------------------------------
+
+export type ReviewDecision = 'approved' | 'rejected' | 'needs-changes';
+
+export interface SubmitReviewOptions {
+  decision: ReviewDecision;
+  reviewer: string;
+  feedback?: string;
+  /** When provided, enables O(1) direct key lookup instead of scanning. */
+  workflowId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Coordinated update result (for engine.submitCoordinatedUpdate)
+// ---------------------------------------------------------------------------
+
+export interface CoordinatedUpdateResult {
+  updateId: string;
+  result?: unknown;
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------

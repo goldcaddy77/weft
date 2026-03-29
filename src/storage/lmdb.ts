@@ -1,18 +1,20 @@
-import type { Database } from 'lmdb';
-import { open } from 'lmdb';
+import * as lmdb from 'lmdb';
 
 import type { BatchOperation, ScanOptions, Storage } from './interface';
 
-/** High-performance LMDB storage adapter. Uses memory-mapped, zero-copy reads. */
+/**
+ * LMDB-backed storage adapter. Reads are synchronous zero-copy via
+ * memory-mapped files. Writes use lmdb-js's async batching: individual
+ * `put`/`remove` calls return promises that resolve once the next
+ * batched transaction commits to disk.
+ */
 export class LMDBStorage implements Storage {
-  #database: Database<Buffer, string>;
+  #database: lmdb.RootDatabase<Buffer, string>;
 
-  constructor(path: string = './weft-data') {
-    this.#database = open({
+  constructor(path: string) {
+    this.#database = lmdb.open<Buffer, string>({
       path,
       encoding: 'binary',
-      mapSize: 2 * 1024 * 1024 * 1024, // 2GB initial map (auto-grows)
-      maxDbs: 1,
     });
   }
 
@@ -33,37 +35,43 @@ export class LMDBStorage implements Storage {
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     const { limit, reverse, gt, lt, gte, lte } = options;
 
+    // Compute the exclusive upper bound for the prefix range, matching
+    // MemoryStorage and BunSQLiteStorage.
     const prefixEnd =
       prefix.length > 0
         ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
         : '\xff';
 
-    const rangeStart = gte ?? prefix;
-    const rangeEnd = lt ?? prefixEnd;
-
-    const range = this.#database.getRange({
-      start: reverse ? rangeEnd : rangeStart,
-      end: reverse ? rangeStart : rangeEnd,
-      reverse: reverse ?? false,
-    });
+    // In lmdb-js, reverse iteration requires start > end: start is the
+    // upper bound to iterate backwards from, end is the lower bound to stop at.
+    const range = reverse
+      ? this.#database.getRange({
+          start: prefixEnd,
+          end: prefix,
+          reverse: true,
+        })
+      : this.#database.getRange({ start: prefix, end: prefixEnd });
 
     let count = 0;
+    let enteredPrefix = false;
     for (const { key, value } of range) {
-      const k = key;
-
-      // Apply prefix filter (needed when gte overrides the prefix start).
-      if (prefix.length > 0 && (k < prefix || k >= prefixEnd)) continue;
-
-      // Apply bound filters.
-      if (gt !== undefined && k <= gt) continue;
-      if (lte !== undefined && k > lte) continue;
-
-      // For reverse scans, exclude the end boundary key.
-      if (reverse && k >= rangeEnd) continue;
+      // Safety: ensure we stay within the prefix range.
+      // Forward: keys past the prefix are lexicographically greater — break.
+      // Reverse: iteration starts at prefixEnd which may itself not match — skip
+      // non-matching keys until we enter the prefix range, then break when we leave.
+      if (!key.startsWith(prefix)) {
+        if (reverse && !enteredPrefix) continue;
+        break;
+      }
+      enteredPrefix = true;
+      if (gt !== undefined && key <= gt) continue;
+      if (gte !== undefined && key < gte) continue;
+      if (lt !== undefined && key >= lt) continue;
+      if (lte !== undefined && key > lte) continue;
 
       if (limit !== undefined && count >= limit) break;
 
-      yield [k, new Uint8Array(value)];
+      yield [key, new Uint8Array(value)];
       count++;
     }
   }
@@ -71,12 +79,12 @@ export class LMDBStorage implements Storage {
   async batch(operations: BatchOperation[]): Promise<void> {
     if (operations.length === 0) return;
 
-    await this.#database.transaction(() => {
+    await this.#database.batch(() => {
       for (const operation of operations) {
         if (operation.type === 'put') {
-          this.#database.putSync(operation.key, Buffer.from(operation.value));
+          void this.#database.put(operation.key, Buffer.from(operation.value));
         } else {
-          this.#database.removeSync(operation.key);
+          void this.#database.remove(operation.key);
         }
       }
     });

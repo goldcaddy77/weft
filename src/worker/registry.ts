@@ -4,6 +4,7 @@
 
 export interface WorkerInfo {
   id: string;
+  queue: string;
   activities: string[];
   concurrency: number;
   inFlight: number;
@@ -20,6 +21,7 @@ export interface InFlightTask {
   operationId: string;
   workerId: string;
   deadline: number; // absolute timestamp
+  visibilityTimeout: number; // original timeout duration in ms
 }
 
 export class WorkerRegistry {
@@ -76,31 +78,38 @@ export class WorkerRegistry {
     }
   }
 
-  /** Find the best worker for a task using least-loaded routing. */
+  /**
+   * Find the best worker for a task using least-loaded routing.
+   *
+   * Default strategy: pick the worker with the lowest `inFlight` count
+   * among those that support the requested activity and have spare capacity
+   * (`inFlight < concurrency`). When a sticky preference is provided and
+   * that worker qualifies, it wins regardless of load.
+   */
   findWorker(activityName: string, options?: RoutingOptions): WorkerInfo | undefined {
-    const candidates: WorkerInfo[] = [];
+    const queue = options?.queue;
+    const stickyId = options?.sticky;
+
+    let best: WorkerInfo | undefined;
+    let stickyCandidate: WorkerInfo | undefined;
 
     for (const worker of this.#workers.values()) {
-      if (worker.activities.includes(activityName) && worker.inFlight < worker.concurrency) {
-        candidates.push(worker);
+      if (queue !== undefined && worker.queue !== queue) continue;
+      if (!worker.activities.includes(activityName)) continue;
+      if (worker.inFlight >= worker.concurrency) continue;
+
+      // Track sticky candidate separately so we can prefer it when available.
+      if (stickyId !== undefined && worker.id === stickyId) {
+        stickyCandidate = worker;
+      }
+
+      // Least-loaded: keep the worker with the lowest inFlight count.
+      if (best === undefined || worker.inFlight < best.inFlight) {
+        best = worker;
       }
     }
 
-    if (candidates.length === 0) {
-      return undefined;
-    }
-
-    // If a sticky preference is provided and that worker has capacity, use it.
-    if (options?.sticky !== undefined) {
-      const sticky = candidates.find((worker) => worker.id === options.sticky);
-      if (sticky !== undefined) {
-        return sticky;
-      }
-    }
-
-    // Return the least-loaded worker (lowest inFlight count).
-    candidates.sort((a, b) => a.inFlight - b.inFlight);
-    return candidates[0];
+    return stickyCandidate ?? best;
   }
 
   /** Track a task assignment with a visibility timeout deadline. */
@@ -111,12 +120,13 @@ export class WorkerRegistry {
       operationId,
       workerId,
       deadline,
+      visibilityTimeout,
     });
 
     this.taskAssigned(workerId);
   }
 
-  /** Return tasks whose deadline has passed for reassignment. */
+  /** Return tasks whose deadline has passed and remove them from tracking. */
   checkExpiredTasks(now: number): InFlightTask[] {
     const expired: InFlightTask[] = [];
 
@@ -126,15 +136,55 @@ export class WorkerRegistry {
       }
     }
 
+    for (const task of expired) {
+      this.#inFlightTasks.delete(task.operationId);
+    }
+
     return expired;
   }
 
-  /** Extend the visibility timeout deadline for an in-flight task (heartbeat). */
-  extendVisibility(operationId: string, extension: number): void {
+  /** Extend the visibility timeout deadline for an in-flight task (heartbeat).
+   *  Resets the deadline to `now + extension` so each heartbeat grants exactly
+   *  one visibility window rather than accumulating on top of a future deadline.
+   *  Returns the new deadline, or `undefined` if the task was not found. */
+  extendVisibility(operationId: string, extension: number): number | undefined {
     const task = this.#inFlightTasks.get(operationId);
     if (task !== undefined) {
       task.deadline = Date.now() + extension;
+      return task.deadline;
     }
+    return undefined;
+  }
+
+  /** Return all in-flight tasks assigned to a given worker. */
+  getWorkerTasks(workerId: string): InFlightTask[] {
+    const tasks: InFlightTask[] = [];
+    for (const task of this.#inFlightTasks.values()) {
+      if (task.workerId === workerId) {
+        tasks.push(task);
+      }
+    }
+    return tasks;
+  }
+
+  /** Check whether an operation is currently assigned to a worker. */
+  isAssigned(operationId: string): boolean {
+    return this.#inFlightTasks.has(operationId);
+  }
+
+  /** Complete an in-flight task: remove tracking and decrement the worker's counter. */
+  completeTask(operationId: string): InFlightTask | undefined {
+    const task = this.#inFlightTasks.get(operationId);
+    if (task === undefined) return undefined;
+
+    this.#inFlightTasks.delete(operationId);
+    this.taskCompleted(task.workerId);
+    return task;
+  }
+
+  /** Look up a worker by ID. */
+  getWorker(workerId: string): WorkerInfo | undefined {
+    return this.#workers.get(workerId);
   }
 
   /** Get all registered workers. */

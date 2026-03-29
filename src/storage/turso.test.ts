@@ -1,9 +1,6 @@
-import { afterEach, describe, expect, it } from 'bun:test';
-import { existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, it } from 'bun:test';
 
-import { LMDBStorage } from './lmdb';
+import { TursoStorage } from './turso';
 
 /** Helper to encode a string as Uint8Array. */
 function encode(value: string): Uint8Array {
@@ -24,38 +21,16 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   return results;
 }
 
-/** Create a unique temporary directory path for each test. */
-function createTemporaryPath(): string {
-  return join(tmpdir(), `lmdb-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-}
-
-describe('LMDBStorage', () => {
-  const temporaryPaths: string[] = [];
-
-  function createStorage(): LMDBStorage {
-    const path = createTemporaryPath();
-    temporaryPaths.push(path);
-    return new LMDBStorage(path);
-  }
-
-  afterEach(() => {
-    for (const path of temporaryPaths) {
-      if (existsSync(path)) {
-        rmSync(path, { recursive: true, force: true });
-      }
-    }
-    temporaryPaths.length = 0;
-  });
-
+describe('TursoStorage', () => {
   it('get on empty storage returns null', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     const result = await storage.get('nonexistent');
     expect(result).toBeNull();
     storage[Symbol.dispose]();
   });
 
   it('put then get returns same bytes', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     const value = encode('hello');
     await storage.put('key', value);
     const result = await storage.get('key');
@@ -64,7 +39,7 @@ describe('LMDBStorage', () => {
   });
 
   it('put with same key overwrites previous value', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('key', encode('first'));
     await storage.put('key', encode('second'));
     const result = await storage.get('key');
@@ -73,7 +48,7 @@ describe('LMDBStorage', () => {
   });
 
   it('delete removes key, subsequent get returns null', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('key', encode('value'));
     await storage.delete('key');
     const result = await storage.get('key');
@@ -82,7 +57,7 @@ describe('LMDBStorage', () => {
   });
 
   it('delete on nonexistent key is a no-op', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.delete('nonexistent');
     const result = await storage.get('nonexistent');
     expect(result).toBeNull();
@@ -90,7 +65,7 @@ describe('LMDBStorage', () => {
   });
 
   it('scan with prefix returns only matching keys, sorted lexicographically', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('wf:b', encode('b'));
     await storage.put('wf:a', encode('a'));
     await storage.put('wf:c', encode('c'));
@@ -102,7 +77,7 @@ describe('LMDBStorage', () => {
   });
 
   it('scan with limit returns at most N entries', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('p:a', encode('a'));
     await storage.put('p:b', encode('b'));
     await storage.put('p:c', encode('c'));
@@ -114,7 +89,7 @@ describe('LMDBStorage', () => {
   });
 
   it('scan with reverse returns in reverse order', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('p:a', encode('a'));
     await storage.put('p:b', encode('b'));
     await storage.put('p:c', encode('c'));
@@ -125,7 +100,7 @@ describe('LMDBStorage', () => {
   });
 
   it('scan with gt/lt bounds', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('p:a', encode('a'));
     await storage.put('p:b', encode('b'));
     await storage.put('p:c', encode('c'));
@@ -137,7 +112,7 @@ describe('LMDBStorage', () => {
   });
 
   it('scan with gte/lte bounds', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('p:a', encode('a'));
     await storage.put('p:b', encode('b'));
     await storage.put('p:c', encode('c'));
@@ -149,7 +124,7 @@ describe('LMDBStorage', () => {
   });
 
   it('scan with empty prefix returns all keys', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('alpha', encode('a'));
     await storage.put('beta', encode('b'));
     await storage.put('gamma', encode('c'));
@@ -160,7 +135,7 @@ describe('LMDBStorage', () => {
   });
 
   it('batch with multiple puts: all keys exist after', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.batch([
       { type: 'put', key: 'a', value: encode('1') },
       { type: 'put', key: 'b', value: encode('2') },
@@ -174,7 +149,7 @@ describe('LMDBStorage', () => {
   });
 
   it('batch with mixed puts and deletes: correct final state', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('keep', encode('keep'));
     await storage.put('remove', encode('remove'));
 
@@ -190,22 +165,22 @@ describe('LMDBStorage', () => {
   });
 
   it('batch with empty array is a no-op', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     await storage.put('key', encode('value'));
     await storage.batch([]);
     expect(await storage.get('key')).toEqual(encode('value'));
     storage[Symbol.dispose]();
   });
 
-  it('[Symbol.dispose] closes the environment', () => {
-    const storage = createStorage();
+  it('[Symbol.dispose] closes client', () => {
+    const storage = new TursoStorage({ url: 'file::memory:' });
     storage[Symbol.dispose]();
-    // After dispose, reads should throw because the environment is closed.
+    // After dispose, the underlying client is closed.
     expect(() => storage.get('key')).toThrow();
   });
 
   it('binary values round-trip correctly', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     const binaryData = new Uint8Array([0, 1, 127, 128, 255, 42, 0, 13, 10]);
     await storage.put('binary', binaryData);
     const result = await storage.get('binary');
@@ -214,7 +189,7 @@ describe('LMDBStorage', () => {
   });
 
   it('large key count (1000 entries): scan returns all in correct order', async () => {
-    const storage = createStorage();
+    const storage = new TursoStorage({ url: 'file::memory:' });
     const operations = Array.from({ length: 1000 }, (_, index) => ({
       type: 'put' as const,
       key: `item:${String(index).padStart(4, '0')}`,
@@ -231,31 +206,38 @@ describe('LMDBStorage', () => {
     storage[Symbol.dispose]();
   });
 
-  it('reads are synchronous zero-copy (get returns without awaiting disk)', async () => {
-    const storage = createStorage();
-    await storage.put('sync-key', encode('sync-value'));
+  it('query returns results for raw SQL passthrough', async () => {
+    const storage = new TursoStorage({ url: 'file::memory:' });
+    await storage.put('q:1', encode('one'));
+    await storage.put('q:2', encode('two'));
+    await storage.put('q:3', encode('three'));
 
-    // Calling get returns a promise wrapping a synchronous LMDB read.
-    // The value should be immediately available after the write is flushed.
-    const result = await storage.get('sync-key');
-    expect(decode(result!)).toBe('sync-value');
+    const result = await storage.query<{ key: string }>('SELECT key FROM kv ORDER BY key');
+    expect(result).toHaveLength(3);
+    expect(result.map((row) => row.key)).toEqual(['q:1', 'q:2', 'q:3']);
     storage[Symbol.dispose]();
   });
 
-  it('writes are batched asynchronously (put returns a promise)', async () => {
-    const storage = createStorage();
+  it('query with parameters', async () => {
+    const storage = new TursoStorage({ url: 'file::memory:' });
+    await storage.put('a', encode('1'));
+    await storage.put('b', encode('2'));
 
-    // Issue multiple writes — they should all resolve without error.
-    const writes = Array.from({ length: 100 }, (_, index) =>
-      storage.put(`batch-key:${index}`, encode(`value-${index}`)),
+    const result = await storage.query<{ key: string; value: Uint8Array }>(
+      'SELECT key, value FROM kv WHERE key = ?',
+      ['a'],
     );
-    await Promise.all(writes);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.key).toBe('a');
+    storage[Symbol.dispose]();
+  });
 
-    // All values should be readable after the batch resolves.
-    for (let index = 0; index < 100; index++) {
-      const result = await storage.get(`batch-key:${index}`);
-      expect(decode(result!)).toBe(`value-${index}`);
-    }
+  it('accepts authToken in configuration', () => {
+    const storage = new TursoStorage({
+      url: 'file::memory:',
+      authToken: 'test-token',
+    });
+    // Should construct without error.
     storage[Symbol.dispose]();
   });
 });

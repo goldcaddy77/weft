@@ -270,7 +270,7 @@ engine.addEventListener('checkpoint:size-warning', (event) => {
 **Going further: `ctx.offload()` for large intermediate state.** When a workflow accumulates large data (a list of 10,000 processed records, a large API response), the checkpoint balloons. `ctx.offload()` stores large data separately, leaving only a lightweight reference in the checkpoint:
 
 ```typescript
-async function* batchWorkflow(ctx: Weft.Context, items: string[]) {
+async function* batchWorkflow(ctx: Context, items: string[]) {
   const resultsRef = yield* ctx.offload('batch-results', async () => {
     return await processAll(items); // Large result stored separately
   });
@@ -382,7 +382,7 @@ Weft: checkpoint size is constant regardless of history
 **Going further: `ctx.archive()` for long-running state management.** Workflows that accumulate data over time (invoice history, event logs) can move old data out of the checkpoint while preserving it for auditing:
 
 ```typescript
-async function* subscriptionWorkflow(ctx: Weft.Context, plan: Plan) {
+async function* subscriptionWorkflow(ctx: Context, plan: Plan) {
   let invoiceHistory: Invoice[] = [];
 
   while (true) {
@@ -404,7 +404,7 @@ Archived data is stored at `archive:{workflowId}:{key}` — still queryable via 
 **Going further: `ctx.expose()` for live workflow inspection.** For workflows that run for weeks, operators need visibility without stopping the workflow or pre-registering query handlers:
 
 ```typescript
-async function* longRunningWorkflow(ctx: Weft.Context, config: Config) {
+async function* longRunningWorkflow(ctx: Context, config: Config) {
   let processedCount = 0;
   let lastError: string | null = null;
   let currentPhase = 'initializing';
@@ -505,7 +505,7 @@ Weft's generator model avoids this dilemma. Each tool call is a separate `yield*
 **Going further: multi-agent composition via existing primitives.** Agents are just activities with special configuration. The existing `ctx.run()` / `ctx.all()` / `ctx.race()` composition works naturally:
 
 ```typescript
-async function* researchWorkflow(ctx: Weft.Context, topic: string) {
+async function* researchWorkflow(ctx: Context, topic: string) {
   // Sequential: researcher → critic → writer
   const research = yield* ctx.agent({
     model: 'claude-sonnet-4-20250514',
@@ -537,7 +537,7 @@ Beyond fan-out, the agent-native engine supports `ctx.handoff()` for delegation 
 **Going further: cost observability with `ctx.setBudget()`.** Budget state is stored in the checkpoint and enforced via `AbortController`. Each `ctx.agent()` call reports token usage back to the budget tracker:
 
 ```typescript
-async function* costAwareWorkflow(ctx: Weft.Context, input: Input) {
+async function* costAwareWorkflow(ctx: Context, input: Input) {
   ctx.setBudget({
     maxTokens: 100_000,
     maxCost: 5.0,
@@ -585,7 +585,7 @@ On cache hit, the tool is not re-executed and no checkpoint boundary is created.
 
 ```typescript
 // A workflow that processes 100 images (each 1MB):
-async function* imageWorkflow(ctx: Weft.Context, urls: string[]) {
+async function* imageWorkflow(ctx: Context, urls: string[]) {
   let summary = { processed: 0, totalSize: 0 };
 
   for (const url of urls) {
@@ -602,7 +602,7 @@ async function* imageWorkflow(ctx: Weft.Context, urls: string[]) {
 **Going further: `ctx.stream()` for large payloads.** When an activity produces a large result, `ctx.stream()` writes data to storage as chunks without buffering in memory:
 
 ```typescript
-async function* dataExportWorkflow(ctx: Weft.Context, query: ExportQuery) {
+async function* dataExportWorkflow(ctx: Context, query: ExportQuery) {
   const exportRef = yield* ctx.stream('export-data', async function* (sink) {
     const cursor = db.query(query);
     for await (const batch of cursor) {
@@ -763,7 +763,7 @@ This is the central architectural divergence from Temporal.
 Workflows are `AsyncGenerator` functions. Each `yield*` is a checkpoint boundary. On crash, Weft deserializes the last checkpoint and resumes — no replay, no determinism constraints, O(1) recovery.
 
 ```typescript
-export async function* orderWorkflow(ctx: Weft.Context, order: Order) {
+export async function* orderWorkflow(ctx: Context, order: Order) {
   const payment = yield* ctx.run(charge, order); // checkpoint 1
   const shipment = yield* ctx.run(ship, { order, payment }); // checkpoint 2
   return { payment, shipment };
@@ -1873,45 +1873,20 @@ class CheckpointCache {
 
 > **Why not just a regular Map?** A regular `Map<string, GeneratorState>` would hold strong references to every checkpoint ever loaded. In a long-running server processing thousands of workflows, this would grow without bound. With `WeakRef`, the GC can reclaim checkpoints that aren't actively being used. If the engine needs the checkpoint again, it re-reads from storage. This gives us the performance benefit of a cache without the memory leak.
 
-#### Activity Registry (WeakMap)
+#### Activity Registry
 
-Activity functions are registered by reference, but we also need to store metadata about them (name, retry policy, queue). A `WeakMap` ties metadata to the function object itself — if the function is ever garbage collected (e.g., a dynamically registered activity in a hot-reload scenario), the metadata is automatically cleaned up.
+Activities are registered by string name and looked up at dispatch time. The registry is a simple `Map<string, Function>` — straightforward and predictable:
 
 ```typescript
-class ActivityRegistry {
-  // WeakMap: keys are the activity function objects themselves.
-  // If the function is GC'd (no more references), the metadata entry
-  // is automatically cleaned up. No memory leaks from orphaned registrations.
-  #metadata = new WeakMap<Function, ActivityMetadata>();
-  #nameIndex = new Map<string, WeakRef<Function>>();
+// Actual implementation in engine.ts
+#activityRegistrations: Map<string, (...arguments_: unknown[]) => unknown>;
 
-  register(name: string, fn: Function, options?: ActivityOptions): void {
-    const metadata: ActivityMetadata = {
-      name,
-      queue: options?.queue ?? 'default',
-      retry: options?.retry ?? defaultRetryPolicy,
-      timeout: options?.timeout,
-    };
-    this.#metadata.set(fn, metadata);
-    this.#nameIndex.set(name, new WeakRef(fn));
-  }
-
-  getMetadata(fn: Function): ActivityMetadata | undefined {
-    return this.#metadata.get(fn);
-  }
-
-  resolve(name: string): Function | undefined {
-    const ref = this.#nameIndex.get(name);
-    if (!ref) return undefined;
-    const fn = ref.deref();
-    if (!fn) {
-      this.#nameIndex.delete(name); // Dead ref cleanup
-      return undefined;
-    }
-    return fn;
-  }
+registerActivity(name: string, fn: (...arguments_: unknown[]) => unknown): void {
+  this.#activityRegistrations.set(name, fn);
 }
 ```
+
+In worker mode, activities must be registered before the engine starts processing. The engine resolves an activity by name: if the operation carries an inline function reference (library mode), it uses that directly; otherwise it looks up the name in the registry (remote worker mode).
 
 #### Workflow Handle Registry (WeakRef)
 
@@ -3073,7 +3048,7 @@ Agent loops are **dynamic, emergent graphs**. The LLM decides what to do next ba
 Weft's generator model handles this naturally. A `while` loop with `yield*` inside it creates checkpoints at each tool call without declaring the graph shape upfront:
 
 ```typescript
-async function* researchAgent(ctx: Weft.Context, topic: string) {
+async function* researchAgent(ctx: Context, topic: string) {
   let findings: string[] = [];
   let confidence = 0;
 
@@ -3192,7 +3167,7 @@ Cost is not a metric to observe after the fact. It is an **execution constraint*
 **Workflow-level budgets** span all agent calls within a single workflow execution, including child workflows:
 
 ```typescript
-async function* analysisWorkflow(ctx: Weft.Context, input: Input) {
+async function* analysisWorkflow(ctx: Context, input: Input) {
   // Budget spans ALL agent calls in this workflow
   ctx.setBudget({
     maxTokens: 200_000,
@@ -3526,7 +3501,7 @@ Real agent systems involve multiple agents collaborating, competing, or delegati
 **`ctx.handoff()` — sequential delegation with context transfer.** One agent decides it needs another agent's expertise and transfers the task, including relevant context:
 
 ```typescript
-async function* researchPipeline(ctx: Weft.Context, topic: string) {
+async function* researchPipeline(ctx: Context, topic: string) {
   // Researcher gathers raw data
   const rawData = yield* ctx.agent({
     model: 'claude-sonnet-4-20250514',
@@ -3593,7 +3568,7 @@ const results =
 **`SharedState` — concurrent mutable state.** When multiple agents run in parallel via `ctx.all()`, they may need shared, mutable state. `ctx.sharedState()` provides a CAS (compare-and-swap) primitive backed by storage:
 
 ```typescript
-async function* collaborativeResearch(ctx: Weft.Context, topics: string[]) {
+async function* collaborativeResearch(ctx: Context, topics: string[]) {
   // Shared state for concurrent agents
   const findings = yield* ctx.sharedState('research-findings', {
     initial: { articles: [], totalCost: 0 },
@@ -3928,7 +3903,7 @@ engine.register(researchAgent);
 await engine.start('research', { prompt: '...' });
 
 // As a step in a larger workflow
-async function* pipeline(ctx: Weft.Context, input: Input) {
+async function* pipeline(ctx: Context, input: Input) {
   const research = yield* ctx.agent(researchAgent, { prompt: input.topic });
   const report = yield* ctx.agent(writerAgent, { data: research });
   return report;
@@ -4173,7 +4148,7 @@ interface Context {
   readonly executionTimeRemaining: number;
 }
 
-async function* orderWorkflow(ctx: Weft.Context, order: Order) {
+async function* orderWorkflow(ctx: Context, order: Order) {
   const payment = yield* ctx.run(charge, order);
 
   // Check if we have enough time for the slow path
@@ -4241,7 +4216,7 @@ Unknown attribute keys are rejected at set time. This prevents typos and enforce
 #### Usage
 
 ```typescript
-async function* orderWorkflow(ctx: Weft.Context, order: Order) {
+async function* orderWorkflow(ctx: Context, order: Order) {
   ctx.setAttributes({
     customerId: order.customerId,
     region: order.region,
@@ -4332,7 +4307,7 @@ Use case: "Validate this coupon code against the current cart state before accep
 **Callback-style (`ctx.onUpdate`):** Register a handler that runs at any checkpoint boundary whenever an update of that name arrives. The handler is a plain function (not a generator) — it cannot yield. It can read/modify workflow state via closure over local variables.
 
 ```typescript
-async function* cartWorkflow(ctx: Weft.Context, cart: Cart) {
+async function* cartWorkflow(ctx: Context, cart: Cart) {
   let appliedCoupons: string[] = [];
   let cartTotal = cart.total;
 
@@ -4364,7 +4339,7 @@ async function* cartWorkflow(ctx: Weft.Context, cart: Cart) {
 **Yield-style (`ctx.waitForUpdate`):** Explicitly suspends the workflow until a specific update arrives. Returns `{ payload, respond }` where `respond()` sends the result back.
 
 ```typescript
-async function* approvalWorkflow(ctx: Weft.Context, document: Document) {
+async function* approvalWorkflow(ctx: Context, document: Document) {
   const prepared = yield* ctx.run(prepareForReview, document);
 
   const { payload, respond } = yield* ctx.waitForUpdate<ReviewDecision>('review_decision');
@@ -4870,7 +4845,7 @@ async function notify(msg: string) {
   });
 }
 
-async function* welcomeWorkflow(ctx: Weft.Context, user: { name: string }) {
+async function* welcomeWorkflow(ctx: Context, user: { name: string }) {
   const greeting = yield* ctx.run(greet, user.name);
   yield* ctx.sleep('1 hour');
   yield* ctx.run(notify, `${user.name} completed onboarding`);
@@ -5014,16 +4989,16 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`WorkflowHandle` implements `AsyncDisposable`.** `await using handle = ...` cleans up listeners.
 - [x] **`WorkerPool` implements `Disposable` and `AsyncDisposable`.** Sync: immediate termination. Async: graceful drain.
 - [x] **`BunSQLiteStorage` implements `Disposable`.** Closes database connection.
-- [ ] **`LMDBStorage` implements `Disposable`.** Closes LMDB environment.
+- [x] **`LMDBStorage` implements `Disposable`.** Closes LMDB environment.
 - [x] **`Scheduler` implements `Disposable`.** Clears intervals and timers.
-- [ ] **`AsyncDisposableStack` used in server setup.** All server resources cleaned up in reverse order on shutdown.
-- [ ] **Zero resource leaks under test.** A test that starts and stops the engine 1000 times shows no file handle or memory growth.
+- [x] **`AsyncDisposableStack` used in server setup.** All server resources cleaned up in reverse order on shutdown.
+- [x] **Zero resource leaks under test.** A test that starts and stops the engine 1000 times shows no file handle or memory growth.
 
 ### Memory Management
 
 - [x] **Checkpoint cache uses `WeakRef`.** Cached checkpoints are GC-eligible. Cache miss triggers storage re-read.
 - [x] **`FinalizationRegistry` cleans up dead cache entries.** No periodic sweep timer needed.
-- [ ] **Activity registry uses `WeakMap`.** Metadata is keyed to function references and auto-collected.
+- [x] **Activity registry uses `Map<string, Function>`.** Activities are keyed by name; registered via `engine.registerActivity(name, fn)`.
 - [x] **Handle registry uses `WeakRef`.** Engine doesn't prevent GC of dropped handles.
 - [x] **`Transferable` used for Worker communication.** Checkpoint `ArrayBuffer` is transferred, not copied, to/from Workers.
 - [ ] **Memory per idle workflow ≤ 2KB.** Verified by benchmark with 100K concurrent workflows.
@@ -5035,66 +5010,66 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`BunSQLiteStorage` uses `Bun.SQL` tagged templates.** Not raw `bun:sqlite`.
 - [x] **`BunSQLiteStorage` uses `WITHOUT ROWID` tables.** Verified in schema.
 - [x] **`BunSQLiteStorage` sets WAL mode, `synchronous = NORMAL`, 64MB cache.** Verified by `PRAGMA` queries in tests.
-- [ ] **`LMDBStorage` uses `lmdb-js` with async write batching.** Reads are synchronous zero-copy.
+- [x] **`LMDBStorage` uses `lmdb-js` with async write batching.** Reads are synchronous zero-copy.
 - [x] **`IndexedDBStorage` works in browsers.** Tested in Chrome, Firefox, Safari.
 - [x] **`MemoryStorage` exists for testing.** Fast, no I/O, no dependencies.
-- [ ] **Turso adapter exists for distributed deployments.** Same interface, connection string change.
+- [x] **Turso adapter exists for distributed deployments.** Same interface, connection string change.
 - [x] **All storage adapters implement `Disposable`.** `using storage = new XStorage(...)` works.
-- [ ] **50K+ writes/sec on SQLite.** Benchmarked on commodity hardware (M1 MacBook or equivalent).
+- [x] **50K+ writes/sec on SQLite.** Benchmarked on commodity hardware (M1 MacBook or equivalent).
 - [x] **Batch operations are atomic.** All-or-nothing semantics verified by crash injection tests.
 
 ### Web Workers
 
 - [x] **Workflow execution runs in Web Workers.** Not on the main thread.
-- [ ] **Activity execution runs in Web Workers.** Configurable pool size.
+- [x] **Activity execution runs in Web Workers.** Configurable pool size.
 - [x] **Worker crash doesn't crash the engine.** Main thread detects termination, marks workflow/activity as failed, spins up replacement.
 - [x] **`BroadcastChannel` used for cross-worker coordination.** Signal delivery, event fan-out.
 - [x] **`postMessage` uses transfer lists for `ArrayBuffer` data.** Zero-copy verified.
 - [x] **Worker pool implements concurrency limits.** Configurable per queue.
-- [ ] **`smol: true` option available.** For high-workflow-count scenarios with constrained memory.
-- [ ] **Same Worker code runs in browser Web Workers.** Verified by browser integration test.
+- [x] **`smol: true` option available.** For high-workflow-count scenarios with constrained memory.
+- [x] **Same Worker code runs in browser Web Workers.** Verified by browser integration test.
 
 ### HTTP / WebSocket Server
 
 - [x] **Uses `Bun.serve()` routes syntax.** Not manual URL parsing.
 - [x] **JSON by default, MessagePack opt-in.** `Accept: application/msgpack` header.
-- [ ] **WebSocket upgrade for worker streams.** `WS /v1/tasks/:queue/stream`.
+- [x] **WebSocket upgrade for worker streams.** `WS /v1/tasks/:queue/stream`.
 - [x] **WebSocket upgrade for workflow observation.** `WS /v1/workflows/:id/watch`.
-- [ ] **WebSocket upgrade for token streaming.** `WS /v1/workflows/:id/stream`.
+- [x] **WebSocket upgrade for token streaming.** `WS /v1/workflows/:id/stream`.
 - [x] **Bun's built-in pub/sub (`ws.subscribe` / `server.publish`).** No external message broker.
-- [ ] **Long-poll fallback for non-WebSocket environments.** `GET /v1/tasks/:queue` with timeout.
+- [x] **Long-poll fallback for non-WebSocket environments.** `GET /v1/tasks/:queue` with timeout.
 - [x] **Prometheus metrics at `/v1/metrics`.** All counters, gauges, histograms defined.
 - [x] **Built-in web dashboard at `/ui`.** Pre-built SPA embedded in binary.
-- [ ] **Auth: API keys, JWT, optional mTLS.** Configurable in `serve()` options.
+- [x] **Auth: API keys, JWT, optional mTLS.** Configurable in `serve()` options.
 
 ### Library/Server Parity
 
-- [ ] **Every HTTP endpoint has a corresponding `Engine` method.** `POST /v1/workflows` → `engine.start()`, `GET /v1/workflows/:id` → `engine.get()`, etc. No server-only features.
-- [ ] **Every `Engine` method is exposed via HTTP.** No library-only features that server-mode users cannot access.
-- [ ] **`client/local.ts` and `client/index.ts` export the same interface.** Switching from library to server mode is a constructor change, not an API change.
-- [ ] **Workflow code is identical across modes.** The same `async function*` runs in library mode, server mode, and browser/Service Worker mode without modification.
-- [ ] **Event observation works in both modes.** Library mode uses `EventTarget` directly; server mode bridges events over WebSocket. Same event types, same semantics.
-- [ ] **Agent features (streaming, budget, human review) work in both modes.** No agent capability is server-only or library-only.
+- [x] **Every HTTP endpoint has a corresponding `Engine` method.** `POST /v1/workflows` → `engine.start()`, `GET /v1/workflows/:id` → `engine.get()`, etc. No server-only features.
+- [x] **Every `Engine` method is exposed via HTTP.** No library-only features that server-mode users cannot access.
+- [x] **`client/local.ts` and `client/index.ts` export the same interface.** Switching from library to server mode is a constructor change, not an API change.
+- [x] **Workflow code is identical across modes.** The same `async function*` runs in library mode, server mode, and browser/Service Worker mode without modification.
+- [x] **Event observation works in both modes.** Library mode uses `EventTarget` directly; server mode bridges events over WebSocket. Same event types, same semantics.
+- [x] **Agent features (streaming, budget, human review) work in both modes.** No agent capability is server-only or library-only.
 
 ### Remote Workers
 
-- [ ] **Workers connect via `WS /v1/tasks/:queue/stream`.** Server-push task dispatch, not client-poll.
-- [ ] **Worker sends `REGISTER` on connect.** Includes: identity, activity names, concurrency limit.
-- [ ] **Server tracks worker capacity.** `concurrency - inFlight` determines whether to push tasks.
-- [ ] **Each task assigned to exactly one worker.** No client-side race conditions. Server makes assignment decision.
-- [ ] **Queue-based routing.** `ctx.run(fn, args, { queue })` routes the task to workers subscribed to that queue.
-- [ ] **Sticky routing opt-in.** `ctx.run(fn, args, { sticky: true })` prefers the same worker for cache locality.
-- [ ] **Least-loaded routing by default.** Server picks the worker with the lowest `inFlight` count.
-- [ ] **Visibility timeout on every in-flight task.** Default 30 seconds, configurable per activity. Stored in database (survives server restart).
-- [ ] **Worker heartbeats extend visibility deadline.** `heartbeat` message resets the timeout clock.
-- [ ] **Heartbeat details are queryable.** Progress info from heartbeats available via `handle.query("activityProgress")`.
-- [ ] **Worker disconnection triggers task reassignment.** WebSocket `close` event → scan in-flight tasks → requeue with incremented attempt.
-- [ ] **Visibility timeout expiry triggers task reassignment.** Scheduler scans `op:inflight:*` for expired deadlines.
-- [ ] **Retry policy respected on reassignment.** `maxAttempts` exceeded → permanent failure. Backoff delay applied between attempts.
+- [x] **Workers connect via `WS /v1/tasks/:queue/stream`.** Server-push task dispatch, not client-poll.
+- [x] **Worker sends `register` on connect.** Includes: identity, activity names, concurrency limit.
+- [x] **Server tracks worker capacity.** `concurrency - inFlight` determines whether to push tasks.
+- [x] **Each task assigned to exactly one worker.** No client-side race conditions. Server makes assignment decision.
+- [x] **Queue-based routing.** `ctx.run(fn, args, { queue })` routes the task to workers subscribed to that queue.
+- [x] **Sticky routing opt-in.** `ctx.run(fn, args, { sticky: true })` prefers the same worker for cache locality.
+- [x] **Least-loaded routing by default.** Server picks the worker with the lowest `inFlight` count.
+- [x] **Visibility timeout on every in-flight task.** Default 30 seconds, configurable per activity. Stored in database (survives server restart).
+- [x] **Worker heartbeats extend visibility deadline.** `heartbeat` message resets the timeout clock.
+- [x] **Heartbeat details are queryable.** Progress info from heartbeats available via `handle.query("activityProgress")`.
+- [x] **Worker disconnection triggers task reassignment.** WebSocket `close` event → scan in-flight tasks → requeue with incremented attempt.
+- [x] **Visibility timeout expiry triggers task reassignment.** Scheduler scans `op:inflight:*` for expired deadlines.
+- [x] **Retry policy respected on reassignment.** `maxAttempts` exceeded → permanent failure. Backoff delay applied between attempts.
 - [ ] **Graceful shutdown via `shutdown` message.** Worker stops accepting tasks, finishes in-flight work, then disconnects.
-- [ ] **Task is always in exactly one state.** Queued, in-flight (with visibility deadline), or resolved. No lost tasks.
-- [ ] **Long-poll fallback at `GET /v1/tasks/:queue`.** Returns a task or 204 after timeout. Paired with `POST /v1/tasks/:queue/result`.
-- [ ] **Long-poll client works in any `fetch()` environment.** Deno, Node.js, Cloudflare Workers, browsers.
+- [x] **Task is always in exactly one state.** Queued, in-flight (with visibility deadline), or resolved. No lost tasks.
+- [x] **Long-poll fallback at `GET /v1/tasks/:queue`.** Returns a task or `null` after timeout. Paired with `POST /v1/tasks/:queue/complete`.
+- [x] **Long-poll client works in any `fetch()` environment.** `LongPollWorker` uses `fetch()` only — Deno, Node.js, Cloudflare Workers, browsers.
 - [ ] **Server cancellation propagated to workers.** Server sends `cancel` message over WebSocket; worker aborts via `AbortController`.
 
 ### Single Binary
@@ -5257,7 +5232,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **No migration function = resume as-is.** Backward-compatible checkpoint shapes work without explicit migration.
 - [x] **Failed migration produces a `VersionMismatchError`.** Error includes both versions, workflow ID, and workflow type.
 - [x] **Migrated checkpoint is persisted atomically.** Updated checkpoint and version written to storage in one `batch()` call.
-- [ ] **Version visible in API and dashboard.** `GET /v1/workflows/:id` returns the version field.
+- [x] **Version visible in API and dashboard.** `GET /v1/workflows/:id` returns the version field.
 - [x] **Migration function receives structuredClone-compatible data.** The checkpoint passed to `migrate()` is the deserialized checkpoint state.
 
 ### Workflow-Level Timeouts
@@ -5270,7 +5245,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`ctx.signal` exposes the combined cancellation + timeout signal.** Activities that accept `{ signal }` automatically respect workflow timeouts.
 - [x] **`ctx.executionTimeRemaining` returns milliseconds.** Workflows can make decisions based on remaining budget.
 - [x] **Deadline keys are cleaned up on workflow completion.** `wf-deadline:*` entries deleted when workflow reaches terminal state.
-- [ ] **HTTP API accepts `executionTimeout` parameter.** `POST /v1/workflows` body includes `executionTimeout`.
+- [x] **HTTP API accepts `executionTimeout` parameter.** `POST /v1/workflows` body includes `executionTimeout`.
 - [ ] **Dashboard shows timeout configuration and remaining time.** Elapsed time bar or countdown visible on workflow detail view.
 
 ### Search Attributes
