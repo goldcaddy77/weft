@@ -37,6 +37,8 @@ export const KEYS = {
   operation: (queue: string, scheduledAt: number, id: string) =>
     `op:${queue}:${String(scheduledAt).padStart(16, '0')}:${id}`,
   operationInflight: (id: string) => `op:inflight:${id}`,
+  operationQueued: (id: string) => `op:queued:${id}`,
+  operationResolved: (id: string) => `op:resolved:${id}`,
   event: (workflowId: string, sequence: number) =>
     `ev:${workflowId}:${String(sequence).padStart(10, '0')}`,
   signal: (workflowId: string, name: string, id: string) => `sig:${workflowId}:${name}:${id}`,
@@ -59,4 +61,5 @@ export const KEYS = {
   streamChunk: (workflowId: string, key: string, chunkIndex: number) =>
     `blob:${workflowId}:${key}:chunk:${String(chunkIndex).padStart(10, '0')}`,
   streamMetadata: (workflowId: string, key: string) => `blob:${workflowId}:${key}:meta`,
+  budgetCharged: (operationId: string) => `budget-charged:${operationId}`,
 } as const;

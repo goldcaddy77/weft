@@ -11,6 +11,7 @@ export {
   DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD,
   DEFAULT_MAX_NESTING_DEPTH,
   DEFAULT_RETRY_POLICY,
+  DEFAULT_VISIBILITY_TIMEOUT_MS,
 } from './core/types';
 export type {
   ActivityCallOptions,
@@ -18,16 +19,20 @@ export type {
   ActivityDefinition,
   ActivityFunction,
   Checkpoint,
+  CoordinatedUpdateResult,
   Duration,
   EngineOptions,
   ListFilter,
   PaginatedResult,
   RetryPolicy,
+  ReviewDecision,
   SearchAttributeSchema,
   SearchAttributeValue,
   Serializer,
   StartOptions,
+  SubmitReviewOptions,
   WorkflowContext,
+  WorkflowEvent,
   WorkflowFunction,
   WorkflowId,
   WorkflowRegistration,
@@ -63,7 +68,10 @@ export type { TypedEventTarget, WeftEventMap } from './core/events';
 export { BunSQLiteStorage } from './storage/bun-sql';
 export { KEYS } from './storage/interface';
 export type { BatchOperation, ScanOptions, Storage } from './storage/interface';
+export { LMDBStorage } from './storage/lmdb';
 export { MemoryStorage } from './storage/memory';
+export { TursoStorage } from './storage/turso';
+export type { TursoStorageOptions } from './storage/turso';
 
 // Codec
 export { decode, encode, validateCloneable } from './core/codec';
@@ -149,6 +157,19 @@ export { handleRequest } from './server/handler';
 export { serve } from './server/index';
 export type { ServeOptions, WeftServer } from './server/index';
 
+// Server Authentication
+export { createAuthenticator, validateAuthConfig } from './server/authentication';
+export type {
+  AuthConfig,
+  AuthMethod,
+  AuthResult,
+  Authenticator,
+  JWTAlgorithm,
+  JWTConfig,
+  JWTPayload,
+  MTLSConfig,
+} from './server/authentication';
+
 // Testing
 export { ActivityMockRegistry } from './testing/mocks';
 export type { MockCall, MockHandle } from './testing/mocks';
@@ -226,13 +247,29 @@ export {
 
 // Workers
 export { executeActivity } from './workers/activity-runner';
+export type { ActivityExecutionRequest, ActivityExecutionResult } from './workers/activity-runner';
+export { ActivityWorkerDispatcher } from './workers/activity-worker-dispatcher';
+export type { ActivityWorkerDispatcherOptions } from './workers/activity-worker-dispatcher';
+export {
+  createActivityWorkerEntryUrl,
+  initializeActivityWorkerMessageLoop,
+  revokeActivityWorkerEntryUrl,
+} from './workers/activity-worker-entry';
+export type { ActivityHandlerLookup } from './workers/activity-worker-entry';
 export { WorkerPool } from './workers/pool';
+export type { WorkerPoolOptions } from './workers/pool';
 
 // Remote Worker
 export { HeartbeatManager } from './worker/heartbeat';
 export { RemoteWorker } from './worker/index';
 export { LongPollWorker } from './worker/long-poll';
 export { WorkerRegistry } from './worker/registry';
+
+// Client
+export { HttpClient, HttpClientError } from './client/index';
+export type { HttpClientOptions } from './client/index';
+export type { ClientHandle, UpdateResult, WeftClient } from './client/interface';
+export { LocalClient } from './client/local';
 
 // Diagnostics
 export { collectDiagnostics } from './diagnostics/doctor';
@@ -242,6 +279,13 @@ export {
   formatDuration,
   formatVersionCheckReport,
 } from './diagnostics/format';
+export { MemoryProfiler, analyzeStability, linearRegression } from './diagnostics/memory-profiler';
+export type {
+  MemoryProfile,
+  MemorySample,
+  StabilityOptions,
+  StabilityResult,
+} from './diagnostics/memory-profiler';
 export { generateRecommendations } from './diagnostics/recommendations';
 export type {
   DatabaseHealth,

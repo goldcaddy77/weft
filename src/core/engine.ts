@@ -13,6 +13,7 @@
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import { ActivityWorkerDispatcher } from '../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../workers/pool.ts';
 import type { ActivityRegistrationOptions } from './activity-registry.ts';
 import { ActivityRegistry } from './activity-registry.ts';
@@ -56,6 +57,7 @@ import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   AttributeFilter,
   Checkpoint,
+  CoordinatedUpdateResult,
   EngineOptions,
   ListFilter,
   OperationOutcome,
@@ -63,7 +65,9 @@ import type {
   SearchAttributeValue,
   StartOptions,
   StepWorkflowFunction,
+  SubmitReviewOptions,
   WorkerOutboundMessage,
+  WorkflowEvent,
   WorkflowFunction,
   WorkflowRegistration,
   WorkflowState,
@@ -305,17 +309,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #signalWaiters: Map<string, (payload: unknown) => void>;
   #updateWaiters: Map<string, (payload: unknown) => void>;
   #sleepResolvers: Map<string, () => void>;
+  #sleepResolversByWorkflow: Map<string, Set<string>>;
   #interceptors: WorkflowInterceptor[];
   #activityInterceptors: ActivityInterceptor[];
   #composedWorkflowInterceptor: ComposedWorkflowInterceptor | null;
   #composedActivityInterceptor: ComposedActivityInterceptor | null;
   #updateCoordinator: UpdateCoordinator;
   #activityRegistry: ActivityRegistry;
+  #activityWorkerDispatcher: ActivityWorkerDispatcher | null;
   #checkpoints: Map<string, Checkpoint>;
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
   #workflowNestingDepths: Map<string, number>;
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
+  #heartbeatDetails: Map<string, unknown>;
+  #pendingStarts: Set<string>;
+  #chargedAgentOperations: Set<string>;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -331,12 +340,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#signalWaiters = new Map();
     this.#updateWaiters = new Map();
     this.#sleepResolvers = new Map();
+    this.#sleepResolversByWorkflow = new Map();
     this.#interceptors = [];
     this.#activityInterceptors = [];
     this.#composedWorkflowInterceptor = null;
     this.#composedActivityInterceptor = null;
     this.#updateCoordinator = new UpdateCoordinator(storage);
     this.#activityRegistry = new ActivityRegistry();
+    this.#activityWorkerDispatcher = null;
     this.#checkpoints = new Map();
     this.#broadcastChannel = null;
     this.#pendingNestingDepth = undefined;
@@ -388,6 +399,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     this.#budgetPolicyEnforcer = null;
+    this.#heartbeatDetails = new Map();
+    this.#pendingStarts = new Set();
+    this.#chargedAgentOperations = new Set();
+
+    // Create the activity worker pool (optional)
+    if (options?.activityExecution) {
+      const activityPool = new WorkerPool({
+        workerUrl: options.activityExecution.workerUrl,
+        concurrency: options.activityExecution.poolSize ?? 4,
+        smol: options.activityExecution.smol ?? false,
+      });
+      this.#activityWorkerDispatcher = new ActivityWorkerDispatcher(activityPool);
+    }
 
     // Wire up the strategy message handler
     this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
@@ -492,97 +516,108 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const workflowId = options?.id ?? crypto.randomUUID();
 
-    // Check for duplicate
-    const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
-    if (existingBytes !== null) {
+    // Atomic check-and-reserve: prevent two concurrent start() calls with the
+    // same ID from both passing the storage check before either writes state.
+    if (this.#pendingStarts.has(workflowId)) {
       throw new Error(`Workflow with id "${workflowId}" already exists`);
     }
+    this.#pendingStarts.add(workflowId);
 
-    const now = this.#options.getNow();
+    try {
+      // Check for duplicate in storage
+      const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
+      if (existingBytes !== null) {
+        throw new Error(`Workflow with id "${workflowId}" already exists`);
+      }
 
-    // Create workflow state
-    const state: WorkflowState = {
-      id: workflowId,
-      type,
-      status: 'running',
-      input,
-      version: registration.version,
-      createdAt: now,
-      updatedAt: now,
-    };
+      const now = this.#options.getNow();
 
-    if (options?.executionTimeout !== undefined) {
-      state.executionDeadline = now + parseDuration(options.executionTimeout);
-    }
+      // Create workflow state
+      const state: WorkflowState = {
+        id: workflowId,
+        type,
+        status: 'running',
+        input,
+        version: registration.version,
+        createdAt: now,
+        updatedAt: now,
+      };
 
-    // Create initial checkpoint
-    const checkpoint = createCheckpoint(workflowId, registration.version, this.#options.getNow());
+      if (options?.executionTimeout !== undefined) {
+        state.executionDeadline = now + parseDuration(options.executionTimeout);
+      }
 
-    // Apply initial search attributes if provided
-    if (options?.searchAttributes) {
-      checkpoint.searchAttributes = { ...options.searchAttributes };
-    }
+      // Create initial checkpoint
+      const checkpoint = createCheckpoint(workflowId, registration.version, this.#options.getNow());
 
-    this.#checkpoints.set(workflowId, checkpoint);
+      // Apply initial search attributes if provided
+      if (options?.searchAttributes) {
+        checkpoint.searchAttributes = { ...options.searchAttributes };
+      }
 
-    // Write state and checkpoint to storage
-    const batchOperations: import('../storage/interface.ts').BatchOperation[] = [
-      { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
-      {
-        type: 'put',
-        key: KEYS.checkpoint(workflowId),
-        value: serializeCheckpoint(checkpoint),
-      },
-    ];
+      this.#checkpoints.set(workflowId, checkpoint);
 
-    // Write attribute record and index entries for initial search attributes
-    if (options?.searchAttributes && Object.keys(options.searchAttributes).length > 0) {
-      batchOperations.push({
-        type: 'put',
-        key: KEYS.attribute(workflowId),
-        value: encode(options.searchAttributes),
-      });
-      batchOperations.push(...buildIndexOperations(workflowId, {}, options.searchAttributes));
-    }
+      // Write state and checkpoint to storage
+      const batchOperations: import('../storage/interface.ts').BatchOperation[] = [
+        { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
+        {
+          type: 'put',
+          key: KEYS.checkpoint(workflowId),
+          value: serializeCheckpoint(checkpoint),
+        },
+      ];
 
-    await this.#storage.batch(batchOperations);
+      // Write attribute record and index entries for initial search attributes
+      if (options?.searchAttributes && Object.keys(options.searchAttributes).length > 0) {
+        batchOperations.push({
+          type: 'put',
+          key: KEYS.attribute(workflowId),
+          value: encode(options.searchAttributes),
+        });
+        batchOperations.push(...buildIndexOperations(workflowId, {}, options.searchAttributes));
+      }
 
-    // Set up execution deadline if needed
-    if (state.executionDeadline !== undefined) {
-      await this.#scheduler.schedule({
-        id: `deadline:${workflowId}`,
+      await this.#storage.batch(batchOperations);
+
+      // Set up execution deadline if needed
+      if (state.executionDeadline !== undefined) {
+        await this.#scheduler.schedule({
+          id: `deadline:${workflowId}`,
+          workflowId,
+          fireAt: state.executionDeadline,
+          kind: 'execution-deadline',
+        });
+      }
+
+      // Dispatch started event
+      this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
+
+      // Create result promise
+      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+      this.#resultResolvers.set(workflowId, { resolve, reject });
+
+      // Create handle
+      const handle = new WorkflowHandle(workflowId, this, promise);
+      this.#handleCache.set(workflowId, new WeakRef(handle));
+      this.#finalizationRegistry.register(handle, workflowId);
+
+      // Begin execution (non-blocking) via the strategy
+      const nestingDepth = this.#pendingNestingDepth ?? 0;
+      this.#pendingNestingDepth = undefined;
+      this.#workflowNestingDepths.set(workflowId, nestingDepth);
+      this.#strategy.startWorkflow({
         workflowId,
-        fireAt: state.executionDeadline,
-        kind: 'execution-deadline',
+        workflowType: type,
+        input,
+        checkpoint: serializeCheckpoint(checkpoint),
+        nestingDepth,
+        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
       });
+
+      return handle;
+    } finally {
+      this.#pendingStarts.delete(workflowId);
     }
-
-    // Dispatch started event
-    this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
-
-    // Create result promise
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    this.#resultResolvers.set(workflowId, { resolve, reject });
-
-    // Create handle
-    const handle = new WorkflowHandle(workflowId, this, promise);
-    this.#handleCache.set(workflowId, new WeakRef(handle));
-    this.#finalizationRegistry.register(handle, workflowId);
-
-    // Begin execution (non-blocking) via the strategy
-    const nestingDepth = this.#pendingNestingDepth ?? 0;
-    this.#pendingNestingDepth = undefined;
-    this.#workflowNestingDepths.set(workflowId, nestingDepth);
-    this.#strategy.startWorkflow({
-      workflowId,
-      workflowType: type,
-      input,
-      checkpoint: serializeCheckpoint(checkpoint),
-      nestingDepth,
-      ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
-    });
-
-    return handle;
   }
 
   // -------------------------------------------------------------------------
@@ -883,6 +918,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async query(workflowId: string, name: string): Promise<unknown> {
+    // Built-in query: return latest heartbeat details for this workflow
+    if (name === 'activityProgress') {
+      return this.#heartbeatDetails.get(workflowId);
+    }
+
     if (!this.#inlineStrategy) {
       throw new Error(
         'Workflow queries are not supported when using the worker execution strategy.',
@@ -905,6 +945,32 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#budgetPolicyEnforcer = new BudgetPolicyEnforcer(this.#storage, this.#options.getNow);
     }
     this.#budgetPolicyEnforcer.setPolicy(options);
+  }
+
+  /** Retrieve the budget policy for a namespace, or `null` if none is set. */
+  async getBudgetPolicy(
+    namespace: string,
+  ): Promise<import('../ai/budget-policy.ts').BudgetPolicyOptions | null> {
+    if (!this.#budgetPolicyEnforcer) return null;
+    return this.#budgetPolicyEnforcer.policies.get(namespace) ?? null;
+  }
+
+  /** Read stream chunks back from storage for a completed stream operation. */
+  async getStreamChunks(workflowId: string, key: string): Promise<unknown[]> {
+    const metadataBytes = await this.#storage.get(KEYS.streamMetadata(workflowId, key));
+    if (!metadataBytes) return [];
+
+    const metadata = decode(metadataBytes) as StreamReference;
+    const chunks: unknown[] = [];
+
+    for (let i = 0; i < metadata.chunkCount; i++) {
+      const chunkBytes = await this.#storage.get(KEYS.streamChunk(workflowId, key, i));
+      if (chunkBytes) {
+        chunks.push(decode(chunkBytes));
+      }
+    }
+
+    return chunks;
   }
 
   // -------------------------------------------------------------------------
@@ -1065,6 +1131,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
     this.#cleanupWaiters(workflowId);
+    this.#heartbeatDetails.delete(workflowId);
 
     const event =
       status === 'timed-out'
@@ -1085,6 +1152,166 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   // -------------------------------------------------------------------------
+  // State retrieval (public API for HTTP handlers and clients)
+  // -------------------------------------------------------------------------
+
+  /** Retrieve the current state of a workflow by ID. */
+  async get(workflowId: string): Promise<WorkflowState | null> {
+    return this.#loadWorkflowState(workflowId);
+  }
+
+  /** Retrieve search attributes for a workflow. */
+  async getAttributes(workflowId: string): Promise<Record<string, SearchAttributeValue> | null> {
+    const bytes = await this.#storage.get(KEYS.attribute(workflowId));
+    if (!bytes) return null;
+    return decode(bytes) as Record<string, SearchAttributeValue>;
+  }
+
+  /** Merge search attributes into a workflow's existing attributes, updating the index. */
+  async setAttributes(
+    workflowId: string,
+    attributes: Record<string, SearchAttributeValue>,
+  ): Promise<void> {
+    const existingBytes = await this.#storage.get(KEYS.attribute(workflowId));
+    const existing: Record<string, SearchAttributeValue> = existingBytes
+      ? (decode(existingBytes) as Record<string, SearchAttributeValue>)
+      : {};
+
+    const merged: Record<string, SearchAttributeValue> = { ...existing, ...attributes };
+
+    const indexOperations = buildIndexOperations(workflowId, existing, merged);
+
+    const operations: import('../storage/interface.ts').BatchOperation[] = [
+      { type: 'put', key: KEYS.attribute(workflowId), value: encode(merged) },
+      ...indexOperations,
+    ];
+
+    await this.#storage.batch(operations);
+  }
+
+  /** Retrieve the event history for a workflow. */
+  async getEvents(workflowId: string): Promise<WorkflowEvent[]> {
+    const events: WorkflowEvent[] = [];
+    const prefix = `ev:${workflowId}:`;
+
+    for await (const [, value] of this.#storage.scan(prefix)) {
+      const event = decode(value) as Record<string, unknown>;
+      events.push({
+        type: (event['type'] as string) ?? 'unknown',
+        timestamp: (event['timestamp'] as number) ?? 0,
+        data: (event['data'] as Record<string, unknown>) ?? {},
+      });
+    }
+
+    return events;
+  }
+
+  /** List all pending reviews. */
+  async listReviews(): Promise<Array<Record<string, unknown>>> {
+    const reviews: Array<Record<string, unknown>> = [];
+
+    for await (const [, value] of this.#storage.scan('review:')) {
+      reviews.push(decode(value) as Record<string, unknown>);
+    }
+
+    return reviews;
+  }
+
+  /** Submit a decision for a pending review. Stores the decision and removes the pending review. */
+  async submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void> {
+    const { decision, reviewer, feedback, workflowId } = options;
+
+    // Look up the review by direct key when workflowId is provided (O(1)),
+    // otherwise fall back to scanning all review entries (O(n)).
+    let reviewKey: string | null = null;
+
+    if (workflowId !== undefined) {
+      const directKey = KEYS.review(workflowId, reviewId);
+      const existing = await this.#storage.get(directKey);
+      if (existing !== null) {
+        reviewKey = directKey;
+      }
+    } else {
+      for await (const [key, value] of this.#storage.scan('review:')) {
+        const review = decode(value) as Record<string, unknown>;
+        if (review['reviewId'] === reviewId) {
+          reviewKey = key;
+          break;
+        }
+      }
+    }
+
+    if (reviewKey === null) {
+      throw new Error(`Review "${reviewId}" not found`);
+    }
+
+    const decisionData = {
+      reviewId,
+      decision,
+      reviewer,
+      feedback,
+      timestamp: Date.now(),
+    };
+
+    await this.#storage.batch([
+      { type: 'put', key: `review-decision:${reviewId}`, value: encode(decisionData) },
+      { type: 'delete', key: reviewKey },
+    ]);
+  }
+
+  /** Retrieve the result of a coordinated update by its ID. */
+  async getUpdateResult(updateId: string): Promise<import('./updates.ts').UpdateResponse | null> {
+    return this.#updateCoordinator.getResponse(updateId);
+  }
+
+  /**
+   * Submit a coordinated update request. Handles idempotency checking,
+   * creates the request, and waits for a response within the timeout.
+   */
+  async submitCoordinatedUpdate(
+    workflowId: string,
+    name: string,
+    payload?: unknown,
+    options?: { timeout?: number; idempotencyKey?: string },
+  ): Promise<CoordinatedUpdateResult> {
+    const timeout = options?.timeout ?? 30_000;
+    const idempotencyKey = options?.idempotencyKey;
+
+    // Check idempotency
+    if (idempotencyKey !== undefined) {
+      const existing = await this.#updateCoordinator.checkIdempotency(workflowId, idempotencyKey);
+      if (existing !== null) {
+        return { updateId: existing.updateId, result: existing.result };
+      }
+    }
+
+    const requestOptions: { timeout: number; idempotencyKey?: string } = { timeout };
+    if (idempotencyKey !== undefined) {
+      requestOptions.idempotencyKey = idempotencyKey;
+    }
+
+    const updateId = await this.#updateCoordinator.createRequest(
+      workflowId,
+      name,
+      payload,
+      requestOptions,
+    );
+
+    const response = await this.#updateCoordinator.waitForResponse(updateId, timeout);
+
+    const result: CoordinatedUpdateResult = {
+      updateId: response.updateId,
+      result: response.result,
+    };
+
+    if (response.error !== undefined) {
+      result.error = response.error;
+    }
+
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
   // Disposal
   // -------------------------------------------------------------------------
 
@@ -1092,14 +1319,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#abortController.abort();
     this.#scheduler[Symbol.dispose]();
     this.#strategy[Symbol.dispose]();
+    this.#activityWorkerDispatcher?.[Symbol.dispose]();
+    this.#activityWorkerDispatcher = null;
     this.#inlineStrategy = null;
     this.#handleCache.clear();
     this.#resultResolvers.clear();
     this.#signalWaiters.clear();
     this.#updateWaiters.clear();
     this.#sleepResolvers.clear();
+    this.#sleepResolversByWorkflow.clear();
     this.#checkpoints.clear();
     this.#workflowNestingDepths.clear();
+    this.#pendingStarts.clear();
+    this.#chargedAgentOperations.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
   }
@@ -1360,10 +1592,26 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           kind: 'sleep',
         });
 
-        // Store the resolution function for when the timer fires
-        this.#sleepResolvers.set(operation.operationId, resolve);
+        // Store the resolution function for when the timer fires.
+        // Key includes workflowId so #cleanupWaiters can remove orphaned
+        // resolvers when a workflow is cancelled or terminated.
+        this.#sleepResolvers.set(`${workflowId}:${operation.operationId}`, resolve);
+
+        let workflowOps = this.#sleepResolversByWorkflow.get(workflowId);
+        if (!workflowOps) {
+          workflowOps = new Set();
+          this.#sleepResolversByWorkflow.set(workflowId, workflowOps);
+        }
+        workflowOps.add(operation.operationId);
 
         await promise;
+
+        // If the workflow was cancelled/completed/failed while sleeping,
+        // the resolver was invoked by #cleanupWaiters to unblock this await.
+        // Skip feeding a result since the workflow is no longer running.
+        const postSleepState = await this.#loadWorkflowState(workflowId);
+        if (!postSleepState || postSleepState.status !== 'running') break;
+
         this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
         break;
       }
@@ -1550,8 +1798,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       case 'stream': {
         const sink: StreamSink = {
-          heartbeat(_details?: unknown) {
-            // Future: emit heartbeat event for observability
+          heartbeat: (details?: unknown) => {
+            this.#heartbeatDetails.set(workflowId, details);
           },
         };
 
@@ -1774,17 +2022,24 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           }
 
           // Record cost against the resolved organization budget namespace.
-          // Note: org budget counter update and checkpoint are not in the same
-          // batch() call because the checkpoint happens at the next generator
-          // yield. If the process crashes after this write but before the next
-          // checkpoint, the agent operation replays and double-charges the org
-          // counter. Idempotent recording requires an operation-scoped marker,
-          // which is deferred to a future iteration.
+          // Deduplicate using the operation ID to prevent double-charging on
+          // crash recovery: if the process crashes after writing the budget
+          // counter but before the next checkpoint, the replayed operation
+          // finds its marker in storage and skips the duplicate charge.
           if (this.#budgetPolicyEnforcer && resolvedBudgetNamespace && agentResult.totalCost > 0) {
-            await this.#budgetPolicyEnforcer.recordCost(
-              resolvedBudgetNamespace,
-              agentResult.totalCost,
-            );
+            const chargedKey = KEYS.budgetCharged(operation.operationId);
+            const alreadyCharged =
+              this.#chargedAgentOperations.has(operation.operationId) ||
+              (await this.#storage.get(chargedKey)) !== null;
+
+            if (!alreadyCharged) {
+              await this.#storage.put(chargedKey, encode({ cost: agentResult.totalCost }));
+              await this.#budgetPolicyEnforcer.recordCost(
+                resolvedBudgetNamespace,
+                agentResult.totalCost,
+              );
+              this.#chargedAgentOperations.add(operation.operationId);
+            }
           }
 
           this.#feedOperationResult(workflowId, {
@@ -1860,9 +2115,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (entry.kind === 'sleep') {
       // Extract the operation ID from the timer ID (format: "sleep:<operationId>")
       const operationId = entry.id.replace('sleep:', '');
-      const resolver = this.#sleepResolvers.get(operationId);
+      const resolverKey = `${entry.workflowId}:${operationId}`;
+      const resolver = this.#sleepResolvers.get(resolverKey);
       if (resolver) {
-        this.#sleepResolvers.delete(operationId);
+        this.#sleepResolvers.delete(resolverKey);
+        const workflowOps = this.#sleepResolversByWorkflow.get(entry.workflowId);
+        if (workflowOps) {
+          workflowOps.delete(operationId);
+          if (workflowOps.size === 0) this.#sleepResolversByWorkflow.delete(entry.workflowId);
+        }
         resolver();
       }
     } else if (entry.kind === 'execution-deadline') {
@@ -1880,9 +2141,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   /**
-   * Remove any pending signal and update waiters for a workflow. This prevents
-   * memory leaks and ensures that cancelled/completed/failed workflows cannot
-   * accept new signals or updates.
+   * Remove any pending signal, update, and sleep waiters for a workflow. This
+   * prevents memory leaks and ensures that cancelled/completed/failed workflows
+   * cannot accept new signals, updates, or resolve orphaned sleep timers.
    */
   #cleanupWaiters(workflowId: string): void {
     const prefix = `${workflowId}:`;
@@ -1891,6 +2152,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     for (const key of this.#updateWaiters.keys()) {
       if (key.startsWith(prefix)) this.#updateWaiters.delete(key);
+    }
+    const sleepOps = this.#sleepResolversByWorkflow.get(workflowId);
+    if (sleepOps) {
+      for (const operationId of sleepOps) {
+        const key = `${workflowId}:${operationId}`;
+        const resolver = this.#sleepResolvers.get(key);
+        if (resolver) resolver();
+        this.#sleepResolvers.delete(key);
+      }
+      this.#sleepResolversByWorkflow.delete(workflowId);
     }
     this.#workflowNestingDepths.delete(workflowId);
   }
@@ -1916,6 +2187,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     this.#checkpoints.delete(workflowId);
+    this.#heartbeatDetails.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
@@ -1946,6 +2218,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     this.#checkpoints.delete(workflowId);
+    this.#heartbeatDetails.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
     const event = new WorkflowFailedEvent(workflowId, error);
@@ -2031,12 +2304,43 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
   }
 
+  /**
+   * Execute an activity function, dispatching to a Web Worker pool when
+   * `activityExecution` is configured, or running inline on the main thread.
+   */
   async #executeActivity(
-    _workflowId: string,
+    workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'activity' }>,
   ): Promise<unknown> {
-    const activityFunction = this.#resolveActivityFunction(operation);
     const activityArguments = operation.args ?? [];
+
+    // Build an ActivityContext so the activity function can send heartbeats.
+    const abortController = this.#inlineStrategy?.getAbortController(workflowId);
+    const activityContext: import('./types.ts').ActivityContext = {
+      signal: abortController?.signal ?? new AbortController().signal,
+      heartbeat: (details?: unknown) => {
+        this.#heartbeatDetails.set(workflowId, details);
+      },
+    };
+
+    // Build the leaf executor: either dispatch to a worker or call inline.
+    const invokeActivity = this.#activityWorkerDispatcher
+      ? async (name: string, args: unknown[]) => {
+          const result = await this.#activityWorkerDispatcher!.execute({
+            operationId: operation.operationId,
+            activityName: name,
+            input: args.length === 1 ? args[0] : args,
+            attempt: 1,
+          });
+          if (result.status === 'failed') {
+            throw new Error(result.error);
+          }
+          return result.value;
+        }
+      : (_name: string, args: unknown[]) => {
+          const activityFunction = this.#resolveActivityFunction(operation);
+          return callActivityFunction(activityFunction, [...args, activityContext]);
+        };
 
     // If there are activity interceptors, use cached composition
     const composedActivity = this.#getComposedActivityInterceptor();
@@ -2052,7 +2356,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           const args = Array.isArray(interception.input)
             ? interception.input
             : [interception.input];
-          return callActivityFunction(activityFunction, args);
+          return invokeActivity(operation.activityName, args);
         },
       );
     }
@@ -2068,7 +2372,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       };
 
       function* execute(): Generator<unknown, unknown, unknown> {
-        const result = callActivityFunction(activityFunction, activityArguments);
+        const result = invokeActivity(operation.activityName, activityArguments);
         yield result;
         return result;
       }
@@ -2081,7 +2385,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return current.value;
     }
 
-    return callActivityFunction(activityFunction, activityArguments);
+    return invokeActivity(operation.activityName, activityArguments);
   }
 
   // -------------------------------------------------------------------------

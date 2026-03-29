@@ -53,8 +53,8 @@ export class LongPollWorker implements Disposable {
 
   /** Stop polling and wait for in-flight to finish. */
   async stop(): Promise<void> {
-    this.#running = false;
     this.#abortController.abort();
+    this.#running = false;
 
     // Wait for in-flight tasks to complete
     while (this.#inFlight > 0) {
@@ -79,8 +79,28 @@ export class LongPollWorker implements Disposable {
   // Internal
   // ---------------------------------------------------------------------------
 
+  /** Build the poll URL with activity and timeout query parameters. */
+  #buildPollUrl(): string {
+    const queue = this.#options.queue ?? DEFAULT_QUEUE;
+    const params = new URLSearchParams();
+    params.set('timeout', String(this.#options.pollTimeout ?? DEFAULT_POLL_TIMEOUT));
+    for (const activity of Object.keys(this.#options.activities)) {
+      params.append('activity', activity);
+    }
+    return `${this.#options.serverUrl}/v1/tasks/${encodeURIComponent(queue)}?${params.toString()}`;
+  }
+
+  /** Build the task result URL. */
+  #buildResultUrl(): string {
+    const queue = this.#options.queue ?? DEFAULT_QUEUE;
+    return `${this.#options.serverUrl}/v1/tasks/${encodeURIComponent(queue)}/result`;
+  }
+
   async #pollLoop(): Promise<void> {
-    while (this.#running) {
+    const pollUrl = this.#buildPollUrl();
+    const resultUrl = this.#buildResultUrl();
+
+    while (this.#running && !this.#abortController.signal.aborted) {
       // Only poll when we have capacity
       if (this.#inFlight >= (this.#options.concurrency ?? DEFAULT_CONCURRENCY)) {
         await Bun.sleep(100);
@@ -88,16 +108,14 @@ export class LongPollWorker implements Disposable {
       }
 
       try {
-        const response = await fetch(`${this.#options.serverUrl}/poll`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            activities: Object.keys(this.#options.activities),
-            queue: this.#options.queue,
-            timeout: this.#options.pollTimeout,
-          }),
+        const response = await fetch(pollUrl, {
           signal: this.#abortController.signal,
         });
+
+        // 204 No Content means no task available — poll again
+        if (response.status === 204) {
+          continue;
+        }
 
         if (!response.ok) {
           await Bun.sleep(1000);
@@ -108,11 +126,9 @@ export class LongPollWorker implements Disposable {
           operationId: string;
           activityName: string;
           input: unknown;
-        } | null;
+        };
 
-        if (task !== null) {
-          void this.#executeTask(task);
-        }
+        void this.#executeTask(task, resultUrl);
       } catch {
         // Abort errors are expected during shutdown; network errors trigger a backoff
         if (this.#running) {
@@ -122,22 +138,31 @@ export class LongPollWorker implements Disposable {
     }
   }
 
-  async #executeTask(task: {
-    operationId: string;
-    activityName: string;
-    input: unknown;
-  }): Promise<void> {
-    const activityFunction = this.#options.activities[task.activityName];
-    if (activityFunction === undefined) {
-      return;
-    }
-
+  async #executeTask(
+    task: { operationId: string; activityName: string; input: unknown },
+    resultUrl: string,
+  ): Promise<void> {
     this.#inFlight += 1;
 
     try {
+      const activityFunction = this.#options.activities[task.activityName];
+      if (activityFunction === undefined) {
+        await fetch(resultUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            operationId: task.operationId,
+            status: 'failed',
+            error: `Unknown activity: ${task.activityName}`,
+          }),
+          signal: this.#abortController.signal,
+        });
+        return;
+      }
+
       const result = await activityFunction(task.input);
 
-      await fetch(`${this.#options.serverUrl}/complete`, {
+      await fetch(resultUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -149,7 +174,7 @@ export class LongPollWorker implements Disposable {
       });
     } catch (error) {
       try {
-        await fetch(`${this.#options.serverUrl}/complete`, {
+        await fetch(resultUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
