@@ -1,16 +1,12 @@
 # Code Review Findings
 
-Last reviewed: 2026-03-28
+Last reviewed: 2026-03-29
 
 ## Architecture Doc Discrepancies
-
-- [ ] **`Weft.Context` vs `Context`**: Architecture doc uses `Weft.Context` as a type annotation in 18 examples. Actual implementation exports `Context` directly (not namespaced). Readers following examples need `import { Context } from 'weft'`.
 
 - [ ] **`engine.profile()` not implemented**: Architecture doc shows `engine.profile()` returning checkpoint/task timing metrics. No such method exists on the Engine class. Either implement or remove from doc.
 
 - [ ] **`alerts` configuration not implemented**: Architecture doc shows alert rules and webhook hooks in Engine constructor options. No `alerts` property exists in `EngineOptions`. Either implement or remove from doc.
-
-- [ ] **`AsyncDisposableStack` not used in server setup**: Architecture doc states "AsyncDisposableStack used in server setup" but the server uses manual event listener cleanup and disposable patterns instead. Either implement or update the checklist item.
 
 ## Not Yet Implemented (Notable Gaps)
 
@@ -26,8 +22,12 @@ Last reviewed: 2026-03-28
 
 ## Code Review: Server (`src/server/index.ts`)
 
-- [ ] **Sequence counter race condition** (`nextSequence`): The `sequenceCounters` map is accessed without synchronization. Two concurrent events for the same workflow could read the same counter value, producing duplicate sequence numbers.
+- [ ] **Sequence counter race condition** (`nextSequence` at lines 230–239): The read-modify-write pattern on `sequenceCounters` is not atomic. Two concurrent events for the same workflow can produce duplicate sequence numbers.
+
+- [ ] **No validation of `visibilityTimeout` in task dispatch** (line 825): `task.visibilityTimeout` is accepted as-is with no bounds checking. Negative values cause immediate expiry; `Infinity` prevents expiry entirely.
+
+- [ ] **Fire-and-forget async operations lack retry** (lines 275–303, 577–585, 608–682, 714–737): Multiple critical async paths (event persistence, visibility extension, worker requeue, inflight restoration) use `void (async () => { ... })()` with only `console.error` on failure. No retry or alerting.
 
 ## Code Review: Activity Worker (`src/workers/activity-worker-entry.ts`)
 
-- [ ] **Function serialization via `toString()` is fragile**: `handler.toString()` (line ~69) only works for functions without closures. Arrow functions that capture outer scope, class methods, or functions referencing module-level variables silently produce broken worker scripts with no validation.
+- [ ] **Function serialization via `toString()` is fragile** (line 69): `handler.toString()` only works for functions without closures. Arrow functions that capture outer scope, class methods, or functions referencing module-level variables silently produce broken worker scripts with no validation.
