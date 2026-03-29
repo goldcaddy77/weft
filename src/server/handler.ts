@@ -643,7 +643,7 @@ async function handleQueryWorkflow(
 ): Promise<Response> {
   try {
     const result = await engine.query(workflowId, queryName);
-    return jsonResponse({ result });
+    return jsonResponse({ result: result ?? null });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('not supported')) {

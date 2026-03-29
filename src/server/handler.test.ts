@@ -1541,7 +1541,7 @@ describe('handleRequest', () => {
 
       expect(response.status).toBe(200);
       const body = (await json(response)) as { result: unknown };
-      expect(body.result).toBeUndefined();
+      expect(body.result).toBeNull();
     });
 
     it('returns null result when workflow context is not available', async () => {
@@ -1554,7 +1554,7 @@ describe('handleRequest', () => {
 
       expect(response.status).toBe(200);
       const body = (await json(response)) as { result: unknown };
-      expect(body.result).toBeUndefined();
+      expect(body.result).toBeNull();
     });
   });
 

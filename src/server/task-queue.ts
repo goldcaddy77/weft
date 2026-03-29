@@ -2,12 +2,15 @@
 // In-memory task queue for HTTP long-poll workers
 // ---------------------------------------------------------------------------
 
+import type { RetryPolicy } from '../core/types.ts';
+
 /** A task waiting to be claimed by a long-poll worker. */
 export interface PendingTask {
   operationId: string;
   activityName: string;
   input: unknown;
   attempt?: number | undefined;
+  retryPolicy?: RetryPolicy | undefined;
 }
 
 /** Result reported by a long-poll worker after executing a task. */

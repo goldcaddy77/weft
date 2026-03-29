@@ -1104,6 +1104,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
     this.#cleanupWaiters(workflowId);
+    this.#heartbeatDetails.delete(workflowId);
 
     const event =
       status === 'timed-out'
@@ -2269,7 +2270,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         }
       : (_name: string, args: unknown[]) => {
           const activityFunction = this.#resolveActivityFunction(operation);
-          return callActivityFunction(activityFunction, [...args, activityContext]);
+          const callArgs = args.length > 0 ? [...args, activityContext] : [];
+          return callActivityFunction(activityFunction, callArgs);
         };
 
     // If there are activity interceptors, use cached composition

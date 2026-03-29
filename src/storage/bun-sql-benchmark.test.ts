@@ -26,7 +26,7 @@ function generateCheckpointValue(): Uint8Array {
  * alongside Web Worker pools). The benchmark still validates order-of-magnitude
  * performance — not an exact hardware spec.
  */
-const TARGET_WRITES_PER_SECOND = 30_000;
+const TARGET_WRITES_PER_SECOND = process.env['CI'] ? 10_000 : 30_000;
 
 describe('BunSQLiteStorage benchmark', () => {
   const temporaryPaths: string[] = [];

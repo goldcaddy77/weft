@@ -170,11 +170,25 @@ const ACTIVITY_CALL_OPTION_KEYS = new Set<string>([
   'visibilityTimeout',
 ]);
 
+/** Keys that uniquely identify an ActivityCallOptions object vs plain data. */
+const DISCRIMINATOR_KEYS = new Set<string>([
+  'queue',
+  'retry',
+  'idempotencyKey',
+  'sticky',
+  'visibilityTimeout',
+  'timeout',
+]);
+
 /** Detect whether a value is an {@link ActivityCallOptions} object. */
 function isActivityCallOptions(value: unknown): value is ActivityCallOptions {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const keys = Object.keys(value as Record<string, unknown>);
-  return keys.length > 0 && keys.every((key) => ACTIVITY_CALL_OPTION_KEYS.has(key));
+  if (keys.length === 0) return false;
+  if (!keys.every((key) => ACTIVITY_CALL_OPTION_KEYS.has(key))) return false;
+  // Require at least one discriminator key to avoid misidentifying plain data
+  // objects (e.g., `{ timeout: 5000 }`) as options.
+  return keys.some((key) => DISCRIMINATOR_KEYS.has(key));
 }
 
 // ---------------------------------------------------------------------------

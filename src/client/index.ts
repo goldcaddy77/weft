@@ -109,18 +109,57 @@ class HttpHandle implements ClientHandle {
   readonly id: string;
   readonly #client: HttpClient;
   readonly #events = new EventTarget();
+  #pollTimer: ReturnType<typeof setInterval> | null = null;
+  #lastEventIndex = 0;
 
   constructor(id: string, client: HttpClient) {
     this.id = id;
     this.#client = client;
   }
 
+  /** Start polling for events if not already running. */
+  #ensurePolling(): void {
+    if (this.#pollTimer !== null) return;
+    this.#pollTimer = setInterval(() => void this.#pollEvents(), 2_000);
+  }
+
+  async #pollEvents(): Promise<void> {
+    try {
+      const events = await this.#client.getEvents(this.id);
+      const newEvents = events.slice(this.#lastEventIndex);
+      for (const event of newEvents) {
+        this.#lastEventIndex++;
+        const wireEvent = event as { type?: string; data?: unknown };
+        if (wireEvent.type) {
+          this.#events.dispatchEvent(new CustomEvent(wireEvent.type, { detail: wireEvent.data }));
+        }
+      }
+    } catch {
+      // Swallow poll errors — workflow may have completed
+    }
+  }
+
+  /** Stop event polling and release resources. */
+  close(): void {
+    if (this.#pollTimer !== null) {
+      clearInterval(this.#pollTimer);
+      this.#pollTimer = null;
+    }
+  }
+
+  [Symbol.dispose](): void {
+    this.close();
+  }
+
   async result(): Promise<unknown> {
-    const response = await request<{ result: unknown }>(
+    const response = await request<{ result: unknown } | null>(
       this.#client.baseUrl,
       `/workflows/${encodeURIComponent(this.id)}/result`,
       this.#client.headers,
     );
+    if (response === null) {
+      throw new HttpClientError(404, `Workflow "${this.id}" not found`);
+    }
     return response.result;
   }
 
@@ -145,6 +184,7 @@ class HttpHandle implements ClientHandle {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | AddEventListenerOptions,
   ): void {
+    this.#ensurePolling();
     this.#events.addEventListener(type, listener, options);
   }
 
@@ -179,6 +219,9 @@ export class HttpClient implements WeftClient {
     if (options?.id !== undefined) body['id'] = options.id;
     if (options?.executionTimeout !== undefined)
       body['executionTimeout'] = options.executionTimeout;
+    if (options?.searchAttributes !== undefined)
+      body['searchAttributes'] = options.searchAttributes;
+    if (options?.idempotencyKey !== undefined) body['idempotencyKey'] = options.idempotencyKey;
 
     const response = await request<{ id: string }>(this.baseUrl, '/workflows', this.headers, {
       method: 'POST',
@@ -200,12 +243,16 @@ export class HttpClient implements WeftClient {
     const params = new URLSearchParams();
 
     if (filter?.status !== undefined) {
-      const status = Array.isArray(filter.status) ? filter.status[0] : filter.status;
-      if (status) params.set('status', status);
+      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+      for (const s of statuses) {
+        if (s) params.append('status', s);
+      }
     }
     if (filter?.type !== undefined) params.set('type', filter.type);
     if (filter?.limit !== undefined) params.set('limit', String(filter.limit));
     if (filter?.offset !== undefined) params.set('offset', String(filter.offset));
+    if (filter?.attributes !== undefined)
+      params.set('attributes', JSON.stringify(filter.attributes));
 
     const query = params.toString();
     const path = query ? `/workflows?${query}` : '/workflows';
@@ -311,11 +358,12 @@ export class HttpClient implements WeftClient {
   }
 
   async getEvents(id: string): Promise<WorkflowEvent[]> {
-    const response = await request<{ events: WorkflowEvent[] }>(
+    const response = await request<{ events: WorkflowEvent[] } | null>(
       this.baseUrl,
       `/workflows/${encodeURIComponent(id)}/events`,
       this.headers,
     );
+    if (response === null) return [];
     return response.events;
   }
 
@@ -374,15 +422,22 @@ export class HttpClient implements WeftClient {
     if (options?.timeout !== undefined) body['timeout'] = options.timeout;
     if (options?.idempotencyKey !== undefined) body['idempotencyKey'] = options.idempotencyKey;
 
-    return request<CoordinatedUpdateResult>(
-      this.baseUrl,
-      `/workflows/${encodeURIComponent(id)}/update/${encodeURIComponent(name)}`,
-      this.headers,
-      {
-        method: 'POST',
-        body: JSON.stringify(body),
-      },
-    );
+    try {
+      return await request<CoordinatedUpdateResult>(
+        this.baseUrl,
+        `/workflows/${encodeURIComponent(id)}/update/${encodeURIComponent(name)}`,
+        this.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        },
+      );
+    } catch (error) {
+      if (error instanceof HttpClientError) {
+        return { updateId: '', error: error.message };
+      }
+      throw error;
+    }
   }
 
   async getUpdateResult(updateId: string): Promise<UpdateResult> {

@@ -290,17 +290,29 @@ if (isDirectExecution) {
 
     process.on('SIGINT', () => {
       console.log('\nShutting down...');
-      void server.stop().then(() => {
-        storage[Symbol.dispose]();
-        process.exit(0);
-      });
+      void server
+        .stop()
+        .then(() => {
+          storage[Symbol.dispose]();
+          process.exit(0);
+        })
+        .catch((error) => {
+          console.error('[weft] Shutdown error:', error);
+          process.exit(1);
+        });
     });
 
     process.on('SIGTERM', () => {
-      void server.stop().then(() => {
-        storage[Symbol.dispose]();
-        process.exit(0);
-      });
+      void server
+        .stop()
+        .then(() => {
+          storage[Symbol.dispose]();
+          process.exit(0);
+        })
+        .catch((error) => {
+          console.error('[weft] Shutdown error:', error);
+          process.exit(1);
+        });
     });
   } else if (parsed.command === 'doctor') {
     if (parsed.help) {
