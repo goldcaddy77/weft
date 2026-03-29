@@ -109,18 +109,86 @@ class HttpHandle implements ClientHandle {
   readonly id: string;
   readonly #client: HttpClient;
   readonly #events = new EventTarget();
+  #pollTimer: ReturnType<typeof setInterval> | null = null;
+  #lastEventIndex = 0;
+  #pollInFlight = false;
+  #closed = false;
 
   constructor(id: string, client: HttpClient) {
     this.id = id;
     this.#client = client;
   }
 
+  /** Start polling for events if not already running. */
+  #ensurePolling(): void {
+    if (this.#closed || this.#pollTimer !== null) return;
+    // Set the timer before the immediate poll so close() can clear it even if
+    // called during the first poll's microtask execution (e.g., terminal event).
+    this.#pollTimer = setInterval(() => void this.#pollEvents(), 2_000);
+    void this.#pollEvents();
+  }
+
+  static readonly #TERMINAL_EVENTS = new Set([
+    'workflow:completed',
+    'workflow:failed',
+    'workflow:cancelled',
+    'workflow:timed-out',
+  ]);
+
+  async #pollEvents(): Promise<void> {
+    if (this.#pollInFlight) return;
+    this.#pollInFlight = true;
+    try {
+      const events = await this.#client.getEvents(this.id);
+      // getEvents returns [] on 404. Only check for workflow deletion after
+      // we've already seen events (#lastEventIndex > 0) — before that, an
+      // empty array is indistinguishable from a workflow that hasn't emitted yet.
+      if (events.length === 0 && this.#lastEventIndex > 0) {
+        const state = await this.#client.get(this.id);
+        if (state === null) {
+          this.close();
+          return;
+        }
+      }
+      const newEvents = events.slice(this.#lastEventIndex);
+      for (const event of newEvents) {
+        this.#lastEventIndex++;
+        this.#events.dispatchEvent(new CustomEvent(event.type, { detail: event.data }));
+        // Stop polling after a terminal workflow event.
+        if (HttpHandle.#TERMINAL_EVENTS.has(event.type)) {
+          this.close();
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn('[weft] Event poll error:', error);
+    } finally {
+      this.#pollInFlight = false;
+    }
+  }
+
+  /** Stop event polling and release resources. Cannot be restarted. */
+  close(): void {
+    this.#closed = true;
+    if (this.#pollTimer !== null) {
+      clearInterval(this.#pollTimer);
+      this.#pollTimer = null;
+    }
+  }
+
+  [Symbol.dispose](): void {
+    this.close();
+  }
+
   async result(): Promise<unknown> {
-    const response = await request<{ result: unknown }>(
+    const response = await request<{ result: unknown } | null>(
       this.#client.baseUrl,
       `/workflows/${encodeURIComponent(this.id)}/result`,
       this.#client.headers,
     );
+    if (response === null) {
+      throw new HttpClientError(404, `Workflow "${this.id}" not found`);
+    }
     return response.result;
   }
 
@@ -145,6 +213,7 @@ class HttpHandle implements ClientHandle {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | AddEventListenerOptions,
   ): void {
+    this.#ensurePolling();
     this.#events.addEventListener(type, listener, options);
   }
 
@@ -179,6 +248,9 @@ export class HttpClient implements WeftClient {
     if (options?.id !== undefined) body['id'] = options.id;
     if (options?.executionTimeout !== undefined)
       body['executionTimeout'] = options.executionTimeout;
+    // searchAttributes and idempotencyKey are not yet forwarded by the server's
+    // POST /v1/workflows handler — omit them from the HTTP payload to avoid
+    // silent divergence between LocalClient and HttpClient.
 
     const response = await request<{ id: string }>(this.baseUrl, '/workflows', this.headers, {
       method: 'POST',
@@ -200,12 +272,32 @@ export class HttpClient implements WeftClient {
     const params = new URLSearchParams();
 
     if (filter?.status !== undefined) {
-      const status = Array.isArray(filter.status) ? filter.status[0] : filter.status;
-      if (status) params.set('status', status);
+      const statuses = (Array.isArray(filter.status) ? filter.status : [filter.status]).filter(
+        Boolean,
+      );
+      // Server reads searchParams.getAll('status'), so append each separately.
+      for (const s of statuses) {
+        params.append('status', s);
+      }
     }
     if (filter?.type !== undefined) params.set('type', filter.type);
     if (filter?.limit !== undefined) params.set('limit', String(filter.limit));
     if (filter?.offset !== undefined) params.set('offset', String(filter.offset));
+    // Encode attributes in the format the server expects: attr.{name}={value},
+    // attr.{name}.gte={value}, attr.{name}.lte={value}.
+    if (filter?.attributes !== undefined) {
+      for (const attr of filter.attributes) {
+        if (attr.value !== undefined) {
+          params.set(`attr.${attr.key}`, String(attr.value));
+        }
+        if (attr.gte !== undefined) {
+          params.set(`attr.${attr.key}.gte`, String(attr.gte));
+        }
+        if (attr.lte !== undefined) {
+          params.set(`attr.${attr.key}.lte`, String(attr.lte));
+        }
+      }
+    }
 
     const query = params.toString();
     const path = query ? `/workflows?${query}` : '/workflows';
@@ -311,11 +403,12 @@ export class HttpClient implements WeftClient {
   }
 
   async getEvents(id: string): Promise<WorkflowEvent[]> {
-    const response = await request<{ events: WorkflowEvent[] }>(
+    const response = await request<{ events: WorkflowEvent[] } | null>(
       this.baseUrl,
       `/workflows/${encodeURIComponent(id)}/events`,
       this.headers,
     );
+    if (response === null) return [];
     return response.events;
   }
 
@@ -374,15 +467,24 @@ export class HttpClient implements WeftClient {
     if (options?.timeout !== undefined) body['timeout'] = options.timeout;
     if (options?.idempotencyKey !== undefined) body['idempotencyKey'] = options.idempotencyKey;
 
-    return request<CoordinatedUpdateResult>(
-      this.baseUrl,
-      `/workflows/${encodeURIComponent(id)}/update/${encodeURIComponent(name)}`,
-      this.headers,
-      {
-        method: 'POST',
-        body: JSON.stringify(body),
-      },
-    );
+    try {
+      return await request<CoordinatedUpdateResult>(
+        this.baseUrl,
+        `/workflows/${encodeURIComponent(id)}/update/${encodeURIComponent(name)}`,
+        this.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        },
+      );
+    } catch (error) {
+      // Only convert business-level rejections (400/422) into error results.
+      // Transport errors (401, 500, etc.) should propagate to the caller.
+      if (error instanceof HttpClientError && (error.status === 400 || error.status === 422)) {
+        return { updateId: '', error: error.message };
+      }
+      throw error;
+    }
   }
 
   async getUpdateResult(updateId: string): Promise<UpdateResult> {

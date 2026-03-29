@@ -170,11 +170,29 @@ const ACTIVITY_CALL_OPTION_KEYS = new Set<string>([
   'visibilityTimeout',
 ]);
 
+/**
+ * Strict subset of ACTIVITY_CALL_OPTION_KEYS that unambiguously identify an
+ * ActivityCallOptions object. `timeout` is excluded because `{ timeout: 5000 }`
+ * could be plain activity input. When adding a new option key, add it to both
+ * sets if it should act as a discriminator.
+ */
+const DISCRIMINATOR_KEYS = new Set<string>([
+  'queue',
+  'retry',
+  'idempotencyKey',
+  'sticky',
+  'visibilityTimeout',
+]);
+
 /** Detect whether a value is an {@link ActivityCallOptions} object. */
 function isActivityCallOptions(value: unknown): value is ActivityCallOptions {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const keys = Object.keys(value as Record<string, unknown>);
-  return keys.length > 0 && keys.every((key) => ACTIVITY_CALL_OPTION_KEYS.has(key));
+  if (keys.length === 0) return false;
+  if (!keys.every((key) => ACTIVITY_CALL_OPTION_KEYS.has(key))) return false;
+  // Require at least one discriminator key to avoid misidentifying plain data
+  // objects (e.g., `{ timeout: 5000 }`) as options.
+  return keys.some((key) => DISCRIMINATOR_KEYS.has(key));
 }
 
 // ---------------------------------------------------------------------------

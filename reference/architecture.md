@@ -4992,7 +4992,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`LMDBStorage` implements `Disposable`.** Closes LMDB environment.
 - [x] **`Scheduler` implements `Disposable`.** Clears intervals and timers.
 - [x] **`AsyncDisposableStack` used in server setup.** All server resources cleaned up in reverse order on shutdown.
-- [ ] **Zero resource leaks under test.** A test that starts and stops the engine 1000 times shows no file handle or memory growth.
+- [x] **Zero resource leaks under test.** A test that starts and stops the engine 1000 times shows no file handle or memory growth.
 
 ### Memory Management
 

@@ -387,7 +387,7 @@ describe('worker WebSocket protocol', () => {
 
     await registerWorker(ws, { workerId: 'w4', activities: ['charge'], concurrency: 5 });
 
-    const dispatched = server.dispatchTask({
+    const dispatched = await server.dispatchTask({
       operationId: 'op-1',
       activityName: 'charge',
       input: { amount: 100 },
@@ -406,11 +406,11 @@ describe('worker WebSocket protocol', () => {
     await Bun.sleep(50);
   });
 
-  it('queues task for long-poll workers when no WebSocket worker is available', () => {
+  it('queues task for long-poll workers when no WebSocket worker is available', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
 
-    const dispatched = server.dispatchTask({
+    const dispatched = await server.dispatchTask({
       operationId: 'op-2',
       activityName: 'charge',
       input: null,
@@ -444,7 +444,7 @@ describe('worker WebSocket protocol', () => {
 
     await registerWorker(ws, { workerId: 'w5', activities: ['compute'], concurrency: 5 });
 
-    server.dispatchTask({ operationId: 'op-3', activityName: 'compute', input: null });
+    await server.dispatchTask({ operationId: 'op-3', activityName: 'compute', input: null });
 
     // Right after dispatch, in-flight should be 1
     expect(server.registry.getAll()[0]?.inFlight).toBe(1);
@@ -521,8 +521,8 @@ describe('worker WebSocket protocol', () => {
     // Dispatch two tasks — both workers start at 0 in-flight, so the first
     // goes to whichever findWorker returns first, and the second should go
     // to the other (least-loaded).
-    server.dispatchTask({ operationId: 'op-a', activityName: 'charge', input: null });
-    server.dispatchTask({ operationId: 'op-b', activityName: 'charge', input: null });
+    await server.dispatchTask({ operationId: 'op-a', activityName: 'charge', input: null });
+    await server.dispatchTask({ operationId: 'op-b', activityName: 'charge', input: null });
 
     await Bun.sleep(50);
 
@@ -543,7 +543,7 @@ describe('worker WebSocket protocol', () => {
     await registerWorker(ws, { workerId: 'w-cap', activities: ['compute'], concurrency: 1 });
 
     // First dispatch should go to the WebSocket worker
-    const first = server.dispatchTask({
+    const first = await server.dispatchTask({
       operationId: 'cap-1',
       activityName: 'compute',
       input: null,
@@ -552,7 +552,7 @@ describe('worker WebSocket protocol', () => {
     expect(server.registry.getWorker('w-cap')?.inFlight).toBe(1);
 
     // Second dispatch — worker is at capacity (1/1), should fall to long-poll queue
-    const second = server.dispatchTask({
+    const second = await server.dispatchTask({
       operationId: 'cap-2',
       activityName: 'compute',
       input: null,
@@ -590,7 +590,7 @@ describe('worker WebSocket protocol', () => {
     await registerWorker(ws, { workerId: 'w-recover', activities: ['compute'], concurrency: 1 });
 
     // Dispatch first task
-    server.dispatchTask({ operationId: 'r-1', activityName: 'compute', input: null });
+    await server.dispatchTask({ operationId: 'r-1', activityName: 'compute', input: null });
     expect(server.registry.getWorker('w-recover')?.inFlight).toBe(1);
 
     // Wait for task result to arrive and decrement inFlight
@@ -598,7 +598,7 @@ describe('worker WebSocket protocol', () => {
     expect(server.registry.getWorker('w-recover')?.inFlight).toBe(0);
 
     // Dispatch second task — worker should accept it since capacity recovered
-    server.dispatchTask({ operationId: 'r-2', activityName: 'compute', input: null });
+    await server.dispatchTask({ operationId: 'r-2', activityName: 'compute', input: null });
     expect(server.registry.getWorker('w-recover')?.inFlight).toBe(1);
 
     await Bun.sleep(100);
@@ -626,8 +626,8 @@ describe('worker WebSocket protocol', () => {
     expect(worker().concurrency - worker().inFlight).toBe(3);
 
     // Dispatch 2 tasks
-    server.dispatchTask({ operationId: 't-1', activityName: 'compute', input: null });
-    server.dispatchTask({ operationId: 't-2', activityName: 'compute', input: null });
+    await server.dispatchTask({ operationId: 't-1', activityName: 'compute', input: null });
+    await server.dispatchTask({ operationId: 't-2', activityName: 'compute', input: null });
     expect(worker().concurrency - worker().inFlight).toBe(1);
 
     // Complete one task
@@ -673,7 +673,7 @@ describe('worker WebSocket protocol', () => {
     expect(server.registry.getAll()[0]?.concurrency).toBe(3);
 
     // Dispatch a task and verify the worker processes it
-    const dispatched = server.dispatchTask({
+    const dispatched = await server.dispatchTask({
       operationId: 'e2e-op-1',
       activityName: 'greet',
       input: 'World',
@@ -725,7 +725,7 @@ describe('worker WebSocket protocol', () => {
     await registerWorker(ws2, { workerId: 'sticky-w2', activities: ['compute'], concurrency: 5 });
 
     // First dispatch with workflowId — goes to whichever worker (least-loaded, both at 0).
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'sticky-op-1',
       activityName: 'compute',
       input: null,
@@ -740,7 +740,7 @@ describe('worker WebSocket protocol', () => {
     const firstReceived = firstWorker === 'sticky-w1' ? received1 : received2;
 
     // Second dispatch with sticky: true — should prefer the same worker.
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'sticky-op-2',
       activityName: 'compute',
       input: null,
@@ -774,7 +774,7 @@ describe('worker WebSocket protocol', () => {
     await registerWorker(ws2, { workerId: 'cap-w2', activities: ['compute'], concurrency: 5 });
 
     // First dispatch establishes affinity with w1.
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'cap-op-1',
       activityName: 'compute',
       input: null,
@@ -783,7 +783,7 @@ describe('worker WebSocket protocol', () => {
     await Bun.sleep(50);
 
     // w1 is now at capacity (1/1). Sticky dispatch should fall back to w2.
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'cap-op-2',
       activityName: 'compute',
       input: null,
@@ -810,7 +810,7 @@ describe('worker WebSocket protocol', () => {
     await registerWorker(ws2, { workerId: 'noid-w2', activities: ['compute'], concurrency: 5 });
 
     // Dispatch with sticky: true but no workflowId — should not crash, just use normal routing.
-    const dispatched = server.dispatchTask({
+    const dispatched = await server.dispatchTask({
       operationId: 'noid-op-1',
       activityName: 'compute',
       input: null,
@@ -901,7 +901,7 @@ describe('queue-aware worker stream', () => {
     await registerWorker(shippingWs, { workerId: 'shipping-w1', activities: ['charge'] });
 
     // Dispatch to billing queue
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'billing-op',
       activityName: 'charge',
       input: { amount: 100 },
@@ -920,12 +920,12 @@ describe('queue-aware worker stream', () => {
     await Bun.sleep(50);
   });
 
-  it('falls back to long-poll queue with the correct queue name', () => {
+  it('falls back to long-poll queue with the correct queue name', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
 
     // Dispatch to a specific queue with no WebSocket workers
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'queued-op',
       activityName: 'charge',
       input: null,
@@ -951,7 +951,7 @@ describe('queue-aware worker stream', () => {
     await registerWorker(ws, { workerId: 'default-w1', activities: ['charge'] });
 
     // Dispatch without specifying queue — should default to 'default'
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'default-op',
       activityName: 'charge',
       input: null,
@@ -987,7 +987,7 @@ describe('queue-aware worker stream', () => {
     await registerWorker(defaultWs, { workerId: 'default-w1', activities: ['charge'] });
 
     // Dispatch to default queue — should not reach billing worker
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'default-only',
       activityName: 'charge',
       input: null,
@@ -1029,7 +1029,7 @@ describe('queue-aware worker stream', () => {
     expect(registered.queue).toBe('billing');
 
     // Dispatch to the billing queue
-    const dispatched = server.dispatchTask({
+    const dispatched = await server.dispatchTask({
       operationId: 'billing-e2e',
       activityName: 'charge',
       input: 42,
@@ -1262,7 +1262,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     server = serve({ engine, port: 0 });
 
     // Dispatch a task with no WebSocket workers — goes to task queue
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'op-poll-1',
       activityName: 'charge',
       input: { amount: 100 },
@@ -1285,7 +1285,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
 
     // Wait a bit, then enqueue a task
     await Bun.sleep(100);
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'op-delayed',
       activityName: 'charge',
       input: { amount: 50 },
@@ -1302,7 +1302,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     server = serve({ engine, port: 0 });
 
     // Queue a 'ship' task
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'op-ship',
       activityName: 'ship',
       input: null,
@@ -1410,7 +1410,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     await Bun.sleep(100);
 
     // Dispatch a task — no WebSocket workers, so it goes to the queue
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'e2e-lp-1',
       activityName: 'greet',
       input: 'World',
@@ -1484,12 +1484,12 @@ describe('task assignment deduplication', () => {
 
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    const first = server.dispatchTask({
+    const first = await server.dispatchTask({
       operationId: 'dup-op',
       activityName: 'charge',
       input: null,
     });
-    const second = server.dispatchTask({
+    const second = await server.dispatchTask({
       operationId: 'dup-op',
       activityName: 'charge',
       input: null,
@@ -1507,17 +1507,17 @@ describe('task assignment deduplication', () => {
     await Bun.sleep(50);
   });
 
-  it('rejects duplicate dispatch when the first went to the long-poll queue', () => {
+  it('rejects duplicate dispatch when the first went to the long-poll queue', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
 
     // No WebSocket workers — tasks go to long-poll queue
-    const first = server.dispatchTask({
+    const first = await server.dispatchTask({
       operationId: 'dup-lp',
       activityName: 'charge',
       input: null,
     });
-    const second = server.dispatchTask({
+    const second = await server.dispatchTask({
       operationId: 'dup-lp',
       activityName: 'charge',
       input: null,
@@ -1536,7 +1536,7 @@ describe('task assignment deduplication', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 1 });
 
     // First dispatch goes to WebSocket worker
-    const first = server.dispatchTask({
+    const first = await server.dispatchTask({
       operationId: 'cross-dup',
       activityName: 'charge',
       input: null,
@@ -1545,7 +1545,7 @@ describe('task assignment deduplication', () => {
 
     // Worker is now at capacity (1/1), so second dispatch would normally go to long-poll.
     // But the operationId is already assigned, so it should be rejected.
-    const second = server.dispatchTask({
+    const second = await server.dispatchTask({
       operationId: 'cross-dup',
       activityName: 'charge',
       input: null,
@@ -1564,7 +1564,7 @@ describe('task assignment deduplication', () => {
     const ws = await connectWorker(server);
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'tracked-op',
       activityName: 'charge',
       input: null,
@@ -1600,7 +1600,7 @@ describe('task assignment deduplication', () => {
 
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'clear-op',
       activityName: 'charge',
       input: null,
@@ -1643,11 +1643,11 @@ describe('task assignment deduplication', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     // First dispatch
-    server.dispatchTask({ operationId: 'reuse-op', activityName: 'charge', input: null });
+    await server.dispatchTask({ operationId: 'reuse-op', activityName: 'charge', input: null });
     await Bun.sleep(100);
 
     // After completion, dispatch the same operationId again
-    const second = server.dispatchTask({
+    const second = await server.dispatchTask({
       operationId: 'reuse-op',
       activityName: 'charge',
       input: null,
@@ -1720,7 +1720,11 @@ describe('visibility timeout persistence', () => {
     const ws = await connectWorker(server);
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({ operationId: 'vt-op-1', activityName: 'charge', input: { amount: 100 } });
+    await server.dispatchTask({
+      operationId: 'vt-op-1',
+      activityName: 'charge',
+      input: { amount: 100 },
+    });
     await Bun.sleep(50);
 
     const key = KEYS.operationInflight('vt-op-1');
@@ -1759,7 +1763,7 @@ describe('visibility timeout persistence', () => {
 
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({ operationId: 'vt-op-2', activityName: 'charge', input: null });
+    await server.dispatchTask({ operationId: 'vt-op-2', activityName: 'charge', input: null });
     await Bun.sleep(100);
 
     const key = KEYS.operationInflight('vt-op-2');
@@ -1778,7 +1782,7 @@ describe('visibility timeout persistence', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     const customTimeout = 120_000; // 2 minutes
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'vt-op-3',
       activityName: 'charge',
       input: null,
@@ -1810,7 +1814,7 @@ describe('visibility timeout persistence', () => {
     const ws = await connectWorker(server);
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({ operationId: 'vt-op-4', activityName: 'charge', input: null });
+    await server.dispatchTask({ operationId: 'vt-op-4', activityName: 'charge', input: null });
     await Bun.sleep(50);
 
     const key = KEYS.operationInflight('vt-op-4');
@@ -1945,7 +1949,7 @@ describe('worker disconnection triggers task reassignment', () => {
     await registerWorker(ws2, { workerId: 'w2', activities: ['charge'], concurrency: 5 });
 
     // Dispatch a task — goes to w1 (least-loaded, both at 0 but w1 registered first)
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'requeue-op-1',
       activityName: 'charge',
       input: { amount: 42 },
@@ -1981,7 +1985,7 @@ describe('worker disconnection triggers task reassignment', () => {
     await registerWorker(ws1, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
     await registerWorker(ws2, { workerId: 'w2', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'attempt-op',
       activityName: 'charge',
       input: null,
@@ -2011,7 +2015,7 @@ describe('worker disconnection triggers task reassignment', () => {
     await registerWorker(ws1, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
     await registerWorker(ws2, { workerId: 'w2', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'cleanup-op',
       activityName: 'charge',
       input: null,
@@ -2041,7 +2045,7 @@ describe('worker disconnection triggers task reassignment', () => {
     const ws = await connectWorker(server);
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'fallback-op',
       activityName: 'charge',
       input: { amount: 99 },
@@ -2074,20 +2078,28 @@ describe('worker disconnection triggers task reassignment', () => {
     await registerWorker(ws2, { workerId: 'w2', activities: ['charge', 'ship'], concurrency: 10 });
 
     // Dispatch multiple tasks to w1
-    server.dispatchTask({ operationId: 'multi-op-1', activityName: 'charge', input: null });
-    server.dispatchTask({ operationId: 'multi-op-2', activityName: 'ship', input: null });
-    server.dispatchTask({ operationId: 'multi-op-3', activityName: 'charge', input: null });
-    await Bun.sleep(50);
+    await server.dispatchTask({ operationId: 'multi-op-1', activityName: 'charge', input: null });
+    await server.dispatchTask({ operationId: 'multi-op-2', activityName: 'ship', input: null });
+    await server.dispatchTask({ operationId: 'multi-op-3', activityName: 'charge', input: null });
+    await Bun.sleep(100);
 
-    // Disconnect w1 — all three tasks should be reassigned to w2
+    // Record which tasks w1 has in-flight (via the registry).
+    const w1Tasks = server.registry.getWorkerTasks('w1');
+    const w1TaskIds = w1Tasks.map((t) => t.operationId).toSorted();
+
+    // Clear received so only reassignment messages are captured.
+    received.length = 0;
+
+    // Disconnect w1 — tasks assigned to w1 should be reassigned to w2.
     ws1.close();
-    await Bun.sleep(200);
+    await Bun.sleep(300);
 
     const taskMessages = received.filter((m) => m.type === 'task');
     const reassignedIds = taskMessages
       .map((m) => m.operationId)
       .toSorted((a = '', b = '') => (a < b ? -1 : a > b ? 1 : 0));
-    expect(reassignedIds).toEqual(['multi-op-1', 'multi-op-2', 'multi-op-3']);
+    // Only w1's tasks should be reassigned, not tasks already on w2.
+    expect(reassignedIds).toEqual(w1TaskIds);
 
     ws2.close();
     await Bun.sleep(50);
@@ -2194,7 +2206,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     // Dispatch with a very short visibility timeout
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'expiry-op-1',
       activityName: 'charge',
       input: { amount: 42 },
@@ -2250,7 +2262,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
 
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'attempt-expiry-op',
       activityName: 'charge',
       input: null,
@@ -2285,7 +2297,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     // Dispatch with a long visibility timeout
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'noexpiry-op',
       activityName: 'charge',
       input: null,
@@ -2331,7 +2343,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
 
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'cleanup-expiry-op',
       activityName: 'charge',
       input: null,
@@ -2365,7 +2377,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     const ws = await connectWorker(server);
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'fallback-expiry-op',
       activityName: 'charge',
       input: null,
@@ -2498,7 +2510,7 @@ describe('retry policy respected on reassignment', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     // Dispatch a task already at maxAttempts with a short visibility timeout
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'max-attempt-expiry-op',
       activityName: 'charge',
       input: { amount: 42 },
@@ -2545,7 +2557,7 @@ describe('retry policy respected on reassignment', () => {
     await registerWorker(ws2, { workerId: 'w2', activities: ['charge'], concurrency: 5 });
 
     // Dispatch a task already at maxAttempts
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'max-attempt-disconnect-op',
       activityName: 'charge',
       input: { amount: 42 },
@@ -2600,7 +2612,7 @@ describe('retry policy respected on reassignment', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     // maxAttempts = 3, starting at attempt 1 — should allow reassignment
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'within-limit-expiry-op',
       activityName: 'charge',
       input: null,
@@ -2653,7 +2665,7 @@ describe('retry policy respected on reassignment', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     // initialBackoff = 100ms
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'backoff-expiry-op',
       activityName: 'charge',
       input: null,
@@ -2700,7 +2712,7 @@ describe('retry policy respected on reassignment', () => {
 
     const dispatchTime = Date.now();
     // initialBackoff = 150ms, attempt 1 → backoff for attempt 2 = 150ms
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'backoff-disconnect-op',
       activityName: 'charge',
       input: null,
@@ -2730,7 +2742,7 @@ describe('retry policy respected on reassignment', () => {
     const ws = await connectWorker(server);
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'policy-stored-op',
       activityName: 'charge',
       input: null,
@@ -2777,7 +2789,7 @@ describe('retry policy respected on reassignment', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     // No retryPolicy — should still re-dispatch (backwards compatible)
-    server.dispatchTask({
+    await server.dispatchTask({
       operationId: 'no-policy-op',
       activityName: 'charge',
       input: null,

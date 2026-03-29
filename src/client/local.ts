@@ -73,6 +73,11 @@ class LocalHandle implements ClientHandle {
   ): void {
     this.#handle.removeEventListener(type, listener, options);
   }
+
+  [Symbol.dispose](): void {
+    // LocalHandle has no resources to clean up — events flow through
+    // the engine's EventTarget which is managed by the engine lifecycle.
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -49,12 +49,21 @@ export class LMDBStorage implements Storage {
           start: prefixEnd,
           end: prefix,
           reverse: true,
-          inclusiveEnd: true,
         })
       : this.#database.getRange({ start: prefix, end: prefixEnd });
 
     let count = 0;
+    let enteredPrefix = false;
     for (const { key, value } of range) {
+      // Safety: ensure we stay within the prefix range.
+      // Forward: keys past the prefix are lexicographically greater — break.
+      // Reverse: iteration starts at prefixEnd which may itself not match — skip
+      // non-matching keys until we enter the prefix range, then break when we leave.
+      if (!key.startsWith(prefix)) {
+        if (reverse && !enteredPrefix) continue;
+        break;
+      }
+      enteredPrefix = true;
       if (gt !== undefined && key <= gt) continue;
       if (gte !== undefined && key < gte) continue;
       if (lt !== undefined && key >= lt) continue;

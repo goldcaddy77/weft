@@ -319,9 +319,11 @@ async function handleListWorkflows(request: Request, engine: Engine): Promise<Re
   const url = new URL(request.url);
   const filter: ListFilter = {};
 
-  const status = url.searchParams.get('status');
-  if (status !== null) {
-    filter.status = status as WorkflowStatus;
+  const statuses = url.searchParams.getAll('status') as WorkflowStatus[];
+  if (statuses.length === 1) {
+    filter.status = statuses[0]!;
+  } else if (statuses.length > 1) {
+    filter.status = statuses;
   }
 
   const type = url.searchParams.get('type');
@@ -643,7 +645,7 @@ async function handleQueryWorkflow(
 ): Promise<Response> {
   try {
     const result = await engine.query(workflowId, queryName);
-    return jsonResponse({ result });
+    return jsonResponse({ result: result ?? null });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('not supported')) {

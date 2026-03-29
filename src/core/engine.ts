@@ -1121,6 +1121,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
     this.#cleanupWaiters(workflowId);
+    this.#heartbeatDetails.delete(workflowId);
 
     const event =
       status === 'timed-out'
