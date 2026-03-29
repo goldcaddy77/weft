@@ -259,7 +259,7 @@ describe('LongPollWorker', () => {
     expect(pollCount).toBeGreaterThanOrEqual(1);
   });
 
-  it('skips tasks for unknown activities', async () => {
+  it('reports unknown activities as failures to the server', async () => {
     const completedTasks: any[] = [];
     let pollCount = 0;
 
@@ -301,9 +301,11 @@ describe('LongPollWorker', () => {
     await Bun.sleep(500);
     await worker.stop();
 
-    // Should not have sent a completion for an unknown activity
+    // Should have reported the unknown activity as a failure
     const unknownCompletion = completedTasks.find((t) => t.operationId === 'op-unknown');
-    expect(unknownCompletion).toBeUndefined();
+    expect(unknownCompletion).toBeDefined();
+    expect(unknownCompletion.status).toBe('failed');
+    expect(unknownCompletion.error).toBe('Unknown activity: nonExistent');
   });
 
   it('handles error completion fetch failure gracefully', async () => {

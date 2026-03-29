@@ -126,7 +126,7 @@ export class WorkerRegistry {
     this.taskAssigned(workerId);
   }
 
-  /** Return tasks whose deadline has passed for reassignment. */
+  /** Return tasks whose deadline has passed and remove them from tracking. */
   checkExpiredTasks(now: number): InFlightTask[] {
     const expired: InFlightTask[] = [];
 
@@ -136,15 +136,24 @@ export class WorkerRegistry {
       }
     }
 
+    for (const task of expired) {
+      this.#inFlightTasks.delete(task.operationId);
+    }
+
     return expired;
   }
 
-  /** Extend the visibility timeout deadline for an in-flight task (heartbeat). */
-  extendVisibility(operationId: string, extension: number): void {
+  /** Extend the visibility timeout deadline for an in-flight task (heartbeat).
+   *  Resets the deadline to `now + extension` so each heartbeat grants exactly
+   *  one visibility window rather than accumulating on top of a future deadline.
+   *  Returns the new deadline, or `undefined` if the task was not found. */
+  extendVisibility(operationId: string, extension: number): number | undefined {
     const task = this.#inFlightTasks.get(operationId);
     if (task !== undefined) {
       task.deadline = Date.now() + extension;
+      return task.deadline;
     }
+    return undefined;
   }
 
   /** Return all in-flight tasks assigned to a given worker. */

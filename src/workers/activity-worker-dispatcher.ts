@@ -11,43 +11,84 @@ import type { ActivityExecutionRequest, ActivityExecutionResult } from './activi
 import type { WorkerPool } from './pool.ts';
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Default timeout in milliseconds for waiting on a worker response. */
+const DEFAULT_WORKER_TIMEOUT_MILLISECONDS = 30_000;
+
+// ---------------------------------------------------------------------------
 // ActivityWorkerDispatcher
 // ---------------------------------------------------------------------------
 
+export type ActivityWorkerDispatcherOptions = {
+  /** Maximum time in milliseconds to wait for a worker to respond before
+   *  rejecting and terminating the worker. Default: 30 000 (30 seconds). */
+  timeoutMilliseconds?: number;
+};
+
 export class ActivityWorkerDispatcher implements Disposable, AsyncDisposable {
   readonly #pool: WorkerPool;
+  readonly #timeoutMilliseconds: number;
 
-  constructor(pool: WorkerPool) {
+  constructor(pool: WorkerPool, options?: ActivityWorkerDispatcherOptions) {
     this.#pool = pool;
+    this.#timeoutMilliseconds = options?.timeoutMilliseconds ?? DEFAULT_WORKER_TIMEOUT_MILLISECONDS;
   }
 
   /**
    * Dispatch an activity execution request to a worker and wait for the result.
    * Acquires a worker from the pool, sends the request, waits for a matching
    * response, then releases the worker back to the pool.
+   *
+   * If the worker does not respond within the configured timeout, the promise
+   * resolves with a `failed` result and the worker is terminated.
    */
   async execute(request: ActivityExecutionRequest): Promise<ActivityExecutionResult> {
     const worker = await this.#pool.acquire();
+    let terminated = false;
 
     try {
       return await new Promise<ActivityExecutionResult>((resolve) => {
+        let settled = false;
+
+        const settle = (result: ActivityExecutionResult) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          resolve(result);
+        };
+
         const onMessage = (event: MessageEvent<ActivityExecutionResult>) => {
           if (event.data.operationId === request.operationId) {
-            cleanup();
-            resolve(event.data);
+            settle(event.data);
           }
         };
 
         const onError = (event: ErrorEvent) => {
-          cleanup();
-          resolve({
+          settle({
             operationId: request.operationId,
             status: 'failed',
             error: `Activity worker crashed: ${event.message ?? 'unknown error'}`,
           });
         };
 
+        const timer = setTimeout(() => {
+          settle({
+            operationId: request.operationId,
+            status: 'failed',
+            error:
+              `Activity "${request.activityName}" timed out after ${this.#timeoutMilliseconds}ms ` +
+              `(operationId: ${request.operationId})`,
+          });
+          // Terminate the unresponsive worker so it doesn't linger.
+          // Mark as terminated so the finally block skips pool release.
+          terminated = true;
+          worker.terminate();
+        }, this.#timeoutMilliseconds);
+
         const cleanup = () => {
+          clearTimeout(timer);
           worker.removeEventListener('message', onMessage as EventListener);
           worker.removeEventListener('error', onError as EventListener);
         };
@@ -57,7 +98,9 @@ export class ActivityWorkerDispatcher implements Disposable, AsyncDisposable {
         worker.postMessage(request);
       });
     } finally {
-      this.#pool.release(worker);
+      if (!terminated) {
+        this.#pool.release(worker);
+      }
     }
   }
 
