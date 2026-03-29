@@ -1,0 +1,101 @@
+name: pr-title
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: 1.3.2
+
+      - name: Analyze PR title
+        id: analyze
+        shell: bash
+        run: |
+          current_title=$(jq -r '.pull_request.title' "$GITHUB_EVENT_PATH")
+          bun run scripts/pr-title.ts normalize --title "$current_title" > pr-title-report.json
+          cat pr-title-report.json
+
+          normalized_title=$(jq -r '.normalizedTitle // ""' pr-title-report.json)
+          safe_to_autofix=$(jq -r '.safeToAutofix' pr-title-report.json)
+          changed=$(jq -r '.changed' pr-title-report.json)
+
+          {
+            echo "current_title<<EOF"
+            printf '%s\n' "$current_title"
+            echo "EOF"
+            echo "normalized_title<<EOF"
+            printf '%s\n' "$normalized_title"
+            echo "EOF"
+            echo "safe_to_autofix=$safe_to_autofix"
+            echo "changed=$changed"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Auto-fix malformed PR title
+        if: steps.analyze.outputs.safe_to_autofix == 'true' && steps.analyze.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NORMALIZED_TITLE: ${{ steps.analyze.outputs.normalized_title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          payload=$(jq -nc --arg title "$NORMALIZED_TITLE" '{title: $title}')
+          curl --fail --silent --show-error \
+            --request PATCH \
+            --url "https://api.github.com/repos/$REPOSITORY/pulls/$PR_NUMBER" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $GITHUB_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "$payload" \
+            > /dev/null
+
+          {
+            echo "### PR title auto-fixed"
+            echo
+            echo "- Old title: \`${{ steps.analyze.outputs.current_title }}\`"
+            echo "- New title: \`$NORMALIZED_TITLE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compute final title
+        id: final
+        shell: bash
+        run: |
+          final_title="${{ steps.analyze.outputs.current_title }}"
+
+          if [[ "${{ steps.analyze.outputs.safe_to_autofix }}" == "true" && "${{ steps.analyze.outputs.changed }}" == "true" ]]; then
+            final_title="${{ steps.analyze.outputs.normalized_title }}"
+          fi
+
+          {
+            echo "title<<EOF"
+            printf '%s\n' "$final_title"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate final PR title
+        env:
+          TITLE: ${{ steps.final.outputs.title }}
+        run: bun run scripts/pr-title.ts validate --title "$TITLE"
