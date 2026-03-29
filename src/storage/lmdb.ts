@@ -55,9 +55,13 @@ export class LMDBStorage implements Storage {
     let count = 0;
     for (const { key, value } of range) {
       // Safety: ensure we stay within the prefix range.
-      // In both directions, once we leave the prefix range we won't re-enter it
-      // (keys are lexicographically ordered), so break immediately.
-      if (!key.startsWith(prefix)) break;
+      // Forward: keys past the prefix are lexicographically greater — break.
+      // Reverse: iteration starts at prefixEnd which may itself not match — skip
+      // non-matching keys until we enter the prefix range, then break when we leave.
+      if (!key.startsWith(prefix)) {
+        if (reverse) continue;
+        break;
+      }
       if (gt !== undefined && key <= gt) continue;
       if (gte !== undefined && key < gte) continue;
       if (lt !== undefined && key >= lt) continue;
