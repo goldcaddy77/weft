@@ -267,6 +267,7 @@ export class TaskQueue {
       for (const task of tasks) {
         if ((task.enqueuedAt ?? 0) < cutoff) {
           stale.push(task);
+          this.#cancelExpiration(task.operationId);
           this.#dispatched.delete(task.operationId);
 
           const callback = this.#completionCallbacks.get(task.operationId);

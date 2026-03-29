@@ -2141,7 +2141,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const sleepOps = this.#sleepResolversByWorkflow.get(workflowId);
     if (sleepOps) {
       for (const operationId of sleepOps) {
-        this.#sleepResolvers.delete(operationId);
+        this.#sleepResolvers.delete(`${workflowId}:${operationId}`);
       }
       this.#sleepResolversByWorkflow.delete(workflowId);
     }
