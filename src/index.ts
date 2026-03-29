@@ -253,6 +253,7 @@ export {
   initializeActivityWorkerMessageLoop,
   revokeActivityWorkerEntryUrl,
 } from './workers/activity-worker-entry';
+export type { ActivityHandlerLookup } from './workers/activity-worker-entry';
 export { WorkerPool } from './workers/pool';
 export type { WorkerPoolOptions } from './workers/pool';
 

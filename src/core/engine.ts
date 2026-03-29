@@ -307,6 +307,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #signalWaiters: Map<string, (payload: unknown) => void>;
   #updateWaiters: Map<string, (payload: unknown) => void>;
   #sleepResolvers: Map<string, () => void>;
+  #sleepResolversByWorkflow: Map<string, Set<string>>;
   #interceptors: WorkflowInterceptor[];
   #activityInterceptors: ActivityInterceptor[];
   #composedWorkflowInterceptor: ComposedWorkflowInterceptor | null;
@@ -337,6 +338,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#signalWaiters = new Map();
     this.#updateWaiters = new Map();
     this.#sleepResolvers = new Map();
+    this.#sleepResolversByWorkflow = new Map();
     this.#interceptors = [];
     this.#activityInterceptors = [];
     this.#composedWorkflowInterceptor = null;
@@ -1314,6 +1316,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#signalWaiters.clear();
     this.#updateWaiters.clear();
     this.#sleepResolvers.clear();
+    this.#sleepResolversByWorkflow.clear();
     this.#checkpoints.clear();
     this.#workflowNestingDepths.clear();
     this.#pendingStarts.clear();
@@ -1583,7 +1586,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // resolvers when a workflow is cancelled or terminated.
         this.#sleepResolvers.set(`${workflowId}:${operation.operationId}`, resolve);
 
+        let workflowOps = this.#sleepResolversByWorkflow.get(workflowId);
+        if (!workflowOps) {
+          workflowOps = new Set();
+          this.#sleepResolversByWorkflow.set(workflowId, workflowOps);
+        }
+        workflowOps.add(operation.operationId);
+
         await promise;
+
+        // If the workflow was cancelled/completed/failed while sleeping,
+        // the resolver was invoked by #cleanupWaiters to unblock this await.
+        // Skip feeding a result since the workflow is no longer running.
+        const postSleepState = await this.#loadWorkflowState(workflowId);
+        if (!postSleepState || postSleepState.status !== 'running') break;
+
         this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
         break;
       }
@@ -2091,6 +2108,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const resolver = this.#sleepResolvers.get(resolverKey);
       if (resolver) {
         this.#sleepResolvers.delete(resolverKey);
+        const workflowOps = this.#sleepResolversByWorkflow.get(entry.workflowId);
+        if (workflowOps) {
+          workflowOps.delete(operationId);
+          if (workflowOps.size === 0) this.#sleepResolversByWorkflow.delete(entry.workflowId);
+        }
         resolver();
       }
     } else if (entry.kind === 'execution-deadline') {
@@ -2120,8 +2142,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     for (const key of this.#updateWaiters.keys()) {
       if (key.startsWith(prefix)) this.#updateWaiters.delete(key);
     }
-    for (const key of this.#sleepResolvers.keys()) {
-      if (key.startsWith(prefix)) this.#sleepResolvers.delete(key);
+    const sleepOps = this.#sleepResolversByWorkflow.get(workflowId);
+    if (sleepOps) {
+      for (const operationId of sleepOps) {
+        const key = `${workflowId}:${operationId}`;
+        const resolver = this.#sleepResolvers.get(key);
+        if (resolver) resolver();
+        this.#sleepResolvers.delete(key);
+      }
+      this.#sleepResolversByWorkflow.delete(workflowId);
     }
     this.#workflowNestingDepths.delete(workflowId);
   }
