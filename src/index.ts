@@ -274,6 +274,13 @@ export {
   formatDuration,
   formatVersionCheckReport,
 } from './diagnostics/format';
+export { MemoryProfiler, analyzeStability, linearRegression } from './diagnostics/memory-profiler';
+export type {
+  MemoryProfile,
+  MemorySample,
+  StabilityOptions,
+  StabilityResult,
+} from './diagnostics/memory-profiler';
 export { generateRecommendations } from './diagnostics/recommendations';
 export type {
   DatabaseHealth,

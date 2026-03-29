@@ -270,7 +270,7 @@ engine.addEventListener('checkpoint:size-warning', (event) => {
 **Going further: `ctx.offload()` for large intermediate state.** When a workflow accumulates large data (a list of 10,000 processed records, a large API response), the checkpoint balloons. `ctx.offload()` stores large data separately, leaving only a lightweight reference in the checkpoint:
 
 ```typescript
-async function* batchWorkflow(ctx: Weft.Context, items: string[]) {
+async function* batchWorkflow(ctx: Context, items: string[]) {
   const resultsRef = yield* ctx.offload('batch-results', async () => {
     return await processAll(items); // Large result stored separately
   });
@@ -382,7 +382,7 @@ Weft: checkpoint size is constant regardless of history
 **Going further: `ctx.archive()` for long-running state management.** Workflows that accumulate data over time (invoice history, event logs) can move old data out of the checkpoint while preserving it for auditing:
 
 ```typescript
-async function* subscriptionWorkflow(ctx: Weft.Context, plan: Plan) {
+async function* subscriptionWorkflow(ctx: Context, plan: Plan) {
   let invoiceHistory: Invoice[] = [];
 
   while (true) {
@@ -404,7 +404,7 @@ Archived data is stored at `archive:{workflowId}:{key}` — still queryable via 
 **Going further: `ctx.expose()` for live workflow inspection.** For workflows that run for weeks, operators need visibility without stopping the workflow or pre-registering query handlers:
 
 ```typescript
-async function* longRunningWorkflow(ctx: Weft.Context, config: Config) {
+async function* longRunningWorkflow(ctx: Context, config: Config) {
   let processedCount = 0;
   let lastError: string | null = null;
   let currentPhase = 'initializing';
@@ -505,7 +505,7 @@ Weft's generator model avoids this dilemma. Each tool call is a separate `yield*
 **Going further: multi-agent composition via existing primitives.** Agents are just activities with special configuration. The existing `ctx.run()` / `ctx.all()` / `ctx.race()` composition works naturally:
 
 ```typescript
-async function* researchWorkflow(ctx: Weft.Context, topic: string) {
+async function* researchWorkflow(ctx: Context, topic: string) {
   // Sequential: researcher → critic → writer
   const research = yield* ctx.agent({
     model: 'claude-sonnet-4-20250514',
@@ -537,7 +537,7 @@ Beyond fan-out, the agent-native engine supports `ctx.handoff()` for delegation 
 **Going further: cost observability with `ctx.setBudget()`.** Budget state is stored in the checkpoint and enforced via `AbortController`. Each `ctx.agent()` call reports token usage back to the budget tracker:
 
 ```typescript
-async function* costAwareWorkflow(ctx: Weft.Context, input: Input) {
+async function* costAwareWorkflow(ctx: Context, input: Input) {
   ctx.setBudget({
     maxTokens: 100_000,
     maxCost: 5.0,
@@ -585,7 +585,7 @@ On cache hit, the tool is not re-executed and no checkpoint boundary is created.
 
 ```typescript
 // A workflow that processes 100 images (each 1MB):
-async function* imageWorkflow(ctx: Weft.Context, urls: string[]) {
+async function* imageWorkflow(ctx: Context, urls: string[]) {
   let summary = { processed: 0, totalSize: 0 };
 
   for (const url of urls) {
@@ -602,7 +602,7 @@ async function* imageWorkflow(ctx: Weft.Context, urls: string[]) {
 **Going further: `ctx.stream()` for large payloads.** When an activity produces a large result, `ctx.stream()` writes data to storage as chunks without buffering in memory:
 
 ```typescript
-async function* dataExportWorkflow(ctx: Weft.Context, query: ExportQuery) {
+async function* dataExportWorkflow(ctx: Context, query: ExportQuery) {
   const exportRef = yield* ctx.stream('export-data', async function* (sink) {
     const cursor = db.query(query);
     for await (const batch of cursor) {
@@ -763,7 +763,7 @@ This is the central architectural divergence from Temporal.
 Workflows are `AsyncGenerator` functions. Each `yield*` is a checkpoint boundary. On crash, Weft deserializes the last checkpoint and resumes — no replay, no determinism constraints, O(1) recovery.
 
 ```typescript
-export async function* orderWorkflow(ctx: Weft.Context, order: Order) {
+export async function* orderWorkflow(ctx: Context, order: Order) {
   const payment = yield* ctx.run(charge, order); // checkpoint 1
   const shipment = yield* ctx.run(ship, { order, payment }); // checkpoint 2
   return { payment, shipment };
@@ -3048,7 +3048,7 @@ Agent loops are **dynamic, emergent graphs**. The LLM decides what to do next ba
 Weft's generator model handles this naturally. A `while` loop with `yield*` inside it creates checkpoints at each tool call without declaring the graph shape upfront:
 
 ```typescript
-async function* researchAgent(ctx: Weft.Context, topic: string) {
+async function* researchAgent(ctx: Context, topic: string) {
   let findings: string[] = [];
   let confidence = 0;
 
@@ -3167,7 +3167,7 @@ Cost is not a metric to observe after the fact. It is an **execution constraint*
 **Workflow-level budgets** span all agent calls within a single workflow execution, including child workflows:
 
 ```typescript
-async function* analysisWorkflow(ctx: Weft.Context, input: Input) {
+async function* analysisWorkflow(ctx: Context, input: Input) {
   // Budget spans ALL agent calls in this workflow
   ctx.setBudget({
     maxTokens: 200_000,
@@ -3501,7 +3501,7 @@ Real agent systems involve multiple agents collaborating, competing, or delegati
 **`ctx.handoff()` — sequential delegation with context transfer.** One agent decides it needs another agent's expertise and transfers the task, including relevant context:
 
 ```typescript
-async function* researchPipeline(ctx: Weft.Context, topic: string) {
+async function* researchPipeline(ctx: Context, topic: string) {
   // Researcher gathers raw data
   const rawData = yield* ctx.agent({
     model: 'claude-sonnet-4-20250514',
@@ -3568,7 +3568,7 @@ const results =
 **`SharedState` — concurrent mutable state.** When multiple agents run in parallel via `ctx.all()`, they may need shared, mutable state. `ctx.sharedState()` provides a CAS (compare-and-swap) primitive backed by storage:
 
 ```typescript
-async function* collaborativeResearch(ctx: Weft.Context, topics: string[]) {
+async function* collaborativeResearch(ctx: Context, topics: string[]) {
   // Shared state for concurrent agents
   const findings = yield* ctx.sharedState('research-findings', {
     initial: { articles: [], totalCost: 0 },
@@ -3903,7 +3903,7 @@ engine.register(researchAgent);
 await engine.start('research', { prompt: '...' });
 
 // As a step in a larger workflow
-async function* pipeline(ctx: Weft.Context, input: Input) {
+async function* pipeline(ctx: Context, input: Input) {
   const research = yield* ctx.agent(researchAgent, { prompt: input.topic });
   const report = yield* ctx.agent(writerAgent, { data: research });
   return report;
@@ -4148,7 +4148,7 @@ interface Context {
   readonly executionTimeRemaining: number;
 }
 
-async function* orderWorkflow(ctx: Weft.Context, order: Order) {
+async function* orderWorkflow(ctx: Context, order: Order) {
   const payment = yield* ctx.run(charge, order);
 
   // Check if we have enough time for the slow path
@@ -4216,7 +4216,7 @@ Unknown attribute keys are rejected at set time. This prevents typos and enforce
 #### Usage
 
 ```typescript
-async function* orderWorkflow(ctx: Weft.Context, order: Order) {
+async function* orderWorkflow(ctx: Context, order: Order) {
   ctx.setAttributes({
     customerId: order.customerId,
     region: order.region,
@@ -4307,7 +4307,7 @@ Use case: "Validate this coupon code against the current cart state before accep
 **Callback-style (`ctx.onUpdate`):** Register a handler that runs at any checkpoint boundary whenever an update of that name arrives. The handler is a plain function (not a generator) — it cannot yield. It can read/modify workflow state via closure over local variables.
 
 ```typescript
-async function* cartWorkflow(ctx: Weft.Context, cart: Cart) {
+async function* cartWorkflow(ctx: Context, cart: Cart) {
   let appliedCoupons: string[] = [];
   let cartTotal = cart.total;
 
@@ -4339,7 +4339,7 @@ async function* cartWorkflow(ctx: Weft.Context, cart: Cart) {
 **Yield-style (`ctx.waitForUpdate`):** Explicitly suspends the workflow until a specific update arrives. Returns `{ payload, respond }` where `respond()` sends the result back.
 
 ```typescript
-async function* approvalWorkflow(ctx: Weft.Context, document: Document) {
+async function* approvalWorkflow(ctx: Context, document: Document) {
   const prepared = yield* ctx.run(prepareForReview, document);
 
   const { payload, respond } = yield* ctx.waitForUpdate<ReviewDecision>('review_decision');
@@ -4845,7 +4845,7 @@ async function notify(msg: string) {
   });
 }
 
-async function* welcomeWorkflow(ctx: Weft.Context, user: { name: string }) {
+async function* welcomeWorkflow(ctx: Context, user: { name: string }) {
   const greeting = yield* ctx.run(greet, user.name);
   yield* ctx.sleep('1 hour');
   yield* ctx.run(notify, `${user.name} completed onboarding`);
@@ -5232,7 +5232,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **No migration function = resume as-is.** Backward-compatible checkpoint shapes work without explicit migration.
 - [x] **Failed migration produces a `VersionMismatchError`.** Error includes both versions, workflow ID, and workflow type.
 - [x] **Migrated checkpoint is persisted atomically.** Updated checkpoint and version written to storage in one `batch()` call.
-- [ ] **Version visible in API and dashboard.** `GET /v1/workflows/:id` returns the version field.
+- [x] **Version visible in API and dashboard.** `GET /v1/workflows/:id` returns the version field.
 - [x] **Migration function receives structuredClone-compatible data.** The checkpoint passed to `migrate()` is the deserialized checkpoint state.
 
 ### Workflow-Level Timeouts
@@ -5245,7 +5245,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`ctx.signal` exposes the combined cancellation + timeout signal.** Activities that accept `{ signal }` automatically respect workflow timeouts.
 - [x] **`ctx.executionTimeRemaining` returns milliseconds.** Workflows can make decisions based on remaining budget.
 - [x] **Deadline keys are cleaned up on workflow completion.** `wf-deadline:*` entries deleted when workflow reaches terminal state.
-- [ ] **HTTP API accepts `executionTimeout` parameter.** `POST /v1/workflows` body includes `executionTimeout`.
+- [x] **HTTP API accepts `executionTimeout` parameter.** `POST /v1/workflows` body includes `executionTimeout`.
 - [ ] **Dashboard shows timeout configuration and remaining time.** Elapsed time bar or countdown visible on workflow detail view.
 
 ### Search Attributes
