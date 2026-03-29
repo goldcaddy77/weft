@@ -113,7 +113,8 @@ class HttpHandle implements ClientHandle {
   #lastEventIndex = 0;
   #pollInFlight = false;
   #closed = false;
-  #listenerCount = 0;
+  /** Track registered listeners to detect when all are removed. */
+  readonly #listeners = new Set<EventListenerOrEventListenerObject>();
 
   constructor(id: string, client: HttpClient) {
     this.id = id;
@@ -214,9 +215,25 @@ class HttpHandle implements ClientHandle {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | AddEventListenerOptions,
   ): void {
-    this.#listenerCount++;
+    this.#listeners.add(listener);
     this.#ensurePolling();
-    this.#events.addEventListener(type, listener, options);
+
+    const once = typeof options === 'object' && options?.once;
+    if (once) {
+      // Wrap once-listeners so the Set is updated when EventTarget auto-removes them.
+      const wrapper: EventListener = (event) => {
+        this.#listeners.delete(listener);
+        if (typeof listener === 'function') {
+          listener(event);
+        } else {
+          listener.handleEvent(event);
+        }
+        if (this.#listeners.size === 0) this.close();
+      };
+      this.#events.addEventListener(type, wrapper, options);
+    } else {
+      this.#events.addEventListener(type, listener, options);
+    }
   }
 
   removeEventListener(
@@ -224,9 +241,9 @@ class HttpHandle implements ClientHandle {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | EventListenerOptions,
   ): void {
+    this.#listeners.delete(listener);
     this.#events.removeEventListener(type, listener, options);
-    this.#listenerCount = Math.max(0, this.#listenerCount - 1);
-    if (this.#listenerCount === 0) {
+    if (this.#listeners.size === 0) {
       this.close();
     }
   }

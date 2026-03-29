@@ -546,7 +546,9 @@ export function serve(options: ServeOptions): WeftServer {
       const delay = calculateBackoff(record.attempt ?? 1, policy);
       scheduleDelayedDispatch(taskDispatch, delay);
     } else {
-      void dispatchTaskImpl(taskDispatch);
+      void dispatchTaskImpl(taskDispatch).catch((err) =>
+        console.error(`[weft] Redispatch failed for "${record.operationId}":`, err),
+      );
     }
   }
 
@@ -1081,7 +1083,7 @@ export function serve(options: ServeOptions): WeftServer {
       input: task.input,
       attempt: task.attempt ?? 1,
       retryPolicy: task.retryPolicy,
-      visibilityTimeout: task.visibilityTimeout,
+      visibilityTimeout,
     });
   }
 
