@@ -61,4 +61,5 @@ export const KEYS = {
   streamChunk: (workflowId: string, key: string, chunkIndex: number) =>
     `blob:${workflowId}:${key}:chunk:${String(chunkIndex).padStart(10, '0')}`,
   streamMetadata: (workflowId: string, key: string) => `blob:${workflowId}:${key}:meta`,
+  budgetCharged: (operationId: string) => `budget-charged:${operationId}`,
 } as const;

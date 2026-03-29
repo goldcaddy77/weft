@@ -307,6 +307,38 @@ describe('worker WebSocket protocol', () => {
     await Bun.sleep(50);
   });
 
+  it('clamps worker concurrency to at least 1 when 0 is sent', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, { workerId: 'w-clamp-min', activities: ['charge'], concurrency: 0 });
+
+    const worker = server.registry.getWorker('w-clamp-min');
+    expect(worker?.concurrency).toBe(1);
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('clamps worker concurrency to MAX_WORKER_CONCURRENCY (1000) when a huge value is sent', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, {
+      workerId: 'w-clamp-max',
+      activities: ['charge'],
+      concurrency: 999_999,
+    });
+
+    const worker = server.registry.getWorker('w-clamp-max');
+    expect(worker?.concurrency).toBe(1_000);
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
   it('unregisters a worker on WebSocket close', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });

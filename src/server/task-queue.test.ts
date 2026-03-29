@@ -326,6 +326,57 @@ describe('TaskQueue', () => {
     });
   });
 
+  describe('removeStale', () => {
+    it('removes tasks older than maxAge and invokes completion callbacks with failed status', () => {
+      const queue = new TaskQueue();
+      const results: TaskResult[] = [];
+
+      const task = makeTask({ operationId: 'stale-1' });
+      // Backdate the enqueuedAt so the task appears old
+      task.enqueuedAt = Date.now() - 10_000;
+
+      queue.enqueue('default', task, (result) => results.push(result));
+
+      const removed = queue.removeStale(5_000);
+
+      expect(removed).toHaveLength(1);
+      expect(removed[0]?.operationId).toBe('stale-1');
+      expect(results).toHaveLength(1);
+      expect(results[0]?.status).toBe('failed');
+      expect(results[0]?.error).toContain('expired');
+      expect(queue.pendingCount('default')).toBe(0);
+      expect(queue.isTracked('stale-1')).toBe(false);
+    });
+
+    it('does not remove tasks younger than maxAge', () => {
+      const queue = new TaskQueue();
+      const task = makeTask({ operationId: 'fresh-1' });
+
+      queue.enqueue('default', task);
+
+      const removed = queue.removeStale(60_000);
+
+      expect(removed).toHaveLength(0);
+      expect(queue.pendingCount('default')).toBe(1);
+      expect(queue.isTracked('fresh-1')).toBe(true);
+    });
+
+    it('allows re-enqueue of a stale operationId after removal', () => {
+      const queue = new TaskQueue();
+      const task = makeTask({ operationId: 'reuse-stale' });
+      task.enqueuedAt = Date.now() - 10_000;
+
+      queue.enqueue('default', task);
+      queue.removeStale(5_000);
+
+      expect(queue.isTracked('reuse-stale')).toBe(false);
+
+      const reEnqueued = queue.enqueue('default', makeTask({ operationId: 'reuse-stale' }));
+      expect(reEnqueued).toBe(true);
+      expect(queue.pendingCount('default')).toBe(1);
+    });
+  });
+
   describe('pendingCount', () => {
     it('tracks the number of pending tasks', () => {
       const queue = new TaskQueue();
@@ -353,6 +404,139 @@ describe('TaskQueue', () => {
       const queue = new TaskQueue();
 
       expect(queue.pendingCount('nonexistent')).toBe(0);
+    });
+  });
+
+  describe('pending task expiration', () => {
+    it('removes a pending task after the TTL expires', async () => {
+      const queue = new TaskQueue({ pendingTaskTimeToLive: 50 });
+
+      queue.enqueue('default', makeTask({ operationId: 'ttl-1', activityName: 'charge' }));
+      expect(queue.pendingCount('default')).toBe(1);
+      expect(queue.isTracked('ttl-1')).toBe(true);
+
+      // Wait for the TTL to fire
+      await Bun.sleep(100);
+
+      expect(queue.pendingCount('default')).toBe(0);
+      expect(queue.isTracked('ttl-1')).toBe(false);
+    });
+
+    it('invokes the completion callback with a failure on expiration', async () => {
+      const queue = new TaskQueue({ pendingTaskTimeToLive: 50 });
+      const results: TaskResult[] = [];
+
+      queue.enqueue('default', makeTask({ operationId: 'ttl-cb' }), (result) =>
+        results.push(result),
+      );
+
+      await Bun.sleep(100);
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.operationId).toBe('ttl-cb');
+      expect(results[0]?.status).toBe('failed');
+      expect(results[0]?.error).toContain('expired');
+    });
+
+    it('does not expire a task that was polled before the TTL', async () => {
+      const queue = new TaskQueue({ pendingTaskTimeToLive: 100 });
+      const results: TaskResult[] = [];
+
+      queue.enqueue(
+        'default',
+        makeTask({ operationId: 'ttl-polled', activityName: 'charge' }),
+        (result) => results.push(result),
+      );
+
+      // Poll the task before expiration
+      const task = await queue.poll('default', ['charge'], 1000);
+      expect(task?.operationId).toBe('ttl-polled');
+
+      // Wait past the original TTL
+      await Bun.sleep(150);
+
+      // Callback should not have been invoked by expiration
+      expect(results).toHaveLength(0);
+      // The task is no longer pending (it was polled), but still tracked as dispatched
+      expect(queue.pendingCount('default')).toBe(0);
+    });
+
+    it('does not expire a task dispatched directly to a waiter', async () => {
+      const queue = new TaskQueue({ pendingTaskTimeToLive: 50 });
+      const results: TaskResult[] = [];
+
+      // Start a poll that will block
+      const pollPromise = queue.poll('default', ['charge'], 5000);
+
+      // Enqueue — dispatched directly to the waiter, never enters #pending
+      queue.enqueue(
+        'default',
+        makeTask({ operationId: 'ttl-direct', activityName: 'charge' }),
+        (result) => results.push(result),
+      );
+
+      const task = await pollPromise;
+      expect(task?.operationId).toBe('ttl-direct');
+
+      // Wait past TTL
+      await Bun.sleep(100);
+
+      // No expiration callback should have fired
+      expect(results).toHaveLength(0);
+    });
+
+    it('allows re-enqueue after a task expires', async () => {
+      const queue = new TaskQueue({ pendingTaskTimeToLive: 50 });
+
+      queue.enqueue('default', makeTask({ operationId: 'ttl-reuse' }));
+
+      // Wait for expiration
+      await Bun.sleep(100);
+
+      expect(queue.isTracked('ttl-reuse')).toBe(false);
+
+      // Should be able to re-enqueue
+      const result = queue.enqueue('default', makeTask({ operationId: 'ttl-reuse' }));
+      expect(result).toBe(true);
+    });
+
+    it('does not expire tasks when TTL is Infinity', async () => {
+      const queue = new TaskQueue({ pendingTaskTimeToLive: Infinity });
+
+      queue.enqueue('default', makeTask({ operationId: 'ttl-inf', activityName: 'charge' }));
+
+      await Bun.sleep(50);
+
+      expect(queue.pendingCount('default')).toBe(1);
+      expect(queue.isTracked('ttl-inf')).toBe(true);
+    });
+
+    it('does not expire tasks when TTL is 0', async () => {
+      const queue = new TaskQueue({ pendingTaskTimeToLive: 0 });
+
+      queue.enqueue('default', makeTask({ operationId: 'ttl-zero', activityName: 'charge' }));
+
+      await Bun.sleep(50);
+
+      expect(queue.pendingCount('default')).toBe(1);
+      expect(queue.isTracked('ttl-zero')).toBe(true);
+    });
+
+    it('cleans up completion callback when task expires without one', async () => {
+      const queue = new TaskQueue({ pendingTaskTimeToLive: 50 });
+
+      // Enqueue without a callback
+      queue.enqueue('default', makeTask({ operationId: 'ttl-no-cb' }));
+
+      await Bun.sleep(100);
+
+      // Task should be cleaned up without errors
+      expect(queue.pendingCount('default')).toBe(0);
+      expect(queue.isTracked('ttl-no-cb')).toBe(false);
+
+      // Calling complete on an expired task should return false (no callback)
+      const found = queue.complete({ operationId: 'ttl-no-cb', status: 'completed' });
+      expect(found).toBe(false);
     });
   });
 });
