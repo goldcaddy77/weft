@@ -77,6 +77,18 @@ const CLOSURE_PATTERNS: ReadonlyArray<{ pattern: RegExp; description: string }> 
 ];
 
 /**
+ * Strip string literals (single, double, template) and comments (line, block)
+ * from JavaScript source so that closure-detection regexes only match actual
+ * code, not occurrences inside `"use this link"` or `// import something`.
+ */
+function stripStringsAndComments(source: string): string {
+  return source.replace(
+    /\/\/[^\n]*|\/\*[\s\S]*?\*\/|`(?:\\[\s\S]|[^`\\])*`|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g,
+    '',
+  );
+}
+
+/**
  * Validate that a handler function can be safely serialized with `toString()`
  * for use inside a Web Worker blob script.
  *
@@ -96,8 +108,11 @@ function validateHandlerSerializable(
     );
   }
 
+  // Strip strings and comments so patterns only match actual code references.
+  const codeOnly = stripStringsAndComments(source);
+
   for (const { pattern, description } of CLOSURE_PATTERNS) {
-    if (pattern.test(source)) {
+    if (pattern.test(codeOnly)) {
       throw new Error(
         `Activity handler "${name}" ${description}. ` +
           'Handlers passed to createActivityWorkerEntryUrl must be self-contained functions ' +

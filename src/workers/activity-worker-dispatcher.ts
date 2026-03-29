@@ -46,6 +46,7 @@ export class ActivityWorkerDispatcher implements Disposable, AsyncDisposable {
    */
   async execute(request: ActivityExecutionRequest): Promise<ActivityExecutionResult> {
     const worker = await this.#pool.acquire();
+    let terminated = false;
 
     try {
       return await new Promise<ActivityExecutionResult>((resolve) => {
@@ -81,6 +82,8 @@ export class ActivityWorkerDispatcher implements Disposable, AsyncDisposable {
               `(operationId: ${request.operationId})`,
           });
           // Terminate the unresponsive worker so it doesn't linger.
+          // Mark as terminated so the finally block skips pool release.
+          terminated = true;
           worker.terminate();
         }, this.#timeoutMilliseconds);
 
@@ -95,7 +98,9 @@ export class ActivityWorkerDispatcher implements Disposable, AsyncDisposable {
         worker.postMessage(request);
       });
     } finally {
-      this.#pool.release(worker);
+      if (!terminated) {
+        this.#pool.release(worker);
+      }
     }
   }
 
