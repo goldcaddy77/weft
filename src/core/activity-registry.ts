@@ -52,8 +52,11 @@ function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOpti
   if ('retry' in fn && typeof record['retry'] === 'object' && record['retry'] !== null) {
     result.retry = record['retry'] as RetryPolicy;
   }
-  if ('timeout' in fn) {
-    result.timeout = record['timeout'] as Duration;
+  if (
+    'timeout' in fn &&
+    (typeof record['timeout'] === 'string' || typeof record['timeout'] === 'number')
+  ) {
+    result.timeout = record['timeout'];
   }
   if ('idempotent' in fn && typeof record['idempotent'] === 'boolean') {
     result.idempotent = record['idempotent'];
@@ -69,9 +72,13 @@ function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOpti
 export class ActivityRegistry {
   /**
    * Primary storage: metadata keyed to the activity function object.
-   * When the function is GC'd, the entry is automatically removed.
+   * The WeakMap allows metadata lookup without preventing GC once the
+   * function is removed from #strongRefs.
    */
   #metadata = new WeakMap<object, ActivityMetadata>();
+
+  /** Strong references that keep registered functions alive until explicitly unregistered. */
+  #strongRefs = new Set<object>();
 
   /**
    * Name → function lookup via WeakRef. Enables resolving activities by
@@ -84,7 +91,10 @@ export class ActivityRegistry {
    * Prunes stale #nameIndex entries when a function is garbage collected.
    */
   #finalization = new FinalizationRegistry<string>((name) => {
-    this.#nameIndex.delete(name);
+    const ref = this.#nameIndex.get(name);
+    if (ref && ref.deref() === undefined) {
+      this.#nameIndex.delete(name);
+    }
   });
 
   /**
@@ -118,6 +128,7 @@ export class ActivityRegistry {
     if (idempotent !== undefined) metadata.idempotent = idempotent;
 
     this.#metadata.set(fn, metadata);
+    this.#strongRefs.add(fn);
     this.#nameIndex.set(name, new WeakRef(fn));
     this.#finalization.register(fn, name);
   }
@@ -165,6 +176,7 @@ export class ActivityRegistry {
     const fn = ref?.deref();
     if (fn) {
       this.#metadata.delete(fn);
+      this.#strongRefs.delete(fn);
     }
     this.#nameIndex.delete(name);
   }
