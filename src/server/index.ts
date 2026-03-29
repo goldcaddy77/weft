@@ -31,7 +31,6 @@ import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { handleRequest } from './handler.ts';
-import type { TaskResult } from './task-queue.ts';
 import { TaskQueue } from './task-queue.ts';
 import type { InflightRecord, QueuedRecord } from './task-state.ts';
 import {
@@ -133,7 +132,10 @@ function clampVisibilityTimeout(value: number | undefined): number {
 }
 
 /**
- * Retry an async operation up to `maxRetries` times with a simple linear backoff.
+ * Retry an async operation with a simple linear backoff.
+ *
+ * `maxAttempts` controls the total number of tries (including the initial one).
+ * The default of `2` means: try once, and if it fails, retry once more.
  *
  * Used for critical fire-and-forget paths (event persistence, inflight
  * restoration) where a single transient failure should not silently lose data.
@@ -141,22 +143,22 @@ function clampVisibilityTimeout(value: number | undefined): number {
 async function withRetry<T>(
   operation: () => Promise<T>,
   label: string,
-  maxRetries = 1,
+  maxAttempts = 2,
 ): Promise<T> {
   let lastError: unknown;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await operation();
     } catch (error) {
       lastError = error;
-      if (attempt < maxRetries) {
-        console.warn(`[weft] Retrying "${label}" (attempt ${attempt + 1}/${maxRetries})`);
+      if (attempt < maxAttempts) {
+        console.warn(`[weft] Retrying "${label}" (attempt ${attempt + 1}/${maxAttempts})`);
         // Brief delay before retry — 100 ms × attempt number.
-        await Bun.sleep(100 * (attempt + 1));
+        await Bun.sleep(100 * attempt);
       }
     }
   }
-  // All retries exhausted — throw the last error so callers can handle it.
+  // All attempts exhausted — throw the last error so callers can handle it.
   throw lastError;
 }
 
@@ -446,6 +448,64 @@ export function serve(options: ServeOptions): WeftServer {
     pendingTimers.add(timer);
   }
 
+  /**
+   * Given a persisted inflight record, either permanently fail the task (if
+   * retry attempts are exhausted) or transition it back to queued and
+   * re-dispatch with backoff. Both the worker-disconnect handler and the
+   * visibility-timeout scanner share this logic.
+   */
+  async function reassignOrExpireTask(operationId: string, record: InflightRecord): Promise<void> {
+    const nextAttempt = (record.attempt ?? 1) + 1;
+    const policy = record.retryPolicy;
+
+    if (policy && nextAttempt > policy.maxAttempts) {
+      await transitionInflightToResolved(options.engine.storage, operationId, 'failed');
+      options.engine.dispatchEvent(
+        new ActivityFailedEvent(
+          record.operationId,
+          record.workflowId ?? '',
+          record.activityName,
+          new Error(
+            `Activity "${record.activityName}" exhausted all ${policy.maxAttempts} retry attempts`,
+          ),
+          record.attempt ?? 1,
+        ),
+      );
+      return;
+    }
+
+    const queuedRecord: QueuedRecord = {
+      operationId: record.operationId,
+      activityName: record.activityName,
+      input: record.input,
+      queue: record.queue,
+      attempt: nextAttempt,
+      visibilityTimeout: record.visibilityTimeout,
+      retryPolicy: policy,
+      queuedAt: Date.now(),
+      workflowId: record.workflowId,
+    };
+    await transitionInflightToQueued(options.engine.storage, operationId, queuedRecord);
+
+    const taskDispatch: TaskDispatch = {
+      operationId: record.operationId,
+      activityName: record.activityName,
+      input: record.input,
+      queue: record.queue,
+      attempt: nextAttempt,
+      visibilityTimeout: record.visibilityTimeout,
+      workflowId: record.workflowId,
+      ...(policy ? { retryPolicy: policy } : {}),
+    };
+
+    if (policy) {
+      const delay = calculateBackoff(record.attempt ?? 1, policy);
+      scheduleDelayedDispatch(taskDispatch, delay);
+    } else {
+      dispatchTaskImpl(taskDispatch);
+    }
+  }
+
   const routes: Record<string, unknown> = {};
   if (dashboard !== null) {
     routes['/ui'] = dashboard;
@@ -555,9 +615,16 @@ export function serve(options: ServeOptions): WeftServer {
             );
           }
 
+          if (status !== 'completed' && status !== 'failed') {
+            return Response.json(
+              { error: 'status must be "completed" or "failed"' },
+              { status: 400 },
+            );
+          }
+
           taskQueue.complete({
             operationId,
-            status: status as TaskResult['status'],
+            status,
             value: body['value'],
             error: typeof body['error'] === 'string' ? body['error'] : undefined,
           });
@@ -699,81 +766,8 @@ export function serve(options: ServeOptions): WeftServer {
                 const existing = await options.engine.storage.get(inflightKey);
 
                 if (existing) {
-                  const record = decode(existing) as {
-                    operationId: string;
-                    activityName: string;
-                    input: unknown;
-                    queue: string;
-                    attempt: number;
-                    visibilityTimeout: number;
-                    retryPolicy?: RetryPolicy;
-                    workflowId?: string;
-                  };
-
-                  const nextAttempt = (record.attempt ?? 1) + 1;
-                  const policy = record.retryPolicy;
-
-                  // Check maxAttempts — if exceeded, the task permanently fails (no re-dispatch).
-                  if (policy && nextAttempt > policy.maxAttempts) {
-                    // Transition to resolved (permanent failure).
-                    await transitionInflightToResolved(
-                      options.engine.storage,
-                      task.operationId,
-                      'failed',
-                    );
-
-                    // Emit ActivityFailedEvent so the owning workflow is notified
-                    // instead of hanging indefinitely waiting for a result.
-                    options.engine.dispatchEvent(
-                      new ActivityFailedEvent(
-                        record.operationId,
-                        record.workflowId ?? '',
-                        record.activityName,
-                        new Error(
-                          `Activity "${record.activityName}" exhausted all ${policy.maxAttempts} retry attempts`,
-                        ),
-                        record.attempt ?? 1,
-                      ),
-                    );
-                    return;
-                  }
-
-                  // Atomically transition inflight → queued before re-dispatch.
-                  const queuedRecord: QueuedRecord = {
-                    operationId: record.operationId,
-                    activityName: record.activityName,
-                    input: record.input,
-                    queue: record.queue,
-                    attempt: nextAttempt,
-                    visibilityTimeout: record.visibilityTimeout,
-                    retryPolicy: policy,
-                    queuedAt: Date.now(),
-                    workflowId: record.workflowId,
-                  };
-                  await transitionInflightToQueued(
-                    options.engine.storage,
-                    task.operationId,
-                    queuedRecord,
-                  );
-
-                  const taskDispatch: TaskDispatch = {
-                    operationId: record.operationId,
-                    activityName: record.activityName,
-                    input: record.input,
-                    queue: record.queue,
-                    attempt: nextAttempt,
-                    visibilityTimeout: record.visibilityTimeout,
-                    workflowId: record.workflowId,
-                    ...(policy ? { retryPolicy: policy } : {}),
-                  };
-
-                  // Apply backoff delay before re-dispatching.
-                  if (policy) {
-                    const delay = calculateBackoff(record.attempt ?? 1, policy);
-                    scheduleDelayedDispatch(taskDispatch, delay);
-                  } else {
-                    dispatchTaskImpl(taskDispatch);
-                  }
+                  const record = decode(existing) as InflightRecord;
+                  await reassignOrExpireTask(task.operationId, record);
                 } else {
                   // No inflight record in storage — clean up the inflight key just in case.
                   await options.engine.storage.delete(inflightKey);
@@ -851,80 +845,13 @@ export function serve(options: ServeOptions): WeftServer {
       const now = Date.now();
 
       for await (const [, value] of options.engine.storage.scan('op:inflight:')) {
-        const record = decode(value) as {
-          operationId: string;
-          workerId: string;
-          deadline: number;
-          activityName: string;
-          queue: string;
-          input: unknown;
-          attempt: number;
-          visibilityTimeout: number;
-          retryPolicy?: RetryPolicy;
-          workflowId?: string;
-        };
+        const record = decode(value) as InflightRecord;
 
         if (record.deadline > now) continue;
 
-        // Expired — remove from registry.
+        // Expired — remove from registry and reassign or permanently fail.
         registry.completeTask(record.operationId);
-
-        const nextAttempt = (record.attempt ?? 1) + 1;
-        const policy = record.retryPolicy;
-
-        // Check maxAttempts — if exceeded, the task permanently fails (no re-dispatch).
-        if (policy && nextAttempt > policy.maxAttempts) {
-          // Atomically transition inflight → resolved (permanent failure).
-          await transitionInflightToResolved(options.engine.storage, record.operationId, 'failed');
-
-          // Emit ActivityFailedEvent so the owning workflow is notified
-          // instead of hanging indefinitely waiting for a result.
-          options.engine.dispatchEvent(
-            new ActivityFailedEvent(
-              record.operationId,
-              record.workflowId ?? '',
-              record.activityName,
-              new Error(
-                `Activity "${record.activityName}" exhausted all ${policy.maxAttempts} retry attempts`,
-              ),
-              record.attempt ?? 1,
-            ),
-          );
-          continue;
-        }
-
-        // Atomically transition inflight → queued before re-dispatch.
-        const queuedRecord: QueuedRecord = {
-          operationId: record.operationId,
-          activityName: record.activityName,
-          input: record.input,
-          queue: record.queue,
-          attempt: nextAttempt,
-          visibilityTimeout: record.visibilityTimeout,
-          retryPolicy: policy,
-          queuedAt: Date.now(),
-          workflowId: record.workflowId,
-        };
-        await transitionInflightToQueued(options.engine.storage, record.operationId, queuedRecord);
-
-        const taskDispatch: TaskDispatch = {
-          operationId: record.operationId,
-          activityName: record.activityName,
-          input: record.input,
-          queue: record.queue,
-          attempt: nextAttempt,
-          visibilityTimeout: record.visibilityTimeout,
-          workflowId: record.workflowId,
-          ...(policy ? { retryPolicy: policy } : {}),
-        };
-
-        // Apply backoff delay before re-dispatching.
-        if (policy) {
-          const delay = calculateBackoff(record.attempt ?? 1, policy);
-          scheduleDelayedDispatch(taskDispatch, delay);
-        } else {
-          dispatchTaskImpl(taskDispatch);
-        }
+        await reassignOrExpireTask(record.operationId, record);
       }
     } catch (error) {
       console.error('[weft] Visibility timeout scanner error:', error);
