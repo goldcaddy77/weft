@@ -51,8 +51,75 @@ export function initializeActivityWorkerMessageLoop(getActivity: ActivityHandler
 }
 
 // ---------------------------------------------------------------------------
+// Function serialization validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Common patterns that indicate a function captures variables from an outer
+ * scope and therefore cannot be safely serialized via `toString()`. When
+ * detected, `validateHandlerSerializable` throws a descriptive error so
+ * callers get an immediate, actionable failure instead of a silent broken
+ * worker script.
+ */
+const CLOSURE_PATTERNS: ReadonlyArray<{ pattern: RegExp; description: string }> = [
+  {
+    pattern: /\bthis\b/,
+    description: 'references `this` (class method or bound context)',
+  },
+  {
+    pattern: /\bimport\s*\(/,
+    description: 'uses dynamic `import()`',
+  },
+  {
+    pattern: /\brequire\s*\(/,
+    description: 'uses `require()`',
+  },
+];
+
+/**
+ * Validate that a handler function can be safely serialized with `toString()`
+ * for use inside a Web Worker blob script.
+ *
+ * @throws {Error} If the function body matches a known closure pattern.
+ */
+function validateHandlerSerializable(
+  name: string,
+  handler: (...arguments_: unknown[]) => unknown,
+): void {
+  const source = handler.toString();
+
+  // Native code cannot be serialized — `toString()` returns something like
+  // `function foo() { [native code] }`.
+  if (source.includes('[native code]')) {
+    throw new Error(
+      `Activity handler "${name}" is a native function and cannot be serialized for worker execution.`,
+    );
+  }
+
+  for (const { pattern, description } of CLOSURE_PATTERNS) {
+    if (pattern.test(source)) {
+      throw new Error(
+        `Activity handler "${name}" ${description}. ` +
+          'Handlers passed to createActivityWorkerEntryUrl must be self-contained functions ' +
+          'without closures over outer scope, class instances, or module-level variables.',
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Blob URL creation
 // ---------------------------------------------------------------------------
+
+/** Return value of {@link createActivityWorkerEntryUrl}. */
+export type ActivityWorkerEntryUrlResult = {
+  /** The Blob URL to pass as `workerUrl` when constructing a {@link WorkerPool}. */
+  url: string;
+  /** Revoke the underlying Blob URL to free the URL registration. Call this
+   *  once all workers that need the URL have been created (e.g., during
+   *  engine disposal). */
+  revoke: () => void;
+};
 
 /**
  * Create a Blob URL that can be used to spawn an activity Web Worker with
@@ -60,11 +127,18 @@ export function initializeActivityWorkerMessageLoop(getActivity: ActivityHandler
  *
  * @param registrations - Map of activity names to handler functions. The
  *   handlers must be serializable (no closures over local state).
- * @returns A Blob URL suitable for the `activityExecution.workerUrl` option.
+ * @returns An object containing the Blob URL and a `revoke` function that
+ *   frees the underlying URL registration. Call `revoke()` once all workers
+ *   that need the URL have been created.
+ * @throws {Error} If any handler function cannot be safely serialized.
  */
 export function createActivityWorkerEntryUrl(
   registrations: Map<string, (...arguments_: unknown[]) => unknown>,
-): string {
+): ActivityWorkerEntryUrlResult {
+  for (const [name, handler] of registrations) {
+    validateHandlerSerializable(name, handler);
+  }
+
   const registrationEntries = [...registrations.entries()]
     .map(([name, handler]) => `  activities.set(${JSON.stringify(name)}, ${handler.toString()});`)
     .join('\n');
@@ -78,5 +152,10 @@ initializeActivityWorkerMessageLoop((name) => activities.get(name));
 `;
 
   const blob = new Blob([script], { type: 'application/javascript' });
-  return URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
+
+  return {
+    url,
+    revoke: () => URL.revokeObjectURL(url),
+  };
 }

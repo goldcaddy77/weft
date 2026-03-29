@@ -39,6 +39,8 @@ export interface QueuedRecord {
   visibilityTimeout: number;
   retryPolicy?: RetryPolicy | undefined;
   queuedAt: number;
+  /** Workflow that dispatched this activity. Present when the dispatch included a workflowId. */
+  workflowId?: string | undefined;
 }
 
 /** Persisted record for a task in the inflight state. */
@@ -52,6 +54,8 @@ export interface InflightRecord {
   attempt: number;
   visibilityTimeout: number;
   retryPolicy?: RetryPolicy | undefined;
+  /** Workflow that dispatched this activity. Present when the dispatch included a workflowId. */
+  workflowId?: string | undefined;
 }
 
 /** Persisted record for a task in the resolved state. */
