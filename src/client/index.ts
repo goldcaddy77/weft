@@ -132,8 +132,10 @@ class HttpHandle implements ClientHandle {
         this.#events.dispatchEvent(new CustomEvent(event.type, { detail: event.data }));
       }
     } catch (error) {
-      // Ignore 404 — workflow completed. Surface anything unexpected.
-      if (!(error instanceof HttpClientError && error.status === 404)) {
+      if (error instanceof HttpClientError && error.status === 404) {
+        // Workflow completed or deleted — stop polling.
+        this.close();
+      } else {
         console.warn('[weft] Event poll error:', error);
       }
     }
@@ -433,7 +435,9 @@ export class HttpClient implements WeftClient {
         },
       );
     } catch (error) {
-      if (error instanceof HttpClientError) {
+      // Only convert business-level rejections (400/422) into error results.
+      // Transport errors (401, 500, etc.) should propagate to the caller.
+      if (error instanceof HttpClientError && (error.status === 400 || error.status === 422)) {
         return { updateId: '', error: error.message };
       }
       throw error;

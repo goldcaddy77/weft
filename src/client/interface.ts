@@ -32,7 +32,7 @@ import type {
  * library mode (events flow through `EventTarget` directly) and server mode
  * (events are bridged over WebSocket).
  */
-export interface ClientHandle extends TypedEventTarget<WeftEventMap> {
+export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable {
   /** The workflow's unique identifier. */
   readonly id: string;
 
