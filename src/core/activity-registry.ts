@@ -111,6 +111,15 @@ export class ActivityRegistry {
     fn: T,
     options?: ActivityRegistrationOptions,
   ): void {
+    // Clean up any previous registration under this name to avoid leaking
+    // the old function in #strongRefs and #metadata.
+    const existingRef = this.#nameIndex.get(name);
+    const existingFn = existingRef?.deref();
+    if (existingFn && existingFn !== fn) {
+      this.#metadata.delete(existingFn);
+      this.#strongRefs.delete(existingFn);
+    }
+
     const extracted = extractDefinitionMetadata(fn);
 
     const metadata: ActivityMetadata = {
