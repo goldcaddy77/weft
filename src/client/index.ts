@@ -113,6 +113,7 @@ class HttpHandle implements ClientHandle {
   #lastEventIndex = 0;
   #pollInFlight = false;
   #closed = false;
+  #listenerCount = 0;
 
   constructor(id: string, client: HttpClient) {
     this.id = id;
@@ -213,6 +214,7 @@ class HttpHandle implements ClientHandle {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | AddEventListenerOptions,
   ): void {
+    this.#listenerCount++;
     this.#ensurePolling();
     this.#events.addEventListener(type, listener, options);
   }
@@ -223,6 +225,10 @@ class HttpHandle implements ClientHandle {
     options?: boolean | EventListenerOptions,
   ): void {
     this.#events.removeEventListener(type, listener, options);
+    this.#listenerCount = Math.max(0, this.#listenerCount - 1);
+    if (this.#listenerCount === 0) {
+      this.close();
+    }
   }
 }
 
@@ -248,9 +254,9 @@ export class HttpClient implements WeftClient {
     if (options?.id !== undefined) body['id'] = options.id;
     if (options?.executionTimeout !== undefined)
       body['executionTimeout'] = options.executionTimeout;
-    if (options?.searchAttributes !== undefined)
-      body['searchAttributes'] = options.searchAttributes;
-    if (options?.idempotencyKey !== undefined) body['idempotencyKey'] = options.idempotencyKey;
+    // searchAttributes and idempotencyKey are not yet forwarded by the server's
+    // POST /v1/workflows handler — omit them from the HTTP payload to avoid
+    // silent divergence between LocalClient and HttpClient.
 
     const response = await request<{ id: string }>(this.baseUrl, '/workflows', this.headers, {
       method: 'POST',
