@@ -624,6 +624,9 @@ export function serve(options: ServeOptions): WeftServer {
                   const inflightKey = KEYS.operationInflight(opId);
                   const existing = await options.engine.storage.get(inflightKey);
                   if (existing) {
+                    // Surgical update: only mutate the deadline field on a record
+                    // we wrote (InflightRecord). Full validation is unnecessary here
+                    // because the record is being refreshed, not reinterpreted.
                     const record = decode(existing) as Record<string, unknown>;
                     record['deadline'] = Date.now() + timeout;
                     await options.engine.storage.put(inflightKey, encode(record));
@@ -683,7 +686,7 @@ export function serve(options: ServeOptions): WeftServer {
                     );
                     return;
                   }
-                  await reassignTask(record, workerId);
+                  await reassignTask(record);
                 } else {
                   // Storage write hadn't committed — clean up the key just in case.
                   console.warn(
@@ -771,7 +774,7 @@ export function serve(options: ServeOptions): WeftServer {
    * Shared between the WebSocket close handler and the visibility timeout scanner.
    * Throws on failure — callers are responsible for error handling.
    */
-  async function reassignTask(task: ReassignableTask, _previousWorkerId: string): Promise<void> {
+  async function reassignTask(task: ReassignableTask): Promise<void> {
     const nextAttempt = (task.attempt ?? 1) + 1;
     const policy = task.retryPolicy;
 
@@ -836,7 +839,6 @@ export function serve(options: ServeOptions): WeftServer {
       for await (const [, value] of options.engine.storage.scan('op:inflight:')) {
         const record = decode(value) as Record<string, unknown>;
         const deadline = record['deadline'] as number | undefined;
-        const workerId = record['workerId'] as string | undefined;
 
         if (deadline === undefined || deadline > now) continue;
 
@@ -850,7 +852,7 @@ export function serve(options: ServeOptions): WeftServer {
         // Expired — remove from registry.
         registry.completeTask(record.operationId);
 
-        await reassignTask(record, workerId ?? 'unknown');
+        await reassignTask(record);
       }
     } catch (error) {
       console.error('[weft] Visibility timeout scanner error:', error);
