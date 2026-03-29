@@ -1,11 +1,12 @@
 /**
  * WeakMap-backed activity registry.
  *
- * Metadata is keyed to function references so that when an activity function
- * is garbage collected, its metadata is automatically cleaned up. A name
- * index backed by `WeakRef` enables lookup by string name; a
- * `FinalizationRegistry` prunes stale name entries when the underlying
- * function is collected.
+ * Metadata is keyed to function references in a WeakMap so that lookup by
+ * function reference is O(1). A separate name index (plain Map) holds strong
+ * references to registered functions, keeping them alive until explicitly
+ * unregistered. When a function is unregistered, removing it from the name
+ * index releases the strong reference and allows the WeakMap entry to be
+ * collected.
  *
  * @module core/activity-registry
  */
@@ -70,32 +71,15 @@ function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOpti
 // ---------------------------------------------------------------------------
 
 export class ActivityRegistry {
-  /**
-   * Primary storage: metadata keyed to the activity function object.
-   * The WeakMap allows metadata lookup without preventing GC once the
-   * function is removed from #strongRefs.
-   */
+  /** Metadata keyed to the activity function object. */
   #metadata = new WeakMap<object, ActivityMetadata>();
 
-  /** Strong references that keep registered functions alive until explicitly unregistered. */
-  #strongRefs = new Set<object>();
-
   /**
-   * Name → function lookup via WeakRef. Enables resolving activities by
-   * string name (required for worker-based execution where the generator
-   * yields a name, not a function reference).
+   * Name → function lookup. Holds strong references to registered functions,
+   * keeping them (and their WeakMap metadata) alive until explicitly
+   * unregistered.
    */
-  #nameIndex = new Map<string, WeakRef<object>>();
-
-  /**
-   * Prunes stale #nameIndex entries when a function is garbage collected.
-   */
-  #finalization = new FinalizationRegistry<string>((name) => {
-    const ref = this.#nameIndex.get(name);
-    if (ref && ref.deref() === undefined) {
-      this.#nameIndex.delete(name);
-    }
-  });
+  #nameIndex = new Map<string, object>();
 
   /**
    * Register an activity function with associated metadata.
@@ -112,12 +96,10 @@ export class ActivityRegistry {
     options?: ActivityRegistrationOptions,
   ): void {
     // Clean up any previous registration under this name to avoid leaking
-    // the old function in #strongRefs and #metadata.
-    const existingRef = this.#nameIndex.get(name);
-    const existingFn = existingRef?.deref();
+    // the old function in #metadata.
+    const existingFn = this.#nameIndex.get(name);
     if (existingFn && existingFn !== fn) {
       this.#metadata.delete(existingFn);
-      this.#strongRefs.delete(existingFn);
     }
 
     const extracted = extractDefinitionMetadata(fn);
@@ -137,32 +119,18 @@ export class ActivityRegistry {
     if (idempotent !== undefined) metadata.idempotent = idempotent;
 
     this.#metadata.set(fn, metadata);
-    this.#strongRefs.add(fn);
-    this.#nameIndex.set(name, new WeakRef(fn));
-    this.#finalization.register(fn, name);
+    this.#nameIndex.set(name, fn);
   }
 
   /** Check whether an activity is registered under the given name. */
   has(name: string): boolean {
-    const ref = this.#nameIndex.get(name);
-    if (!ref) return false;
-    const fn = ref.deref();
-    if (!fn) {
-      this.#nameIndex.delete(name);
-      return false;
-    }
-    return true;
+    return this.#nameIndex.has(name);
   }
 
-  /** Resolve a function by its registered name. Returns `undefined` if not found or collected. */
+  /** Resolve a function by its registered name. Returns `undefined` if not found. */
   resolve(name: string): ((...arguments_: unknown[]) => unknown) | undefined {
-    const ref = this.#nameIndex.get(name);
-    if (!ref) return undefined;
-    const fn = ref.deref();
-    if (!fn) {
-      this.#nameIndex.delete(name);
-      return undefined;
-    }
+    const fn = this.#nameIndex.get(name);
+    if (!fn) return undefined;
     return fn as (...arguments_: unknown[]) => unknown;
   }
 
@@ -181,23 +149,15 @@ export class ActivityRegistry {
 
   /** Remove an activity registration by name. */
   unregister(name: string): void {
-    const ref = this.#nameIndex.get(name);
-    const fn = ref?.deref();
+    const fn = this.#nameIndex.get(name);
     if (fn) {
       this.#metadata.delete(fn);
-      this.#strongRefs.delete(fn);
     }
     this.#nameIndex.delete(name);
   }
 
   /** Iterate over all registered activity names. */
   *names(): IterableIterator<string> {
-    for (const [name, ref] of this.#nameIndex) {
-      if (ref.deref()) {
-        yield name;
-      } else {
-        this.#nameIndex.delete(name);
-      }
-    }
+    yield* this.#nameIndex.keys();
   }
 }
