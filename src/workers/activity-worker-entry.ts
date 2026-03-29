@@ -126,30 +126,20 @@ function validateHandlerSerializable(
 // Blob URL creation
 // ---------------------------------------------------------------------------
 
-/** Return value of {@link createActivityWorkerEntryUrl}. */
-export type ActivityWorkerEntryUrlResult = {
-  /** The Blob URL to pass as `workerUrl` when constructing a {@link WorkerPool}. */
-  url: string;
-  /** Revoke the underlying Blob URL to free the URL registration. Call this
-   *  once all workers that need the URL have been created (e.g., during
-   *  engine disposal). */
-  revoke: () => void;
-};
-
 /**
  * Create a Blob URL that can be used to spawn an activity Web Worker with
  * the given activity registrations.
  *
  * @param registrations - Map of activity names to handler functions. The
  *   handlers must be serializable (no closures over local state).
- * @returns An object containing the Blob URL and a `revoke` function that
- *   frees the underlying URL registration. Call `revoke()` once all workers
- *   that need the URL have been created.
+ * @returns A Blob URL string suitable for the `activityExecution.workerUrl`
+ *   option. Call {@link revokeActivityWorkerEntryUrl} when the URL is no
+ *   longer needed (e.g., during engine disposal) to free the registration.
  * @throws {Error} If any handler function cannot be safely serialized.
  */
 export function createActivityWorkerEntryUrl(
   registrations: Map<string, (...arguments_: unknown[]) => unknown>,
-): ActivityWorkerEntryUrlResult {
+): string {
   for (const [name, handler] of registrations) {
     validateHandlerSerializable(name, handler);
   }
@@ -167,10 +157,14 @@ initializeActivityWorkerMessageLoop((name) => activities.get(name));
 `;
 
   const blob = new Blob([script], { type: 'application/javascript' });
-  const url = URL.createObjectURL(blob);
+  return URL.createObjectURL(blob);
+}
 
-  return {
-    url,
-    revoke: () => URL.revokeObjectURL(url),
-  };
+/**
+ * Revoke a Blob URL previously created by {@link createActivityWorkerEntryUrl}.
+ * Call this once all workers that need the URL have been constructed (e.g.,
+ * during engine disposal) to free the URL registration and prevent leaks.
+ */
+export function revokeActivityWorkerEntryUrl(url: string): void {
+  URL.revokeObjectURL(url);
 }

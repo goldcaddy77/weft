@@ -721,23 +721,29 @@ export function serve(options: ServeOptions): WeftServer {
 
               // Extend visibility deadline for all in-flight tasks assigned to this worker.
               for (const task of registry.getWorkerTasks(workerId)) {
-                registry.extendVisibility(task.operationId, task.visibilityTimeout);
+                const newDeadline = registry.extendVisibility(
+                  task.operationId,
+                  task.visibilityTimeout,
+                );
 
-                // Update persisted storage record with the new deadline.
-                void withRetry(async () => {
-                  const inflightKey = KEYS.operationInflight(task.operationId);
-                  const existing = await options.engine.storage.get(inflightKey);
-                  if (existing) {
-                    const record = decode(existing) as Record<string, unknown>;
-                    record['deadline'] = Date.now() + task.visibilityTimeout;
-                    await options.engine.storage.put(inflightKey, encode(record));
-                  }
-                }, `extend visibility for task "${task.operationId}"`).catch((error) => {
-                  console.error(
-                    `[weft] Failed to extend visibility for task "${task.operationId}":`,
-                    error,
-                  );
-                });
+                // Update persisted storage record with the same deadline the
+                // registry computed, so the two stay in sync across restarts.
+                if (newDeadline !== undefined) {
+                  void withRetry(async () => {
+                    const inflightKey = KEYS.operationInflight(task.operationId);
+                    const existing = await options.engine.storage.get(inflightKey);
+                    if (existing) {
+                      const record = decode(existing) as Record<string, unknown>;
+                      record['deadline'] = newDeadline;
+                      await options.engine.storage.put(inflightKey, encode(record));
+                    }
+                  }, `extend visibility for task "${task.operationId}"`).catch((error) => {
+                    console.error(
+                      `[weft] Failed to extend visibility for task "${task.operationId}":`,
+                      error,
+                    );
+                  });
+                }
               }
             }
             break;
