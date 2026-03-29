@@ -589,17 +589,17 @@ describe('WorkerRegistry', () => {
       expect(registry.getWorkerTasks('w1')).toHaveLength(0);
     });
 
-    it('checkExpiredTasks decrements worker inFlight for each expired task', () => {
+    it('checkExpiredTasks removes expired tasks from tracking', () => {
       const registry = new WorkerRegistry();
       registry.register({ id: 'w1', queue: 'default', activities: ['doWork'], concurrency: 5 });
 
       registry.assignTask('w1', 'op-1', 500);
       registry.assignTask('w1', 'op-2', 500);
-      expect(registry.getWorker('w1')!.inFlight).toBe(2);
 
-      registry.checkExpiredTasks(Date.now() + 60_000);
-
-      expect(registry.getWorker('w1')!.inFlight).toBe(0);
+      const expired = registry.checkExpiredTasks(Date.now() + 60_000);
+      expect(expired).toHaveLength(2);
+      expect(registry.isAssigned('op-1')).toBe(false);
+      expect(registry.isAssigned('op-2')).toBe(false);
     });
 
     it('checkExpiredTasks returns nothing on second call for same tasks', () => {

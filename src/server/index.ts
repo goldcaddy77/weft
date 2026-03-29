@@ -66,7 +66,7 @@ export interface TaskDispatch {
   /** Queue to dispatch the task to. Defaults to `'default'`. */
   queue?: string;
   /** Workflow ID. Required for sticky routing to track worker affinity. */
-  workflowId?: string;
+  workflowId?: string | undefined;
   /** When true, prefer the worker that last handled a task for this workflow. Requires `workflowId`. */
   sticky?: boolean;
   /** Visibility timeout in milliseconds. Defaults to `DEFAULT_VISIBILITY_TIMEOUT` (30 000). */
@@ -115,8 +115,52 @@ const TASK_RESULT_RE = /^\/v1\/tasks\/([\w-]+)\/result$/;
 const MAX_POLL_TIMEOUT = 60_000;
 const DEFAULT_POLL_TIMEOUT = 30_000;
 const DEFAULT_VISIBILITY_TIMEOUT = 30_000;
-const MAX_WORKER_CONCURRENCY = 100;
-const VALID_TASK_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed']);
+const MIN_VISIBILITY_TIMEOUT = 10;
+const MAX_VISIBILITY_TIMEOUT = 3_600_000;
+const MAX_WORKER_CONCURRENCY = 1_000;
+
+/**
+ * Clamp a visibility timeout to the allowed range.
+ *
+ * Negative or near-zero values cause immediate expiry, and `Infinity`
+ * prevents expiry entirely—both are dangerous. This helper constrains
+ * the value to [10 ms, 3 600 000 ms] (10 milliseconds to 1 hour).
+ */
+function clampVisibilityTimeout(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_VISIBILITY_TIMEOUT;
+  return Math.min(Math.max(value, MIN_VISIBILITY_TIMEOUT), MAX_VISIBILITY_TIMEOUT);
+}
+
+/**
+ * Retry an async operation with a simple linear backoff.
+ *
+ * `maxAttempts` controls the total number of tries (including the initial one).
+ * The default of `2` means: try once, and if it fails, retry once more.
+ *
+ * Used for critical fire-and-forget paths (event persistence, inflight
+ * restoration) where a single transient failure should not silently lose data.
+ */
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  label: string,
+  maxAttempts = 2,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        console.warn(`[weft] Retrying "${label}" (attempt ${attempt + 1}/${maxAttempts})`);
+        // Brief delay before retry — 100 ms × attempt number.
+        await Bun.sleep(100 * attempt);
+      }
+    }
+  }
+  // All attempts exhausted — throw the last error so callers can handle it.
+  throw lastError;
+}
 
 function isWorkerConnection(pathname: string): boolean {
   return WORKER_STREAM_RE.test(pathname);
@@ -197,6 +241,13 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
   const sequenceCounters = new Map<string, number>();
   const sequenceInitPromises = new Map<string, Promise<void>>();
 
+  /**
+   * Per-workflow serialization chain. Each workflow's events are persisted
+   * sequentially by chaining promises—this eliminates the read-modify-write
+   * race on `sequenceCounters` without requiring an explicit mutex.
+   */
+  const sequenceChains = new Map<string, Promise<void>>();
+
   /** Ensure the sequence counter for a workflow is seeded from storage. */
   function ensureSequenceInitialized(workflowId: string): Promise<void> {
     const existing = sequenceInitPromises.get(workflowId);
@@ -228,6 +279,13 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     return promise;
   }
 
+  /**
+   * Atomically claim the next sequence number for a workflow.
+   *
+   * This is safe to call from concurrent async contexts because callers
+   * serialize through `sequenceChains`—only one caller executes at a time
+   * per workflow, so the read-modify-write on the counter is effectively atomic.
+   */
   function nextSequence(workflowId: string): number {
     const current = sequenceCounters.get(workflowId);
     if (current === undefined) {
@@ -237,6 +295,42 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     }
     sequenceCounters.set(workflowId, current + 1);
     return current;
+  }
+
+  /** Persist an event to storage and publish to WebSocket channels. */
+  async function persistAndPublishEvent(
+    workflowId: string,
+    eventType: string,
+    message: string,
+  ): Promise<void> {
+    await ensureSequenceInitialized(workflowId);
+
+    const parsed = JSON.parse(message) as {
+      type: string;
+      timestamp: number;
+      data: Record<string, unknown>;
+    };
+
+    // Claim the sequence number once — outside the retry scope so a
+    // failed storage write doesn't consume an additional number.
+    const sequence = nextSequence(workflowId);
+    const storageKey = KEYS.event(workflowId, sequence);
+    const encoded = encode(parsed);
+
+    await withRetry(
+      async () => engine.storage.put(storageKey, encoded),
+      `persist event "${eventType}" for workflow "${workflowId}"`,
+    );
+
+    // Publish to the workflow's watch channel
+    const watchChannel = `/v1/workflows/${workflowId}/watch`;
+    server.publish(watchChannel, message);
+
+    // For token events, also publish to the stream channel
+    if (eventType === TokenEvent.type) {
+      const streamChannel = `/v1/workflows/${workflowId}/stream`;
+      server.publish(streamChannel, message);
+    }
   }
 
   const eventTypes = [
@@ -273,35 +367,19 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
         // workflow), so chain the persistence behind it. WebSocket publishing
         // is deferred until persistence succeeds so clients never see events
         // that failed to store.
-        void (async () => {
-          try {
-            await ensureSequenceInitialized(workflowId);
-
-            const parsed = JSON.parse(message) as {
-              type: string;
-              timestamp: number;
-              data: Record<string, unknown>;
-            };
-            const sequence = nextSequence(workflowId);
-            const storageKey = KEYS.event(workflowId, sequence);
-            await engine.storage.put(storageKey, encode(parsed));
-
-            // Publish to the workflow's watch channel
-            const watchChannel = `/v1/workflows/${workflowId}/watch`;
-            server.publish(watchChannel, message);
-
-            // For token events, also publish to the stream channel
-            if (eventType === TokenEvent.type) {
-              const streamChannel = `/v1/workflows/${workflowId}/stream`;
-              server.publish(streamChannel, message);
-            }
-          } catch (error) {
+        //
+        // Events for the same workflow are serialized through `sequenceChains`
+        // to prevent concurrent handlers from racing on `nextSequence`.
+        const previousChain = sequenceChains.get(workflowId) ?? Promise.resolve();
+        const nextChain = previousChain
+          .then(() => persistAndPublishEvent(workflowId, eventType, message))
+          .catch((error) => {
             console.error(
               `[weft] Failed to persist event "${eventType}" for workflow "${workflowId}":`,
               error,
             );
-          }
-        })();
+          });
+        sequenceChains.set(workflowId, nextChain);
       },
       { signal },
     );
@@ -343,6 +421,7 @@ export function serve(options: ServeOptions): WeftServer {
   const workerSockets = new Map<string, ServerWebSocket<WebSocketData>>();
   /** Tracks per-workflow worker affinity for sticky routing. Maps workflowId → workerId. */
   const workerAffinity = new Map<string, string>();
+  /** Tracks pending backoff-delay timers so they can be cleared on shutdown. */
   const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   /**
@@ -373,21 +452,38 @@ export function serve(options: ServeOptions): WeftServer {
     }
   }
 
+  /** Schedule a delayed dispatch, tracking the timer for cleanup on shutdown. */
+  function scheduleDelayedDispatch(task: TaskDispatch, delay: number): void {
+    const timer = setTimeout(() => {
+      pendingTimers.delete(timer);
+      dispatchTaskImpl(task);
+    }, delay);
+    pendingTimers.add(timer);
+  }
+
   /**
-   * Requeue an inflight task with incremented attempt, respecting retry policy.
-   * Used by both the WebSocket close handler and the visibility timeout scanner.
+   * Given a persisted inflight record, either permanently fail the task (if
+   * retry attempts are exhausted) or transition it back to queued and
+   * re-dispatch with backoff. Both the worker-disconnect handler and the
+   * visibility-timeout scanner share this logic.
    */
-  async function requeueTask(record: InflightRecord): Promise<void> {
+  async function reassignOrExpireTask(operationId: string, record: InflightRecord): Promise<void> {
     const nextAttempt = (record.attempt ?? 1) + 1;
     const policy = record.retryPolicy;
 
     if (policy && nextAttempt > policy.maxAttempts) {
-      await transitionInflightToResolved(options.engine.storage, record.operationId, 'failed');
-      taskQueue.complete({
-        operationId: record.operationId,
-        status: 'failed',
-        error: `Max attempts (${policy.maxAttempts}) exceeded`,
-      });
+      await transitionInflightToResolved(options.engine.storage, operationId, 'failed');
+      options.engine.dispatchEvent(
+        new ActivityFailedEvent(
+          record.operationId,
+          record.workflowId ?? '',
+          record.activityName,
+          new Error(
+            `Activity "${record.activityName}" exhausted all ${policy.maxAttempts} retry attempts`,
+          ),
+          record.attempt ?? 1,
+        ),
+      );
       return;
     }
 
@@ -400,28 +496,26 @@ export function serve(options: ServeOptions): WeftServer {
       visibilityTimeout: record.visibilityTimeout,
       retryPolicy: policy,
       queuedAt: Date.now(),
+      workflowId: record.workflowId,
     };
-    await transitionInflightToQueued(options.engine.storage, record.operationId, queuedRecord);
+    await transitionInflightToQueued(options.engine.storage, operationId, queuedRecord);
 
-    const task: TaskDispatch = {
+    const taskDispatch: TaskDispatch = {
       operationId: record.operationId,
       activityName: record.activityName,
       input: record.input,
       queue: record.queue,
       attempt: nextAttempt,
       visibilityTimeout: record.visibilityTimeout,
+      workflowId: record.workflowId,
       ...(policy ? { retryPolicy: policy } : {}),
     };
 
     if (policy) {
       const delay = calculateBackoff(record.attempt ?? 1, policy);
-      const handle = setTimeout(() => {
-        pendingTimers.delete(handle);
-        dispatchTaskImpl(task);
-      }, delay);
-      pendingTimers.add(handle);
+      scheduleDelayedDispatch(taskDispatch, delay);
     } else {
-      dispatchTaskImpl(task);
+      dispatchTaskImpl(taskDispatch);
     }
   }
 
@@ -534,7 +628,7 @@ export function serve(options: ServeOptions): WeftServer {
             );
           }
 
-          if (!VALID_TASK_STATUSES.has(status)) {
+          if (status !== 'completed' && status !== 'failed') {
             return Response.json(
               { error: 'status must be "completed" or "failed"' },
               { status: 400 },
@@ -543,7 +637,7 @@ export function serve(options: ServeOptions): WeftServer {
 
           taskQueue.complete({
             operationId,
-            status: status as 'completed' | 'failed',
+            status,
             value: body['value'],
             error: typeof body['error'] === 'string' ? body['error'] : undefined,
           });
@@ -593,11 +687,15 @@ export function serve(options: ServeOptions): WeftServer {
             const activities = parsed['activities'];
             const concurrency = parsed['concurrency'];
 
+            // Validate and cap concurrency to prevent a misconfigured client
+            // from claiming an unbounded number of task slots.
+            const rawConcurrency = typeof concurrency === 'number' ? concurrency : 10;
+            const clampedConcurrency = Math.min(
+              Math.max(1, Math.floor(rawConcurrency)),
+              MAX_WORKER_CONCURRENCY,
+            );
+
             ws.data.workerId = workerId;
-            const clampedConcurrency =
-              typeof concurrency === 'number'
-                ? Math.min(Math.max(1, concurrency), MAX_WORKER_CONCURRENCY)
-                : 10;
             registry.register({
               id: workerId,
               queue: ws.data.queue ?? 'default',
@@ -636,18 +734,29 @@ export function serve(options: ServeOptions): WeftServer {
 
               // Extend visibility deadline for all in-flight tasks assigned to this worker.
               for (const task of registry.getWorkerTasks(workerId)) {
-                registry.extendVisibility(task.operationId, task.visibilityTimeout);
+                const newDeadline = registry.extendVisibility(
+                  task.operationId,
+                  task.visibilityTimeout,
+                );
 
-                // Update persisted storage record with the new deadline.
-                void (async () => {
-                  const inflightKey = KEYS.operationInflight(task.operationId);
-                  const existing = await options.engine.storage.get(inflightKey);
-                  if (existing) {
-                    const record = decode(existing) as Record<string, unknown>;
-                    record['deadline'] = Date.now() + task.visibilityTimeout;
-                    await options.engine.storage.put(inflightKey, encode(record));
-                  }
-                })();
+                // Update persisted storage record with the same deadline the
+                // registry computed, so the two stay in sync across restarts.
+                if (newDeadline !== undefined) {
+                  void withRetry(async () => {
+                    const inflightKey = KEYS.operationInflight(task.operationId);
+                    const existing = await options.engine.storage.get(inflightKey);
+                    if (existing) {
+                      const record = decode(existing) as Record<string, unknown>;
+                      record['deadline'] = newDeadline;
+                      await options.engine.storage.put(inflightKey, encode(record));
+                    }
+                  }, `extend visibility for task "${task.operationId}"`).catch((error) => {
+                    console.error(
+                      `[weft] Failed to extend visibility for task "${task.operationId}":`,
+                      error,
+                    );
+                  });
+                }
               }
             }
             break;
@@ -676,8 +785,10 @@ export function serve(options: ServeOptions): WeftServer {
                 const existing = await options.engine.storage.get(inflightKey);
 
                 if (existing) {
-                  await requeueTask(decode(existing) as InflightRecord);
+                  const record = decode(existing) as InflightRecord;
+                  await reassignOrExpireTask(task.operationId, record);
                 } else {
+                  // No inflight record in storage — clean up the inflight key just in case.
                   await options.engine.storage.delete(inflightKey);
                 }
               } catch (error) {
@@ -718,25 +829,28 @@ export function serve(options: ServeOptions): WeftServer {
   // Restore persisted in-flight records from storage so visibility timeout
   // tracking survives server restarts. Records whose deadline has already
   // passed are removed from storage (the task will be retried by the engine).
-  void (async () => {
-    try {
-      for await (const [key, value] of options.engine.storage.scan('op:inflight:')) {
-        const record = decode(value) as InflightRecord;
-        const now = Date.now();
-        if (record.deadline <= now) {
-          // Expired while the server was down — remove from storage.
-          void options.engine.storage.delete(key);
-        } else {
-          // Still within the visibility window — seed the registry with the
-          // remaining time so `checkExpiredTasks` can track it.
-          const remaining = record.deadline - now;
-          registry.assignTask(record.workerId, record.operationId, remaining);
-        }
+  void withRetry(async () => {
+    for await (const [key, value] of options.engine.storage.scan('op:inflight:')) {
+      const record = decode(value) as {
+        operationId: string;
+        workerId: string;
+        deadline: number;
+        visibilityTimeout?: number;
+      };
+      const now = Date.now();
+      if (record.deadline <= now) {
+        // Expired while the server was down — remove from storage.
+        void options.engine.storage.delete(key);
+      } else {
+        // Still within the visibility window — seed the registry with the
+        // remaining time so `checkExpiredTasks` can track it.
+        const remaining = record.deadline - now;
+        registry.assignTask(record.workerId, record.operationId, remaining);
       }
-    } catch (error) {
-      console.error('[weft] Failed to restore in-flight tasks from storage:', error);
     }
-  })();
+  }, 'restore in-flight tasks from storage').catch((error) => {
+    console.error('[weft] Failed to restore in-flight tasks from storage:', error);
+  });
 
   // ---------------------------------------------------------------------------
   // Visibility timeout expiry scanner
@@ -754,10 +868,9 @@ export function serve(options: ServeOptions): WeftServer {
 
         if (record.deadline > now) continue;
 
-        // Expired — remove from registry.
+        // Expired — remove from registry and reassign or permanently fail.
         registry.completeTask(record.operationId);
-
-        await requeueTask(record);
+        await reassignOrExpireTask(record.operationId, record);
       }
     } catch (error) {
       console.error('[weft] Visibility timeout scanner error:', error);
@@ -771,15 +884,17 @@ export function serve(options: ServeOptions): WeftServer {
   // Registered last — disposed first (reverse order).
   stack.defer(() => {
     clearInterval(visibilityPollHandle);
-    for (const handle of pendingTimers) {
-      clearTimeout(handle);
+    // Clear all pending backoff-delay timers to prevent callbacks firing
+    // against a stopped server.
+    for (const timer of pendingTimers) {
+      clearTimeout(timer);
     }
     pendingTimers.clear();
   });
 
   function dispatchTaskImpl(task: TaskDispatch): boolean {
     const queue = task.queue ?? 'default';
-    const visibilityTimeout = task.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT;
+    const visibilityTimeout = clampVisibilityTimeout(task.visibilityTimeout);
 
     // Each task assigned to exactly one worker — reject duplicates.
     if (registry.isAssigned(task.operationId) || taskQueue.isTracked(task.operationId)) {
@@ -823,6 +938,7 @@ export function serve(options: ServeOptions): WeftServer {
           attempt: task.attempt ?? 1,
           visibilityTimeout,
           retryPolicy: task.retryPolicy,
+          workflowId: task.workflowId,
         };
         void options.engine.storage.batch([
           { type: 'delete', key: KEYS.operationQueued(task.operationId) },
@@ -853,6 +969,7 @@ export function serve(options: ServeOptions): WeftServer {
       visibilityTimeout,
       retryPolicy: task.retryPolicy,
       queuedAt: Date.now(),
+      workflowId: task.workflowId,
     };
     void markQueued(options.engine.storage, queuedRecord);
 

@@ -321,7 +321,7 @@ describe('worker WebSocket protocol', () => {
     await Bun.sleep(50);
   });
 
-  it('clamps worker concurrency to MAX_WORKER_CONCURRENCY (100) when a huge value is sent', async () => {
+  it('clamps worker concurrency to MAX_WORKER_CONCURRENCY (1000) when a huge value is sent', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
 
@@ -333,7 +333,7 @@ describe('worker WebSocket protocol', () => {
     });
 
     const worker = server.registry.getWorker('w-clamp-max');
-    expect(worker?.concurrency).toBe(100);
+    expect(worker?.concurrency).toBe(1_000);
 
     ws.close();
     await Bun.sleep(50);

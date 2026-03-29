@@ -52,7 +52,6 @@ export const KEYS = {
   updateIdempotency: (workflowId: string, key: string) => `upk:${workflowId}:${key}`,
   budget: (namespace: string, period: string, date: string) =>
     `budget:${namespace}:${period}:${date}`,
-  budgetCharged: (operationId: string) => `budget:charged:${operationId}`,
   review: (workflowId: string, reviewId: string) => `review:${workflowId}:${reviewId}`,
   offload: (workflowId: string, key: string) => `offload:${workflowId}:${key}`,
   archive: (workflowId: string, key: string) => `archive:${workflowId}:${key}`,
@@ -62,4 +61,5 @@ export const KEYS = {
   streamChunk: (workflowId: string, key: string, chunkIndex: number) =>
     `blob:${workflowId}:${key}:chunk:${String(chunkIndex).padStart(10, '0')}`,
   streamMetadata: (workflowId: string, key: string) => `blob:${workflowId}:${key}:meta`,
+  budgetCharged: (operationId: string) => `budget-charged:${operationId}`,
 } as const;

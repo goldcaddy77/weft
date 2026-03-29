@@ -53,8 +53,8 @@ export class LongPollWorker implements Disposable {
 
   /** Stop polling and wait for in-flight to finish. */
   async stop(): Promise<void> {
-    this.#running = false;
     this.#abortController.abort();
+    this.#running = false;
 
     // Wait for in-flight tasks to complete
     while (this.#inFlight > 0) {
@@ -142,9 +142,11 @@ export class LongPollWorker implements Disposable {
     task: { operationId: string; activityName: string; input: unknown },
     resultUrl: string,
   ): Promise<void> {
-    const activityFunction = this.#options.activities[task.activityName];
-    if (activityFunction === undefined) {
-      try {
+    this.#inFlight += 1;
+
+    try {
+      const activityFunction = this.#options.activities[task.activityName];
+      if (activityFunction === undefined) {
         await fetch(resultUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -155,15 +157,9 @@ export class LongPollWorker implements Disposable {
           }),
           signal: this.#abortController.signal,
         });
-      } catch {
-        // Best-effort error reporting; server will eventually time out the task
+        return;
       }
-      return;
-    }
 
-    this.#inFlight += 1;
-
-    try {
       const result = await activityFunction(task.input);
 
       await fetch(resultUrl, {
