@@ -258,6 +258,9 @@ export class TaskQueue {
 
   /** Remove and return pending tasks older than `maxAge` milliseconds. */
   removeStale(maxAge: number): PendingTask[] {
+    if (!Number.isFinite(maxAge) || maxAge < 0) {
+      throw new RangeError(`maxAge must be a finite, non-negative number, got: ${maxAge}`);
+    }
     const cutoff = Date.now() - maxAge;
     const stale: PendingTask[] = [];
 

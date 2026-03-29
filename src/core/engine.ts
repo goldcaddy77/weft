@@ -1594,6 +1594,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         workflowOps.add(operation.operationId);
 
         await promise;
+
+        // If the workflow was cancelled/completed/failed while sleeping,
+        // the resolver was invoked by #cleanupWaiters to unblock this await.
+        // Skip feeding a result since the workflow is no longer running.
+        const postSleepState = await this.#loadWorkflowState(workflowId);
+        if (!postSleepState || postSleepState.status !== 'running') break;
+
         this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
         break;
       }
@@ -2135,13 +2142,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     for (const key of this.#updateWaiters.keys()) {
       if (key.startsWith(prefix)) this.#updateWaiters.delete(key);
     }
-    for (const key of this.#sleepResolvers.keys()) {
-      if (key.startsWith(prefix)) this.#sleepResolvers.delete(key);
-    }
     const sleepOps = this.#sleepResolversByWorkflow.get(workflowId);
     if (sleepOps) {
       for (const operationId of sleepOps) {
-        this.#sleepResolvers.delete(`${workflowId}:${operationId}`);
+        const key = `${workflowId}:${operationId}`;
+        const resolver = this.#sleepResolvers.get(key);
+        if (resolver) resolver();
+        this.#sleepResolvers.delete(key);
       }
       this.#sleepResolversByWorkflow.delete(workflowId);
     }
