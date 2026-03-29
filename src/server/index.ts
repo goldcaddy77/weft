@@ -637,18 +637,25 @@ export function serve(options: ServeOptions): WeftServer {
           // Full task metadata (activityName, input, etc.) is read from storage.
           for (const task of inFlightTasks) {
             void (async () => {
-              const inflightKey = KEYS.operationInflight(task.operationId);
-              const existing = await options.engine.storage.get(inflightKey);
+              try {
+                const inflightKey = KEYS.operationInflight(task.operationId);
+                const existing = await options.engine.storage.get(inflightKey);
 
-              if (existing) {
-                const record = decode(existing) as ReassignableTask;
-                await reassignTask(record, workerId);
-              } else {
-                // Storage write hadn't committed — clean up the key just in case.
-                console.warn(
-                  `[weft] No inflight record found in storage for task "${task.operationId}" — skipping reassignment`,
+                if (existing) {
+                  const record = decode(existing) as ReassignableTask;
+                  await reassignTask(record, workerId);
+                } else {
+                  // Storage write hadn't committed — clean up the key just in case.
+                  console.warn(
+                    `[weft] No inflight record found in storage for task "${task.operationId}" — skipping reassignment`,
+                  );
+                  await options.engine.storage.delete(inflightKey);
+                }
+              } catch (error) {
+                console.error(
+                  `[weft] Failed to reassign task "${task.operationId}" from worker "${workerId}":`,
+                  error,
                 );
-                await options.engine.storage.delete(inflightKey);
               }
             })();
           }
@@ -766,7 +773,13 @@ export function serve(options: ServeOptions): WeftServer {
       // Apply backoff delay before re-dispatching.
       if (policy) {
         const delay = calculateBackoff(task.attempt ?? 1, policy);
-        setTimeout(() => void dispatchTaskImpl(taskDispatch), delay);
+        setTimeout(
+          () =>
+            void dispatchTaskImpl(taskDispatch).catch((err) =>
+              console.error(`[weft] Backoff redispatch failed for "${task.operationId}":`, err),
+            ),
+          delay,
+        );
       } else {
         await dispatchTaskImpl(taskDispatch);
       }
