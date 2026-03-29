@@ -113,8 +113,8 @@ class HttpHandle implements ClientHandle {
   #lastEventIndex = 0;
   #pollInFlight = false;
   #closed = false;
-  /** Track registered listeners to detect when all are removed. */
-  readonly #listeners = new Set<EventListenerOrEventListenerObject>();
+  /** Count add/remove pairs to detect when all listeners are gone. */
+  #listenerCount = 0;
   /** Map original once-listeners to their wrappers for correct removeEventListener. */
   readonly #onceWrappers = new Map<EventListenerOrEventListenerObject, EventListener>();
 
@@ -217,21 +217,21 @@ class HttpHandle implements ClientHandle {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | AddEventListenerOptions,
   ): void {
-    this.#listeners.add(listener);
+    this.#listenerCount++;
     this.#ensurePolling();
 
     const once = typeof options === 'object' && options?.once;
     if (once) {
-      // Wrap once-listeners so the Set is updated when EventTarget auto-removes them.
+      // Wrap once-listeners so the counter is decremented when EventTarget auto-removes them.
       const wrapper: EventListener = (event) => {
-        this.#listeners.delete(listener);
+        this.#listenerCount = Math.max(0, this.#listenerCount - 1);
         this.#onceWrappers.delete(listener);
         if (typeof listener === 'function') {
           listener(event);
         } else {
           listener.handleEvent(event);
         }
-        if (this.#listeners.size === 0) this.close();
+        if (this.#listenerCount === 0) this.close();
       };
       this.#onceWrappers.set(listener, wrapper);
       this.#events.addEventListener(type, wrapper, options);
@@ -245,7 +245,7 @@ class HttpHandle implements ClientHandle {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | EventListenerOptions,
   ): void {
-    this.#listeners.delete(listener);
+    this.#listenerCount = Math.max(0, this.#listenerCount - 1);
     // For once-listeners, the EventTarget holds the wrapper, not the original.
     const wrapper = this.#onceWrappers.get(listener);
     if (wrapper) {
@@ -254,7 +254,7 @@ class HttpHandle implements ClientHandle {
     } else {
       this.#events.removeEventListener(type, listener, options);
     }
-    if (this.#listeners.size === 0) {
+    if (this.#listenerCount === 0) {
       this.close();
     }
   }
