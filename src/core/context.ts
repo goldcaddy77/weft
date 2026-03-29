@@ -170,14 +170,16 @@ const ACTIVITY_CALL_OPTION_KEYS = new Set<string>([
   'visibilityTimeout',
 ]);
 
-/** Keys that uniquely identify an ActivityCallOptions object vs plain data. */
+/**
+ * Keys specific enough to unambiguously identify an ActivityCallOptions object.
+ * `timeout` is excluded because `{ timeout: 5000 }` could be plain activity input.
+ */
 const DISCRIMINATOR_KEYS = new Set<string>([
   'queue',
   'retry',
   'idempotencyKey',
   'sticky',
   'visibilityTimeout',
-  'timeout',
 ]);
 
 /** Detect whether a value is an {@link ActivityCallOptions} object. */

@@ -154,6 +154,16 @@ describe('Context', () => {
       expect(request.options).toBeUndefined();
     });
 
+    it('does not treat { timeout: 5000 } as options — timeout alone is ambiguous', () => {
+      const context = createContext();
+
+      const generator = context.run(greet, { timeout: 5000 });
+      const request = expectRequest(generator.next(), 'activity');
+
+      expect(request.args).toEqual([{ timeout: 5000 }]);
+      expect(request.options).toBeUndefined();
+    });
+
     it('accepts sticky: true as an ActivityCallOption', () => {
       const context = createContext();
 

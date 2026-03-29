@@ -875,7 +875,7 @@ export function serve(options: ServeOptions): WeftServer {
           visibilityTimeout,
           retryPolicy: task.retryPolicy,
         };
-        void options.engine.storage.batch([
+        await options.engine.storage.batch([
           { type: 'delete', key: KEYS.operationQueued(task.operationId) },
           {
             type: 'put',

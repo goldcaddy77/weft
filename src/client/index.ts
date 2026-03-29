@@ -129,13 +129,13 @@ class HttpHandle implements ClientHandle {
       const newEvents = events.slice(this.#lastEventIndex);
       for (const event of newEvents) {
         this.#lastEventIndex++;
-        const wireEvent = event as { type?: string; data?: unknown };
-        if (wireEvent.type) {
-          this.#events.dispatchEvent(new CustomEvent(wireEvent.type, { detail: wireEvent.data }));
-        }
+        this.#events.dispatchEvent(new CustomEvent(event.type, { detail: event.data }));
       }
-    } catch {
-      // Swallow poll errors — workflow may have completed
+    } catch (error) {
+      // Ignore 404 — workflow completed. Surface anything unexpected.
+      if (!(error instanceof HttpClientError && error.status === 404)) {
+        console.warn('[weft] Event poll error:', error);
+      }
     }
   }
 

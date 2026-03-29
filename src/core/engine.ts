@@ -2270,8 +2270,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         }
       : (_name: string, args: unknown[]) => {
           const activityFunction = this.#resolveActivityFunction(operation);
-          const callArgs = args.length > 0 ? [...args, activityContext] : [];
-          return callActivityFunction(activityFunction, callArgs);
+          return callActivityFunction(activityFunction, [...args, activityContext]);
         };
 
     // If there are activity interceptors, use cached composition

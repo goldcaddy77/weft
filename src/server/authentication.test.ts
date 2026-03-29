@@ -485,6 +485,36 @@ describe('createAuthenticator — mTLS', () => {
       expect(result.method).toBe('api-key');
     }
   });
+
+  it('rejects invalid API key even when mTLS is also configured', async () => {
+    const authenticate = await createAuthenticator({
+      apiKeys: [TEST_API_KEY],
+      mtls: { ca: 'ca-pem', cert: 'cert-pem', key: 'key-pem' },
+    });
+
+    const result = await authenticate(
+      makeRequest('http://localhost/v1/workflows', {
+        Authorization: 'Bearer wrong-key',
+      }),
+    );
+
+    expect(result.authenticated).toBe(false);
+  });
+
+  it('falls through to mTLS when no credentials are provided', async () => {
+    const authenticate = await createAuthenticator({
+      apiKeys: [TEST_API_KEY],
+      mtls: { ca: 'ca-pem', cert: 'cert-pem', key: 'key-pem' },
+    });
+
+    // No auth headers — should fall through to mTLS
+    const result = await authenticate(makeRequest('http://localhost/v1/workflows'));
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) {
+      expect(result.method).toBe('mtls');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
