@@ -703,14 +703,18 @@ export function serve(options: ServeOptions): WeftServer {
           // Expired while the server was down — remove from storage.
           void options.engine.storage.delete(key);
         } else {
-          // Still within the visibility window — seed the registry with the
-          // original visibility timeout so the deadline is computed correctly
-          // relative to now (not the remaining time from the persisted record).
-          registry.assignTask(
-            record.workerId,
-            record.operationId,
-            record.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT_MS,
-          );
+          // Still within the visibility window — use remaining time so the
+          // deadline matches the original persisted value. Then patch the
+          // stored visibilityTimeout to the original value so future heartbeat
+          // extensions use the full duration, not the diminished remainder.
+          const remaining = record.deadline - now;
+          registry.assignTask(record.workerId, record.operationId, remaining);
+          const tracked = registry
+            .getWorkerTasks(record.workerId)
+            .find((t) => t.operationId === record.operationId);
+          if (tracked) {
+            tracked.visibilityTimeout = record.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT_MS;
+          }
         }
       }
     } catch (error) {

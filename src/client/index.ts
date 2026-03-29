@@ -123,21 +123,38 @@ class HttpHandle implements ClientHandle {
     this.#pollTimer = setInterval(() => void this.#pollEvents(), 2_000);
   }
 
+  static readonly #TERMINAL_EVENTS = new Set([
+    'workflow:completed',
+    'workflow:failed',
+    'workflow:cancelled',
+    'workflow:timed-out',
+  ]);
+
   async #pollEvents(): Promise<void> {
     try {
       const events = await this.#client.getEvents(this.id);
+      // getEvents returns [] on 404, so check if the workflow still exists
+      // when we've never seen any events — an empty array from a missing
+      // workflow is indistinguishable from a workflow with no events yet.
+      if (events.length === 0 && this.#lastEventIndex > 0) {
+        const state = await this.#client.get(this.id);
+        if (state === null) {
+          this.close();
+          return;
+        }
+      }
       const newEvents = events.slice(this.#lastEventIndex);
       for (const event of newEvents) {
         this.#lastEventIndex++;
         this.#events.dispatchEvent(new CustomEvent(event.type, { detail: event.data }));
+        // Stop polling after a terminal workflow event.
+        if (HttpHandle.#TERMINAL_EVENTS.has(event.type)) {
+          this.close();
+          return;
+        }
       }
     } catch (error) {
-      if (error instanceof HttpClientError && error.status === 404) {
-        // Workflow completed or deleted — stop polling.
-        this.close();
-      } else {
-        console.warn('[weft] Event poll error:', error);
-      }
+      console.warn('[weft] Event poll error:', error);
     }
   }
 
