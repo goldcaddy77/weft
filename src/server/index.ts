@@ -297,6 +297,42 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     return current;
   }
 
+  /** Persist an event to storage and publish to WebSocket channels. */
+  async function persistAndPublishEvent(
+    workflowId: string,
+    eventType: string,
+    message: string,
+  ): Promise<void> {
+    await ensureSequenceInitialized(workflowId);
+
+    const parsed = JSON.parse(message) as {
+      type: string;
+      timestamp: number;
+      data: Record<string, unknown>;
+    };
+
+    // Claim the sequence number once — outside the retry scope so a
+    // failed storage write doesn't consume an additional number.
+    const sequence = nextSequence(workflowId);
+    const storageKey = KEYS.event(workflowId, sequence);
+    const encoded = encode(parsed);
+
+    await withRetry(
+      async () => engine.storage.put(storageKey, encoded),
+      `persist event "${eventType}" for workflow "${workflowId}"`,
+    );
+
+    // Publish to the workflow's watch channel
+    const watchChannel = `/v1/workflows/${workflowId}/watch`;
+    server.publish(watchChannel, message);
+
+    // For token events, also publish to the stream channel
+    if (eventType === TokenEvent.type) {
+      const streamChannel = `/v1/workflows/${workflowId}/stream`;
+      server.publish(streamChannel, message);
+    }
+  }
+
   const eventTypes = [
     WorkflowStartedEvent.type,
     WorkflowCompletedEvent.type,
@@ -336,30 +372,7 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
         // to prevent concurrent handlers from racing on `nextSequence`.
         const previousChain = sequenceChains.get(workflowId) ?? Promise.resolve();
         const nextChain = previousChain
-          .then(() => {
-            return withRetry(async () => {
-              await ensureSequenceInitialized(workflowId);
-
-              const parsed = JSON.parse(message) as {
-                type: string;
-                timestamp: number;
-                data: Record<string, unknown>;
-              };
-              const sequence = nextSequence(workflowId);
-              const storageKey = KEYS.event(workflowId, sequence);
-              await engine.storage.put(storageKey, encode(parsed));
-
-              // Publish to the workflow's watch channel
-              const watchChannel = `/v1/workflows/${workflowId}/watch`;
-              server.publish(watchChannel, message);
-
-              // For token events, also publish to the stream channel
-              if (eventType === TokenEvent.type) {
-                const streamChannel = `/v1/workflows/${workflowId}/stream`;
-                server.publish(streamChannel, message);
-              }
-            }, `persist event "${eventType}" for workflow "${workflowId}"`);
-          })
+          .then(() => persistAndPublishEvent(workflowId, eventType, message))
           .catch((error) => {
             console.error(
               `[weft] Failed to persist event "${eventType}" for workflow "${workflowId}":`,

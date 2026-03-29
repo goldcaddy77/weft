@@ -144,11 +144,13 @@ export class WorkerRegistry {
   }
 
   /** Extend the visibility timeout deadline for an in-flight task (heartbeat).
+   *  Resets the deadline to `now + extension` so each heartbeat grants exactly
+   *  one visibility window rather than accumulating on top of a future deadline.
    *  Returns the new deadline, or `undefined` if the task was not found. */
   extendVisibility(operationId: string, extension: number): number | undefined {
     const task = this.#inFlightTasks.get(operationId);
     if (task !== undefined) {
-      task.deadline = Math.max(Date.now(), task.deadline) + extension;
+      task.deadline = Date.now() + extension;
       return task.deadline;
     }
     return undefined;
