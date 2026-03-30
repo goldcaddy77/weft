@@ -71,6 +71,7 @@ import type {
   WorkflowFunction,
   WorkflowRegistration,
   WorkflowState,
+  WorkflowStatus,
   WorkflowSummary,
 } from './types.ts';
 import { UpdateCoordinator, WorkflowTerminalError } from './updates.ts';
@@ -1087,7 +1088,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // registered inline handlers. Schedule on next microtask so the
       // generator has a chance to register its onUpdate handlers first.
       queueMicrotask(() => {
-        void this.#processPendingUpdatesForHandlers(workflowId);
+        this.#processPendingUpdatesForHandlers(workflowId).catch(() => {});
       });
     } else {
       // Worker mode: send run message to the worker with the checkpoint
@@ -2488,7 +2489,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
-  static readonly #TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'timed-out']);
+  static readonly #TERMINAL_STATUSES: ReadonlySet<WorkflowStatus> = new Set<WorkflowStatus>([
+    'completed',
+    'failed',
+    'cancelled',
+    'timed-out',
+  ]);
 
   /** Throw {@link WorkflowTerminalError} if the workflow is in a terminal state. */
   async #guardTerminalWorkflow(workflowId: string): Promise<void> {

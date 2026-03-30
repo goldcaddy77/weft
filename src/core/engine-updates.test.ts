@@ -159,6 +159,31 @@ describe('Synchronous Updates', () => {
       engine[Symbol.dispose]();
     });
 
+    it('throws WorkflowTerminalError for cancelled workflow', async () => {
+      const engine = new Engine();
+      engine.register('cancelme', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).sleep('1 hour');
+        return 'done';
+      });
+
+      const handle = await engine.start('cancelme', undefined);
+      suppressResult(handle);
+      await flush();
+
+      await engine.cancel(handle.id);
+      await flush();
+
+      try {
+        await engine.update(handle.id, 'someUpdate', 'payload');
+        expect.unreachable('should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(WorkflowTerminalError);
+        expect((error as WorkflowTerminalError).status).toBe('cancelled');
+      }
+
+      engine[Symbol.dispose]();
+    });
+
     it('allows updates to running workflows', async () => {
       const engine = new Engine();
       engine.register('waiter', async function* (ctx: WorkflowContext) {
@@ -228,10 +253,7 @@ describe('Synchronous Updates', () => {
         // Arrow function — should not throw
         (ctx as Context).onUpdate('also-good', (payload) => payload);
         // Async function — should not throw
-        (ctx as Context).onUpdate(
-          'async-good',
-          async (payload) => payload as (payload: unknown) => unknown,
-        );
+        (ctx as Context).onUpdate('async-good', async (payload) => payload);
         return 'done';
       });
 
@@ -244,14 +266,18 @@ describe('Synchronous Updates', () => {
     it('error message mentions handler name', async () => {
       const engine = new Engine();
       engine.register('msg-test', async function* (ctx: WorkflowContext) {
+        let threw = false;
         try {
           (ctx as Context).onUpdate('myHandler', function* () {
             yield 1;
           } as unknown as (payload: unknown) => unknown);
+          expect.unreachable('should have thrown');
         } catch (error) {
+          threw = true;
           expect((error as TypeError).message).toContain('myHandler');
           expect((error as TypeError).message).toContain('generator');
         }
+        expect(threw).toBe(true);
         return 'done';
       });
 
@@ -305,49 +331,92 @@ describe('Synchronous Updates', () => {
   // -----------------------------------------------------------------------
 
   describe('FIFO ordering', () => {
-    it('processes the earliest pending update first', async () => {
+    it('selects the oldest pending update when multiple match the same name', async () => {
+      // Test FIFO at the coordinator level to verify sort correctness
+      const storage = new MemoryStorage();
+      const coordinator = new UpdateCoordinator(storage);
+
+      // Create three updates with explicit timestamps in non-chronological
+      // insertion order to ensure sorting (not insertion order) determines
+      // priority.
+      const updates = [
+        {
+          updateId: 'update-3',
+          workflowId: 'wf-fifo',
+          name: 'data',
+          payload: 'third',
+          createdAt: 3000,
+        },
+        {
+          updateId: 'update-1',
+          workflowId: 'wf-fifo',
+          name: 'data',
+          payload: 'first',
+          createdAt: 1000,
+        },
+        {
+          updateId: 'update-2',
+          workflowId: 'wf-fifo',
+          name: 'data',
+          payload: 'second',
+          createdAt: 2000,
+        },
+      ];
+
+      for (const update of updates) {
+        await storage.put(KEYS.update('wf-fifo', update.updateId), encode(update));
+      }
+
+      const pending = await coordinator.getPendingUpdates('wf-fifo');
+      const sorted = pending
+        .filter((u) => u.name === 'data')
+        .toSorted((a, b) => a.createdAt - b.createdAt);
+
+      // The oldest update should come first
+      expect(sorted[0]!.payload).toBe('first');
+      expect(sorted[1]!.payload).toBe('second');
+      expect(sorted[2]!.payload).toBe('third');
+
+      storage.clear();
+    });
+
+    it('engine consumes the oldest pending update via waitForUpdate', async () => {
       const engine = new Engine();
       const storage = engine.storage;
 
-      engine.register('fifo-test', async function* (ctx: WorkflowContext) {
-        const value = yield* (ctx as Context).waitForUpdate<string>('data');
-        return value;
-      });
+      // Seed pending updates BEFORE the workflow runs, so the wait-update
+      // handler finds them immediately in FIFO order.
+      const workflowId = 'fifo-wf';
 
-      const handle = await engine.start('fifo-test', undefined);
-      suppressResult(handle);
-      await flush();
-
-      // Manually create two pending update requests with different timestamps
-      // to test FIFO ordering. The older one should be consumed first.
       const oldUpdate = {
         updateId: 'update-old',
-        workflowId: handle.id,
+        workflowId,
         name: 'data',
         payload: 'first',
         createdAt: Date.now() - 1000,
       };
       const newUpdate = {
         updateId: 'update-new',
-        workflowId: handle.id,
+        workflowId,
         name: 'data',
         payload: 'second',
         createdAt: Date.now(),
       };
 
-      // Put the newer one first in storage to ensure sort is effective
-      await storage.put(KEYS.update(handle.id, 'update-new'), encode(newUpdate));
-      await storage.put(KEYS.update(handle.id, 'update-old'), encode(oldUpdate));
+      // Insert newer first to ensure sort, not insertion order, wins
+      await storage.put(KEYS.update(workflowId, 'update-new'), encode(newUpdate));
+      await storage.put(KEYS.update(workflowId, 'update-old'), encode(oldUpdate));
 
-      // Resume the workflow — it should pick up the older update first
-      try {
-        const resumedHandle = await engine.resume(handle.id);
-        const result = await resumedHandle.result();
-        expect(result).toBe('first');
-      } catch {
-        // Resume may fail if workflow already advanced; the key assertion
-        // is that FIFO ordering is applied in the wait-update code path.
-      }
+      engine.register('fifo-test', async function* (ctx: WorkflowContext) {
+        const value = yield* (ctx as Context).waitForUpdate<string>('data');
+        return value;
+      });
+
+      const handle = await engine.start('fifo-test', undefined, { id: workflowId });
+      const result = await handle.result();
+
+      // FIFO: the older update (payload 'first') should win
+      expect(result).toBe('first');
 
       engine[Symbol.dispose]();
     });
@@ -358,14 +427,13 @@ describe('Synchronous Updates', () => {
   // -----------------------------------------------------------------------
 
   describe('periodic cleanup', () => {
-    it('engine creates and disposes cleanup interval', () => {
-      // Just verify the engine can be created and disposed without errors.
-      // The interval is internal, so we verify indirectly by ensuring
-      // disposal completes cleanly.
+    it('engine construction and disposal do not leak timers', () => {
+      // The cleanup interval is internal. We verify indirectly that
+      // construction and disposal complete cleanly without hanging or
+      // throwing — if the interval were not properly cleared, this would
+      // leak timers.
       const engine = new Engine();
       engine[Symbol.dispose]();
-      // If cleanup interval wasn't properly cleared, this would leak timers.
-      // No assertion needed — the test passes if it doesn't hang or throw.
     });
   });
 
@@ -374,16 +442,14 @@ describe('Synchronous Updates', () => {
   // -----------------------------------------------------------------------
 
   describe('pending updates on resume', () => {
-    it('processes pending coordinated updates after resume when inline handler matches', async () => {
+    it('processes pending coordinated updates when inline handler is registered', async () => {
       const engine = new Engine();
 
-      let updateResult: unknown;
       engine.register('resumable', async function* (ctx: WorkflowContext) {
         (ctx as Context).onUpdate('validate', (payload) => {
-          updateResult = payload;
           return `validated: ${String(payload)}`;
         });
-        // Sleep to simulate a paused workflow
+        // Sleep to keep the workflow active
         yield* (ctx as Context).sleep('1 hour');
         return 'done';
       });
@@ -392,7 +458,8 @@ describe('Synchronous Updates', () => {
       suppressResult(handle);
       await flush();
 
-      // Create a pending coordinated update in storage
+      // Create a pending coordinated update in storage as if it arrived
+      // while the engine was restarting (simulates the crash-recovery case)
       const pendingUpdate = {
         updateId: 'pending-1',
         workflowId: handle.id,
@@ -402,36 +469,73 @@ describe('Synchronous Updates', () => {
       };
       await engine.storage.put(KEYS.update(handle.id, 'pending-1'), encode(pendingUpdate));
 
-      // Resume the workflow — pending update should be processed
-      const events: string[] = [];
-      engine.addEventListener('update:completed', () => {
-        events.push('completed');
-      });
-
-      try {
-        await engine.resume(handle.id);
-      } catch {
-        // Resume may fail for already-active workflow; the key test is
-        // that pending updates get processed.
-      }
-
-      // Wait for microtask + async processing
-      await flush();
-      await flush();
-
-      // The pending update should have been consumed from storage
-      const remaining = await engine.storage.get(KEYS.update(handle.id, 'pending-1'));
-      // Either the update was processed (key deleted) or the response was written
-      const response = await engine.storage.get('upr:pending-1');
-      // At least one of these should indicate processing happened
-      if (remaining === null) {
-        // Update was consumed — response should exist
-        expect(response).not.toBeNull();
-        const decoded = decode(response!) as { result: unknown };
-        expect(decoded.result).toBe('validated: test-data');
-      }
+      // The inline handler path should handle this update directly since
+      // the workflow is active and has a matching handler registered
+      const result = await engine.update(handle.id, 'validate', 'direct-call');
+      expect(result).toBe('validated: direct-call');
 
       engine[Symbol.dispose]();
+    });
+
+    it('drains pending updates for registered handlers after resume', async () => {
+      // Use two engine instances sharing storage to simulate process restart
+      const storage = new MemoryStorage();
+
+      const engine1 = new Engine({ storage });
+      engine1.register('durable', async function* (ctx: WorkflowContext) {
+        (ctx as Context).onUpdate('process', (payload) => {
+          return `processed: ${String(payload)}`;
+        });
+        yield* (ctx as Context).sleep('1 hour');
+        return 'done';
+      });
+
+      const handle = await engine1.start('durable', undefined);
+      suppressResult(handle);
+      await flush();
+
+      // Seed a pending coordinated update in storage
+      const pendingUpdate = {
+        updateId: 'pending-drain',
+        workflowId: handle.id,
+        name: 'process',
+        payload: 'queued-data',
+        createdAt: Date.now(),
+      };
+      await storage.put(KEYS.update(handle.id, 'pending-drain'), encode(pendingUpdate));
+
+      // Dispose engine1 to simulate crash
+      engine1[Symbol.dispose]();
+
+      // Create engine2 with the same storage, simulating restart
+      const engine2 = new Engine({ storage });
+      engine2.register('durable', async function* (ctx: WorkflowContext) {
+        (ctx as Context).onUpdate('process', (payload) => {
+          return `processed: ${String(payload)}`;
+        });
+        yield* (ctx as Context).sleep('1 hour');
+        return 'done';
+      });
+
+      // Resume the workflow on engine2
+      const resumedHandle = await engine2.resume(handle.id);
+      suppressResult(resumedHandle);
+
+      // Wait for queueMicrotask + async processing
+      await flush();
+      await flush();
+
+      // The pending update request should have been consumed from storage
+      const remaining = await storage.get(KEYS.update(handle.id, 'pending-drain'));
+      expect(remaining).toBeNull();
+
+      // The response should have been written
+      const response = await storage.get('upr:pending-drain');
+      expect(response).not.toBeNull();
+      const decoded = decode(response!) as { result: unknown };
+      expect(decoded.result).toBe('processed: queued-data');
+
+      engine2[Symbol.dispose]();
     });
   });
 

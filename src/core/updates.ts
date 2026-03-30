@@ -10,6 +10,7 @@
 import type { BatchOperation, Storage } from '../storage/interface';
 import { KEYS } from '../storage/interface';
 import { decode, encode } from './codec';
+import type { WorkflowStatus } from './types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,9 +53,9 @@ export class UpdateTimeoutError extends Error {
 
 export class WorkflowTerminalError extends Error {
   readonly workflowId: string;
-  readonly status: string;
+  readonly status: WorkflowStatus;
 
-  constructor(workflowId: string, status: string) {
+  constructor(workflowId: string, status: WorkflowStatus) {
     super(
       `Cannot send update to workflow "${workflowId}": workflow is in terminal state "${status}"`,
     );
