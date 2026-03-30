@@ -1038,6 +1038,8 @@ export function serve(options: ServeOptions): WeftServer {
           );
         }
       }
+    } catch (error) {
+      console.error('[weft] Visibility timeout scanner error:', error);
     } finally {
       scanRunning = false;
     }
