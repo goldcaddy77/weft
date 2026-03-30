@@ -431,7 +431,7 @@ describe('Schema Registration and Validation', () => {
       await handle.result();
       // If we reach here, the workflow completed without throwing. In the inline
       // strategy the error from setAttribute propagates through the generator.
-      expect(true).toBe(false); // Should not reach here
+      expect.unreachable('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain('Unknown search attribute "unknownKey"');
@@ -488,7 +488,7 @@ describe('Schema Registration and Validation', () => {
     // Invalid attribute should throw
     try {
       await engine.setAttributes('wf-schema-ext', { badKey: 'value' });
-      expect(true).toBe(false); // Should not reach here
+      expect.unreachable('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain('Unknown search attribute "badKey"');
@@ -518,7 +518,7 @@ describe('Schema Registration and Validation', () => {
 
     try {
       await handle.result();
-      expect(true).toBe(false);
+      expect.unreachable('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain('Unknown search attribute "badKey"');

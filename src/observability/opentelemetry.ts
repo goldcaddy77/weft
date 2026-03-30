@@ -12,26 +12,6 @@ import type { ObservabilityOptions, SpanInfo } from './index.ts';
 import { createObservabilityInterceptors } from './index.ts';
 
 // ---------------------------------------------------------------------------
-// Dynamic import — avoids a hard dependency on @opentelemetry/api
-// ---------------------------------------------------------------------------
-
-// We avoid importing types from @opentelemetry/api since the package may not
-// be installed. Instead we use `unknown` for the OTel API surface and cast as
-// needed at runtime.
-
-let otelApi: Record<string, unknown> | undefined;
-
-try {
-  // Use a variable to prevent TypeScript from resolving the module specifier
-  // at compile time. The package is an optional peer dependency.
-  const moduleName = '@opentelemetry/api';
-  otelApi = (await import(/* @vite-ignore */ moduleName)) as Record<string, unknown>;
-} catch {
-  // @opentelemetry/api not installed — createOpenTelemetryInterceptors will
-  // throw a helpful error at call time instead of at module import time.
-}
-
-// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -65,17 +45,30 @@ interface OtelTracer {
 // ---------------------------------------------------------------------------
 
 /**
- * Create observability interceptors that emit real OpenTelemetry spans.
- *
- * @throws {Error} If `@opentelemetry/api` is not installed.
+ * Load the @opentelemetry/api module synchronously at call time.
+ * Throws a helpful error if the package is not installed.
  */
-export function createOpenTelemetryInterceptors(options?: OpenTelemetryOptions) {
-  if (!otelApi) {
+function loadOtelApi(): Record<string, unknown> {
+  try {
+    // Use require() for synchronous loading — no race condition, no top-level await.
+    // The variable indirection prevents TypeScript from resolving the specifier.
+    const moduleName = '@opentelemetry/api';
+    return require(moduleName) as Record<string, unknown>;
+  } catch {
     throw new Error(
       'createOpenTelemetryInterceptors requires @opentelemetry/api to be installed. ' +
         'Run: bun add @opentelemetry/api',
     );
   }
+}
+
+/**
+ * Create observability interceptors that emit real OpenTelemetry spans.
+ *
+ * @throws {Error} If `@opentelemetry/api` is not installed.
+ */
+export function createOpenTelemetryInterceptors(options?: OpenTelemetryOptions) {
+  const otelApi = loadOtelApi();
 
   const trace = otelApi['trace'] as { getTracer(name: string, version?: string): OtelTracer };
   const SpanStatusCode = otelApi['SpanStatusCode'] as { OK: number; ERROR: number };

@@ -3,7 +3,11 @@
 // ---------------------------------------------------------------------------
 
 import type { ActivityInterceptor } from '../core/interceptor.ts';
-import { composeActivityInterceptors } from '../core/interceptor.ts';
+import {
+  buildComposedInterceptor,
+  executeWithInterceptors,
+  type ComposedInterceptor,
+} from './execute-with-interceptors.ts';
 
 export interface LongPollWorkerOptions {
   serverUrl: string;
@@ -32,6 +36,7 @@ export class LongPollWorker implements Disposable {
   #running: boolean;
   #inFlight: number;
   #abortController: AbortController;
+  #composedInterceptor: ComposedInterceptor | null;
 
   constructor(options: LongPollWorkerOptions) {
     this.#options = {
@@ -43,6 +48,7 @@ export class LongPollWorker implements Disposable {
     this.#running = false;
     this.#inFlight = 0;
     this.#abortController = new AbortController();
+    this.#composedInterceptor = buildComposedInterceptor(options.interceptors);
   }
 
   /** Start polling for tasks. */
@@ -173,28 +179,11 @@ export class LongPollWorker implements Disposable {
         return;
       }
 
-      let result: unknown;
-
-      if (this.#options.interceptors && this.#options.interceptors.length > 0) {
-        const composed = composeActivityInterceptors(this.#options.interceptors);
-        const headers = new Map<string, string>(
-          Object.entries(task.headers ?? {}),
-        );
-        result = await composed.execute(
-          {
-            activityName: task.activityName,
-            operationId: task.operationId,
-            attempt: task.attempt ?? 1,
-            input: task.input,
-            headers,
-          },
-          async (interception) => {
-            return activityFunction(interception.input);
-          },
-        );
-      } else {
-        result = await activityFunction(task.input);
-      }
+      const result = await executeWithInterceptors(
+        activityFunction,
+        task,
+        this.#composedInterceptor,
+      );
 
       await fetch(resultUrl, {
         method: 'POST',

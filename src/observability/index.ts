@@ -128,6 +128,20 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   let currentWorkflowId = '';
   let currentWorkflowType = '';
 
+  /** Extract custom attributes from the extractor callback and merge into a target object. */
+  function applyCustomAttributes(
+    target: Record<string, string | number | boolean>,
+    extra?: Record<string, unknown>,
+  ): void {
+    if (!attributeExtractor) return;
+    const custom = attributeExtractor({
+      workflowId: currentWorkflowId,
+      workflowType: currentWorkflowType,
+      ...extra,
+    });
+    Object.assign(target, custom);
+  }
+
   // -----------------------------------------------------------------------
   // Workflow interceptor
   // -----------------------------------------------------------------------
@@ -164,14 +178,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         span.attributes['input'] = serializePayload(interception.input, maxPayloadSize);
       }
 
-      const customAttributes = attributeExtractor?.({
-        workflowId: interception.workflowId,
-        workflowType: interception.workflowType,
-        input: interception.input,
-      });
-      if (customAttributes) {
-        Object.assign(span.attributes, customAttributes);
-      }
+      applyCustomAttributes(span.attributes, { input: interception.input });
 
       metrics.increment('weft.workflow.started');
       onSpanStart?.(span);
@@ -208,15 +215,10 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         span.attributes['input'] = serializePayload(interception.input, maxPayloadSize);
       }
 
-      const customAttributes = attributeExtractor?.({
-        workflowId: currentWorkflowId,
-        workflowType: currentWorkflowType,
+      applyCustomAttributes(span.attributes, {
         activityName: interception.activityName,
         attempt: interception.attempt,
       });
-      if (customAttributes) {
-        Object.assign(span.attributes, customAttributes);
-      }
 
       onSpanStart?.(span);
 
@@ -255,14 +257,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         startTime: Date.now(),
       };
 
-      const customAttributes = attributeExtractor?.({
-        workflowId: currentWorkflowId,
-        workflowType: currentWorkflowType,
-        duration: interception.duration,
-      });
-      if (customAttributes) {
-        Object.assign(span.attributes, customAttributes);
-      }
+      applyCustomAttributes(span.attributes, { duration: interception.duration });
 
       onSpanStart?.(span);
 
@@ -290,14 +285,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         startTime: Date.now(),
       };
 
-      const customAttributes = attributeExtractor?.({
-        workflowId: currentWorkflowId,
-        workflowType: currentWorkflowType,
-        signalName: interception.signalName,
-      });
-      if (customAttributes) {
-        Object.assign(span.attributes, customAttributes);
-      }
+      applyCustomAttributes(span.attributes, { signalName: interception.signalName });
 
       onSpanStart?.(span);
 
@@ -345,14 +333,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         span.attributes['agent.prompt'] = serializePayload(interception.prompt, maxPayloadSize);
       }
 
-      const customAttributes = attributeExtractor?.({
-        workflowId: currentWorkflowId,
-        workflowType: currentWorkflowType,
-        model: interception.model,
-      });
-      if (customAttributes) {
-        Object.assign(span.attributes, customAttributes);
-      }
+      applyCustomAttributes(span.attributes, { model: interception.model });
 
       onSpanStart?.(span);
 
@@ -392,14 +373,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         startTime: Date.now(),
       };
 
-      const customAttributes = attributeExtractor?.({
-        workflowId: interception.workflowId,
-        workflowType: '',
-        signalName: interception.signalName,
-      });
-      if (customAttributes) {
-        Object.assign(span.attributes, customAttributes);
-      }
+      applyCustomAttributes(span.attributes, { signalName: interception.signalName });
 
       onSpanStart?.(span);
 
@@ -448,15 +422,10 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         span.attributes['input'] = serializePayload(interception.input, maxPayloadSize);
       }
 
-      const customAttributes = attributeExtractor?.({
-        workflowId: currentWorkflowId,
-        workflowType: currentWorkflowType,
+      applyCustomAttributes(span.attributes, {
         activityName: interception.activityName,
         attempt: interception.attempt,
       });
-      if (customAttributes) {
-        Object.assign(span.attributes, customAttributes);
-      }
 
       onSpanStart?.(span);
 

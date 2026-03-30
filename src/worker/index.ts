@@ -2,9 +2,12 @@
 // Remote worker client — connects to the server via WebSocket
 // ---------------------------------------------------------------------------
 
-import type { ActivityInterceptor } from '../core/interceptor.ts';
-import { composeActivityInterceptors } from '../core/interceptor.ts';
 import { HeartbeatManager } from './heartbeat.ts';
+import {
+  buildComposedInterceptor,
+  executeWithInterceptors,
+  type ComposedInterceptor,
+} from './execute-with-interceptors.ts';
 
 export { HeartbeatManager } from './heartbeat.ts';
 export { LongPollWorker } from './long-poll.ts';
@@ -58,6 +61,7 @@ export class RemoteWorker implements Disposable {
   #abortController: AbortController;
   #heartbeat: HeartbeatManager;
   #shuttingDown: boolean;
+  #composedInterceptor: ComposedInterceptor | null;
 
   constructor(options: RemoteWorkerOptions) {
     this.#options = {
@@ -70,6 +74,7 @@ export class RemoteWorker implements Disposable {
     this.#inFlight = 0;
     this.#abortController = new AbortController();
     this.#shuttingDown = false;
+    this.#composedInterceptor = buildComposedInterceptor(options.interceptors);
     this.#heartbeat = new HeartbeatManager(() => {
       this.#sendMessage({ type: 'heartbeat', workerId: this.#options.workerId });
     }, HEARTBEAT_INTERVAL_MS);
@@ -233,31 +238,12 @@ export class RemoteWorker implements Disposable {
     const taskAbortController = new AbortController();
 
     try {
-      let result: unknown;
-
-      if (this.#options.interceptors && this.#options.interceptors.length > 0) {
-        const composed = composeActivityInterceptors(this.#options.interceptors);
-        const headers = new Map<string, string>(
-          Object.entries(task.headers ?? {}),
-        );
-        result = await composed.execute(
-          {
-            activityName: task.activityName,
-            operationId: task.operationId,
-            attempt: task.attempt ?? 1,
-            input: task.input,
-            headers,
-            signal: taskAbortController.signal,
-          },
-          async (interception) => {
-            return activityFunction(interception.input, {
-              signal: taskAbortController.signal,
-            });
-          },
-        );
-      } else {
-        result = await activityFunction(task.input);
-      }
+      const result = await executeWithInterceptors(
+        activityFunction,
+        task,
+        this.#composedInterceptor,
+        taskAbortController.signal,
+      );
 
       this.#sendMessage({
         type: 'taskResult',

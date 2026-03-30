@@ -52,7 +52,11 @@ import type {
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
 import { Scheduler, parseDuration } from './scheduler.ts';
 import { buildIndexOperations, encodeAttributeValue } from './search-attributes.ts';
-import { compileStepWorkflow, isAsyncGeneratorFunction } from './step-context.ts';
+import {
+  compileStepWorkflow,
+  isAsyncGeneratorFunction,
+  isGeneratorResult,
+} from './step-context.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   AttributeFilter,
@@ -908,17 +912,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
 
         try {
-          const result = handler(payload);
-          if (
-            result &&
-            typeof result === 'object' &&
-            (Symbol.iterator in result || Symbol.asyncIterator in result)
-          ) {
-            throw new Error(
-              `Update handler for '${name}' must not be a generator function. Use a plain function that returns a value synchronously.`,
-            );
-          }
-          const awaited = await result;
+          const awaited = await this.#invokeUpdateHandler(name, handler, payload);
           this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, awaited));
           this.#broadcast({ type: 'update:completed', workflowId, updateId });
           return awaited;
@@ -2546,17 +2540,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       let result: unknown;
       let error: string | undefined;
       try {
-        const handlerResult = handler(update.payload);
-        if (
-          handlerResult &&
-          typeof handlerResult === 'object' &&
-          (Symbol.iterator in handlerResult || Symbol.asyncIterator in handlerResult)
-        ) {
-          throw new Error(
-            `Update handler for '${update.name}' must not be a generator function. Use a plain function that returns a value synchronously.`,
-          );
-        }
-        result = await handlerResult;
+        result = await this.#invokeUpdateHandler(update.name, handler, update.payload);
       } catch (handlerError) {
         error = handlerError instanceof Error ? handlerError.message : String(handlerError);
       }
@@ -2575,6 +2559,24 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
       this.#broadcast({ type: 'update:completed', workflowId, updateId: update.updateId });
     }
+  }
+
+  /**
+   * Invoke an update handler, checking for generator return values.
+   * Returns the awaited result. Throws on error (caller handles catch).
+   */
+  async #invokeUpdateHandler(
+    name: string,
+    handler: (payload: unknown) => unknown,
+    payload: unknown,
+  ): Promise<unknown> {
+    const result = handler(payload);
+    if (isGeneratorResult(result)) {
+      throw new Error(
+        `Update handler for '${name}' must not be a generator function. Use a plain function that returns a value synchronously.`,
+      );
+    }
+    return await result;
   }
 
   static readonly #TERMINAL_STATUSES: ReadonlySet<WorkflowStatus> = new Set<WorkflowStatus>([

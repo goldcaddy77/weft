@@ -18,6 +18,7 @@ import type { AgentHooks } from '../ai/hooks.ts';
 import type { ModelRouter } from '../ai/model-router.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import { parseDuration } from './scheduler.ts';
+import { isAsyncGeneratorFunction, isGeneratorFunction } from './step-context.ts';
 import type {
   ActivityCallOptions,
   Duration,
@@ -769,10 +770,8 @@ export class Context implements WorkflowContext {
   }
 
   setAttributes(attributes: Record<string, SearchAttributeValue>): void {
-    for (const key of Object.keys(attributes)) {
-      this.#validateAttributeKey(key);
-    }
     for (const [key, value] of Object.entries(attributes)) {
+      this.#validateAttributeKey(key);
       this.#searchAttributes[key] = value;
       this.#pendingAttributeChanges[key] = value;
     }
@@ -797,10 +796,7 @@ export class Context implements WorkflowContext {
   onUpdate(name: string, handler: (payload: unknown) => unknown): void {
     // Reject generator functions at registration time — they cannot yield
     // inside an update handler.
-    if (
-      handler.constructor.name === 'GeneratorFunction' ||
-      handler.constructor.name === 'AsyncGeneratorFunction'
-    ) {
+    if (isGeneratorFunction(handler) || isAsyncGeneratorFunction(handler)) {
       throw new TypeError(
         `Update handler for '${name}' must not be a generator function. Use a plain function that returns a value synchronously.`,
       );

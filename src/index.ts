@@ -132,7 +132,7 @@ export {
 } from './core/search-attributes';
 
 // Updates
-export { UpdateCoordinator, UpdateTimeoutError } from './core/updates';
+export { UpdateCoordinator, UpdateTimeoutError, WorkflowTerminalError } from './core/updates';
 
 // Versioning
 export {

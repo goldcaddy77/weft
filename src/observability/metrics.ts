@@ -129,9 +129,9 @@ export const METRICS = {
   },
   activityAttempts: {
     name: 'weft.activity.attempts',
-    description: 'Number of attempts per activity',
+    description: 'Total activity execution attempts',
     unit: 'attempts',
-    type: 'histogram' as const,
+    type: 'counter' as const,
   },
   workflowActive: {
     name: 'weft.workflow.active',
