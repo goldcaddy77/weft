@@ -52,10 +52,7 @@ export class DeadlineTracker {
   /** Remove all entries matching the given operation ID. */
   remove(operationId: string): void {
     const filtered = this.#heap.filter((e) => e.operationId !== operationId);
-    this.#heap.length = 0;
-    for (const entry of filtered) {
-      this.#heap.push(entry);
-    }
+    this.#heap.splice(0, this.#heap.length, ...filtered);
     this.#buildHeap();
   }
 

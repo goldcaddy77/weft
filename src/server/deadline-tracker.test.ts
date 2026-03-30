@@ -93,4 +93,26 @@ describe('DeadlineTracker', () => {
     expect(tracker.popMin()?.operationId).toBe('c');
     expect(tracker.popMin()?.operationId).toBe('b');
   });
+
+  it('stays consistent after remove then re-add with a new deadline', () => {
+    const tracker = new DeadlineTracker();
+    tracker.add({ operationId: 'a', deadline: 100 });
+    tracker.add({ operationId: 'b', deadline: 200 });
+    tracker.remove('a');
+    tracker.add({ operationId: 'a', deadline: 50 });
+    expect(tracker.peekDeadline()).toBe(50);
+    expect(tracker.size).toBe(2);
+    expect(tracker.popMin()?.operationId).toBe('a');
+    expect(tracker.popMin()?.operationId).toBe('b');
+  });
+
+  it('removes all entries when the same operationId appears multiple times', () => {
+    const tracker = new DeadlineTracker();
+    tracker.add({ operationId: 'dup', deadline: 100 });
+    tracker.add({ operationId: 'dup', deadline: 200 });
+    tracker.add({ operationId: 'other', deadline: 150 });
+    tracker.remove('dup');
+    expect(tracker.size).toBe(1);
+    expect(tracker.popMin()?.operationId).toBe('other');
+  });
 });

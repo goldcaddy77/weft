@@ -2438,6 +2438,14 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(taskMessages.length).toBe(1);
     expect(taskMessages[0]?.attempt).toBe(2);
 
+    // Verify the original expired inflight record was replaced — the task was
+    // re-dispatched so a new inflight record exists, but its deadline should
+    // be in the future (not the stale expired value).
+    for await (const [, value] of storage.scan('op:inflight:')) {
+      const record = decode(value) as { deadline: number };
+      expect(record.deadline).toBeGreaterThan(Date.now() - 1000);
+    }
+
     ws.close();
     await Bun.sleep(50);
   });

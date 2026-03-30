@@ -45,19 +45,8 @@ import {
 // Internal types
 // ---------------------------------------------------------------------------
 
-/** Fields needed to requeue a task after worker disconnect or visibility expiry. */
-interface ReassignableTask {
-  operationId: string;
-  activityName: string;
-  input: unknown;
-  queue: string;
-  attempt: number;
-  visibilityTimeout: number;
-  retryPolicy?: RetryPolicy;
-}
-
-/** Type guard for decoded storage records used in task reassignment. */
-function isReassignableTask(value: unknown): value is ReassignableTask {
+/** Type guard for decoded storage records in the inflight state. */
+function isInflightRecord(value: unknown): value is InflightRecord {
   if (value === null || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   return (
@@ -65,7 +54,9 @@ function isReassignableTask(value: unknown): value is ReassignableTask {
     typeof record['activityName'] === 'string' &&
     typeof record['queue'] === 'string' &&
     typeof record['attempt'] === 'number' &&
-    typeof record['visibilityTimeout'] === 'number'
+    typeof record['visibilityTimeout'] === 'number' &&
+    typeof record['workerId'] === 'string' &&
+    typeof record['deadline'] === 'number'
   );
 }
 
@@ -148,6 +139,8 @@ const DEFAULT_VISIBILITY_TIMEOUT = 30_000;
 const MIN_VISIBILITY_TIMEOUT = 10;
 const MAX_VISIBILITY_TIMEOUT = 3_600_000;
 const MAX_WORKER_CONCURRENCY = 1_000;
+/** Reconciliation full-scan runs at this multiple of the visibility poll interval (~60s at default). */
+const RECONCILIATION_MULTIPLIER = 12;
 
 /**
  * Clamp a visibility timeout to the allowed range.
@@ -468,14 +461,17 @@ export function serve(options: ServeOptions): WeftServer {
     const prefix = `ev:${workflowId}:`;
     try {
       for await (const [, value] of options.engine.storage.scan(prefix)) {
-        const event = decode(value) as { type: string; data: Record<string, unknown> };
-        if (event.type !== TokenEvent.type) continue;
+        const event = decode(value);
+        if (event === null || typeof event !== 'object' || !('type' in event) || !('data' in event))
+          continue;
+        const { type: eventType, data } = event as { type: string; data: Record<string, unknown> };
+        if (eventType !== TokenEvent.type) continue;
 
         ws.send(
           JSON.stringify({
             type: 'replay',
             timestamp: Date.now(),
-            data: event.data,
+            data,
           }),
         );
       }
@@ -875,13 +871,13 @@ export function serve(options: ServeOptions): WeftServer {
 
                 if (existing) {
                   const record = decode(existing);
-                  if (!isReassignableTask(record)) {
+                  if (!isInflightRecord(record)) {
                     console.error(
                       `[weft] Corrupt inflight record for task "${task.operationId}" — skipping reassignment`,
                     );
                     return;
                   }
-                  await reassignOrExpireTask(task.operationId, record as InflightRecord);
+                  await reassignOrExpireTask(task.operationId, record);
                 } else {
                   // Storage write hadn't committed — clean up the key just in case.
                   console.warn(
@@ -948,12 +944,12 @@ export function serve(options: ServeOptions): WeftServer {
   // passed are removed from storage (the task will be retried by the engine).
   void withRetry(async () => {
     for await (const [key, value] of options.engine.storage.scan('op:inflight:')) {
-      const record = decode(value) as {
-        operationId: string;
-        workerId: string;
-        deadline: number;
-        visibilityTimeout?: number;
-      };
+      const decoded = decode(value);
+      if (!isInflightRecord(decoded)) {
+        console.error(`[weft] Corrupt inflight record at "${key}" during restore — skipping`);
+        continue;
+      }
+      const record = decoded;
       const now = Date.now();
       if (record.deadline <= now) {
         // Expired while the server was down — remove from storage.
@@ -1004,22 +1000,21 @@ export function serve(options: ServeOptions): WeftServer {
         if (!existing) continue; // Already resolved or requeued by another path.
 
         const decoded = decode(existing);
-        if (!isReassignableTask(decoded)) {
+        if (!isInflightRecord(decoded)) {
           console.error(`[weft] Corrupt inflight record for task "${operationId}" — skipping`);
           continue;
         }
-        const record = decoded as InflightRecord;
 
         // Double-check the deadline in case a heartbeat extended it after
         // the entry was added to the heap.
-        if (record.deadline > now) {
-          deadlineTracker.add({ operationId, deadline: record.deadline });
+        if (decoded.deadline > now) {
+          deadlineTracker.add({ operationId, deadline: decoded.deadline });
           continue;
         }
 
         // Expired — remove from registry and reassign or permanently fail.
-        registry.completeTask(record.operationId);
-        await reassignOrExpireTask(record.operationId, record);
+        registry.completeTask(decoded.operationId);
+        await reassignOrExpireTask(decoded.operationId, decoded);
       }
     } catch (error) {
       console.error('[weft] Visibility timeout scanner error:', error);
@@ -1045,20 +1040,19 @@ export function serve(options: ServeOptions): WeftServer {
       const now = Date.now();
       for await (const [, value] of options.engine.storage.scan('op:inflight:')) {
         const decoded = decode(value);
-        if (!isReassignableTask(decoded)) continue;
-        const record = decoded as InflightRecord;
+        if (!isInflightRecord(decoded)) continue;
 
-        if (record.deadline > now) {
+        if (decoded.deadline > now) {
           // Still valid — ensure it is tracked in the heap so the fast path
           // can handle it when it expires.
-          deadlineTracker.remove(record.operationId);
-          deadlineTracker.add({ operationId: record.operationId, deadline: record.deadline });
+          deadlineTracker.remove(decoded.operationId);
+          deadlineTracker.add({ operationId: decoded.operationId, deadline: decoded.deadline });
           continue;
         }
 
         // Expired orphan — remove from registry and reassign.
-        registry.completeTask(record.operationId);
-        await reassignOrExpireTask(record.operationId, record);
+        registry.completeTask(decoded.operationId);
+        await reassignOrExpireTask(decoded.operationId, decoded);
       }
     } catch (error) {
       console.error('[weft] Reconciliation scanner error:', error);
@@ -1067,7 +1061,7 @@ export function serve(options: ServeOptions): WeftServer {
     }
   }
 
-  const reconciliationIntervalMs = visibilityPollMs * 12;
+  const reconciliationIntervalMs = visibilityPollMs * RECONCILIATION_MULTIPLIER;
   const reconciliationHandle = setInterval(() => {
     void reconcileOrphanedRecords();
   }, reconciliationIntervalMs);
