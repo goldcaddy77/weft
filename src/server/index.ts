@@ -1007,7 +1007,7 @@ export function serve(options: ServeOptions): WeftServer {
       if (!operationIds || operationIds.size === 0) return;
 
       for (const operationId of operationIds) {
-        cancelTaskImpl(operationId);
+        cancelTask(operationId);
         operationToWorkflow.delete(operationId);
       }
 
@@ -1305,7 +1305,7 @@ export function serve(options: ServeOptions): WeftServer {
   const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
 
   /** Send a cancel message to the worker handling a specific operation. */
-  function cancelTaskImpl(operationId: string): boolean {
+  function cancelTask(operationId: string): boolean {
     // O(1) lookup via the registry's in-flight task map.
     const task = registry.getTask(operationId);
     if (!task) return false;
@@ -1318,7 +1318,7 @@ export function serve(options: ServeOptions): WeftServer {
   }
 
   /** Send a shutdown message to a specific worker and wait for it to disconnect. */
-  async function shutdownWorkerImpl(
+  async function shutdownWorker(
     workerId: string,
     shutdownOptions?: { timeoutMs?: number },
   ): Promise<boolean> {
@@ -1341,9 +1341,9 @@ export function serve(options: ServeOptions): WeftServer {
   }
 
   /** Send a shutdown message to all connected workers and wait for them to disconnect. */
-  async function shutdownAllWorkersImpl(shutdownOptions?: { timeoutMs?: number }): Promise<void> {
+  async function shutdownAllWorkers(shutdownOptions?: { timeoutMs?: number }): Promise<void> {
     const workerIds = [...workerSockets.keys()];
-    await Promise.all(workerIds.map((id) => shutdownWorkerImpl(id, shutdownOptions)));
+    await Promise.all(workerIds.map((id) => shutdownWorker(id, shutdownOptions)));
   }
 
   const resolvedPort = server.port ?? port;
@@ -1360,9 +1360,9 @@ export function serve(options: ServeOptions): WeftServer {
       await stack[Symbol.asyncDispose]();
     },
     dispatchTask: dispatchTaskImpl,
-    shutdownWorker: shutdownWorkerImpl,
-    shutdownAllWorkers: shutdownAllWorkersImpl,
-    cancelTask: cancelTaskImpl,
+    shutdownWorker,
+    shutdownAllWorkers,
+    cancelTask,
     [Symbol.asyncDispose]() {
       return stack[Symbol.asyncDispose]();
     },
