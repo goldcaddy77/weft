@@ -142,8 +142,15 @@ export function compileStepWorkflow<TInput = unknown, TOutput = unknown>(
 // Detection helper
 // ---------------------------------------------------------------------------
 
+const GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {});
 const AsyncGeneratorFunctionPrototype = Object.getPrototypeOf(async function* () {});
 
+/** Returns `true` if `fn` is a sync generator function (`function*`). */
+export function isGeneratorFunction(fn: Function): boolean {
+  return Object.getPrototypeOf(fn) === GeneratorFunctionPrototype;
+}
+
+/** Returns `true` if `fn` is an async generator function (`async function*`). */
 export function isAsyncGeneratorFunction(fn: Function): boolean {
   return Object.getPrototypeOf(fn) === AsyncGeneratorFunctionPrototype;
 }

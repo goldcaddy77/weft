@@ -10,6 +10,7 @@
 import type { BatchOperation, Storage } from '../storage/interface';
 import { KEYS } from '../storage/interface';
 import { decode, encode } from './codec';
+import type { WorkflowStatus } from './types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,12 +51,26 @@ export class UpdateTimeoutError extends Error {
   }
 }
 
+export class WorkflowTerminalError extends Error {
+  readonly workflowId: string;
+  readonly status: WorkflowStatus;
+
+  constructor(workflowId: string, status: WorkflowStatus) {
+    super(
+      `Cannot send update to workflow "${workflowId}": workflow is in terminal state "${status}"`,
+    );
+    this.name = 'WorkflowTerminalError';
+    this.workflowId = workflowId;
+    this.status = status;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Coordinator
 // ---------------------------------------------------------------------------
 
 const POLL_INTERVAL_MS = 50;
-const DEFAULT_CLEANUP_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DEFAULT_CLEANUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export class UpdateCoordinator {
   #storage: Storage;
@@ -104,7 +119,7 @@ export class UpdateCoordinator {
     return this.getResponse(mapping.updateId);
   }
 
-  /** Get pending update requests for a workflow. */
+  /** Get pending update requests for a workflow, sorted FIFO by creation time. */
   async getPendingUpdates(workflowId: string): Promise<UpdateRequest[]> {
     const prefix = `upd:${workflowId}:`;
     const results: UpdateRequest[] = [];
@@ -113,7 +128,9 @@ export class UpdateCoordinator {
       results.push(decode(value) as UpdateRequest);
     }
 
-    return results;
+    return results.toSorted(
+      (a, b) => a.createdAt - b.createdAt || (a.updateId < b.updateId ? -1 : a.updateId > b.updateId ? 1 : 0),
+    );
   }
 
   /** Build batch operations for persisting an update response (to be included in checkpoint batch). */

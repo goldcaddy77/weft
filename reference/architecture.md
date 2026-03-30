@@ -5288,22 +5288,22 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [ ] **`ctx.waitForUpdate(name)` suspends until an update arrives.** Returns `{ payload, respond }`. `respond()` sends the result back.
 - [x] **`engine.update(workflowId, name, payload, options)` sends an update and waits for the response.** Returns a promise that resolves with the handler's return value.
 - [x] **`handle.update(name, payload, options)` is a convenience method.** Delegates to `engine.update()`.
-- [ ] **Timeout semantics.** Default 30 seconds, configurable via `options.timeout`. On timeout, rejects with `UpdateTimeoutError` containing `updateId` for later retrieval.
+- [x] **Timeout semantics.** Default 30 seconds, configurable via `options.timeout`. On timeout, rejects with `UpdateTimeoutError` containing `updateId` for later retrieval.
 - [x] **HTTP endpoint: `POST /v1/workflows/:id/update/:name`.** Body: `{ payload, timeout?, idempotencyKey? }`. Returns result or 408 on timeout.
 - [ ] **HTTP endpoint: `GET /v1/updates/:updateId`.** Returns `{ status: "pending" }` (202) or `{ status: "completed", result }` (200).
 - [x] **Update request persisted to storage before acknowledging caller.** Key: `upd:{workflowId}:{updateId}`. Survives server crash.
 - [x] **Update response persisted atomically with checkpoint.** Key: `upr:{updateId}`. Written in same `batch()` as checkpoint.
 - [x] **Update handler runs at checkpoint boundary.** Processed in the same phase as pending signals.
-- [ ] **Update handler cannot yield.** Attempting to use `yield*` inside an `onUpdate` handler throws a clear error.
-- [ ] **Paused workflows are woken for pending updates.** If waiting on a timer or signal, a pending update triggers a wake-up.
-- [ ] **Idempotency key prevents duplicate processing.** Same key returns existing response. Key stored at `upk:{workflowId}:{key}`.
-- [ ] **BroadcastChannel notification on response completion.** Caller's waiting promise resolves without polling.
-- [ ] **WebSocket observers receive `UpdateCompletedEvent`.** Published on the workflow's watch channel.
+- [x] **Update handler cannot yield.** Attempting to use `yield*` inside an `onUpdate` handler throws a clear error.
+- [x] **Paused workflows are woken for pending updates.** If waiting on a timer or signal, a pending update triggers a wake-up.
+- [x] **Idempotency key prevents duplicate processing.** Same key returns existing response. Key stored at `upk:{workflowId}:{key}`.
+- [x] **BroadcastChannel notification on response completion.** Caller's waiting promise resolves without polling.
+- [x] **WebSocket observers receive `UpdateCompletedEvent`.** Published on the workflow's watch channel.
 - [x] **`UpdateReceivedEvent` and `UpdateCompletedEvent` dispatched on Engine and WorkflowHandle.**
-- [ ] **Response cleanup after TTL.** `upr:*` entries deleted after 5 minutes (configurable).
-- [ ] **Durability: crash between request and response.** After recovery, workflow processes the pending update. Caller retrieves via `GET /v1/updates/:updateId`.
-- [ ] **Multiple concurrent updates to the same workflow.** Each processed independently at the next checkpoint boundary.
-- [ ] **Update to a completed/failed workflow returns an error.** 422 status with clear message.
+- [x] **Response cleanup after TTL.** `upr:*` entries deleted after 5 minutes (configurable).
+- [x] **Durability: crash between request and response.** After recovery, workflow processes the pending update. Caller retrieves via `GET /v1/updates/:updateId`.
+- [x] **Multiple concurrent updates to the same workflow.** Each processed independently at the next checkpoint boundary.
+- [x] **Update to a completed/failed workflow returns an error.** 422 status with clear message.
 - [ ] **Works identically on SQLite, LMDB, and IndexedDB.** Same test suite passes on all three backends.
 
 ### Interceptors

@@ -18,6 +18,7 @@ import type { AgentHooks } from '../ai/hooks.ts';
 import type { ModelRouter } from '../ai/model-router.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import { parseDuration } from './scheduler.ts';
+import { isAsyncGeneratorFunction, isGeneratorFunction } from './step-context.ts';
 import type {
   ActivityCallOptions,
   Duration,
@@ -744,6 +745,12 @@ export class Context implements WorkflowContext {
   }
 
   onUpdate(name: string, handler: (payload: unknown) => unknown): void {
+    if (isGeneratorFunction(handler) || isAsyncGeneratorFunction(handler)) {
+      throw new TypeError(
+        `Update handler "${name}" cannot be a generator function. ` +
+          `Use a plain function — update handlers run synchronously at checkpoint boundaries and cannot yield.`,
+      );
+    }
     this.#updateHandlers.set(name, handler);
   }
 
