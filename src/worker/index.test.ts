@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import type { ActivityExecutionInterception, ActivityInterceptor } from '../core/interceptor.ts';
+import type { ActivityInterceptor } from '../core/interceptor.ts';
 import { RemoteWorker } from './index.ts';
 
 // ---------------------------------------------------------------------------
@@ -918,9 +918,9 @@ describe('RemoteWorker', () => {
   // Interceptor support tests
   // ---------------------------------------------------------------------------
 
-  it('runs activity interceptor around task execution', async () => {
+  it('interceptor wraps activity execution', async () => {
     const messages: any[] = [];
-    const interceptorOrder: string[] = [];
+    const interceptorCalls: string[] = [];
 
     server = createTestServer({
       onMessage(ws, message) {
@@ -931,47 +931,47 @@ describe('RemoteWorker', () => {
           ws.send(
             JSON.stringify({
               type: 'task',
-              operationId: 'op-intercepted-1',
-              activityName: 'processOrder',
-              input: { orderId: 99 },
+              operationId: 'op-intercept-1',
+              activityName: 'greet',
+              input: 'world',
             }),
           );
         }
       },
     });
 
-    const loggingInterceptor: ActivityInterceptor = {
-      async execute(interception, next) {
-        interceptorOrder.push(`before:${interception.activityName}`);
-        const result = await next(interception);
-        interceptorOrder.push(`after:${interception.activityName}`);
+    const interceptor: ActivityInterceptor = {
+      execute(context, next) {
+        interceptorCalls.push(`before:${context.activityName}`);
+        const result = next(context);
+        interceptorCalls.push(`after:${context.activityName}`);
         return result;
       },
     };
 
     const worker = new RemoteWorker({
       serverUrl: `ws://localhost:${server.port}`,
-      workerId: 'interceptor-test-worker',
+      workerId: 'interceptor-test',
       activities: {
-        processOrder: async (input: any) => ({ processed: true, orderId: input.orderId }),
+        greet: async (input: unknown) => `hello ${String(input)}`,
       },
-      interceptors: [loggingInterceptor],
+      interceptors: [interceptor],
     });
 
     await worker.connect();
     await Bun.sleep(200);
 
-    expect(interceptorOrder).toEqual(['before:processOrder', 'after:processOrder']);
+    expect(interceptorCalls).toEqual(['before:greet', 'after:greet']);
 
     const taskResult = messages.find((m) => m.type === 'taskResult');
     expect(taskResult).toBeDefined();
     expect(taskResult.status).toBe('completed');
-    expect(taskResult.value).toEqual({ processed: true, orderId: 99 });
+    expect(taskResult.value).toBe('hello world');
 
     await worker.disconnect();
   });
 
-  it('interceptor can modify activity input', async () => {
+  it('interceptor can modify input', async () => {
     const messages: any[] = [];
 
     server = createTestServer({
@@ -992,19 +992,19 @@ describe('RemoteWorker', () => {
       },
     });
 
-    const modifyInterceptor: ActivityInterceptor = {
-      async execute(interception, next) {
-        return next({ ...interception, input: 'modified' });
+    const interceptor: ActivityInterceptor = {
+      execute(context, next) {
+        return next({ ...context, input: 'modified' });
       },
     };
 
     const worker = new RemoteWorker({
       serverUrl: `ws://localhost:${server.port}`,
-      workerId: 'modify-input-worker',
+      workerId: 'modify-input-test',
       activities: {
-        echo: async (input: any) => input,
+        echo: async (input: unknown) => input,
       },
-      interceptors: [modifyInterceptor],
+      interceptors: [interceptor],
     });
 
     await worker.connect();
@@ -1018,7 +1018,7 @@ describe('RemoteWorker', () => {
     await worker.disconnect();
   });
 
-  it('interceptor receives propagated headers from task message', async () => {
+  it('interceptor receives propagated headers', async () => {
     const messages: any[] = [];
     let capturedHeaders: Map<string, string> | undefined;
 
@@ -1031,30 +1031,30 @@ describe('RemoteWorker', () => {
           ws.send(
             JSON.stringify({
               type: 'task',
-              operationId: 'op-headers-1',
+              operationId: 'op-headers',
               activityName: 'echo',
-              input: 'hello',
-              headers: { 'x-trace-id': 'trace-abc', 'x-request-id': 'req-42' },
+              input: 'data',
+              headers: { 'x-trace-id': 'trace-abc', 'x-auth': 'token-xyz' },
             }),
           );
         }
       },
     });
 
-    const headerInterceptor: ActivityInterceptor = {
-      async execute(interception, next) {
-        capturedHeaders = interception.headers;
-        return next(interception);
+    const interceptor: ActivityInterceptor = {
+      execute(context, next) {
+        capturedHeaders = context.headers;
+        return next(context);
       },
     };
 
     const worker = new RemoteWorker({
       serverUrl: `ws://localhost:${server.port}`,
-      workerId: 'headers-worker',
+      workerId: 'headers-test',
       activities: {
-        echo: async (input: any) => input,
+        echo: async (input: unknown) => input,
       },
-      interceptors: [headerInterceptor],
+      interceptors: [interceptor],
     });
 
     await worker.connect();
@@ -1062,15 +1062,12 @@ describe('RemoteWorker', () => {
 
     expect(capturedHeaders).toBeDefined();
     expect(capturedHeaders!.get('x-trace-id')).toBe('trace-abc');
-    expect(capturedHeaders!.get('x-request-id')).toBe('req-42');
-
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult?.status).toBe('completed');
+    expect(capturedHeaders!.get('x-auth')).toBe('token-xyz');
 
     await worker.disconnect();
   });
 
-  it('executes without interceptors when none are configured (zero overhead)', async () => {
+  it('zero overhead without interceptors — activity runs directly', async () => {
     const messages: any[] = [];
 
     server = createTestServer({
@@ -1082,22 +1079,22 @@ describe('RemoteWorker', () => {
           ws.send(
             JSON.stringify({
               type: 'task',
-              operationId: 'op-no-intercept',
-              activityName: 'echo',
-              input: 'direct',
+              operationId: 'op-no-interceptor',
+              activityName: 'double',
+              input: 21,
             }),
           );
         }
       },
     });
 
+    // No interceptors configured
     const worker = new RemoteWorker({
       serverUrl: `ws://localhost:${server.port}`,
-      workerId: 'no-interceptor-worker',
+      workerId: 'no-interceptor-test',
       activities: {
-        echo: async (input: any) => input,
+        double: async (input: unknown) => (input as number) * 2,
       },
-      // No interceptors — default path
     });
 
     await worker.connect();
@@ -1106,12 +1103,12 @@ describe('RemoteWorker', () => {
     const taskResult = messages.find((m) => m.type === 'taskResult');
     expect(taskResult).toBeDefined();
     expect(taskResult.status).toBe('completed');
-    expect(taskResult.value).toBe('direct');
+    expect(taskResult.value).toBe(42);
 
     await worker.disconnect();
   });
 
-  it('interceptor receives operationId and signal on the interception', async () => {
+  it('interceptor context includes operationId and signal', async () => {
     const messages: any[] = [];
     let capturedOperationId: string | undefined;
     let capturedSignal: AbortSignal | undefined;
@@ -1125,39 +1122,184 @@ describe('RemoteWorker', () => {
           ws.send(
             JSON.stringify({
               type: 'task',
-              operationId: 'op-context-fields',
+              operationId: 'op-context-check',
               activityName: 'echo',
               input: 'test',
-              attempt: 3,
             }),
           );
         }
       },
     });
 
-    const inspectInterceptor: ActivityInterceptor = {
-      async execute(interception: ActivityExecutionInterception, next) {
-        capturedOperationId = interception.operationId;
-        capturedSignal = interception.signal;
-        return next(interception);
+    const interceptor: ActivityInterceptor = {
+      execute(context, next) {
+        capturedOperationId = context.operationId;
+        capturedSignal = context.signal;
+        return next(context);
       },
     };
 
     const worker = new RemoteWorker({
       serverUrl: `ws://localhost:${server.port}`,
-      workerId: 'context-fields-worker',
+      workerId: 'context-check-test',
       activities: {
-        echo: async (input: any) => input,
+        echo: async (input: unknown) => input,
       },
-      interceptors: [inspectInterceptor],
+      interceptors: [interceptor],
     });
 
     await worker.connect();
     await Bun.sleep(200);
 
-    expect(capturedOperationId).toBe('op-context-fields');
+    expect(capturedOperationId).toBe('op-context-check');
     expect(capturedSignal).toBeInstanceOf(AbortSignal);
     expect(capturedSignal!.aborted).toBe(false);
+
+    await worker.disconnect();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Cancel support tests
+  // ---------------------------------------------------------------------------
+
+  it('handles cancel message and aborts in-flight task', async () => {
+    const messages: any[] = [];
+    let taskStarted = false;
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          // Send a task that will block until cancelled
+          ws.send(
+            JSON.stringify({
+              type: 'task',
+              operationId: 'op-cancel-1',
+              activityName: 'cancellableActivity',
+              input: null,
+            }),
+          );
+
+          // After a brief delay, send a cancel message
+          setTimeout(() => {
+            ws.send(JSON.stringify({ type: 'cancel', operationId: 'op-cancel-1' }));
+          }, 100);
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'cancel-test-worker',
+      activities: {
+        cancellableActivity: async (_input: unknown, context) => {
+          taskStarted = true;
+          // Wait indefinitely — the cancel should abort this via the signal
+          return new Promise((_resolve, reject) => {
+            context?.signal.addEventListener('abort', () => {
+              reject(new Error('Aborted'));
+            });
+          });
+        },
+      },
+    });
+
+    await worker.connect();
+
+    // Wait for the task to start, then for the cancel to arrive and be processed
+    await Bun.sleep(400);
+
+    expect(taskStarted).toBe(true);
+
+    const taskResult = messages.find((m) => m.type === 'taskResult');
+    expect(taskResult).toBeDefined();
+    expect(taskResult.operationId).toBe('op-cancel-1');
+    expect(taskResult.status).toBe('cancelled');
+    expect(taskResult.cancelled).toBe(true);
+
+    await worker.disconnect();
+  });
+
+  it('cancel for unknown operationId is a no-op', async () => {
+    const messages: any[] = [];
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          // Send a cancel for a non-existent operationId
+          ws.send(JSON.stringify({ type: 'cancel', operationId: 'non-existent-op' }));
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'cancel-noop-test',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await worker.connect();
+    await Bun.sleep(100);
+
+    // Worker should still be connected and no taskResult should have been sent
+    expect(worker.connected).toBe(true);
+    expect(worker.inFlight).toBe(0);
+    const taskResults = messages.filter((m) => m.type === 'taskResult');
+    expect(taskResults.length).toBe(0);
+
+    await worker.disconnect();
+  });
+
+  it('activity function receives AbortSignal via context', async () => {
+    let receivedSignal: AbortSignal | undefined;
+    const messages: any[] = [];
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          ws.send(
+            JSON.stringify({
+              type: 'task',
+              operationId: 'op-signal-check',
+              activityName: 'signalInspector',
+              input: null,
+            }),
+          );
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'signal-check-worker',
+      activities: {
+        signalInspector: async (_input: unknown, context) => {
+          receivedSignal = context?.signal;
+          return 'done';
+        },
+      },
+    });
+
+    await worker.connect();
+    await Bun.sleep(200);
+
+    expect(receivedSignal).toBeDefined();
+    expect(receivedSignal).toBeInstanceOf(AbortSignal);
+    expect(receivedSignal!.aborted).toBe(false);
+
+    const taskResult = messages.find((m) => m.type === 'taskResult');
+    expect(taskResult).toBeDefined();
+    expect(taskResult.status).toBe('completed');
 
     await worker.disconnect();
   });

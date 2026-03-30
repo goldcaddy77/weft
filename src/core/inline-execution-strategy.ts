@@ -25,13 +25,13 @@ import type {
 // ---------------------------------------------------------------------------
 
 export interface InlineExecutionDependencies {
-  getRegistration: (
-    workflowType: string,
-  ) => {
-    handler: WorkflowFunction;
-    version: string;
-    searchAttributes?: SearchAttributeSchema;
-  } | undefined;
+  getRegistration: (workflowType: string) =>
+    | {
+        handler: WorkflowFunction;
+        version: string;
+        searchAttributes?: SearchAttributeSchema;
+      }
+    | undefined;
   getNow: () => number;
   maxNestingDepth: number;
   development?: boolean;
@@ -93,7 +93,9 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       abortController: workflowAbort,
       getNow: this.#dependencies.getNow,
       nestingDepth: parameters.nestingDepth ?? 0,
-      searchAttributeSchema: registration.searchAttributes,
+      ...(registration.searchAttributes && {
+        searchAttributeSchema: registration.searchAttributes,
+      }),
       ...(parameters.deadline !== undefined && { deadline: parameters.deadline }),
     });
 

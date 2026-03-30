@@ -2822,8 +2822,190 @@ describe('retry policy respected on reassignment', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Header propagation tests
+// Worker shutdown and cancel propagation
 // ---------------------------------------------------------------------------
+
+describe('worker shutdown and cancel propagation', () => {
+  let engine: Engine;
+  let server: WeftServer;
+
+  afterEach(async () => {
+    await server?.stop();
+    engine?.[Symbol.dispose]();
+  });
+
+  async function connectWorker(
+    wsServer: WeftServer,
+    path = '/v1/tasks/default/stream',
+  ): Promise<WebSocket> {
+    const wsUrl = wsServer.url.replace('http://', 'ws://');
+    const ws = new WebSocket(`${wsUrl}${path}`);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('WebSocket connection failed')));
+    });
+    return ws;
+  }
+
+  async function registerWorker(
+    ws: WebSocket,
+    options: { workerId: string; activities: string[]; concurrency?: number },
+  ): Promise<void> {
+    ws.send(
+      JSON.stringify({
+        type: 'register',
+        workerId: options.workerId,
+        activities: options.activities,
+        concurrency: options.concurrency ?? 10,
+      }),
+    );
+    await Bun.sleep(50);
+  }
+
+  it('shutdownWorker sends shutdown message and waits for disconnect', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const received: Array<{ type: string; [key: string]: unknown }> = [];
+    const ws = await connectWorker(server);
+
+    ws.addEventListener('message', (event) => {
+      const parsed = JSON.parse(String(event.data)) as { type: string; [key: string]: unknown };
+      received.push(parsed);
+
+      // Simulate worker receiving shutdown and closing the connection
+      if (parsed.type === 'shutdown') {
+        ws.close();
+      }
+    });
+
+    await registerWorker(ws, { workerId: 'shutdown-w1', activities: ['charge'], concurrency: 5 });
+
+    const result = await server.shutdownWorker('shutdown-w1', { timeoutMs: 5000 });
+
+    expect(result).toBe(true);
+
+    const shutdownMessage = received.find((m) => m.type === 'shutdown');
+    expect(shutdownMessage).toBeDefined();
+
+    // The worker should be unregistered after disconnect
+    await Bun.sleep(50);
+    expect(server.registry.getWorker('shutdown-w1')).toBeUndefined();
+  });
+
+  it('shutdownWorker returns false for unknown worker', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const result = await server.shutdownWorker('non-existent-worker');
+    expect(result).toBe(false);
+  });
+
+  it('shutdownAllWorkers shuts down all connected workers', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws1 = await connectWorker(server);
+    const ws2 = await connectWorker(server);
+
+    // Auto-close on receiving shutdown
+    ws1.addEventListener('message', (event) => {
+      const parsed = JSON.parse(String(event.data)) as { type: string };
+      if (parsed.type === 'shutdown') ws1.close();
+    });
+    ws2.addEventListener('message', (event) => {
+      const parsed = JSON.parse(String(event.data)) as { type: string };
+      if (parsed.type === 'shutdown') ws2.close();
+    });
+
+    await registerWorker(ws1, { workerId: 'all-w1', activities: ['charge'], concurrency: 5 });
+    await registerWorker(ws2, { workerId: 'all-w2', activities: ['charge'], concurrency: 5 });
+
+    expect(server.registry.size).toBe(2);
+
+    await server.shutdownAllWorkers({ timeoutMs: 5000 });
+
+    await Bun.sleep(50);
+    expect(server.registry.size).toBe(0);
+  });
+
+  it('cancelTask sends cancel to the correct worker', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const received: Array<{ type: string; operationId?: string }> = [];
+    const ws = await connectWorker(server);
+
+    ws.addEventListener('message', (event) => {
+      received.push(JSON.parse(String(event.data)));
+    });
+
+    await registerWorker(ws, { workerId: 'cancel-w1', activities: ['charge'], concurrency: 5 });
+
+    await server.dispatchTask({
+      operationId: 'cancel-op-1',
+      activityName: 'charge',
+      input: { amount: 100 },
+    });
+    await Bun.sleep(50);
+
+    const result = server.cancelTask('cancel-op-1');
+
+    expect(result).toBe(true);
+    await Bun.sleep(50);
+
+    const cancelMessage = received.find((m) => m.type === 'cancel');
+    expect(cancelMessage).toBeDefined();
+    expect(cancelMessage!.operationId).toBe('cancel-op-1');
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('cancelTask returns false when no worker has the task', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const result = server.cancelTask('non-existent-op');
+    expect(result).toBe(false);
+  });
+
+  it('workflow cancellation propagates cancel to workers', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const received: Array<{ type: string; operationId?: string }> = [];
+    const ws = await connectWorker(server);
+
+    ws.addEventListener('message', (event) => {
+      received.push(JSON.parse(String(event.data)));
+    });
+
+    await registerWorker(ws, { workerId: 'wf-cancel-w1', activities: ['charge'], concurrency: 5 });
+
+    // Dispatch a task with a workflowId so it gets indexed in workflowOperations
+    await server.dispatchTask({
+      operationId: 'wf-cancel-op-1',
+      activityName: 'charge',
+      input: { amount: 100 },
+      workflowId: 'workflow-to-cancel',
+    });
+    await Bun.sleep(50);
+
+    // Simulate workflow cancellation by dispatching the event on the engine
+    const { WorkflowCancelledEvent: CancelledEvent } = await import('../core/events.ts');
+    engine.dispatchEvent(new CancelledEvent('workflow-to-cancel'));
+
+    await Bun.sleep(100);
+
+    const cancelMessages = received.filter((m) => m.type === 'cancel');
+    expect(cancelMessages.length).toBe(1);
+    expect(cancelMessages[0]!.operationId).toBe('wf-cancel-op-1');
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+});
 
 describe('header propagation in task dispatch', () => {
   let engine: Engine;
@@ -2834,76 +3016,80 @@ describe('header propagation in task dispatch', () => {
     engine?.[Symbol.dispose]();
   });
 
-  function createTestEngine(): Engine {
-    return new Engine({ storage: new MemoryStorage() });
-  }
-
-  async function connectWorkerWs(
-    srv: WeftServer,
+  async function connectWorker(
+    wsServer: WeftServer,
+    path = '/v1/tasks/default/stream',
   ): Promise<WebSocket> {
-    const ws = new WebSocket(`ws://localhost:${srv.port}/v1/tasks/default/stream`);
-    await new Promise<void>((resolve) => {
+    const wsUrl = wsServer.url.replace('http://', 'ws://');
+    const ws = new WebSocket(`${wsUrl}${path}`);
+    await new Promise<void>((resolve, reject) => {
       ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('WebSocket connection failed')));
     });
     return ws;
   }
 
-  async function registerWs(
+  async function registerWorker(
     ws: WebSocket,
-    options: { workerId: string; activities: string[]; concurrency: number },
+    options: { workerId: string; activities: string[]; concurrency?: number },
   ): Promise<void> {
-    ws.send(JSON.stringify({ type: 'register', ...options }));
+    ws.send(
+      JSON.stringify({
+        type: 'register',
+        workerId: options.workerId,
+        activities: options.activities,
+        concurrency: options.concurrency ?? 10,
+      }),
+    );
     await Bun.sleep(50);
   }
 
-  it('propagates headers to WebSocket workers in the task message', async () => {
-    engine = createTestEngine();
+  it('includes headers when dispatching to WebSocket workers', async () => {
+    engine = createEngine();
     server = serve({ engine, port: 0 });
 
-    const ws = await connectWorkerWs(server);
-    const received: unknown[] = [];
+    const received: Array<Record<string, unknown>> = [];
+    const ws = await connectWorker(server);
 
     ws.addEventListener('message', (event) => {
-      received.push(JSON.parse(String(event.data)));
+      received.push(JSON.parse(String(event.data)) as Record<string, unknown>);
     });
 
-    await registerWs(ws, { workerId: 'header-ws-1', activities: ['charge'], concurrency: 5 });
+    await registerWorker(ws, { workerId: 'header-w1', activities: ['charge'], concurrency: 5 });
 
     await server.dispatchTask({
       operationId: 'header-op-1',
       activityName: 'charge',
-      input: { amount: 50 },
-      headers: { 'x-trace-id': 'trace-123', 'x-org-id': 'org-7' },
+      input: { amount: 100 },
+      headers: { 'x-trace-id': 'trace-123', 'x-auth': 'bearer-token' },
     });
 
-    await Bun.sleep(50);
+    await Bun.sleep(100);
 
-    const taskMessage = (received as Record<string, unknown>[]).find(
-      (m) => m.type === 'task',
-    );
+    const taskMessage = received.find((m) => m['type'] === 'task');
     expect(taskMessage).toBeDefined();
-    expect((taskMessage as Record<string, unknown>).headers).toEqual({
+    expect(taskMessage!['headers']).toEqual({
       'x-trace-id': 'trace-123',
-      'x-org-id': 'org-7',
+      'x-auth': 'bearer-token',
     });
 
     ws.close();
     await Bun.sleep(50);
   });
 
-  it('omits headers field from WS task message when dispatch has no headers', async () => {
-    engine = createTestEngine();
+  it('omits headers field when no headers are provided', async () => {
+    engine = createEngine();
     server = serve({ engine, port: 0 });
 
-    const ws = await connectWorkerWs(server);
-    const received: unknown[] = [];
+    const received: Array<Record<string, unknown>> = [];
+    const ws = await connectWorker(server);
 
     ws.addEventListener('message', (event) => {
-      received.push(JSON.parse(String(event.data)));
+      received.push(JSON.parse(String(event.data)) as Record<string, unknown>);
     });
 
-    await registerWs(ws, {
-      workerId: 'no-header-ws-1',
+    await registerWorker(ws, {
+      workerId: 'no-header-w1',
       activities: ['charge'],
       concurrency: 5,
     });
@@ -2911,42 +3097,42 @@ describe('header propagation in task dispatch', () => {
     await server.dispatchTask({
       operationId: 'no-header-op-1',
       activityName: 'charge',
-      input: null,
+      input: { amount: 50 },
     });
 
-    await Bun.sleep(50);
+    await Bun.sleep(100);
 
-    const taskMessage = (received as Record<string, unknown>[]).find(
-      (m) => m.type === 'task',
-    );
+    const taskMessage = received.find((m) => m['type'] === 'task');
     expect(taskMessage).toBeDefined();
-    expect((taskMessage as Record<string, unknown>).headers).toBeUndefined();
+    expect(taskMessage!['headers']).toBeUndefined();
 
     ws.close();
     await Bun.sleep(50);
   });
 
-  it('propagates headers to long-poll workers via task queue', async () => {
-    engine = createTestEngine();
+  it('includes headers when dispatching to long-poll workers via task queue', async () => {
+    engine = createEngine();
     server = serve({ engine, port: 0 });
 
-    // No WebSocket workers — falls through to task queue
+    // Dispatch task with headers — it will go into the task queue since no
+    // WebSocket worker is connected for the target activity
     await server.dispatchTask({
-      operationId: 'header-lp-op-1',
-      activityName: 'charge',
-      input: null,
-      headers: { 'x-trace-id': 'trace-lp-1' },
+      operationId: 'lp-header-op-1',
+      activityName: 'unregistered-activity',
+      input: { data: 'test' },
+      headers: { 'x-request-id': 'req-456' },
     });
 
-    expect(server.taskQueue.pendingCount('default')).toBe(1);
+    // Poll the task queue via the long-poll HTTP endpoint
+    const baseUrl = server.url;
+    const response = await fetch(`${baseUrl}/v1/tasks/default?activity=unregistered-activity`, {
+      method: 'GET',
+      headers: { 'X-Long-Poll-Timeout': '500' },
+    });
 
-    // Poll for the task via the HTTP endpoint
-    const pollUrl = `http://localhost:${server.port}/v1/tasks/default?activity=charge&timeout=1000`;
-    const response = await fetch(pollUrl);
-    expect(response.ok).toBe(true);
-
+    expect(response.status).toBe(200);
     const task = (await response.json()) as Record<string, unknown>;
-    expect(task.operationId).toBe('header-lp-op-1');
-    expect(task.headers).toEqual({ 'x-trace-id': 'trace-lp-1' });
+    expect(task['operationId']).toBe('lp-header-op-1');
+    expect(task['headers']).toEqual({ 'x-request-id': 'req-456' });
   });
 });

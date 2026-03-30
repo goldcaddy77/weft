@@ -798,7 +798,8 @@ export class Context implements WorkflowContext {
     // inside an update handler.
     if (isGeneratorFunction(handler) || isAsyncGeneratorFunction(handler)) {
       throw new TypeError(
-        `Update handler for '${name}' must not be a generator function. Use a plain function that returns a value synchronously.`,
+        `Update handler "${name}" cannot be a generator function. ` +
+          `Use a plain function — update handlers run synchronously at checkpoint boundaries and cannot yield.`,
       );
     }
     this.#updateHandlers.set(name, handler);

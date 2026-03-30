@@ -51,7 +51,7 @@ export async function executeWithInterceptors(
       attempt: task.attempt ?? 1,
       input: task.input,
       headers,
-      signal,
+      ...(signal && { signal }),
     },
     async (interception) => {
       return activityFunction(interception.input, signal ? { signal } : undefined);

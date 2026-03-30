@@ -146,17 +146,17 @@ const GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {});
 const AsyncGeneratorFunctionPrototype = Object.getPrototypeOf(async function* () {});
 
 /** Prototype of generator instance objects (the values returned by generator functions). */
-const GeneratorPrototype = Object.getPrototypeOf(
-  Object.getPrototypeOf((function* () {})()),
-);
+const GeneratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf((function* () {})()));
 const AsyncGeneratorPrototype = Object.getPrototypeOf(
   Object.getPrototypeOf((async function* () {})()),
 );
 
+/** Returns `true` if `fn` is a sync generator function (`function*`). */
 export function isGeneratorFunction(fn: Function): boolean {
   return Object.getPrototypeOf(fn) === GeneratorFunctionPrototype;
 }
 
+/** Returns `true` if `fn` is an async generator function (`async function*`). */
 export function isAsyncGeneratorFunction(fn: Function): boolean {
   return Object.getPrototypeOf(fn) === AsyncGeneratorFunctionPrototype;
 }

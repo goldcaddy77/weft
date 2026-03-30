@@ -399,7 +399,7 @@ describe('Schema Registration and Validation', () => {
       },
     });
 
-    const handle = await engine.start('schema-wf', null, { id: 'wf-schema-ok' });
+    await engine.start('schema-wf', null, { id: 'wf-schema-ok' });
     await flush();
 
     const attributes = await engine.getAttributes('wf-schema-ok');
@@ -454,7 +454,7 @@ describe('Schema Registration and Validation', () => {
       return 'done';
     });
 
-    const handle = await engine.start('no-schema', null, { id: 'wf-no-schema' });
+    await engine.start('no-schema', null, { id: 'wf-no-schema' });
     await flush();
 
     const attributes = await engine.getAttributes('wf-no-schema');

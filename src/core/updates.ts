@@ -8,9 +8,9 @@
  */
 
 import type { BatchOperation, Storage } from '../storage/interface';
-import type { WorkflowStatus } from './types.ts';
 import { KEYS } from '../storage/interface';
 import { decode, encode } from './codec';
+import type { WorkflowStatus } from './types';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -119,7 +119,7 @@ export class UpdateCoordinator {
     return this.getResponse(mapping.updateId);
   }
 
-  /** Get pending update requests for a workflow. */
+  /** Get pending update requests for a workflow, sorted FIFO by creation time. */
   async getPendingUpdates(workflowId: string): Promise<UpdateRequest[]> {
     const prefix = `upd:${workflowId}:`;
     const results: UpdateRequest[] = [];

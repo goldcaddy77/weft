@@ -2,12 +2,12 @@
 // Remote worker client — connects to the server via WebSocket
 // ---------------------------------------------------------------------------
 
-import { HeartbeatManager } from './heartbeat.ts';
 import {
   buildComposedInterceptor,
   executeWithInterceptors,
   type ComposedInterceptor,
 } from './execute-with-interceptors.ts';
+import { HeartbeatManager } from './heartbeat.ts';
 
 export { HeartbeatManager } from './heartbeat.ts';
 export { LongPollWorker } from './long-poll.ts';
@@ -19,15 +19,20 @@ export type { InFlightTask, RoutingOptions, WorkerInfo } from './registry.ts';
 // Types
 // ---------------------------------------------------------------------------
 
+/** Context passed to activity functions executed by a remote worker. */
+export interface RemoteActivityContext {
+  signal: AbortSignal;
+}
+
 export interface RemoteWorkerOptions {
   serverUrl: string;
   workerId?: string;
-  activities: Record<string, (input: unknown) => Promise<unknown>>;
+  activities: Record<string, (input: unknown, context?: RemoteActivityContext) => Promise<unknown>>;
   concurrency?: number; // default: 10
   queue?: string; // default: 'default'
   disconnectTimeoutMs?: number; // default: 30_000
   /** Activity interceptors to run around each activity execution on this worker. */
-  interceptors?: ActivityInterceptor[];
+  interceptors?: import('../core/interceptor.ts').ActivityInterceptor[];
 }
 
 interface TaskMessage {
@@ -61,6 +66,7 @@ export class RemoteWorker implements Disposable {
   #abortController: AbortController;
   #heartbeat: HeartbeatManager;
   #shuttingDown: boolean;
+  #taskAbortControllers: Map<string, AbortController>;
   #composedInterceptor: ComposedInterceptor | null;
 
   constructor(options: RemoteWorkerOptions) {
@@ -74,6 +80,7 @@ export class RemoteWorker implements Disposable {
     this.#inFlight = 0;
     this.#abortController = new AbortController();
     this.#shuttingDown = false;
+    this.#taskAbortControllers = new Map();
     this.#composedInterceptor = buildComposedInterceptor(options.interceptors);
     this.#heartbeat = new HeartbeatManager(() => {
       this.#sendMessage({ type: 'heartbeat', workerId: this.#options.workerId });
@@ -161,6 +168,7 @@ export class RemoteWorker implements Disposable {
   }
 
   [Symbol.dispose](): void {
+    this.#abortAllTasks();
     this.#abortController.abort();
     this.#abortController = new AbortController();
     this.#heartbeat.stop();
@@ -174,6 +182,14 @@ export class RemoteWorker implements Disposable {
   // ---------------------------------------------------------------------------
   // Internal
   // ---------------------------------------------------------------------------
+
+  /** Abort all in-flight task controllers and clear the map. */
+  #abortAllTasks(): void {
+    for (const controller of this.#taskAbortControllers.values()) {
+      controller.abort();
+    }
+    this.#taskAbortControllers.clear();
+  }
 
   async #gracefulShutdown(): Promise<void> {
     this.#shuttingDown = true;
@@ -191,6 +207,9 @@ export class RemoteWorker implements Disposable {
         console.warn(
           `[weft] RemoteWorker timed out after ${timeout}ms with ${this.#inFlight} tasks still in-flight`,
         );
+        // Abort all remaining in-flight task controllers so activities don't
+        // continue running after the worker has disconnected.
+        this.#abortAllTasks();
         break;
       }
       await Bun.sleep(50);
@@ -218,6 +237,18 @@ export class RemoteWorker implements Disposable {
       await this.#executeTask(task);
     } else if (data.type === 'shutdown') {
       void this.#gracefulShutdown();
+    } else if (data.type === 'cancel') {
+      const operationId = data['operationId'];
+      if (typeof operationId !== 'string') {
+        console.warn(
+          '[weft] Received cancel message with missing or non-string operationId — ignoring',
+        );
+        return;
+      }
+      const controller = this.#taskAbortControllers.get(operationId);
+      if (controller) {
+        controller.abort();
+      }
     }
   }
 
@@ -233,12 +264,9 @@ export class RemoteWorker implements Disposable {
       return;
     }
 
-    this.#inFlight += 1;
-
     const taskAbortController = new AbortController();
-    // Abort per-task controller when the worker disconnects/shuts down
-    const onWorkerAbort = () => taskAbortController.abort();
-    this.#abortController.signal.addEventListener('abort', onWorkerAbort);
+    this.#taskAbortControllers.set(task.operationId, taskAbortController);
+    this.#inFlight += 1;
 
     try {
       const result = await executeWithInterceptors(
@@ -255,14 +283,24 @@ export class RemoteWorker implements Disposable {
         value: result,
       });
     } catch (error) {
-      this.#sendMessage({
-        type: 'taskResult',
-        operationId: task.operationId,
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (taskAbortController.signal.aborted) {
+        this.#sendMessage({
+          type: 'taskResult',
+          operationId: task.operationId,
+          status: 'cancelled',
+          cancelled: true,
+          error: 'Task cancelled',
+        });
+      } else {
+        this.#sendMessage({
+          type: 'taskResult',
+          operationId: task.operationId,
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     } finally {
-      this.#abortController.signal.removeEventListener('abort', onWorkerAbort);
+      this.#taskAbortControllers.delete(task.operationId);
       this.#inFlight -= 1;
     }
   }
