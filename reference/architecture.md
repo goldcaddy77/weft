@@ -1460,9 +1460,10 @@ export class Engine extends EventTarget implements Disposable {
 
   constructor(options: EngineOptions) {
     super();
-    this.#storage = options.storage;
-    this.#workers = new WorkerPool(options.worker);
+    this.#storage = options.storage ?? new MemoryStorage();
     this.#scheduler = new Scheduler(this.#storage, this);
+    // Worker execution configured via options.workerExecution (workflows)
+    // and options.activityExecution (activities), both optional.
   }
 
   async start(type: string, input: unknown, options?: StartOptions): Promise<WorkflowHandle> {
@@ -2551,14 +2552,23 @@ const server = serve({
     },
 
     'GET /v1/workflows/:id/review/:reviewId': async (req) => {
-      const review = await engine.getReview(req.params.id, req.params.reviewId);
+      // getReview() lives on HumanReviewCoordinator, not Engine directly
+      const reviews = await engine.listReviews();
+      const review = reviews.find(
+        (r) => r.reviewId === req.params.reviewId && r.workflowId === req.params.id,
+      );
       if (!review) return new Response('Not found', { status: 404 });
       return Response.json(review);
     },
 
     'POST /v1/workflows/:id/review/:reviewId': async (req) => {
-      const decision = await req.json();
-      await engine.submitReview(req.params.id, req.params.reviewId, decision);
+      const { decision, reviewer, feedback } = await req.json();
+      await engine.submitReview(req.params.reviewId, {
+        decision,
+        reviewer,
+        feedback,
+        workflowId: req.params.id,
+      });
       return Response.json({ submitted: true });
     },
 
@@ -4992,7 +5002,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`LMDBStorage` implements `Disposable`.** Closes LMDB environment.
 - [x] **`Scheduler` implements `Disposable`.** Clears intervals and timers.
 - [x] **`AsyncDisposableStack` used in server setup.** All server resources cleaned up in reverse order on shutdown.
-- [x] **Zero resource leaks under test.** A test that starts and stops the engine 1000 times shows no file handle or memory growth.
+- [ ] **Zero resource leaks under test.** A test that starts and stops the engine 1000 times shows no file handle or memory growth.
 
 ### Memory Management
 
