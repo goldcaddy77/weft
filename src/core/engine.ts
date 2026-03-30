@@ -883,7 +883,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
 
         try {
-          const result = handler(payload);
+          const result = await handler(payload);
           this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
           this.#broadcast({ type: 'update:completed', workflowId, updateId });
           return result;
