@@ -104,6 +104,12 @@ export interface WeftServer extends AsyncDisposable {
   stop(): Promise<void>;
   /** Dispatch a task to the best available worker. Returns true if dispatched. */
   dispatchTask(task: TaskDispatch): Promise<boolean>;
+  /** Send a shutdown message to a specific worker and wait for it to disconnect. Returns true if the worker was found. */
+  shutdownWorker(workerId: string, options?: { timeoutMs?: number }): Promise<boolean>;
+  /** Send a shutdown message to all connected workers and wait for them to disconnect. */
+  shutdownAllWorkers(options?: { timeoutMs?: number }): Promise<void>;
+  /** Send a cancel message for a specific operation to the worker handling it. Returns true if the worker was found. */
+  cancelTask(operationId: string): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +450,8 @@ export function serve(options: ServeOptions): WeftServer {
   const workerSockets = new Map<string, ServerWebSocket<WebSocketData>>();
   /** Tracks per-workflow worker affinity for sticky routing. Maps workflowId → workerId. */
   const workerAffinity = new Map<string, string>();
+  /** Reverse index: workflowId → set of operationIds currently in-flight for that workflow. */
+  const workflowOperations = new Map<string, Set<string>>();
   /** Tracks pending backoff-delay timers so they can be cleared on shutdown. */
   const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
   /** In-memory min-heap for inflight task deadlines — avoids full storage scans on each visibility tick. */
@@ -756,6 +764,11 @@ export function serve(options: ServeOptions): WeftServer {
               // Remove in-flight tracking and decrement the worker's counter.
               registry.completeTask(operationId);
               deadlineTracker.remove(operationId);
+
+              // Remove from workflow→operations reverse index.
+              for (const [, opIds] of workflowOperations) {
+                opIds.delete(operationId);
+              }
               // Atomically transition inflight → resolved in storage.
               const resolvedStatus = resultStatus === 'failed' ? 'failed' : ('completed' as const);
               transitionInflightToResolved(
@@ -866,6 +879,13 @@ export function serve(options: ServeOptions): WeftServer {
             }
           }
 
+          // Clean up workflow→operations reverse index for tasks owned by this worker.
+          for (const task of inFlightTasks) {
+            for (const [, opIds] of workflowOperations) {
+              opIds.delete(task.operationId);
+            }
+          }
+
           // Requeue each in-flight task with incremented attempt, respecting retry policy.
           // The in-memory registry is the source of truth for *which* tasks to reassign.
           // Full task metadata (activityName, input, etc.) is read from storage.
@@ -950,6 +970,30 @@ export function serve(options: ServeOptions): WeftServer {
     );
   }
   stack.defer(() => affinityController.abort());
+
+  // Propagate workflow cancellation to in-flight workers.
+  const cancelPropagationController = new AbortController();
+  options.engine.addEventListener(
+    WorkflowCancelledEvent.type,
+    (event) => {
+      const raw =
+        'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
+      const workflowId = typeof raw === 'string' ? raw : undefined;
+      if (!workflowId) return;
+
+      const operationIds = workflowOperations.get(workflowId);
+      if (!operationIds || operationIds.size === 0) return;
+
+      for (const operationId of operationIds) {
+        cancelTaskImpl(operationId);
+      }
+
+      // Clean up the reverse index entry now that all operations are cancelled.
+      workflowOperations.delete(workflowId);
+    },
+    { signal: cancelPropagationController.signal },
+  );
+  stack.defer(() => cancelPropagationController.abort());
 
   // Restore persisted in-flight records from storage so visibility timeout
   // tracking survives server restarts. Records whose deadline has already
@@ -1171,6 +1215,14 @@ export function serve(options: ServeOptions): WeftServer {
             const firstKey = workerAffinity.keys().next().value;
             if (firstKey !== undefined) workerAffinity.delete(firstKey);
           }
+
+          // Track operation in the workflow→operations reverse index for cancel propagation.
+          let operationIds = workflowOperations.get(task.workflowId);
+          if (!operationIds) {
+            operationIds = new Set();
+            workflowOperations.set(task.workflowId, operationIds);
+          }
+          operationIds.add(task.operationId);
         }
 
         return true;
@@ -1208,6 +1260,54 @@ export function serve(options: ServeOptions): WeftServer {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Worker shutdown helpers
+  // ---------------------------------------------------------------------------
+
+  const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
+
+  /** Send a cancel message to the worker handling a specific operation. */
+  function cancelTaskImpl(operationId: string): boolean {
+    // Find which worker has this task by checking the registry.
+    for (const [workerId, ws] of workerSockets) {
+      const tasks = registry.getWorkerTasks(workerId);
+      if (tasks.some((t) => t.operationId === operationId)) {
+        ws.send(JSON.stringify({ type: 'cancel', operationId }));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Send a shutdown message to a specific worker and wait for it to disconnect. */
+  async function shutdownWorkerImpl(
+    workerId: string,
+    shutdownOptions?: { timeoutMs?: number },
+  ): Promise<boolean> {
+    const ws = workerSockets.get(workerId);
+    if (!ws) return false;
+
+    ws.send(JSON.stringify({ type: 'shutdown' }));
+
+    const timeout = shutdownOptions?.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
+    while (workerSockets.has(workerId)) {
+      if (Date.now() >= deadline) {
+        return true; // We sent the message, but the worker did not disconnect in time.
+      }
+      await Bun.sleep(50);
+    }
+
+    return true;
+  }
+
+  /** Send a shutdown message to all connected workers and wait for them to disconnect. */
+  async function shutdownAllWorkersImpl(shutdownOptions?: { timeoutMs?: number }): Promise<void> {
+    const workerIds = [...workerSockets.keys()];
+    await Promise.all(workerIds.map((id) => shutdownWorkerImpl(id, shutdownOptions)));
+  }
+
   const resolvedPort = server.port ?? port;
   const resolvedHostname = server.hostname ?? hostname;
   const scheme = tlsOptions ? 'https' : 'http';
@@ -1222,6 +1322,9 @@ export function serve(options: ServeOptions): WeftServer {
       await stack[Symbol.asyncDispose]();
     },
     dispatchTask: dispatchTaskImpl,
+    shutdownWorker: shutdownWorkerImpl,
+    shutdownAllWorkers: shutdownAllWorkersImpl,
+    cancelTask: cancelTaskImpl,
     [Symbol.asyncDispose]() {
       return stack[Symbol.asyncDispose]();
     },

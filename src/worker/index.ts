@@ -14,10 +14,15 @@ export type { InFlightTask, RoutingOptions, WorkerInfo } from './registry.ts';
 // Types
 // ---------------------------------------------------------------------------
 
+/** Context passed to activity functions executed by a remote worker. */
+export interface RemoteActivityContext {
+  signal: AbortSignal;
+}
+
 export interface RemoteWorkerOptions {
   serverUrl: string;
   workerId?: string;
-  activities: Record<string, (input: unknown) => Promise<unknown>>;
+  activities: Record<string, (input: unknown, context?: RemoteActivityContext) => Promise<unknown>>;
   concurrency?: number; // default: 10
   queue?: string; // default: 'default'
   disconnectTimeoutMs?: number; // default: 30_000
@@ -51,6 +56,7 @@ export class RemoteWorker implements Disposable {
   #abortController: AbortController;
   #heartbeat: HeartbeatManager;
   #shuttingDown: boolean;
+  #taskAbortControllers: Map<string, AbortController>;
 
   constructor(options: RemoteWorkerOptions) {
     this.#options = {
@@ -63,6 +69,7 @@ export class RemoteWorker implements Disposable {
     this.#inFlight = 0;
     this.#abortController = new AbortController();
     this.#shuttingDown = false;
+    this.#taskAbortControllers = new Map();
     this.#heartbeat = new HeartbeatManager(() => {
       this.#sendMessage({ type: 'heartbeat', workerId: this.#options.workerId });
     }, HEARTBEAT_INTERVAL_MS);
@@ -206,6 +213,14 @@ export class RemoteWorker implements Disposable {
       await this.#executeTask(task);
     } else if (data.type === 'shutdown') {
       void this.#gracefulShutdown();
+    } else if (data.type === 'cancel') {
+      const operationId = data['operationId'] as string | undefined;
+      if (operationId) {
+        const controller = this.#taskAbortControllers.get(operationId);
+        if (controller) {
+          controller.abort();
+        }
+      }
     }
   }
 
@@ -221,10 +236,14 @@ export class RemoteWorker implements Disposable {
       return;
     }
 
+    const taskAbortController = new AbortController();
+    this.#taskAbortControllers.set(task.operationId, taskAbortController);
     this.#inFlight += 1;
 
     try {
-      const result = await activityFunction(task.input);
+      const result = await activityFunction(task.input, {
+        signal: taskAbortController.signal,
+      });
 
       this.#sendMessage({
         type: 'taskResult',
@@ -233,13 +252,24 @@ export class RemoteWorker implements Disposable {
         value: result,
       });
     } catch (error) {
-      this.#sendMessage({
-        type: 'taskResult',
-        operationId: task.operationId,
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (taskAbortController.signal.aborted) {
+        this.#sendMessage({
+          type: 'taskResult',
+          operationId: task.operationId,
+          status: 'cancelled',
+          cancelled: true,
+          error: 'Task cancelled',
+        });
+      } else {
+        this.#sendMessage({
+          type: 'taskResult',
+          operationId: task.operationId,
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     } finally {
+      this.#taskAbortControllers.delete(task.operationId);
       this.#inFlight -= 1;
     }
   }
