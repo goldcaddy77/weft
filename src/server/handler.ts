@@ -788,10 +788,12 @@ function handleGetMetrics(metricsCollector?: MetricsCollector): Response {
 
     lines.push(`# HELP ${safeName} ${metric.description}`);
 
-    if (metric.type === 'histogram' && collected?.type === 'histogram') {
+    if (metric.type === 'histogram') {
       lines.push(`# TYPE ${safeName} histogram`);
-      lines.push(`${safeName}_count ${collected.count}`);
-      lines.push(`${safeName}_sum ${collected.sum}`);
+      const count = collected?.type === 'histogram' ? collected.count : 0;
+      const sum = collected?.type === 'histogram' ? collected.sum : 0;
+      lines.push(`${safeName}_count ${count}`);
+      lines.push(`${safeName}_sum ${sum}`);
     } else if (metric.type === 'counter') {
       lines.push(`# TYPE ${safeName} counter`);
       const value = collected?.type === 'counter' ? collected.value : 0;

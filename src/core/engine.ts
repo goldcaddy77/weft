@@ -1751,27 +1751,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
               undefined,
               matchingUpdate.idempotencyKey,
             );
-            void this.#storage.batch(responseOperations);
+            void this.#storage
+              .batch(responseOperations)
+              .then(() => {
+                this.dispatchEvent(
+                  new UpdateCompletedEvent(
+                    matchingUpdate.updateId,
+                    workflowId,
+                    operation.updateName,
+                    value,
+                  ),
+                );
+                this.#broadcast({
+                  type: 'update:completed',
+                  workflowId,
+                  updateId: matchingUpdate.updateId,
+                });
+                return undefined;
+              })
+              .catch(() => {});
           };
 
           // Feed { payload, respond } back as the operation result
           this.#feedOperationResult(workflowId, {
             status: 'completed',
             value: { payload: matchingUpdate.payload, respond: coordinatedRespond },
-          });
-
-          this.dispatchEvent(
-            new UpdateCompletedEvent(
-              matchingUpdate.updateId,
-              workflowId,
-              operation.updateName,
-              matchingUpdate.payload,
-            ),
-          );
-          this.#broadcast({
-            type: 'update:completed',
-            workflowId,
-            updateId: matchingUpdate.updateId,
           });
         } else {
           // Wait for update to arrive — the update() caller will feed

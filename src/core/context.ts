@@ -770,8 +770,11 @@ export class Context implements WorkflowContext {
   }
 
   setAttributes(attributes: Record<string, SearchAttributeValue>): void {
-    for (const [key, value] of Object.entries(attributes)) {
+    // Validate all keys before mutating to ensure atomicity
+    for (const key of Object.keys(attributes)) {
       this.#validateAttributeKey(key);
+    }
+    for (const [key, value] of Object.entries(attributes)) {
       this.#searchAttributes[key] = value;
       this.#pendingAttributeChanges[key] = value;
     }
