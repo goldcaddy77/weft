@@ -368,14 +368,12 @@ describe('Synchronous Updates', () => {
       }
 
       const pending = await coordinator.getPendingUpdates('wf-fifo');
-      const sorted = pending
-        .filter((u) => u.name === 'data')
-        .toSorted((a, b) => a.createdAt - b.createdAt);
+      const filtered = pending.filter((u) => u.name === 'data');
 
-      // The oldest update should come first
-      expect(sorted[0]!.payload).toBe('first');
-      expect(sorted[1]!.payload).toBe('second');
-      expect(sorted[2]!.payload).toBe('third');
+      // getPendingUpdates must return FIFO order — assert directly without re-sorting
+      expect(filtered[0]!.payload).toBe('first');
+      expect(filtered[1]!.payload).toBe('second');
+      expect(filtered[2]!.payload).toBe('third');
 
       storage.clear();
     });

@@ -1291,16 +1291,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const timeout = options?.timeout ?? 30_000;
     const idempotencyKey = options?.idempotencyKey;
 
-    // Reject updates to workflows in terminal states
-    await this.#guardTerminalWorkflow(workflowId);
-
-    // Check idempotency
+    // Check idempotency first — a retry for an already-processed key should
+    // return the cached result even if the workflow has since completed.
     if (idempotencyKey !== undefined) {
       const existing = await this.#updateCoordinator.checkIdempotency(workflowId, idempotencyKey);
       if (existing !== null) {
         return { updateId: existing.updateId, result: existing.result };
       }
     }
+
+    // Reject updates to workflows in terminal states
+    await this.#guardTerminalWorkflow(workflowId);
 
     const requestOptions: { timeout: number; idempotencyKey?: string } = { timeout };
     if (idempotencyKey !== undefined) {
