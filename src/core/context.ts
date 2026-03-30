@@ -21,6 +21,7 @@ import { parseDuration } from './scheduler.ts';
 import type {
   ActivityCallOptions,
   Duration,
+  SearchAttributeSchema,
   SearchAttributeValue,
   WorkflowContext,
 } from './types.ts';
@@ -78,6 +79,8 @@ export type ContextOperationRequest =
       args: unknown[];
       callerStack?: string;
       options?: Record<string, unknown>;
+      /** Serialized interceptor headers (Map entries) for remote worker propagation. */
+      headers?: [string, string][];
     }
   | {
       type: 'sleep';
@@ -208,6 +211,7 @@ export interface ContextOptions {
   initialStep?: number;
   accumulatedResults?: Map<number, unknown>;
   searchAttributes?: Record<string, SearchAttributeValue>;
+  searchAttributeSchema?: SearchAttributeSchema;
   getNow?: () => number;
   nestingDepth?: number;
   /**
@@ -231,6 +235,7 @@ export class Context implements WorkflowContext {
   #stepIndex: number;
   #accumulatedResults: Map<number, unknown>;
   #searchAttributes: Record<string, SearchAttributeValue>;
+  #searchAttributeSchema: SearchAttributeSchema | undefined;
   #pendingAttributeChanges: Record<string, SearchAttributeValue>;
   #updateHandlers: Map<string, (payload: unknown) => unknown>;
   #exposedValues: Map<string, () => unknown>;
@@ -256,6 +261,7 @@ export class Context implements WorkflowContext {
     this.#stepIndex = options.initialStep ?? 0;
     this.#accumulatedResults = options.accumulatedResults ?? new Map();
     this.#searchAttributes = options.searchAttributes ? { ...options.searchAttributes } : {};
+    this.#searchAttributeSchema = options.searchAttributeSchema;
     this.#pendingAttributeChanges = {};
     this.#updateHandlers = new Map();
     this.#exposedValues = new Map();
@@ -361,6 +367,13 @@ export class Context implements WorkflowContext {
     if (this.#accumulatedResults.has(step)) return;
 
     const milliseconds = parseDuration(duration);
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.sleep(${JSON.stringify(duration)})`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Scheduling timer for ${milliseconds}ms`);
+    }
+
     const operationId = crypto.randomUUID();
 
     // Use the sleep reference time (checkpoint createdAt on resume) so that
@@ -387,6 +400,12 @@ export class Context implements WorkflowContext {
       return this.#accumulatedResults.get(step) as T;
     }
 
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.waitForSignal("${name}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Waiting for signal "${name}"`);
+    }
+
     const operationId = crypto.randomUUID();
     const result = yield {
       type: 'wait-signal',
@@ -398,11 +417,26 @@ export class Context implements WorkflowContext {
     return result as T;
   }
 
-  *waitForUpdate<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown> {
+  *waitForUpdate<T = unknown>(
+    name: string,
+  ): Generator<
+    ContextOperationRequest,
+    { payload: T; respond: (result: unknown) => void },
+    unknown
+  > {
     const step = this.#stepIndex++;
 
     if (this.#accumulatedResults.has(step)) {
-      return this.#accumulatedResults.get(step) as T;
+      // Recovery path: the response was already sent in the original execution.
+      // Return the cached payload with a no-op respond function.
+      const cached = this.#accumulatedResults.get(step) as { payload: T };
+      return { payload: cached.payload, respond: () => {} };
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.waitForUpdate("${name}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Waiting for update "${name}"`);
     }
 
     const operationId = crypto.randomUUID();
@@ -412,8 +446,13 @@ export class Context implements WorkflowContext {
       updateName: name,
     };
 
-    this.#accumulatedResults.set(step, result);
-    return result as T;
+    const envelope = result as { payload: T; respond: (result: unknown) => void };
+
+    // Store only the serializable payload in accumulatedResults (functions
+    // cannot survive checkpoint serialization). On recovery, a no-op respond
+    // function is provided instead.
+    this.#accumulatedResults.set(step, { payload: envelope.payload });
+    return envelope;
   }
 
   *all(
@@ -724,14 +763,26 @@ export class Context implements WorkflowContext {
   // -------------------------------------------------------------------------
 
   setAttribute(key: string, value: SearchAttributeValue): void {
+    this.#validateAttributeKey(key);
     this.#searchAttributes[key] = value;
     this.#pendingAttributeChanges[key] = value;
   }
 
   setAttributes(attributes: Record<string, SearchAttributeValue>): void {
+    for (const key of Object.keys(attributes)) {
+      this.#validateAttributeKey(key);
+    }
     for (const [key, value] of Object.entries(attributes)) {
       this.#searchAttributes[key] = value;
       this.#pendingAttributeChanges[key] = value;
+    }
+  }
+
+  #validateAttributeKey(key: string): void {
+    if (this.#searchAttributeSchema && !(key in this.#searchAttributeSchema)) {
+      throw new Error(
+        `Unknown search attribute "${key}". Registered attributes: ${Object.keys(this.#searchAttributeSchema).join(', ')}`,
+      );
     }
   }
 
@@ -744,6 +795,16 @@ export class Context implements WorkflowContext {
   }
 
   onUpdate(name: string, handler: (payload: unknown) => unknown): void {
+    // Reject generator functions at registration time — they cannot yield
+    // inside an update handler.
+    if (
+      handler.constructor.name === 'GeneratorFunction' ||
+      handler.constructor.name === 'AsyncGeneratorFunction'
+    ) {
+      throw new TypeError(
+        `Update handler for '${name}' must not be a generator function. Use a plain function that returns a value synchronously.`,
+      );
+    }
     this.#updateHandlers.set(name, handler);
   }
 

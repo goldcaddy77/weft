@@ -2,12 +2,17 @@
 // HTTP long-poll fallback worker for environments without WebSocket support
 // ---------------------------------------------------------------------------
 
+import type { ActivityInterceptor } from '../core/interceptor.ts';
+import { composeActivityInterceptors } from '../core/interceptor.ts';
+
 export interface LongPollWorkerOptions {
   serverUrl: string;
   activities: Record<string, (input: unknown) => Promise<unknown>>;
   concurrency?: number;
   queue?: string;
   pollTimeout?: number; // ms, default: 30000
+  /** Activity interceptors to run around each activity execution on this worker. */
+  interceptors?: ActivityInterceptor[];
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +131,8 @@ export class LongPollWorker implements Disposable {
           operationId: string;
           activityName: string;
           input: unknown;
+          attempt?: number;
+          headers?: Record<string, string>;
         };
 
         void this.#executeTask(task, resultUrl);
@@ -139,7 +146,13 @@ export class LongPollWorker implements Disposable {
   }
 
   async #executeTask(
-    task: { operationId: string; activityName: string; input: unknown },
+    task: {
+      operationId: string;
+      activityName: string;
+      input: unknown;
+      attempt?: number;
+      headers?: Record<string, string>;
+    },
     resultUrl: string,
   ): Promise<void> {
     this.#inFlight += 1;
@@ -160,7 +173,28 @@ export class LongPollWorker implements Disposable {
         return;
       }
 
-      const result = await activityFunction(task.input);
+      let result: unknown;
+
+      if (this.#options.interceptors && this.#options.interceptors.length > 0) {
+        const composed = composeActivityInterceptors(this.#options.interceptors);
+        const headers = new Map<string, string>(
+          Object.entries(task.headers ?? {}),
+        );
+        result = await composed.execute(
+          {
+            activityName: task.activityName,
+            operationId: task.operationId,
+            attempt: task.attempt ?? 1,
+            input: task.input,
+            headers,
+          },
+          async (interception) => {
+            return activityFunction(interception.input);
+          },
+        );
+      } else {
+        result = await activityFunction(task.input);
+      }
 
       await fetch(resultUrl, {
         method: 'POST',

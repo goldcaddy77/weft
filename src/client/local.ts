@@ -58,6 +58,14 @@ class LocalHandle implements ClientHandle {
     return this.#client.query(this.id, name);
   }
 
+  async getAttributes(): Promise<Record<string, SearchAttributeValue> | null> {
+    return this.#client.getAttributes(this.id);
+  }
+
+  async setAttributes(attributes: Record<string, SearchAttributeValue>): Promise<void> {
+    return this.#client.setAttributes(this.id, attributes);
+  }
+
   addEventListener(
     type: string,
     listener: EventListenerOrEventListenerObject,

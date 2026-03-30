@@ -18,8 +18,8 @@ import type {
   SearchAttributeValue,
   WorkflowStatus,
 } from '../core/types.ts';
-import { UpdateTimeoutError } from '../core/updates.ts';
-import { METRICS } from '../observability/metrics.ts';
+import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
+import { METRICS, type MetricsCollector, type MetricsSnapshot } from '../observability/metrics.ts';
 
 // ---------------------------------------------------------------------------
 // Route matching
@@ -290,7 +290,13 @@ function parseAttributeFilters(params: URLSearchParams): AttributeFilter[] {
       const operator = rest.slice(dotIndex + 1);
       const existing = filterMap.get(name) ?? { key: name };
 
-      if (operator === 'gte') {
+      if (operator === 'gt') {
+        existing.gt = inferAttributeValue(value);
+        filterMap.set(name, existing);
+      } else if (operator === 'lt') {
+        existing.lt = inferAttributeValue(value);
+        filterMap.set(name, existing);
+      } else if (operator === 'gte') {
         existing.gte = inferAttributeValue(value);
         filterMap.set(name, existing);
       } else if (operator === 'lte') {
@@ -500,6 +506,9 @@ async function handleUpdateWorkflow(
 
     return jsonResponse({ updateId: result.updateId, result: result.result });
   } catch (error) {
+    if (error instanceof WorkflowTerminalError) {
+      return errorResponse(error.message, 422);
+    }
     if (error instanceof UpdateTimeoutError) {
       return errorResponse(error.message, 408);
     }
@@ -769,14 +778,29 @@ async function handleGetStreamChunks(
 // Metrics route
 // ---------------------------------------------------------------------------
 
-function handleGetMetrics(): Response {
+function handleGetMetrics(metricsCollector?: MetricsCollector): Response {
+  const snapshot: MetricsSnapshot = metricsCollector?.snapshot() ?? {};
   const lines: string[] = [];
 
   for (const metric of Object.values(METRICS)) {
     const safeName = metric.name.replace(/\./g, '_');
+    const collected = snapshot[metric.name];
+
     lines.push(`# HELP ${safeName} ${metric.description}`);
-    lines.push(`# TYPE ${safeName} ${metric.type === 'counter' ? 'counter' : 'gauge'}`);
-    lines.push(`${safeName}${metric.type === 'counter' ? '_total' : ''} 0`);
+
+    if (metric.type === 'histogram' && collected?.type === 'histogram') {
+      lines.push(`# TYPE ${safeName} histogram`);
+      lines.push(`${safeName}_count ${collected.count}`);
+      lines.push(`${safeName}_sum ${collected.sum}`);
+    } else if (metric.type === 'counter') {
+      lines.push(`# TYPE ${safeName} counter`);
+      const value = collected?.type === 'counter' ? collected.value : 0;
+      lines.push(`${safeName}_total ${value}`);
+    } else {
+      lines.push(`# TYPE ${safeName} gauge`);
+      const value = collected?.type === 'gauge' ? collected.value : 0;
+      lines.push(`${safeName} ${value}`);
+    }
   }
 
   return new Response(lines.join('\n') + '\n', {
@@ -789,8 +813,17 @@ function handleGetMetrics(): Response {
 // Main handler
 // ---------------------------------------------------------------------------
 
+export interface HandlerOptions {
+  /** Optional metrics collector for the /v1/metrics endpoint. */
+  metricsCollector?: MetricsCollector;
+}
+
 /** Pure HTTP request handler. Maps Request to Response. */
-export async function handleRequest(request: Request, engine: Engine): Promise<Response> {
+export async function handleRequest(
+  request: Request,
+  engine: Engine,
+  options?: HandlerOptions,
+): Promise<Response> {
   const url = new URL(request.url);
   const route = matchRoute(request.method, url.pathname);
 
@@ -863,7 +896,7 @@ export async function handleRequest(request: Request, engine: Engine): Promise<R
         return handleGetStreamChunks(engine, param('id'), param('key'));
 
       case 'getMetrics':
-        return handleGetMetrics();
+        return handleGetMetrics(options?.metricsCollector);
 
       case 'getWorkflowEvents':
         return handleGetWorkflowEvents(engine, param('id'));

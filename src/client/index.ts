@@ -208,6 +208,14 @@ class HttpHandle implements ClientHandle {
     return this.#client.query(this.id, name);
   }
 
+  async getAttributes(): Promise<Record<string, SearchAttributeValue> | null> {
+    return this.#client.getAttributes(this.id);
+  }
+
+  async setAttributes(attributes: Record<string, SearchAttributeValue>): Promise<void> {
+    return this.#client.setAttributes(this.id, attributes);
+  }
+
   addEventListener(
     type: string,
     listener: EventListenerOrEventListenerObject,
@@ -284,11 +292,18 @@ export class HttpClient implements WeftClient {
     if (filter?.limit !== undefined) params.set('limit', String(filter.limit));
     if (filter?.offset !== undefined) params.set('offset', String(filter.offset));
     // Encode attributes in the format the server expects: attr.{name}={value},
-    // attr.{name}.gte={value}, attr.{name}.lte={value}.
+    // attr.{name}.gt={value}, attr.{name}.lt={value}, attr.{name}.gte={value},
+    // attr.{name}.lte={value}.
     if (filter?.attributes !== undefined) {
       for (const attr of filter.attributes) {
         if (attr.value !== undefined) {
           params.set(`attr.${attr.key}`, String(attr.value));
+        }
+        if (attr.gt !== undefined) {
+          params.set(`attr.${attr.key}.gt`, String(attr.gt));
+        }
+        if (attr.lt !== undefined) {
+          params.set(`attr.${attr.key}.lt`, String(attr.lt));
         }
         if (attr.gte !== undefined) {
           params.set(`attr.${attr.key}.gte`, String(attr.gte));

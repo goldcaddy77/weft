@@ -43,6 +43,10 @@ export interface ActivityExecutionInterception {
   input: unknown;
   attempt: number;
   headers: Map<string, string>;
+  /** Operation identifier, available when executing on a remote worker. */
+  operationId?: string;
+  /** Abort signal for cancellation, available when executing on a remote worker. */
+  signal?: AbortSignal;
 }
 
 export interface AgentInterception {

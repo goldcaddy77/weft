@@ -721,6 +721,100 @@ describe('composeWorkflowInterceptors — agent hook', () => {
     runGenerator(generator);
     expect(order).toEqual(['with:before', 'execute', 'with:after']);
   });
+
+  it('three interceptors compose in correct order (first = outermost)', () => {
+    const order: string[] = [];
+
+    const first: WorkflowInterceptor = {
+      *agent(interception, next) {
+        order.push('first:before');
+        const result = yield* next(interception);
+        order.push('first:after');
+        return result;
+      },
+    };
+
+    const second: WorkflowInterceptor = {
+      *agent(interception, next) {
+        order.push('second:before');
+        const result = yield* next(interception);
+        order.push('second:after');
+        return result;
+      },
+    };
+
+    const third: WorkflowInterceptor = {
+      *agent(interception, next) {
+        order.push('third:before');
+        const result = yield* next(interception);
+        order.push('third:after');
+        return result;
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([first, second, third]);
+
+    const generator = composed.agent(makeAgentInterception(), function* () {
+      order.push('execute');
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(order).toEqual([
+      'first:before',
+      'second:before',
+      'third:before',
+      'execute',
+      'third:after',
+      'second:after',
+      'first:after',
+    ]);
+  });
+
+  it('interceptor can modify the agent prompt before calling next', () => {
+    const interceptor: WorkflowInterceptor = {
+      *agent(interception, next) {
+        return yield* next({
+          ...interception,
+          prompt: `[SYSTEM] ${interception.prompt}`,
+        });
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let capturedPrompt: string | undefined;
+
+    const generator = composed.agent(makeAgentInterception(), function* (ctx) {
+      capturedPrompt = ctx.prompt;
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(capturedPrompt).toBe('[SYSTEM] Summarize the data');
+  });
+
+  it('interceptor sets headers that are visible in execute', () => {
+    const interceptor: WorkflowInterceptor = {
+      *agent(interception, next) {
+        interception.headers.set('x-request-id', 'req-42');
+        interception.headers.set('x-org-id', 'org-7');
+        return yield* next(interception);
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let capturedHeaders: Map<string, string> | undefined;
+
+    const generator = composed.agent(makeAgentInterception(), function* (ctx) {
+      capturedHeaders = ctx.headers;
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(capturedHeaders?.get('x-request-id')).toBe('req-42');
+    expect(capturedHeaders?.get('x-org-id')).toBe('org-7');
+    expect(capturedHeaders?.size).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,8 @@
 // Remote worker client — connects to the server via WebSocket
 // ---------------------------------------------------------------------------
 
+import type { ActivityInterceptor } from '../core/interceptor.ts';
+import { composeActivityInterceptors } from '../core/interceptor.ts';
 import { HeartbeatManager } from './heartbeat.ts';
 
 export { HeartbeatManager } from './heartbeat.ts';
@@ -21,6 +23,8 @@ export interface RemoteWorkerOptions {
   concurrency?: number; // default: 10
   queue?: string; // default: 'default'
   disconnectTimeoutMs?: number; // default: 30_000
+  /** Activity interceptors to run around each activity execution on this worker. */
+  interceptors?: ActivityInterceptor[];
 }
 
 interface TaskMessage {
@@ -28,6 +32,9 @@ interface TaskMessage {
   operationId: string;
   activityName: string;
   input: unknown;
+  attempt?: number;
+  /** Propagated interceptor headers from the dispatch path. */
+  headers?: Record<string, string>;
 }
 
 interface ServerMessage {
@@ -223,8 +230,34 @@ export class RemoteWorker implements Disposable {
 
     this.#inFlight += 1;
 
+    const taskAbortController = new AbortController();
+
     try {
-      const result = await activityFunction(task.input);
+      let result: unknown;
+
+      if (this.#options.interceptors && this.#options.interceptors.length > 0) {
+        const composed = composeActivityInterceptors(this.#options.interceptors);
+        const headers = new Map<string, string>(
+          Object.entries(task.headers ?? {}),
+        );
+        result = await composed.execute(
+          {
+            activityName: task.activityName,
+            operationId: task.operationId,
+            attempt: task.attempt ?? 1,
+            input: task.input,
+            headers,
+            signal: taskAbortController.signal,
+          },
+          async (interception) => {
+            return activityFunction(interception.input, {
+              signal: taskAbortController.signal,
+            });
+          },
+        );
+      } else {
+        result = await activityFunction(task.input);
+      }
 
       this.#sendMessage({
         type: 'taskResult',

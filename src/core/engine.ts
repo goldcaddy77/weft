@@ -62,6 +62,7 @@ import type {
   ListFilter,
   OperationOutcome,
   PaginatedResult,
+  SearchAttributeSchema,
   SearchAttributeValue,
   StartOptions,
   StepWorkflowFunction,
@@ -71,9 +72,10 @@ import type {
   WorkflowFunction,
   WorkflowRegistration,
   WorkflowState,
+  WorkflowStatus,
   WorkflowSummary,
 } from './types.ts';
-import { UpdateCoordinator } from './updates.ts';
+import { UpdateCoordinator, WorkflowTerminalError } from './updates.ts';
 import { checkVersionCompatibility, migrateCheckpoint } from './versioning.ts';
 import { WorkerExecutionStrategy } from './worker-execution-strategy.ts';
 
@@ -91,6 +93,7 @@ interface RegistrationEntry {
   handler: WorkflowFunction;
   version: string;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
+  searchAttributes?: SearchAttributeSchema;
 }
 
 interface ResolvedOptions {
@@ -165,6 +168,14 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
 
   async query(name: string): Promise<unknown> {
     return this.#engine.query(this.id, name);
+  }
+
+  async getAttributes(): Promise<Record<string, SearchAttributeValue> | null> {
+    return this.#engine.getAttributes(this.id);
+  }
+
+  async setAttributes(attributes: Record<string, SearchAttributeValue>): Promise<void> {
+    return this.#engine.setAttributes(this.id, attributes);
   }
 
   async *[Symbol.asyncIterator](): AsyncIterableIterator<Event> {
@@ -325,6 +336,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
   #chargedAgentOperations: Set<string>;
+  #cleanupInterval: ReturnType<typeof setInterval> | null;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -415,6 +427,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Wire up the strategy message handler
     this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
+
+    // Periodically clean up expired update responses
+    this.#cleanupInterval = setInterval(() => {
+      this.#updateCoordinator.cleanupExpiredResponses().catch(() => {});
+    }, 60_000);
   }
 
   // -------------------------------------------------------------------------
@@ -440,6 +457,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       };
       if (registration.migrate) {
         entry.migrate = registration.migrate;
+      }
+      if (registration.searchAttributes) {
+        entry.searchAttributes = registration.searchAttributes;
       }
       this.#registrations.set(name, entry);
     } else {
@@ -743,10 +763,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         ids.add(workflowId);
       }
     } else {
-      // Range scan with gte/lte boundaries
+      // Range scan with gt/gte/lt/lte boundaries
       const scanOptions: import('../storage/interface.ts').ScanOptions = {};
+      if (filter.gt !== undefined) {
+        // Exclude the boundary value by using gt with a key past all workflow IDs for that value
+        scanOptions.gt = `idx:${filter.key}:${encodeAttributeValue(filter.gt)}:\xff`;
+      }
       if (filter.gte !== undefined) {
         scanOptions.gte = `idx:${filter.key}:${encodeAttributeValue(filter.gte)}:`;
+      }
+      if (filter.lt !== undefined) {
+        // Exclude the boundary value by using lt with the start of that value's key range
+        scanOptions.lt = `idx:${filter.key}:${encodeAttributeValue(filter.lt)}:`;
       }
       if (filter.lte !== undefined) {
         // Use a boundary that includes all workflow IDs for the lte value
@@ -865,7 +893,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     payload?: unknown,
     options?: { timeout?: number },
   ): Promise<unknown> {
-    const timeout = options?.timeout ?? 5000;
+    await this.#guardTerminalWorkflow(workflowId);
+    const timeout = options?.timeout ?? 30_000;
 
     // Check if the workflow has an active context with an update handler.
     // Note: in worker mode, #inlineStrategy is null so synchronous update
@@ -880,8 +909,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
         try {
           const result = handler(payload);
-          this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
-          return result;
+          if (
+            result &&
+            typeof result === 'object' &&
+            (Symbol.iterator in result || Symbol.asyncIterator in result)
+          ) {
+            throw new Error(
+              `Update handler for '${name}' must not be a generator function. Use a plain function that returns a value synchronously.`,
+            );
+          }
+          const awaited = await result;
+          this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, awaited));
+          this.#broadcast({ type: 'update:completed', workflowId, updateId });
+          return awaited;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           this.dispatchEvent(
@@ -899,9 +939,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#updateWaiters.delete(waiterKey);
       const updateId = crypto.randomUUID();
       this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
-      updateWaiter(payload);
-      this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, payload));
-      return payload;
+
+      // Build a respond function. When the workflow calls respond(result),
+      // the result promise that engine.update() returns resolves with that value.
+      const { promise: respondPromise, resolve: resolveRespond } = Promise.withResolvers<unknown>();
+      let responded = false;
+      const respond = (result: unknown): void => {
+        if (responded) return;
+        responded = true;
+        resolveRespond(result);
+        this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
+        this.#broadcast({ type: 'update:completed', workflowId, updateId });
+      };
+
+      // Feed { payload, respond } envelope to the waiting workflow
+      updateWaiter({ payload, respond });
+
+      // Wait for the workflow to call respond()
+      const result = await respondPromise;
+      return result;
     }
 
     // If no active handler, use the UpdateCoordinator with polling
@@ -1059,6 +1115,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         getNow: this.#options.getNow,
         accumulatedResults,
         searchAttributes: resumeCheckpoint.searchAttributes,
+        searchAttributeSchema: registration.searchAttributes,
         sleepReferenceTime: resumeCheckpoint.createdAt,
         ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
       });
@@ -1072,6 +1129,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       // Drive the generator (non-blocking) via the strategy
       this.#inlineStrategy.continueWorkflow(workflowId, undefined);
+
+      // After replay, process any pending coordinated updates that match
+      // registered inline handlers. Schedule on next microtask so the
+      // generator has a chance to register its onUpdate handlers first.
+      queueMicrotask(() => {
+        this.#processPendingUpdatesForHandlers(workflowId).catch(() => {});
+      });
     } else {
       // Worker mode: send run message to the worker with the checkpoint
       const serialized = serializeCheckpoint(resumeCheckpoint);
@@ -1172,6 +1236,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     attributes: Record<string, SearchAttributeValue>,
   ): Promise<void> {
+    // Validate against the workflow's registered schema when present.
+    const state = await this.#loadWorkflowState(workflowId);
+    if (state) {
+      const registration = this.#registrations.get(state.type);
+      if (registration?.searchAttributes) {
+        const schema = registration.searchAttributes;
+        for (const key of Object.keys(attributes)) {
+          if (!(key in schema)) {
+            throw new Error(
+              `Unknown search attribute "${key}". Registered attributes: ${Object.keys(schema).join(', ')}`,
+            );
+          }
+        }
+      }
+    }
+
     const existingBytes = await this.#storage.get(KEYS.attribute(workflowId));
     const existing: Record<string, SearchAttributeValue> = existingBytes
       ? (decode(existingBytes) as Record<string, SearchAttributeValue>)
@@ -1274,6 +1354,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     payload?: unknown,
     options?: { timeout?: number; idempotencyKey?: string },
   ): Promise<CoordinatedUpdateResult> {
+    await this.#guardTerminalWorkflow(workflowId);
     const timeout = options?.timeout ?? 30_000;
     const idempotencyKey = options?.idempotencyKey;
 
@@ -1316,6 +1397,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   [Symbol.dispose](): void {
+    if (this.#cleanupInterval) clearInterval(this.#cleanupInterval);
+    this.#cleanupInterval = null;
     this.#abortController.abort();
     this.#scheduler[Symbol.dispose]();
     this.#strategy[Symbol.dispose]();
@@ -1652,38 +1735,55 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             ),
           );
 
-          // Build response operations to acknowledge the update
-          const responseOperations = this.#updateCoordinator.buildResponseOperations(
-            matchingUpdate.updateId,
-            workflowId,
-            matchingUpdate.payload,
-            undefined,
-            matchingUpdate.idempotencyKey,
-          );
-          await this.#storage.batch(responseOperations);
+          // Build a respond function the workflow calls to send the result back.
+          // Idempotent: only the first call takes effect.
+          let responded = false;
+          const respond = (result: unknown): void => {
+            if (responded) return;
+            responded = true;
 
-          this.dispatchEvent(
-            new UpdateCompletedEvent(
+            const responseOperations = this.#updateCoordinator.buildResponseOperations(
               matchingUpdate.updateId,
               workflowId,
-              operation.updateName,
-              matchingUpdate.payload,
-            ),
-          );
+              result,
+              undefined,
+              matchingUpdate.idempotencyKey,
+            );
+            void this.#storage
+              .batch(responseOperations)
+              .then(() => {
+                this.dispatchEvent(
+                  new UpdateCompletedEvent(
+                    matchingUpdate.updateId,
+                    workflowId,
+                    operation.updateName,
+                    result,
+                  ),
+                );
+                this.#broadcast({
+                  type: 'update:completed',
+                  workflowId,
+                  updateId: matchingUpdate.updateId,
+                });
+                return undefined;
+              })
+              .catch(() => {});
+          };
 
-          // Feed update payload back as the operation result
+          // Feed { payload, respond } back as the operation result
           this.#feedOperationResult(workflowId, {
             status: 'completed',
-            value: matchingUpdate.payload,
+            value: { payload: matchingUpdate.payload, respond },
           });
         } else {
-          // Wait for update to arrive
+          // Wait for update to arrive. The waiter now receives the full
+          // { payload, respond } envelope so the workflow can call respond().
           const { promise, resolve } = Promise.withResolvers<unknown>();
           const waiterKey = `${workflowId}:${operation.updateName}`;
           this.#updateWaiters.set(waiterKey, resolve);
 
-          const updatePayload = await promise;
-          this.#feedOperationResult(workflowId, { status: 'completed', value: updatePayload });
+          const envelope = await promise;
+          this.#feedOperationResult(workflowId, { status: 'completed', value: envelope });
         }
         break;
       }
@@ -2345,20 +2445,26 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // If there are activity interceptors, use cached composition
     const composedActivity = this.#getComposedActivityInterceptor();
     if (composedActivity) {
-      return composedActivity.execute(
-        {
-          activityName: operation.activityName,
-          input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
-          attempt: 1,
-          headers: new Map(),
-        },
-        async (interception) => {
-          const args = Array.isArray(interception.input)
-            ? interception.input
-            : [interception.input];
+      const interception = {
+        activityName: operation.activityName,
+        input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
+        attempt: 1,
+        headers: new Map<string, string>(),
+      };
+      const result = await composedActivity.execute(
+        interception,
+        async (ctx) => {
+          const args = Array.isArray(ctx.input)
+            ? ctx.input
+            : [ctx.input];
           return invokeActivity(operation.activityName, args);
         },
       );
+      // Capture headers set by interceptors onto the operation for remote dispatch.
+      if (interception.headers.size > 0) {
+        operation.headers = [...interception.headers.entries()];
+      }
+      return result;
     }
 
     // If there are workflow interceptors with activity hooks, use cached composition
@@ -2381,6 +2487,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       let current: IteratorResult<unknown, unknown> = generator.next();
       while (!current.done) {
         current = generator.next(current.value);
+      }
+      // Capture headers set by interceptors onto the operation for remote dispatch.
+      if (interception.headers.size > 0) {
+        operation.headers = [...interception.headers.entries()];
       }
       return current.value;
     }
@@ -2407,6 +2517,80 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const fieldPaths = result.divergences.map((divergence) => divergence.path);
       const message = `Checkpoint at step ${step} has ${result.divergences.length} non-serializable field(s)`;
       this.dispatchEvent(new DevelopmentWarningEvent(workflowId, message, fieldPaths));
+    }
+  }
+
+  /**
+   * Process pending coordinated updates that match registered inline handlers.
+   * Called on resume to drain updates that arrived while the workflow was paused.
+   */
+  async #processPendingUpdatesForHandlers(workflowId: string): Promise<void> {
+    const context = this.#inlineStrategy?.getContext(workflowId);
+    if (!context) return;
+
+    const handlers = context.updateHandlers;
+    if (handlers.size === 0) return;
+
+    // getPendingUpdates returns FIFO-sorted results.
+    const pendingUpdates = await this.#updateCoordinator.getPendingUpdates(workflowId);
+    if (pendingUpdates.length === 0) return;
+
+    for (const update of pendingUpdates) {
+      const handler = handlers.get(update.name);
+      if (!handler) continue;
+
+      this.dispatchEvent(
+        new UpdateReceivedEvent(update.updateId, workflowId, update.name, update.payload),
+      );
+
+      let result: unknown;
+      let error: string | undefined;
+      try {
+        const handlerResult = handler(update.payload);
+        if (
+          handlerResult &&
+          typeof handlerResult === 'object' &&
+          (Symbol.iterator in handlerResult || Symbol.asyncIterator in handlerResult)
+        ) {
+          throw new Error(
+            `Update handler for '${update.name}' must not be a generator function. Use a plain function that returns a value synchronously.`,
+          );
+        }
+        result = await handlerResult;
+      } catch (handlerError) {
+        error = handlerError instanceof Error ? handlerError.message : String(handlerError);
+      }
+
+      const responseOperations = this.#updateCoordinator.buildResponseOperations(
+        update.updateId,
+        workflowId,
+        result,
+        error,
+        update.idempotencyKey,
+      );
+      await this.#storage.batch(responseOperations);
+
+      this.dispatchEvent(
+        new UpdateCompletedEvent(update.updateId, workflowId, update.name, result, error),
+      );
+      this.#broadcast({ type: 'update:completed', workflowId, updateId: update.updateId });
+    }
+  }
+
+  static readonly #TERMINAL_STATUSES: ReadonlySet<WorkflowStatus> = new Set<WorkflowStatus>([
+    'completed',
+    'failed',
+    'cancelled',
+    'timed-out',
+  ]);
+
+  /** Throw {@link WorkflowTerminalError} if the workflow is in a terminal state. */
+  async #guardTerminalWorkflow(workflowId: string): Promise<void> {
+    const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
+    if (!stateBytes) return; // unknown workflow — let downstream handle it
+    const state = decodeWorkflowState(stateBytes);
+    if (Engine.#TERMINAL_STATUSES.has(state.status)) {
+      throw new WorkflowTerminalError(workflowId, state.status);
     }
   }
 

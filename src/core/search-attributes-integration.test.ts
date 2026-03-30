@@ -304,6 +304,346 @@ describe('Search Attributes Integration', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Handle-level getAttributes / setAttributes
+// ---------------------------------------------------------------------------
+
+describe('Handle-level getAttributes / setAttributes', () => {
+  it('handle.setAttributes() persists the attribute', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('stop');
+      return 'done';
+    });
+
+    const handle = await engine.start('stay-running', null, { id: 'wf-handle-set' });
+    await flush();
+
+    await handle.setAttributes({ region: 'us-east' });
+
+    // Verify the attribute was persisted
+    const attributes = await engine.getAttributes('wf-handle-set');
+    expect(attributes).not.toBeNull();
+    expect(attributes!['region']).toBe('us-east');
+
+    engine[Symbol.dispose]();
+  });
+
+  it('handle.getAttributes() retrieves the set attributes', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('stop');
+      return 'done';
+    });
+
+    const handle = await engine.start('stay-running', null, {
+      id: 'wf-handle-get',
+      searchAttributes: { priority: 10, region: 'eu-west' },
+    });
+    await flush();
+
+    const attributes = await handle.getAttributes();
+    expect(attributes).not.toBeNull();
+    expect(attributes!['priority']).toBe(10);
+    expect(attributes!['region']).toBe('eu-west');
+
+    engine[Symbol.dispose]();
+  });
+
+  it('handle methods work with the engine.start() return value', async () => {
+    const engine = new Engine();
+
+    engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('stop');
+      return 'done';
+    });
+
+    const handle = await engine.start('stay-running', null, { id: 'wf-handle-both' });
+    await flush();
+
+    // Set via handle
+    await handle.setAttributes({ status: 'active', count: 42 });
+
+    // Get via same handle
+    const attributes = await handle.getAttributes();
+    expect(attributes).not.toBeNull();
+    expect(attributes!['status']).toBe('active');
+    expect(attributes!['count']).toBe(42);
+
+    engine[Symbol.dispose]();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Schema Registration and Validation
+// ---------------------------------------------------------------------------
+
+describe('Schema Registration and Validation', () => {
+  it('setting a registered attribute succeeds', async () => {
+    const engine = new Engine();
+
+    engine.register('schema-wf', {
+      handler: async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        context.setAttribute('region', 'us-east');
+        yield* context.run(async () => 'done');
+        yield* context.waitForSignal('stop');
+        return 'done';
+      },
+      searchAttributes: {
+        region: { type: 'string' },
+        priority: { type: 'number' },
+      },
+    });
+
+    const handle = await engine.start('schema-wf', null, { id: 'wf-schema-ok' });
+    await flush();
+
+    const attributes = await engine.getAttributes('wf-schema-ok');
+    expect(attributes).not.toBeNull();
+    expect(attributes!['region']).toBe('us-east');
+
+    engine[Symbol.dispose]();
+  });
+
+  it('setting an unknown attribute throws with descriptive error', async () => {
+    const engine = new Engine();
+
+    engine.register('schema-strict', {
+      handler: async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        context.setAttribute('unknownKey', 'value');
+        yield* context.run(async () => 'done');
+        return 'done';
+      },
+      searchAttributes: {
+        region: { type: 'string' },
+        priority: { type: 'number' },
+      },
+    });
+
+    const handle = await engine.start('schema-strict', null, { id: 'wf-schema-fail' });
+
+    try {
+      await handle.result();
+      // If we reach here, the workflow completed without throwing. In the inline
+      // strategy the error from setAttribute propagates through the generator.
+      expect(true).toBe(false); // Should not reach here
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('Unknown search attribute "unknownKey"');
+      expect((error as Error).message).toContain('region');
+      expect((error as Error).message).toContain('priority');
+    }
+
+    engine[Symbol.dispose]();
+  });
+
+  it('workflows without schema still accept any key (backward compatible)', async () => {
+    const engine = new Engine();
+
+    engine.register('no-schema', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.setAttribute('anything', 'goes');
+      context.setAttribute('random', 123);
+      yield* context.run(async () => 'done');
+      yield* context.waitForSignal('stop');
+      return 'done';
+    });
+
+    const handle = await engine.start('no-schema', null, { id: 'wf-no-schema' });
+    await flush();
+
+    const attributes = await engine.getAttributes('wf-no-schema');
+    expect(attributes).not.toBeNull();
+    expect(attributes!['anything']).toBe('goes');
+    expect(attributes!['random']).toBe(123);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('external engine.setAttributes() validates against schema', async () => {
+    const engine = new Engine();
+
+    engine.register('schema-ext', {
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('stop');
+        return 'done';
+      },
+      searchAttributes: {
+        region: { type: 'string' },
+        priority: { type: 'number' },
+      },
+    });
+
+    await engine.start('schema-ext', null, { id: 'wf-schema-ext' });
+    await flush();
+
+    // Valid attribute should succeed
+    await engine.setAttributes('wf-schema-ext', { region: 'us-west' });
+
+    // Invalid attribute should throw
+    try {
+      await engine.setAttributes('wf-schema-ext', { badKey: 'value' });
+      expect(true).toBe(false); // Should not reach here
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('Unknown search attribute "badKey"');
+      expect((error as Error).message).toContain('region');
+      expect((error as Error).message).toContain('priority');
+    }
+
+    engine[Symbol.dispose]();
+  });
+
+  it('context.setAttributes() (batch) validates all keys against schema', async () => {
+    const engine = new Engine();
+
+    engine.register('schema-batch', {
+      handler: async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        context.setAttributes({ region: 'us-east', badKey: 'oops' });
+        yield* context.run(async () => 'done');
+        return 'done';
+      },
+      searchAttributes: {
+        region: { type: 'string' },
+      },
+    });
+
+    const handle = await engine.start('schema-batch', null, { id: 'wf-schema-batch' });
+
+    try {
+      await handle.result();
+      expect(true).toBe(false);
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('Unknown search attribute "badKey"');
+    }
+
+    engine[Symbol.dispose]();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gt / lt Filter Operators
+// ---------------------------------------------------------------------------
+
+describe('gt / lt Filter Operators', () => {
+  it('engine.list() with gt filter excludes the boundary value', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('stop');
+      return 'done';
+    });
+
+    await engine.start('stay-running', null, {
+      id: 'wf-p3',
+      searchAttributes: { priority: 3 },
+    });
+    await engine.start('stay-running', null, {
+      id: 'wf-p5',
+      searchAttributes: { priority: 5 },
+    });
+    await engine.start('stay-running', null, {
+      id: 'wf-p7',
+      searchAttributes: { priority: 7 },
+    });
+    await engine.start('stay-running', null, {
+      id: 'wf-p10',
+      searchAttributes: { priority: 10 },
+    });
+
+    await flush();
+
+    // gt: 5 should return only priority > 5 (not 5 itself)
+    const result = await engine.list({
+      attributes: [{ key: 'priority', gt: 5 }],
+    });
+
+    const ids = result.items.map((item) => item.id).toSorted();
+    expect(ids).toEqual(['wf-p10', 'wf-p7']);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.list() with lt filter excludes the boundary value', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('stop');
+      return 'done';
+    });
+
+    await engine.start('stay-running', null, {
+      id: 'wf-p3',
+      searchAttributes: { priority: 3 },
+    });
+    await engine.start('stay-running', null, {
+      id: 'wf-p5',
+      searchAttributes: { priority: 5 },
+    });
+    await engine.start('stay-running', null, {
+      id: 'wf-p10',
+      searchAttributes: { priority: 10 },
+    });
+
+    await flush();
+
+    // lt: 10 should return only priority < 10 (not 10 itself)
+    const result = await engine.list({
+      attributes: [{ key: 'priority', lt: 10 }],
+    });
+
+    const ids = result.items.map((item) => item.id).toSorted();
+    expect(ids).toEqual(['wf-p3', 'wf-p5']);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('gt and lt can be combined for an exclusive range', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('stay-running', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('stop');
+      return 'done';
+    });
+
+    await engine.start('stay-running', null, {
+      id: 'wf-p1',
+      searchAttributes: { priority: 1 },
+    });
+    await engine.start('stay-running', null, {
+      id: 'wf-p5',
+      searchAttributes: { priority: 5 },
+    });
+    await engine.start('stay-running', null, {
+      id: 'wf-p10',
+      searchAttributes: { priority: 10 },
+    });
+
+    await flush();
+
+    // gt: 1, lt: 10 — only priority=5 matches
+    const result = await engine.list({
+      attributes: [{ key: 'priority', gt: 1, lt: 10 }],
+    });
+
+    expect(result.items.length).toBe(1);
+    expect(result.items[0]!.id).toBe('wf-p5');
+
+    engine[Symbol.dispose]();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Synchronous Updates (wait-update)
 // ---------------------------------------------------------------------------
 
@@ -313,17 +653,18 @@ describe('Synchronous Updates (waitForUpdate)', () => {
 
     engine.register('wait-for-update', async function* (ctx: WorkflowContext) {
       const context = ctx as Context;
-      const updatePayload = yield* context.waitForUpdate<{ value: number }>('my-update');
-      return updatePayload;
+      const { payload, respond } = yield* context.waitForUpdate<{ value: number }>('my-update');
+      respond({ accepted: true, value: payload.value });
+      return payload;
     });
 
     const handle = await engine.start('wait-for-update', null, { id: 'wf-update-1' });
 
     await flush();
 
-    // Send update
+    // Send update — the caller receives whatever respond() was called with
     const updateResult = await engine.update('wf-update-1', 'my-update', { value: 42 });
-    expect(updateResult).toEqual({ value: 42 });
+    expect(updateResult).toEqual({ accepted: true, value: 42 });
 
     // Workflow should have completed with the update payload
     const result = await handle.result();
@@ -337,9 +678,13 @@ describe('Synchronous Updates (waitForUpdate)', () => {
 
     engine.register('multi-update', async function* (ctx: WorkflowContext) {
       const context = ctx as Context;
-      const firstUpdate = yield* context.waitForUpdate<string>('update-a');
-      const secondUpdate = yield* context.waitForUpdate<string>('update-b');
-      return `${firstUpdate}-${secondUpdate}`;
+      const { payload: firstPayload, respond: respond1 } =
+        yield* context.waitForUpdate<string>('update-a');
+      respond1(firstPayload);
+      const { payload: secondPayload, respond: respond2 } =
+        yield* context.waitForUpdate<string>('update-b');
+      respond2(secondPayload);
+      return `${firstPayload}-${secondPayload}`;
     });
 
     const handle = await engine.start('multi-update', null, { id: 'wf-multi-update' });
@@ -372,7 +717,8 @@ describe('Synchronous Updates (waitForUpdate)', () => {
         await Bun.sleep(50);
         return 'activity-done';
       });
-      const payload = yield* context.waitForUpdate<string>('pending');
+      const { payload, respond } = yield* context.waitForUpdate<string>('pending');
+      respond(payload);
       return payload;
     });
 
@@ -402,7 +748,8 @@ describe('Synchronous Updates (waitForUpdate)', () => {
 
     engine.register('events-update', async function* (ctx: WorkflowContext) {
       const context = ctx as Context;
-      const payload = yield* context.waitForUpdate('my-update');
+      const { payload, respond } = yield* context.waitForUpdate('my-update');
+      respond(payload);
       return payload;
     });
 

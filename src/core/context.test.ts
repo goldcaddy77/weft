@@ -850,6 +850,58 @@ describe('Context', () => {
       const calls = consoleSpy.mock.calls.flat().join(' ');
       expect(calls).toContain('run');
     });
+
+    it('logs sleep details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.sleep(5000);
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.sleep');
+      expect(calls).toContain('5000ms');
+    });
+
+    it('logs waitForSignal details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.waitForSignal('approval');
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.waitForSignal');
+      expect(calls).toContain('approval');
+    });
+
+    it('logs waitForUpdate details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.waitForUpdate('price-update');
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.waitForUpdate');
+      expect(calls).toContain('price-update');
+    });
+
+    it('does not log sleep when explain mode is disabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+
+      const generator = context.sleep(1000);
+      generator.next();
+
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('callerStack', () => {

@@ -2820,3 +2820,133 @@ describe('retry policy respected on reassignment', () => {
     await Bun.sleep(50);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Header propagation tests
+// ---------------------------------------------------------------------------
+
+describe('header propagation in task dispatch', () => {
+  let engine: Engine;
+  let server: WeftServer;
+
+  afterEach(async () => {
+    await server?.stop();
+    engine?.[Symbol.dispose]();
+  });
+
+  function createTestEngine(): Engine {
+    return new Engine({ storage: new MemoryStorage() });
+  }
+
+  async function connectWorkerWs(
+    srv: WeftServer,
+  ): Promise<WebSocket> {
+    const ws = new WebSocket(`ws://localhost:${srv.port}/v1/tasks/default/stream`);
+    await new Promise<void>((resolve) => {
+      ws.addEventListener('open', () => resolve());
+    });
+    return ws;
+  }
+
+  async function registerWs(
+    ws: WebSocket,
+    options: { workerId: string; activities: string[]; concurrency: number },
+  ): Promise<void> {
+    ws.send(JSON.stringify({ type: 'register', ...options }));
+    await Bun.sleep(50);
+  }
+
+  it('propagates headers to WebSocket workers in the task message', async () => {
+    engine = createTestEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorkerWs(server);
+    const received: unknown[] = [];
+
+    ws.addEventListener('message', (event) => {
+      received.push(JSON.parse(String(event.data)));
+    });
+
+    await registerWs(ws, { workerId: 'header-ws-1', activities: ['charge'], concurrency: 5 });
+
+    await server.dispatchTask({
+      operationId: 'header-op-1',
+      activityName: 'charge',
+      input: { amount: 50 },
+      headers: { 'x-trace-id': 'trace-123', 'x-org-id': 'org-7' },
+    });
+
+    await Bun.sleep(50);
+
+    const taskMessage = (received as Record<string, unknown>[]).find(
+      (m) => m.type === 'task',
+    );
+    expect(taskMessage).toBeDefined();
+    expect((taskMessage as Record<string, unknown>).headers).toEqual({
+      'x-trace-id': 'trace-123',
+      'x-org-id': 'org-7',
+    });
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('omits headers field from WS task message when dispatch has no headers', async () => {
+    engine = createTestEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorkerWs(server);
+    const received: unknown[] = [];
+
+    ws.addEventListener('message', (event) => {
+      received.push(JSON.parse(String(event.data)));
+    });
+
+    await registerWs(ws, {
+      workerId: 'no-header-ws-1',
+      activities: ['charge'],
+      concurrency: 5,
+    });
+
+    await server.dispatchTask({
+      operationId: 'no-header-op-1',
+      activityName: 'charge',
+      input: null,
+    });
+
+    await Bun.sleep(50);
+
+    const taskMessage = (received as Record<string, unknown>[]).find(
+      (m) => m.type === 'task',
+    );
+    expect(taskMessage).toBeDefined();
+    expect((taskMessage as Record<string, unknown>).headers).toBeUndefined();
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('propagates headers to long-poll workers via task queue', async () => {
+    engine = createTestEngine();
+    server = serve({ engine, port: 0 });
+
+    // No WebSocket workers — falls through to task queue
+    await server.dispatchTask({
+      operationId: 'header-lp-op-1',
+      activityName: 'charge',
+      input: null,
+      headers: { 'x-trace-id': 'trace-lp-1' },
+    });
+
+    expect(server.taskQueue.pendingCount('default')).toBe(1);
+
+    // Poll for the task via the HTTP endpoint
+    const pollUrl = `http://localhost:${server.port}/v1/tasks/default?activity=charge&timeout=1000`;
+    const response = await fetch(pollUrl);
+    expect(response.ok).toBe(true);
+
+    const task = (await response.json()) as Record<string, unknown>;
+    expect(task.operationId).toBe('header-lp-op-1');
+    expect(task.headers).toEqual({ 'x-trace-id': 'trace-lp-1' });
+  });
+});
