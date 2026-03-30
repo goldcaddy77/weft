@@ -1064,7 +1064,8 @@ export function serve(options: ServeOptions): WeftServer {
           continue;
         }
 
-        // Expired orphan — remove from registry and reassign.
+        // Expired orphan — remove from heap and registry, then reassign.
+        deadlineTracker.remove(decoded.operationId);
         registry.completeTask(decoded.operationId);
         await reassignOrExpireTask(decoded.operationId, decoded);
       }
