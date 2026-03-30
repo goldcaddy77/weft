@@ -145,6 +145,14 @@ export function compileStepWorkflow<TInput = unknown, TOutput = unknown>(
 const GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {});
 const AsyncGeneratorFunctionPrototype = Object.getPrototypeOf(async function* () {});
 
+/** Prototype of generator instance objects (the values returned by generator functions). */
+const GeneratorPrototype = Object.getPrototypeOf(
+  Object.getPrototypeOf((function* () {})()),
+);
+const AsyncGeneratorPrototype = Object.getPrototypeOf(
+  Object.getPrototypeOf((async function* () {})()),
+);
+
 export function isGeneratorFunction(fn: Function): boolean {
   return Object.getPrototypeOf(fn) === GeneratorFunctionPrototype;
 }
@@ -153,11 +161,16 @@ export function isAsyncGeneratorFunction(fn: Function): boolean {
   return Object.getPrototypeOf(fn) === AsyncGeneratorFunctionPrototype;
 }
 
-/** Check if a value is a generator/async generator object (return value, not function). */
+/**
+ * Check if a value is a Generator or AsyncGenerator object (not just any iterable).
+ * Arrays, Maps, Sets, etc. are NOT matched — only actual generator instances.
+ *
+ * The prototype chain for a generator instance is:
+ *   gen -> genFn.prototype -> Generator.prototype
+ * We check two levels up to match Generator.prototype.
+ */
 export function isGeneratorResult(value: unknown): boolean {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    (Symbol.iterator in value || Symbol.asyncIterator in value)
-  );
+  if (value === null || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(Object.getPrototypeOf(value));
+  return proto === GeneratorPrototype || proto === AsyncGeneratorPrototype;
 }

@@ -79,7 +79,7 @@ import type {
   WorkflowStatus,
   WorkflowSummary,
 } from './types.ts';
-import { UpdateCoordinator, WorkflowTerminalError } from './updates.ts';
+import { UpdateCoordinator, UpdateTimeoutError, WorkflowTerminalError } from './updates.ts';
 import { checkVersionCompatibility, migrateCheckpoint } from './versioning.ts';
 import { WorkerExecutionStrategy } from './worker-execution-strategy.ts';
 
@@ -949,8 +949,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // Feed { payload, respond } envelope to the waiting workflow
       updateWaiter({ payload, respond });
 
-      // Wait for the workflow to call respond()
-      const result = await respondPromise;
+      // Wait for the workflow to call respond(), with timeout to prevent indefinite hang
+      // if the workflow dies or forgets to call respond().
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new UpdateTimeoutError(updateId, timeout)),
+          timeout,
+        );
+      });
+      const result = await Promise.race([respondPromise, timeoutPromise]);
       return result;
     }
 

@@ -692,16 +692,15 @@ describe('Synchronous Updates', () => {
     it('throws if onUpdate handler returns a generator at runtime', async () => {
       const engine = new Engine();
 
-      // Use a function that returns a generator-like object (not detected
-      // at registration time because it is a normal function)
+      // Use a normal function that returns an actual generator object (not
+      // detected at registration time because the outer function is not a
+      // generator — it just returns a generator's result)
+      function* sneakyGenerator() {
+        yield 1;
+      }
       engine.register('runtime-gen', async function* (ctx: WorkflowContext) {
         (ctx as Context).onUpdate('bad-runtime', () => {
-          // Return an object with Symbol.iterator — mimics generator result
-          return {
-            [Symbol.iterator]() {
-              return { next: () => ({ done: true, value: undefined }) };
-            },
-          };
+          return sneakyGenerator();
         });
         await Bun.sleep(999_999);
         return 'done';

@@ -236,6 +236,9 @@ export class RemoteWorker implements Disposable {
     this.#inFlight += 1;
 
     const taskAbortController = new AbortController();
+    // Abort per-task controller when the worker disconnects/shuts down
+    const onWorkerAbort = () => taskAbortController.abort();
+    this.#abortController.signal.addEventListener('abort', onWorkerAbort);
 
     try {
       const result = await executeWithInterceptors(
@@ -259,6 +262,7 @@ export class RemoteWorker implements Disposable {
         error: error instanceof Error ? error.message : String(error),
       });
     } finally {
+      this.#abortController.signal.removeEventListener('abort', onWorkerAbort);
       this.#inFlight -= 1;
     }
   }
