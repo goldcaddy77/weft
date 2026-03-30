@@ -452,6 +452,8 @@ export function serve(options: ServeOptions): WeftServer {
   const workerAffinity = new Map<string, string>();
   /** Reverse index: workflowId → set of operationIds currently in-flight for that workflow. */
   const workflowOperations = new Map<string, Set<string>>();
+  /** Reverse lookup: operationId → workflowId for O(1) cleanup on task completion. */
+  const operationToWorkflow = new Map<string, string>();
   /** Tracks pending backoff-delay timers so they can be cleared on shutdown. */
   const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
   /** In-memory min-heap for inflight task deadlines — avoids full storage scans on each visibility tick. */
@@ -765,9 +767,15 @@ export function serve(options: ServeOptions): WeftServer {
               registry.completeTask(operationId);
               deadlineTracker.remove(operationId);
 
-              // Remove from workflow→operations reverse index.
-              for (const [, opIds] of workflowOperations) {
-                opIds.delete(operationId);
+              // Remove from workflow→operations reverse index using O(1) lookup.
+              const taskWorkflowId = operationToWorkflow.get(operationId);
+              if (taskWorkflowId) {
+                const opIds = workflowOperations.get(taskWorkflowId);
+                if (opIds) {
+                  opIds.delete(operationId);
+                  if (opIds.size === 0) workflowOperations.delete(taskWorkflowId);
+                }
+                operationToWorkflow.delete(operationId);
               }
               // Atomically transition inflight → resolved in storage.
               const resolvedStatus = resultStatus === 'failed' ? 'failed' : ('completed' as const);
@@ -881,8 +889,14 @@ export function serve(options: ServeOptions): WeftServer {
 
           // Clean up workflow→operations reverse index for tasks owned by this worker.
           for (const task of inFlightTasks) {
-            for (const [, opIds] of workflowOperations) {
-              opIds.delete(task.operationId);
+            const taskWorkflowId = operationToWorkflow.get(task.operationId);
+            if (taskWorkflowId) {
+              const opIds = workflowOperations.get(taskWorkflowId);
+              if (opIds) {
+                opIds.delete(task.operationId);
+                if (opIds.size === 0) workflowOperations.delete(taskWorkflowId);
+              }
+              operationToWorkflow.delete(task.operationId);
             }
           }
 
@@ -986,6 +1000,7 @@ export function serve(options: ServeOptions): WeftServer {
 
       for (const operationId of operationIds) {
         cancelTaskImpl(operationId);
+        operationToWorkflow.delete(operationId);
       }
 
       // Clean up the reverse index entry now that all operations are cancelled.
@@ -1223,6 +1238,7 @@ export function serve(options: ServeOptions): WeftServer {
             workflowOperations.set(task.workflowId, operationIds);
           }
           operationIds.add(task.operationId);
+          operationToWorkflow.set(task.operationId, task.workflowId);
         }
 
         return true;
