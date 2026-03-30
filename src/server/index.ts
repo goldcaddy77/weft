@@ -778,7 +778,10 @@ export function serve(options: ServeOptions): WeftServer {
                 operationToWorkflow.delete(operationId);
               }
               // Atomically transition inflight → resolved in storage.
-              const resolvedStatus = resultStatus === 'failed' ? 'failed' : ('completed' as const);
+              const resolvedStatus =
+                resultStatus === 'failed' || resultStatus === 'cancelled'
+                  ? 'failed'
+                  : ('completed' as const);
               transitionInflightToResolved(
                 options.engine.storage,
                 operationId,
