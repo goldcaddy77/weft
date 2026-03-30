@@ -2459,7 +2459,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       let result: unknown;
       let error: string | undefined;
       try {
-        result = handler(update.payload);
+        result = await handler(update.payload);
       } catch (handlerError) {
         error = handlerError instanceof Error ? handlerError.message : String(handlerError);
       }
