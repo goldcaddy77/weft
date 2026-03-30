@@ -18,7 +18,7 @@ import type {
   SearchAttributeValue,
   WorkflowStatus,
 } from '../core/types.ts';
-import { UpdateTimeoutError } from '../core/updates.ts';
+import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
 import { METRICS } from '../observability/metrics.ts';
 
 // ---------------------------------------------------------------------------
@@ -500,6 +500,9 @@ async function handleUpdateWorkflow(
 
     return jsonResponse({ updateId: result.updateId, result: result.result });
   } catch (error) {
+    if (error instanceof WorkflowTerminalError) {
+      return errorResponse(error.message, 422);
+    }
     if (error instanceof UpdateTimeoutError) {
       return errorResponse(error.message, 408);
     }

@@ -50,12 +50,26 @@ export class UpdateTimeoutError extends Error {
   }
 }
 
+export class WorkflowTerminalError extends Error {
+  readonly workflowId: string;
+  readonly status: string;
+
+  constructor(workflowId: string, status: string) {
+    super(
+      `Cannot send update to workflow "${workflowId}": workflow is in terminal state "${status}"`,
+    );
+    this.name = 'WorkflowTerminalError';
+    this.workflowId = workflowId;
+    this.status = status;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Coordinator
 // ---------------------------------------------------------------------------
 
 const POLL_INTERVAL_MS = 50;
-const DEFAULT_CLEANUP_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DEFAULT_CLEANUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export class UpdateCoordinator {
   #storage: Storage;

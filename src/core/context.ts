@@ -744,6 +744,13 @@ export class Context implements WorkflowContext {
   }
 
   onUpdate(name: string, handler: (payload: unknown) => unknown): void {
+    const constructorName = handler.constructor?.name;
+    if (constructorName === 'GeneratorFunction' || constructorName === 'AsyncGeneratorFunction') {
+      throw new TypeError(
+        `Update handler "${name}" cannot be a generator function. ` +
+          `Use a plain function — update handlers run synchronously at checkpoint boundaries and cannot yield.`,
+      );
+    }
     this.#updateHandlers.set(name, handler);
   }
 
