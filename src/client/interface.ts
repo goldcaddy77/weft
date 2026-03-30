@@ -50,6 +50,12 @@ export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable
 
   /** Query a named read-only accessor on the running workflow. */
   query(name: string): Promise<unknown>;
+
+  /** Get search attributes for this workflow. */
+  getAttributes(): Promise<Record<string, SearchAttributeValue> | null>;
+
+  /** Set search attributes on this workflow (merge semantics). */
+  setAttributes(attributes: Record<string, SearchAttributeValue>): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

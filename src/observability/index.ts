@@ -19,6 +19,7 @@ import type {
   WorkflowInterceptor,
   WorkflowStartInterception,
 } from '../core/interceptor';
+import { MetricsCollector as MetricsCollectorClass } from './metrics';
 import {
   extractTraceParent,
   generateSpanId,
@@ -26,8 +27,15 @@ import {
   injectTraceParent,
 } from './propagation';
 
-export { METRICS } from './metrics';
-export type { MetricDefinition, MetricType } from './metrics';
+export { METRICS, MetricsCollector } from './metrics';
+export type {
+  CounterMetric,
+  GaugeMetric,
+  HistogramMetric,
+  MetricDefinition,
+  MetricsSnapshot,
+  MetricType,
+} from './metrics';
 export {
   extractTraceParent,
   formatTraceParent,
@@ -51,6 +59,15 @@ export interface ObservabilityOptions {
   onSpanStart?: (span: SpanInfo) => void;
   /** Called when a span ends. */
   onSpanEnd?: (span: SpanInfo) => void;
+  /**
+   * Extract custom span attributes from each interception context.
+   * The returned record is merged into the span's attributes before `onSpanStart` fires.
+   */
+  attributeExtractor?: (
+    interception: { workflowId: string; workflowType: string; [key: string]: unknown },
+  ) => Record<string, string | number | boolean>;
+  /** Metrics collector for recording counters, histograms, and gauges. */
+  metrics?: MetricsCollectorClass;
 }
 
 export interface SpanInfo {
@@ -94,16 +111,36 @@ function serializePayload(input: unknown, maxSize: number): string {
 export function createObservabilityInterceptors(options?: ObservabilityOptions): {
   workflow: WorkflowInterceptor;
   activity: ActivityInterceptor;
+  metrics: MetricsCollectorClass;
 } {
   const recordPayloads = options?.recordPayloads ?? false;
   const maxPayloadSize = options?.maxPayloadSize ?? DEFAULT_MAX_PAYLOAD_SIZE;
   const onSpanStart = options?.onSpanStart;
   const onSpanEnd = options?.onSpanEnd;
+  const attributeExtractor = options?.attributeExtractor;
+
+  const metrics = options?.metrics ?? new MetricsCollectorClass();
 
   // Mutable state shared across the workflow interceptor hooks for the
   // current workflow execution. Reset on each `workflowStart`.
   let currentTraceId = '';
   let rootSpanId = '';
+  let currentWorkflowId = '';
+  let currentWorkflowType = '';
+
+  /** Extract custom attributes from the extractor callback and merge into a target object. */
+  function applyCustomAttributes(
+    target: Record<string, string | number | boolean>,
+    extra?: Record<string, unknown>,
+  ): void {
+    if (!attributeExtractor) return;
+    const custom = attributeExtractor({
+      workflowId: currentWorkflowId,
+      workflowType: currentWorkflowType,
+      ...extra,
+    });
+    Object.assign(target, custom);
+  }
 
   // -----------------------------------------------------------------------
   // Workflow interceptor
@@ -116,6 +153,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     ): void {
       currentTraceId = generateTraceId();
       rootSpanId = generateSpanId();
+      currentWorkflowId = interception.workflowId;
+      currentWorkflowType = interception.workflowType;
 
       injectTraceParent(interception.headers, {
         version: '00',
@@ -139,6 +178,9 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         span.attributes['input'] = serializePayload(interception.input, maxPayloadSize);
       }
 
+      applyCustomAttributes(span.attributes, { input: interception.input });
+
+      metrics.increment('weft.workflow.started');
       onSpanStart?.(span);
 
       next(interception);
@@ -173,12 +215,20 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         span.attributes['input'] = serializePayload(interception.input, maxPayloadSize);
       }
 
+      applyCustomAttributes(span.attributes, {
+        activityName: interception.activityName,
+        attempt: interception.attempt,
+      });
+
       onSpanStart?.(span);
 
       try {
         const result = yield* next(interception);
         span.endTime = Date.now();
         span.status = 'ok';
+        const duration = span.endTime - span.startTime;
+        metrics.record('weft.activity.duration', duration);
+        metrics.increment('weft.activity.attempts');
         onSpanEnd?.(span);
         return result;
       } catch (error) {
@@ -207,6 +257,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         startTime: Date.now(),
       };
 
+      applyCustomAttributes(span.attributes, { duration: interception.duration });
+
       onSpanStart?.(span);
 
       yield* next(interception);
@@ -232,6 +284,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         },
         startTime: Date.now(),
       };
+
+      applyCustomAttributes(span.attributes, { signalName: interception.signalName });
 
       onSpanStart?.(span);
 
@@ -279,6 +333,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         span.attributes['agent.prompt'] = serializePayload(interception.prompt, maxPayloadSize);
       }
 
+      applyCustomAttributes(span.attributes, { model: interception.model });
+
       onSpanStart?.(span);
 
       try {
@@ -316,6 +372,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         },
         startTime: Date.now(),
       };
+
+      applyCustomAttributes(span.attributes, { signalName: interception.signalName });
 
       onSpanStart?.(span);
 
@@ -364,6 +422,11 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         span.attributes['input'] = serializePayload(interception.input, maxPayloadSize);
       }
 
+      applyCustomAttributes(span.attributes, {
+        activityName: interception.activityName,
+        attempt: interception.attempt,
+      });
+
       onSpanStart?.(span);
 
       try {
@@ -382,5 +445,5 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     },
   };
 
-  return { workflow, activity };
+  return { workflow, activity, metrics };
 }

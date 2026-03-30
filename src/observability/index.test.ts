@@ -3,10 +3,13 @@ import { describe, expect, it } from 'bun:test';
 import type {
   ActivityExecutionInterception,
   ActivityInterception,
+  AgentInterception,
   SignalInterception,
+  SleepInterception,
 } from '../core/interceptor';
 import type { SpanInfo } from './index';
 import { createObservabilityInterceptors } from './index';
+import { MetricsCollector } from './metrics';
 
 describe('createObservabilityInterceptors', () => {
   it('returns workflow and activity interceptors', () => {
@@ -662,6 +665,221 @@ describe('createObservabilityInterceptors', () => {
       expect(startedSpans).toHaveLength(1);
       // traceparent should still be injected with a generated traceId
       expect(interception.headers.has('traceparent')).toBe(true);
+    });
+  });
+
+  describe('attributeExtractor', () => {
+    it('merges custom attributes into workflowStart span', () => {
+      const startedSpans: SpanInfo[] = [];
+      const { workflow } = createObservabilityInterceptors({
+        onSpanStart: (span) => startedSpans.push(span),
+        attributeExtractor: () => ({ 'custom.region': 'us-east', 'custom.priority': 1 }),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-attr',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const span = startedSpans.find((s) => s.name.startsWith('workflow:'));
+      expect(span).toBeDefined();
+      expect(span!.attributes['custom.region']).toBe('us-east');
+      expect(span!.attributes['custom.priority']).toBe(1);
+    });
+
+    it('merges custom attributes into activity span', () => {
+      const startedSpans: SpanInfo[] = [];
+      const { workflow } = createObservabilityInterceptors({
+        onSpanStart: (span) => startedSpans.push(span),
+        attributeExtractor: () => ({ 'custom.region': 'us-east' }),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-attr-act',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const next = function* (_ctx: ActivityInterception) {
+        return 'result';
+      };
+
+      const generator = workflow.activity!(
+        { activityName: 'doSomething', input: undefined, attempt: 1, headers: new Map() },
+        next,
+      );
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      const activitySpan = startedSpans.find((s) => s.name.startsWith('activity:'));
+      expect(activitySpan).toBeDefined();
+      expect(activitySpan!.attributes['custom.region']).toBe('us-east');
+    });
+
+    it('merges custom attributes into sleep span', () => {
+      const startedSpans: SpanInfo[] = [];
+      const { workflow } = createObservabilityInterceptors({
+        onSpanStart: (span) => startedSpans.push(span),
+        attributeExtractor: () => ({ 'custom.region': 'eu-west' }),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-attr-sleep',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const next = function* (_ctx: SleepInterception) {};
+
+      const generator = workflow.sleep!(
+        { duration: 5000, headers: new Map() },
+        next,
+      );
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      const sleepSpan = startedSpans.find((s) => s.name === 'sleep');
+      expect(sleepSpan).toBeDefined();
+      expect(sleepSpan!.attributes['custom.region']).toBe('eu-west');
+    });
+
+    it('merges custom attributes into agent span', () => {
+      const startedSpans: SpanInfo[] = [];
+      const { workflow } = createObservabilityInterceptors({
+        onSpanStart: (span) => startedSpans.push(span),
+        attributeExtractor: () => ({ 'custom.env': 'production' }),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-attr-agent',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const next = function* (_ctx: AgentInterception) {
+        return 'agent-result';
+      };
+
+      const generator = workflow.agent!(
+        { model: 'gpt-4', prompt: 'hello', headers: new Map() },
+        next,
+      );
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      const agentSpan = startedSpans.find((s) => s.name === 'agent');
+      expect(agentSpan).toBeDefined();
+      expect(agentSpan!.attributes['custom.env']).toBe('production');
+    });
+
+    it('passes interception context to the extractor', () => {
+      const extractorCalls: Record<string, unknown>[] = [];
+      const { workflow } = createObservabilityInterceptors({
+        attributeExtractor: (ctx) => {
+          extractorCalls.push({ ...ctx });
+          return {};
+        },
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-ctx-check',
+          workflowType: 'MyWorkflow',
+          input: { data: 123 },
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      expect(extractorCalls.length).toBeGreaterThanOrEqual(1);
+      const call = extractorCalls[0]!;
+      expect(call['workflowId']).toBe('wf-ctx-check');
+      expect(call['workflowType']).toBe('MyWorkflow');
+    });
+  });
+
+  describe('MetricsCollector integration', () => {
+    it('records weft.workflow.started on workflowStart', () => {
+      const metricsCollector = new MetricsCollector();
+      const { workflow } = createObservabilityInterceptors({ metrics: metricsCollector });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-m1',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const snapshot = metricsCollector.snapshot();
+      expect(snapshot['weft.workflow.started']).toBeDefined();
+      expect(snapshot['weft.workflow.started']!.type === 'counter' && snapshot['weft.workflow.started']!.value).toBe(1);
+    });
+
+    it('records weft.activity.duration on activity completion', () => {
+      const metricsCollector = new MetricsCollector();
+      const { workflow } = createObservabilityInterceptors({ metrics: metricsCollector });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-m2',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const next = function* (_ctx: ActivityInterception) {
+        return 'result';
+      };
+
+      const generator = workflow.activity!(
+        { activityName: 'myActivity', input: undefined, attempt: 1, headers: new Map() },
+        next,
+      );
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      const snapshot = metricsCollector.snapshot();
+      expect(snapshot['weft.activity.duration']).toBeDefined();
+      expect(snapshot['weft.activity.duration']!.type).toBe('histogram');
+      expect(snapshot['weft.activity.attempts']).toBeDefined();
+      expect(snapshot['weft.activity.attempts']!.type === 'counter' && snapshot['weft.activity.attempts']!.value).toBe(1);
+    });
+
+    it('returns a metrics collector even when not explicitly provided', () => {
+      const { metrics } = createObservabilityInterceptors();
+      expect(metrics).toBeDefined();
+      expect(typeof metrics.increment).toBe('function');
+      expect(typeof metrics.snapshot).toBe('function');
     });
   });
 });

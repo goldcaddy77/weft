@@ -13,6 +13,8 @@ export interface PendingTask {
   retryPolicy?: RetryPolicy | undefined;
   visibilityTimeout?: number | undefined;
   enqueuedAt?: number | undefined;
+  /** Propagated interceptor headers (e.g. W3C trace context, auth tokens). */
+  headers?: Record<string, string> | undefined;
 }
 
 /** Result reported by a long-poll worker after executing a task. */

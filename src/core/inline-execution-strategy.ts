@@ -13,16 +13,25 @@
 import type { ContextOperationRequest } from './context.ts';
 import { Context } from './context.ts';
 import type { ExecutionStrategy } from './execution-strategy.ts';
-import type { OperationOutcome, WorkerOutboundMessage, WorkflowFunction } from './types.ts';
+import type {
+  OperationOutcome,
+  SearchAttributeSchema,
+  WorkerOutboundMessage,
+  WorkflowFunction,
+} from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Dependencies injected by the engine
 // ---------------------------------------------------------------------------
 
 export interface InlineExecutionDependencies {
-  getRegistration: (
-    workflowType: string,
-  ) => { handler: WorkflowFunction; version: string } | undefined;
+  getRegistration: (workflowType: string) =>
+    | {
+        handler: WorkflowFunction;
+        version: string;
+        searchAttributes?: SearchAttributeSchema;
+      }
+    | undefined;
   getNow: () => number;
   maxNestingDepth: number;
   development?: boolean;
@@ -84,6 +93,9 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       abortController: workflowAbort,
       getNow: this.#dependencies.getNow,
       nestingDepth: parameters.nestingDepth ?? 0,
+      ...(registration.searchAttributes && {
+        searchAttributeSchema: registration.searchAttributes,
+      }),
       ...(parameters.deadline !== undefined && { deadline: parameters.deadline }),
     });
 

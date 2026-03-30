@@ -3006,3 +3006,133 @@ describe('worker shutdown and cancel propagation', () => {
     await Bun.sleep(50);
   });
 });
+
+describe('header propagation in task dispatch', () => {
+  let engine: Engine;
+  let server: WeftServer;
+
+  afterEach(async () => {
+    await server?.stop();
+    engine?.[Symbol.dispose]();
+  });
+
+  async function connectWorker(
+    wsServer: WeftServer,
+    path = '/v1/tasks/default/stream',
+  ): Promise<WebSocket> {
+    const wsUrl = wsServer.url.replace('http://', 'ws://');
+    const ws = new WebSocket(`${wsUrl}${path}`);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('WebSocket connection failed')));
+    });
+    return ws;
+  }
+
+  async function registerWorker(
+    ws: WebSocket,
+    options: { workerId: string; activities: string[]; concurrency?: number },
+  ): Promise<void> {
+    ws.send(
+      JSON.stringify({
+        type: 'register',
+        workerId: options.workerId,
+        activities: options.activities,
+        concurrency: options.concurrency ?? 10,
+      }),
+    );
+    await Bun.sleep(50);
+  }
+
+  it('includes headers when dispatching to WebSocket workers', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const received: Array<Record<string, unknown>> = [];
+    const ws = await connectWorker(server);
+
+    ws.addEventListener('message', (event) => {
+      received.push(JSON.parse(String(event.data)) as Record<string, unknown>);
+    });
+
+    await registerWorker(ws, { workerId: 'header-w1', activities: ['charge'], concurrency: 5 });
+
+    await server.dispatchTask({
+      operationId: 'header-op-1',
+      activityName: 'charge',
+      input: { amount: 100 },
+      headers: { 'x-trace-id': 'trace-123', 'x-auth': 'bearer-token' },
+    });
+
+    await Bun.sleep(100);
+
+    const taskMessage = received.find((m) => m['type'] === 'task');
+    expect(taskMessage).toBeDefined();
+    expect(taskMessage!['headers']).toEqual({
+      'x-trace-id': 'trace-123',
+      'x-auth': 'bearer-token',
+    });
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('omits headers field when no headers are provided', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const received: Array<Record<string, unknown>> = [];
+    const ws = await connectWorker(server);
+
+    ws.addEventListener('message', (event) => {
+      received.push(JSON.parse(String(event.data)) as Record<string, unknown>);
+    });
+
+    await registerWorker(ws, {
+      workerId: 'no-header-w1',
+      activities: ['charge'],
+      concurrency: 5,
+    });
+
+    await server.dispatchTask({
+      operationId: 'no-header-op-1',
+      activityName: 'charge',
+      input: { amount: 50 },
+    });
+
+    await Bun.sleep(100);
+
+    const taskMessage = received.find((m) => m['type'] === 'task');
+    expect(taskMessage).toBeDefined();
+    expect(taskMessage!['headers']).toBeUndefined();
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('includes headers when dispatching to long-poll workers via task queue', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    // Dispatch task with headers — it will go into the task queue since no
+    // WebSocket worker is connected for the target activity
+    await server.dispatchTask({
+      operationId: 'lp-header-op-1',
+      activityName: 'unregistered-activity',
+      input: { data: 'test' },
+      headers: { 'x-request-id': 'req-456' },
+    });
+
+    // Poll the task queue via the long-poll HTTP endpoint
+    const baseUrl = server.url;
+    const response = await fetch(`${baseUrl}/v1/tasks/default?activity=unregistered-activity`, {
+      method: 'GET',
+      headers: { 'X-Long-Poll-Timeout': '500' },
+    });
+
+    expect(response.status).toBe(200);
+    const task = (await response.json()) as Record<string, unknown>;
+    expect(task['operationId']).toBe('lp-header-op-1');
+    expect(task['headers']).toEqual({ 'x-request-id': 'req-456' });
+  });
+});

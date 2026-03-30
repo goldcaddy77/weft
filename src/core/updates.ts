@@ -129,7 +129,9 @@ export class UpdateCoordinator {
     }
 
     return results.toSorted(
-      (a, b) => a.createdAt - b.createdAt || (a.updateId < b.updateId ? -1 : a.updateId > b.updateId ? 1 : 0),
+      (a, b) =>
+        a.createdAt - b.createdAt ||
+        (a.updateId < b.updateId ? -1 : a.updateId > b.updateId ? 1 : 0),
     );
   }
 

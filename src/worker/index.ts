@@ -2,6 +2,11 @@
 // Remote worker client — connects to the server via WebSocket
 // ---------------------------------------------------------------------------
 
+import {
+  buildComposedInterceptor,
+  executeWithInterceptors,
+  type ComposedInterceptor,
+} from './execute-with-interceptors.ts';
 import { HeartbeatManager } from './heartbeat.ts';
 
 export { HeartbeatManager } from './heartbeat.ts';
@@ -26,6 +31,8 @@ export interface RemoteWorkerOptions {
   concurrency?: number; // default: 10
   queue?: string; // default: 'default'
   disconnectTimeoutMs?: number; // default: 30_000
+  /** Activity interceptors to run around each activity execution on this worker. */
+  interceptors?: import('../core/interceptor.ts').ActivityInterceptor[];
 }
 
 interface TaskMessage {
@@ -33,6 +40,9 @@ interface TaskMessage {
   operationId: string;
   activityName: string;
   input: unknown;
+  attempt?: number;
+  /** Propagated interceptor headers from the dispatch path. */
+  headers?: Record<string, string>;
 }
 
 interface ServerMessage {
@@ -57,6 +67,7 @@ export class RemoteWorker implements Disposable {
   #heartbeat: HeartbeatManager;
   #shuttingDown: boolean;
   #taskAbortControllers: Map<string, AbortController>;
+  #composedInterceptor: ComposedInterceptor | null;
 
   constructor(options: RemoteWorkerOptions) {
     this.#options = {
@@ -70,6 +81,7 @@ export class RemoteWorker implements Disposable {
     this.#abortController = new AbortController();
     this.#shuttingDown = false;
     this.#taskAbortControllers = new Map();
+    this.#composedInterceptor = buildComposedInterceptor(options.interceptors);
     this.#heartbeat = new HeartbeatManager(() => {
       this.#sendMessage({ type: 'heartbeat', workerId: this.#options.workerId });
     }, HEARTBEAT_INTERVAL_MS);
@@ -257,9 +269,12 @@ export class RemoteWorker implements Disposable {
     this.#inFlight += 1;
 
     try {
-      const result = await activityFunction(task.input, {
-        signal: taskAbortController.signal,
-      });
+      const result = await executeWithInterceptors(
+        activityFunction,
+        task,
+        this.#composedInterceptor,
+        taskAbortController.signal,
+      );
 
       this.#sendMessage({
         type: 'taskResult',

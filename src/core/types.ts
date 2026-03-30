@@ -328,6 +328,8 @@ export interface ListFilter {
 export interface AttributeFilter {
   key: string;
   value?: SearchAttributeValue;
+  gt?: SearchAttributeValue;
+  lt?: SearchAttributeValue;
   gte?: SearchAttributeValue;
   lte?: SearchAttributeValue;
 }

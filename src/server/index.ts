@@ -93,6 +93,8 @@ export interface TaskDispatch {
   visibilityTimeout?: number;
   /** Retry policy governing maxAttempts and backoff between reassignment attempts. */
   retryPolicy?: RetryPolicy;
+  /** Propagated interceptor headers (e.g. W3C trace context, auth tokens). */
+  headers?: Record<string, string>;
 }
 
 export interface WeftServer extends AsyncDisposable {
@@ -1216,6 +1218,7 @@ export function serve(options: ServeOptions): WeftServer {
             activityName: task.activityName,
             input: task.input,
             attempt: task.attempt ?? 1,
+            ...(task.headers ? { headers: task.headers } : {}),
           }),
         );
         registry.assignTask(worker.id, task.operationId, visibilityTimeout);
@@ -1295,6 +1298,7 @@ export function serve(options: ServeOptions): WeftServer {
       attempt: task.attempt ?? 1,
       retryPolicy: task.retryPolicy,
       visibilityTimeout,
+      ...(task.headers ? { headers: task.headers } : {}),
     });
   }
 

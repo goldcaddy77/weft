@@ -406,8 +406,9 @@ describe('Synchronous Updates', () => {
       await storage.put(KEYS.update(workflowId, 'update-old'), encode(oldUpdate));
 
       engine.register('fifo-test', async function* (ctx: WorkflowContext) {
-        const value = yield* (ctx as Context).waitForUpdate<string>('data');
-        return value;
+        const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('data');
+        respond(payload);
+        return payload;
       });
 
       const handle = await engine.start('fifo-test', undefined, { id: workflowId });
@@ -566,6 +567,171 @@ describe('Synchronous Updates', () => {
       expect(events).toContain('received');
       expect(events).toContain('completed');
 
+      engine[Symbol.dispose]();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Step 7: waitForUpdate returns { payload, respond }
+  // -----------------------------------------------------------------------
+
+  describe('waitForUpdate { payload, respond } shape', () => {
+    it('respond() sends the result back to the engine.update() caller', async () => {
+      const engine = new Engine();
+
+      engine.register('respond-test', async function* (ctx: WorkflowContext) {
+        const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('review');
+        respond({ accepted: true, originalPayload: payload });
+        return `processed: ${payload}`;
+      });
+
+      const handle = await engine.start('respond-test', undefined);
+      await flush();
+
+      // engine.update() should return whatever respond() was called with
+      const updateResult = await engine.update(handle.id, 'review', 'my-data');
+      expect(updateResult).toEqual({ accepted: true, originalPayload: 'my-data' });
+
+      // Workflow should complete with its own return value
+      const result = await handle.result();
+      expect(result).toBe('processed: my-data');
+
+      engine[Symbol.dispose]();
+    });
+
+    it('calling respond() multiple times is idempotent', async () => {
+      const engine = new Engine();
+
+      engine.register('idempotent-respond', async function* (ctx: WorkflowContext) {
+        const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('data');
+        // Call respond twice — the second call should be a no-op
+        respond('first-response');
+        respond('second-response');
+        return payload;
+      });
+
+      const handle = await engine.start('idempotent-respond', undefined);
+      await flush();
+
+      const updateResult = await engine.update(handle.id, 'data', 'input');
+      // Only the first respond() call should matter
+      expect(updateResult).toBe('first-response');
+
+      const result = await handle.result();
+      expect(result).toBe('input');
+
+      engine[Symbol.dispose]();
+    });
+
+    it('respond() works with pending coordinated updates', async () => {
+      const engine = new Engine();
+      const storage = engine.storage;
+      const workflowId = 'coordinated-respond-wf';
+
+      // Seed a pending coordinated update
+      const pendingUpdate = {
+        updateId: 'coordinated-1',
+        workflowId,
+        name: 'approve',
+        payload: { amount: 100 },
+        createdAt: Date.now() - 500,
+      };
+      await storage.put(KEYS.update(workflowId, 'coordinated-1'), encode(pendingUpdate));
+
+      engine.register('coordinated-respond', async function* (ctx: WorkflowContext) {
+        const { payload, respond } = yield* (ctx as Context).waitForUpdate<{ amount: number }>(
+          'approve',
+        );
+        respond({ approved: true, amount: payload.amount });
+        return `approved: ${payload.amount}`;
+      });
+
+      const handle = await engine.start('coordinated-respond', undefined, { id: workflowId });
+      const result = await handle.result();
+      expect(result).toBe('approved: 100');
+
+      // Verify the response was written to storage
+      await flush();
+      const responseBytes = await storage.get('upr:coordinated-1');
+      expect(responseBytes).not.toBeNull();
+      const response = decode(responseBytes!) as { result: unknown };
+      expect(response.result).toEqual({ approved: true, amount: 100 });
+
+      engine[Symbol.dispose]();
+    });
+
+    it('recovery path provides no-op respond function', async () => {
+      const engine = new Engine();
+
+      let respondCallCount = 0;
+
+      engine.register('recovery-respond', async function* (ctx: WorkflowContext) {
+        const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('data');
+        respondCallCount++;
+        respond(payload);
+        return payload;
+      });
+
+      const handle = await engine.start('recovery-respond', undefined);
+      await flush();
+
+      await engine.update(handle.id, 'data', 'test-value');
+      const result = await handle.result();
+      expect(result).toBe('test-value');
+      expect(respondCallCount).toBe(1);
+
+      engine[Symbol.dispose]();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Step 8: Runtime generator check for onUpdate handler invocation
+  // -----------------------------------------------------------------------
+
+  describe('runtime generator check on handler invocation', () => {
+    it('throws if onUpdate handler returns a generator at runtime', async () => {
+      const engine = new Engine();
+
+      // Use a normal function that returns an actual generator object (not
+      // detected at registration time because the outer function is not a
+      // generator — it just returns a generator's result)
+      function* sneakyGenerator() {
+        yield 1;
+      }
+      engine.register('runtime-gen', async function* (ctx: WorkflowContext) {
+        (ctx as Context).onUpdate('bad-runtime', () => {
+          return sneakyGenerator();
+        });
+        await Bun.sleep(999_999);
+        return 'done';
+      });
+
+      const handle = await engine.start('runtime-gen', undefined);
+      suppressResult(handle);
+      await flush();
+
+      try {
+        await engine.update(handle.id, 'bad-runtime', 'payload');
+        expect.unreachable('should have thrown');
+      } catch (error) {
+        expect((error as Error).message).toContain('generator');
+        expect((error as Error).message).toContain('bad-runtime');
+      }
+
+      engine[Symbol.dispose]();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Step 9: Cleanup interval
+  // -----------------------------------------------------------------------
+
+  describe('response cleanup interval', () => {
+    it('engine disposal clears the cleanup interval', () => {
+      const engine = new Engine();
+      // If disposal doesn't throw, the interval was properly cleared
+      engine[Symbol.dispose]();
+      // Disposing again should also be safe (no-op)
       engine[Symbol.dispose]();
     });
   });

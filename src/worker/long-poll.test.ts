@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import type { ActivityInterceptor } from '../core/interceptor.ts';
 import { LongPollWorker } from './long-poll.ts';
 
 // ---------------------------------------------------------------------------
@@ -429,5 +430,186 @@ describe('LongPollWorker', () => {
     await worker.stop();
 
     expect(capturedPath).toBe('/v1/tasks/billing');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Interceptor support tests
+  // ---------------------------------------------------------------------------
+
+  it('runs activity interceptor around task execution', async () => {
+    const completedTasks: any[] = [];
+    const interceptorOrder: string[] = [];
+    let pollCount = 0;
+
+    server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+
+        if (POLL_PATH_RE.test(url.pathname) && request.method === 'GET') {
+          pollCount++;
+          if (pollCount === 1) {
+            return Response.json({
+              operationId: 'op-lp-intercepted',
+              activityName: 'processOrder',
+              input: { orderId: 55 },
+            });
+          }
+          return new Response(null, { status: 204 });
+        }
+
+        if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
+          const body = await request.json();
+          completedTasks.push(body);
+          return Response.json({ ok: true });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    const loggingInterceptor: ActivityInterceptor = {
+      async execute(interception, next) {
+        interceptorOrder.push(`before:${interception.activityName}`);
+        const result = await next(interception);
+        interceptorOrder.push(`after:${interception.activityName}`);
+        return result;
+      },
+    };
+
+    const worker = new LongPollWorker({
+      serverUrl: `http://localhost:${server.port}`,
+      activities: {
+        processOrder: async (input: any) => ({ processed: true, orderId: input.orderId }),
+      },
+      interceptors: [loggingInterceptor],
+    });
+
+    worker.start();
+    await Bun.sleep(500);
+    await worker.stop();
+
+    expect(interceptorOrder).toEqual(['before:processOrder', 'after:processOrder']);
+
+    const taskCompletion = completedTasks.find((t) => t.operationId === 'op-lp-intercepted');
+    expect(taskCompletion).toBeDefined();
+    expect(taskCompletion.status).toBe('completed');
+    expect(taskCompletion.value).toEqual({ processed: true, orderId: 55 });
+  });
+
+  it('interceptor can modify activity input in long-poll worker', async () => {
+    const completedTasks: any[] = [];
+    let pollCount = 0;
+
+    server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+
+        if (POLL_PATH_RE.test(url.pathname) && request.method === 'GET') {
+          pollCount++;
+          if (pollCount === 1) {
+            return Response.json({
+              operationId: 'op-lp-modify',
+              activityName: 'echo',
+              input: 'original',
+            });
+          }
+          return new Response(null, { status: 204 });
+        }
+
+        if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
+          const body = await request.json();
+          completedTasks.push(body);
+          return Response.json({ ok: true });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    const modifyInterceptor: ActivityInterceptor = {
+      async execute(interception, next) {
+        return next({ ...interception, input: 'modified-by-interceptor' });
+      },
+    };
+
+    const worker = new LongPollWorker({
+      serverUrl: `http://localhost:${server.port}`,
+      activities: {
+        echo: async (input: any) => input,
+      },
+      interceptors: [modifyInterceptor],
+    });
+
+    worker.start();
+    await Bun.sleep(500);
+    await worker.stop();
+
+    const taskCompletion = completedTasks.find((t) => t.operationId === 'op-lp-modify');
+    expect(taskCompletion).toBeDefined();
+    expect(taskCompletion.status).toBe('completed');
+    expect(taskCompletion.value).toBe('modified-by-interceptor');
+  });
+
+  it('interceptor receives propagated headers from task response', async () => {
+    const completedTasks: any[] = [];
+    let capturedHeaders: Map<string, string> | undefined;
+    let pollCount = 0;
+
+    server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+
+        if (POLL_PATH_RE.test(url.pathname) && request.method === 'GET') {
+          pollCount++;
+          if (pollCount === 1) {
+            return Response.json({
+              operationId: 'op-lp-headers',
+              activityName: 'echo',
+              input: 'hi',
+              headers: { 'x-trace-id': 'trace-lp-1', 'x-env': 'staging' },
+            });
+          }
+          return new Response(null, { status: 204 });
+        }
+
+        if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
+          const body = await request.json();
+          completedTasks.push(body);
+          return Response.json({ ok: true });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    const headerInterceptor: ActivityInterceptor = {
+      async execute(interception, next) {
+        capturedHeaders = interception.headers;
+        return next(interception);
+      },
+    };
+
+    const worker = new LongPollWorker({
+      serverUrl: `http://localhost:${server.port}`,
+      activities: {
+        echo: async (input: any) => input,
+      },
+      interceptors: [headerInterceptor],
+    });
+
+    worker.start();
+    await Bun.sleep(500);
+    await worker.stop();
+
+    expect(capturedHeaders).toBeDefined();
+    expect(capturedHeaders!.get('x-trace-id')).toBe('trace-lp-1');
+    expect(capturedHeaders!.get('x-env')).toBe('staging');
+
+    const taskCompletion = completedTasks.find((t) => t.operationId === 'op-lp-headers');
+    expect(taskCompletion).toBeDefined();
+    expect(taskCompletion.status).toBe('completed');
   });
 });
