@@ -1061,21 +1061,25 @@ export function serve(options: ServeOptions): WeftServer {
     try {
       const now = Date.now();
       for await (const [, value] of options.engine.storage.scan('op:inflight:')) {
-        const decoded = decode(value);
-        if (!isInflightRecord(decoded)) continue;
+        try {
+          const decoded = decode(value);
+          if (!isInflightRecord(decoded)) continue;
 
-        if (decoded.deadline > now) {
-          // Still valid — ensure it is tracked in the heap so the fast path
-          // can handle it when it expires.
+          if (decoded.deadline > now) {
+            // Still valid — ensure it is tracked in the heap so the fast path
+            // can handle it when it expires.
+            deadlineTracker.remove(decoded.operationId);
+            deadlineTracker.add({ operationId: decoded.operationId, deadline: decoded.deadline });
+            continue;
+          }
+
+          // Expired orphan — remove from heap and registry, then reassign.
           deadlineTracker.remove(decoded.operationId);
-          deadlineTracker.add({ operationId: decoded.operationId, deadline: decoded.deadline });
-          continue;
+          registry.completeTask(decoded.operationId);
+          await reassignOrExpireTask(decoded.operationId, decoded);
+        } catch (error) {
+          console.error('[weft] Failed to reconcile inflight record — skipping:', error);
         }
-
-        // Expired orphan — remove from heap and registry, then reassign.
-        deadlineTracker.remove(decoded.operationId);
-        registry.completeTask(decoded.operationId);
-        await reassignOrExpireTask(decoded.operationId, decoded);
       }
     } catch (error) {
       console.error('[weft] Reconciliation scanner error:', error);
