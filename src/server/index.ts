@@ -921,6 +921,7 @@ export function serve(options: ServeOptions): WeftServer {
   stack.defer(cleanupBroadcasting);
 
   // Clean up worker affinity entries when workflows reach a terminal state.
+  const affinityController = new AbortController();
   const terminalEventTypes = [
     WorkflowCompletedEvent.type,
     WorkflowFailedEvent.type,
@@ -929,15 +930,20 @@ export function serve(options: ServeOptions): WeftServer {
   ] as const;
 
   for (const eventType of terminalEventTypes) {
-    options.engine.addEventListener(eventType, (event) => {
-      const raw =
-        'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
-      const workflowId = typeof raw === 'string' ? raw : undefined;
-      if (workflowId) {
-        workerAffinity.delete(workflowId);
-      }
-    });
+    options.engine.addEventListener(
+      eventType,
+      (event) => {
+        const raw =
+          'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
+        const workflowId = typeof raw === 'string' ? raw : undefined;
+        if (workflowId) {
+          workerAffinity.delete(workflowId);
+        }
+      },
+      { signal: affinityController.signal },
+    );
   }
+  stack.defer(() => affinityController.abort());
 
   // Restore persisted in-flight records from storage so visibility timeout
   // tracking survives server restarts. Records whose deadline has already
@@ -993,31 +999,39 @@ export function serve(options: ServeOptions): WeftServer {
       const now = Date.now();
       const expired = deadlineTracker.drainExpired(now);
 
-      for (const { operationId } of expired) {
-        const inflightKey = KEYS.operationInflight(operationId);
-        const existing = await options.engine.storage.get(inflightKey);
+      for (const { operationId, deadline } of expired) {
+        try {
+          const inflightKey = KEYS.operationInflight(operationId);
+          const existing = await options.engine.storage.get(inflightKey);
 
-        if (!existing) continue; // Already resolved or requeued by another path.
+          if (!existing) continue; // Already resolved or requeued by another path.
 
-        const decoded = decode(existing);
-        if (!isInflightRecord(decoded)) {
-          console.error(`[weft] Corrupt inflight record for task "${operationId}" — skipping`);
-          continue;
+          const decoded = decode(existing);
+          if (!isInflightRecord(decoded)) {
+            console.error(`[weft] Corrupt inflight record for task "${operationId}" — skipping`);
+            continue;
+          }
+
+          // Double-check the deadline in case a heartbeat extended it after
+          // the entry was added to the heap.
+          if (decoded.deadline > now) {
+            deadlineTracker.add({ operationId, deadline: decoded.deadline });
+            continue;
+          }
+
+          // Expired — remove from registry and reassign or permanently fail.
+          registry.completeTask(decoded.operationId);
+          await reassignOrExpireTask(decoded.operationId, decoded);
+        } catch (error) {
+          // Re-add to the heap so it will be retried on the next tick
+          // instead of waiting for the slower reconciliation scan.
+          deadlineTracker.add({ operationId, deadline });
+          console.error(
+            `[weft] Failed to process expired task "${operationId}" — will retry:`,
+            error,
+          );
         }
-
-        // Double-check the deadline in case a heartbeat extended it after
-        // the entry was added to the heap.
-        if (decoded.deadline > now) {
-          deadlineTracker.add({ operationId, deadline: decoded.deadline });
-          continue;
-        }
-
-        // Expired — remove from registry and reassign or permanently fail.
-        registry.completeTask(decoded.operationId);
-        await reassignOrExpireTask(decoded.operationId, decoded);
       }
-    } catch (error) {
-      console.error('[weft] Visibility timeout scanner error:', error);
     } finally {
       scanRunning = false;
     }
