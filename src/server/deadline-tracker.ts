@@ -74,7 +74,7 @@ export class DeadlineTracker {
   /** Invalidate all entries for the given operation ID in O(1). */
   remove(operationId: string): void {
     if (!this.#isLive(operationId)) return;
-    this.#liveGeneration.set(operationId, 0); // Mark as removed
+    this.#liveGeneration.delete(operationId);
     this.#liveCount--;
   }
 
