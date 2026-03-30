@@ -459,6 +459,19 @@ export function serve(options: ServeOptions): WeftServer {
   /** In-memory min-heap for inflight task deadlines — avoids full storage scans on each visibility tick. */
   const deadlineTracker = new DeadlineTracker();
 
+  /** Remove an operationId from the workflow→operations reverse index. */
+  function cleanupWorkflowIndex(operationId: string): void {
+    const workflowId = operationToWorkflow.get(operationId);
+    if (workflowId) {
+      const opIds = workflowOperations.get(workflowId);
+      if (opIds) {
+        opIds.delete(operationId);
+        if (opIds.size === 0) workflowOperations.delete(workflowId);
+      }
+      operationToWorkflow.delete(operationId);
+    }
+  }
+
   /**
    * Send existing token events from storage as replay messages to a newly
    * connected stream client, so it can catch up on tokens emitted before
@@ -766,22 +779,22 @@ export function serve(options: ServeOptions): WeftServer {
               // Remove in-flight tracking and decrement the worker's counter.
               registry.completeTask(operationId);
               deadlineTracker.remove(operationId);
+              cleanupWorkflowIndex(operationId);
 
-              // Remove from workflow→operations reverse index using O(1) lookup.
-              const taskWorkflowId = operationToWorkflow.get(operationId);
-              if (taskWorkflowId) {
-                const opIds = workflowOperations.get(taskWorkflowId);
-                if (opIds) {
-                  opIds.delete(operationId);
-                  if (opIds.size === 0) workflowOperations.delete(taskWorkflowId);
-                }
-                operationToWorkflow.delete(operationId);
-              }
               // Atomically transition inflight → resolved in storage.
-              const resolvedStatus =
-                resultStatus === 'failed' || resultStatus === 'cancelled'
-                  ? 'failed'
-                  : ('completed' as const);
+              let resolvedStatus: 'completed' | 'failed';
+              if (resultStatus === 'completed') {
+                resolvedStatus = 'completed';
+              } else if (resultStatus === 'failed' || resultStatus === 'cancelled') {
+                resolvedStatus = 'failed';
+              } else {
+                console.warn(
+                  `[weft] taskResult for operation "${operationId}" has unexpected status "${String(
+                    resultStatus,
+                  )}" — treating as failed`,
+                );
+                resolvedStatus = 'failed';
+              }
               transitionInflightToResolved(
                 options.engine.storage,
                 operationId,
@@ -892,15 +905,7 @@ export function serve(options: ServeOptions): WeftServer {
 
           // Clean up workflow→operations reverse index for tasks owned by this worker.
           for (const task of inFlightTasks) {
-            const taskWorkflowId = operationToWorkflow.get(task.operationId);
-            if (taskWorkflowId) {
-              const opIds = workflowOperations.get(taskWorkflowId);
-              if (opIds) {
-                opIds.delete(task.operationId);
-                if (opIds.size === 0) workflowOperations.delete(taskWorkflowId);
-              }
-              operationToWorkflow.delete(task.operationId);
-            }
+            cleanupWorkflowIndex(task.operationId);
           }
 
           // Requeue each in-flight task with incremented attempt, respecting retry policy.
@@ -1042,6 +1047,18 @@ export function serve(options: ServeOptions): WeftServer {
         if (tracked) {
           tracked.visibilityTimeout = record.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT;
         }
+
+        // Rebuild workflow→operations reverse index so WorkflowCancelledEvent
+        // can propagate cancels to tasks restored from storage after a restart.
+        if (record.workflowId) {
+          let opIds = workflowOperations.get(record.workflowId);
+          if (!opIds) {
+            opIds = new Set();
+            workflowOperations.set(record.workflowId, opIds);
+          }
+          opIds.add(record.operationId);
+          operationToWorkflow.set(record.operationId, record.workflowId);
+        }
       }
     }
   }, 'restore in-flight tasks from storage').catch((error) => {
@@ -1087,8 +1104,9 @@ export function serve(options: ServeOptions): WeftServer {
             continue;
           }
 
-          // Expired — remove from registry and reassign or permanently fail.
+          // Expired — remove from registry, clean up workflow index, and reassign or permanently fail.
           registry.completeTask(decoded.operationId);
+          cleanupWorkflowIndex(decoded.operationId);
           await reassignOrExpireTask(decoded.operationId, decoded);
         } catch (error) {
           // Re-add to the heap so it will be retried on the next tick
@@ -1135,9 +1153,10 @@ export function serve(options: ServeOptions): WeftServer {
             continue;
           }
 
-          // Expired orphan — remove from heap and registry, then reassign.
+          // Expired orphan — remove from heap, registry, and workflow index, then reassign.
           deadlineTracker.remove(decoded.operationId);
           registry.completeTask(decoded.operationId);
+          cleanupWorkflowIndex(decoded.operationId);
           await reassignOrExpireTask(decoded.operationId, decoded);
         } catch (error) {
           console.error('[weft] Failed to reconcile inflight record — skipping:', error);
@@ -1287,15 +1306,15 @@ export function serve(options: ServeOptions): WeftServer {
 
   /** Send a cancel message to the worker handling a specific operation. */
   function cancelTaskImpl(operationId: string): boolean {
-    // Find which worker has this task by checking the registry.
-    for (const [workerId, ws] of workerSockets) {
-      const tasks = registry.getWorkerTasks(workerId);
-      if (tasks.some((t) => t.operationId === operationId)) {
-        ws.send(JSON.stringify({ type: 'cancel', operationId }));
-        return true;
-      }
-    }
-    return false;
+    // O(1) lookup via the registry's in-flight task map.
+    const task = registry.getTask(operationId);
+    if (!task) return false;
+
+    const ws = workerSockets.get(task.workerId);
+    if (!ws) return false;
+
+    ws.send(JSON.stringify({ type: 'cancel', operationId }));
+    return true;
   }
 
   /** Send a shutdown message to a specific worker and wait for it to disconnect. */

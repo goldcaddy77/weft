@@ -172,6 +172,11 @@ export class WorkerRegistry {
     return this.#inFlightTasks.has(operationId);
   }
 
+  /** Look up an in-flight task by operationId in O(1). */
+  getTask(operationId: string): InFlightTask | undefined {
+    return this.#inFlightTasks.get(operationId);
+  }
+
   /** Complete an in-flight task: remove tracking and decrement the worker's counter. */
   completeTask(operationId: string): InFlightTask | undefined {
     const task = this.#inFlightTasks.get(operationId);

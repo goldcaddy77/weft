@@ -156,6 +156,7 @@ export class RemoteWorker implements Disposable {
   }
 
   [Symbol.dispose](): void {
+    this.#abortAllTasks();
     this.#abortController.abort();
     this.#abortController = new AbortController();
     this.#heartbeat.stop();
@@ -169,6 +170,14 @@ export class RemoteWorker implements Disposable {
   // ---------------------------------------------------------------------------
   // Internal
   // ---------------------------------------------------------------------------
+
+  /** Abort all in-flight task controllers and clear the map. */
+  #abortAllTasks(): void {
+    for (const controller of this.#taskAbortControllers.values()) {
+      controller.abort();
+    }
+    this.#taskAbortControllers.clear();
+  }
 
   async #gracefulShutdown(): Promise<void> {
     this.#shuttingDown = true;
@@ -186,6 +195,9 @@ export class RemoteWorker implements Disposable {
         console.warn(
           `[weft] RemoteWorker timed out after ${timeout}ms with ${this.#inFlight} tasks still in-flight`,
         );
+        // Abort all remaining in-flight task controllers so activities don't
+        // continue running after the worker has disconnected.
+        this.#abortAllTasks();
         break;
       }
       await Bun.sleep(50);
@@ -214,12 +226,16 @@ export class RemoteWorker implements Disposable {
     } else if (data.type === 'shutdown') {
       void this.#gracefulShutdown();
     } else if (data.type === 'cancel') {
-      const operationId = data['operationId'] as string | undefined;
-      if (operationId) {
-        const controller = this.#taskAbortControllers.get(operationId);
-        if (controller) {
-          controller.abort();
-        }
+      const operationId = data['operationId'];
+      if (typeof operationId !== 'string') {
+        console.warn(
+          '[weft] Received cancel message with missing or non-string operationId — ignoring',
+        );
+        return;
+      }
+      const controller = this.#taskAbortControllers.get(operationId);
+      if (controller) {
+        controller.abort();
       }
     }
   }
