@@ -30,6 +30,7 @@ import { KEYS } from '../storage/interface.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
+import { DeadlineTracker } from './deadline-tracker.ts';
 import { handleRequest } from './handler.ts';
 import { TaskQueue } from './task-queue.ts';
 import type { InflightRecord, QueuedRecord } from './task-state.ts';
@@ -44,19 +45,8 @@ import {
 // Internal types
 // ---------------------------------------------------------------------------
 
-/** Fields needed to requeue a task after worker disconnect or visibility expiry. */
-interface ReassignableTask {
-  operationId: string;
-  activityName: string;
-  input: unknown;
-  queue: string;
-  attempt: number;
-  visibilityTimeout: number;
-  retryPolicy?: RetryPolicy;
-}
-
-/** Type guard for decoded storage records used in task reassignment. */
-function isReassignableTask(value: unknown): value is ReassignableTask {
+/** Type guard for decoded storage records in the inflight state. */
+function isInflightRecord(value: unknown): value is InflightRecord {
   if (value === null || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   return (
@@ -64,7 +54,9 @@ function isReassignableTask(value: unknown): value is ReassignableTask {
     typeof record['activityName'] === 'string' &&
     typeof record['queue'] === 'string' &&
     typeof record['attempt'] === 'number' &&
-    typeof record['visibilityTimeout'] === 'number'
+    typeof record['visibilityTimeout'] === 'number' &&
+    typeof record['workerId'] === 'string' &&
+    typeof record['deadline'] === 'number'
   );
 }
 
@@ -147,6 +139,8 @@ const DEFAULT_VISIBILITY_TIMEOUT = 30_000;
 const MIN_VISIBILITY_TIMEOUT = 10;
 const MAX_VISIBILITY_TIMEOUT = 3_600_000;
 const MAX_WORKER_CONCURRENCY = 1_000;
+/** Reconciliation full-scan runs at this multiple of the visibility poll interval (~60s at default). */
+const RECONCILIATION_MULTIPLIER = 12;
 
 /**
  * Clamp a visibility timeout to the allowed range.
@@ -452,6 +446,8 @@ export function serve(options: ServeOptions): WeftServer {
   const workerAffinity = new Map<string, string>();
   /** Tracks pending backoff-delay timers so they can be cleared on shutdown. */
   const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** In-memory min-heap for inflight task deadlines — avoids full storage scans on each visibility tick. */
+  const deadlineTracker = new DeadlineTracker();
 
   /**
    * Send existing token events from storage as replay messages to a newly
@@ -465,14 +461,17 @@ export function serve(options: ServeOptions): WeftServer {
     const prefix = `ev:${workflowId}:`;
     try {
       for await (const [, value] of options.engine.storage.scan(prefix)) {
-        const event = decode(value) as { type: string; data: Record<string, unknown> };
-        if (event.type !== TokenEvent.type) continue;
+        const event = decode(value);
+        if (event === null || typeof event !== 'object' || !('type' in event) || !('data' in event))
+          continue;
+        const { type: eventType, data } = event as { type: string; data: Record<string, unknown> };
+        if (eventType !== TokenEvent.type) continue;
 
         ws.send(
           JSON.stringify({
             type: 'replay',
             timestamp: Date.now(),
-            data: event.data,
+            data,
           }),
         );
       }
@@ -617,10 +616,11 @@ export function serve(options: ServeOptions): WeftServer {
           // Transition queued → inflight when a long-poll worker claims a task.
           if (task) {
             const vt = task.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT;
+            const deadline = Date.now() + vt;
             const inflightRecord: InflightRecord = {
               operationId: task.operationId,
               workerId: `longpoll-${crypto.randomUUID().slice(0, 8)}`,
-              deadline: Date.now() + vt,
+              deadline,
               activityName: task.activityName,
               queue,
               input: task.input,
@@ -628,6 +628,7 @@ export function serve(options: ServeOptions): WeftServer {
               visibilityTimeout: vt,
               retryPolicy: task.retryPolicy,
             };
+            deadlineTracker.add({ operationId: task.operationId, deadline });
             void transitionQueuedToInflight(
               options.engine.storage,
               task.operationId,
@@ -677,9 +678,17 @@ export function serve(options: ServeOptions): WeftServer {
             error: typeof body['error'] === 'string' ? body['error'] : undefined,
           });
 
-          // Transition inflight → resolved in durable storage.
+          // Remove from deadline tracker and transition inflight → resolved in durable storage.
+          deadlineTracker.remove(operationId);
           const resolvedStatus = status === 'failed' ? 'failed' : ('completed' as const);
-          void transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus);
+          transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus).catch(
+            (error) => {
+              console.error(
+                `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
+                error,
+              );
+            },
+          );
 
           return Response.json({ ok: true });
         }
@@ -746,13 +755,19 @@ export function serve(options: ServeOptions): WeftServer {
             if (typeof operationId === 'string') {
               // Remove in-flight tracking and decrement the worker's counter.
               registry.completeTask(operationId);
+              deadlineTracker.remove(operationId);
               // Atomically transition inflight → resolved in storage.
               const resolvedStatus = resultStatus === 'failed' ? 'failed' : ('completed' as const);
-              void transitionInflightToResolved(
+              transitionInflightToResolved(
                 options.engine.storage,
                 operationId,
                 resolvedStatus,
-              );
+              ).catch((error) => {
+                console.error(
+                  `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
+                  error,
+                );
+              });
             } else {
               // Fallback: decrement counter by worker ID when operationId is missing.
               // This path leaks the inflight tracking record — log a warning.
@@ -778,9 +793,13 @@ export function serve(options: ServeOptions): WeftServer {
                   task.visibilityTimeout,
                 );
 
-                // Update persisted storage record with the same deadline the
-                // registry computed, so the two stay in sync across restarts.
+                // Update persisted storage record and deadline tracker with
+                // the same deadline the registry computed, so all three stay
+                // in sync across restarts and visibility scans.
                 if (newDeadline !== undefined) {
+                  deadlineTracker.remove(task.operationId);
+                  deadlineTracker.add({ operationId: task.operationId, deadline: newDeadline });
+
                   const opId = task.operationId;
                   const heartbeatWorkerId = ws.data.workerId;
                   void withRetry(async () => {
@@ -795,9 +814,15 @@ export function serve(options: ServeOptions): WeftServer {
                     const inflightKey = KEYS.operationInflight(opId);
                     const existing = await options.engine.storage.get(inflightKey);
                     if (existing) {
-                      const record = decode(existing) as Record<string, unknown>;
-                      record['deadline'] = newDeadline;
-                      await options.engine.storage.put(inflightKey, encode(record));
+                      const decoded = decode(existing);
+                      if (!isInflightRecord(decoded)) {
+                        console.error(
+                          `[weft] Corrupt inflight record for task "${opId}" during heartbeat — skipping visibility extension`,
+                        );
+                        return;
+                      }
+                      const updated = { ...decoded, deadline: newDeadline };
+                      await options.engine.storage.put(inflightKey, encode(updated));
                     }
                   }, `extend visibility for task "${opId}"`).catch((error) => {
                     console.error(`[weft] Failed to extend visibility for task "${opId}":`, error);
@@ -828,6 +853,7 @@ export function serve(options: ServeOptions): WeftServer {
           // Remove in-flight tracking synchronously to allow re-dispatch.
           for (const task of inFlightTasks) {
             registry.completeTask(task.operationId);
+            deadlineTracker.remove(task.operationId);
           }
 
           registry.unregister(workerId);
@@ -851,13 +877,13 @@ export function serve(options: ServeOptions): WeftServer {
 
                 if (existing) {
                   const record = decode(existing);
-                  if (!isReassignableTask(record)) {
+                  if (!isInflightRecord(record)) {
                     console.error(
                       `[weft] Corrupt inflight record for task "${task.operationId}" — skipping reassignment`,
                     );
                     return;
                   }
-                  await reassignOrExpireTask(task.operationId, record as InflightRecord);
+                  await reassignOrExpireTask(task.operationId, record);
                 } else {
                   // Storage write hadn't committed — clean up the key just in case.
                   console.warn(
@@ -900,17 +926,42 @@ export function serve(options: ServeOptions): WeftServer {
   // Registered second — disposed second-to-last.
   stack.defer(cleanupBroadcasting);
 
+  // Clean up worker affinity entries when workflows reach a terminal state.
+  const affinityController = new AbortController();
+  const terminalEventTypes = [
+    WorkflowCompletedEvent.type,
+    WorkflowFailedEvent.type,
+    WorkflowCancelledEvent.type,
+    WorkflowTimedOutEvent.type,
+  ] as const;
+
+  for (const eventType of terminalEventTypes) {
+    options.engine.addEventListener(
+      eventType,
+      (event) => {
+        const raw =
+          'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
+        const workflowId = typeof raw === 'string' ? raw : undefined;
+        if (workflowId) {
+          workerAffinity.delete(workflowId);
+        }
+      },
+      { signal: affinityController.signal },
+    );
+  }
+  stack.defer(() => affinityController.abort());
+
   // Restore persisted in-flight records from storage so visibility timeout
   // tracking survives server restarts. Records whose deadline has already
   // passed are removed from storage (the task will be retried by the engine).
   void withRetry(async () => {
     for await (const [key, value] of options.engine.storage.scan('op:inflight:')) {
-      const record = decode(value) as {
-        operationId: string;
-        workerId: string;
-        deadline: number;
-        visibilityTimeout?: number;
-      };
+      const decoded = decode(value);
+      if (!isInflightRecord(decoded)) {
+        console.error(`[weft] Corrupt inflight record at "${key}" during restore — skipping`);
+        continue;
+      }
+      const record = decoded;
       const now = Date.now();
       if (record.deadline <= now) {
         // Expired while the server was down — remove from storage.
@@ -922,6 +973,7 @@ export function serve(options: ServeOptions): WeftServer {
         // extensions use the full duration, not the diminished remainder.
         const remaining = record.deadline - now;
         registry.assignTask(record.workerId, record.operationId, remaining);
+        deadlineTracker.add({ operationId: record.operationId, deadline: record.deadline });
         const tracked = registry
           .getWorkerTasks(record.workerId)
           .find((t) => t.operationId === record.operationId);
@@ -941,28 +993,50 @@ export function serve(options: ServeOptions): WeftServer {
   const visibilityPollMs = options.visibilityPollIntervalMs ?? 5_000;
   let scanRunning = false;
 
-  /** Scan `op:inflight:*` in storage for expired deadlines and reassign tasks. */
+  /**
+   * Drain expired entries from the in-memory deadline heap and reassign
+   * their tasks. Only touches storage for the specific operations whose
+   * deadlines have actually passed — no full `op:inflight:*` scan.
+   */
   async function scanExpiredTasks(): Promise<void> {
     if (scanRunning) return;
     scanRunning = true;
     try {
       const now = Date.now();
+      const expired = deadlineTracker.drainExpired(now);
 
-      for await (const [, value] of options.engine.storage.scan('op:inflight:')) {
-        const decoded = decode(value);
-        if (!isReassignableTask(decoded)) {
+      for (const { operationId, deadline } of expired) {
+        try {
+          const inflightKey = KEYS.operationInflight(operationId);
+          const existing = await options.engine.storage.get(inflightKey);
+
+          if (!existing) continue; // Already resolved or requeued by another path.
+
+          const decoded = decode(existing);
+          if (!isInflightRecord(decoded)) {
+            console.error(`[weft] Corrupt inflight record for task "${operationId}" — skipping`);
+            continue;
+          }
+
+          // Double-check the deadline in case a heartbeat extended it after
+          // the entry was added to the heap.
+          if (decoded.deadline > now) {
+            deadlineTracker.add({ operationId, deadline: decoded.deadline });
+            continue;
+          }
+
+          // Expired — remove from registry and reassign or permanently fail.
+          registry.completeTask(decoded.operationId);
+          await reassignOrExpireTask(decoded.operationId, decoded);
+        } catch (error) {
+          // Re-add to the heap so it will be retried on the next tick
+          // instead of waiting for the slower reconciliation scan.
+          deadlineTracker.add({ operationId, deadline });
           console.error(
-            `[weft] Corrupt inflight record for task "${String((decoded as Record<string, unknown>)['operationId'])}" — skipping`,
+            `[weft] Failed to process expired task "${operationId}" — will retry:`,
+            error,
           );
-          continue;
         }
-        const record = decoded as InflightRecord;
-
-        if (record.deadline > now) continue;
-
-        // Expired — remove from registry and reassign or permanently fail.
-        registry.completeTask(record.operationId);
-        await reassignOrExpireTask(record.operationId, record);
       }
     } catch (error) {
       console.error('[weft] Visibility timeout scanner error:', error);
@@ -975,9 +1049,55 @@ export function serve(options: ServeOptions): WeftServer {
     void scanExpiredTasks();
   }, visibilityPollMs);
 
+  // Periodic full-storage reconciliation to catch orphaned inflight records
+  // that were never tracked in the heap (e.g., written by another process or
+  // left over from a crash). Runs at 12x the visibility poll interval to keep
+  // cost low while still providing a safety net.
+  let reconciliationRunning = false;
+
+  async function reconcileOrphanedRecords(): Promise<void> {
+    if (reconciliationRunning) return;
+    reconciliationRunning = true;
+    try {
+      const now = Date.now();
+      for await (const [, value] of options.engine.storage.scan('op:inflight:')) {
+        try {
+          const decoded = decode(value);
+          if (!isInflightRecord(decoded)) continue;
+
+          if (decoded.deadline > now) {
+            // Still valid — ensure it is tracked in the heap so the fast path
+            // can handle it when it expires.
+            deadlineTracker.remove(decoded.operationId);
+            deadlineTracker.add({ operationId: decoded.operationId, deadline: decoded.deadline });
+            continue;
+          }
+
+          // Expired orphan — remove from heap and registry, then reassign.
+          deadlineTracker.remove(decoded.operationId);
+          registry.completeTask(decoded.operationId);
+          await reassignOrExpireTask(decoded.operationId, decoded);
+        } catch (error) {
+          console.error('[weft] Failed to reconcile inflight record — skipping:', error);
+        }
+      }
+    } catch (error) {
+      console.error('[weft] Reconciliation scanner error:', error);
+    } finally {
+      reconciliationRunning = false;
+    }
+  }
+
+  const reconciliationIntervalMs = visibilityPollMs * RECONCILIATION_MULTIPLIER;
+  const reconciliationHandle = setInterval(() => {
+    void reconcileOrphanedRecords();
+  }, reconciliationIntervalMs);
+
   // Registered last — disposed first (reverse order).
   stack.defer(() => {
     clearInterval(visibilityPollHandle);
+    clearInterval(reconciliationHandle);
+    deadlineTracker.clear();
     // Clear all pending backoff-delay timers to prevent callbacks firing
     // against a stopped server.
     for (const timer of pendingTimers) {
@@ -1022,6 +1142,7 @@ export function serve(options: ServeOptions): WeftServer {
         // Persist in-flight record to storage so it survives server restart.
         // Uses a batch to atomically remove any stale queued record and write the inflight record.
         const deadline = Date.now() + visibilityTimeout;
+        deadlineTracker.add({ operationId: task.operationId, deadline });
         const inflightRecord: InflightRecord = {
           operationId: task.operationId,
           workerId: worker.id,

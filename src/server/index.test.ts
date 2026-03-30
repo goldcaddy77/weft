@@ -2428,12 +2428,23 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     };
     await storage.put(KEYS.operationInflight('orphan-op'), encode(expiredRecord));
 
-    // Wait for the scanner to pick up the orphaned record
-    await Bun.sleep(200);
+    // Wait for the reconciliation scanner to pick up the orphaned record.
+    // Orphaned records (not tracked in the deadline heap) are only discovered
+    // by the periodic full-storage reconciliation, which runs at 12x the
+    // visibility poll interval (50ms * 12 = 600ms here).
+    await Bun.sleep(800);
 
     const taskMessages = received.filter((m) => m.type === 'task' && m.operationId === 'orphan-op');
     expect(taskMessages.length).toBe(1);
     expect(taskMessages[0]?.attempt).toBe(2);
+
+    // Verify the original expired inflight record was replaced — the task was
+    // re-dispatched so a new inflight record exists, but its deadline should
+    // be in the future (not the stale expired value).
+    for await (const [, value] of storage.scan('op:inflight:')) {
+      const record = decode(value) as { deadline: number };
+      expect(record.deadline).toBeGreaterThan(Date.now() - 1000);
+    }
 
     ws.close();
     await Bun.sleep(50);
