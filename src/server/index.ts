@@ -814,9 +814,15 @@ export function serve(options: ServeOptions): WeftServer {
                     const inflightKey = KEYS.operationInflight(opId);
                     const existing = await options.engine.storage.get(inflightKey);
                     if (existing) {
-                      const record = decode(existing) as Record<string, unknown>;
-                      record['deadline'] = newDeadline;
-                      await options.engine.storage.put(inflightKey, encode(record));
+                      const decoded = decode(existing);
+                      if (!isInflightRecord(decoded)) {
+                        console.error(
+                          `[weft] Corrupt inflight record for task "${opId}" during heartbeat — skipping visibility extension`,
+                        );
+                        return;
+                      }
+                      const updated = { ...decoded, deadline: newDeadline };
+                      await options.engine.storage.put(inflightKey, encode(updated));
                     }
                   }, `extend visibility for task "${opId}"`).catch((error) => {
                     console.error(`[weft] Failed to extend visibility for task "${opId}":`, error);
