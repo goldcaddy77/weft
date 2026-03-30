@@ -326,7 +326,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
   #chargedAgentOperations: Set<string>;
-  #cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -348,9 +347,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#composedWorkflowInterceptor = null;
     this.#composedActivityInterceptor = null;
     this.#updateCoordinator = new UpdateCoordinator(storage);
-    this.#cleanupInterval = setInterval(() => {
-      this.#updateCoordinator.cleanupExpiredResponses().catch(() => {});
-    }, 60_000);
     this.#activityRegistry = new ActivityRegistry();
     this.#activityWorkerDispatcher = null;
     this.#checkpoints = new Map();
@@ -1353,10 +1349,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowNestingDepths.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
-    if (this.#cleanupInterval !== null) {
-      clearInterval(this.#cleanupInterval);
-      this.#cleanupInterval = null;
-    }
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
   }
@@ -1660,11 +1652,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       case 'wait-update': {
-        // Check for pending update requests — FIFO ordering by createdAt
+        // getPendingUpdates returns FIFO-sorted results; pick the first match.
         const pendingUpdates = await this.#updateCoordinator.getPendingUpdates(workflowId);
-        const matchingUpdate = pendingUpdates
-          .filter((update) => update.name === operation.updateName)
-          .toSorted((a, b) => a.createdAt - b.createdAt)[0];
+        const matchingUpdate = pendingUpdates.find(
+          (update) => update.name === operation.updateName,
+        );
 
         if (matchingUpdate) {
           // Consume the pending update immediately
@@ -2451,13 +2443,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const handlers = context.updateHandlers;
     if (handlers.size === 0) return;
 
+    // getPendingUpdates returns FIFO-sorted results.
     const pendingUpdates = await this.#updateCoordinator.getPendingUpdates(workflowId);
     if (pendingUpdates.length === 0) return;
 
-    // Sort FIFO by createdAt for deterministic ordering
-    const sorted = pendingUpdates.toSorted((a, b) => a.createdAt - b.createdAt);
-
-    for (const update of sorted) {
+    for (const update of pendingUpdates) {
       const handler = handlers.get(update.name);
       if (!handler) continue;
 

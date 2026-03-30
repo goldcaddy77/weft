@@ -119,7 +119,7 @@ export class UpdateCoordinator {
     return this.getResponse(mapping.updateId);
   }
 
-  /** Get pending update requests for a workflow. */
+  /** Get pending update requests for a workflow, sorted FIFO by creation time. */
   async getPendingUpdates(workflowId: string): Promise<UpdateRequest[]> {
     const prefix = `upd:${workflowId}:`;
     const results: UpdateRequest[] = [];
@@ -128,7 +128,9 @@ export class UpdateCoordinator {
       results.push(decode(value) as UpdateRequest);
     }
 
-    return results;
+    return results.toSorted(
+      (a, b) => a.createdAt - b.createdAt || (a.updateId < b.updateId ? -1 : a.updateId > b.updateId ? 1 : 0),
+    );
   }
 
   /** Build batch operations for persisting an update response (to be included in checkpoint batch). */

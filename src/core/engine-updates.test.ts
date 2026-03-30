@@ -423,22 +423,7 @@ describe('Synchronous Updates', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Step 6: Periodic cleanup interval
-  // -----------------------------------------------------------------------
-
-  describe('periodic cleanup', () => {
-    it('engine construction and disposal do not leak timers', () => {
-      // The cleanup interval is internal. We verify indirectly that
-      // construction and disposal complete cleanly without hanging or
-      // throwing — if the interval were not properly cleared, this would
-      // leak timers.
-      const engine = new Engine();
-      engine[Symbol.dispose]();
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Step 7: Pending updates processed on resume
+  // Step 6: Pending updates processed on resume
   // -----------------------------------------------------------------------
 
   describe('pending updates on resume', () => {
