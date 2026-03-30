@@ -40,7 +40,7 @@ export async function executeWithInterceptors(
   signal?: AbortSignal,
 ): Promise<unknown> {
   if (!composed) {
-    return activityFunction(task.input);
+    return activityFunction(task.input, signal ? { signal } : undefined);
   }
 
   const headers = new Map<string, string>(Object.entries(task.headers ?? {}));
