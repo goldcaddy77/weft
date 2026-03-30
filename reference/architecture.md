@@ -233,9 +233,10 @@ Recommendations:
   ⚠ Queue "payments" has only 1 worker. Consider adding redundancy.
 ```
 
-**Going further: built-in alerting with zero external dependencies.** Alert rules are event listeners on the engine's internal metrics. No Prometheus, no Grafana, no alert manager required:
+**Going further: built-in alerting with zero external dependencies** \*(not yet implemented)**\*.** Alert rules will be event listeners on the engine's internal metrics. No Prometheus, no Grafana, no alert manager required:
 
 ```typescript
+// Planned API — not yet available
 const engine = new Engine({
   storage: new BunSQLiteStorage('./weft.db'),
   alerts: {
@@ -282,9 +283,10 @@ async function* batchWorkflow(ctx: Context, items: string[]) {
 }
 ```
 
-**Going further: built-in profiling mode.** When `profiling: true`, the engine records per-operation timing with `performance.now()` — zero overhead when disabled:
+**Going further: built-in profiling mode** \*(not yet implemented)**\*.** When `profiling: true`, the engine will record per-operation timing with `performance.now()` — zero overhead when disabled:
 
 ```typescript
+// Planned API — not yet available
 const profile = engine.profile();
 // {
 //   checkpointWrite: { p50: "15μs", p99: "89μs", count: 47293 },
@@ -2547,7 +2549,8 @@ const server = serve({
     'GET /v1/reviews': async (req) => {
       const url = new URL(req.url);
       const status = url.searchParams.get('status') ?? 'pending';
-      const reviews = await engine.listReviews({ status });
+      // Note: listReviews() does not yet accept a filter argument; status filtering is planned
+      const reviews = await engine.listReviews();
       return Response.json(reviews);
     },
 
