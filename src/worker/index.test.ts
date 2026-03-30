@@ -912,4 +912,150 @@ describe('RemoteWorker', () => {
 
     await worker.disconnect();
   });
+
+  // ---------------------------------------------------------------------------
+  // Cancel support tests
+  // ---------------------------------------------------------------------------
+
+  it('handles cancel message and aborts in-flight task', async () => {
+    const messages: any[] = [];
+    let taskStarted = false;
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          // Send a task that will block until cancelled
+          ws.send(
+            JSON.stringify({
+              type: 'task',
+              operationId: 'op-cancel-1',
+              activityName: 'cancellableActivity',
+              input: null,
+            }),
+          );
+
+          // After a brief delay, send a cancel message
+          setTimeout(() => {
+            ws.send(JSON.stringify({ type: 'cancel', operationId: 'op-cancel-1' }));
+          }, 100);
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'cancel-test-worker',
+      activities: {
+        cancellableActivity: async (_input: unknown, context) => {
+          taskStarted = true;
+          // Wait indefinitely — the cancel should abort this via the signal
+          return new Promise((_resolve, reject) => {
+            context?.signal.addEventListener('abort', () => {
+              reject(new Error('Aborted'));
+            });
+          });
+        },
+      },
+    });
+
+    await worker.connect();
+
+    // Wait for the task to start, then for the cancel to arrive and be processed
+    await Bun.sleep(400);
+
+    expect(taskStarted).toBe(true);
+
+    const taskResult = messages.find((m) => m.type === 'taskResult');
+    expect(taskResult).toBeDefined();
+    expect(taskResult.operationId).toBe('op-cancel-1');
+    expect(taskResult.status).toBe('cancelled');
+    expect(taskResult.cancelled).toBe(true);
+
+    await worker.disconnect();
+  });
+
+  it('cancel for unknown operationId is a no-op', async () => {
+    const messages: any[] = [];
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          // Send a cancel for a non-existent operationId
+          ws.send(JSON.stringify({ type: 'cancel', operationId: 'non-existent-op' }));
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'cancel-noop-test',
+      activities: {
+        processOrder: async (input) => input,
+      },
+    });
+
+    await worker.connect();
+    await Bun.sleep(100);
+
+    // Worker should still be connected and no taskResult should have been sent
+    expect(worker.connected).toBe(true);
+    expect(worker.inFlight).toBe(0);
+    const taskResults = messages.filter((m) => m.type === 'taskResult');
+    expect(taskResults.length).toBe(0);
+
+    await worker.disconnect();
+  });
+
+  it('activity function receives AbortSignal via context', async () => {
+    let receivedSignal: AbortSignal | undefined;
+    const messages: any[] = [];
+
+    server = createTestServer({
+      onMessage(ws, message) {
+        const parsed = JSON.parse(message);
+        messages.push(parsed);
+
+        if (parsed.type === 'register') {
+          ws.send(
+            JSON.stringify({
+              type: 'task',
+              operationId: 'op-signal-check',
+              activityName: 'signalInspector',
+              input: null,
+            }),
+          );
+        }
+      },
+    });
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}`,
+      workerId: 'signal-check-worker',
+      activities: {
+        signalInspector: async (_input: unknown, context) => {
+          receivedSignal = context?.signal;
+          return 'done';
+        },
+      },
+    });
+
+    await worker.connect();
+    await Bun.sleep(200);
+
+    expect(receivedSignal).toBeDefined();
+    expect(receivedSignal).toBeInstanceOf(AbortSignal);
+    expect(receivedSignal!.aborted).toBe(false);
+
+    const taskResult = messages.find((m) => m.type === 'taskResult');
+    expect(taskResult).toBeDefined();
+    expect(taskResult.status).toBe('completed');
+
+    await worker.disconnect();
+  });
 });
