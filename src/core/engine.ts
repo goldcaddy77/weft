@@ -552,6 +552,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const workflowId = options?.id ?? crypto.randomUUID();
 
+    // Capture and clear pending parent headers immediately, before any async
+    // work, to prevent a concurrent child-workflow start from overwriting them.
+    const parentHeaders = this.#pendingParentHeaders;
+    this.#pendingParentHeaders = undefined;
+
     // Atomic check-and-reserve: prevent two concurrent start() calls with the
     // same ID from both passing the storage check before either writes state.
     if (this.#pendingStarts.has(workflowId)) {
@@ -642,8 +647,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
 
       // Invoke workflowStart interceptor hook
-      const parentHeaders = this.#pendingParentHeaders;
-      this.#pendingParentHeaders = undefined;
       const composed = this.#getComposedWorkflowInterceptor();
       if (composed) {
         const headers = new Map<string, string>();
@@ -2275,7 +2278,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
                   ...agentResult.turns,
                 ]
               : agentResult.turns;
-            accessors.set('agentCostWaterfall', () => allTurns);
+            accessors.set('agentCostWaterfall', () => [...allTurns]);
 
             // agentConversation — full message history
             const previousConversation = accessors.get('agentConversation');
@@ -2285,7 +2288,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
                   ...agentResult.conversation,
                 ]
               : agentResult.conversation;
-            accessors.set('agentConversation', () => allMessages);
+            accessors.set('agentConversation', () => [...allMessages]);
 
             // agentCostProjection — budget-based cost estimate
             if (budgetTracker) {

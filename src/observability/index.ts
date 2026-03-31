@@ -294,10 +294,16 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
       applyCustomAttributes(span, interception);
 
-      yield* next(interception);
-
-      span.setStatus({ code: SpanStatusCode.OK });
-      span.end();
+      try {
+        yield* next(interception);
+        span.setStatus({ code: SpanStatusCode.OK });
+      } catch (error) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+        span.recordException(toError(error));
+        throw error;
+      } finally {
+        span.end();
+      }
     },
 
     *waitForSignal(
@@ -502,13 +508,37 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     ): Promise<unknown> {
       const parentContext = extractTraceParent(interception.headers);
 
-      const span = tracer.startSpan(`activity:execute:${interception.activityName}`, {
-        attributes: {
-          'weft.activity.name': interception.activityName,
-          'weft.activity.attempt': interception.attempt,
-          ...(parentContext ? { 'weft.parent.trace_id': parentContext.traceId } : {}),
+      // Build a parent context from the extracted traceparent so the activity
+      // span becomes a child of the workflow span that dispatched it.
+      let parentCtx = api.context.ROOT_CONTEXT;
+      if (parentContext) {
+        const remoteParentSpan: OtelSpan = {
+          setAttribute() {},
+          setStatus() {},
+          recordException() {},
+          end() {},
+          spanContext() {
+            return {
+              traceId: parentContext.traceId,
+              spanId: parentContext.spanId,
+              traceFlags: parentContext.traceFlags,
+            };
+          },
+        };
+        parentCtx = trace.setSpan(api.context.ROOT_CONTEXT, remoteParentSpan);
+      }
+
+      const span = tracer.startSpan(
+        `activity:execute:${interception.activityName}`,
+        {
+          attributes: {
+            'weft.activity.name': interception.activityName,
+            'weft.activity.attempt': interception.attempt,
+            ...(parentContext ? { 'weft.parent.trace_id': parentContext.traceId } : {}),
+          },
         },
-      });
+        parentCtx,
+      );
 
       if (recordPayloads && interception.input !== undefined) {
         span.setAttribute(

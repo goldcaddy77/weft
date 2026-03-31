@@ -35,7 +35,10 @@ function createRecordingTracer(): { tracer: OtelTracer; spans: RecordedSpan[] } 
   const tracer: OtelTracer = {
     startSpan(name: string, options?, _context?): OtelSpan {
       const id = String(++spanCounter).padStart(16, '0');
-      const traceId = 'a'.repeat(32);
+      // If a parent context carries a span with a traceId, inherit it.
+      // This mirrors real OTel behavior where child spans share the parent's traceId.
+      const parentSpan = (_context as any)?.__span as OtelSpan | undefined;
+      const traceId = parentSpan ? parentSpan.spanContext().traceId : 'a'.repeat(32);
       const recorded: RecordedSpan = {
         name,
         attributes: { ...options?.attributes },
@@ -70,8 +73,9 @@ function createMockOtelApi(tracer: OtelTracer): OtelApi {
       getTracer() {
         return tracer;
       },
-      setSpan(context: unknown) {
-        return context;
+      setSpan(_context: unknown, span: OtelSpan) {
+        // Store the span on the context so the recording tracer can retrieve it.
+        return { __span: span };
       },
     },
     metrics: {
@@ -170,6 +174,12 @@ describe('remote worker trace propagation', () => {
     const remoteSpan = workerSpans.find((s) => s.name.includes('chargeCard'));
     expect(remoteSpan).toBeDefined();
     expect(remoteSpan!.ended).toBe(true);
+
+    // 7. Verify the remote span shares the workflow's traceId — the whole point
+    //    of trace propagation. The injected traceparent carries the workflow's
+    //    traceId, and the activity interceptor should parent the span under it.
+    expect(remoteSpan!.spanContext.traceId).toBe(injectedContext!.traceId);
+    expect(remoteSpan!.parentContext).toBeDefined();
   });
 
   it('round-trips through JSON serialization without losing trace context', async () => {
