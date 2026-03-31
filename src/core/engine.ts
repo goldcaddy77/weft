@@ -598,6 +598,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       // Write attribute record and index entries for initial search attributes
       if (options?.searchAttributes && Object.keys(options.searchAttributes).length > 0) {
+        this.#validateAttributeValueSizes(options.searchAttributes);
         batchOperations.push({
           type: 'put',
           key: KEYS.attribute(workflowId),
@@ -1275,16 +1276,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
     }
 
-    // Validate encoded value sizes before building index operations.
-    for (const [key, value] of Object.entries(attributes)) {
-      if (Array.isArray(value)) {
-        for (const element of value) {
-          validateEncodedValueSize(encodeAttributeValue(element), key);
-        }
-      } else {
-        validateEncodedValueSize(encodeAttributeValue(value), key);
-      }
-    }
+    this.#validateAttributeValueSizes(attributes);
 
     const existingBytes = await this.#storage.get(KEYS.attribute(workflowId));
     const existing: Record<string, SearchAttributeValue> = existingBytes
@@ -1301,6 +1293,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     ];
 
     await this.#storage.batch(operations);
+  }
+
+  /** Validate that all attribute values in a record fit within the storage key size limit. */
+  #validateAttributeValueSizes(attributes: Record<string, SearchAttributeValue>): void {
+    for (const [key, value] of Object.entries(attributes)) {
+      if (Array.isArray(value)) {
+        for (const element of value) {
+          validateEncodedValueSize(encodeAttributeValue(element), key);
+        }
+      } else {
+        validateEncodedValueSize(encodeAttributeValue(value), key);
+      }
+    }
   }
 
   /** Retrieve the event history for a workflow. */
@@ -1517,6 +1522,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       if (hasPendingAttributeChanges) {
+        this.#validateAttributeValueSizes(context.pendingAttributeChanges);
         operations.push({
           type: 'put',
           key: KEYS.attribute(workflowId),
