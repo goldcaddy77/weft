@@ -10,6 +10,7 @@
  * @module core/engine
  */
 
+import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
 import {
   ReviewCoordinator,
@@ -112,6 +113,12 @@ interface RegistrationEntry {
   version: string;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
+}
+
+/** Options required when registering an AgentDefinition as a workflow. */
+export interface AgentRegistrationOptions {
+  /** The LLM provider to use when running the agent. */
+  provider: import('../ai/providers/interface.ts').LLMProvider;
 }
 
 interface ResolvedOptions {
@@ -471,10 +478,56 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void;
   register(name: string, registration: WorkflowRegistration): void;
+  register(agentDef: AgentDefinition, options: AgentRegistrationOptions): void;
   register(
-    name: string,
-    handlerOrRegistration: WorkflowFunction | StepWorkflowFunction | WorkflowRegistration,
+    nameOrAgent: string | AgentDefinition,
+    handlerOrRegistrationOrOptions?:
+      | WorkflowFunction
+      | StepWorkflowFunction
+      | WorkflowRegistration
+      | AgentRegistrationOptions,
   ): void {
+    // --- AgentDefinition overload ---
+    if (isAgentDefinition(nameOrAgent)) {
+      const agentDef = nameOrAgent;
+      const agentOptions = handlerOrRegistrationOrOptions as AgentRegistrationOptions;
+
+      // Build a workflow function that delegates to ctx.agent(), ensuring the
+      // agent execution flows through the engine's operation handler for budget
+      // policy enforcement, observability, and durable checkpointing.
+      const handler: WorkflowFunction = async function* (ctx, input) {
+        const prompt = typeof input === 'string' ? input : JSON.stringify(input);
+        const agentOpts: import('./context.ts').AgentContextOptions = {
+          model: agentDef.model,
+          prompt,
+          provider: agentOptions.provider,
+        };
+        if (agentDef.systemPrompt) agentOpts.systemPrompt = agentDef.systemPrompt;
+        if (agentDef.tools) agentOpts.tools = agentDef.tools;
+        if (agentDef.maxTurns !== undefined) agentOpts.maxTurns = agentDef.maxTurns;
+        if (agentDef.budget) agentOpts.budget = agentDef.budget;
+        if (agentDef.modelRouter) agentOpts.modelRouter = agentDef.modelRouter;
+        if (agentDef.contextStrategy) agentOpts.contextStrategy = agentDef.contextStrategy;
+        if (agentDef.hooks) agentOpts.hooks = agentDef.hooks;
+
+        const result = yield* (ctx as Context).agent(agentOpts);
+        return result;
+      };
+
+      this.#registrations.set(agentDef.name, {
+        handler,
+        version: '1',
+      });
+      return;
+    }
+
+    // --- Existing overloads (name + handler/registration) ---
+    const name = nameOrAgent;
+    const handlerOrRegistration = handlerOrRegistrationOrOptions as
+      | WorkflowFunction
+      | StepWorkflowFunction
+      | WorkflowRegistration;
+
     const isRegistration =
       typeof handlerOrRegistration === 'object' &&
       handlerOrRegistration !== null &&

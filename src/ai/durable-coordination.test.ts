@@ -13,7 +13,7 @@ import { describe, expect, it } from 'bun:test';
 import type { Context } from '../core/context.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { TestEngine } from '../testing/test-engine.ts';
-import type { AgentDefinition } from './declaration.ts';
+import { defineAgent, type AgentDefinition } from './declaration.ts';
 import type { LLMProvider } from './providers/interface.ts';
 import type { ChatResponse } from './providers/types.ts';
 
@@ -53,11 +53,11 @@ function createChatResponse(content: string): ChatResponse {
 }
 
 function createAgentDefinition(overrides?: Partial<AgentDefinition>): AgentDefinition {
-  return {
+  return defineAgent({
     name: 'test-agent',
     model: 'test-model',
     ...overrides,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -193,7 +193,7 @@ export { slidingWindowStrategy } from './ai/context-strategies/sliding-window';
 export { ContextWindowManager, composeStrategies, noopStrategy } from './ai/context-window';
 export type { ContextStrategy } from './ai/context-window';
 export { debate, handoff, supervise } from './ai/coordination';
-export { defineAgent } from './ai/declaration';
+export { defineAgent, isAgentDefinition } from './ai/declaration';
 export type { AgentDefinition } from './ai/declaration';
 export type { AgentHooks } from './ai/hooks';
 export { ReviewCoordinator, ReviewTimeoutError } from './ai/human-review';
@@ -206,6 +206,7 @@ export {
 export type { ModelRouter, ModelSelection, RoutingContext } from './ai/model-router';
 export { ProviderHealthTracker } from './ai/provider-health';
 export { ReconnectionBuffer, StreamMultiplexer, TokenBridge } from './ai/streaming';
+export type { AgentRegistrationOptions } from './core/engine';
 
 // AI Events
 export {

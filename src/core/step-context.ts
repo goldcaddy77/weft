@@ -47,7 +47,7 @@ export class StepContext implements StepWorkflowContext {
         type: 'activity',
         operationId,
         activityName: name,
-        fn: fn as Function,
+        fn: fn as (...args: unknown[]) => unknown,
         args: [],
       },
       resolve,
