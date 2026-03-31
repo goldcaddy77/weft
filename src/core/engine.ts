@@ -340,7 +340,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #checkpoints: Map<string, Checkpoint>;
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
+  #pendingParentHeaders: Map<string, string> | undefined;
   #workflowNestingDepths: Map<string, number>;
+  #workflowHeaders: Map<string, Map<string, string>>;
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
@@ -372,7 +374,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#checkpoints = new Map();
     this.#broadcastChannel = null;
     this.#pendingNestingDepth = undefined;
+    this.#pendingParentHeaders = undefined;
     this.#workflowNestingDepths = new Map();
+    this.#workflowHeaders = new Map();
     this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
       this.#handleCache.delete(id);
     });
@@ -633,6 +637,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       // Dispatch started event
       this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
+
+      // Invoke workflowStart interceptor hook
+      const parentHeaders = this.#pendingParentHeaders;
+      this.#pendingParentHeaders = undefined;
+      const composed = this.#getComposedWorkflowInterceptor();
+      if (composed) {
+        const headers = new Map<string, string>();
+        if (parentHeaders) {
+          for (const [k, v] of parentHeaders) {
+            headers.set(k, v);
+          }
+        }
+        const interception: import('./interceptor.ts').WorkflowStartInterception = {
+          workflowId,
+          workflowType: type,
+          input,
+          headers,
+        };
+        composed.workflowStart(interception, (i) => {
+          this.#workflowHeaders.set(workflowId, i.headers);
+        });
+      }
 
       // Create result promise
       const { promise, resolve, reject } = Promise.withResolvers<unknown>();
@@ -1469,6 +1495,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#sleepResolversByWorkflow.clear();
     this.#checkpoints.clear();
     this.#workflowNestingDepths.clear();
+    this.#workflowHeaders.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
     this.#broadcastChannel?.close();
@@ -2238,8 +2265,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         }
 
         try {
-          // Set pending nesting depth for the child workflow
+          // Set pending nesting depth and parent headers for the child workflow
           this.#pendingNestingDepth = currentDepth + 1;
+          this.#pendingParentHeaders = this.#workflowHeaders.get(workflowId);
           const childHandle = await this.start(operation.workflowType, operation.input);
           const childResult = await childHandle.result();
           this.#feedOperationResult(workflowId, { status: 'completed', value: childResult });
@@ -2329,6 +2357,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#sleepResolversByWorkflow.delete(workflowId);
     }
     this.#workflowNestingDepths.delete(workflowId);
+    this.#workflowHeaders.delete(workflowId);
   }
 
   // -------------------------------------------------------------------------

@@ -17,7 +17,11 @@ import {
   WorkflowStartedEvent,
   WorkflowTimedOutEvent,
 } from './events.ts';
-import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
+import type {
+  ActivityInterceptor,
+  WorkflowInterceptor,
+  WorkflowStartInterception,
+} from './interceptor.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type { WorkflowContext, WorkflowState } from './types.ts';
 import { activity } from './types.ts';
@@ -2151,6 +2155,213 @@ describe('Engine', () => {
 
       await engine.signal(handle.id, 'done');
       await handle.result();
+      engine[Symbol.dispose]();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // workflowStart interceptor invocation
+  // ---------------------------------------------------------------------------
+
+  describe('workflowStart interceptor', () => {
+    it('invokes workflowStart when engine.start() is called', async () => {
+      const engine = new Engine();
+      let intercepted = false;
+      let capturedInterception: WorkflowStartInterception | undefined;
+
+      engine.addInterceptor({
+        workflowStart(interception, next) {
+          intercepted = true;
+          capturedInterception = interception;
+          next(interception);
+        },
+      });
+
+      engine.register('greet', async function* () {
+        return 'hello';
+      });
+
+      const handle = await engine.start('greet', { name: 'test' });
+      await handle.result();
+
+      expect(intercepted).toBe(true);
+      expect(capturedInterception?.workflowType).toBe('greet');
+      expect(capturedInterception?.input).toEqual({ name: 'test' });
+      expect(capturedInterception?.workflowId).toBeDefined();
+      engine[Symbol.dispose]();
+    });
+
+    it('receives a mutable headers Map', async () => {
+      const engine = new Engine();
+      let capturedHeaders: Map<string, string> | undefined;
+
+      engine.addInterceptor({
+        workflowStart(interception, next) {
+          interception.headers.set('x-trace-id', '12345');
+          capturedHeaders = interception.headers;
+          next(interception);
+        },
+      });
+
+      engine.register('simple', async function* () {
+        return 'ok';
+      });
+
+      const handle = await engine.start('simple', null);
+      await handle.result();
+
+      expect(capturedHeaders).toBeInstanceOf(Map);
+      expect(capturedHeaders?.get('x-trace-id')).toBe('12345');
+      engine[Symbol.dispose]();
+    });
+
+    it('chains multiple workflowStart interceptors in order', async () => {
+      const engine = new Engine();
+      const order: string[] = [];
+
+      engine.addInterceptor({
+        workflowStart(interception, next) {
+          order.push('first');
+          next(interception);
+        },
+      });
+
+      engine.addInterceptor({
+        workflowStart(interception, next) {
+          order.push('second');
+          next(interception);
+        },
+      });
+
+      engine.register('chained', async function* () {
+        return 'ok';
+      });
+
+      const handle = await engine.start('chained', null);
+      await handle.result();
+
+      expect(order).toEqual(['first', 'second']);
+      engine[Symbol.dispose]();
+    });
+
+    it('workflowStart headers are stored and accessible per workflow', async () => {
+      const engine = new Engine();
+      const headersByWorkflow = new Map<string, Map<string, string>>();
+
+      engine.addInterceptor({
+        workflowStart(interception, next) {
+          interception.headers.set('x-request-id', `req-${interception.workflowType}`);
+          headersByWorkflow.set(interception.workflowId, new Map(interception.headers));
+          next(interception);
+        },
+      });
+
+      engine.register('wf-a', async function* () {
+        return 'a';
+      });
+      engine.register('wf-b', async function* () {
+        return 'b';
+      });
+
+      const handleA = await engine.start('wf-a', null);
+      const handleB = await engine.start('wf-b', null);
+      await handleA.result();
+      await handleB.result();
+
+      expect(headersByWorkflow.get(handleA.id)?.get('x-request-id')).toBe('req-wf-a');
+      expect(headersByWorkflow.get(handleB.id)?.get('x-request-id')).toBe('req-wf-b');
+      engine[Symbol.dispose]();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Child workflow header propagation
+  // ---------------------------------------------------------------------------
+
+  describe('child workflow header propagation', () => {
+    it('child workflow workflowStart receives parent headers', async () => {
+      const engine = new Engine();
+      const capturedInterceptions: WorkflowStartInterception[] = [];
+
+      engine.addInterceptor({
+        workflowStart(interception, next) {
+          capturedInterceptions.push({
+            ...interception,
+            headers: new Map(interception.headers),
+          });
+          // Simulate trace context propagation: set a traceparent header
+          interception.headers.set(
+            'traceparent',
+            `00-trace-${interception.workflowId}-01`,
+          );
+          next(interception);
+        },
+      });
+
+      engine.register('parent-wf', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        const childResult = yield* context.startChild<string>('child-wf', {
+          data: 'test',
+        });
+        return childResult;
+      });
+
+      engine.register('child-wf', async function* () {
+        return 'child-done';
+      });
+
+      const handle = await engine.start('parent-wf', {});
+      const result = await handle.result();
+
+      expect(result).toBe('child-done');
+      // Both parent and child should have had workflowStart called
+      expect(capturedInterceptions.length).toBe(2);
+
+      // The parent (first) should not have traceparent in its captured snapshot
+      // (it was empty when captured, then set after capture)
+      const parentInterception = capturedInterceptions[0]!;
+      expect(parentInterception.workflowType).toBe('parent-wf');
+
+      // The child (second) should have the parent's traceparent header
+      const childInterception = capturedInterceptions[1]!;
+      expect(childInterception.workflowType).toBe('child-wf');
+      expect(childInterception.headers.has('traceparent')).toBe(true);
+    });
+
+    it('child workflow headers include all parent headers', async () => {
+      const engine = new Engine();
+      const childHeaders: Map<string, string> = new Map();
+
+      engine.addInterceptor({
+        workflowStart(interception, next) {
+          if (interception.workflowType === 'child-trace') {
+            // Capture what the child received
+            for (const [k, v] of interception.headers) {
+              childHeaders.set(k, v);
+            }
+          }
+          // Set headers that should propagate to children
+          interception.headers.set('x-custom-header', 'custom-value');
+          interception.headers.set('traceparent', '00-abc-def-01');
+          next(interception);
+        },
+      });
+
+      engine.register('parent-trace', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        return yield* context.startChild<string>('child-trace', {});
+      });
+
+      engine.register('child-trace', async function* () {
+        return 'traced';
+      });
+
+      const handle = await engine.start('parent-trace', {});
+      await handle.result();
+
+      // Child should have received both headers from parent's workflowStart
+      expect(childHeaders.get('x-custom-header')).toBe('custom-value');
+      expect(childHeaders.get('traceparent')).toBe('00-abc-def-01');
       engine[Symbol.dispose]();
     });
   });
