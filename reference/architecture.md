@@ -5077,11 +5077,11 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Worker disconnection triggers task reassignment.** WebSocket `close` event → scan in-flight tasks → requeue with incremented attempt.
 - [x] **Visibility timeout expiry triggers task reassignment.** Scheduler scans `op:inflight:*` for expired deadlines.
 - [x] **Retry policy respected on reassignment.** `maxAttempts` exceeded → permanent failure. Backoff delay applied between attempts.
-- [ ] **Graceful shutdown via `shutdown` message.** Worker stops accepting tasks, finishes in-flight work, then disconnects.
+- [x] **Graceful shutdown via `shutdown` message.** Worker stops accepting tasks, finishes in-flight work, then disconnects.
 - [x] **Task is always in exactly one state.** Queued, in-flight (with visibility deadline), or resolved. No lost tasks.
 - [x] **Long-poll fallback at `GET /v1/tasks/:queue`.** Returns a task or `null` after timeout. Paired with `POST /v1/tasks/:queue/complete`.
 - [x] **Long-poll client works in any `fetch()` environment.** `LongPollWorker` uses `fetch()` only — Deno, Node.js, Cloudflare Workers, browsers.
-- [ ] **Server cancellation propagated to workers.** Server sends `cancel` message over WebSocket; worker aborts via `AbortController`.
+- [x] **Server cancellation propagated to workers.** Server sends `cancel` message over WebSocket; worker aborts via `AbortController`.
 
 ### Single Binary
 
@@ -5265,7 +5265,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`ctx.setAttributes(attrs)` sets multiple attributes in one call.** Merge semantics: existing attributes not mentioned are preserved.
 - [x] **`ctx.getAttribute(key)` reads the current value.** Returns the in-memory value, even if not yet checkpointed.
 - [x] **`ctx.getAttributes()` returns all attributes.** Returns a readonly copy.
-- [ ] **Attribute schema declared at registration time.** `engine.register("type", fn, { searchAttributes: { ... } })`. Unknown attribute keys rejected at set time.
+- [x] **Attribute schema declared at registration time.** `engine.register("type", fn, { searchAttributes: { ... } })`. Unknown attribute keys rejected at set time.
 - [x] **Index entries created atomically with checkpoint.** `idx:{attr}:{value}:{wfId}` keys written in the same `batch()` call as the checkpoint.
 - [x] **Index entries diffed on update.** When an attribute value changes, old index entries deleted and new entries created in the same batch.
 - [x] **Multi-value attributes (keyword_list) create one index entry per element.** Setting `tags: ["a", "b"]` creates two index keys.
@@ -5276,7 +5276,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **HTTP API supports `attr.*` query parameters.** `?attr.customerId=abc`, `?attr.priority.gte=8`.
 - [x] **`PATCH /v1/workflows/:id/attributes` sets attributes externally.** Merge semantics. Index updated atomically.
 - [x] **`GET /v1/workflows/:id/attributes` reads attributes.** Returns JSON object.
-- [ ] **`handle.setAttributes()` and `handle.getAttributes()` work from the client SDK.**
+- [x] **`handle.setAttributes()` and `handle.getAttributes()` work from the client SDK.**
 - [x] **`AttributesChangedEvent` dispatched on Engine and WorkflowHandle.** Includes workflow ID and changed keys.
 - [x] **Attribute cleanup on workflow completion/deletion.** All `attr:` and `idx:` entries removed atomically.
 - [ ] **Works identically on SQLite, LMDB, and IndexedDB.** Same test suite passes on all three backends.
@@ -5285,12 +5285,12 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 ### Synchronous Updates
 
 - [x] **`ctx.onUpdate(name, handler)` registers an update handler.** Handler is a function (not a generator). Receives payload, returns result.
-- [ ] **`ctx.waitForUpdate(name)` suspends until an update arrives.** Returns `{ payload, respond }`. `respond()` sends the result back.
+- [x] **`ctx.waitForUpdate(name)` suspends until an update arrives.** Returns `{ payload, respond }`. `respond()` sends the result back.
 - [x] **`engine.update(workflowId, name, payload, options)` sends an update and waits for the response.** Returns a promise that resolves with the handler's return value.
 - [x] **`handle.update(name, payload, options)` is a convenience method.** Delegates to `engine.update()`.
 - [x] **Timeout semantics.** Default 30 seconds, configurable via `options.timeout`. On timeout, rejects with `UpdateTimeoutError` containing `updateId` for later retrieval.
 - [x] **HTTP endpoint: `POST /v1/workflows/:id/update/:name`.** Body: `{ payload, timeout?, idempotencyKey? }`. Returns result or 408 on timeout.
-- [ ] **HTTP endpoint: `GET /v1/updates/:updateId`.** Returns `{ status: "pending" }` (202) or `{ status: "completed", result }` (200).
+- [x] **HTTP endpoint: `GET /v1/updates/:updateId`.** Returns `{ status: "pending" }` (202) or `{ status: "completed", result }` (200).
 - [x] **Update request persisted to storage before acknowledging caller.** Key: `upd:{workflowId}:{updateId}`. Survives server crash.
 - [x] **Update response persisted atomically with checkpoint.** Key: `upr:{updateId}`. Written in same `batch()` as checkpoint.
 - [x] **Update handler runs at checkpoint boundary.** Processed in the same phase as pending signals.
