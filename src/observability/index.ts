@@ -360,65 +360,61 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
       const onTurnStarted = (event: Event) => {
         if (!(event instanceof AgentTurnStartedEvent)) return;
-        const e = event;
         const turnSpan = tracer.startSpan(
-          `agent:turn:${e.turnIndex}`,
+          `agent:turn:${event.turnIndex}`,
           {
             attributes: {
-              'weft.agent.turn_index': e.turnIndex,
-              'weft.agent.model': e.model,
+              'weft.agent.turn_index': event.turnIndex,
+              'weft.agent.model': event.model,
             },
           },
           agentCtx,
         );
-        turnSpans.set(e.turnIndex, turnSpan);
+        turnSpans.set(event.turnIndex, turnSpan);
       };
 
       const onTurnCompleted = (event: Event) => {
         if (!(event instanceof AgentTurnCompletedEvent)) return;
-        const e = event;
-        const turnSpan = turnSpans.get(e.turnIndex);
+        const turnSpan = turnSpans.get(event.turnIndex);
         if (turnSpan) {
-          turnSpan.setAttribute('weft.agent.input_tokens', e.inputTokens);
-          turnSpan.setAttribute('weft.agent.output_tokens', e.outputTokens);
-          turnSpan.setAttribute('weft.agent.cost', e.cost);
+          turnSpan.setAttribute('weft.agent.input_tokens', event.inputTokens);
+          turnSpan.setAttribute('weft.agent.output_tokens', event.outputTokens);
+          turnSpan.setAttribute('weft.agent.cost', event.cost);
           turnSpan.setStatus({ code: SpanStatusCode.OK });
           turnSpan.end();
-          turnSpans.delete(e.turnIndex);
+          turnSpans.delete(event.turnIndex);
         }
       };
 
       const onToolCalled = (event: Event) => {
         if (!(event instanceof AgentToolCalledEvent)) return;
-        const e = event;
-        const parentTurnSpan = turnSpans.get(e.turnIndex);
+        const parentTurnSpan = turnSpans.get(event.turnIndex);
         const toolParentCtx = parentTurnSpan
           ? trace.setSpan(api.context.ROOT_CONTEXT, parentTurnSpan)
           : agentCtx;
         const toolSpan = tracer.startSpan(
-          `agent:tool:${e.toolName}`,
+          `agent:tool:${event.toolName}`,
           {
             attributes: {
-              'weft.agent.tool_name': e.toolName,
+              'weft.agent.tool_name': event.toolName,
             },
           },
           toolParentCtx,
         );
-        toolSpans.set(e.operationId, toolSpan);
+        toolSpans.set(event.operationId, toolSpan);
       };
 
       const onToolReturned = (event: Event) => {
         if (!(event instanceof AgentToolReturnedEvent)) return;
-        const e = event;
-        const toolSpan = toolSpans.get(e.operationId);
+        const toolSpan = toolSpans.get(event.operationId);
         if (toolSpan) {
-          toolSpan.setAttribute('weft.agent.tool_duration', e.duration);
-          toolSpan.setAttribute('weft.agent.tool_success', e.success);
+          toolSpan.setAttribute('weft.agent.tool_duration', event.duration);
+          toolSpan.setAttribute('weft.agent.tool_success', event.success);
           toolSpan.setStatus({
-            code: e.success ? SpanStatusCode.OK : SpanStatusCode.ERROR,
+            code: event.success ? SpanStatusCode.OK : SpanStatusCode.ERROR,
           });
           toolSpan.end();
-          toolSpans.delete(e.operationId);
+          toolSpans.delete(event.operationId);
         }
       };
 

@@ -1278,7 +1278,7 @@ describe('createObservabilityInterceptors', () => {
           );
           eventTarget.dispatchEvent(
             new AgentTurnCompletedEvent(
-              'wf-1',
+              'wf-agent-spans',
               'agent-1',
               0,
               'claude',
@@ -1333,7 +1333,7 @@ describe('createObservabilityInterceptors', () => {
           );
           eventTarget.dispatchEvent(
             new AgentTurnCompletedEvent(
-              'wf-1',
+              'wf-agent-spans',
               'agent-1',
               0,
               'claude',
@@ -1368,7 +1368,7 @@ describe('createObservabilityInterceptors', () => {
           );
           eventTarget.dispatchEvent(
             new AgentTurnCompletedEvent(
-              'wf-1',
+              'wf-agent-spans',
               'agent-1',
               1,
               'claude',
@@ -1444,7 +1444,7 @@ describe('createObservabilityInterceptors', () => {
           );
           eventTarget.dispatchEvent(
             new AgentTurnCompletedEvent(
-              'wf-1',
+              'wf-agent-spans',
               'agent-1',
               0,
               'claude',
