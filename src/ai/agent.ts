@@ -86,12 +86,26 @@ export interface ToolReturnInfo {
   success: boolean;
 }
 
+/** Per-turn cost and usage summary for observability queries. */
+export interface TurnSummary {
+  turnIndex: number;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  cumulativeCost: number;
+  duration: number;
+  toolCalls: string[];
+}
+
 export interface AgentResult {
   content: string;
   conversation: Message[];
   totalTokens: TokenUsage;
   totalCost: number;
   turnCount: number;
+  /** Per-turn breakdown for the agentCostWaterfall query accessor. */
+  turns: TurnSummary[];
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +179,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
   let totalCost = 0;
   let turnCount = 0;
   let lastContent = '';
+  const turns: TurnSummary[] = [];
 
   for (let turnIndex = 0; turnIndex < maxTurns; turnIndex++) {
     // Exit path: cancellation
@@ -313,6 +328,18 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
 
     turnCount++;
     lastContent = response.content;
+
+    // Record per-turn summary for observability
+    turns.push({
+      turnIndex,
+      model: currentModel,
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
+      cost: turnCost,
+      cumulativeCost: totalCost,
+      duration: turnDuration,
+      toolCalls: response.toolCalls.map((tc) => tc.name),
+    });
 
     // Add assistant message to conversation
     const assistantMessage: Message = {
@@ -515,5 +542,6 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     totalTokens,
     totalCost,
     turnCount,
+    turns,
   };
 }

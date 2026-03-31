@@ -346,6 +346,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #workflowHeaders: Map<string, Map<string, string>>;
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   #heartbeatDetails: Map<string, unknown>;
+  #agentQueryData: Map<string, Map<string, () => unknown>>;
   #pendingStarts: Set<string>;
   #chargedAgentOperations: Set<string>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
@@ -426,6 +427,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#budgetPolicyEnforcer = null;
     this.#heartbeatDetails = new Map();
+    this.#agentQueryData = new Map();
     this.#pendingStarts = new Set();
     this.#chargedAgentOperations = new Set();
     this.#cleanupInterval = setInterval(() => {
@@ -1031,6 +1033,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Built-in query: return latest heartbeat details for this workflow
     if (name === 'activityProgress') {
       return this.#heartbeatDetails.get(workflowId);
+    }
+
+    // Engine-level agent observability accessors persist beyond workflow completion
+    const agentAccessors = this.#agentQueryData.get(workflowId);
+    if (agentAccessors) {
+      const agentAccessor = agentAccessors.get(name);
+      if (agentAccessor) return agentAccessor();
     }
 
     if (!this.#inlineStrategy) {
@@ -2245,6 +2254,41 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
                 agentResult.totalCost,
               );
               this.#chargedAgentOperations.add(operation.operationId);
+            }
+          }
+
+          // Expose agent observability query accessors at the engine level
+          // so they persist beyond workflow completion. Accumulates across
+          // successive ctx.agent() calls in the same workflow.
+          {
+            if (!this.#agentQueryData.has(workflowId)) {
+              this.#agentQueryData.set(workflowId, new Map());
+            }
+            const accessors = this.#agentQueryData.get(workflowId)!;
+
+            // agentCostWaterfall — per-turn cost breakdown
+            const previousWaterfall = accessors.get('agentCostWaterfall');
+            const allTurns = previousWaterfall
+              ? [
+                  ...(previousWaterfall() as import('../ai/agent.ts').TurnSummary[]),
+                  ...agentResult.turns,
+                ]
+              : agentResult.turns;
+            accessors.set('agentCostWaterfall', () => allTurns);
+
+            // agentConversation — full message history
+            const previousConversation = accessors.get('agentConversation');
+            const allMessages = previousConversation
+              ? [
+                  ...(previousConversation() as import('../ai/providers/types.ts').Message[]),
+                  ...agentResult.conversation,
+                ]
+              : agentResult.conversation;
+            accessors.set('agentConversation', () => allMessages);
+
+            // agentCostProjection — budget-based cost estimate
+            if (budgetTracker) {
+              accessors.set('agentCostProjection', () => budgetTracker.budgetProjection());
             }
           }
 

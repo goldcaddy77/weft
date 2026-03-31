@@ -178,7 +178,7 @@ export { TimeControl } from './testing/time-control';
 
 // AI / Agent
 export { executeAgentLoop } from './ai/agent';
-export type { AgentOptions, AgentResult, AgentTool } from './ai/agent';
+export type { AgentOptions, AgentResult, AgentTool, TurnSummary } from './ai/agent';
 export { BudgetExceededError, BudgetTracker } from './ai/budget';
 export type { BudgetOptions, BudgetState, ModelPricing } from './ai/budget';
 export { BudgetPolicyEnforcer, OrganizationBudgetExceededError } from './ai/budget-policy';
