@@ -484,18 +484,6 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     turnCount++;
     lastContent = response.content;
 
-    // Record per-turn summary for observability
-    turns.push({
-      turnIndex,
-      model: currentModel,
-      inputTokens: response.usage.inputTokens,
-      outputTokens: response.usage.outputTokens,
-      cost: turnCost,
-      cumulativeCost: totalCost,
-      duration: turnDuration,
-      toolCalls: response.toolCalls.map((tc) => tc.name),
-    });
-
     // Add assistant message to conversation
     const assistantMessage: Message = {
       role: 'assistant',

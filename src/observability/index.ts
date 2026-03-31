@@ -343,23 +343,16 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: AgentInterception,
       next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
     ): Generator<unknown, unknown, unknown> {
-      const agentSpanId = generateSpanId();
-      const traceId = currentTraceId || generateTraceId();
+      const parentCtx = currentRootSpan
+        ? trace.setSpan(api.context.ROOT_CONTEXT, currentRootSpan)
+        : api.context.ROOT_CONTEXT;
 
-      injectTraceParent(interception.headers, {
-        version: '00',
-        traceId,
-        spanId: agentSpanId,
-        traceFlags: 1,
-      });
-
-      const span: SpanInfo = {
-        name: 'agent',
-        traceId,
-        spanId: agentSpanId,
-        parentSpanId: rootSpanId,
-        attributes: {
-          'agent.model': interception.model,
+      const span = tracer.startSpan(
+        'agent',
+        {
+          attributes: {
+            'weft.agent.model': interception.model,
+          },
         },
         parentCtx,
       );
@@ -448,77 +441,10 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         eventTarget.addEventListener('agent:tool:returned', onToolReturned);
       }
 
-      // Track per-turn and per-tool spans so they can be ended correctly
-      const activeTurnSpans = new Map<number, SpanInfo>();
-      const activeToolSpans = new Map<string, SpanInfo>();
-
-      // Inject per-turn and per-tool-call span callbacks into the interception
-      const enrichedInterception: AgentInterception = {
-        ...interception,
-        onTurnStarted: (info) => {
-          const turnSpan: SpanInfo = {
-            name: `agent:turn:${info.turnIndex}`,
-            traceId,
-            spanId: generateSpanId(),
-            parentSpanId: agentSpanId,
-            attributes: {
-              'weft.agent.model': info.model,
-              'weft.agent.turn_index': info.turnIndex,
-            },
-            startTime: Date.now(),
-          };
-          activeTurnSpans.set(info.turnIndex, turnSpan);
-          onSpanStart?.(turnSpan);
-          interception.onTurnStarted?.(info);
-        },
-        onTurnCompleted: (info) => {
-          const turnSpan = activeTurnSpans.get(info.turnIndex);
-          if (turnSpan) {
-            turnSpan.endTime = Date.now();
-            turnSpan.status = 'ok';
-            turnSpan.attributes['weft.agent.cost'] = info.cost;
-            onSpanEnd?.(turnSpan);
-            activeTurnSpans.delete(info.turnIndex);
-          }
-          interception.onTurnCompleted?.(info);
-        },
-        onToolCalled: (info) => {
-          const turnSpan = activeTurnSpans.get(info.turnIndex);
-          const toolSpan: SpanInfo = {
-            name: `agent:tool:call:${info.toolName}`,
-            traceId,
-            spanId: generateSpanId(),
-            parentSpanId: turnSpan?.spanId ?? agentSpanId,
-            attributes: {
-              'weft.agent.turn_index': info.turnIndex,
-              'tool.name': info.toolName,
-            },
-            startTime: Date.now(),
-          };
-          activeToolSpans.set(info.toolName, toolSpan);
-          onSpanStart?.(toolSpan);
-          interception.onToolCalled?.(info);
-        },
-        onToolReturned: (info) => {
-          // End the tool span started in onToolCalled
-          const toolSpan = activeToolSpans.get(info.toolName);
-          if (toolSpan) {
-            toolSpan.endTime = Date.now();
-            toolSpan.status = info.success ? 'ok' : 'error';
-            toolSpan.attributes['tool.success'] = info.success;
-            toolSpan.attributes['tool.duration'] = info.duration;
-            onSpanEnd?.(toolSpan);
-            activeToolSpans.delete(info.toolName);
-          }
-          interception.onToolReturned?.(info);
-        },
-      };
-
       try {
-        const result = yield* next(enrichedInterception);
-        span.endTime = Date.now();
-        span.status = 'ok';
-        onSpanEnd?.(span);
+        const result = yield* next(interception);
+        span.setStatus({ code: SpanStatusCode.OK });
+        span.end();
         return result;
       } catch (error) {
         span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });

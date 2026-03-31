@@ -102,10 +102,16 @@ export interface ReviewCoordinatorOptions {
 export class ReviewCoordinator {
   #storage: Storage;
   #getNow: () => number;
+  #eventTarget: EventTarget | undefined;
 
-  constructor(storage: Storage, getNow?: () => number) {
+  constructor(storage: Storage, optionsOrGetNow?: ReviewCoordinatorOptions | (() => number)) {
     this.#storage = storage;
-    this.#getNow = getNow ?? Date.now;
+    if (typeof optionsOrGetNow === 'function') {
+      this.#getNow = optionsOrGetNow;
+    } else {
+      this.#getNow = Date.now;
+      this.#eventTarget = optionsOrGetNow?.eventTarget;
+    }
   }
 
   /** Create a review request and persist it. */
@@ -135,12 +141,7 @@ export class ReviewCoordinator {
 
     if (this.#eventTarget) {
       this.#eventTarget.dispatchEvent(
-        new HumanReviewRequestedEvent(
-          workflowId,
-          reviewId,
-          request.reviewType,
-          request.reviewers,
-        ),
+        new HumanReviewRequestedEvent(workflowId, reviewId, request.reviewType, request.reviewers),
       );
     }
 

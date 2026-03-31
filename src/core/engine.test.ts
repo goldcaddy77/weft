@@ -17,11 +17,7 @@ import {
   WorkflowStartedEvent,
   WorkflowTimedOutEvent,
 } from './events.ts';
-import type {
-  ActivityInterceptor,
-  WorkflowInterceptor,
-  WorkflowStartInterception,
-} from './interceptor.ts';
+import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type { WorkflowContext, WorkflowState } from './types.ts';
 import { activity } from './types.ts';
@@ -2086,10 +2082,7 @@ describe('Engine', () => {
       reviewers: ['bob'],
       createdAt,
     };
-    await storage.put(
-      KEYS.review('wf-scan-event-1', 'rev-scan-event-1'),
-      encodeValue(review),
-    );
+    await storage.put(KEYS.review('wf-scan-event-1', 'rev-scan-event-1'), encodeValue(review));
 
     const receivedEvents: InstanceType<typeof HumanReviewCompletedEvent>[] = [];
     engine.addEventListener(HumanReviewCompletedEvent.type, (event) => {

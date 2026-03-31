@@ -93,25 +93,34 @@ export type OtelApi = {
 // No-op implementations
 // ---------------------------------------------------------------------------
 
-const NO_OP_SPAN_CONTEXT: SpanContext = Object.freeze({
-  traceId: '00000000000000000000000000000000',
-  spanId: '0000000000000000',
-  traceFlags: 0,
-});
+/** Generate a random hex string of the given byte length. */
+function randomHex(bytes: number): string {
+  const array = new Uint8Array(bytes);
+  crypto.getRandomValues(array);
+  return Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
-const noOpSpan: OtelSpan = {
-  setAttribute() {},
-  setStatus() {},
-  recordException() {},
-  end() {},
-  spanContext() {
-    return NO_OP_SPAN_CONTEXT;
-  },
-};
+/** Create a fresh no-op span with unique trace/span IDs. */
+function createNoOpSpan(): OtelSpan {
+  const context: SpanContext = {
+    traceId: randomHex(16),
+    spanId: randomHex(8),
+    traceFlags: 1,
+  };
+  return {
+    setAttribute() {},
+    setStatus() {},
+    recordException() {},
+    end() {},
+    spanContext() {
+      return context;
+    },
+  };
+}
 
 const noOpTracer: OtelTracer = {
   startSpan() {
-    return noOpSpan;
+    return createNoOpSpan();
   },
 };
 

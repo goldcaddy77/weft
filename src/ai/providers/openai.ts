@@ -273,9 +273,9 @@ export class OpenAIProvider implements LLMProvider {
     };
 
     // OpenAI reasoning models (o1, o3, etc.) may include reasoning content
-    const reasoningContent = message['reasoning_content'] as string | undefined;
-    if (reasoningContent) {
-      response.reasoningContent = reasoningContent;
+    const reasoningTrace = message['reasoning_content'] as string | undefined;
+    if (reasoningTrace) {
+      response.reasoningTrace = reasoningTrace;
     }
 
     return response;

@@ -49,15 +49,19 @@ describe('getOtelApi', () => {
       expect(typeof ctx.traceFlags).toBe('number');
     });
 
-    it('returns a no-op span context with zeroed IDs', () => {
+    it('returns a no-op span context with unique random IDs', () => {
       const { trace } = getOtelApi();
       const tracer = trace.getTracer('test');
-      const span = tracer.startSpan('test-span');
-      const ctx = span.spanContext();
+      const span1 = tracer.startSpan('span-1');
+      const span2 = tracer.startSpan('span-2');
+      const ctx1 = span1.spanContext();
+      const ctx2 = span2.spanContext();
 
-      expect(ctx.traceId).toBe('00000000000000000000000000000000');
-      expect(ctx.spanId).toBe('0000000000000000');
-      expect(ctx.traceFlags).toBe(0);
+      expect(ctx1.traceId).toHaveLength(32);
+      expect(ctx1.spanId).toHaveLength(16);
+      expect(ctx1.traceFlags).toBe(1);
+      // Each span gets unique IDs
+      expect(ctx1.spanId).not.toBe(ctx2.spanId);
     });
   });
 

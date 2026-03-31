@@ -362,7 +362,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #workflowHeaders: Map<string, Map<string, string>>;
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   #heartbeatDetails: Map<string, unknown>;
-  #agentQueryData: Map<string, Map<string, () => unknown>>;
   #pendingStarts: Set<string>;
   #chargedAgentOperations: Set<string>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
@@ -452,7 +451,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#budgetPolicyEnforcer = null;
     this.#heartbeatDetails = new Map();
-    this.#agentQueryData = new Map();
     this.#pendingStarts = new Set();
     this.#chargedAgentOperations = new Set();
     this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
@@ -717,44 +715,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         });
       }
 
-      // Invoke workflowStart interceptor hook (before execution begins)
+      // Invoke workflowStart interceptor hook (before execution begins).
+      // Seed headers from parent workflow if this is a child workflow.
       const composedInterceptor = this.#getComposedWorkflowInterceptor();
       if (composedInterceptor) {
-        composedInterceptor.workflowStart(
-          {
-            workflowId,
-            workflowType: type,
-            input,
-            headers: new Map(),
-          },
-          () => {
-            /* no-op execute — the actual start happens below */
-          },
-        );
-      }
-
-      // Dispatch started event
-      this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
-
-      // Invoke workflowStart interceptor hook
-      const composed = this.#getComposedWorkflowInterceptor();
-      if (composed) {
         const headers = new Map<string, string>();
         if (parentHeaders) {
           for (const [k, v] of parentHeaders) {
             headers.set(k, v);
           }
         }
-        const interception: import('./interceptor.ts').WorkflowStartInterception = {
-          workflowId,
-          workflowType: type,
-          input,
-          headers,
-        };
-        composed.workflowStart(interception, (i) => {
-          this.#workflowHeaders.set(workflowId, i.headers);
-        });
+        composedInterceptor.workflowStart(
+          {
+            workflowId,
+            workflowType: type,
+            input,
+            headers,
+          },
+          (interception) => {
+            this.#workflowHeaders.set(workflowId, interception.headers);
+          },
+        );
       }
+
+      // Dispatch started event
+      this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
 
       // Create result promise
       const { promise, resolve, reject } = Promise.withResolvers<unknown>();
@@ -1126,13 +1111,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Built-in query: return latest heartbeat details for this workflow
     if (name === 'activityProgress') {
       return this.#heartbeatDetails.get(workflowId);
-    }
-
-    // Engine-level agent observability accessors persist beyond workflow completion
-    const agentAccessors = this.#agentQueryData.get(workflowId);
-    if (agentAccessors) {
-      const agentAccessor = agentAccessors.get(name);
-      if (agentAccessor) return agentAccessor();
     }
 
     if (!this.#inlineStrategy) {
@@ -1639,7 +1617,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#checkpoints.clear();
     this.#workflowNestingDepths.clear();
     this.#workflowHeaders.clear();
-    this.#agentQueryData.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
     this.#broadcastChannel?.close();
@@ -2492,41 +2469,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             }
           }
 
-          // Expose agent observability query accessors at the engine level
-          // so they persist beyond workflow completion. Accumulates across
-          // successive ctx.agent() calls in the same workflow.
-          {
-            if (!this.#agentQueryData.has(workflowId)) {
-              this.#agentQueryData.set(workflowId, new Map());
-            }
-            const accessors = this.#agentQueryData.get(workflowId)!;
-
-            // agentCostWaterfall — per-turn cost breakdown
-            const previousWaterfall = accessors.get('agentCostWaterfall');
-            const allTurns = previousWaterfall
-              ? [
-                  ...(previousWaterfall() as import('../ai/agent.ts').TurnSummary[]),
-                  ...agentResult.turns,
-                ]
-              : agentResult.turns;
-            accessors.set('agentCostWaterfall', () => [...allTurns]);
-
-            // agentConversation — full message history
-            const previousConversation = accessors.get('agentConversation');
-            const allMessages = previousConversation
-              ? [
-                  ...(previousConversation() as import('../ai/providers/types.ts').Message[]),
-                  ...agentResult.conversation,
-                ]
-              : agentResult.conversation;
-            accessors.set('agentConversation', () => [...allMessages]);
-
-            // agentCostProjection — budget-based cost estimate
-            if (budgetTracker) {
-              accessors.set('agentCostProjection', () => budgetTracker.budgetProjection());
-            }
-          }
-
           this.#feedOperationResult(workflowId, {
             status: 'completed',
             value: agentResult.content,
@@ -2938,13 +2880,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     this.#workflowNestingDepths.delete(workflowId);
     this.#workflowHeaders.delete(workflowId);
-    // Agent query data is retained after workflow completion so
-    // handle.query() can read it. Evict oldest entries when the map
-    // exceeds 1000 workflows to bound memory growth.
-    if (this.#agentQueryData.size > 1000) {
-      const oldest = this.#agentQueryData.keys().next().value;
-      if (oldest !== undefined) this.#agentQueryData.delete(oldest);
-    }
   }
 
   // -------------------------------------------------------------------------

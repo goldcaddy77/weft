@@ -220,14 +220,14 @@ export class AnthropicProvider implements LLMProvider {
     const stopReason = data['stop_reason'] as string;
 
     let textContent = '';
-    let reasoningContent = '';
+    let reasoningTrace = '';
     const toolCalls: ToolCall[] = [];
 
     for (const block of contentBlocks) {
       if (block['type'] === 'text') {
         textContent += block['text'] as string;
       } else if (block['type'] === 'thinking') {
-        reasoningContent += block['thinking'] as string;
+        reasoningTrace += block['thinking'] as string;
       } else if (block['type'] === 'tool_use') {
         toolCalls.push({
           id: block['id'] as string,
@@ -252,8 +252,8 @@ export class AnthropicProvider implements LLMProvider {
       stopReason: this.#mapStopReason(stopReason),
     };
 
-    if (reasoningContent) {
-      response.reasoningContent = reasoningContent;
+    if (reasoningTrace) {
+      response.reasoningTrace = reasoningTrace;
     }
 
     return response;
