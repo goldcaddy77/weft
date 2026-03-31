@@ -178,7 +178,16 @@ export { TimeControl } from './testing/time-control';
 
 // AI / Agent
 export { executeAgentLoop } from './ai/agent';
-export type { AgentOptions, AgentResult, AgentTool, TurnSummary } from './ai/agent';
+export type {
+  AgentOptions,
+  AgentResult,
+  AgentTool,
+  ToolCallInfo,
+  ToolReturnInfo,
+  TurnInfo,
+  TurnResult,
+  TurnSummary,
+} from './ai/agent';
 export { BudgetExceededError, BudgetTracker } from './ai/budget';
 export type { BudgetOptions, BudgetState, ModelPricing } from './ai/budget';
 export { BudgetPolicyEnforcer, OrganizationBudgetExceededError } from './ai/budget-policy';
@@ -238,7 +247,7 @@ export { ToolSchemaValidationError, validateSchema } from './ai/mcp/schema-valid
 
 // Observability
 export { createObservabilityInterceptors } from './observability/index';
-export type { InterceptionContext, ObservabilityOptions, SpanInfo } from './observability/index';
+export type { InterceptionContext, ObservabilityOptions } from './observability/index';
 export { METRICS, createOtelMetrics } from './observability/metrics';
 export type { OtelMetrics } from './observability/metrics';
 export { getOtelApi } from './observability/no-op-telemetry';

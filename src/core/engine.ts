@@ -1519,6 +1519,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#checkpoints.clear();
     this.#workflowNestingDepths.clear();
     this.#workflowHeaders.clear();
+    this.#agentQueryData.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
     this.#broadcastChannel?.close();
@@ -2416,6 +2417,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     this.#workflowNestingDepths.delete(workflowId);
     this.#workflowHeaders.delete(workflowId);
+    // Note: #agentQueryData is intentionally NOT deleted here — query
+    // accessors must remain available after workflow completion. Cleanup
+    // happens in [Symbol.dispose] when the engine itself is torn down.
   }
 
   // -------------------------------------------------------------------------

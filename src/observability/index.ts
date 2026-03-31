@@ -9,7 +9,7 @@
  * @module observability
  */
 
-import type {
+import {
   AgentToolCalledEvent,
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,
@@ -95,23 +95,6 @@ export type ObservabilityOptions = {
   eventTarget?: EventTarget;
 };
 
-/**
- * @deprecated Use a real OpenTelemetry `SpanProcessor` instead of these callbacks.
- * The `onSpanStart`/`onSpanEnd` callbacks have been removed in favor of direct
- * OTel API usage. Register a `SpanProcessor` with the OTel SDK to observe spans.
- */
-export type SpanInfo = {
-  name: string;
-  traceId: string;
-  spanId: string;
-  parentSpanId?: string;
-  attributes: Record<string, string | number | boolean>;
-  startTime: number;
-  endTime?: number;
-  status?: 'ok' | 'error';
-  error?: string;
-};
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -182,6 +165,13 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
   // Mutable state: the root span for the current workflow execution.
   // Reset on each `workflowStart`. Used to parent child spans.
+  //
+  // LIMITATION: This is a single variable, not keyed by workflow ID.
+  // If multiple workflows run concurrently on the same thread sharing
+  // this interceptor instance, the last workflowStart wins and earlier
+  // workflows' spans get mis-parented. The fix requires adding workflowId
+  // to all interception types or using AsyncLocalStorage for context.
+  // For now, each concurrent workflow should use its own interceptor instance.
   let currentRootSpan: OtelSpan | undefined;
 
   /** Apply custom attributes from the extractor to a span. */
@@ -369,7 +359,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       const toolSpans = new Map<string, OtelSpan>();
 
       const onTurnStarted = (event: Event) => {
-        const e = event as AgentTurnStartedEvent;
+        if (!(event instanceof AgentTurnStartedEvent)) return;
+        const e = event;
         const turnSpan = tracer.startSpan(
           `agent:turn:${e.turnIndex}`,
           {
@@ -384,7 +375,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       };
 
       const onTurnCompleted = (event: Event) => {
-        const e = event as AgentTurnCompletedEvent;
+        if (!(event instanceof AgentTurnCompletedEvent)) return;
+        const e = event;
         const turnSpan = turnSpans.get(e.turnIndex);
         if (turnSpan) {
           turnSpan.setAttribute('weft.agent.input_tokens', e.inputTokens);
@@ -397,7 +389,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       };
 
       const onToolCalled = (event: Event) => {
-        const e = event as AgentToolCalledEvent;
+        if (!(event instanceof AgentToolCalledEvent)) return;
+        const e = event;
         const parentTurnSpan = turnSpans.get(e.turnIndex);
         const toolParentCtx = parentTurnSpan
           ? trace.setSpan(api.context.ROOT_CONTEXT, parentTurnSpan)
@@ -415,7 +408,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       };
 
       const onToolReturned = (event: Event) => {
-        const e = event as AgentToolReturnedEvent;
+        if (!(event instanceof AgentToolReturnedEvent)) return;
+        const e = event;
         const toolSpan = toolSpans.get(e.operationId);
         if (toolSpan) {
           toolSpan.setAttribute('weft.agent.tool_duration', e.duration);

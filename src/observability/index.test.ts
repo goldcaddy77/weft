@@ -1252,13 +1252,29 @@ describe('createObservabilityInterceptors', () => {
         { model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
-            new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1),
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
           );
           eventTarget.dispatchEvent(
-            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'webSearch', '{}', 'local', 'op-1'),
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'webSearch',
+              '{}',
+              'local',
+              'op-1',
+            ),
           );
           eventTarget.dispatchEvent(
-            new AgentToolReturnedEvent('wf-1', 'agent-1', 0, 'webSearch', 50, true, 'op-1'),
+            new AgentToolReturnedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'webSearch',
+              50,
+              true,
+              'op-1',
+            ),
           );
           eventTarget.dispatchEvent(
             new AgentTurnCompletedEvent(
@@ -1299,13 +1315,21 @@ describe('createObservabilityInterceptors', () => {
         { model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
-            new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1),
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
           );
           eventTarget.dispatchEvent(
-            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'search', '{}', 'local', 'op-1'),
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'search',
+              '{}',
+              'local',
+              'op-1',
+            ),
           );
           eventTarget.dispatchEvent(
-            new AgentToolReturnedEvent('wf-1', 'agent-1', 0, 'search', 30, true, 'op-1'),
+            new AgentToolReturnedEvent('wf-agent-spans', 'agent-1', 0, 'search', 30, true, 'op-1'),
           );
           eventTarget.dispatchEvent(
             new AgentTurnCompletedEvent(
@@ -1326,13 +1350,21 @@ describe('createObservabilityInterceptors', () => {
           );
 
           eventTarget.dispatchEvent(
-            new AgentTurnStartedEvent('wf-1', 'agent-1', 1, 'claude', 200, 3),
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 1, 'claude', 200, 3),
           );
           eventTarget.dispatchEvent(
-            new AgentToolCalledEvent('wf-1', 'agent-1', 1, 'analyze', '{}', 'local', 'op-2'),
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              1,
+              'analyze',
+              '{}',
+              'local',
+              'op-2',
+            ),
           );
           eventTarget.dispatchEvent(
-            new AgentToolReturnedEvent('wf-1', 'agent-1', 1, 'analyze', 80, true, 'op-2'),
+            new AgentToolReturnedEvent('wf-agent-spans', 'agent-1', 1, 'analyze', 80, true, 'op-2'),
           );
           eventTarget.dispatchEvent(
             new AgentTurnCompletedEvent(
@@ -1372,19 +1404,43 @@ describe('createObservabilityInterceptors', () => {
         { model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
-            new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1),
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
           );
           eventTarget.dispatchEvent(
-            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'search', '{}', 'local', 'op-1'),
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'search',
+              '{}',
+              'local',
+              'op-1',
+            ),
           );
           eventTarget.dispatchEvent(
-            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'readDoc', '{}', 'local', 'op-2'),
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'readDoc',
+              '{}',
+              'local',
+              'op-2',
+            ),
           );
           eventTarget.dispatchEvent(
-            new AgentToolReturnedEvent('wf-1', 'agent-1', 0, 'search', 30, true, 'op-1'),
+            new AgentToolReturnedEvent('wf-agent-spans', 'agent-1', 0, 'search', 30, true, 'op-1'),
           );
           eventTarget.dispatchEvent(
-            new AgentToolReturnedEvent('wf-1', 'agent-1', 0, 'readDoc', 40, false, 'op-2'),
+            new AgentToolReturnedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'readDoc',
+              40,
+              false,
+              'op-2',
+            ),
           );
           eventTarget.dispatchEvent(
             new AgentTurnCompletedEvent(
@@ -1450,10 +1506,18 @@ describe('createObservabilityInterceptors', () => {
         { model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
-            new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1),
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
           );
           eventTarget.dispatchEvent(
-            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'search', '{}', 'local', 'op-1'),
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'search',
+              '{}',
+              'local',
+              'op-1',
+            ),
           );
           throw theError;
         },
@@ -1465,10 +1529,13 @@ describe('createObservabilityInterceptors', () => {
         expect(error).toBe(theError);
       }
 
-      // Agent, turn, and tool spans should all be ended
+      // Agent, turn, and tool spans should all be ended with ERROR status
       expect(spans.find((s) => s.name === 'agent')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent')!.status?.code).toBe(2); // ERROR
       expect(spans.find((s) => s.name === 'agent:turn:0')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent:turn:0')!.status?.code).toBe(2); // ERROR
       expect(spans.find((s) => s.name === 'agent:tool:search')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent:tool:search')!.status?.code).toBe(2); // ERROR
     });
 
     it('removes event listeners after agent completes', () => {
@@ -1485,7 +1552,9 @@ describe('createObservabilityInterceptors', () => {
       driveGenerator(gen);
 
       const spanCountBefore = spans.length;
-      eventTarget.dispatchEvent(new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1));
+      eventTarget.dispatchEvent(
+        new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
+      );
       expect(spans.length).toBe(spanCountBefore);
     });
   });

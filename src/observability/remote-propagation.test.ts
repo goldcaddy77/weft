@@ -28,10 +28,9 @@ type RecordedSpan = {
   spanContext: { traceId: string; spanId: string; traceFlags: number };
 };
 
-let spanCounter = 0;
-
 function createRecordingTracer(): { tracer: OtelTracer; spans: RecordedSpan[] } {
   const spans: RecordedSpan[] = [];
+  let spanCounter = 0;
 
   const tracer: OtelTracer = {
     startSpan(name: string, options?, _context?): OtelSpan {
