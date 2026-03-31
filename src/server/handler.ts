@@ -9,6 +9,7 @@
  */
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
+import { createSSEStream } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
 import type {
@@ -161,6 +162,12 @@ const ROUTE_PATTERNS: Array<{
     pattern: /^\/v1\/workflows\/([^/]+)\/review\/([^/]+)$/,
     handler: 'getReview',
     paramNames: ['id', 'reviewId'],
+  },
+  {
+    method: 'GET',
+    pattern: /^\/v1\/workflows\/([^/]+)\/sse$/,
+    handler: 'streamSSE',
+    paramNames: ['id'],
   },
   {
     method: 'GET',
@@ -793,6 +800,59 @@ async function handleGetStreamChunks(
 }
 
 // ---------------------------------------------------------------------------
+// SSE streaming route
+// ---------------------------------------------------------------------------
+
+async function handleStreamSSE(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+): Promise<Response> {
+  const accept = request.headers.get('Accept') ?? '';
+  if (!accept.includes('text/event-stream')) {
+    return errorResponse('Accept header must include text/event-stream', 406);
+  }
+
+  // Check workflow exists
+  const state = await engine.get(workflowId);
+  if (state === null) {
+    return errorResponse(`Workflow "${workflowId}" not found`, 404);
+  }
+
+  // Get Last-Event-ID for reconnection support
+  const lastEventId = request.headers.get('Last-Event-ID') ?? undefined;
+
+  // Get token stream from engine's stream chunks
+  const chunks = await engine.getStreamChunks(workflowId, 'tokens');
+
+  // Build a ReadableStream<string> from the stored chunks
+  const tokenStream = new ReadableStream<string>({
+    start(controller) {
+      for (const chunk of chunks) {
+        if (typeof chunk === 'string') {
+          controller.enqueue(chunk);
+        } else if (typeof chunk === 'object' && chunk !== null && 'token' in chunk) {
+          const token = (chunk as { token?: string }).token;
+          if (token) controller.enqueue(token);
+        }
+      }
+      controller.close();
+    },
+  });
+
+  const sseStream = createSSEStream(tokenStream, lastEventId);
+
+  return new Response(sseStream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Metrics route
 // ---------------------------------------------------------------------------
 
@@ -914,6 +974,9 @@ export async function handleRequest(
 
       case 'getStreamChunks':
         return handleGetStreamChunks(engine, param('id'), param('key'));
+
+      case 'streamSSE':
+        return handleStreamSSE(request, engine, param('id'));
 
       case 'getMetrics':
         return handleGetMetrics(options?.metricsCollector);

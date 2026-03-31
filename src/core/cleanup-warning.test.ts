@@ -93,12 +93,10 @@ describe('Engine dispatches CleanupWarningEvent on cleanup errors', () => {
     await flush();
     await flush();
 
-    // If the scan threw, a CleanupWarningEvent should have been dispatched
-    if (warnings.length > 0) {
-      expect(warnings[0]!.source).toBe('processPendingUpdates');
-      expect(warnings[0]!.error.message).toBe('scan exploded');
-    }
-    // The workflow result should not be affected regardless
+    // The scan should have thrown, dispatching a CleanupWarningEvent
+    expect(warnings.length).toBeGreaterThanOrEqual(1);
+    expect(warnings[0]!.source).toBe('processPendingUpdates');
+    expect(warnings[0]!.error.message).toBe('scan exploded');
   });
 
   it('dispatches CleanupWarningEvent when coordinated update response write fails', async () => {

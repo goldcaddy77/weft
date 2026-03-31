@@ -2463,6 +2463,63 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         break;
       }
 
+      case 'handoff': {
+        try {
+          const { handoff: executeHandoff } = await import('../ai/coordination.ts');
+          const handoffResult = await executeHandoff(operation.options);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: handoffResult });
+        } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
+        break;
+      }
+
+      case 'debate': {
+        try {
+          const { debate: executeDebate } = await import('../ai/coordination.ts');
+          const debateResult = await executeDebate(operation.options);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: debateResult });
+        } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
+        break;
+      }
+
+      case 'supervise': {
+        try {
+          const { supervise: executeSupervise } = await import('../ai/coordination.ts');
+          const superviseResult = await executeSupervise(operation.options);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: superviseResult });
+        } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
+        break;
+      }
+
       default:
         throw new Error(`Unknown operation type: ${(operation as { type: string }).type}`);
     }
@@ -2477,6 +2534,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return callActivityFunction(operation.fn, operation.args);
       case 'memo':
         return callMemoFunction(operation.fn);
+      case 'agent': {
+        const { executeAgentLoop } = await import('../ai/agent.ts');
+        const { BudgetTracker } = await import('../ai/budget.ts');
+        const { prompt, budget, ...rest } = operation.options;
+        const agentResult = await executeAgentLoop(
+          {
+            ...rest,
+            budget: budget ? new BudgetTracker(budget) : undefined,
+          },
+          prompt,
+        );
+        return agentResult;
+      }
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);
     }

@@ -493,11 +493,8 @@ describe('Engine', () => {
     const handle = await engine.start('chained', null, { id: 'chain-id' });
     await flush();
 
-    // Manually remove the handle from the cache so getHandle creates a new one
-    // that chains off the existing result resolver
-    (engine as any)['#handleCache']?.delete?.('chain-id');
-
-    // Get a second handle (should chain off the existing result resolver)
+    // Get a second handle — even without clearing the cache, getHandle should
+    // return a handle that resolves to the same result via the shared resolver
     const secondHandle = engine.getHandle('chain-id');
 
     // Now signal the workflow

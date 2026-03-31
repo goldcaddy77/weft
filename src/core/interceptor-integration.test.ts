@@ -160,7 +160,7 @@ for (const backend of storageBackends) {
       expect(handleResult).toBe(42);
     });
 
-    it('interceptor blocking next() prevents workflow start event but start() still throws from the try block', async () => {
+    it('silently not calling next() does not prevent start() from succeeding', async () => {
       const result = backend.factory();
       cleanup = result.cleanup;
       engine = new Engine({ storage: result.storage });

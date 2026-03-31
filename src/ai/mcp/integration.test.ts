@@ -87,17 +87,15 @@ function setupMockMCPServer(
 
     if (url === `${serverUrl}/tools/invoke` && init?.method === 'POST') {
       if (invokeDelay > 0) {
-        await new Promise((_resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const signal = init?.signal as AbortSignal | undefined;
+          const timer = setTimeout(resolve, invokeDelay);
           if (signal) {
             signal.addEventListener('abort', () => {
+              clearTimeout(timer);
               reject(new DOMException('The operation was aborted.', 'AbortError'));
             });
           }
-          setTimeout(() => {
-            // If no abort happened, resolve normally — but we need to handle
-            // the reject path. The caller will race timeout vs completion.
-          }, invokeDelay);
         });
       }
 
