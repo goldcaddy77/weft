@@ -205,7 +205,7 @@ async function initializeTools(
           }
         }
 
-        return client.invokeTool(toolName, input);
+        return client.invokeTool(toolName, input, signal);
       });
     } else {
       registry.registerLocal(entry.definition, entry.execute);
@@ -280,7 +280,6 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
   };
   let totalCost = 0;
   let turnCount = 0;
-  let lastCompactedMessages: Message[] | undefined;
   let lastContent = '';
   let sizeWarningFired = false;
   const previousModels: string[] = [];
@@ -327,15 +326,13 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     }
 
     // Apply context window strategy if configured.
-    // Use lastCompactedMessages as baseline if context was previously compacted,
-    // appending any messages added since the last compaction.
-    let messagesToSend = lastCompactedMessages ?? conversation;
+    // Always pass the full conversation — the strategy decides what to keep.
+    let messagesToSend = [...conversation];
     if (contextManager) {
       const tokenCount = await provider.countTokens(messagesToSend);
       if (contextManager.shouldCompact(tokenCount)) {
         const compacted = await contextManager.compact(messagesToSend);
         messagesToSend = compacted.messages;
-        lastCompactedMessages = compacted.messages;
 
         // Dispatch context-compacted event
         if (eventTarget && resolvedWorkflowId) {
