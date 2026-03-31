@@ -52,10 +52,7 @@ export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
 export function isAgentDefinition(value: unknown): value is AgentDefinition {
   if (typeof value !== 'object' || value === null) return false;
   const obj = value as Record<string, unknown>;
-  // Accept branded definitions from defineAgent()
-  if (obj['_brand'] === AGENT_DEFINITION_BRAND) return true;
-  // Also accept duck-typed definitions with required fields (name + model)
-  return typeof obj['name'] === 'string' && typeof obj['model'] === 'string';
+  return obj['_brand'] === AGENT_DEFINITION_BRAND;
 }
 
 /** Declare a reusable agent definition. */
