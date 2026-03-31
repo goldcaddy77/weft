@@ -148,9 +148,14 @@ export function validateAttributeType(
       }
       break;
     case 'keyword_list':
-      if (!Array.isArray(value) || !value.every((element) => typeof element === 'string')) {
+      if (!Array.isArray(value)) {
         throw new Error(
           `Search attribute "${attributeName}" is declared as "keyword_list" but received ${typeof value}.`,
+        );
+      }
+      if (!value.every((element) => typeof element === 'string')) {
+        throw new Error(
+          `Search attribute "${attributeName}" is declared as "keyword_list" but array contains non-string elements.`,
         );
       }
       break;
