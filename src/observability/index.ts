@@ -63,9 +63,11 @@ export interface ObservabilityOptions {
    * Extract custom span attributes from each interception context.
    * The returned record is merged into the span's attributes before `onSpanStart` fires.
    */
-  attributeExtractor?: (
-    interception: { workflowId: string; workflowType: string; [key: string]: unknown },
-  ) => Record<string, string | number | boolean>;
+  attributeExtractor?: (interception: {
+    workflowId: string;
+    workflowType: string;
+    [key: string]: unknown;
+  }) => Record<string, string | number | boolean>;
   /** Metrics collector for recording counters, histograms, and gauges. */
   metrics?: MetricsCollectorClass;
 }

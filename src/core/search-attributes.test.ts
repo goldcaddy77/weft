@@ -2,9 +2,12 @@ import { describe, expect, it } from 'bun:test';
 
 import type { BatchOperation } from '../storage/interface.ts';
 import {
+  MAX_ENCODED_VALUE_BYTES,
   buildIndexOperations,
   decodeAttributeValue,
   encodeAttributeValue,
+  validateAttributeType,
+  validateEncodedValueSize,
 } from './search-attributes.ts';
 
 describe('search-attributes', () => {
@@ -225,6 +228,99 @@ describe('search-attributes', () => {
       const operations = buildIndexOperations('wf-1', { tags: ['a', 'b'] }, {});
       expect(operations).toHaveLength(2);
       expect(operations.every((operation) => operation.type === 'delete')).toBe(true);
+    });
+  });
+
+  describe('validateEncodedValueSize', () => {
+    it('accepts a string value within the size limit', () => {
+      const encoded = encodeAttributeValue('a'.repeat(1000));
+      expect(() => validateEncodedValueSize(encoded, 'test')).not.toThrow();
+    });
+
+    it('rejects an encoded value exceeding the byte limit', () => {
+      const encoded = encodeAttributeValue('a'.repeat(MAX_ENCODED_VALUE_BYTES));
+      // The encoded form is "s:" + value, so it exceeds the limit
+      expect(() => validateEncodedValueSize(encoded, 'test')).toThrow(
+        /exceeds the 1024-byte limit/,
+      );
+    });
+
+    it('accounts for multi-byte characters in the size check', () => {
+      // Each emoji is 4 bytes in UTF-8. 300 emojis = 1200 bytes payload + 2 bytes prefix > 1024.
+      const encoded = encodeAttributeValue('\u{1F600}'.repeat(300));
+      expect(() => validateEncodedValueSize(encoded, 'test')).toThrow(
+        /exceeds the 1024-byte limit/,
+      );
+    });
+
+    it('does not reject short number, boolean, or date values', () => {
+      expect(() => validateEncodedValueSize(encodeAttributeValue(42), 'test')).not.toThrow();
+      expect(() => validateEncodedValueSize(encodeAttributeValue(true), 'test')).not.toThrow();
+      expect(() =>
+        validateEncodedValueSize(encodeAttributeValue(new Date()), 'test'),
+      ).not.toThrow();
+    });
+
+    it('does not throw in encodeAttributeValue itself (cleanup path safe)', () => {
+      // Even oversized values should encode without error — validation is separate
+      const oversized = 'a'.repeat(2000);
+      expect(() => encodeAttributeValue(oversized)).not.toThrow();
+    });
+  });
+
+  describe('validateAttributeType', () => {
+    it('accepts a string value for a string declaration', () => {
+      expect(() => validateAttributeType('status', 'active', { type: 'string' })).not.toThrow();
+    });
+
+    it('rejects a number value for a string declaration', () => {
+      expect(() => validateAttributeType('status', 12345, { type: 'string' })).toThrow(
+        'declared as "string" but received number',
+      );
+    });
+
+    it('accepts a number value for a number declaration', () => {
+      expect(() => validateAttributeType('priority', 42, { type: 'number' })).not.toThrow();
+    });
+
+    it('rejects a string value for a number declaration', () => {
+      expect(() => validateAttributeType('priority', 'high', { type: 'number' })).toThrow(
+        'declared as "number" but received string',
+      );
+    });
+
+    it('accepts a boolean value for a boolean declaration', () => {
+      expect(() => validateAttributeType('active', true, { type: 'boolean' })).not.toThrow();
+    });
+
+    it('rejects a number value for a boolean declaration', () => {
+      expect(() => validateAttributeType('active', 1, { type: 'boolean' })).toThrow(
+        'declared as "boolean" but received number',
+      );
+    });
+
+    it('accepts a Date value for a datetime declaration', () => {
+      expect(() =>
+        validateAttributeType('createdAt', new Date(), { type: 'datetime' }),
+      ).not.toThrow();
+    });
+
+    it('rejects a string value for a datetime declaration', () => {
+      expect(() => validateAttributeType('createdAt', '2024-01-01', { type: 'datetime' })).toThrow(
+        'declared as "datetime" but received string',
+      );
+    });
+
+    it('accepts an array value for a keyword_list declaration', () => {
+      expect(() =>
+        validateAttributeType('tags', ['a', 'b'], { type: 'keyword_list' }),
+      ).not.toThrow();
+    });
+
+    it('rejects a string value for a keyword_list declaration', () => {
+      expect(() => validateAttributeType('tags', 'tag1', { type: 'keyword_list' })).toThrow(
+        'declared as "keyword_list" but received string',
+      );
     });
   });
 });

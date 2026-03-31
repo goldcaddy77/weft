@@ -471,6 +471,162 @@ describe('composeWorkflowInterceptors', () => {
 
       expect(executeCalled).toBe(true);
     });
+
+    it('propagates errors from an interceptor to the caller', () => {
+      const interceptor: WorkflowInterceptor = {
+        workflowStart(_ctx, _next) {
+          throw new Error('workflowStart boom');
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+
+      expect(() => {
+        composed.workflowStart(makeWorkflowStartInterception(), () => {});
+      }).toThrow('workflowStart boom');
+    });
+
+    it('propagates errors thrown by execute through the interceptor chain', () => {
+      const order: string[] = [];
+
+      const interceptor: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          order.push('before');
+          next(ctx);
+          order.push('after');
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+
+      expect(() => {
+        composed.workflowStart(makeWorkflowStartInterception(), () => {
+          throw new Error('execute boom');
+        });
+      }).toThrow('execute boom');
+
+      // 'after' should not be reached because the error propagates
+      expect(order).toEqual(['before']);
+    });
+
+    it('propagates errors from the second interceptor through the first', () => {
+      const order: string[] = [];
+
+      const first: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          order.push('first:before');
+          next(ctx);
+          order.push('first:after');
+        },
+      };
+
+      const second: WorkflowInterceptor = {
+        workflowStart(_ctx, _next) {
+          order.push('second:before');
+          throw new Error('second interceptor boom');
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([first, second]);
+
+      expect(() => {
+        composed.workflowStart(makeWorkflowStartInterception(), () => {
+          order.push('execute');
+        });
+      }).toThrow('second interceptor boom');
+
+      expect(order).toEqual(['first:before', 'second:before']);
+    });
+
+    it('allows an interceptor to modify interception before next()', () => {
+      const interceptor: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          next({ ...ctx, workflowType: 'modifiedFlow' });
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+      let capturedType: string | undefined;
+
+      composed.workflowStart(makeWorkflowStartInterception(), (ctx) => {
+        capturedType = ctx.workflowType;
+      });
+
+      expect(capturedType).toBe('modifiedFlow');
+    });
+
+    it('passes through when an interceptor does not define the hook', () => {
+      const emptyInterceptor: WorkflowInterceptor = {};
+      const composed = composeWorkflowInterceptors([emptyInterceptor]);
+      let executeCalled = false;
+
+      composed.workflowStart(makeWorkflowStartInterception(), () => {
+        executeCalled = true;
+      });
+
+      expect(executeCalled).toBe(true);
+    });
+
+    it('composes two interceptors in order (first is outermost)', () => {
+      const order: string[] = [];
+
+      const first: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          order.push('first');
+          next(ctx);
+        },
+      };
+
+      const second: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          order.push('second');
+          next(ctx);
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([first, second]);
+
+      composed.workflowStart(makeWorkflowStartInterception(), () => {
+        order.push('execute');
+      });
+
+      expect(order).toEqual(['first', 'second', 'execute']);
+    });
+
+    it('propagates headers between interceptors', () => {
+      const interceptor: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          ctx.headers.set('x-start-trace', 'traced');
+          next(ctx);
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+      let capturedHeaders: Map<string, string> | undefined;
+
+      composed.workflowStart(makeWorkflowStartInterception(), (ctx) => {
+        capturedHeaders = ctx.headers;
+      });
+
+      expect(capturedHeaders?.get('x-start-trace')).toBe('traced');
+    });
+
+    it('interceptor can block execution by not calling next', () => {
+      const interceptor: WorkflowInterceptor = {
+        workflowStart() {
+          // deliberately does not call next
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+      let executeCalled = false;
+
+      composed.workflowStart(makeWorkflowStartInterception(), () => {
+        executeCalled = true;
+      });
+
+      expect(executeCalled).toBe(false);
+    });
   });
 });
 
@@ -1105,5 +1261,41 @@ describe('composeWorkflowInterceptors — signalReceived hook', () => {
     });
 
     expect(order).toEqual(['with', 'execute']);
+  });
+
+  it('propagates errors from an interceptor to the caller', () => {
+    const interceptor: WorkflowInterceptor = {
+      signalReceived(_interception, _next) {
+        throw new Error('signalReceived boom');
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+
+    expect(() => {
+      composed.signalReceived(makeSignalReceivedInterception(), () => {});
+    }).toThrow('signalReceived boom');
+  });
+
+  it('propagates errors thrown by execute through the interceptor chain', () => {
+    const order: string[] = [];
+
+    const interceptor: WorkflowInterceptor = {
+      signalReceived(interception, next) {
+        order.push('before');
+        next(interception);
+        order.push('after');
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+
+    expect(() => {
+      composed.signalReceived(makeSignalReceivedInterception(), () => {
+        throw new Error('execute boom');
+      });
+    }).toThrow('execute boom');
+
+    expect(order).toEqual(['before']);
   });
 });

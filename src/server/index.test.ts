@@ -3135,4 +3135,101 @@ describe('header propagation in task dispatch', () => {
     expect(task['operationId']).toBe('lp-header-op-1');
     expect(task['headers']).toEqual({ 'x-request-id': 'req-456' });
   });
+
+  it('propagates headers end-to-end to a RemoteWorker activity interceptor', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const { RemoteWorker } = await import('../worker/index.ts');
+
+    let capturedHeaders: Map<string, string> | undefined;
+
+    const interceptor: import('../core/interceptor.ts').ActivityInterceptor = {
+      execute(context, next) {
+        capturedHeaders = context.headers;
+        return next(context);
+      },
+    };
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}/v1/tasks/default/stream`,
+      workerId: 'header-e2e-worker',
+      activities: {
+        echo: async (input: unknown) => input,
+      },
+      interceptors: [interceptor],
+      concurrency: 3,
+    });
+
+    await worker.connect();
+    await Bun.sleep(50);
+
+    expect(server.registry.size).toBe(1);
+
+    const dispatched = await server.dispatchTask({
+      operationId: 'header-e2e-op-1',
+      activityName: 'echo',
+      input: 'payload',
+      headers: { 'x-trace-id': 'trace-e2e-789', 'x-custom': 'value-42' },
+    });
+    expect(dispatched).toBe(true);
+
+    // Wait for the worker to process the task through its interceptor chain
+    await Bun.sleep(300);
+
+    // The interceptor should have captured the headers as a Map
+    expect(capturedHeaders).toBeDefined();
+    expect(capturedHeaders!.get('x-trace-id')).toBe('trace-e2e-789');
+    expect(capturedHeaders!.get('x-custom')).toBe('value-42');
+
+    // The task should have completed successfully
+    expect(server.registry.getAll()[0]?.inFlight).toBe(0);
+
+    await worker.disconnect();
+    await Bun.sleep(50);
+  });
+
+  it('propagates empty headers map to interceptor when dispatch includes no headers', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const { RemoteWorker } = await import('../worker/index.ts');
+
+    let capturedHeaders: Map<string, string> | undefined;
+
+    const interceptor: import('../core/interceptor.ts').ActivityInterceptor = {
+      execute(context, next) {
+        capturedHeaders = context.headers;
+        return next(context);
+      },
+    };
+
+    const worker = new RemoteWorker({
+      serverUrl: `ws://localhost:${server.port}/v1/tasks/default/stream`,
+      workerId: 'header-e2e-no-headers',
+      activities: {
+        echo: async (input: unknown) => input,
+      },
+      interceptors: [interceptor],
+      concurrency: 3,
+    });
+
+    await worker.connect();
+    await Bun.sleep(50);
+
+    await server.dispatchTask({
+      operationId: 'header-e2e-no-op',
+      activityName: 'echo',
+      input: 'payload',
+    });
+
+    await Bun.sleep(300);
+
+    // The interceptor should still receive a headers Map, just empty
+    expect(capturedHeaders).toBeDefined();
+    expect(capturedHeaders!.size).toBe(0);
+
+    await worker.disconnect();
+    await Bun.sleep(50);
+  });
 });
