@@ -18,6 +18,7 @@ import type { AgentHooks } from '../ai/hooks.ts';
 import type { ModelRouter } from '../ai/model-router.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import { parseDuration } from './scheduler.ts';
+import { validateAttributeType } from './search-attributes.ts';
 import { isAsyncGeneratorFunction, isGeneratorFunction } from './step-context.ts';
 import type {
   ActivityCallOptions,
@@ -764,15 +765,15 @@ export class Context implements WorkflowContext {
   // -------------------------------------------------------------------------
 
   setAttribute(key: string, value: SearchAttributeValue): void {
-    this.#validateAttributeKey(key);
+    this.#validateAttribute(key, value);
     this.#searchAttributes[key] = value;
     this.#pendingAttributeChanges[key] = value;
   }
 
   setAttributes(attributes: Record<string, SearchAttributeValue>): void {
-    // Validate all keys before mutating to ensure atomicity
-    for (const key of Object.keys(attributes)) {
-      this.#validateAttributeKey(key);
+    // Validate all keys and types before mutating to ensure atomicity
+    for (const [key, value] of Object.entries(attributes)) {
+      this.#validateAttribute(key, value);
     }
     for (const [key, value] of Object.entries(attributes)) {
       this.#searchAttributes[key] = value;
@@ -780,11 +781,14 @@ export class Context implements WorkflowContext {
     }
   }
 
-  #validateAttributeKey(key: string): void {
-    if (this.#searchAttributeSchema && !(key in this.#searchAttributeSchema)) {
-      throw new Error(
-        `Unknown search attribute "${key}". Registered attributes: ${Object.keys(this.#searchAttributeSchema).join(', ')}`,
-      );
+  #validateAttribute(key: string, value: SearchAttributeValue): void {
+    if (this.#searchAttributeSchema) {
+      if (!(key in this.#searchAttributeSchema)) {
+        throw new Error(
+          `Unknown search attribute "${key}". Registered attributes: ${Object.keys(this.#searchAttributeSchema).join(', ')}`,
+        );
+      }
+      validateAttributeType(key, value, this.#searchAttributeSchema[key]!);
     }
   }
 
