@@ -483,8 +483,8 @@ describe('OpenAIProvider', () => {
         { role: 'assistant', content: 'Hi!' }, // 3 chars
       ];
       const count = await provider.countTokens(messages);
-      // (13 + 3) / 4 = 4
-      expect(count).toBe(4);
+      // ceil(13/4) + 3 overhead + ceil(3/4) + 3 overhead = 4 + 3 + 1 + 3 = 11
+      expect(count).toBe(11);
     });
 
     it('returns 0 for empty messages', async () => {

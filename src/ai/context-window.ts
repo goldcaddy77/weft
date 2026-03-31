@@ -1,5 +1,7 @@
 import type { Message } from './providers/types.ts';
 
+import { estimateTokens } from './token-counting.ts';
+
 /** Strategy for compacting conversation history. Returns a generator for durable operations. */
 export interface ContextStrategy {
   compact(
@@ -42,7 +44,8 @@ export class ContextWindowManager {
       reservedForOutput,
       compactAt: options.compactAt ?? 0.85,
       strategy: options.strategy ?? noopStrategy(),
-      countTokens: options.countTokens ?? defaultCountTokens,
+      countTokens:
+        options.countTokens ?? ((messages: Message[]) => Promise.resolve(estimateTokens(messages))),
     };
   }
 
@@ -141,8 +144,4 @@ export function noopStrategy(): ContextStrategy {
       return messages;
     },
   };
-}
-
-async function defaultCountTokens(messages: Message[]): Promise<number> {
-  return messages.reduce((sum, message) => sum + Math.ceil(message.content.length / 4), 0);
 }

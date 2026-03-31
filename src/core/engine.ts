@@ -149,7 +149,8 @@ function callMemoFunction(fn: Function): unknown {
 }
 
 function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
-  return decode(bytes) as never;
+  // bytes were written by encode(WorkflowState) — shape is guaranteed by our own storage
+  return decode(bytes) as WorkflowState;
 }
 
 // ---------------------------------------------------------------------------
@@ -1756,7 +1757,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Already in ContextOperationRequest shape (inline strategy)
     if ('type' in operation && typeof operation['type'] === 'string') {
-      return operation as unknown as ContextOperationRequest;
+      // Inline execution strategy yields ContextOperationRequest directly
+      return operation as ContextOperationRequest;
     }
 
     // Worker OperationRequest uses `kind` — translate to `type`
@@ -1773,13 +1775,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       const type = kindToType[kind] ?? kind;
 
+      // Worker protocol omits `fn` — it is resolved from the activity registry later
       return {
         ...operation,
         type,
         operationId: (operation['id'] as string) ?? crypto.randomUUID(),
         activityName: (operation['activityName'] as string) ?? '',
         args: operation['input'] !== undefined ? [operation['input']] : [],
-      } as unknown as ContextOperationRequest;
+      } as ContextOperationRequest;
     }
 
     throw new Error('Unsupported operation request shape received from execution strategy');

@@ -78,7 +78,7 @@ export type ContextOperationRequest =
       type: 'activity';
       operationId: string;
       activityName: string;
-      fn: Function;
+      fn: (...args: unknown[]) => unknown;
       args: unknown[];
       callerStack?: string;
       options?: Record<string, unknown>;

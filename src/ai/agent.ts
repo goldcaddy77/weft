@@ -388,7 +388,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     const costBefore = budget?.budgetRemaining().costUsed ?? 0;
 
     // Call LLM provider with fallback chain
-    let response: ChatResponse;
+    let response: ChatResponse | undefined;
     let fallbackAttempts = 0;
     const modelsToTry = [currentModel, ...fallbackModels];
     let lastError: unknown;
@@ -446,7 +446,6 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     }
 
     // If no model succeeded, throw the last error
-    // @ts-expect-error -- response is guaranteed assigned when a model succeeds
     if (response === undefined) {
       throw lastError;
     }

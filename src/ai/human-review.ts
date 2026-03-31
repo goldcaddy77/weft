@@ -57,14 +57,7 @@ export interface ReviewOptions {
  * Options passed to `ctx.humanReview()` inside a workflow generator.
  * Extends the base ReviewOptions with context-level callbacks.
  */
-export interface HumanReviewOptions {
-  artifact: unknown;
-  reviewType?: string;
-  reviewers?: string[];
-  allowPartial?: boolean;
-  timeout?: number;
-  escalation?: EscalationStep[];
-  webhookUrl?: string;
+export interface HumanReviewOptions extends ReviewOptions {
   /** Enable conversation round-trips between reviewer and workflow. */
   conversation?: boolean;
   /** Handler for incoming reviewer messages during conversation. */
