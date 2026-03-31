@@ -598,6 +598,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       // Write attribute record and index entries for initial search attributes
       if (options?.searchAttributes && Object.keys(options.searchAttributes).length > 0) {
+        // Validate attribute names and types against the registration schema
+        if (registration.searchAttributes) {
+          const schema = registration.searchAttributes;
+          for (const [key, value] of Object.entries(options.searchAttributes)) {
+            if (!(key in schema)) {
+              throw new Error(
+                `Unknown search attribute "${key}". Registered attributes: ${Object.keys(schema).join(', ')}`,
+              );
+            }
+            validateAttributeType(key, value, schema[key]!);
+          }
+        }
         this.#validateAttributeValueSizes(options.searchAttributes);
         batchOperations.push({
           type: 'put',
