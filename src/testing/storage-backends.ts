@@ -2,6 +2,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { Engine } from '../core/engine.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 import type { Storage } from '../storage/interface.ts';
 import { LMDBStorage } from '../storage/lmdb.ts';
@@ -99,4 +100,20 @@ export async function collectKeys(storage: Storage, prefix: string): Promise<str
  */
 export async function storageHas(storage: Storage, key: string): Promise<boolean> {
   return (await storage.get(key)) !== null;
+}
+
+/** Drain microtasks so fire-and-forget work completes. */
+export async function flush(): Promise<void> {
+  await Bun.sleep(10);
+}
+
+/**
+ * Dispose engine first, flush to let async work drain, then clean up storage.
+ * This ordering prevents "client closed" errors from backends like Turso
+ * where async operations may still reference storage after engine disposal.
+ */
+export async function teardown(engine: Engine, storageCleanup: () => void): Promise<void> {
+  engine[Symbol.dispose]();
+  await flush();
+  storageCleanup();
 }

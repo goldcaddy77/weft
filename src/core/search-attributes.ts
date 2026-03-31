@@ -148,14 +148,16 @@ export function validateAttributeType(
       }
       break;
     case 'keyword_list':
-      if (!Array.isArray(value)) {
+      if (!Array.isArray(value) || !value.every((element) => typeof element === 'string')) {
         throw new Error(
           `Search attribute "${attributeName}" is declared as "keyword_list" but received ${typeof value}.`,
         );
       }
       break;
-    default:
-      throw new Error(`Unknown search attribute type declaration: ${declaredType as string}`);
+    default: {
+      const _exhaustive: never = declaredType;
+      throw new Error(`Unknown search attribute type declaration: ${String(_exhaustive)}`);
+    }
   }
 }
 
