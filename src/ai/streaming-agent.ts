@@ -453,7 +453,8 @@ export function createSSEStream(
   lastEventId?: string,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  let eventId = lastEventId ? parseInt(lastEventId, 10) + 1 : 0;
+  const parsed = lastEventId ? parseInt(lastEventId, 10) : NaN;
+  let eventId = Number.isNaN(parsed) ? 0 : parsed + 1;
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {

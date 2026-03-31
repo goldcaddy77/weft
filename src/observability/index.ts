@@ -339,8 +339,9 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
       onSpanStart?.(span);
 
-      // Track per-turn spans so tool-call spans can be parented correctly
+      // Track per-turn and per-tool spans so they can be ended correctly
       const activeTurnSpans = new Map<number, SpanInfo>();
+      const activeToolSpans = new Map<string, SpanInfo>();
 
       // Inject per-turn and per-tool-call span callbacks into the interception
       const enrichedInterception: AgentInterception = {
@@ -385,28 +386,21 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
             },
             startTime: Date.now(),
           };
+          activeToolSpans.set(info.toolName, toolSpan);
           onSpanStart?.(toolSpan);
           interception.onToolCalled?.(info);
         },
         onToolReturned: (info) => {
-          // Emit a completed tool span. Since tool calls are sequential within
-          // a turn, we create and end the span in the returned callback.
-          const toolSpan: SpanInfo = {
-            name: `agent:tool:call:${info.toolName}`,
-            traceId,
-            spanId: generateSpanId(),
-            parentSpanId: agentSpanId,
-            attributes: {
-              'weft.agent.turn_index': info.turnIndex,
-              'tool.name': info.toolName,
-              'tool.success': info.success,
-              'tool.duration': info.duration,
-            },
-            startTime: Date.now() - info.duration,
-            endTime: Date.now(),
-            status: info.success ? 'ok' : 'error',
-          };
-          onSpanEnd?.(toolSpan);
+          // End the tool span started in onToolCalled
+          const toolSpan = activeToolSpans.get(info.toolName);
+          if (toolSpan) {
+            toolSpan.endTime = Date.now();
+            toolSpan.status = info.success ? 'ok' : 'error';
+            toolSpan.attributes['tool.success'] = info.success;
+            toolSpan.attributes['tool.duration'] = info.duration;
+            onSpanEnd?.(toolSpan);
+            activeToolSpans.delete(info.toolName);
+          }
           interception.onToolReturned?.(info);
         },
       };

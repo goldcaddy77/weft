@@ -4,12 +4,12 @@ import type { AgentHooks } from './hooks.ts';
 import type { ModelRouter } from './model-router.ts';
 import type { ToolDefinition } from './providers/types.ts';
 
-/** @internal Brand symbol for runtime identification of AgentDefinition objects. */
-const AGENT_DEFINITION_BRAND = Symbol.for('weft.AgentDefinition');
+/** @internal Brand string for runtime identification of AgentDefinition objects. */
+const AGENT_DEFINITION_BRAND = '__weft_agent_definition__' as const;
 
 export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   /** @internal Runtime brand for identification via isAgentDefinition(). */
-  readonly _brand: typeof AGENT_DEFINITION_BRAND;
+  readonly _brand: string;
   name: string;
   model: string;
   systemPrompt?: string;
@@ -50,12 +50,12 @@ export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
 
 /** Runtime check: is the value an AgentDefinition created by defineAgent()? */
 export function isAgentDefinition(value: unknown): value is AgentDefinition {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    '_brand' in value &&
-    (value as Record<string, unknown>)['_brand'] === AGENT_DEFINITION_BRAND
-  );
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  // Accept branded definitions from defineAgent()
+  if (obj['_brand'] === AGENT_DEFINITION_BRAND) return true;
+  // Also accept duck-typed definitions with required fields (name + model)
+  return typeof obj['name'] === 'string' && typeof obj['model'] === 'string';
 }
 
 /** Declare a reusable agent definition. */

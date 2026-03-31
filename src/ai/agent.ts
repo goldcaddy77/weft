@@ -165,10 +165,14 @@ function estimateConversationSizeBytes(conversation: Message[]): number {
  * For each local tool: register in the registry.
  * Finally, validate for name conflicts and return the populated registry.
  */
-async function initializeTools(tools: (AgentTool | MCPToolSource)[]): Promise<ToolRegistry> {
+async function initializeTools(
+  tools: (AgentTool | MCPToolSource)[],
+  signal?: AbortSignal,
+): Promise<ToolRegistry> {
   const registry = new ToolRegistry();
 
   for (const entry of tools) {
+    signal?.throwIfAborted();
     if (isMCPToolSource(entry)) {
       const clientOptions: { serverUrl: string; auth?: MCPAuthConfig; timeout?: number } = {
         serverUrl: entry.mcp,
@@ -187,11 +191,13 @@ async function initializeTools(tools: (AgentTool | MCPToolSource)[]): Promise<To
       // Discover tools
       const discovered = await client.discoverTools();
 
+      // Pre-index discovered tools by name for O(1) schema lookup
+      const schemaIndex = new Map(discovered.map((t) => [t.name, t]));
+
       // Register MCP tools with a dispatch function that validates input
       // and invokes through the client
       registry.registerMCP(discovered, entry.mcp, async (toolName: string, input: unknown) => {
-        // Find the tool definition for schema validation
-        const toolDef = discovered.find((t) => t.name === toolName);
+        const toolDef = schemaIndex.get(toolName);
         if (toolDef && Object.keys(toolDef.inputSchema).length > 0) {
           const validation = validateSchema(input, toolDef.inputSchema);
           if (!validation.valid) {
@@ -245,7 +251,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
   const resolvedAgentId = optionsAgentId ?? '';
 
   // Build the tool registry from mixed local + MCP entries
-  const registry = await initializeTools(tools);
+  const registry = await initializeTools(tools, signal);
 
   // Build the tool lookup map and definition list from the registry
   const registryTools = registry.getAll();
@@ -274,6 +280,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
   };
   let totalCost = 0;
   let turnCount = 0;
+  let lastCompactedMessages: Message[] | undefined;
   let lastContent = '';
   let sizeWarningFired = false;
   const previousModels: string[] = [];
@@ -319,13 +326,16 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       fallbackModels = selection.fallback ?? [];
     }
 
-    // Apply context window strategy if configured
-    let messagesToSend = conversation;
+    // Apply context window strategy if configured.
+    // Use lastCompactedMessages as baseline if context was previously compacted,
+    // appending any messages added since the last compaction.
+    let messagesToSend = lastCompactedMessages ?? conversation;
     if (contextManager) {
-      const tokenCount = await provider.countTokens(conversation);
+      const tokenCount = await provider.countTokens(messagesToSend);
       if (contextManager.shouldCompact(tokenCount)) {
-        const compacted = await contextManager.compact(conversation);
+        const compacted = await contextManager.compact(messagesToSend);
         messagesToSend = compacted.messages;
+        lastCompactedMessages = compacted.messages;
 
         // Dispatch context-compacted event
         if (eventTarget && resolvedWorkflowId) {

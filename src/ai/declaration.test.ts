@@ -174,11 +174,16 @@ describe('defineAgent', () => {
     expect(isAgentDefinition(agent)).toBe(true);
   });
 
-  it('isAgentDefinition returns false for plain objects', () => {
-    expect(isAgentDefinition({ name: 'foo', model: 'bar' })).toBe(false);
+  it('isAgentDefinition accepts duck-typed objects with name and model', () => {
+    expect(isAgentDefinition({ name: 'foo', model: 'bar' })).toBe(true);
+  });
+
+  it('isAgentDefinition returns false for non-agent values', () => {
     expect(isAgentDefinition(null)).toBe(false);
     expect(isAgentDefinition(42)).toBe(false);
     expect(isAgentDefinition('string')).toBe(false);
+    expect(isAgentDefinition({ name: 'foo' })).toBe(false);
+    expect(isAgentDefinition({ model: 'bar' })).toBe(false);
   });
 });
 
