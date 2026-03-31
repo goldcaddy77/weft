@@ -237,7 +237,11 @@ export { ToolSchemaValidationError, validateSchema } from './ai/mcp/schema-valid
 
 // Observability
 export { createObservabilityInterceptors } from './observability/index';
-export { METRICS } from './observability/metrics';
+export type { InterceptionContext, ObservabilityOptions, SpanInfo } from './observability/index';
+export { METRICS, createOtelMetrics } from './observability/metrics';
+export type { OtelMetrics } from './observability/metrics';
+export { getOtelApi } from './observability/no-op-telemetry';
+export type { OtelApi, OtelMeter, OtelSpan, OtelTracer } from './observability/no-op-telemetry';
 export {
   formatTraceParent,
   generateSpanId,

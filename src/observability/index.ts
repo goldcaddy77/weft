@@ -2,8 +2,9 @@
  * Observability interceptors for Weft workflows and activities.
  *
  * Creates {@link WorkflowInterceptor} and {@link ActivityInterceptor}
- * implementations that propagate W3C trace context, emit span-like lifecycle
- * events, and optionally record payloads for debugging.
+ * implementations that propagate W3C trace context, emit OpenTelemetry spans,
+ * and record metrics. When `@opentelemetry/api` is not installed, all span
+ * operations are no-ops with zero overhead.
  *
  * @module observability
  */
@@ -20,12 +21,9 @@ import type {
   WorkflowStartInterception,
 } from '../core/interceptor';
 import { MetricsCollector as MetricsCollectorClass } from './metrics';
-import {
-  extractTraceParent,
-  generateSpanId,
-  generateTraceId,
-  injectTraceParent,
-} from './propagation';
+import type { OtelApi, OtelSpan } from './no-op-telemetry';
+import { getOtelApi } from './no-op-telemetry';
+import { extractTraceParent, injectTraceParent } from './propagation';
 
 export { METRICS, MetricsCollector } from './metrics';
 export type {
@@ -50,29 +48,47 @@ export type { TraceContext } from './propagation';
 // Types
 // ---------------------------------------------------------------------------
 
-export interface ObservabilityOptions {
+/** Union of all interception context types the attributeExtractor receives. */
+export type InterceptionContext =
+  | WorkflowStartInterception
+  | ActivityInterception
+  | SleepInterception
+  | SignalInterception
+  | AgentInterception
+  | SignalReceivedInterception;
+
+export type ObservabilityOptions = {
+  /** Name passed to `trace.getTracer()`. Default: `'weft'`. */
+  tracerName?: string;
+  /** Version passed to `trace.getTracer()`. */
+  tracerVersion?: string;
   /** Whether to record activity/workflow inputs as span attributes. Default: false. */
   recordPayloads?: boolean;
   /** Maximum serialized payload size in bytes before truncation. Default: 1024. */
   maxPayloadSize?: number;
-  /** Called when a span starts. */
-  onSpanStart?: (span: SpanInfo) => void;
-  /** Called when a span ends. */
-  onSpanEnd?: (span: SpanInfo) => void;
   /**
    * Extract custom span attributes from each interception context.
-   * The returned record is merged into the span's attributes before `onSpanStart` fires.
+   * Receives the actual interception object—not a synthetic wrapper.
    */
-  attributeExtractor?: (interception: {
-    workflowId: string;
-    workflowType: string;
-    [key: string]: unknown;
-  }) => Record<string, string | number | boolean>;
+  attributeExtractor?: (
+    interception: InterceptionContext,
+  ) => Record<string, string | number | boolean>;
   /** Metrics collector for recording counters, histograms, and gauges. */
   metrics?: MetricsCollectorClass;
-}
+  /**
+   * Override the OTel API instance used by the interceptors.
+   * Primarily for testing—production code should omit this so `getOtelApi()`
+   * auto-detects whether `@opentelemetry/api` is installed.
+   */
+  otelApi?: OtelApi;
+};
 
-export interface SpanInfo {
+/**
+ * @deprecated Use a real OpenTelemetry `SpanProcessor` instead of these callbacks.
+ * The `onSpanStart`/`onSpanEnd` callbacks have been removed in favor of direct
+ * OTel API usage. Register a `SpanProcessor` with the OTel SDK to observe spans.
+ */
+export type SpanInfo = {
   name: string;
   traceId: string;
   spanId: string;
@@ -82,7 +98,7 @@ export interface SpanInfo {
   endTime?: number;
   status?: 'ok' | 'error';
   error?: string;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -105,43 +121,62 @@ function serializePayload(input: unknown, maxSize: number): string {
   return serialized;
 }
 
+/** Extract error message from an unknown thrown value. */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Convert an unknown thrown value to an Error for `recordException`. */
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+/** Inject the traceparent header from a span's context into a headers map. */
+function injectSpanContext(span: OtelSpan, headers: Map<string, string>): void {
+  const ctx = span.spanContext();
+  injectTraceParent(headers, {
+    version: '00',
+    traceId: ctx.traceId,
+    spanId: ctx.spanId,
+    traceFlags: ctx.traceFlags,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
-/** Create workflow and activity interceptors for observability. */
+/**
+ * Create workflow and activity interceptors for observability.
+ *
+ * Uses `@opentelemetry/api` directly for span creation. When the package is
+ * not installed, falls back to no-op implementations with zero overhead.
+ */
 export function createObservabilityInterceptors(options?: ObservabilityOptions): {
   workflow: WorkflowInterceptor;
   activity: ActivityInterceptor;
   metrics: MetricsCollectorClass;
 } {
+  const api = options?.otelApi ?? getOtelApi();
+  const { trace, SpanStatusCode } = api;
+
+  const tracer = trace.getTracer(options?.tracerName ?? 'weft', options?.tracerVersion);
   const recordPayloads = options?.recordPayloads ?? false;
   const maxPayloadSize = options?.maxPayloadSize ?? DEFAULT_MAX_PAYLOAD_SIZE;
-  const onSpanStart = options?.onSpanStart;
-  const onSpanEnd = options?.onSpanEnd;
   const attributeExtractor = options?.attributeExtractor;
-
   const metrics = options?.metrics ?? new MetricsCollectorClass();
 
-  // Mutable state shared across the workflow interceptor hooks for the
-  // current workflow execution. Reset on each `workflowStart`.
-  let currentTraceId = '';
-  let rootSpanId = '';
-  let currentWorkflowId = '';
-  let currentWorkflowType = '';
+  // Mutable state: the root span for the current workflow execution.
+  // Reset on each `workflowStart`. Used to parent child spans.
+  let currentRootSpan: OtelSpan | undefined;
 
-  /** Extract custom attributes from the extractor callback and merge into a target object. */
-  function applyCustomAttributes(
-    target: Record<string, string | number | boolean>,
-    extra?: Record<string, unknown>,
-  ): void {
+  /** Apply custom attributes from the extractor to a span. */
+  function applyCustomAttributes(span: OtelSpan, interception: InterceptionContext): void {
     if (!attributeExtractor) return;
-    const custom = attributeExtractor({
-      workflowId: currentWorkflowId,
-      workflowType: currentWorkflowType,
-      ...extra,
-    });
-    Object.assign(target, custom);
+    const custom = attributeExtractor(interception);
+    for (const [key, value] of Object.entries(custom)) {
+      span.setAttribute(key, value);
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -153,37 +188,27 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: WorkflowStartInterception,
       next: (interception: WorkflowStartInterception) => void,
     ): void {
-      currentTraceId = generateTraceId();
-      rootSpanId = generateSpanId();
-      currentWorkflowId = interception.workflowId;
-      currentWorkflowType = interception.workflowType;
-
-      injectTraceParent(interception.headers, {
-        version: '00',
-        traceId: currentTraceId,
-        spanId: rootSpanId,
-        traceFlags: 1,
+      const span = tracer.startSpan(`workflow:${interception.workflowType}`, {
+        attributes: {
+          'weft.workflow.id': interception.workflowId,
+          'weft.workflow.type': interception.workflowType,
+        },
       });
 
-      const span: SpanInfo = {
-        name: `workflow:${interception.workflowType}`,
-        traceId: currentTraceId,
-        spanId: rootSpanId,
-        attributes: {
-          'workflow.id': interception.workflowId,
-          'workflow.type': interception.workflowType,
-        },
-        startTime: Date.now(),
-      };
+      currentRootSpan = span;
+
+      injectSpanContext(span, interception.headers);
 
       if (recordPayloads && interception.input !== undefined) {
-        span.attributes['input'] = serializePayload(interception.input, maxPayloadSize);
+        span.setAttribute(
+          'weft.payload.input',
+          serializePayload(interception.input, maxPayloadSize),
+        );
       }
 
-      applyCustomAttributes(span.attributes, { input: interception.input });
+      applyCustomAttributes(span, interception);
 
       metrics.increment('weft.workflow.started');
-      onSpanStart?.(span);
 
       next(interception);
     },
@@ -192,52 +217,45 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: ActivityInterception,
       next: (interception: ActivityInterception) => Generator<unknown, unknown, unknown>,
     ): Generator<unknown, unknown, unknown> {
-      const childSpanId = generateSpanId();
+      const parentCtx = currentRootSpan
+        ? trace.setSpan(api.context.ROOT_CONTEXT, currentRootSpan)
+        : api.context.ROOT_CONTEXT;
 
-      injectTraceParent(interception.headers, {
-        version: '00',
-        traceId: currentTraceId || generateTraceId(),
-        spanId: childSpanId,
-        traceFlags: 1,
-      });
-
-      const span: SpanInfo = {
-        name: `activity:${interception.activityName}`,
-        traceId: currentTraceId,
-        spanId: childSpanId,
-        parentSpanId: rootSpanId,
-        attributes: {
-          'activity.name': interception.activityName,
-          'activity.attempt': interception.attempt,
+      const span = tracer.startSpan(
+        `activity:${interception.activityName}`,
+        {
+          attributes: {
+            'weft.activity.name': interception.activityName,
+            'weft.activity.attempt': interception.attempt,
+          },
         },
-        startTime: Date.now(),
-      };
+        parentCtx,
+      );
+
+      injectSpanContext(span, interception.headers);
 
       if (recordPayloads && interception.input !== undefined) {
-        span.attributes['input'] = serializePayload(interception.input, maxPayloadSize);
+        span.setAttribute(
+          'weft.payload.input',
+          serializePayload(interception.input, maxPayloadSize),
+        );
       }
 
-      applyCustomAttributes(span.attributes, {
-        activityName: interception.activityName,
-        attempt: interception.attempt,
-      });
+      applyCustomAttributes(span, interception);
 
-      onSpanStart?.(span);
+      const startTime = Date.now();
 
       try {
         const result = yield* next(interception);
-        span.endTime = Date.now();
-        span.status = 'ok';
-        const duration = span.endTime - span.startTime;
-        metrics.record('weft.activity.duration', duration);
+        span.setStatus({ code: SpanStatusCode.OK });
+        metrics.record('weft.activity.duration', Date.now() - startTime);
         metrics.increment('weft.activity.attempts');
-        onSpanEnd?.(span);
+        span.end();
         return result;
       } catch (error) {
-        span.endTime = Date.now();
-        span.status = 'error';
-        span.error = error instanceof Error ? error.message : String(error);
-        onSpanEnd?.(span);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+        span.recordException(toError(error));
+        span.end();
         throw error;
       }
     },
@@ -246,62 +264,57 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: SleepInterception,
       next: (interception: SleepInterception) => Generator<unknown, void, unknown>,
     ): Generator<unknown, void, unknown> {
-      const childSpanId = generateSpanId();
+      const parentCtx = currentRootSpan
+        ? trace.setSpan(api.context.ROOT_CONTEXT, currentRootSpan)
+        : api.context.ROOT_CONTEXT;
 
-      const span: SpanInfo = {
-        name: 'sleep',
-        traceId: currentTraceId,
-        spanId: childSpanId,
-        parentSpanId: rootSpanId,
-        attributes: {
-          'sleep.duration': interception.duration,
+      const span = tracer.startSpan(
+        'sleep',
+        {
+          attributes: {
+            'weft.sleep.duration': interception.duration,
+          },
         },
-        startTime: Date.now(),
-      };
+        parentCtx,
+      );
 
-      applyCustomAttributes(span.attributes, { duration: interception.duration });
-
-      onSpanStart?.(span);
+      applyCustomAttributes(span, interception);
 
       yield* next(interception);
 
-      span.endTime = Date.now();
-      span.status = 'ok';
-      onSpanEnd?.(span);
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.end();
     },
 
     *waitForSignal(
       interception: SignalInterception,
       next: (interception: SignalInterception) => Generator<unknown, unknown, unknown>,
     ): Generator<unknown, unknown, unknown> {
-      const childSpanId = generateSpanId();
+      const parentCtx = currentRootSpan
+        ? trace.setSpan(api.context.ROOT_CONTEXT, currentRootSpan)
+        : api.context.ROOT_CONTEXT;
 
-      const span: SpanInfo = {
-        name: 'waitForSignal',
-        traceId: currentTraceId,
-        spanId: childSpanId,
-        parentSpanId: rootSpanId,
-        attributes: {
-          'signal.name': interception.signalName,
+      const span = tracer.startSpan(
+        'waitForSignal',
+        {
+          attributes: {
+            'weft.signal.name': interception.signalName,
+          },
         },
-        startTime: Date.now(),
-      };
+        parentCtx,
+      );
 
-      applyCustomAttributes(span.attributes, { signalName: interception.signalName });
-
-      onSpanStart?.(span);
+      applyCustomAttributes(span, interception);
 
       try {
         const result = yield* next(interception);
-        span.endTime = Date.now();
-        span.status = 'ok';
-        onSpanEnd?.(span);
+        span.setStatus({ code: SpanStatusCode.OK });
+        span.end();
         return result;
       } catch (error) {
-        span.endTime = Date.now();
-        span.status = 'error';
-        span.error = error instanceof Error ? error.message : String(error);
-        onSpanEnd?.(span);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+        span.recordException(toError(error));
+        span.end();
         throw error;
       }
     },
@@ -310,46 +323,40 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: AgentInterception,
       next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
     ): Generator<unknown, unknown, unknown> {
-      const childSpanId = generateSpanId();
-      const traceId = currentTraceId || generateTraceId();
+      const parentCtx = currentRootSpan
+        ? trace.setSpan(api.context.ROOT_CONTEXT, currentRootSpan)
+        : api.context.ROOT_CONTEXT;
 
-      injectTraceParent(interception.headers, {
-        version: '00',
-        traceId,
-        spanId: childSpanId,
-        traceFlags: 1,
-      });
-
-      const span: SpanInfo = {
-        name: 'agent',
-        traceId,
-        spanId: childSpanId,
-        parentSpanId: rootSpanId,
-        attributes: {
-          'agent.model': interception.model,
+      const span = tracer.startSpan(
+        'agent',
+        {
+          attributes: {
+            'weft.agent.model': interception.model,
+          },
         },
-        startTime: Date.now(),
-      };
+        parentCtx,
+      );
+
+      injectSpanContext(span, interception.headers);
 
       if (recordPayloads && interception.prompt) {
-        span.attributes['agent.prompt'] = serializePayload(interception.prompt, maxPayloadSize);
+        span.setAttribute(
+          'weft.agent.prompt',
+          serializePayload(interception.prompt, maxPayloadSize),
+        );
       }
 
-      applyCustomAttributes(span.attributes, { model: interception.model });
-
-      onSpanStart?.(span);
+      applyCustomAttributes(span, interception);
 
       try {
         const result = yield* next(interception);
-        span.endTime = Date.now();
-        span.status = 'ok';
-        onSpanEnd?.(span);
+        span.setStatus({ code: SpanStatusCode.OK });
+        span.end();
         return result;
       } catch (error) {
-        span.endTime = Date.now();
-        span.status = 'error';
-        span.error = error instanceof Error ? error.message : String(error);
-        onSpanEnd?.(span);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+        span.recordException(toError(error));
+        span.end();
         throw error;
       }
     },
@@ -358,37 +365,23 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: SignalReceivedInterception,
       next: (interception: SignalReceivedInterception) => void,
     ): void {
-      // signalReceived is invoked from engine.signal(), outside any workflow
-      // execution context. Generate a standalone trace rather than using the
-      // shared currentTraceId/rootSpanId which belong to the last-started workflow.
-      const spanId = generateSpanId();
-      const traceId = generateTraceId();
-
-      const span: SpanInfo = {
-        name: `signal:received:${interception.signalName}`,
-        traceId,
-        spanId,
+      const span = tracer.startSpan(`signal:received:${interception.signalName}`, {
         attributes: {
-          'signal.name': interception.signalName,
-          'signal.workflow_id': interception.workflowId,
+          'weft.signal.name': interception.signalName,
+          'weft.signal.workflow_id': interception.workflowId,
         },
-        startTime: Date.now(),
-      };
+      });
 
-      applyCustomAttributes(span.attributes, { signalName: interception.signalName });
-
-      onSpanStart?.(span);
+      applyCustomAttributes(span, interception);
 
       try {
         next(interception);
-        span.endTime = Date.now();
-        span.status = 'ok';
-        onSpanEnd?.(span);
+        span.setStatus({ code: SpanStatusCode.OK });
+        span.end();
       } catch (error) {
-        span.endTime = Date.now();
-        span.status = 'error';
-        span.error = error instanceof Error ? error.message : String(error);
-        onSpanEnd?.(span);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+        span.recordException(toError(error));
+        span.end();
         throw error;
       }
     },
@@ -404,44 +397,31 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       next: (interception: ActivityExecutionInterception) => Promise<unknown>,
     ): Promise<unknown> {
       const parentContext = extractTraceParent(interception.headers);
-      const traceId = parentContext?.traceId ?? generateTraceId();
-      const parentSpanId = parentContext?.spanId;
-      const childSpanId = generateSpanId();
 
-      const span: SpanInfo = {
-        name: `activity:${interception.activityName}`,
-        traceId,
-        spanId: childSpanId,
-        ...(parentSpanId !== undefined ? { parentSpanId } : {}),
+      const span = tracer.startSpan(`activity:execute:${interception.activityName}`, {
         attributes: {
-          'activity.name': interception.activityName,
-          'activity.attempt': interception.attempt,
+          'weft.activity.name': interception.activityName,
+          'weft.activity.attempt': interception.attempt,
+          ...(parentContext ? { 'weft.parent.trace_id': parentContext.traceId } : {}),
         },
-        startTime: Date.now(),
-      };
-
-      if (recordPayloads && interception.input !== undefined) {
-        span.attributes['input'] = serializePayload(interception.input, maxPayloadSize);
-      }
-
-      applyCustomAttributes(span.attributes, {
-        activityName: interception.activityName,
-        attempt: interception.attempt,
       });
 
-      onSpanStart?.(span);
+      if (recordPayloads && interception.input !== undefined) {
+        span.setAttribute(
+          'weft.payload.input',
+          serializePayload(interception.input, maxPayloadSize),
+        );
+      }
 
       try {
         const result = await next(interception);
-        span.endTime = Date.now();
-        span.status = 'ok';
-        onSpanEnd?.(span);
+        span.setStatus({ code: SpanStatusCode.OK });
+        span.end();
         return result;
       } catch (error) {
-        span.endTime = Date.now();
-        span.status = 'error';
-        span.error = error instanceof Error ? error.message : String(error);
-        onSpanEnd?.(span);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+        span.recordException(toError(error));
+        span.end();
         throw error;
       }
     },

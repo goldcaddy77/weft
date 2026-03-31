@@ -8,6 +8,9 @@
  * @module metrics
  */
 
+import type { OtelMeter } from './no-op-telemetry';
+import { getOtelApi } from './no-op-telemetry';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -107,6 +110,51 @@ export class MetricsCollector {
     this.#histograms.clear();
     this.#gauges.clear();
   }
+}
+
+// ---------------------------------------------------------------------------
+// OTel metrics bridge
+// ---------------------------------------------------------------------------
+
+/** OTel instrument set for Weft metrics. */
+export type OtelMetrics = {
+  workflowDuration: {
+    record(value: number, attributes?: Record<string, string | number | boolean>): void;
+  };
+  activityDuration: {
+    record(value: number, attributes?: Record<string, string | number | boolean>): void;
+  };
+  activityAttempts: {
+    add(value: number, attributes?: Record<string, string | number | boolean>): void;
+  };
+  activeWorkflows: {
+    add(value: number, attributes?: Record<string, string | number | boolean>): void;
+  };
+};
+
+/**
+ * Create OTel instruments for the standard Weft metrics.
+ *
+ * Accepts an `OtelMeter` instance, a string meter name, or nothing. When
+ * called without arguments it uses `getOtelApi().metrics.getMeter('weft')`,
+ * which returns a no-op meter when `@opentelemetry/api` is not installed.
+ */
+export function createOtelMetrics(meterOrName?: OtelMeter | string): OtelMetrics {
+  let meter: OtelMeter;
+  if (typeof meterOrName === 'string') {
+    meter = getOtelApi().metrics.getMeter(meterOrName);
+  } else if (meterOrName) {
+    meter = meterOrName;
+  } else {
+    meter = getOtelApi().metrics.getMeter('weft');
+  }
+
+  return {
+    workflowDuration: meter.createHistogram('weft.workflow.duration', { unit: 'ms' }),
+    activityDuration: meter.createHistogram('weft.activity.duration', { unit: 'ms' }),
+    activityAttempts: meter.createCounter('weft.activity.attempts'),
+    activeWorkflows: meter.createUpDownCounter('weft.workflow.active'),
+  };
 }
 
 // ---------------------------------------------------------------------------
