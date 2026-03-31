@@ -1974,6 +1974,83 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('engine.submitReview() dispatches HumanReviewCompletedEvent', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const { encode: encodeValue } = await import('./codec.ts');
+    const { HumanReviewCompletedEvent } = await import('../ai/events.ts');
+
+    const createdAt = Date.now() - 5000;
+    const review = {
+      reviewId: 'rev-event-1',
+      workflowId: 'wf-event-1',
+      artifact: { text: 'review me' },
+      reviewType: 'code-review',
+      reviewers: ['alice'],
+      createdAt,
+    };
+    await storage.put(KEYS.review('wf-event-1', 'rev-event-1'), encodeValue(review));
+
+    const receivedEvents: InstanceType<typeof HumanReviewCompletedEvent>[] = [];
+    engine.addEventListener(HumanReviewCompletedEvent.type, (event) => {
+      receivedEvents.push(event as InstanceType<typeof HumanReviewCompletedEvent>);
+    });
+
+    await engine.submitReview('rev-event-1', {
+      decision: 'approved',
+      reviewer: 'alice',
+      workflowId: 'wf-event-1',
+    });
+
+    expect(receivedEvents).toHaveLength(1);
+    expect(receivedEvents[0]!.workflowId).toBe('wf-event-1');
+    expect(receivedEvents[0]!.reviewId).toBe('rev-event-1');
+    expect(receivedEvents[0]!.decision).toBe('approved');
+    expect(receivedEvents[0]!.reviewer).toBe('alice');
+    expect(receivedEvents[0]!.duration).toBeGreaterThanOrEqual(5000);
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.submitReview() dispatches HumanReviewCompletedEvent when workflowId found by scan', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const { encode: encodeValue } = await import('./codec.ts');
+    const { HumanReviewCompletedEvent } = await import('../ai/events.ts');
+
+    const createdAt = Date.now() - 3000;
+    const review = {
+      reviewId: 'rev-scan-event-1',
+      workflowId: 'wf-scan-event-1',
+      artifact: { text: 'reject me' },
+      reviewType: 'general',
+      reviewers: ['bob'],
+      createdAt,
+    };
+    await storage.put(
+      KEYS.review('wf-scan-event-1', 'rev-scan-event-1'),
+      encodeValue(review),
+    );
+
+    const receivedEvents: InstanceType<typeof HumanReviewCompletedEvent>[] = [];
+    engine.addEventListener(HumanReviewCompletedEvent.type, (event) => {
+      receivedEvents.push(event as InstanceType<typeof HumanReviewCompletedEvent>);
+    });
+
+    // Submit without workflowId — triggers the scan path
+    await engine.submitReview('rev-scan-event-1', {
+      decision: 'rejected',
+      reviewer: 'bob',
+    });
+
+    expect(receivedEvents).toHaveLength(1);
+    expect(receivedEvents[0]!.workflowId).toBe('wf-scan-event-1');
+    expect(receivedEvents[0]!.reviewId).toBe('rev-scan-event-1');
+    expect(receivedEvents[0]!.decision).toBe('rejected');
+    expect(receivedEvents[0]!.reviewer).toBe('bob');
+    expect(receivedEvents[0]!.duration).toBeGreaterThanOrEqual(3000);
+    engine[Symbol.dispose]();
+  });
+
   // ---------------------------------------------------------------------------
   // engine.getUpdateResult()
   // ---------------------------------------------------------------------------

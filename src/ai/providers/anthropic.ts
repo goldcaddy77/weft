@@ -219,11 +219,14 @@ export class AnthropicProvider implements LLMProvider {
     const stopReason = data['stop_reason'] as string;
 
     let textContent = '';
+    let reasoningContent = '';
     const toolCalls: ToolCall[] = [];
 
     for (const block of contentBlocks) {
       if (block['type'] === 'text') {
         textContent += block['text'] as string;
+      } else if (block['type'] === 'thinking') {
+        reasoningContent += block['thinking'] as string;
       } else if (block['type'] === 'tool_use') {
         toolCalls.push({
           id: block['id'] as string,
@@ -236,7 +239,7 @@ export class AnthropicProvider implements LLMProvider {
     const inputTokens = usage['input_tokens'] ?? 0;
     const outputTokens = usage['output_tokens'] ?? 0;
 
-    return {
+    const response: ChatResponse = {
       content: textContent,
       toolCalls,
       usage: {
@@ -247,6 +250,12 @@ export class AnthropicProvider implements LLMProvider {
       model,
       stopReason: this.#mapStopReason(stopReason),
     };
+
+    if (reasoningContent) {
+      response.reasoningContent = reasoningContent;
+    }
+
+    return response;
   }
 
   #mapStopReason(stopReason: string): 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' {

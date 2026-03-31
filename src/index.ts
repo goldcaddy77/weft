@@ -191,6 +191,7 @@ export { defineAgent } from './ai/declaration';
 export type { AgentDefinition } from './ai/declaration';
 export type { AgentHooks } from './ai/hooks';
 export { ReviewCoordinator, ReviewTimeoutError } from './ai/human-review';
+export type { ReviewCoordinatorOptions } from './ai/human-review';
 export {
   abTestRouter,
   costTierRouter,

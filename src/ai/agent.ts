@@ -12,6 +12,7 @@ import type { BudgetTracker } from './budget';
 import { BudgetExceededError } from './budget';
 import type { ContextWindowManager } from './context-window';
 import {
+  AgentContextCompactedEvent,
   AgentToolCalledEvent,
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,
@@ -209,6 +210,19 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       if (contextManager.shouldCompact(tokenCount)) {
         const compacted = await contextManager.compact(conversation);
         messagesToSend = compacted.messages;
+
+        if (eventTarget && resolvedWorkflowId) {
+          eventTarget.dispatchEvent(
+            new AgentContextCompactedEvent(
+              resolvedWorkflowId,
+              resolvedAgentId,
+              'default',
+              compacted.tokensBefore,
+              compacted.tokensAfter,
+              compacted.messagesDropped,
+            ),
+          );
+        }
       }
     }
 
@@ -328,7 +342,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
             turnDuration,
             0,
             0,
-            undefined,
+            response.reasoningContent,
           ),
         );
       }
@@ -478,7 +492,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
           turnDuration,
           response.toolCalls.length,
           0,
-          undefined,
+          response.reasoningContent,
         ),
       );
     }

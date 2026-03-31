@@ -10,6 +10,7 @@
 import { decode, encode } from '../core/codec.ts';
 import type { BatchOperation, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
+import { HumanReviewRequestedEvent } from './events.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,11 +78,18 @@ export class ReviewTimeoutError extends Error {
 // Coordinator
 // ---------------------------------------------------------------------------
 
+export interface ReviewCoordinatorOptions {
+  /** When provided, the coordinator dispatches human review events. */
+  eventTarget?: EventTarget;
+}
+
 export class ReviewCoordinator {
   #storage: Storage;
+  #eventTarget: EventTarget | undefined;
 
-  constructor(storage: Storage) {
+  constructor(storage: Storage, options?: ReviewCoordinatorOptions) {
     this.#storage = storage;
+    this.#eventTarget = options?.eventTarget;
   }
 
   /** Create a review request and persist it. */
@@ -108,6 +116,17 @@ export class ReviewCoordinator {
 
     const key = KEYS.review(workflowId, reviewId);
     await this.#storage.put(key, encode(request));
+
+    if (this.#eventTarget) {
+      this.#eventTarget.dispatchEvent(
+        new HumanReviewRequestedEvent(
+          workflowId,
+          reviewId,
+          request.reviewType,
+          request.reviewers,
+        ),
+      );
+    }
 
     return request;
   }

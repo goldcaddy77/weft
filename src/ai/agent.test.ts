@@ -6,7 +6,7 @@ import type { ChatResponse, Message } from './providers/types';
 import type { AgentTool, ToolCallInfo, ToolReturnInfo, TurnInfo, TurnResult } from './agent';
 import { executeAgentLoop } from './agent';
 import { BudgetExceededError, BudgetTracker } from './budget';
-import { AgentTurnCompletedEvent } from './events';
+import { AgentContextCompactedEvent, AgentTurnCompletedEvent } from './events';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1265,5 +1265,206 @@ describe('executeAgentLoop', () => {
     const result = await executeAgentLoop({ model: 'test-model', provider }, 'Hello');
 
     expect(result.totalCost).toBe(0);
+  });
+
+  it('includes reasoningTrace in AgentTurnCompletedEvent when provider returns reasoning content (no tool calls)', async () => {
+    const provider = createMockProvider([
+      createChatResponse('Final answer', {
+        reasoningContent: 'Let me think step by step about this problem...',
+      }),
+    ]);
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        eventTarget,
+        workflowId: 'wf-reasoning-test',
+        agentId: 'agent-reasoning-test',
+      },
+      'Think about this',
+    );
+
+    expect(turnEvents).toHaveLength(1);
+    expect(turnEvents[0]!.reasoningTrace).toBe(
+      'Let me think step by step about this problem...',
+    );
+  });
+
+  it('includes reasoningTrace in AgentTurnCompletedEvent when provider returns reasoning content (with tool calls)', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }], {
+        reasoningContent: 'I need to call this tool first...',
+      }),
+      createChatResponse('Done'),
+    ]);
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        eventTarget,
+        workflowId: 'wf-reasoning-tool-test',
+        agentId: 'agent-reasoning-tool-test',
+      },
+      'Use a tool',
+    );
+
+    expect(turnEvents).toHaveLength(2);
+    expect(turnEvents[0]!.reasoningTrace).toBe('I need to call this tool first...');
+    // Second turn has no reasoning content
+    expect(turnEvents[1]!.reasoningTrace).toBeUndefined();
+  });
+
+  it('passes undefined reasoningTrace when provider returns no reasoning content', async () => {
+    const provider = createMockProvider([createChatResponse('Just an answer')]);
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        eventTarget,
+        workflowId: 'wf-no-reasoning',
+        agentId: 'agent-no-reasoning',
+      },
+      'Hello',
+    );
+
+    expect(turnEvents).toHaveLength(1);
+    expect(turnEvents[0]!.reasoningTrace).toBeUndefined();
+  });
+
+  it('dispatches AgentContextCompactedEvent when context window is compacted', async () => {
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 5000;
+      },
+    };
+
+    const contextManager = {
+      shouldCompact(tokenCount: number): boolean {
+        return tokenCount > 1000;
+      },
+      async compact(messages: Message[]) {
+        const compacted = messages.slice(-1);
+        return {
+          messages: compacted,
+          tokensBefore: 5000,
+          tokensAfter: 100,
+          messagesDropped: messages.length - 1,
+        };
+      },
+    } as any;
+
+    const eventTarget = new EventTarget();
+    const compactedEvents: AgentContextCompactedEvent[] = [];
+
+    eventTarget.addEventListener(AgentContextCompactedEvent.type, (event) => {
+      compactedEvents.push(event as AgentContextCompactedEvent);
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        contextManager,
+        systemPrompt: 'You are helpful.',
+        eventTarget,
+        workflowId: 'wf-compact-event-test',
+        agentId: 'agent-compact-event-test',
+      },
+      'Hello',
+    );
+
+    expect(compactedEvents).toHaveLength(1);
+    expect(compactedEvents[0]!.workflowId).toBe('wf-compact-event-test');
+    expect(compactedEvents[0]!.agentId).toBe('agent-compact-event-test');
+    expect(compactedEvents[0]!.tokensBefore).toBe(5000);
+    expect(compactedEvents[0]!.tokensAfter).toBe(100);
+    expect(compactedEvents[0]!.messagesDropped).toBe(1);
+  });
+
+  it('does not dispatch AgentContextCompactedEvent when compaction is not needed', async () => {
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 50;
+      },
+    };
+
+    const contextManager = {
+      shouldCompact(): boolean {
+        return false;
+      },
+      async compact(messages: Message[]) {
+        return {
+          messages,
+          tokensBefore: 50,
+          tokensAfter: 50,
+          messagesDropped: 0,
+        };
+      },
+    } as any;
+
+    const eventTarget = new EventTarget();
+    const compactedEvents: AgentContextCompactedEvent[] = [];
+
+    eventTarget.addEventListener(AgentContextCompactedEvent.type, (event) => {
+      compactedEvents.push(event as AgentContextCompactedEvent);
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        contextManager,
+        eventTarget,
+        workflowId: 'wf-no-compact',
+        agentId: 'agent-no-compact',
+      },
+      'Hello',
+    );
+
+    expect(compactedEvents).toHaveLength(0);
   });
 });

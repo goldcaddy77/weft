@@ -10,6 +10,7 @@
  * @module core/engine
  */
 
+import { HumanReviewCompletedEvent } from '../ai/events.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -1381,18 +1382,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Look up the review by direct key when workflowId is provided (O(1)),
     // otherwise fall back to scanning all review entries (O(n)).
     let reviewKey: string | null = null;
+    let reviewData: Record<string, unknown> | null = null;
 
     if (workflowId !== undefined) {
       const directKey = KEYS.review(workflowId, reviewId);
       const existing = await this.#storage.get(directKey);
       if (existing !== null) {
         reviewKey = directKey;
+        reviewData = decode(existing) as Record<string, unknown>;
       }
     } else {
       for await (const [key, value] of this.#storage.scan('review:')) {
         const review = decode(value) as Record<string, unknown>;
         if (review['reviewId'] === reviewId) {
           reviewKey = key;
+          reviewData = review;
           break;
         }
       }
@@ -1402,18 +1406,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`Review "${reviewId}" not found`);
     }
 
+    const now = Date.now();
     const decisionData = {
       reviewId,
       decision,
       reviewer,
       feedback,
-      timestamp: Date.now(),
+      timestamp: now,
     };
 
     await this.#storage.batch([
       { type: 'put', key: `review-decision:${reviewId}`, value: encode(decisionData) },
       { type: 'delete', key: reviewKey },
     ]);
+
+    // Dispatch HumanReviewCompletedEvent with duration computed from review creation time
+    const resolvedWorkflowId = (reviewData?.['workflowId'] as string) ?? workflowId ?? '';
+    const createdAt = (reviewData?.['createdAt'] as number) ?? now;
+    const duration = now - createdAt;
+
+    this.dispatchEvent(
+      new HumanReviewCompletedEvent(resolvedWorkflowId, reviewId, decision, reviewer, duration),
+    );
   }
 
   /** Retrieve the result of a coordinated update by its ID. */
