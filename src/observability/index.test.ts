@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 
+import {
+  AgentToolCalledEvent,
+  AgentToolReturnedEvent,
+  AgentTurnCompletedEvent,
+  AgentTurnStartedEvent,
+} from '../ai/events';
 import type {
   ActivityInterception,
   AgentInterception,
@@ -1160,6 +1166,327 @@ describe('createObservabilityInterceptors', () => {
 
       expect(spans).toHaveLength(1);
       expect(interception.headers.has('traceparent')).toBe(true);
+    });
+  });
+
+  describe('agent turn and tool child spans', () => {
+    function driveGenerator<T>(gen: Generator<unknown, T, unknown>): T {
+      let step = gen.next();
+      while (!step.done) {
+        step = gen.next(step.value);
+      }
+      return step.value;
+    }
+
+    function setupWorkflow(eventTarget: EventTarget) {
+      const { tracer, spans } = createRecordingTracer();
+      const otelApi = createMockOtelApi(tracer);
+
+      const { workflow } = createObservabilityInterceptors({
+        eventTarget,
+        otelApi,
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-agent-spans',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      return { workflow, spans };
+    }
+
+    it('creates agent:turn child spans from turn events', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'claude',
+              'claude',
+              100,
+              50,
+              0.01,
+              0.01,
+              500,
+              1,
+              0,
+              undefined,
+            ),
+          );
+          return 'agent-result';
+        },
+      );
+
+      const result = driveGenerator(gen);
+      expect(result).toBe('agent-result');
+
+      const turnSpan = spans.find((s) => s.name === 'agent:turn:0');
+      expect(turnSpan).toBeDefined();
+      expect(turnSpan!.attributes['weft.agent.turn_index']).toBe(0);
+      expect(turnSpan!.attributes['weft.agent.model']).toBe('claude');
+      expect(turnSpan!.attributes['weft.agent.input_tokens']).toBe(100);
+      expect(turnSpan!.attributes['weft.agent.output_tokens']).toBe(50);
+      expect(turnSpan!.attributes['weft.agent.cost']).toBe(0.01);
+      expect(turnSpan!.ended).toBe(true);
+    });
+
+    it('creates agent:tool child spans from tool events', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'webSearch', '{}', 'local', 'op-1'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent('wf-1', 'agent-1', 0, 'webSearch', 50, true, 'op-1'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-1',
+              'agent-1',
+              0,
+              'claude',
+              'claude',
+              100,
+              50,
+              0.01,
+              0.01,
+              500,
+              1,
+              0,
+              undefined,
+            ),
+          );
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      const toolSpan = spans.find((s) => s.name === 'agent:tool:webSearch');
+      expect(toolSpan).toBeDefined();
+      expect(toolSpan!.attributes['weft.agent.tool_name']).toBe('webSearch');
+      expect(toolSpan!.attributes['weft.agent.tool_duration']).toBe(50);
+      expect(toolSpan!.attributes['weft.agent.tool_success']).toBe(true);
+      expect(toolSpan!.ended).toBe(true);
+    });
+
+    it('creates spans for multiple turns with tools', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'search', '{}', 'local', 'op-1'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent('wf-1', 'agent-1', 0, 'search', 30, true, 'op-1'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-1',
+              'agent-1',
+              0,
+              'claude',
+              'claude',
+              100,
+              50,
+              0.01,
+              0.01,
+              500,
+              1,
+              0,
+              undefined,
+            ),
+          );
+
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-1', 'agent-1', 1, 'claude', 200, 3),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent('wf-1', 'agent-1', 1, 'analyze', '{}', 'local', 'op-2'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent('wf-1', 'agent-1', 1, 'analyze', 80, true, 'op-2'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-1',
+              'agent-1',
+              1,
+              'claude',
+              'claude',
+              200,
+              100,
+              0.02,
+              0.03,
+              600,
+              1,
+              0,
+              undefined,
+            ),
+          );
+
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      expect(spans.filter((s) => s.name.startsWith('agent:turn:'))).toHaveLength(2);
+      expect(spans.filter((s) => s.name.startsWith('agent:tool:'))).toHaveLength(2);
+      expect(spans.find((s) => s.name === 'agent:turn:0')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent:turn:1')!.ended).toBe(true);
+    });
+
+    it('handles multiple tool calls within a single turn', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'search', '{}', 'local', 'op-1'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'readDoc', '{}', 'local', 'op-2'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent('wf-1', 'agent-1', 0, 'search', 30, true, 'op-1'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent('wf-1', 'agent-1', 0, 'readDoc', 40, false, 'op-2'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-1',
+              'agent-1',
+              0,
+              'claude',
+              'claude',
+              100,
+              50,
+              0.01,
+              0.01,
+              500,
+              2,
+              0,
+              undefined,
+            ),
+          );
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      const toolSpans = spans.filter((s) => s.name.startsWith('agent:tool:'));
+      expect(toolSpans).toHaveLength(2);
+
+      const readDocSpan = spans.find((s) => s.name === 'agent:tool:readDoc');
+      expect(readDocSpan!.status?.code).toBe(2); // ERROR
+    });
+
+    it('does not create child spans when eventTarget is not provided', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        { workflowId: 'wf-no-et', workflowType: 'Test', input: undefined, headers: new Map() },
+        () => {},
+      );
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      expect(spans.filter((s) => s.name.startsWith('agent:turn:'))).toHaveLength(0);
+      expect(spans.filter((s) => s.name.startsWith('agent:tool:'))).toHaveLength(0);
+      expect(spans.find((s) => s.name === 'agent')!.ended).toBe(true);
+    });
+
+    it('cleans up orphaned turn and tool spans on agent error', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+      const theError = new Error('agent exploded');
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent('wf-1', 'agent-1', 0, 'search', '{}', 'local', 'op-1'),
+          );
+          throw theError;
+        },
+      );
+
+      try {
+        driveGenerator(gen);
+      } catch (error) {
+        expect(error).toBe(theError);
+      }
+
+      // Agent, turn, and tool spans should all be ended
+      expect(spans.find((s) => s.name === 'agent')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent:turn:0')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent:tool:search')!.ended).toBe(true);
+    });
+
+    it('removes event listeners after agent completes', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      const spanCountBefore = spans.length;
+      eventTarget.dispatchEvent(new AgentTurnStartedEvent('wf-1', 'agent-1', 0, 'claude', 100, 1));
+      expect(spans.length).toBe(spanCountBefore);
     });
   });
 });

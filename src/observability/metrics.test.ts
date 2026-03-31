@@ -203,26 +203,26 @@ function createRecordingMeter(): {
 
   const meter: OtelMeter = {
     createHistogram(name: string, options?: { unit?: string }) {
-      created.push({ type: 'histogram', name, options });
+      created.push({ type: 'histogram', name, ...(options ? { options } : {}) });
       return {
         record(value: number, attributes?: Record<string, string | number | boolean>) {
-          recordings.push({ instrument: name, value, attributes });
+          recordings.push({ instrument: name, value, ...(attributes ? { attributes } : {}) });
         },
       };
     },
     createCounter(name: string, options?: { unit?: string }) {
-      created.push({ type: 'counter', name, options });
+      created.push({ type: 'counter', name, ...(options ? { options } : {}) });
       return {
         add(value: number, attributes?: Record<string, string | number | boolean>) {
-          recordings.push({ instrument: name, value, attributes });
+          recordings.push({ instrument: name, value, ...(attributes ? { attributes } : {}) });
         },
       };
     },
     createUpDownCounter(name: string, options?: { unit?: string }) {
-      created.push({ type: 'upDownCounter', name, options });
+      created.push({ type: 'upDownCounter', name, ...(options ? { options } : {}) });
       return {
         add(value: number, attributes?: Record<string, string | number | boolean>) {
-          recordings.push({ instrument: name, value, attributes });
+          recordings.push({ instrument: name, value, ...(attributes ? { attributes } : {}) });
         },
       };
     },

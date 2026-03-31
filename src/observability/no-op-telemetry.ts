@@ -183,7 +183,7 @@ export function getOtelApi(): OtelApi {
     const real = require(moduleName) as OtelApi;
 
     // Sanity-check: the real module must expose the shape we need.
-    if (real.trace?.getTracer && real.SpanStatusCode) {
+    if (real.trace?.getTracer != null && real.SpanStatusCode != null) {
       cached = real;
       return cached;
     }
