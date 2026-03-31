@@ -51,7 +51,11 @@ import type {
 } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
 import { Scheduler, parseDuration } from './scheduler.ts';
-import { buildIndexOperations, encodeAttributeValue } from './search-attributes.ts';
+import {
+  buildIndexOperations,
+  encodeAttributeValue,
+  validateAttributeType,
+} from './search-attributes.ts';
 import {
   compileStepWorkflow,
   isAsyncGeneratorFunction,
@@ -419,7 +423,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#pendingStarts = new Set();
     this.#chargedAgentOperations = new Set();
     this.#cleanupInterval = setInterval(() => {
-      this.#updateCoordinator.cleanupExpiredResponses().catch(() => {});
+      this.#updateCoordinator.cleanupExpiredResponses().catch((error: unknown) => {
+        console.warn('[weft] Failed to clean up expired update responses', error);
+      });
     }, 60_000);
 
     // Create the activity worker pool (optional)
@@ -943,17 +949,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       updateWaiter({ payload, respond });
 
-      // Race the respond promise against the timeout
-      const result = await Promise.race([
-        respondPromise,
-        new Promise<never>((_resolve, reject) => {
-          setTimeout(() => reject(new UpdateTimeoutError(updateId, timeout)), timeout);
-        }),
-      ]);
+      // Race the respond promise against the timeout, clearing the timer on either outcome
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          respondPromise,
+          new Promise<never>((_resolve, reject) => {
+            timeoutId = setTimeout(
+              () => reject(new UpdateTimeoutError(updateId, timeout)),
+              timeout,
+            );
+          }),
+        ]);
 
-      this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
-      this.#broadcast({ type: 'update:completed', workflowId, updateId });
-      return result;
+        clearTimeout(timeoutId);
+
+        this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
+        this.#broadcast({ type: 'update:completed', workflowId, updateId });
+        return result;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw error;
+      }
     }
 
     // If no active handler, use the UpdateCoordinator with polling
@@ -1132,7 +1149,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // registered inline handlers. Schedule on next microtask so the
       // generator has a chance to register its onUpdate handlers first.
       queueMicrotask(() => {
-        this.#processPendingUpdatesForHandlers(workflowId).catch(() => {});
+        this.#processPendingUpdatesForHandlers(workflowId).catch((error: unknown) => {
+          console.warn(
+            `[weft] Failed to process pending updates for workflow ${workflowId}`,
+            error,
+          );
+        });
       });
     } else {
       // Worker mode: send run message to the worker with the checkpoint
@@ -1241,12 +1263,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const registration = this.#registrations.get(state.type);
       if (registration?.searchAttributes) {
         const schema = registration.searchAttributes;
-        for (const key of Object.keys(attributes)) {
+        for (const [key, value] of Object.entries(attributes)) {
           if (!(key in schema)) {
             throw new Error(
               `Unknown search attribute "${key}". Registered attributes: ${Object.keys(schema).join(', ')}`,
             );
           }
+          validateAttributeType(key, value, schema[key]!);
         }
       }
     }
@@ -1769,7 +1792,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
                 });
                 return undefined;
               })
-              .catch(() => {});
+              .catch((error: unknown) => {
+                console.warn(
+                  `[weft] Failed to write coordinated update response for workflow ${workflowId}`,
+                  error,
+                );
+              });
           };
 
           // Feed { payload, respond } back as the operation result
@@ -1938,7 +1966,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
               ...writtenKeys.map((key) => ({ type: 'delete' as const, key })),
               { type: 'delete' as const, key: KEYS.streamMetadata(workflowId, operation.key) },
             ];
-            await this.#storage.batch(deleteOperations).catch(() => {});
+            await this.#storage.batch(deleteOperations).catch((deleteError: unknown) => {
+              console.warn(
+                `[weft] Failed to clean up partial stream chunks for workflow ${workflowId}`,
+                deleteError,
+              );
+            });
           }
 
           if (error instanceof Error && operation.callerStack) {

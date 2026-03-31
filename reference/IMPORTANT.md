@@ -27,24 +27,26 @@ All three items below have been resolved by updating the architecture doc to mar
 - [x] **Fire-and-forget `transitionInflightToResolved` in WebSocket message handler**: Replaced `void` with `.catch()` that logs the error with the operation ID.
 - [x] **Fire-and-forget `transitionInflightToResolved` in long-poll result handler**: Same fix applied to the HTTP handler.
 
-- [ ] **Timer leak in synchronous update `Promise.race`** (`engine.ts:946-952`): When `respondPromise` resolves before the timeout, the `setTimeout` timer continues running until it fires, creating an unhandled rejection. Under high update throughput this accumulates dangling timers. Fix: store the timer ID and clear it on both race outcomes.
+- [x] **Timer leak in synchronous update `Promise.race`** (`engine.ts:946-952`): Fixed by storing the timer ID and clearing it on both race outcomes via try/finally.
 
 ### Medium Severity
 
 - [ ] **Zero resource leaks test missing**: Architecture doc claims a test starts/stops the engine 1000 times with no file handle or memory growth. No such test exists. Write the test or remove the criterion.
 
+- [x] **`@types/bun` missing from devDependencies**: TypeScript `typecheck` was failing because `@types/bun` was not installed despite `tsconfig.json` declaring `"types": ["bun"]`. Added as a dev dependency.
+
 - [x] **`workerAffinity` entries not cleaned up on workflow completion**: Added event listeners for terminal workflow events that delete the corresponding affinity entry.
 
 - [x] **`scanExpiredTasks` iterates all inflight records on every tick**: Replaced full storage scan with an in-memory `DeadlineTracker` min-heap. The scanner now drains only expired entries. A reconciliation scan runs at a much lower frequency as a safety net.
 
-- [ ] **Search attribute value size unbounded** (`search-attributes.ts:55-57`): Attribute values are encoded into storage keys (`idx:{attr}:{encodedValue}:{wfId}`) with no size validation. A large string value (e.g. 100KB) creates oversized keys that may exceed storage backend key limits (LMDB, SQLite). Add validation in `setAttributes` to reject values above a reasonable threshold.
+- [x] **Search attribute value size unbounded** (`search-attributes.ts`): Added 1024-byte limit on encoded attribute values with clear error message. Validated via unit tests for within-limit, over-limit, and multi-byte character cases.
 
-- [ ] **Search attribute type not validated against schema** (`engine.ts:1233-1269`): When a schema is declared at registration time, only attribute _names_ are validated — not types. Setting `{ status: 12345 }` when the schema declares `status: 'string'` silently succeeds. The encoded key prefix (`n:` vs `s:`) then mismatches expectations, causing filters to miss results.
+- [x] **Search attribute type not validated against schema** (`engine.ts`): Added `validateAttributeType` that checks runtime typeof against all five schema types (string, number, boolean, datetime, keyword_list). Integration tests verify mismatches are rejected.
 
-- [ ] **Interceptor error swallowed in `composeWorkflowStartHook`** (`interceptor.ts:267-291`): The `workflowStart` interceptor composition does not catch or propagate exceptions. If an interceptor throws, the error is silently lost and the workflow may start with incomplete initialization. Compare with `composeAgentHook` which correctly propagates via generators.
+- [x] **Interceptor error propagation in `composeWorkflowStartHook`** (`interceptor.ts`): Verified that synchronous function call chain correctly propagates errors. Added 13 tests confirming error propagation from interceptors, through nested chains, and from execute callbacks.
 
-- [ ] **Swallowed errors in fire-and-forget cleanup operations** (`engine.ts` lines 422, 1135, 1754-1772): Multiple `.catch(() => {})` blocks silently discard storage errors during update cleanup, pending update processing, and batch operations. These should at minimum log at warn level so failures in cleanup are visible in production.
+- [x] **Swallowed errors in fire-and-forget cleanup operations** (`engine.ts`): Replaced 4 silent `.catch(() => {})` blocks with `.catch((error) => { console.warn(...) })` that logs operation context and error details.
 
-- [ ] **Multi-backend test coverage missing for search attributes and updates**: All search attribute and synchronous update tests use `MemoryStorage` only. The acceptance criteria require identical behavior on SQLite, LMDB, and IndexedDB. Parametrize the test suites to run against all backends.
+- [x] **Multi-backend test coverage for search attributes and updates**: Added parametrized test suites running against MemoryStorage, BunSQLiteStorage, LMDBStorage, and TursoStorage (112 additional test cases). Shared `storageBackends` infrastructure makes adding new backends automatic.
 
-- [ ] **`headers` propagation to remote workers unverified**: Interceptor headers are serialized into the WebSocket `task` message (`server/index.ts`), but no integration test verifies that a remote worker actually receives and can read them from the activity context.
+- [x] **`headers` propagation to remote workers verified**: Added 2 end-to-end integration tests confirming headers flow from `dispatchTask` through WebSocket to `RemoteWorker` activity interceptors, including the empty-headers case.

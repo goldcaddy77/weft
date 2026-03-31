@@ -67,8 +67,14 @@ describe('MetricsCollector', () => {
       collector.increment('weft.workflow.started');
 
       const snapshot = collector.snapshot();
-      expect(snapshot['weft.workflow.started']!.type === 'counter' && snapshot['weft.workflow.started']!.value).toBe(2);
-      expect(snapshot['weft.workflow.completed']!.type === 'counter' && snapshot['weft.workflow.completed']!.value).toBe(1);
+      expect(
+        snapshot['weft.workflow.started']!.type === 'counter' &&
+          snapshot['weft.workflow.started']!.value,
+      ).toBe(2);
+      expect(
+        snapshot['weft.workflow.completed']!.type === 'counter' &&
+          snapshot['weft.workflow.completed']!.value,
+      ).toBe(1);
     });
   });
 

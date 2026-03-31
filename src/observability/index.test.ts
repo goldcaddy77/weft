@@ -746,10 +746,7 @@ describe('createObservabilityInterceptors', () => {
 
       const next = function* (_ctx: SleepInterception) {};
 
-      const generator = workflow.sleep!(
-        { duration: 5000, headers: new Map() },
-        next,
-      );
+      const generator = workflow.sleep!({ duration: 5000, headers: new Map() }, next);
       let step = generator.next();
       while (!step.done) {
         step = generator.next(step.value);
@@ -838,7 +835,10 @@ describe('createObservabilityInterceptors', () => {
 
       const snapshot = metricsCollector.snapshot();
       expect(snapshot['weft.workflow.started']).toBeDefined();
-      expect(snapshot['weft.workflow.started']!.type === 'counter' && snapshot['weft.workflow.started']!.value).toBe(1);
+      expect(
+        snapshot['weft.workflow.started']!.type === 'counter' &&
+          snapshot['weft.workflow.started']!.value,
+      ).toBe(1);
     });
 
     it('records weft.activity.duration on activity completion', () => {
@@ -872,7 +872,10 @@ describe('createObservabilityInterceptors', () => {
       expect(snapshot['weft.activity.duration']).toBeDefined();
       expect(snapshot['weft.activity.duration']!.type).toBe('histogram');
       expect(snapshot['weft.activity.attempts']).toBeDefined();
-      expect(snapshot['weft.activity.attempts']!.type === 'counter' && snapshot['weft.activity.attempts']!.value).toBe(1);
+      expect(
+        snapshot['weft.activity.attempts']!.type === 'counter' &&
+          snapshot['weft.activity.attempts']!.value,
+      ).toBe(1);
     });
 
     it('returns a metrics collector even when not explicitly provided', () => {

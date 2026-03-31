@@ -15,8 +15,10 @@ import { createObservabilityInterceptors } from './index.ts';
 // Types
 // ---------------------------------------------------------------------------
 
-export interface OpenTelemetryOptions
-  extends Omit<ObservabilityOptions, 'onSpanStart' | 'onSpanEnd'> {
+export interface OpenTelemetryOptions extends Omit<
+  ObservabilityOptions,
+  'onSpanStart' | 'onSpanEnd'
+> {
   /** Name passed to `trace.getTracer()`. Default: `'weft'`. */
   tracerName?: string;
   /** Version passed to `trace.getTracer()`. */

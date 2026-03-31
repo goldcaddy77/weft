@@ -526,6 +526,98 @@ describe('Schema Registration and Validation', () => {
 
     engine[Symbol.dispose]();
   });
+
+  it('setting a number value for a string-declared attribute throws a type error', async () => {
+    const engine = new Engine();
+
+    engine.register('schema-type-mismatch', {
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('stop');
+        return 'done';
+      },
+      searchAttributes: {
+        status: { type: 'string' },
+        priority: { type: 'number' },
+      },
+    });
+
+    await engine.start('schema-type-mismatch', null, { id: 'wf-type-mismatch' });
+    await flush();
+
+    // Setting a number where string is expected should throw
+    try {
+      await engine.setAttributes('wf-type-mismatch', { status: 12345 as any });
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('declared as "string"');
+      expect((error as Error).message).toContain('received number');
+    }
+
+    engine[Symbol.dispose]();
+  });
+
+  it('setting a string value for a number-declared attribute throws a type error', async () => {
+    const engine = new Engine();
+
+    engine.register('schema-type-mismatch-num', {
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('stop');
+        return 'done';
+      },
+      searchAttributes: {
+        priority: { type: 'number' },
+      },
+    });
+
+    await engine.start('schema-type-mismatch-num', null, { id: 'wf-type-mismatch-num' });
+    await flush();
+
+    try {
+      await engine.setAttributes('wf-type-mismatch-num', { priority: 'high' as any });
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('declared as "number"');
+      expect((error as Error).message).toContain('received string');
+    }
+
+    engine[Symbol.dispose]();
+  });
+
+  it('setting a correctly-typed value succeeds with type validation', async () => {
+    const engine = new Engine();
+
+    engine.register('schema-type-ok', {
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('stop');
+        return 'done';
+      },
+      searchAttributes: {
+        status: { type: 'string' },
+        priority: { type: 'number' },
+        active: { type: 'boolean' },
+      },
+    });
+
+    await engine.start('schema-type-ok', null, { id: 'wf-type-ok' });
+    await flush();
+
+    // All correctly-typed values should succeed
+    await engine.setAttributes('wf-type-ok', {
+      status: 'active',
+      priority: 5,
+      active: true,
+    });
+
+    const attributes = await engine.getAttributes('wf-type-ok');
+    expect(attributes).not.toBeNull();
+    expect(attributes!['status']).toBe('active');
+    expect(attributes!['priority']).toBe(5);
+    expect(attributes!['active']).toBe(true);
+
+    engine[Symbol.dispose]();
+  });
 });
 
 // ---------------------------------------------------------------------------
