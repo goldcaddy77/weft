@@ -99,13 +99,15 @@ export class ContextWindowManager {
   /** Create a serializable snapshot of the current compacted state. */
   checkpoint(): ContextWindowCheckpoint {
     return {
-      compactedMessages: this.#compactedMessages,
+      compactedMessages: this.#compactedMessages ? [...this.#compactedMessages] : null,
     };
   }
 
   /** Restore compacted state from a checkpoint, avoiding re-running the strategy. */
   restore(checkpoint: ContextWindowCheckpoint): void {
-    this.#compactedMessages = checkpoint.compactedMessages;
+    this.#compactedMessages = checkpoint.compactedMessages
+      ? [...checkpoint.compactedMessages]
+      : null;
   }
 
   /** Return the stored compacted messages, or null if none exist. */

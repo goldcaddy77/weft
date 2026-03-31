@@ -543,7 +543,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       });
 
       // Check conversation size on final-answer path too
-      if (eventTarget && !sizeWarningFired) {
+      if (eventTarget && resolvedWorkflowId && !sizeWarningFired) {
         const sizeBytes = estimateConversationSizeBytes(conversation);
         if (sizeBytes >= checkpointSizeWarningThreshold) {
           sizeWarningFired = true;

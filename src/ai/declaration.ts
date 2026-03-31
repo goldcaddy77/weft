@@ -52,7 +52,11 @@ export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
 export function isAgentDefinition(value: unknown): value is AgentDefinition {
   if (typeof value !== 'object' || value === null) return false;
   const obj = value as Record<string, unknown>;
-  return obj['_brand'] === AGENT_DEFINITION_BRAND;
+  return (
+    obj['_brand'] === AGENT_DEFINITION_BRAND &&
+    typeof obj['name'] === 'string' &&
+    typeof obj['model'] === 'string'
+  );
 }
 
 /** Declare a reusable agent definition. */

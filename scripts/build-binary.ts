@@ -147,8 +147,12 @@ export async function buildForTarget(bunTarget: BunTarget, outdir: string): Prom
       },
     );
 
-    const exitCode = await proc.exited;
-    const stderr = await new Response(proc.stderr).text();
+    // Consume both stdout and stderr to prevent pipe buffer deadlock
+    const [exitCode, , stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
 
     if (exitCode !== 0) {
       return { target: bunTarget, outputPath, success: false, error: stderr.trim() };
