@@ -112,8 +112,8 @@ export async function flush(): Promise<void> {
  * This ordering prevents "client closed" errors from backends like Turso
  * where async operations may still reference storage after engine disposal.
  */
-export async function teardown(engine: Engine, storageCleanup: () => void): Promise<void> {
-  engine[Symbol.dispose]();
+export async function teardown(engine?: Engine, storageCleanup?: () => void): Promise<void> {
+  engine?.[Symbol.dispose]();
   await flush();
-  storageCleanup();
+  storageCleanup?.();
 }
