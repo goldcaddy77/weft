@@ -61,8 +61,9 @@ export function createSummarizeStrategy(options: SummarizeStrategyOptions): Cont
         return messages;
       }
 
-      const oldMessages = nonSystemMessages.slice(0, -keepRecent);
-      const recentMessages = nonSystemMessages.slice(-keepRecent);
+      const oldMessages =
+        keepRecent > 0 ? nonSystemMessages.slice(0, -keepRecent) : nonSystemMessages;
+      const recentMessages = keepRecent > 0 ? nonSystemMessages.slice(-keepRecent) : [];
 
       const summaryText = await provider.summarize(oldMessages);
       const summaryMessage: Message = {

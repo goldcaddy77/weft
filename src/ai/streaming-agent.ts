@@ -186,7 +186,8 @@ export function executeStreamingAgent(
   const onToken = (token: string): void => {
     if (streamClosed || !streamController) return;
 
-    // Backpressure: check buffer size
+    // Backpressure: track cumulative enqueued bytes. When the buffer limit is
+    // exceeded, disconnect the consumer to prevent unbounded memory growth.
     const tokenBytes = new TextEncoder().encode(token).byteLength;
     bufferedBytes += tokenBytes;
 

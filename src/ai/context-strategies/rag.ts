@@ -62,7 +62,7 @@ export function createRAGStrategy(options: RAGStrategyOptions): ContextStrategy 
         return messages;
       }
 
-      const recentMessages = nonSystemMessages.slice(-keepRecent);
+      const recentMessages = keepRecent > 0 ? nonSystemMessages.slice(-keepRecent) : [];
 
       // Build query from recent message content
       const query = recentMessages.map((message) => message.content).join('\n');
