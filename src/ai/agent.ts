@@ -12,12 +12,20 @@ import type { BudgetTracker } from './budget';
 import { BudgetExceededError } from './budget';
 import type { ContextWindowManager } from './context-window';
 import {
+  AgentCheckpointSizeWarningEvent,
+  AgentContextCompactedEvent,
+  AgentModelFallbackEvent,
   AgentToolCalledEvent,
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
 } from './events';
 import type { AgentHooks } from './hooks';
+import type { MCPAuthConfig } from './mcp/authentication';
+import { MCPClient, MCPServerUnavailableError } from './mcp/client';
+import type { RegistryTool } from './mcp/registry';
+import { ToolRegistry } from './mcp/registry';
+import { ToolSchemaValidationError, validateSchema } from './mcp/schema-validator';
 import type { ModelRouter, RoutingContext } from './model-router';
 import type { ProviderHealthTracker } from './provider-health';
 import type { LLMProvider } from './providers/interface';
@@ -27,11 +35,23 @@ import type { ChatResponse, Message, TokenUsage, ToolDefinition } from './provid
 // Types
 // ---------------------------------------------------------------------------
 
+/** An MCP server URL to discover tools from at agent initialization. */
+export interface MCPToolSource {
+  mcp: string;
+  auth?: MCPAuthConfig | undefined;
+  timeout?: number | undefined;
+}
+
+/** Type guard: is the tools entry an MCP server URL source? */
+function isMCPToolSource(entry: AgentTool | MCPToolSource): entry is MCPToolSource {
+  return 'mcp' in entry && typeof entry.mcp === 'string';
+}
+
 export interface AgentOptions {
   model: string;
   provider: LLMProvider;
   systemPrompt?: string | undefined;
-  tools?: AgentTool[] | undefined;
+  tools?: (AgentTool | MCPToolSource)[] | undefined;
   /** Maximum number of LLM turns before returning. Defaults to 10. */
   maxTurns?: number | undefined;
   budget?: BudgetTracker | undefined;
@@ -49,6 +69,11 @@ export interface AgentOptions {
   onTurnCompleted?: ((turn: TurnResult) => void) | undefined;
   onToolCalled?: ((call: ToolCallInfo) => void) | undefined;
   onToolReturned?: ((result: ToolReturnInfo) => void) | undefined;
+  /**
+   * Conversation size in bytes at which an `AgentCheckpointSizeWarningEvent`
+   * is dispatched via the eventTarget. Defaults to 65 536 (64 KB).
+   */
+  checkpointSizeWarningThreshold?: number | undefined;
 }
 
 export interface AgentTool {
@@ -85,12 +110,26 @@ export interface ToolReturnInfo {
   success: boolean;
 }
 
+/** Per-turn cost breakdown entry returned as part of the agent result. */
+export interface TurnCostEntry {
+  turn: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  model: string;
+  tools: string[];
+}
+
 export interface AgentResult {
   content: string;
   conversation: Message[];
   totalTokens: TokenUsage;
   totalCost: number;
   turnCount: number;
+  /** Reasoning/thinking traces captured from each turn's provider response. */
+  reasoningTraces: string[];
+  /** Per-turn cost breakdown with token counts, model, and tools used. */
+  turnCosts: TurnCostEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +143,79 @@ interface CacheEntry {
 
 function buildCacheKey(toolName: string, input: unknown): string {
   return `${toolName}:${JSON.stringify(input)}`;
+}
+
+/**
+ * Estimate the serialized size of a conversation in bytes.
+ * Uses JSON.stringify as a reasonable approximation of the size
+ * the conversation would occupy in a checkpoint blob.
+ */
+function estimateConversationSizeBytes(conversation: Message[]): number {
+  return new TextEncoder().encode(JSON.stringify(conversation)).byteLength;
+}
+
+// ---------------------------------------------------------------------------
+// Tool initialization
+// ---------------------------------------------------------------------------
+
+/**
+ * Process a mixed tools array (local `AgentTool` + `MCPToolSource` entries).
+ *
+ * For each MCP source: health check, discover tools, register in the registry.
+ * For each local tool: register in the registry.
+ * Finally, validate for name conflicts and return the populated registry.
+ */
+async function initializeTools(
+  tools: (AgentTool | MCPToolSource)[],
+  signal?: AbortSignal,
+): Promise<ToolRegistry> {
+  const registry = new ToolRegistry();
+
+  for (const entry of tools) {
+    signal?.throwIfAborted();
+    if (isMCPToolSource(entry)) {
+      const clientOptions: { serverUrl: string; auth?: MCPAuthConfig; timeout?: number } = {
+        serverUrl: entry.mcp,
+      };
+      if (entry.auth !== undefined) clientOptions.auth = entry.auth;
+      if (entry.timeout !== undefined) clientOptions.timeout = entry.timeout;
+
+      const client = new MCPClient(clientOptions);
+
+      // Health check — fail fast if the server is unreachable
+      const healthy = await client.healthCheck();
+      if (!healthy) {
+        throw new MCPServerUnavailableError(entry.mcp);
+      }
+
+      // Discover tools
+      const discovered = await client.discoverTools();
+
+      // Pre-index discovered tools by name for O(1) schema lookup
+      const schemaIndex = new Map(discovered.map((t) => [t.name, t]));
+
+      // Register MCP tools with a dispatch function that validates input
+      // and invokes through the client
+      registry.registerMCP(discovered, entry.mcp, async (toolName: string, input: unknown) => {
+        const toolDef = schemaIndex.get(toolName);
+        if (toolDef && Object.keys(toolDef.inputSchema).length > 0) {
+          const validation = validateSchema(input, toolDef.inputSchema);
+          if (!validation.valid) {
+            throw new ToolSchemaValidationError(toolName, validation.errors);
+          }
+        }
+
+        return client.invokeTool(toolName, input, signal);
+      });
+    } else {
+      registry.registerLocal(entry.definition, entry.execute);
+    }
+  }
+
+  // Validate for name conflicts before the agent loop starts
+  registry.validate();
+
+  return registry;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,15 +244,20 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     onTurnCompleted,
     onToolCalled,
     onToolReturned,
+    checkpointSizeWarningThreshold = 65_536,
   } = options;
 
   const resolvedWorkflowId = optionsWorkflowId ?? '';
   const resolvedAgentId = optionsAgentId ?? '';
 
-  // Build the tool lookup map and definition list
-  const toolMap = new Map<string, AgentTool>();
+  // Build the tool registry from mixed local + MCP entries
+  const registry = await initializeTools(tools, signal);
+
+  // Build the tool lookup map and definition list from the registry
+  const registryTools = registry.getAll();
+  const toolMap = new Map<string, RegistryTool>();
   const toolDefinitions: ToolDefinition[] = [];
-  for (const tool of tools) {
+  for (const tool of registryTools) {
     toolMap.set(tool.definition.name, tool);
     toolDefinitions.push(tool.definition);
   }
@@ -164,6 +281,10 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
   let totalCost = 0;
   let turnCount = 0;
   let lastContent = '';
+  let sizeWarningFired = false;
+  const previousModels: string[] = [];
+  const reasoningTraces: string[] = [];
+  const turnCosts: TurnCostEntry[] = [];
 
   for (let turnIndex = 0; turnIndex < maxTurns; turnIndex++) {
     // Exit path: cancellation
@@ -185,9 +306,10 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
 
     // Select model via router or use default
     let currentModel = defaultModel;
+    let fallbackModels: string[] = [];
     if (modelRouter) {
       const routingContext: RoutingContext = {
-        workflowId: '',
+        workflowId: resolvedWorkflowId,
         turnIndex,
         conversationLength: conversation.length,
         budgetRemaining: budget
@@ -196,19 +318,35 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
               costRemaining: budget.budgetRemaining().costRemaining,
             }
           : undefined,
-        previousModels: [],
+        previousModels: [...previousModels],
       };
       const selection = modelRouter.select(routingContext);
       currentModel = selection.model;
+      fallbackModels = selection.fallback ?? [];
     }
 
-    // Apply context window strategy if configured
-    let messagesToSend = conversation;
+    // Apply context window strategy if configured.
+    // Always pass the full conversation — the strategy decides what to keep.
+    let messagesToSend = [...conversation];
     if (contextManager) {
-      const tokenCount = await provider.countTokens(conversation);
+      const tokenCount = await provider.countTokens(messagesToSend);
       if (contextManager.shouldCompact(tokenCount)) {
-        const compacted = await contextManager.compact(conversation);
+        const compacted = await contextManager.compact(messagesToSend);
         messagesToSend = compacted.messages;
+
+        // Dispatch context-compacted event
+        if (eventTarget && resolvedWorkflowId) {
+          eventTarget.dispatchEvent(
+            new AgentContextCompactedEvent(
+              resolvedWorkflowId,
+              resolvedAgentId,
+              contextManager.strategyName,
+              compacted.tokensBefore,
+              compacted.tokensAfter,
+              compacted.messagesDropped,
+            ),
+          );
+        }
       }
     }
 
@@ -256,31 +394,77 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     const turnStart = Date.now();
     const costBefore = budget?.budgetRemaining().costUsed ?? 0;
 
-    // Call LLM provider
-    let response: ChatResponse;
-    try {
-      const chatOptions: import('./providers/interface').ChatOptions = {
-        model: currentModel,
-      };
-      if (toolDefinitions.length > 0) {
-        chatOptions.tools = toolDefinitions;
+    // Call LLM provider with fallback chain
+    let response: ChatResponse | undefined;
+    let fallbackAttempts = 0;
+    const modelsToTry = [currentModel, ...fallbackModels];
+    const originalModel = currentModel;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
+      const attemptModel = modelsToTry[attempt]!;
+      try {
+        const chatOptions: import('./providers/interface').ChatOptions = {
+          model: attemptModel,
+        };
+        if (toolDefinitions.length > 0) {
+          chatOptions.tools = toolDefinitions;
+        }
+        if (signal) {
+          chatOptions.signal = signal;
+        }
+        response = await provider.chat(messagesToSend, chatOptions);
+
+        // Record success in health tracker
+        if (healthTracker) {
+          healthTracker.recordSuccess(provider.name);
+        }
+
+        // Update currentModel to whichever one succeeded
+        currentModel = attemptModel;
+        break;
+      } catch (error: unknown) {
+        lastError = error;
+
+        // If the request was aborted, stop immediately — do not try fallback models.
+        if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+          throw error;
+        }
+
+        // Record failure in health tracker
+        if (healthTracker) {
+          healthTracker.recordFailure(provider.name);
+        }
+
+        // If there are more fallbacks to try, dispatch fallback event and continue
+        const nextModel = modelsToTry[attempt + 1];
+        if (nextModel) {
+          fallbackAttempts++;
+          if (eventTarget && resolvedWorkflowId) {
+            const reason = error instanceof Error ? error.message : String(error);
+            eventTarget.dispatchEvent(
+              new AgentModelFallbackEvent(
+                resolvedWorkflowId,
+                resolvedAgentId,
+                turnIndex,
+                attemptModel,
+                reason,
+                nextModel,
+                fallbackAttempts,
+              ),
+            );
+          }
+        }
       }
-      if (signal) {
-        chatOptions.signal = signal;
-      }
-      response = await provider.chat(messagesToSend, chatOptions);
-    } catch (error: unknown) {
-      // Record failure in health tracker if available
-      if (healthTracker) {
-        healthTracker.recordFailure(provider.name);
-      }
-      throw error;
     }
 
-    // Record success in health tracker
-    if (healthTracker) {
-      healthTracker.recordSuccess(provider.name);
+    // If no model succeeded, throw the last error
+    if (response === undefined) {
+      throw lastError;
     }
+
+    // Track which model was used for this turn
+    previousModels.push(currentModel);
 
     const turnDuration = Date.now() - turnStart;
 
@@ -310,8 +494,23 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     }
     conversation.push(assistantMessage);
 
+    // Capture reasoning trace if present
+    if (response.reasoningTrace) {
+      reasoningTraces.push(response.reasoningTrace);
+    }
+
     // Exit path: final answer (no tool calls)
     if (response.toolCalls.length === 0) {
+      // Record turn cost entry
+      turnCosts.push({
+        turn: turnIndex,
+        inputTokens: response.usage.inputTokens,
+        outputTokens: response.usage.outputTokens,
+        cost: turnCost,
+        model: currentModel,
+        tools: [],
+      });
+
       // Dispatch turn-completed event
       if (eventTarget && resolvedWorkflowId) {
         eventTarget.dispatchEvent(
@@ -319,7 +518,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
             resolvedWorkflowId,
             resolvedAgentId,
             turnIndex,
-            currentModel,
+            originalModel,
             currentModel,
             response.usage.inputTokens,
             response.usage.outputTokens,
@@ -327,8 +526,8 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
             totalCost,
             turnDuration,
             0,
-            0,
-            undefined,
+            fallbackAttempts,
+            response.reasoningTrace,
           ),
         );
       }
@@ -342,6 +541,22 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
         duration: turnDuration,
         toolCallCount: 0,
       });
+
+      // Check conversation size on final-answer path too
+      if (eventTarget && resolvedWorkflowId && !sizeWarningFired) {
+        const sizeBytes = estimateConversationSizeBytes(conversation);
+        if (sizeBytes >= checkpointSizeWarningThreshold) {
+          sizeWarningFired = true;
+          eventTarget.dispatchEvent(
+            new AgentCheckpointSizeWarningEvent(
+              resolvedWorkflowId,
+              resolvedAgentId,
+              sizeBytes,
+              turnIndex,
+            ),
+          );
+        }
+      }
       break;
     }
 
@@ -350,6 +565,10 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
 
     for (const toolCall of response.toolCalls) {
       const toolOperationId = crypto.randomUUID();
+
+      // Look up tool to determine source for events
+      const tool = toolMap.get(toolCall.name);
+      const toolSource: 'local' | 'mcp' = tool?.source ?? 'local';
 
       // Dispatch tool-called event
       if (eventTarget && resolvedWorkflowId) {
@@ -360,7 +579,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
             turnIndex,
             toolCall.name,
             toolCall.input,
-            'local',
+            toolSource,
             toolOperationId,
           ),
         );
@@ -386,7 +605,6 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
         output = cached.output;
       } else {
         // Look up tool
-        const tool = toolMap.get(toolCall.name);
         if (!tool) {
           output = JSON.stringify({ error: `Unknown tool: ${toolCall.name}` });
           success = false;
@@ -462,6 +680,16 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       toolResults,
     });
 
+    // Record turn cost entry (with tool names)
+    turnCosts.push({
+      turn: turnIndex,
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
+      cost: turnCost,
+      model: currentModel,
+      tools: response.toolCalls.map((tc) => tc.name),
+    });
+
     // Dispatch turn-completed event (with tool calls)
     if (eventTarget && resolvedWorkflowId) {
       eventTarget.dispatchEvent(
@@ -469,7 +697,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
           resolvedWorkflowId,
           resolvedAgentId,
           turnIndex,
-          currentModel,
+          originalModel,
           currentModel,
           response.usage.inputTokens,
           response.usage.outputTokens,
@@ -477,8 +705,8 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
           totalCost,
           turnDuration,
           response.toolCalls.length,
-          0,
-          undefined,
+          fallbackAttempts,
+          response.reasoningTrace,
         ),
       );
     }
@@ -493,6 +721,22 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       duration: turnDuration,
       toolCallCount: response.toolCalls.length,
     });
+
+    // Check conversation size and dispatch warning if threshold exceeded
+    if (eventTarget && !sizeWarningFired) {
+      const sizeBytes = estimateConversationSizeBytes(conversation);
+      if (sizeBytes >= checkpointSizeWarningThreshold) {
+        sizeWarningFired = true;
+        eventTarget.dispatchEvent(
+          new AgentCheckpointSizeWarningEvent(
+            resolvedWorkflowId,
+            resolvedAgentId,
+            sizeBytes,
+            turnIndex,
+          ),
+        );
+      }
+    }
   }
 
   return {
@@ -501,5 +745,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     totalTokens,
     totalCost,
     turnCount,
+    reasoningTraces,
+    turnCosts,
   };
 }

@@ -53,6 +53,22 @@ export interface ReviewOptions {
   webhookUrl?: string;
 }
 
+/**
+ * Options passed to `ctx.humanReview()` inside a workflow generator.
+ * Extends the base ReviewOptions with context-level callbacks.
+ */
+export interface HumanReviewOptions extends ReviewOptions {
+  /** Enable conversation round-trips between reviewer and workflow. */
+  conversation?: boolean;
+  /** Handler for incoming reviewer messages during conversation. */
+  onMessage?: (message: string) => string;
+  /** Handler called when an escalation step fires. */
+  onEscalation?: (action: EscalationAction) => void;
+}
+
+/** The decision payload returned to the workflow from `ctx.humanReview()`. */
+export type HumanReviewResult = ReviewDecision;
+
 export type EscalationAction =
   | { type: 'escalate'; to: string }
   | { type: 'auto-decide'; decision: 'approved' | 'rejected'; auditReason: string };
@@ -79,9 +95,11 @@ export class ReviewTimeoutError extends Error {
 
 export class ReviewCoordinator {
   #storage: Storage;
+  #getNow: () => number;
 
-  constructor(storage: Storage) {
+  constructor(storage: Storage, getNow?: () => number) {
     this.#storage = storage;
+    this.#getNow = getNow ?? Date.now;
   }
 
   /** Create a review request and persist it. */
@@ -95,7 +113,7 @@ export class ReviewCoordinator {
       reviewType: options.reviewType ?? 'general',
       reviewers: options.reviewers ?? [],
       allowPartial: options.allowPartial ?? false,
-      createdAt: Date.now(),
+      createdAt: this.#getNow(),
     };
 
     if (options.timeout !== undefined) {

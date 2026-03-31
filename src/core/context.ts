@@ -14,7 +14,16 @@ import type { AgentTool } from '../ai/agent.ts';
 import type { BudgetOptions, BudgetState } from '../ai/budget.ts';
 import { BudgetTracker } from '../ai/budget.ts';
 import type { ContextStrategy } from '../ai/context-window.ts';
+import type {
+  DebateOptions,
+  DebateResult,
+  HandoffOptions,
+  HandoffResult,
+  SuperviseOptions,
+  SuperviseResult,
+} from '../ai/coordination.ts';
 import type { AgentHooks } from '../ai/hooks.ts';
+import type { HumanReviewOptions, HumanReviewResult } from '../ai/human-review.ts';
 import type { ModelRouter } from '../ai/model-router.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import { parseDuration } from './scheduler.ts';
@@ -77,7 +86,7 @@ export type ContextOperationRequest =
       type: 'activity';
       operationId: string;
       activityName: string;
-      fn: Function;
+      fn: (...args: unknown[]) => unknown;
       args: unknown[];
       callerStack?: string;
       options?: Record<string, unknown>;
@@ -159,6 +168,29 @@ export type ContextOperationRequest =
       operationId: string;
       key: string;
       fn: (sink: StreamSink) => AsyncGenerator<unknown, void, unknown>;
+      callerStack?: string;
+    }
+  | {
+      type: 'wait-review';
+      operationId: string;
+      reviewOptions: HumanReviewOptions;
+    }
+  | {
+      type: 'handoff';
+      operationId: string;
+      options: HandoffOptions;
+      callerStack?: string;
+    }
+  | {
+      type: 'debate';
+      operationId: string;
+      options: DebateOptions;
+      callerStack?: string;
+    }
+  | {
+      type: 'supervise';
+      operationId: string;
+      options: SuperviseOptions;
       callerStack?: string;
     };
 
@@ -457,6 +489,38 @@ export class Context implements WorkflowContext {
     return envelope;
   }
 
+  /**
+   * Pause the workflow for human review. Creates a durable review request
+   * in storage and blocks until a decision is submitted via
+   * `engine.submitReview()`, or until the review times out / auto-decides
+   * via escalation.
+   */
+  *humanReview(
+    options: HumanReviewOptions,
+  ): Generator<ContextOperationRequest, HumanReviewResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as HumanReviewResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.humanReview(${JSON.stringify(options.reviewType ?? 'general')})`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Pausing for human review`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const result = yield {
+      type: 'wait-review' as const,
+      operationId,
+      reviewOptions: options,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as HumanReviewResult;
+  }
+
   *all(
     operations: Generator<ContextOperationRequest, unknown, unknown>[],
   ): Generator<ContextOperationRequest, unknown[], unknown> {
@@ -726,7 +790,20 @@ export class Context implements WorkflowContext {
     const step = this.#stepIndex++;
 
     if (this.#accumulatedResults.has(step)) {
+      if (this.#explainMode) {
+        console.log(
+          `[weft] ctx.agent(model="${options.model}") → Returning cached result from step ${step}`,
+        );
+      }
       return this.#accumulatedResults.get(step);
+    }
+
+    if (this.#explainMode) {
+      const toolCount = options.tools?.length ?? 0;
+      const maxTurns = options.maxTurns ?? 'default';
+      console.log(`[weft] ctx.agent(model="${options.model}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Starting agent loop with ${toolCount} tool(s), maxTurns=${maxTurns}`);
     }
 
     const operationId = crypto.randomUUID();
@@ -740,6 +817,97 @@ export class Context implements WorkflowContext {
 
     this.#accumulatedResults.set(step, result);
     return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // Multi-agent coordination (durable)
+  // -------------------------------------------------------------------------
+
+  /** Hand off execution to another agent, optionally forwarding conversation context. */
+  *handoff(options: HandoffOptions): Generator<ContextOperationRequest, HandoffResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as HandoffResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.handoff("${options.agent.name}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(
+        `  → Handing off to agent "${options.agent.name}" with context=${options.forwardContext ?? 'none'}`,
+      );
+    }
+
+    const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
+    const result = yield {
+      type: 'handoff' as const,
+      operationId,
+      options,
+      callerStack,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as HandoffResult;
+  }
+
+  /** Run an adversarial multi-agent debate as a durable operation. */
+  *debate(options: DebateOptions): Generator<ContextOperationRequest, DebateResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as DebateResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.debate("${options.topic}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Running ${options.rounds} debate rounds`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
+    const result = yield {
+      type: 'debate' as const,
+      operationId,
+      options,
+      callerStack,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as DebateResult;
+  }
+
+  /** Run supervised parallel multi-agent execution with synthesis as a durable operation. */
+  *supervise(
+    options: SuperviseOptions,
+  ): Generator<ContextOperationRequest, SuperviseResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as SuperviseResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.supervise("${options.strategy}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(
+        `  → Running ${options.workers.length} workers with "${options.strategy}" strategy`,
+      );
+    }
+
+    const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
+    const result = yield {
+      type: 'supervise' as const,
+      operationId,
+      options,
+      callerStack,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as SuperviseResult;
   }
 
   // -------------------------------------------------------------------------

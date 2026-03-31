@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'bun:test';
 
+import { existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
   type CliCommand,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
+  createStorage,
   executeDoctor,
   executeVersionCheck,
   parseCliArguments,
@@ -93,11 +98,62 @@ describe('CLI argument parsing', () => {
       expect(result.port).toBe('5000');
     });
 
+    it('parses --storage flag with sqlite', () => {
+      const result = parseCliArguments(['--storage', 'sqlite']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.storage).toBe('sqlite');
+    });
+
+    it('parses --storage flag with lmdb', () => {
+      const result = parseCliArguments(['--storage', 'lmdb']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.storage).toBe('lmdb');
+    });
+
+    it('parses --storage flag with memory', () => {
+      const result = parseCliArguments(['--storage', 'memory']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.storage).toBe('memory');
+    });
+
+    it('parses -s short flag for storage', () => {
+      const result = parseCliArguments(['-s', 'lmdb']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.storage).toBe('lmdb');
+    });
+
+    it('defaults storage to sqlite', () => {
+      const result = parseCliArguments([]) as ServeCommand;
+      expect(result.storage).toBe('sqlite');
+    });
+
+    it('enables ui by default', () => {
+      const result = parseCliArguments([]) as ServeCommand;
+      expect(result.ui).toBe(true);
+    });
+
+    it('parses --no-ui to disable the dashboard', () => {
+      const result = parseCliArguments(['--no-ui']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.ui).toBe(false);
+    });
+
     it('parses all flags combined', () => {
-      const result = parseCliArguments(['-p', '4000', '-d', '/tmp/all.db', '-h']) as ServeCommand;
+      const result = parseCliArguments([
+        '-p',
+        '4000',
+        '-d',
+        '/tmp/all.db',
+        '-s',
+        'memory',
+        '--no-ui',
+        '-h',
+      ]) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('4000');
       expect(result.database).toBe('/tmp/all.db');
+      expect(result.storage).toBe('memory');
+      expect(result.ui).toBe(false);
       expect(result.help).toBe(true);
     });
 
@@ -329,6 +385,20 @@ describe('help text', () => {
   it('VERSION_CHECK_HELP_TEXT contains --help flag', () => {
     expect(VERSION_CHECK_HELP_TEXT).toContain('--help');
   });
+
+  it('HELP_TEXT documents --storage flag', () => {
+    expect(HELP_TEXT).toContain('--storage');
+  });
+
+  it('HELP_TEXT documents --no-ui flag', () => {
+    expect(HELP_TEXT).toContain('--no-ui');
+  });
+
+  it('HELP_TEXT lists all storage backends', () => {
+    expect(HELP_TEXT).toContain('sqlite');
+    expect(HELP_TEXT).toContain('lmdb');
+    expect(HELP_TEXT).toContain('memory');
+  });
 });
 
 describe('executeDoctor', () => {
@@ -507,5 +577,74 @@ describe('CLI direct execution', () => {
       process.kill('SIGTERM');
       await process.exited;
     }
+  });
+
+  it('accepts --storage flag via the CLI binary', async () => {
+    const process = Bun.spawn(['bun', './src/cli.ts', '--help', '--storage', 'memory'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    expect(exitCode).toBe(0);
+  });
+
+  it('accepts --no-ui flag via the CLI binary', async () => {
+    const process = Bun.spawn(['bun', './src/cli.ts', '--help', '--no-ui'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe('createStorage', () => {
+  it('creates BunSQLiteStorage for sqlite backend', async () => {
+    const storage = await createStorage('sqlite', ':memory:');
+    expect(storage).toBeDefined();
+    expect(typeof storage.get).toBe('function');
+    expect(typeof storage.put).toBe('function');
+    storage[Symbol.dispose]();
+  });
+
+  it('creates MemoryStorage for memory backend', async () => {
+    const storage = await createStorage('memory', './unused.db');
+    expect(storage).toBeDefined();
+    expect(typeof storage.get).toBe('function');
+    expect(typeof storage.put).toBe('function');
+    storage[Symbol.dispose]();
+  });
+
+  it('creates LMDBStorage for lmdb backend', async () => {
+    const path = join(
+      tmpdir(),
+      `lmdb-cli-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    const storage = await createStorage('lmdb', path);
+
+    expect(storage).toBeDefined();
+    expect(typeof storage.get).toBe('function');
+    expect(typeof storage.put).toBe('function');
+    storage[Symbol.dispose]();
+
+    if (existsSync(path)) {
+      rmSync(path, { recursive: true, force: true });
+    }
+  });
+
+  it('returns storage implementing get/put/delete/scan', async () => {
+    const storage = await createStorage('memory', '');
+
+    await storage.put('test-key', new Uint8Array([1, 2, 3]));
+    const result = await storage.get('test-key');
+    expect(result).toEqual(new Uint8Array([1, 2, 3]));
+
+    await storage.delete('test-key');
+    const deleted = await storage.get('test-key');
+    expect(deleted).toBeNull();
+
+    storage[Symbol.dispose]();
   });
 });

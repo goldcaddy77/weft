@@ -276,3 +276,89 @@ describe('abTestRouter edge cases', () => {
     expect(foundFallback).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D3: A/B testing determinism per workflow ID
+// ---------------------------------------------------------------------------
+
+describe('abTestRouter determinism', () => {
+  const variants: WeightedVariant[] = [
+    { model: 'model-a', weight: 0.5 },
+    { model: 'model-b', weight: 0.5 },
+  ];
+
+  it('returns the same model for the same workflow ID across 10 invocations', () => {
+    const router = abTestRouter(variants);
+    const workflowId = 'deterministic-workflow-42';
+
+    const firstSelection = router.select(createContext({ workflowId }));
+
+    for (let i = 0; i < 10; i++) {
+      const selection = router.select(createContext({ workflowId }));
+      expect(selection.model).toBe(firstSelection.model);
+    }
+  });
+
+  it('produces different models for different workflow IDs', () => {
+    const router = abTestRouter(variants);
+    const models = new Set<string>();
+
+    for (let i = 0; i < 100; i++) {
+      const selection = router.select(createContext({ workflowId: `workflow-unique-${i}` }));
+      models.add(selection.model);
+    }
+
+    // With 50/50 weights over 100 IDs, both models should appear
+    expect(models.size).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D3: Cost-tier routing with budget thresholds
+// ---------------------------------------------------------------------------
+
+describe('costTierRouter budget integration', () => {
+  it('selects expensive model when budget is above threshold and cheap model below', () => {
+    const tiers: CostTier[] = [{ model: 'expensive', maxCostRemaining: 0.5 }, { model: 'cheap' }];
+
+    const router = costTierRouter(tiers);
+
+    // High budget: expensive model
+    const highBudget = router.select(
+      createContext({
+        budgetRemaining: { tokensRemaining: 100_000, costRemaining: 1.0 },
+      }),
+    );
+    expect(highBudget.model).toBe('expensive');
+
+    // Low budget: cheap model (below 0.5 threshold)
+    const lowBudget = router.select(
+      createContext({
+        budgetRemaining: { tokensRemaining: 100_000, costRemaining: 0.3 },
+      }),
+    );
+    expect(lowBudget.model).toBe('cheap');
+  });
+
+  it('transitions through multiple tiers as budget depletes', () => {
+    const tiers: CostTier[] = [
+      { model: 'premium', maxCostRemaining: 8 },
+      { model: 'standard', maxCostRemaining: 3 },
+      { model: 'economy' },
+    ];
+
+    const router = costTierRouter(tiers);
+
+    const selections = [10, 5, 1].map((costRemaining) =>
+      router.select(
+        createContext({
+          budgetRemaining: { tokensRemaining: 100_000, costRemaining },
+        }),
+      ),
+    );
+
+    expect(selections[0]!.model).toBe('premium');
+    expect(selections[1]!.model).toBe('standard');
+    expect(selections[2]!.model).toBe('economy');
+  });
+});

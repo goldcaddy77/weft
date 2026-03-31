@@ -1485,6 +1485,52 @@ describe('handleRequest', () => {
   });
 
   // -------------------------------------------------------------------------
+  // GET /v1/workflows/:id/review/:reviewId — get review details
+  // -------------------------------------------------------------------------
+
+  describe('GET /v1/workflows/:id/review/:reviewId', () => {
+    it('returns review details when found', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const review = {
+        reviewId: 'rev-detail',
+        workflowId: 'wf-detail',
+        artifact: { content: 'report' },
+        reviewType: 'code-review',
+        reviewers: ['charlie'],
+        allowPartial: false,
+        createdAt: Date.now(),
+      };
+      await storage.put(KEYS.review('wf-detail', 'rev-detail'), encode(review));
+
+      const response = await handleRequest(
+        request('GET', '/v1/workflows/wf-detail/review/rev-detail'),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { reviewId: string; reviewType: string };
+      expect(body.reviewId).toBe('rev-detail');
+      expect(body.reviewType).toBe('code-review');
+    });
+
+    it('returns 404 for non-existent review', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('GET', '/v1/workflows/wf-1/review/nonexistent'),
+        engine,
+      );
+
+      expect(response.status).toBe(404);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // GET /v1/workflows/:id/query/:name — query workflow state
   // -------------------------------------------------------------------------
 
@@ -1715,6 +1761,91 @@ describe('handleRequest', () => {
       );
 
       expect(response.status).toBe(400);
+    });
+  });
+
+  // SSE streaming endpoint
+  describe('GET /v1/workflows/:id/sse', () => {
+    it('returns 406 when Accept header does not include text/event-stream', async () => {
+      engine = createEngine();
+
+      const startResponse = await handleRequest(
+        request('POST', '/v1/workflows', { type: 'echo', input: 'data' }),
+        engine,
+      );
+      const { id } = (await json(startResponse)) as { id: string };
+      await flush();
+
+      const response = await handleRequest(
+        new Request(`http://localhost/v1/workflows/${id}/sse`, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(406);
+    });
+
+    it('returns 404 for unknown workflow', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        new Request('http://localhost/v1/workflows/nonexistent/sse', {
+          method: 'GET',
+          headers: { Accept: 'text/event-stream' },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(404);
+    });
+
+    it('returns SSE format with correct content-type', async () => {
+      engine = createEngine();
+
+      const startResponse = await handleRequest(
+        request('POST', '/v1/workflows', { type: 'echo', input: 'hello' }),
+        engine,
+      );
+      const { id } = (await json(startResponse)) as { id: string };
+      await flush();
+
+      const response = await handleRequest(
+        new Request(`http://localhost/v1/workflows/${id}/sse`, {
+          method: 'GET',
+          headers: { Accept: 'text/event-stream' },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+      expect(response.headers.get('Cache-Control')).toBe('no-cache');
+    });
+
+    it('SSE response body contains data: prefixed lines', async () => {
+      engine = createEngine();
+
+      const startResponse = await handleRequest(
+        request('POST', '/v1/workflows', { type: 'echo', input: 'test' }),
+        engine,
+      );
+      const { id } = (await json(startResponse)) as { id: string };
+      await flush();
+
+      const response = await handleRequest(
+        new Request(`http://localhost/v1/workflows/${id}/sse`, {
+          method: 'GET',
+          headers: { Accept: 'text/event-stream' },
+        }),
+        engine,
+      );
+
+      const body = await response.text();
+      // Should contain at least the done event
+      expect(body).toContain('event: done');
+      expect(body).toContain('data: ');
     });
   });
 });

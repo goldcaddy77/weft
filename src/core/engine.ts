@@ -10,6 +10,15 @@
  * @module core/engine
  */
 
+import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
+import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
+import {
+  ReviewCoordinator,
+  ReviewTimeoutError,
+  type HumanReviewOptions,
+  type HumanReviewResult,
+  type ReviewRequest,
+} from '../ai/human-review.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -30,6 +39,7 @@ import { Context } from './context.ts';
 import {
   AttributesChangedEvent,
   CheckpointSizeWarningEvent,
+  CleanupWarningEvent,
   DevelopmentWarningEvent,
   SignalReceivedEvent,
   UpdateCompletedEvent,
@@ -105,6 +115,12 @@ interface RegistrationEntry {
   searchAttributes?: SearchAttributeSchema;
 }
 
+/** Options required when registering an AgentDefinition as a workflow. */
+export interface AgentRegistrationOptions {
+  /** The LLM provider to use when running the agent. */
+  provider: import('../ai/providers/interface.ts').LLMProvider;
+}
+
 interface ResolvedOptions {
   storage: WeftStorage;
   development: boolean;
@@ -140,7 +156,8 @@ function callMemoFunction(fn: Function): unknown {
 }
 
 function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
-  return decode(bytes) as never;
+  // bytes were written by encode(WorkflowState) — shape is guaranteed by our own storage
+  return decode(bytes) as WorkflowState;
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +363,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #pendingStarts: Set<string>;
   #chargedAgentOperations: Set<string>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
+  #defaultModelRouter: import('../ai/model-router.ts').ModelRouter | undefined;
+  #reviewCoordinator: ReviewCoordinator;
+  #reviewWaiters: Map<string, (decision: HumanReviewResult) => void>;
+  #reviewEscalationHandlers: Map<
+    string,
+    (entry: { id: string; workflowId: string }) => Promise<boolean>
+  >;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -387,6 +411,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       getNow,
     };
 
+    this.#defaultModelRouter = options?.defaultModelRouter;
+
     this.#scheduler = new Scheduler({
       storage,
       onTimerFired: (entry) => this.#handleTimerFired(entry),
@@ -423,9 +449,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#heartbeatDetails = new Map();
     this.#pendingStarts = new Set();
     this.#chargedAgentOperations = new Set();
+    this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
+    this.#reviewWaiters = new Map();
+    this.#reviewEscalationHandlers = new Map();
     this.#cleanupInterval = setInterval(() => {
       this.#updateCoordinator.cleanupExpiredResponses().catch((error: unknown) => {
-        console.warn('[weft] Failed to clean up expired update responses', error);
+        this.#handleCleanupError('cleanupExpiredResponses', error);
       });
     }, 60_000);
 
@@ -449,10 +478,56 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void;
   register(name: string, registration: WorkflowRegistration): void;
+  register(agentDef: AgentDefinition, options: AgentRegistrationOptions): void;
   register(
-    name: string,
-    handlerOrRegistration: WorkflowFunction | StepWorkflowFunction | WorkflowRegistration,
+    nameOrAgent: string | AgentDefinition,
+    handlerOrRegistrationOrOptions?:
+      | WorkflowFunction
+      | StepWorkflowFunction
+      | WorkflowRegistration
+      | AgentRegistrationOptions,
   ): void {
+    // --- AgentDefinition overload ---
+    if (isAgentDefinition(nameOrAgent)) {
+      const agentDef = nameOrAgent;
+      const agentOptions = handlerOrRegistrationOrOptions as AgentRegistrationOptions;
+
+      // Build a workflow function that delegates to ctx.agent(), ensuring the
+      // agent execution flows through the engine's operation handler for budget
+      // policy enforcement, observability, and durable checkpointing.
+      const handler: WorkflowFunction = async function* (ctx, input) {
+        const prompt = typeof input === 'string' ? input : JSON.stringify(input);
+        const agentOpts: import('./context.ts').AgentContextOptions = {
+          model: agentDef.model,
+          prompt,
+          provider: agentOptions.provider,
+        };
+        if (agentDef.systemPrompt) agentOpts.systemPrompt = agentDef.systemPrompt;
+        if (agentDef.tools) agentOpts.tools = agentDef.tools;
+        if (agentDef.maxTurns !== undefined) agentOpts.maxTurns = agentDef.maxTurns;
+        if (agentDef.budget) agentOpts.budget = agentDef.budget;
+        if (agentDef.modelRouter) agentOpts.modelRouter = agentDef.modelRouter;
+        if (agentDef.contextStrategy) agentOpts.contextStrategy = agentDef.contextStrategy;
+        if (agentDef.hooks) agentOpts.hooks = agentDef.hooks;
+
+        const result = yield* (ctx as Context).agent(agentOpts);
+        return result;
+      };
+
+      this.#registrations.set(agentDef.name, {
+        handler,
+        version: '1',
+      });
+      return;
+    }
+
+    // --- Existing overloads (name + handler/registration) ---
+    const name = nameOrAgent;
+    const handlerOrRegistration = handlerOrRegistrationOrOptions as
+      | WorkflowFunction
+      | StepWorkflowFunction
+      | WorkflowRegistration;
+
     const isRegistration =
       typeof handlerOrRegistration === 'object' &&
       handlerOrRegistration !== null &&
@@ -629,6 +704,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           fireAt: state.executionDeadline,
           kind: 'execution-deadline',
         });
+      }
+
+      // Invoke workflowStart interceptor hook (before execution begins)
+      const composedInterceptor = this.#getComposedWorkflowInterceptor();
+      if (composedInterceptor) {
+        composedInterceptor.workflowStart(
+          {
+            workflowId,
+            workflowType: type,
+            input,
+            headers: new Map(),
+          },
+          () => {
+            /* no-op execute — the actual start happens below */
+          },
+        );
       }
 
       // Dispatch started event
@@ -1164,10 +1255,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // generator has a chance to register its onUpdate handlers first.
       queueMicrotask(() => {
         this.#processPendingUpdatesForHandlers(workflowId).catch((error: unknown) => {
-          console.warn(
-            `[weft] Failed to process pending updates for workflow ${workflowId}`,
-            error,
-          );
+          this.#handleCleanupError('processPendingUpdates', error, workflowId);
         });
       });
     } else {
@@ -1348,25 +1436,38 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return reviews;
   }
 
-  /** Submit a decision for a pending review. Stores the decision and removes the pending review. */
+  /** Retrieve a specific review by workflowId and reviewId. */
+  async getReview(workflowId: string, reviewId: string): Promise<ReviewRequest | null> {
+    return this.#reviewCoordinator.getReview(workflowId, reviewId);
+  }
+
+  /**
+   * Submit a decision for a pending review. Stores the decision, removes
+   * the pending review, and wakes the paused workflow if one is waiting.
+   */
   async submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void> {
-    const { decision, reviewer, feedback, workflowId } = options;
+    const { decision, reviewer, feedback, sectionDecisions, workflowId } = options;
 
     // Look up the review by direct key when workflowId is provided (O(1)),
     // otherwise fall back to scanning all review entries (O(n)).
     let reviewKey: string | null = null;
+    let resolvedWorkflowId: string | undefined = workflowId;
+    let reviewData: ReviewRequest | undefined;
 
     if (workflowId !== undefined) {
       const directKey = KEYS.review(workflowId, reviewId);
       const existing = await this.#storage.get(directKey);
       if (existing !== null) {
         reviewKey = directKey;
+        reviewData = decode(existing) as ReviewRequest;
       }
     } else {
       for await (const [key, value] of this.#storage.scan('review:')) {
         const review = decode(value) as Record<string, unknown>;
         if (review['reviewId'] === reviewId) {
           reviewKey = key;
+          reviewData = review as unknown as ReviewRequest;
+          resolvedWorkflowId = review['workflowId'] as string;
           break;
         }
       }
@@ -1376,18 +1477,46 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`Review "${reviewId}" not found`);
     }
 
-    const decisionData = {
+    const now = this.#options.getNow();
+    const decisionResult: HumanReviewResult = {
       reviewId,
       decision,
       reviewer,
-      feedback,
-      timestamp: Date.now(),
+      timestamp: now,
     };
 
+    if (feedback !== undefined) {
+      decisionResult.feedback = feedback;
+    }
+
+    if (sectionDecisions !== undefined) {
+      decisionResult.sectionDecisions = sectionDecisions;
+    }
+
     await this.#storage.batch([
-      { type: 'put', key: `review-decision:${reviewId}`, value: encode(decisionData) },
+      { type: 'put', key: `review-decision:${reviewId}`, value: encode(decisionResult) },
       { type: 'delete', key: reviewKey },
     ]);
+
+    // Dispatch HumanReviewCompletedEvent
+    const duration = reviewData ? now - reviewData.createdAt : 0;
+    this.dispatchEvent(
+      new HumanReviewCompletedEvent(
+        resolvedWorkflowId ?? '',
+        reviewId,
+        decision,
+        reviewer,
+        duration,
+      ),
+    );
+
+    // Wake the waiting workflow by resolving its review waiter
+    const waiterKey = `${resolvedWorkflowId}:${reviewId}`;
+    const waiter = this.#reviewWaiters.get(waiterKey);
+    if (waiter) {
+      this.#reviewWaiters.delete(waiterKey);
+      waiter(decisionResult);
+    }
   }
 
   /** Retrieve the result of a coordinated update by its ID. */
@@ -1465,6 +1594,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#resultResolvers.clear();
     this.#signalWaiters.clear();
     this.#updateWaiters.clear();
+    this.#reviewWaiters.clear();
+    this.#reviewEscalationHandlers.clear();
     this.#sleepResolvers.clear();
     this.#sleepResolversByWorkflow.clear();
     this.#checkpoints.clear();
@@ -1489,6 +1620,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   get scheduler(): Scheduler {
     return this.#scheduler;
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: cleanup error handling
+  // -------------------------------------------------------------------------
+
+  /**
+   * Handle errors from fire-and-forget cleanup operations. Dispatches a
+   * {@link CleanupWarningEvent} so callers can observe failures without
+   * affecting the primary workflow result.
+   */
+  #handleCleanupError(source: string, error: unknown, workflowId?: string): void {
+    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    this.dispatchEvent(new CleanupWarningEvent(source, normalizedError, workflowId));
   }
 
   // -------------------------------------------------------------------------
@@ -1665,7 +1810,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Already in ContextOperationRequest shape (inline strategy)
     if ('type' in operation && typeof operation['type'] === 'string') {
-      return operation as unknown as ContextOperationRequest;
+      // Inline execution strategy yields ContextOperationRequest directly
+      return operation as ContextOperationRequest;
     }
 
     // Worker OperationRequest uses `kind` — translate to `type`
@@ -1682,13 +1828,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       const type = kindToType[kind] ?? kind;
 
+      // Worker protocol omits `fn` — it is resolved from the activity registry later
       return {
         ...operation,
         type,
         operationId: (operation['id'] as string) ?? crypto.randomUUID(),
         activityName: (operation['activityName'] as string) ?? '',
         args: operation['input'] !== undefined ? [operation['input']] : [],
-      } as unknown as ContextOperationRequest;
+      } as ContextOperationRequest;
     }
 
     throw new Error('Unsupported operation request shape received from execution strategy');
@@ -1823,10 +1970,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
                 return undefined;
               })
               .catch((error: unknown) => {
-                console.warn(
-                  `[weft] Failed to write coordinated update response for workflow ${workflowId}`,
-                  error,
-                );
+                this.#handleCleanupError('writeCoordinatedUpdateResponse', error, workflowId);
               });
           };
 
@@ -1997,10 +2141,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
               { type: 'delete' as const, key: KEYS.streamMetadata(workflowId, operation.key) },
             ];
             await this.#storage.batch(deleteOperations).catch((deleteError: unknown) => {
-              console.warn(
-                `[weft] Failed to clean up partial stream chunks for workflow ${workflowId}`,
-                deleteError,
-              );
+              this.#handleCleanupError('cleanupPartialStreamChunks', deleteError, workflowId);
             });
           }
 
@@ -2169,16 +2310,120 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             });
           }
 
+          // Run through workflow interceptor for agent operations,
+          // allowing observability interceptors to inject per-turn/per-tool
+          // callbacks into the interception context.
+          const agentInterception: import('./interceptor.ts').AgentInterception = {
+            model: rest.model,
+            prompt,
+            headers: new Map<string, string>(),
+          };
+
+          const composedForAgent = this.#getComposedWorkflowInterceptor();
+          if (composedForAgent) {
+            // Drive the composed interceptor generator synchronously. The
+            // interceptor enriches the interception (e.g., adding callbacks)
+            // and yields to the execute function where we actually run the loop.
+            const execute = function* (ctx: import('./interceptor.ts').AgentInterception) {
+              // The execute function receives the (possibly enriched) interception.
+              // Copy any injected callbacks back to agentInterception.
+              if (ctx.onTurnStarted) agentInterception.onTurnStarted = ctx.onTurnStarted;
+              if (ctx.onTurnCompleted) agentInterception.onTurnCompleted = ctx.onTurnCompleted;
+              if (ctx.onToolCalled) agentInterception.onToolCalled = ctx.onToolCalled;
+              if (ctx.onToolReturned) agentInterception.onToolReturned = ctx.onToolReturned;
+              yield; // Pause so we can run the async agent loop outside
+              return undefined;
+            };
+
+            const gen = composedForAgent.agent(agentInterception, execute);
+            // Advance to the yield point (interceptor has enriched the context)
+            gen.next();
+            // We'll close the generator after the agent loop completes below.
+            // Store generator for cleanup
+            (operation as Record<string, unknown>)['_agentInterceptorGen'] = gen;
+          }
+
           const agentResult = await executeAgentLoop(
             {
               ...rest,
+              // Per-call modelRouter overrides the engine-level default
+              modelRouter: rest.modelRouter ?? this.#defaultModelRouter,
               budget: budgetTracker,
               eventTarget: this,
               workflowId,
               agentId: operation.operationId,
+              onTurnStarted: agentInterception.onTurnStarted,
+              onTurnCompleted: agentInterception.onTurnCompleted,
+              onToolCalled: agentInterception.onToolCalled,
+              onToolReturned: agentInterception.onToolReturned,
             },
             prompt,
           );
+
+          // Close the interceptor generator to trigger span end callbacks
+          const agentGen = (operation as Record<string, unknown>)['_agentInterceptorGen'] as
+            | Generator<unknown, unknown, unknown>
+            | undefined;
+          if (agentGen) {
+            agentGen.next(agentResult.content);
+          }
+
+          // Expose agent observability query accessors. Each new ctx.agent()
+          // call appends to the accumulated arrays so multiple agent invocations
+          // within the same workflow are all visible.
+          if (context) {
+            const previousWaterfallAccessor = context.exposedAccessors.get('agentCostWaterfall');
+            const previousConversationAccessor = context.exposedAccessors.get('agentConversation');
+            const previousProjectionAccessor = context.exposedAccessors.get('agentCostProjection');
+
+            const currentTurnCosts = agentResult.turnCosts;
+            const currentConversation = agentResult.conversation;
+            const currentTurnCount = agentResult.turnCount;
+            const currentTotalCost = agentResult.totalCost;
+            const agentMaxTurns = rest.maxTurns ?? 10;
+
+            context.expose({
+              agentCostWaterfall: () => {
+                const previous = previousWaterfallAccessor
+                  ? (previousWaterfallAccessor() as typeof currentTurnCosts)
+                  : [];
+                return [...previous, ...currentTurnCosts];
+              },
+              agentConversation: () => {
+                const previous = previousConversationAccessor
+                  ? (previousConversationAccessor() as typeof currentConversation)
+                  : [];
+                return [...previous, ...currentConversation];
+              },
+              agentCostProjection: () => {
+                // Combine data from all agent calls in this workflow
+                const previousProjection = previousProjectionAccessor
+                  ? (previousProjectionAccessor() as {
+                      averageCostPerTurn: number;
+                      turnsCompleted: number;
+                      maxTurns: number;
+                      projectedTotalCost: number;
+                    })
+                  : null;
+
+                const totalTurns = (previousProjection?.turnsCompleted ?? 0) + currentTurnCount;
+                const totalCost =
+                  (previousProjection
+                    ? previousProjection.averageCostPerTurn * previousProjection.turnsCompleted
+                    : 0) + currentTotalCost;
+
+                const averageCostPerTurn = totalTurns > 0 ? totalCost / totalTurns : 0;
+                const maxTurns = Math.max(previousProjection?.maxTurns ?? 0, agentMaxTurns);
+
+                return {
+                  averageCostPerTurn,
+                  turnsCompleted: totalTurns,
+                  maxTurns,
+                  projectedTotalCost: averageCostPerTurn * maxTurns,
+                };
+              },
+            });
+          }
 
           // Accumulate cost search attribute across multiple agent calls
           if (context && agentResult.totalCost > 0) {
@@ -2257,6 +2502,77 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         break;
       }
 
+      case 'wait-review': {
+        try {
+          await this.#processReviewOperation(workflowId, operation.reviewOptions);
+        } catch (error) {
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
+        break;
+      }
+
+      case 'handoff': {
+        try {
+          const { handoff: executeHandoff } = await import('../ai/coordination.ts');
+          const handoffResult = await executeHandoff(operation.options);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: handoffResult });
+        } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
+        break;
+      }
+
+      case 'debate': {
+        try {
+          const { debate: executeDebate } = await import('../ai/coordination.ts');
+          const debateResult = await executeDebate(operation.options);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: debateResult });
+        } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
+        break;
+      }
+
+      case 'supervise': {
+        try {
+          const { supervise: executeSupervise } = await import('../ai/coordination.ts');
+          const superviseResult = await executeSupervise(operation.options);
+          this.#feedOperationResult(workflowId, { status: 'completed', value: superviseResult });
+        } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
+        }
+        break;
+      }
+
       default:
         throw new Error(`Unknown operation type: ${(operation as { type: string }).type}`);
     }
@@ -2271,12 +2587,37 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return callActivityFunction(operation.fn, operation.args);
       case 'memo':
         return callMemoFunction(operation.fn);
+      case 'agent': {
+        const { executeAgentLoop } = await import('../ai/agent.ts');
+        const { BudgetTracker } = await import('../ai/budget.ts');
+        const { prompt, budget, ...rest } = operation.options;
+        const agentResult = await executeAgentLoop(
+          {
+            ...rest,
+            budget: budget ? new BudgetTracker(budget) : undefined,
+          },
+          prompt,
+        );
+        return agentResult;
+      }
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);
     }
   }
 
   async #handleTimerFired(entry: { id: string; workflowId: string; kind: string }): Promise<void> {
+    // Check if this timer is for a review escalation/timeout
+    if (entry.id.startsWith('review-escalation:') || entry.id.startsWith('review-timeout:')) {
+      // Extract reviewId from the timer ID
+      const parts = entry.id.split(':');
+      const reviewId = parts[1]!;
+      const handler = this.#reviewEscalationHandlers.get(reviewId);
+      if (handler) {
+        await handler(entry);
+      }
+      return;
+    }
+
     if (entry.kind === 'sleep') {
       // Extract the operation ID from the timer ID (format: "sleep:<operationId>")
       const operationId = entry.id.replace('sleep:', '');
@@ -2294,6 +2635,194 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     } else if (entry.kind === 'execution-deadline') {
       await this.timeout(entry.workflowId);
     }
+  }
+
+  /** Remove all pending review entries from storage for a given workflow. */
+  async #cleanupReviews(workflowId: string): Promise<void> {
+    const prefix = `review:${workflowId}:`;
+    const deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
+    for await (const [key] of this.#storage.scan(prefix)) {
+      deleteOperations.push({ type: 'delete', key });
+    }
+    if (deleteOperations.length > 0) {
+      await this.#storage.batch(deleteOperations);
+    }
+  }
+
+  /**
+   * Handle a `wait-review` operation: create a durable review request,
+   * dispatch events, fire webhooks, set up escalation timers, and block
+   * until a decision arrives via `submitReview()`.
+   */
+  async #processReviewOperation(workflowId: string, options: HumanReviewOptions): Promise<void> {
+    const now = this.#options.getNow();
+
+    // Create a review request in storage
+    const reviewOptions: import('../ai/human-review.ts').ReviewOptions = {
+      artifact: options.artifact,
+    };
+    if (options.reviewType !== undefined) reviewOptions.reviewType = options.reviewType;
+    if (options.reviewers !== undefined) reviewOptions.reviewers = options.reviewers;
+    if (options.allowPartial !== undefined) reviewOptions.allowPartial = options.allowPartial;
+    if (options.timeout !== undefined) reviewOptions.timeout = options.timeout;
+    if (options.escalation !== undefined) reviewOptions.escalation = options.escalation;
+    if (options.webhookUrl !== undefined) reviewOptions.webhookUrl = options.webhookUrl;
+
+    const reviewRequest = await this.#reviewCoordinator.createReview(workflowId, reviewOptions);
+
+    const reviewId = reviewRequest.reviewId;
+
+    // Dispatch HumanReviewRequestedEvent
+    this.dispatchEvent(
+      new HumanReviewRequestedEvent(
+        workflowId,
+        reviewId,
+        reviewRequest.reviewType,
+        reviewRequest.reviewers,
+      ),
+    );
+
+    // Fire webhook notification (fire-and-forget)
+    if (options.webhookUrl) {
+      fetch(options.webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workflowId,
+          reviewId,
+          reviewType: reviewRequest.reviewType,
+          reviewers: reviewRequest.reviewers,
+          artifact: reviewRequest.artifact,
+        }),
+      }).catch((error: unknown) => {
+        console.warn(`[weft] Failed to send review webhook for ${reviewId}`, error);
+      });
+    }
+
+    // Set up escalation timers
+    if (options.escalation && options.escalation.length > 0) {
+      for (const step of options.escalation) {
+        const fireAt = now + step.after;
+        await this.#scheduler.schedule({
+          id: `review-escalation:${reviewId}:${step.after}`,
+          workflowId,
+          fireAt,
+          kind: 'sleep', // Reuse sleep kind — the timer handler checks the id prefix
+        });
+      }
+    }
+
+    // Set up timeout timer
+    if (options.timeout !== undefined) {
+      const timeoutFireAt = now + options.timeout;
+      await this.#scheduler.schedule({
+        id: `review-timeout:${reviewId}`,
+        workflowId,
+        fireAt: timeoutFireAt,
+        kind: 'sleep',
+      });
+    }
+
+    // Wait for the review decision (blocks the workflow generator).
+    // We use a result-or-error wrapper instead of rejection to avoid
+    // unhandled rejection timing issues with bun:test.
+    const { promise, resolve } = Promise.withResolvers<
+      { ok: true; value: HumanReviewResult } | { ok: false; error: Error }
+    >();
+    const waiterKey = `${workflowId}:${reviewId}`;
+    this.#reviewWaiters.set(waiterKey, (decision) => resolve({ ok: true, value: decision }));
+
+    // Set up a listener for escalation/timeout timer fires
+    const escalationListener = async (entry: {
+      id: string;
+      workflowId: string;
+    }): Promise<boolean> => {
+      if (
+        !entry.id.startsWith(`review-escalation:${reviewId}:`) &&
+        entry.id !== `review-timeout:${reviewId}`
+      ) {
+        return false; // Not our timer
+      }
+
+      if (entry.id === `review-timeout:${reviewId}`) {
+        // Timeout: directly fail the workflow instead of going through
+        // the promise chain, to avoid fire-and-forget unhandled rejections.
+        this.#reviewWaiters.delete(waiterKey);
+        const elapsed = this.#options.getNow() - reviewRequest.createdAt;
+
+        // Clean up the review from storage
+        await this.#storage.delete(KEYS.review(workflowId, reviewId));
+
+        // Directly fail the workflow
+        const timeoutError = new ReviewTimeoutError(reviewId, elapsed);
+        await this.#failWorkflow(workflowId, timeoutError);
+
+        // Resolve the promise so the awaiting code can clean up without
+        // hanging, but the workflow is already failed so the result is moot.
+        resolve({ ok: false, error: timeoutError });
+        return true;
+      }
+
+      // Escalation: check what action to take
+      if (options.escalation) {
+        const action = this.#reviewCoordinator.checkEscalations(
+          reviewRequest,
+          options.escalation,
+          this.#options.getNow(),
+        );
+
+        if (action) {
+          if (action.type === 'escalate') {
+            // Notify escalation callback if provided
+            options.onEscalation?.(action);
+          } else if (action.type === 'auto-decide') {
+            // Auto-decide: resolve the review waiter
+            this.#reviewWaiters.delete(waiterKey);
+            const autoResult: HumanReviewResult = {
+              reviewId,
+              decision: action.decision,
+              reviewer: 'system',
+              feedback: action.auditReason,
+              timestamp: this.#options.getNow(),
+            };
+
+            // Clean up the review from storage
+            await this.#storage.delete(KEYS.review(workflowId, reviewId));
+
+            resolve({ ok: true, value: autoResult });
+            return true;
+          }
+        }
+      }
+
+      return false;
+    };
+
+    // Register the escalation handler
+    this.#reviewEscalationHandlers.set(reviewId, escalationListener);
+
+    const outcome = await promise;
+
+    // Clean up escalation handler
+    this.#reviewEscalationHandlers.delete(reviewId);
+
+    // Cancel any remaining escalation/timeout timers
+    if (options.escalation) {
+      for (const step of options.escalation) {
+        await this.#scheduler.cancel(`review-escalation:${reviewId}:${step.after}`, workflowId);
+      }
+    }
+    if (options.timeout !== undefined) {
+      await this.#scheduler.cancel(`review-timeout:${reviewId}`, workflowId);
+    }
+
+    if (!outcome.ok) {
+      // The workflow was already failed directly (e.g., by the timeout handler).
+      // Just return without feeding a result.
+      return;
+    }
+
+    this.#feedOperationResult(workflowId, { status: 'completed', value: outcome.value });
   }
 
   async #consumeSignal(workflowId: string, signalName: string): Promise<unknown> {
@@ -2317,6 +2846,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     for (const key of this.#updateWaiters.keys()) {
       if (key.startsWith(prefix)) this.#updateWaiters.delete(key);
+    }
+    for (const key of this.#reviewWaiters.keys()) {
+      if (key.startsWith(prefix)) this.#reviewWaiters.delete(key);
     }
     const sleepOps = this.#sleepResolversByWorkflow.get(workflowId);
     if (sleepOps) {
@@ -2351,6 +2883,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
+    // Clean up any remaining review entries for this workflow
+    await this.#cleanupReviews(workflowId);
+
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);
     this.#cleanupWaiters(workflowId);
@@ -2381,6 +2916,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Clean up attribute indexes and deadline timer
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+
+    // Clean up any remaining review entries for this workflow
+    await this.#cleanupReviews(workflowId);
 
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);
