@@ -310,20 +310,20 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: AgentInterception,
       next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
     ): Generator<unknown, unknown, unknown> {
-      const childSpanId = generateSpanId();
+      const agentSpanId = generateSpanId();
       const traceId = currentTraceId || generateTraceId();
 
       injectTraceParent(interception.headers, {
         version: '00',
         traceId,
-        spanId: childSpanId,
+        spanId: agentSpanId,
         traceFlags: 1,
       });
 
       const span: SpanInfo = {
         name: 'agent',
         traceId,
-        spanId: childSpanId,
+        spanId: agentSpanId,
         parentSpanId: rootSpanId,
         attributes: {
           'agent.model': interception.model,
@@ -339,8 +339,80 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
       onSpanStart?.(span);
 
+      // Track per-turn spans so tool-call spans can be parented correctly
+      const activeTurnSpans = new Map<number, SpanInfo>();
+
+      // Inject per-turn and per-tool-call span callbacks into the interception
+      const enrichedInterception: AgentInterception = {
+        ...interception,
+        onTurnStarted: (info) => {
+          const turnSpan: SpanInfo = {
+            name: `agent:turn:${info.turnIndex}`,
+            traceId,
+            spanId: generateSpanId(),
+            parentSpanId: agentSpanId,
+            attributes: {
+              'weft.agent.model': info.model,
+              'weft.agent.turn_index': info.turnIndex,
+            },
+            startTime: Date.now(),
+          };
+          activeTurnSpans.set(info.turnIndex, turnSpan);
+          onSpanStart?.(turnSpan);
+          interception.onTurnStarted?.(info);
+        },
+        onTurnCompleted: (info) => {
+          const turnSpan = activeTurnSpans.get(info.turnIndex);
+          if (turnSpan) {
+            turnSpan.endTime = Date.now();
+            turnSpan.status = 'ok';
+            turnSpan.attributes['weft.agent.cost'] = info.cost;
+            onSpanEnd?.(turnSpan);
+            activeTurnSpans.delete(info.turnIndex);
+          }
+          interception.onTurnCompleted?.(info);
+        },
+        onToolCalled: (info) => {
+          const turnSpan = activeTurnSpans.get(info.turnIndex);
+          const toolSpan: SpanInfo = {
+            name: `agent:tool:call:${info.toolName}`,
+            traceId,
+            spanId: generateSpanId(),
+            parentSpanId: turnSpan?.spanId ?? agentSpanId,
+            attributes: {
+              'weft.agent.turn_index': info.turnIndex,
+              'tool.name': info.toolName,
+            },
+            startTime: Date.now(),
+          };
+          onSpanStart?.(toolSpan);
+          interception.onToolCalled?.(info);
+        },
+        onToolReturned: (info) => {
+          // Emit a completed tool span. Since tool calls are sequential within
+          // a turn, we create and end the span in the returned callback.
+          const toolSpan: SpanInfo = {
+            name: `agent:tool:call:${info.toolName}`,
+            traceId,
+            spanId: generateSpanId(),
+            parentSpanId: agentSpanId,
+            attributes: {
+              'weft.agent.turn_index': info.turnIndex,
+              'tool.name': info.toolName,
+              'tool.success': info.success,
+              'tool.duration': info.duration,
+            },
+            startTime: Date.now() - info.duration,
+            endTime: Date.now(),
+            status: info.success ? 'ok' : 'error',
+          };
+          onSpanEnd?.(toolSpan);
+          interception.onToolReturned?.(info);
+        },
+      };
+
       try {
-        const result = yield* next(interception);
+        const result = yield* next(enrichedInterception);
         span.endTime = Date.now();
         span.status = 'ok';
         onSpanEnd?.(span);

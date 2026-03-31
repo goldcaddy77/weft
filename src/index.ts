@@ -178,7 +178,13 @@ export { TimeControl } from './testing/time-control';
 
 // AI / Agent
 export { executeAgentLoop } from './ai/agent';
-export type { AgentOptions, AgentResult, AgentTool } from './ai/agent';
+export type {
+  AgentOptions,
+  AgentResult,
+  AgentTool,
+  MCPToolSource,
+  TurnCostEntry,
+} from './ai/agent';
 export { BudgetExceededError, BudgetTracker } from './ai/budget';
 export type { BudgetOptions, BudgetState, ModelPricing } from './ai/budget';
 export { BudgetPolicyEnforcer, OrganizationBudgetExceededError } from './ai/budget-policy';
@@ -233,6 +239,7 @@ export { buildAuthHeaders } from './ai/mcp/authentication';
 export type { MCPAuthConfig } from './ai/mcp/authentication';
 export { MCPClient, MCPServerUnavailableError, MCPToolTimeoutError } from './ai/mcp/client';
 export { ToolNameConflictError, ToolRegistry } from './ai/mcp/registry';
+export type { RegistryTool } from './ai/mcp/registry';
 export { ToolSchemaValidationError, validateSchema } from './ai/mcp/schema-validator';
 
 // Observability

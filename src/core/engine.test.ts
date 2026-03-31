@@ -2154,4 +2154,206 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Agent observability query handlers
+  // ---------------------------------------------------------------------------
+
+  describe('agent query handlers', () => {
+    function createMultiTurnMockProvider(turns: number): LLMProvider {
+      let callIndex = 0;
+      return {
+        name: 'mock',
+        async chat(): Promise<ChatResponse> {
+          callIndex++;
+          if (callIndex < turns) {
+            return {
+              content: '',
+              toolCalls: [{ id: `call-${callIndex}`, name: 'noop', input: {} }],
+              usage: {
+                inputTokens: callIndex * 100,
+                outputTokens: callIndex * 50,
+                totalTokens: callIndex * 150,
+              },
+              model: 'test-model',
+              stopReason: 'tool_use',
+            };
+          }
+          return {
+            content: `Final answer after ${turns} turns`,
+            toolCalls: [],
+            usage: {
+              inputTokens: turns * 100,
+              outputTokens: turns * 50,
+              totalTokens: turns * 150,
+            },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      };
+    }
+
+    it('exposes agentCostWaterfall query with per-turn cost data', async () => {
+      const engine = new Engine();
+      const provider = createMultiTurnMockProvider(3);
+
+      const noopTool = {
+        definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+        execute: async () => 'ok',
+      };
+
+      engine.register('waterfall-workflow', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        yield* context.agent({
+          model: 'test-model',
+          prompt: 'Do three turns',
+          provider,
+          tools: [noopTool],
+          maxTurns: 10,
+          budget: {
+            maxCost: 100,
+            models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
+          },
+        });
+        // Wait so we can query during execution
+        yield* context.waitForSignal('release');
+        return 'done';
+      });
+
+      const handle = await engine.start('waterfall-workflow', null);
+      await flush();
+
+      const waterfall = (await handle.query('agentCostWaterfall')) as Array<{
+        turn: number;
+        inputTokens: number;
+        outputTokens: number;
+        cost: number;
+        model: string;
+        tools: string[];
+      }>;
+
+      expect(waterfall).toHaveLength(3);
+      expect(waterfall[0]!.turn).toBe(0);
+      expect(waterfall[0]!.model).toBe('test-model');
+      expect(waterfall[0]!.tools).toEqual(['noop']);
+      expect(waterfall[1]!.turn).toBe(1);
+      expect(waterfall[2]!.turn).toBe(2);
+      expect(waterfall[2]!.tools).toEqual([]);
+
+      await engine.signal(handle.id, 'release');
+      await handle.result();
+      engine[Symbol.dispose]();
+    });
+
+    it('exposes agentConversation query with full message array', async () => {
+      const engine = new Engine();
+
+      const provider: LLMProvider = {
+        name: 'mock',
+        async chat(): Promise<ChatResponse> {
+          return {
+            content: 'Hello from agent',
+            toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      };
+
+      engine.register('conversation-workflow', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        yield* context.agent({
+          model: 'test-model',
+          prompt: 'Say hello',
+          provider,
+          systemPrompt: 'You are helpful.',
+        });
+        yield* context.waitForSignal('release');
+        return 'done';
+      });
+
+      const handle = await engine.start('conversation-workflow', null);
+      await flush();
+
+      const conversation = (await handle.query('agentConversation')) as Array<{
+        role: string;
+        content: string;
+      }>;
+
+      expect(conversation.length).toBeGreaterThanOrEqual(3);
+      expect(conversation[0]!.role).toBe('system');
+      expect(conversation[0]!.content).toBe('You are helpful.');
+      expect(conversation[1]!.role).toBe('user');
+      expect(conversation[1]!.content).toBe('Say hello');
+      expect(conversation[2]!.role).toBe('assistant');
+      expect(conversation[2]!.content).toBe('Hello from agent');
+
+      await engine.signal(handle.id, 'release');
+      await handle.result();
+      engine[Symbol.dispose]();
+    });
+
+    it('exposes agentCostProjection query with estimated total cost', async () => {
+      const engine = new Engine();
+      const provider = createMultiTurnMockProvider(3);
+
+      const noopTool = {
+        definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+        execute: async () => 'ok',
+      };
+
+      engine.register('projection-workflow', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        yield* context.agent({
+          model: 'test-model',
+          prompt: 'Do three turns',
+          provider,
+          tools: [noopTool],
+          maxTurns: 10,
+          budget: {
+            maxCost: 100,
+            models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
+          },
+        });
+        yield* context.waitForSignal('release');
+        return 'done';
+      });
+
+      const handle = await engine.start('projection-workflow', null);
+      await flush();
+
+      const projection = (await handle.query('agentCostProjection')) as {
+        averageCostPerTurn: number;
+        turnsCompleted: number;
+        maxTurns: number;
+        projectedTotalCost: number;
+      };
+
+      expect(projection.turnsCompleted).toBe(3);
+      expect(projection.maxTurns).toBe(10);
+      expect(projection.averageCostPerTurn).toBeGreaterThan(0);
+      expect(projection.projectedTotalCost).toBeCloseTo(
+        projection.averageCostPerTurn * projection.maxTurns,
+        4,
+      );
+
+      await engine.signal(handle.id, 'release');
+      await handle.result();
+      engine[Symbol.dispose]();
+    });
+  });
 });

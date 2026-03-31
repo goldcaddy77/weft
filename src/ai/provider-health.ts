@@ -8,6 +8,8 @@
  * @module provider-health
  */
 
+import { AgentProviderCircuitOpenEvent } from './events.ts';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -62,6 +64,9 @@ export class ProviderHealthTracker {
 
   /** Optional callback fired whenever a provider's circuit state changes. */
   onStateChange?: ((provider: string, from: CircuitState, to: CircuitState) => void) | undefined;
+
+  /** Optional EventTarget for dispatching circuit open events. */
+  eventTarget?: EventTarget | undefined;
 
   constructor(options?: ProviderHealthOptions) {
     this.#providers = new Map();
@@ -201,5 +206,18 @@ export class ProviderHealthTracker {
     const from = state.circuit;
     state.circuit = to;
     this.onStateChange?.(provider, from, to);
+
+    // Dispatch circuit-open event when transitioning to open
+    if (to === 'open' && this.eventTarget) {
+      const errorRate = this.getErrorRate(provider);
+      this.eventTarget.dispatchEvent(
+        new AgentProviderCircuitOpenEvent(
+          provider,
+          errorRate,
+          this.#options.errorThreshold,
+          this.#options.windowDuration,
+        ),
+      );
+    }
   }
 }

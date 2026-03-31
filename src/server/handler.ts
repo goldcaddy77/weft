@@ -158,6 +158,12 @@ const ROUTE_PATTERNS: Array<{
   },
   {
     method: 'GET',
+    pattern: /^\/v1\/workflows\/([^/]+)\/review\/([^/]+)$/,
+    handler: 'getReview',
+    paramNames: ['id', 'reviewId'],
+  },
+  {
+    method: 'GET',
     pattern: /^\/v1\/workflows\/([^/]+)$/,
     handler: 'getWorkflow',
     paramNames: ['id'],
@@ -585,6 +591,18 @@ async function handleListReviews(engine: Engine): Promise<Response> {
   return jsonResponse({ items: reviews });
 }
 
+async function handleGetReview(
+  engine: Engine,
+  workflowId: string,
+  reviewId: string,
+): Promise<Response> {
+  const review = await engine.getReview(workflowId, reviewId);
+  if (review === null) {
+    return errorResponse(`Review "${reviewId}" not found for workflow "${workflowId}"`, 404);
+  }
+  return jsonResponse(review);
+}
+
 const VALID_DECISIONS = ['approved', 'rejected', 'needs-changes'] as const;
 
 async function handleSubmitReviewDecision(
@@ -905,6 +923,9 @@ export async function handleRequest(
 
       case 'listReviews':
         return handleListReviews(engine);
+
+      case 'getReview':
+        return handleGetReview(engine, param('id'), param('reviewId'));
 
       case 'submitReviewDecision':
         return handleSubmitReviewDecision(request, engine, param('reviewId'));

@@ -15,6 +15,7 @@ import type { BudgetOptions, BudgetState } from '../ai/budget.ts';
 import { BudgetTracker } from '../ai/budget.ts';
 import type { ContextStrategy } from '../ai/context-window.ts';
 import type { AgentHooks } from '../ai/hooks.ts';
+import type { HumanReviewOptions, HumanReviewResult } from '../ai/human-review.ts';
 import type { ModelRouter } from '../ai/model-router.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import { parseDuration } from './scheduler.ts';
@@ -160,6 +161,11 @@ export type ContextOperationRequest =
       key: string;
       fn: (sink: StreamSink) => AsyncGenerator<unknown, void, unknown>;
       callerStack?: string;
+    }
+  | {
+      type: 'wait-review';
+      operationId: string;
+      reviewOptions: HumanReviewOptions;
     };
 
 // ---------------------------------------------------------------------------
@@ -455,6 +461,38 @@ export class Context implements WorkflowContext {
     // function is provided instead.
     this.#accumulatedResults.set(step, { payload: envelope.payload });
     return envelope;
+  }
+
+  /**
+   * Pause the workflow for human review. Creates a durable review request
+   * in storage and blocks until a decision is submitted via
+   * `engine.submitReview()`, or until the review times out / auto-decides
+   * via escalation.
+   */
+  *humanReview(
+    options: HumanReviewOptions,
+  ): Generator<ContextOperationRequest, HumanReviewResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as HumanReviewResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.humanReview(${JSON.stringify(options.reviewType ?? 'general')})`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Pausing for human review`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const result = yield {
+      type: 'wait-review' as const,
+      operationId,
+      reviewOptions: options,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as HumanReviewResult;
   }
 
   *all(

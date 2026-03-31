@@ -885,4 +885,319 @@ describe('createObservabilityInterceptors', () => {
       expect(typeof metrics.snapshot).toBe('function');
     });
   });
+
+  describe('agent per-turn and per-tool-call span hierarchy', () => {
+    it('creates child spans for agent turns', () => {
+      const startedSpans: SpanInfo[] = [];
+      const endedSpans: SpanInfo[] = [];
+      const { workflow } = createObservabilityInterceptors({
+        onSpanStart: (span) => startedSpans.push({ ...span }),
+        onSpanEnd: (span) => endedSpans.push({ ...span }),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-turn-spans',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      // The next function simulates the agent execution by invoking the
+      // injected callbacks that the interceptor set on the interception.
+      const next = function* (ctx: AgentInterception) {
+        // Simulate turn 0
+        ctx.onTurnStarted?.({ turnIndex: 0, model: 'test-model' });
+        ctx.onTurnCompleted?.({
+          turnIndex: 0,
+          model: 'test-model',
+          inputTokens: 100,
+          outputTokens: 50,
+          cost: 0.01,
+          duration: 500,
+          toolCallCount: 0,
+        });
+
+        // Simulate turn 1
+        ctx.onTurnStarted?.({ turnIndex: 1, model: 'test-model' });
+        ctx.onTurnCompleted?.({
+          turnIndex: 1,
+          model: 'test-model',
+          inputTokens: 200,
+          outputTokens: 100,
+          cost: 0.02,
+          duration: 600,
+          toolCallCount: 0,
+        });
+
+        return 'agent-result';
+      };
+
+      const generator = workflow.agent!(
+        { model: 'test-model', prompt: 'hello', headers: new Map() },
+        next,
+      );
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      // Verify the span hierarchy: agent > turn:0, turn:1
+      const agentSpan = startedSpans.find((s) => s.name === 'agent');
+      expect(agentSpan).toBeDefined();
+
+      const turnSpans = startedSpans.filter((s) => s.name.startsWith('agent:turn:'));
+      expect(turnSpans).toHaveLength(2);
+      expect(turnSpans[0]!.name).toBe('agent:turn:0');
+      expect(turnSpans[1]!.name).toBe('agent:turn:1');
+
+      // Turn spans should be children of the agent span
+      expect(turnSpans[0]!.parentSpanId).toBe(agentSpan!.spanId);
+      expect(turnSpans[1]!.parentSpanId).toBe(agentSpan!.spanId);
+
+      // Turn spans should have correct attributes
+      expect(turnSpans[0]!.attributes['weft.agent.model']).toBe('test-model');
+      expect(turnSpans[0]!.attributes['weft.agent.turn_index']).toBe(0);
+      expect(turnSpans[1]!.attributes['weft.agent.turn_index']).toBe(1);
+
+      // Turn spans should be ended with cost attribute
+      const endedTurnSpans = endedSpans.filter((s) => s.name.startsWith('agent:turn:'));
+      expect(endedTurnSpans).toHaveLength(2);
+      expect(endedTurnSpans[0]!.attributes['weft.agent.cost']).toBe(0.01);
+      expect(endedTurnSpans[1]!.attributes['weft.agent.cost']).toBe(0.02);
+    });
+
+    it('creates child spans for tool calls within turns', () => {
+      const startedSpans: SpanInfo[] = [];
+      const endedSpans: SpanInfo[] = [];
+      const { workflow } = createObservabilityInterceptors({
+        onSpanStart: (span) => startedSpans.push({ ...span }),
+        onSpanEnd: (span) => endedSpans.push({ ...span }),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-tool-spans',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const next = function* (ctx: AgentInterception) {
+        // Simulate turn 0 with 2 tool calls
+        ctx.onTurnStarted?.({ turnIndex: 0, model: 'test-model' });
+        ctx.onToolCalled?.({ turnIndex: 0, toolName: 'readFile' });
+        ctx.onToolReturned?.({ turnIndex: 0, toolName: 'readFile', duration: 100, success: true });
+        ctx.onToolCalled?.({ turnIndex: 0, toolName: 'writeFile' });
+        ctx.onToolReturned?.({
+          turnIndex: 0,
+          toolName: 'writeFile',
+          duration: 50,
+          success: false,
+        });
+        ctx.onTurnCompleted?.({
+          turnIndex: 0,
+          model: 'test-model',
+          inputTokens: 100,
+          outputTokens: 50,
+          cost: 0.01,
+          duration: 500,
+          toolCallCount: 2,
+        });
+
+        return 'agent-result';
+      };
+
+      const generator = workflow.agent!(
+        { model: 'test-model', prompt: 'hello', headers: new Map() },
+        next,
+      );
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      // Verify tool call spans were created
+      const toolCallStartSpans = startedSpans.filter((s) => s.name.startsWith('agent:tool:call:'));
+      expect(toolCallStartSpans).toHaveLength(2);
+      expect(toolCallStartSpans[0]!.name).toBe('agent:tool:call:readFile');
+      expect(toolCallStartSpans[1]!.name).toBe('agent:tool:call:writeFile');
+
+      // Verify tool return spans were ended
+      const toolEndSpans = endedSpans.filter((s) => s.name.startsWith('agent:tool:call:'));
+      expect(toolEndSpans).toHaveLength(2);
+      expect(toolEndSpans[0]!.status).toBe('ok');
+      expect(toolEndSpans[1]!.status).toBe('error');
+      expect(toolEndSpans[0]!.attributes['tool.name']).toBe('readFile');
+      expect(toolEndSpans[1]!.attributes['tool.name']).toBe('writeFile');
+      expect(toolEndSpans[0]!.attributes['tool.success']).toBe(true);
+      expect(toolEndSpans[1]!.attributes['tool.success']).toBe(false);
+    });
+
+    it('produces correct span tree: agent > turn > tool', () => {
+      const startedSpans: SpanInfo[] = [];
+      const endedSpans: SpanInfo[] = [];
+      const { workflow } = createObservabilityInterceptors({
+        onSpanStart: (span) => startedSpans.push({ ...span }),
+        onSpanEnd: (span) => endedSpans.push({ ...span }),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-tree',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const next = function* (ctx: AgentInterception) {
+        // Turn 0: 2 tool calls
+        ctx.onTurnStarted?.({ turnIndex: 0, model: 'claude-3' });
+        ctx.onToolCalled?.({ turnIndex: 0, toolName: 'tool_a' });
+        ctx.onToolReturned?.({ turnIndex: 0, toolName: 'tool_a', duration: 10, success: true });
+        ctx.onToolCalled?.({ turnIndex: 0, toolName: 'tool_b' });
+        ctx.onToolReturned?.({ turnIndex: 0, toolName: 'tool_b', duration: 20, success: true });
+        ctx.onTurnCompleted?.({
+          turnIndex: 0,
+          model: 'claude-3',
+          inputTokens: 100,
+          outputTokens: 50,
+          cost: 0.01,
+          duration: 500,
+          toolCallCount: 2,
+        });
+
+        // Turn 1: 1 tool call
+        ctx.onTurnStarted?.({ turnIndex: 1, model: 'claude-3' });
+        ctx.onToolCalled?.({ turnIndex: 1, toolName: 'tool_c' });
+        ctx.onToolReturned?.({ turnIndex: 1, toolName: 'tool_c', duration: 15, success: true });
+        ctx.onTurnCompleted?.({
+          turnIndex: 1,
+          model: 'claude-3',
+          inputTokens: 200,
+          outputTokens: 100,
+          cost: 0.02,
+          duration: 600,
+          toolCallCount: 1,
+        });
+
+        // Turn 2: final answer (no tools)
+        ctx.onTurnStarted?.({ turnIndex: 2, model: 'claude-3' });
+        ctx.onTurnCompleted?.({
+          turnIndex: 2,
+          model: 'claude-3',
+          inputTokens: 300,
+          outputTokens: 150,
+          cost: 0.03,
+          duration: 400,
+          toolCallCount: 0,
+        });
+
+        return 'done';
+      };
+
+      const generator = workflow.agent!(
+        { model: 'claude-3', prompt: 'do stuff', headers: new Map() },
+        next,
+      );
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      // Verify the full span tree
+      const agentSpan = startedSpans.find((s) => s.name === 'agent');
+      const turnSpans = startedSpans.filter((s) => s.name.startsWith('agent:turn:'));
+      const toolCallStartSpans = startedSpans.filter((s) => s.name.startsWith('agent:tool:call:'));
+
+      expect(agentSpan).toBeDefined();
+      expect(turnSpans).toHaveLength(3);
+      expect(toolCallStartSpans).toHaveLength(3);
+
+      // All turn spans are children of the agent span
+      for (const turnSpan of turnSpans) {
+        expect(turnSpan.parentSpanId).toBe(agentSpan!.spanId);
+      }
+
+      // Tool call start spans: readFile and writeFile in turn 0 should be
+      // parented to turn 0's span
+      const turn0Span = turnSpans.find((s) => s.name === 'agent:turn:0');
+      const toolASpan = toolCallStartSpans.find((s) => s.name === 'agent:tool:call:tool_a');
+      const toolBSpan = toolCallStartSpans.find((s) => s.name === 'agent:tool:call:tool_b');
+      expect(toolASpan!.parentSpanId).toBe(turn0Span!.spanId);
+      expect(toolBSpan!.parentSpanId).toBe(turn0Span!.spanId);
+
+      // Tool call in turn 1 should be parented to turn 1's span
+      const turn1Span = turnSpans.find((s) => s.name === 'agent:turn:1');
+      const toolCSpan = toolCallStartSpans.find((s) => s.name === 'agent:tool:call:tool_c');
+      expect(toolCSpan!.parentSpanId).toBe(turn1Span!.spanId);
+
+      // Agent span should have same traceId as all children
+      for (const childSpan of [...turnSpans, ...toolCallStartSpans]) {
+        expect(childSpan.traceId).toBe(agentSpan!.traceId);
+      }
+
+      // Agent span should be ended
+      const endedAgentSpan = endedSpans.find((s) => s.name === 'agent');
+      expect(endedAgentSpan).toBeDefined();
+      expect(endedAgentSpan!.status).toBe('ok');
+    });
+
+    it('preserves original callbacks when interceptor injects new ones', () => {
+      const startedSpans: SpanInfo[] = [];
+      const { workflow } = createObservabilityInterceptors({
+        onSpanStart: (span) => startedSpans.push({ ...span }),
+        onSpanEnd: () => {},
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-preserve-callbacks',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const originalTurnStartCalls: number[] = [];
+      const originalInterception: AgentInterception = {
+        model: 'test-model',
+        prompt: 'hello',
+        headers: new Map(),
+        onTurnStarted: (info) => originalTurnStartCalls.push(info.turnIndex),
+      };
+
+      const next = function* (ctx: AgentInterception) {
+        ctx.onTurnStarted?.({ turnIndex: 0, model: 'test-model' });
+        ctx.onTurnCompleted?.({
+          turnIndex: 0,
+          model: 'test-model',
+          inputTokens: 10,
+          outputTokens: 5,
+          cost: 0,
+          duration: 100,
+          toolCallCount: 0,
+        });
+        return 'result';
+      };
+
+      const generator = workflow.agent!(originalInterception, next);
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      // Both the original callback and the interceptor's spans should fire
+      expect(originalTurnStartCalls).toEqual([0]);
+      const turnSpans = startedSpans.filter((s) => s.name.startsWith('agent:turn:'));
+      expect(turnSpans).toHaveLength(1);
+    });
+  });
 });

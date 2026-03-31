@@ -1,3 +1,4 @@
+import type { ModelRouter } from '../ai/model-router.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 
 // ---------------------------------------------------------------------------
@@ -169,6 +170,12 @@ export interface EngineOptions {
     /** Use Bun's `smol` worker option for smaller memory footprint. */
     smol?: boolean;
   };
+
+  /**
+   * Default model router applied to all `ctx.agent()` calls that don't
+   * provide their own `modelRouter`. Per-call routers override this.
+   */
+  defaultModelRouter?: ModelRouter | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +385,8 @@ export interface SubmitReviewOptions {
   decision: ReviewDecision;
   reviewer: string;
   feedback?: string;
+  /** Per-section decisions for partial approval workflows. */
+  sectionDecisions?: Record<string, 'approved' | 'rejected'>;
   /** When provided, enables O(1) direct key lookup instead of scanning. */
   workflowId?: string;
 }

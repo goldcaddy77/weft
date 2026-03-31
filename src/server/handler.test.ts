@@ -1485,6 +1485,52 @@ describe('handleRequest', () => {
   });
 
   // -------------------------------------------------------------------------
+  // GET /v1/workflows/:id/review/:reviewId — get review details
+  // -------------------------------------------------------------------------
+
+  describe('GET /v1/workflows/:id/review/:reviewId', () => {
+    it('returns review details when found', async () => {
+      const storage = new MemoryStorage();
+      engine = new Engine({ storage });
+      engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+
+      const review = {
+        reviewId: 'rev-detail',
+        workflowId: 'wf-detail',
+        artifact: { content: 'report' },
+        reviewType: 'code-review',
+        reviewers: ['charlie'],
+        allowPartial: false,
+        createdAt: Date.now(),
+      };
+      await storage.put(KEYS.review('wf-detail', 'rev-detail'), encode(review));
+
+      const response = await handleRequest(
+        request('GET', '/v1/workflows/wf-detail/review/rev-detail'),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { reviewId: string; reviewType: string };
+      expect(body.reviewId).toBe('rev-detail');
+      expect(body.reviewType).toBe('code-review');
+    });
+
+    it('returns 404 for non-existent review', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('GET', '/v1/workflows/wf-1/review/nonexistent'),
+        engine,
+      );
+
+      expect(response.status).toBe(404);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // GET /v1/workflows/:id/query/:name — query workflow state
   // -------------------------------------------------------------------------
 

@@ -49,10 +49,49 @@ export interface ActivityExecutionInterception {
   signal?: AbortSignal;
 }
 
+/** Callback info passed to agent turn-lifecycle hooks. */
+export interface AgentTurnInfo {
+  turnIndex: number;
+  model: string;
+}
+
+/** Callback info passed after an agent turn completes. */
+export interface AgentTurnResultInfo {
+  turnIndex: number;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  duration: number;
+  toolCallCount: number;
+}
+
+/** Callback info passed when a tool is called during an agent turn. */
+export interface AgentToolCallInfo {
+  turnIndex: number;
+  toolName: string;
+}
+
+/** Callback info passed when a tool call returns during an agent turn. */
+export interface AgentToolReturnInfo {
+  turnIndex: number;
+  toolName: string;
+  duration: number;
+  success: boolean;
+}
+
 export interface AgentInterception {
   model: string;
   prompt: string;
   headers: Map<string, string>;
+  /** Optional callback invoked when each agent turn starts. */
+  onTurnStarted?: (info: AgentTurnInfo) => void;
+  /** Optional callback invoked when each agent turn completes. */
+  onTurnCompleted?: (info: AgentTurnResultInfo) => void;
+  /** Optional callback invoked when a tool is called. */
+  onToolCalled?: (info: AgentToolCallInfo) => void;
+  /** Optional callback invoked when a tool call returns. */
+  onToolReturned?: (info: AgentToolReturnInfo) => void;
 }
 
 export interface QueryInterception {

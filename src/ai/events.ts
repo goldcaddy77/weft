@@ -300,6 +300,22 @@ export class HumanReviewCompletedEvent extends Event {
   }
 }
 
+export class AgentCheckpointSizeWarningEvent extends Event {
+  static readonly type = 'agent:checkpoint-size-warning' as const;
+  readonly workflowId: string;
+  readonly agentId: string;
+  readonly sizeBytes: number;
+  readonly turnIndex: number;
+
+  constructor(workflowId: string, agentId: string, sizeBytes: number, turnIndex: number) {
+    super(AgentCheckpointSizeWarningEvent.type);
+    this.workflowId = workflowId;
+    this.agentId = agentId;
+    this.sizeBytes = sizeBytes;
+    this.turnIndex = turnIndex;
+  }
+}
+
 export type WeftAgentEventMap = {
   'agent:turn:started': AgentTurnStartedEvent;
   'agent:turn:completed': AgentTurnCompletedEvent;
@@ -308,6 +324,7 @@ export type WeftAgentEventMap = {
   'agent:budget:warning': AgentBudgetWarningEvent;
   'agent:budget:exceeded': AgentBudgetExceededEvent;
   'agent:context:compacted': AgentContextCompactedEvent;
+  'agent:checkpoint-size-warning': AgentCheckpointSizeWarningEvent;
   'agent:model:fallback': AgentModelFallbackEvent;
   'agent:provider:circuit-open': AgentProviderCircuitOpenEvent;
   'human-review:requested': HumanReviewRequestedEvent;

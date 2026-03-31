@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { AgentProviderCircuitOpenEvent } from './events.ts';
 import {
   ProviderHealthTracker,
   type CircuitState,
@@ -465,6 +466,90 @@ describe('ProviderHealthTracker', () => {
 
       expect(tracker.getState('openai')).toBe('open');
       expect(tracker.getState('anthropic')).toBe('closed');
+      expect(tracker.isHealthy('openai')).toBe(false);
+      expect(tracker.isHealthy('anthropic')).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // D6: AgentProviderCircuitOpenEvent dispatched when circuit opens
+  // -------------------------------------------------------------------------
+
+  describe('eventTarget dispatch on circuit open', () => {
+    it('dispatches AgentProviderCircuitOpenEvent when circuit trips', () => {
+      const circuitEvents: AgentProviderCircuitOpenEvent[] = [];
+      const eventTarget = new EventTarget();
+
+      eventTarget.addEventListener(AgentProviderCircuitOpenEvent.type, ((
+        event: AgentProviderCircuitOpenEvent,
+      ) => {
+        circuitEvents.push(event);
+      }) as EventListener);
+
+      const tracker = new ProviderHealthTracker({
+        windowDuration: 60_000,
+        errorThreshold: 0.5,
+        cooldownDuration: 30_000,
+        minimumRequests: 5,
+        getNow: () => 0,
+      });
+
+      tracker.eventTarget = eventTarget;
+
+      // Trip the circuit: 5 failures
+      for (let i = 0; i < 5; i++) {
+        tracker.recordFailure('openai');
+      }
+
+      expect(tracker.getState('openai')).toBe('open');
+      expect(circuitEvents).toHaveLength(1);
+      expect(circuitEvents[0]!.provider).toBe('openai');
+      expect(circuitEvents[0]!.errorRate).toBeGreaterThan(0.5);
+      expect(circuitEvents[0]!.threshold).toBe(0.5);
+    });
+
+    it('does not dispatch event when circuit stays closed', () => {
+      const circuitEvents: AgentProviderCircuitOpenEvent[] = [];
+      const eventTarget = new EventTarget();
+
+      eventTarget.addEventListener(AgentProviderCircuitOpenEvent.type, ((
+        event: AgentProviderCircuitOpenEvent,
+      ) => {
+        circuitEvents.push(event);
+      }) as EventListener);
+
+      const tracker = new ProviderHealthTracker({
+        windowDuration: 60_000,
+        errorThreshold: 0.5,
+        cooldownDuration: 30_000,
+        minimumRequests: 5,
+        getNow: () => 0,
+      });
+
+      tracker.eventTarget = eventTarget;
+
+      // Only successes — no trip
+      for (let i = 0; i < 10; i++) {
+        tracker.recordSuccess('openai');
+      }
+
+      expect(circuitEvents).toHaveLength(0);
+    });
+
+    it('excludes open circuit provider from subsequent isHealthy checks', () => {
+      const tracker = new ProviderHealthTracker({
+        windowDuration: 60_000,
+        errorThreshold: 0.5,
+        cooldownDuration: 30_000,
+        minimumRequests: 3,
+        getNow: () => 0,
+      });
+
+      // Trip the circuit
+      tracker.recordFailure('openai');
+      tracker.recordFailure('openai');
+      tracker.recordFailure('openai');
+
       expect(tracker.isHealthy('openai')).toBe(false);
       expect(tracker.isHealthy('anthropic')).toBe(true);
     });

@@ -6,7 +6,8 @@ import type { ChatResponse, Message } from './providers/types';
 import type { AgentTool, ToolCallInfo, ToolReturnInfo, TurnInfo, TurnResult } from './agent';
 import { executeAgentLoop } from './agent';
 import { BudgetExceededError, BudgetTracker } from './budget';
-import { AgentTurnCompletedEvent } from './events';
+import { AgentModelFallbackEvent, AgentTurnCompletedEvent } from './events';
+import type { ModelRouter, RoutingContext } from './model-router';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1265,5 +1266,537 @@ describe('executeAgentLoop', () => {
     const result = await executeAgentLoop({ model: 'test-model', provider }, 'Hello');
 
     expect(result.totalCost).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // D1: Per-turn model selection — routing context correctness
+  // ---------------------------------------------------------------------------
+
+  it('passes correct workflowId to model router', async () => {
+    let capturedContext: RoutingContext | undefined;
+
+    const provider = createMockProvider([createChatResponse('Done')]);
+
+    const modelRouter: ModelRouter = {
+      select(context: RoutingContext) {
+        capturedContext = context;
+        return { model: 'routed-model' };
+      },
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'default-model',
+        provider,
+        modelRouter,
+        workflowId: 'wf-test-123',
+      },
+      'Hello',
+    );
+
+    expect(capturedContext).toBeDefined();
+    expect(capturedContext!.workflowId).toBe('wf-test-123');
+  });
+
+  it('tracks previousModels across turns in the routing context', async () => {
+    const capturedContexts: RoutingContext[] = [];
+    let providerCallCount = 0;
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        providerCallCount++;
+        if (providerCallCount < 4) {
+          return createToolCallResponse([
+            { id: `call-${providerCallCount}`, name: 'noop', input: {} },
+          ]);
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const modelRouter: ModelRouter = {
+      select(context: RoutingContext) {
+        capturedContexts.push({ ...context, previousModels: [...context.previousModels] });
+        const models = ['model-a', 'model-b', 'model-c', 'model-d'];
+        return { model: models[context.turnIndex] ?? 'model-d' };
+      },
+    };
+
+    await executeAgentLoop(
+      { model: 'default', provider, tools: [noopTool], modelRouter, maxTurns: 5 },
+      'Hello',
+    );
+
+    expect(capturedContexts[0]!.previousModels).toEqual([]);
+    expect(capturedContexts[1]!.previousModels).toEqual(['model-a']);
+    expect(capturedContexts[2]!.previousModels).toEqual(['model-a', 'model-b']);
+    expect(capturedContexts[3]!.previousModels).toEqual(['model-a', 'model-b', 'model-c']);
+  });
+
+  it('passes conversationLength and turnIndex accurately to router', async () => {
+    const capturedContexts: RoutingContext[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        if (capturedContexts.length < 2) {
+          return createToolCallResponse([
+            { id: `call-${capturedContexts.length}`, name: 'noop', input: {} },
+          ]);
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const modelRouter: ModelRouter = {
+      select(context: RoutingContext) {
+        capturedContexts.push({ ...context });
+        return { model: 'routed-model' };
+      },
+    };
+
+    await executeAgentLoop(
+      { model: 'default', provider, tools: [noopTool], modelRouter, maxTurns: 3 },
+      'Hello',
+    );
+
+    expect(capturedContexts[0]!.turnIndex).toBe(0);
+    expect(capturedContexts[1]!.turnIndex).toBe(1);
+    expect(capturedContexts[1]!.conversationLength).toBeGreaterThan(
+      capturedContexts[0]!.conversationLength,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // D2: Static fallback chain with retry on provider failure
+  // ---------------------------------------------------------------------------
+
+  it('retries with fallback models when the primary model fails', async () => {
+    const capturedModels: string[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        capturedModels.push(options.model);
+        if (options.model === 'model-a') {
+          throw new Error('rate limit exceeded');
+        }
+        return createChatResponse('Done from fallback');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b', 'model-c'] };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      { model: 'default', provider, modelRouter, workflowId: 'wf-fallback' },
+      'Hello',
+    );
+
+    expect(result.content).toBe('Done from fallback');
+    expect(capturedModels).toContain('model-a');
+    expect(capturedModels).toContain('model-b');
+  });
+
+  it('throws when all fallback models fail', async () => {
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        throw new Error('all models fail');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    expect(executeAgentLoop({ model: 'default', provider, modelRouter }, 'Hello')).rejects.toThrow(
+      'all models fail',
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // D5: AgentModelFallbackEvent dispatched on fallback
+  // ---------------------------------------------------------------------------
+
+  it('dispatches AgentModelFallbackEvent when a fallback model is used', async () => {
+    const fallbackEvents: AgentModelFallbackEvent[] = [];
+    const eventTarget = new EventTarget();
+
+    eventTarget.addEventListener(AgentModelFallbackEvent.type, ((
+      event: AgentModelFallbackEvent,
+    ) => {
+      fallbackEvents.push(event);
+    }) as EventListener);
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        if (options.model === 'model-a') {
+          throw new Error('rate limit');
+        }
+        return createChatResponse('Success via fallback');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'default',
+        provider,
+        modelRouter,
+        eventTarget,
+        workflowId: 'wf-fallback-event',
+        agentId: 'agent-1',
+      },
+      'Hello',
+    );
+
+    expect(fallbackEvents).toHaveLength(1);
+    expect(fallbackEvents[0]!.failedModel).toBe('model-a');
+    expect(fallbackEvents[0]!.nextModel).toBe('model-b');
+    expect(fallbackEvents[0]!.turnIndex).toBe(0);
+    expect(fallbackEvents[0]!.workflowId).toBe('wf-fallback-event');
+  });
+
+  it('reports fallbackAttempts > 0 in AgentTurnCompletedEvent after fallback', async () => {
+    const completedEvents: AgentTurnCompletedEvent[] = [];
+    const eventTarget = new EventTarget();
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, ((
+      event: AgentTurnCompletedEvent,
+    ) => {
+      completedEvents.push(event);
+    }) as EventListener);
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        if (options.model === 'model-a') {
+          throw new Error('rate limit');
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'default',
+        provider,
+        modelRouter,
+        eventTarget,
+        workflowId: 'wf-fallback-completed',
+        agentId: 'agent-1',
+      },
+      'Hello',
+    );
+
+    expect(completedEvents).toHaveLength(1);
+    expect(completedEvents[0]!.fallbackAttempts).toBeGreaterThan(0);
+    expect(completedEvents[0]!.selectedModel).toBe('model-b');
+  });
+
+  // ---------------------------------------------------------------------------
+  // D4: Default model router (engine wires it, but the behavior is testable
+  //     at the agent loop level — per-call router should override any default)
+  // ---------------------------------------------------------------------------
+
+  it('uses modelRouter from options when provided', async () => {
+    let routerCalled = false;
+
+    const provider = createMockProvider([createChatResponse('Done')]);
+
+    const modelRouter: ModelRouter = {
+      select() {
+        routerCalled = true;
+        return { model: 'router-model' };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      { model: 'default-model', provider, modelRouter },
+      'Hello',
+    );
+
+    expect(routerCalled).toBe(true);
+    expect(result.content).toBe('Done');
+  });
+
+  it('falls back to default model when no modelRouter is provided', async () => {
+    const capturedModels: string[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        capturedModels.push(options.model);
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    await executeAgentLoop({ model: 'my-default-model', provider }, 'Hello');
+
+    expect(capturedModels).toEqual(['my-default-model']);
+  });
+
+  it('records health tracker failures for failed fallback attempts', async () => {
+    const healthEvents: { type: string; provider: string }[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        if (options.model === 'model-a') {
+          throw new Error('rate limit');
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const healthTracker = {
+      recordSuccess(providerName: string) {
+        healthEvents.push({ type: 'success', provider: providerName });
+      },
+      recordFailure(providerName: string) {
+        healthEvents.push({ type: 'failure', provider: providerName });
+      },
+    } as any;
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    await executeAgentLoop({ model: 'default', provider, modelRouter, healthTracker }, 'Hello');
+
+    expect(healthEvents).toContainEqual({ type: 'failure', provider: 'mock' });
+    expect(healthEvents).toContainEqual({ type: 'success', provider: 'mock' });
+  });
+
+  // ---------------------------------------------------------------------------
+  // E: Reasoning traces and per-turn cost breakdown
+  // ---------------------------------------------------------------------------
+
+  it('captures reasoning trace from provider response in turn-completed event', async () => {
+    const provider = createMockProvider([
+      createChatResponse('Final answer', {
+        reasoningTrace: 'Let me think step by step about this problem.',
+      }),
+    ]);
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        eventTarget,
+        workflowId: 'wf-reasoning',
+        agentId: 'agent-reasoning',
+      },
+      'Think about this',
+    );
+
+    expect(turnEvents).toHaveLength(1);
+    expect(turnEvents[0]!.reasoningTrace).toBe('Let me think step by step about this problem.');
+  });
+
+  it('passes undefined reasoning trace when provider does not return one', async () => {
+    const provider = createMockProvider([createChatResponse('Final answer')]);
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        eventTarget,
+        workflowId: 'wf-no-reasoning',
+        agentId: 'agent-no-reasoning',
+      },
+      'Simple question',
+    );
+
+    expect(turnEvents).toHaveLength(1);
+    expect(turnEvents[0]!.reasoningTrace).toBeUndefined();
+  });
+
+  it('includes reasoning trace in AgentResult', async () => {
+    const provider = createMockProvider([
+      createChatResponse('Answer', {
+        reasoningTrace: 'Thinking deeply...',
+      }),
+    ]);
+
+    const result = await executeAgentLoop({ model: 'test-model', provider }, 'Think');
+
+    expect(result.reasoningTraces).toHaveLength(1);
+    expect(result.reasoningTraces[0]).toBe('Thinking deeply...');
+  });
+
+  it('captures reasoning traces across multiple turns with tool calls', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }], {
+        reasoningTrace: 'I need to use a tool first.',
+      }),
+      createChatResponse('Done', {
+        reasoningTrace: 'Now I have the answer.',
+      }),
+    ]);
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        eventTarget,
+        workflowId: 'wf-multi-reasoning',
+        agentId: 'agent-multi-reasoning',
+      },
+      'Use tool then answer',
+    );
+
+    expect(turnEvents).toHaveLength(2);
+    expect(turnEvents[0]!.reasoningTrace).toBe('I need to use a tool first.');
+    expect(turnEvents[1]!.reasoningTrace).toBe('Now I have the answer.');
+    expect(result.reasoningTraces).toHaveLength(2);
+  });
+
+  it('exposes per-turn cost data in turnCosts array', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }], {
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      }),
+      createChatResponse('Done', {
+        usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+      }),
+    ]);
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const budget = new BudgetTracker({
+      maxCost: 10,
+      models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
+    });
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        budget,
+      },
+      'Track costs',
+    );
+
+    expect(result.turnCosts).toHaveLength(2);
+    expect(result.turnCosts[0]!.turn).toBe(0);
+    expect(result.turnCosts[0]!.inputTokens).toBe(100);
+    expect(result.turnCosts[0]!.outputTokens).toBe(50);
+    expect(result.turnCosts[0]!.model).toBe('test-model');
+    expect(result.turnCosts[0]!.tools).toEqual(['noop']);
+    expect(result.turnCosts[1]!.turn).toBe(1);
+    expect(result.turnCosts[1]!.inputTokens).toBe(200);
+    expect(result.turnCosts[1]!.outputTokens).toBe(100);
+    expect(result.turnCosts[1]!.tools).toEqual([]);
   });
 });

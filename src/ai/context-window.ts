@@ -22,10 +22,16 @@ export interface ContextWindowOptions {
   countTokens?: (messages: Message[]) => Promise<number>;
 }
 
+/** Serializable snapshot of the context window state for crash recovery. */
+export interface ContextWindowCheckpoint {
+  compactedMessages: Message[] | null;
+}
+
 type ResolvedContextWindowOptions = Required<ContextWindowOptions>;
 
 export class ContextWindowManager {
   #options: ResolvedContextWindowOptions;
+  #compactedMessages: Message[] | null = null;
 
   constructor(options: ContextWindowOptions) {
     const maxTokens = options.maxTokens;
@@ -65,6 +71,8 @@ export class ContextWindowManager {
     const compactedMessages = result.value ?? messages;
     const tokensAfter = await this.#options.countTokens(compactedMessages);
 
+    this.#compactedMessages = compactedMessages;
+
     return {
       messages: compactedMessages,
       tokensBefore,
@@ -76,6 +84,28 @@ export class ContextWindowManager {
   /** Get the available input token budget. */
   get inputBudget(): number {
     return this.#options.maxTokens - this.#options.reservedForOutput;
+  }
+
+  /** Create a serializable snapshot of the current compacted state. */
+  checkpoint(): ContextWindowCheckpoint {
+    return {
+      compactedMessages: this.#compactedMessages,
+    };
+  }
+
+  /** Restore compacted state from a checkpoint, avoiding re-running the strategy. */
+  restore(checkpoint: ContextWindowCheckpoint): void {
+    this.#compactedMessages = checkpoint.compactedMessages;
+  }
+
+  /** Return the stored compacted messages, or null if none exist. */
+  getCompactedMessages(): Message[] | null {
+    return this.#compactedMessages;
+  }
+
+  /** Clear the stored compacted messages (e.g., after the agent consumes them). */
+  clearCompactedMessages(): void {
+    this.#compactedMessages = null;
   }
 }
 
