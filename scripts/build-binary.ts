@@ -178,7 +178,15 @@ export function resolveTargets(args: BuildBinaryArgs): BunTarget[] {
 
   // Default: current platform
   const platform = process.platform === 'win32' ? 'windows' : process.platform;
-  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const supportedArches: Record<string, string> = { arm64: 'arm64', x64: 'x64', x86_64: 'x64' };
+  const arch = supportedArches[process.arch];
+
+  if (!arch) {
+    throw new Error(
+      `Unsupported CPU architecture '${process.arch}'. Supported: ${Object.keys(supportedArches).join(', ')}`,
+    );
+  }
+
   const key = `${platform}-${arch}`;
   const mapped = TARGET_MAP[key];
 

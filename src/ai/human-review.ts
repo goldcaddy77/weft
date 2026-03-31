@@ -67,14 +67,7 @@ export interface HumanReviewOptions extends ReviewOptions {
 }
 
 /** The decision payload returned to the workflow from `ctx.humanReview()`. */
-export interface HumanReviewResult {
-  reviewId: string;
-  decision: 'approved' | 'rejected' | 'needs-changes';
-  reviewer: string;
-  feedback?: string;
-  sectionDecisions?: Record<string, 'approved' | 'rejected'>;
-  timestamp: number;
-}
+export type HumanReviewResult = ReviewDecision;
 
 export type EscalationAction =
   | { type: 'escalate'; to: string }

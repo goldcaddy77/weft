@@ -31,7 +31,34 @@ export class MCPClient {
       throw new MCPServerUnavailableError(this.#options.serverUrl);
     }
 
-    return body.tools.filter(isToolDefinition);
+    const valid: ToolDefinition[] = [];
+    const malformed: unknown[] = [];
+
+    for (const entry of body.tools) {
+      if (isToolDefinition(entry)) {
+        valid.push(entry);
+      } else {
+        malformed.push(entry);
+      }
+    }
+
+    if (malformed.length > 0) {
+      const names = malformed.map((entry) => {
+        const name = (entry as Record<string, unknown> | null)?.['name'];
+        return typeof name === 'string' ? name : '<unknown>';
+      });
+      console.warn(
+        `[MCP] ${malformed.length} malformed tool(s) filtered from ${this.#options.serverUrl}: ${names.join(', ')}`,
+      );
+    }
+
+    if (valid.length === 0 && body.tools.length > 0) {
+      throw new Error(
+        `All ${body.tools.length} tool(s) from ${this.#options.serverUrl} failed structural validation. Check that each tool has 'name' (string), 'description' (string), and 'inputSchema' (object).`,
+      );
+    }
+
+    return valid;
   }
 
   /** Invoke a tool on the MCP server. */

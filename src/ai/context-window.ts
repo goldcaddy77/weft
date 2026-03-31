@@ -4,6 +4,8 @@ import { estimateTokens } from './token-counting.ts';
 
 /** Strategy for compacting conversation history. Returns a generator for durable operations. */
 export interface ContextStrategy {
+  /** Human-readable label identifying this strategy (e.g. 'sliding-window', 'summarize'). */
+  name: string;
   compact(
     messages: Message[],
     options: CompactOptions,
@@ -47,6 +49,11 @@ export class ContextWindowManager {
       countTokens:
         options.countTokens ?? ((messages: Message[]) => Promise.resolve(estimateTokens(messages))),
     };
+  }
+
+  /** The name of the active compaction strategy. */
+  get strategyName(): string {
+    return this.#options.strategy.name;
   }
 
   /** Check if compaction is needed based on token count. */
@@ -115,6 +122,7 @@ export class ContextWindowManager {
 /** Compose multiple strategies: apply in sequence, checkpoint between each. */
 export function composeStrategies(...strategies: ContextStrategy[]): ContextStrategy {
   return {
+    name: `compose(${strategies.map((s) => s.name).join(', ')})`,
     async *compact(
       messages: Message[],
       options: CompactOptions,
@@ -139,6 +147,7 @@ export function composeStrategies(...strategies: ContextStrategy[]): ContextStra
 /** No-op pass-through strategy (default). */
 export function noopStrategy(): ContextStrategy {
   return {
+    name: 'noop',
     async *compact(messages: Message[]): AsyncGenerator<Message[], Message[], unknown> {
       yield messages;
       return messages;

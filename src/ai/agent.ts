@@ -333,7 +333,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
             new AgentContextCompactedEvent(
               resolvedWorkflowId,
               resolvedAgentId,
-              'context-strategy',
+              contextManager.strategyName,
               compacted.tokensBefore,
               compacted.tokensAfter,
               compacted.messagesDropped,
@@ -391,6 +391,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     let response: ChatResponse | undefined;
     let fallbackAttempts = 0;
     const modelsToTry = [currentModel, ...fallbackModels];
+    const originalModel = currentModel;
     let lastError: unknown;
 
     for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
@@ -417,6 +418,11 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
         break;
       } catch (error: unknown) {
         lastError = error;
+
+        // If the request was aborted, stop immediately — do not try fallback models.
+        if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+          throw error;
+        }
 
         // Record failure in health tracker
         if (healthTracker) {
@@ -505,7 +511,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
             resolvedWorkflowId,
             resolvedAgentId,
             turnIndex,
-            currentModel,
+            originalModel,
             currentModel,
             response.usage.inputTokens,
             response.usage.outputTokens,
@@ -528,6 +534,22 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
         duration: turnDuration,
         toolCallCount: 0,
       });
+
+      // Check conversation size on final-answer path too
+      if (eventTarget && !sizeWarningFired) {
+        const sizeBytes = estimateConversationSizeBytes(conversation);
+        if (sizeBytes >= checkpointSizeWarningThreshold) {
+          sizeWarningFired = true;
+          eventTarget.dispatchEvent(
+            new AgentCheckpointSizeWarningEvent(
+              resolvedWorkflowId,
+              resolvedAgentId,
+              sizeBytes,
+              turnIndex,
+            ),
+          );
+        }
+      }
       break;
     }
 
@@ -668,7 +690,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
           resolvedWorkflowId,
           resolvedAgentId,
           turnIndex,
-          currentModel,
+          originalModel,
           currentModel,
           response.usage.inputTokens,
           response.usage.outputTokens,

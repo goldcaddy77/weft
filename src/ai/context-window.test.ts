@@ -376,6 +376,7 @@ describe('ContextWindowManager', () => {
     it('does not re-run strategy when compacted messages are restored', async () => {
       let strategyCallCount = 0;
       const trackingStrategy: ContextStrategy = {
+        name: 'tracking',
         async *compact(
           messages: Message[],
           _options: CompactOptions,
@@ -446,6 +447,7 @@ describe('ContextWindowManager', () => {
     it('calls custom strategy when token count exceeds threshold', async () => {
       let strategyCalled = false;
       const customStrategy: ContextStrategy = {
+        name: 'custom',
         async *compact(
           messages: Message[],
           _options: CompactOptions,
@@ -483,6 +485,7 @@ describe('ContextWindowManager', () => {
     it('passes correct options to the strategy', async () => {
       let receivedOptions: CompactOptions | null = null;
       const customStrategy: ContextStrategy = {
+        name: 'custom',
         async *compact(
           messages: Message[],
           options: CompactOptions,
@@ -514,6 +517,7 @@ describe('ContextWindowManager', () => {
     it('returns the strategy output as compacted messages', async () => {
       const summaryMessage = createMessage('system', 'Summary of prior conversation.');
       const customStrategy: ContextStrategy = {
+        name: 'custom',
         async *compact(
           _messages: Message[],
           _options: CompactOptions,

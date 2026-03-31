@@ -41,6 +41,7 @@ export function createSummarizeStrategy(options: SummarizeStrategyOptions): Cont
   const { provider, keepRecent } = options;
 
   return {
+    name: 'summarize',
     async *compact(
       messages: Message[],
       _compactOptions: CompactOptions,

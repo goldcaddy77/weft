@@ -104,8 +104,8 @@ export class ProviderHealthTracker {
 
     // Half-open: a single failure reopens the circuit.
     if (state.circuit === 'half-open') {
-      this.#transition(provider, state, 'open');
       state.openedAt = this.#now();
+      this.#transition(provider, state, 'open');
       state.entries = [];
       return;
     }
@@ -196,8 +196,10 @@ export class ProviderHealthTracker {
     const errorRate = failures / windowEntries.length;
 
     if (errorRate > this.#options.errorThreshold) {
-      this.#transition(provider, state, 'open');
+      // Set openedAt before transition so getErrorRate() inside #transition
+      // sees the fresh timestamp and doesn't re-transition to half-open.
       state.openedAt = this.#now();
+      this.#transition(provider, state, 'open');
     }
   }
 

@@ -440,6 +440,7 @@ describe('J3: Context strategy + model router on agent definition', () => {
     let strategyUsed = false;
 
     const strategy: ContextStrategy = {
+      name: 'test',
       async *compact(messages) {
         strategyUsed = true;
         yield messages;

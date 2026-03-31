@@ -42,6 +42,7 @@ export function createRAGStrategy(options: RAGStrategyOptions): ContextStrategy 
   const { vectorStore, topK, keepRecent } = options;
 
   return {
+    name: 'rag',
     async *compact(
       messages: Message[],
       _compactOptions: CompactOptions,
