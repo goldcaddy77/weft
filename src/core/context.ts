@@ -790,7 +790,20 @@ export class Context implements WorkflowContext {
     const step = this.#stepIndex++;
 
     if (this.#accumulatedResults.has(step)) {
+      if (this.#explainMode) {
+        console.log(
+          `[weft] ctx.agent(model="${options.model}") → Returning cached result from step ${step}`,
+        );
+      }
       return this.#accumulatedResults.get(step);
+    }
+
+    if (this.#explainMode) {
+      const toolCount = options.tools?.length ?? 0;
+      const maxTurns = options.maxTurns ?? 'default';
+      console.log(`[weft] ctx.agent(model="${options.model}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Starting agent loop with ${toolCount} tool(s), maxTurns=${maxTurns}`);
     }
 
     const operationId = crypto.randomUUID();

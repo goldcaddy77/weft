@@ -902,6 +902,195 @@ describe('Context', () => {
 
       expect(consoleSpy).not.toHaveBeenCalled();
     });
+
+    it('logs agent operation details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const mockProvider: LLMProvider = {
+        name: 'mock',
+        chat: async () => ({
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          model: 'test',
+          stopReason: 'end_turn',
+        }),
+        stream: async () => new ReadableStream(),
+        countTokens: async () => 0,
+      };
+
+      const generator = context.agent({
+        model: 'gpt-4',
+        prompt: 'test prompt',
+        provider: mockProvider,
+        tools: [
+          {
+            definition: { name: 'tool_a', description: 'A', inputSchema: { type: 'object' } },
+            execute: async () => 'ok',
+          },
+        ],
+        maxTurns: 5,
+      });
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.agent');
+      expect(calls).toContain('gpt-4');
+      expect(calls).toContain('1 tool(s)');
+      expect(calls).toContain('maxTurns=5');
+    });
+
+    it('logs cached result for agent when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext({
+        accumulatedResults: new Map([[0, 'cached-agent-result']]),
+      });
+      context.explain(true);
+
+      const mockProvider: LLMProvider = {
+        name: 'mock',
+        chat: async () => ({
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          model: 'test',
+          stopReason: 'end_turn',
+        }),
+        stream: async () => new ReadableStream(),
+        countTokens: async () => 0,
+      };
+
+      const generator = context.agent({
+        model: 'gpt-4',
+        prompt: 'test prompt',
+        provider: mockProvider,
+      });
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('cached-agent-result');
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('Returning cached result');
+    });
+
+    it('logs offload details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.offload('report-data', async () => ({ large: 'dataset' }));
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.offload');
+      expect(calls).toContain('report-data');
+    });
+
+    it('logs load details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const ref: OffloadReference = {
+        key: 'report-data',
+        workflowId: 'wf-test',
+        sizeBytes: 1024,
+      };
+      const generator = context.load(ref);
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.load');
+      expect(calls).toContain('report-data');
+    });
+
+    it('logs archive details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.archive('snapshot', { key: 'value' });
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.archive');
+      expect(calls).toContain('snapshot');
+    });
+
+    it('logs runAll details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const branches = {
+        fetch: [taskA] as [Function, ...unknown[]],
+        compute: [taskB] as [Function, ...unknown[]],
+      };
+      const generator = context.runAll(branches);
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.runAll');
+      expect(calls).toContain('fetch');
+      expect(calls).toContain('compute');
+      expect(calls).toContain('2 named branches');
+    });
+
+    it('logs startChild details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.startChild('payment-process', { amount: 100 });
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.startChild');
+      expect(calls).toContain('payment-process');
+    });
+
+    it('logs cached result for startChild when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext({
+        accumulatedResults: new Map([[0, 'cached-child-result']]),
+      });
+      context.explain(true);
+
+      const generator = context.startChild('payment-process', { amount: 100 });
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('cached-child-result');
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('Returning cached result');
+    });
+
+    it('logs cached result for ctx.run when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext({
+        accumulatedResults: new Map([[0, 'cached-run-result']]),
+      });
+      context.explain(true);
+
+      const generator = context.run(greet, 'Alice');
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('cached-run-result');
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('Returning cached result');
+    });
   });
 
   describe('callerStack', () => {

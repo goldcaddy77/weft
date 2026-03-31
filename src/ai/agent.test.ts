@@ -1268,6 +1268,124 @@ describe('executeAgentLoop', () => {
     expect(result.totalCost).toBe(0);
   });
 
+  it('does not cache tool results with different input arguments', async () => {
+    let executeCount = 0;
+
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'abc' } }]),
+      createToolCallResponse([{ id: 'call-2', name: 'lookup', input: { key: 'xyz' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async (input: unknown) => {
+        executeCount++;
+        const typedInput = input as { key: string };
+        return { value: typedInput.key };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      { model: 'test-model', provider, tools: [lookupTool] },
+      'Lookup abc then xyz',
+    );
+
+    expect(result.content).toBe('Done');
+    expect(executeCount).toBe(2);
+  });
+
+  it('re-executes tool after cache TTL expires', async () => {
+    let executeCount = 0;
+    const originalDateNow = Date.now;
+
+    let mockTime = 1000;
+    Date.now = () => mockTime;
+
+    try {
+      const provider = createMockProvider([
+        createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'abc' } }]),
+        createToolCallResponse([{ id: 'call-2', name: 'lookup', input: { key: 'abc' } }]),
+        createChatResponse('Done'),
+      ]);
+
+      const lookupTool: AgentTool = {
+        definition: {
+          name: 'lookup',
+          description: 'Lookup a key',
+          inputSchema: { type: 'object' },
+        },
+        execute: async () => {
+          executeCount++;
+          return { value: 42 };
+        },
+      };
+
+      // Use a very short TTL (100ms)
+      // First call: time=1000, cached at time=1000
+      // Advance time past TTL before second call
+      const originalChat = provider.chat.bind(provider);
+      let chatCallCount = 0;
+      provider.chat = async function (messages, options) {
+        chatCallCount++;
+        if (chatCallCount === 2) {
+          // Advance time past TTL before second tool execution
+          mockTime = 2000;
+        }
+        return originalChat(messages, options);
+      };
+
+      const result = await executeAgentLoop(
+        { model: 'test-model', provider, tools: [lookupTool], toolCacheTTL: 100 },
+        'Lookup abc twice',
+      );
+
+      expect(result.content).toBe('Done');
+      // Both calls should execute because TTL expired
+      expect(executeCount).toBe(2);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  it('does not cache failed tool executions', async () => {
+    let executeCount = 0;
+
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'flaky', input: { key: 'abc' } }]),
+      createToolCallResponse([{ id: 'call-2', name: 'flaky', input: { key: 'abc' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const flakyTool: AgentTool = {
+      definition: {
+        name: 'flaky',
+        description: 'A flaky tool',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => {
+        executeCount++;
+        if (executeCount === 1) {
+          throw new Error('Transient failure');
+        }
+        return { value: 'success' };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      { model: 'test-model', provider, tools: [flakyTool] },
+      'Try flaky tool twice',
+    );
+
+    expect(result.content).toBe('Done');
+    // Both calls should execute because the first one failed and was not cached
+    expect(executeCount).toBe(2);
+  });
+
   // ---------------------------------------------------------------------------
   // D1: Per-turn model selection — routing context correctness
   // ---------------------------------------------------------------------------

@@ -1764,6 +1764,69 @@ describe('Engine', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // 1D+: Clean stack traces — user call site appears prominently
+  // ---------------------------------------------------------------------------
+
+  it('activity error stack includes both original error and workflow call site sections', async () => {
+    const engine = new Engine();
+    let capturedError: Error | undefined;
+
+    const brokenActivity = async () => {
+      throw new Error('network timeout');
+    };
+
+    engine.register('clean-stack-workflow', async function* (ctx: WorkflowContext) {
+      try {
+        yield* (ctx as Context).run(brokenActivity);
+      } catch (error) {
+        capturedError = error as Error;
+        throw error;
+      }
+      return 'unreachable';
+    });
+
+    const handle = await engine.start('clean-stack-workflow', null);
+    await handle.result().catch(() => {});
+
+    expect(capturedError).toBeDefined();
+    expect(capturedError!.message).toBe('network timeout');
+    // The stack should have the original error section
+    expect(capturedError!.stack).toContain('network timeout');
+    // And the workflow call site separator
+    expect(capturedError!.stack).toContain('--- workflow call site ---');
+    // The call site section should reference the context module (the yield* site)
+    expect(capturedError!.stack).toContain('context');
+    engine[Symbol.dispose]();
+  });
+
+  it('child workflow error stack includes workflow call site when child fails', async () => {
+    const engine = new Engine();
+    let capturedError: Error | undefined;
+
+    engine.register('failing-child', async function* () {
+      throw new Error('child exploded');
+    });
+
+    engine.register('parent-workflow', async function* (ctx: WorkflowContext) {
+      try {
+        yield* (ctx as Context).startChild('failing-child', null);
+      } catch (error) {
+        capturedError = error as Error;
+        throw error;
+      }
+      return 'unreachable';
+    });
+
+    const handle = await engine.start('parent-workflow', null);
+    await handle.result().catch(() => {});
+
+    expect(capturedError).toBeDefined();
+    expect(capturedError!.message).toContain('child exploded');
+    expect(capturedError!.stack).toContain('--- workflow call site ---');
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
   // engine.get() — retrieve workflow state
   // ---------------------------------------------------------------------------
 
