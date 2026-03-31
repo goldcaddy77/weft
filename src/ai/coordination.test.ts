@@ -4,7 +4,7 @@ import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message } from './providers/types';
 
 import { debate, handoff, summarizeConversation, supervise } from './coordination';
-import type { AgentDefinition } from './declaration';
+import { defineAgent, type AgentDefinition } from './declaration';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,11 +38,11 @@ function createChatResponse(content: string, overrides?: Partial<ChatResponse>):
 }
 
 function createAgentDefinition(overrides?: Partial<AgentDefinition>): AgentDefinition {
-  return {
+  return defineAgent({
     name: 'test-agent',
     model: 'test-model',
     ...overrides,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------

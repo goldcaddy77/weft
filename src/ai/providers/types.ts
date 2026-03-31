@@ -45,6 +45,6 @@ export interface ChatResponse {
   usage: TokenUsage;
   model: string;
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';
-  /** Reasoning/thinking content from extended thinking models (e.g., Claude thinking blocks). */
-  reasoningContent?: string;
+  /** Reasoning/thinking text extracted from provider-specific thinking blocks. */
+  reasoningTrace?: string | undefined;
 }

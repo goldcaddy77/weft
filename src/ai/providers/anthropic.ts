@@ -1,6 +1,8 @@
 import type { ChatOptions, LLMProvider } from './interface';
 import type { ChatResponse, Message, StreamChunk, ToolCall, ToolDefinition } from './types';
 
+import { estimateTokens } from '../token-counting.ts';
+
 export interface AnthropicProviderOptions {
   apiKey: string;
   baseUrl?: string;
@@ -146,8 +148,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async countTokens(messages: Message[]): Promise<number> {
-    const totalCharacters = messages.reduce((sum, message) => sum + message.content.length, 0);
-    return Math.floor(totalCharacters / 4);
+    return estimateTokens(messages);
   }
 
   #buildRequestBody(messages: Message[], options: ChatOptions): Record<string, unknown> {

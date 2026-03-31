@@ -13,14 +13,24 @@ import { parseArgs } from 'node:util';
 
 import { Engine } from './core/engine.ts';
 import { serve } from './server/index.ts';
-import { BunSQLiteStorage } from './storage/bun-sql.ts';
+import type { Storage } from './storage/interface.ts';
 
 // ---------------------------------------------------------------------------
 // Subcommand types
 // ---------------------------------------------------------------------------
 
+/** Supported storage backend identifiers for the `--storage` flag. */
+export type StorageBackend = 'sqlite' | 'lmdb' | 'memory';
+
 export type CliCommand =
-  | { command: 'serve'; port: string; database: string; help: boolean }
+  | {
+      command: 'serve';
+      port: string;
+      database: string;
+      storage: StorageBackend;
+      ui: boolean;
+      help: boolean;
+    }
   | { command: 'doctor'; database: string; help: boolean; json: boolean }
   | {
       command: 'version:check';
@@ -35,6 +45,8 @@ export type CliCommand =
 // ---------------------------------------------------------------------------
 
 const KNOWN_SUBCOMMANDS = new Set(['doctor', 'version:check']);
+
+const VALID_STORAGE_BACKENDS = new Set<string>(['sqlite', 'lmdb', 'memory']);
 
 // ---------------------------------------------------------------------------
 // Argument parsing (exported for testing)
@@ -52,9 +64,11 @@ export function parseCliArguments(args: string[]): CliCommand {
       if (
         arg === '-p' ||
         arg === '-d' ||
+        arg === '-s' ||
         arg === '-w' ||
         arg === '--port' ||
         arg === '--database' ||
+        arg === '--storage' ||
         arg === '--workflows'
       ) {
         i++;
@@ -86,22 +100,41 @@ export function parseCliArguments(args: string[]): CliCommand {
   return parseServeArguments(remainingArgs);
 }
 
+/** Validates that a string is a known storage backend identifier. */
+function isValidStorageBackend(value: string): value is StorageBackend {
+  return VALID_STORAGE_BACKENDS.has(value);
+}
+
 function parseServeArguments(args: string[]): CliCommand {
   const { values } = parseArgs({
     args,
     options: {
       port: { type: 'string', short: 'p', default: '7233' },
       database: { type: 'string', short: 'd', default: './weft.db' },
+      storage: { type: 'string', short: 's', default: 'sqlite' },
+      ui: { type: 'boolean', default: true },
       help: { type: 'boolean', short: 'h', default: false },
     },
     strict: true,
     allowPositionals: true,
+    allowNegative: true,
   });
+
+  const storageValue = values.storage ?? 'sqlite';
+
+  if (!isValidStorageBackend(storageValue)) {
+    console.error(
+      `Error: Invalid storage backend '${storageValue}'. Must be one of: sqlite, lmdb, memory`,
+    );
+    process.exit(1);
+  }
 
   return {
     command: 'serve',
     port: values.port ?? '7233',
     database: values.database ?? './weft.db',
+    storage: storageValue,
+    ui: values.ui ?? true,
     help: values.help ?? false,
   };
 }
@@ -163,9 +196,11 @@ Commands:
   version:check   Check workflow version compatibility
 
 Serve Options:
-  -p, --port <port>       Server port (default: 7233)
-  -d, --database <path>   Database file path (default: ./weft.db)
-  -h, --help              Show this help message
+  -p, --port <port>           Server port (default: 7233)
+  -d, --database <path>       Database file path (default: ./weft.db)
+  -s, --storage <backend>     Storage backend: sqlite, lmdb, memory (default: sqlite)
+      --no-ui                 Disable the dashboard UI
+  -h, --help                  Show this help message
 `;
 
 export const DOCTOR_HELP_TEXT = `
@@ -207,6 +242,7 @@ export async function executeDoctor(options: {
 }): Promise<CommandOutput> {
   const { collectDiagnostics } = await import('./diagnostics/doctor.ts');
   const { formatDiagnosticReport } = await import('./diagnostics/format.ts');
+  const { BunSQLiteStorage } = await import('./storage/bun-sql.ts');
 
   const storage = new BunSQLiteStorage(options.database);
 
@@ -234,6 +270,7 @@ export async function executeVersionCheck(options: {
 
   const { runVersionCheck } = await import('./diagnostics/version-check.ts');
   const { formatVersionCheckReport } = await import('./diagnostics/format.ts');
+  const { BunSQLiteStorage } = await import('./storage/bun-sql.ts');
 
   const storage = new BunSQLiteStorage(options.database);
 
@@ -246,6 +283,34 @@ export async function executeVersionCheck(options: {
     return { stdout, exitCode: 0 };
   } finally {
     storage[Symbol.dispose]();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Storage factory (exported for testing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a storage instance based on the selected backend and database path.
+ *
+ * Uses dynamic imports so that native addons (LMDB) are only loaded when
+ * actually requested — this avoids errors in compiled binaries where the
+ * native binding may not be bundled.
+ */
+export async function createStorage(backend: StorageBackend, database: string): Promise<Storage> {
+  switch (backend) {
+    case 'sqlite': {
+      const { BunSQLiteStorage } = await import('./storage/bun-sql.ts');
+      return new BunSQLiteStorage(database);
+    }
+    case 'lmdb': {
+      const { LMDBStorage } = await import('./storage/lmdb.ts');
+      return new LMDBStorage(database);
+    }
+    case 'memory': {
+      const { MemoryStorage } = await import('./storage/memory.ts');
+      return new MemoryStorage();
+    }
   }
 }
 
@@ -264,16 +329,18 @@ if (isDirectExecution) {
       process.exit(0);
     }
 
-    const storage = new BunSQLiteStorage(parsed.database);
+    const storage = await createStorage(parsed.storage, parsed.database);
     const engine = new Engine({ storage });
 
-    // Load the dashboard HTML if available
+    // Load the dashboard HTML if available and enabled
     let dashboard: unknown = null;
-    try {
-      const dashboardModule = await import('./dashboard/index.html' as string);
-      dashboard = dashboardModule.default;
-    } catch {
-      // Dashboard not built — serve without it
+    if (parsed.ui) {
+      try {
+        const dashboardModule = await import('./dashboard/index.html' as string);
+        dashboard = dashboardModule.default;
+      } catch {
+        // Dashboard not built — serve without it
+      }
     }
 
     const server = serve({
@@ -286,6 +353,7 @@ if (isDirectExecution) {
     if (dashboard !== null) {
       console.log(`Dashboard: ${server.url}/ui`);
     }
+    console.log(`Storage: ${parsed.storage}`);
     console.log(`Database: ${parsed.database}`);
 
     process.on('SIGINT', () => {

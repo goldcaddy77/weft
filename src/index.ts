@@ -182,11 +182,8 @@ export type {
   AgentOptions,
   AgentResult,
   AgentTool,
-  ToolCallInfo,
-  ToolReturnInfo,
-  TurnInfo,
-  TurnResult,
-  TurnSummary,
+  MCPToolSource,
+  TurnCostEntry,
 } from './ai/agent';
 export { BudgetExceededError, BudgetTracker } from './ai/budget';
 export type { BudgetOptions, BudgetState, ModelPricing } from './ai/budget';
@@ -196,7 +193,7 @@ export { slidingWindowStrategy } from './ai/context-strategies/sliding-window';
 export { ContextWindowManager, composeStrategies, noopStrategy } from './ai/context-window';
 export type { ContextStrategy } from './ai/context-window';
 export { debate, handoff, supervise } from './ai/coordination';
-export { defineAgent } from './ai/declaration';
+export { defineAgent, isAgentDefinition } from './ai/declaration';
 export type { AgentDefinition } from './ai/declaration';
 export type { AgentHooks } from './ai/hooks';
 export { ReviewCoordinator, ReviewTimeoutError } from './ai/human-review';
@@ -210,6 +207,7 @@ export {
 export type { ModelRouter, ModelSelection, RoutingContext } from './ai/model-router';
 export { ProviderHealthTracker } from './ai/provider-health';
 export { ReconnectionBuffer, StreamMultiplexer, TokenBridge } from './ai/streaming';
+export type { AgentRegistrationOptions } from './core/engine';
 
 // AI Events
 export {
@@ -243,6 +241,7 @@ export { buildAuthHeaders } from './ai/mcp/authentication';
 export type { MCPAuthConfig } from './ai/mcp/authentication';
 export { MCPClient, MCPServerUnavailableError, MCPToolTimeoutError } from './ai/mcp/client';
 export { ToolNameConflictError, ToolRegistry } from './ai/mcp/registry';
+export type { RegistryTool } from './ai/mcp/registry';
 export { ToolSchemaValidationError, validateSchema } from './ai/mcp/schema-validator';
 
 // Observability

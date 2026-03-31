@@ -49,6 +49,7 @@
   ],
   "scripts": {
     "build": "bun run scripts/build.ts",
+    "build:binary": "bun run scripts/build-binary.ts",
     "clean": "rm -rf dist coverage tsconfig.tsbuildinfo",
     "dev": "bun --watch run src/index.ts",
     "dev:dashboard": "bun --hot src/dashboard/development-server.ts",

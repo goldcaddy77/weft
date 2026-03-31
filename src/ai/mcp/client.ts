@@ -20,14 +20,45 @@ export class MCPClient {
 
   /** Discover available tools from the MCP server. */
   async discoverTools(): Promise<ToolDefinition[]> {
-    const response = await this.#fetch('/tools', { method: 'GET' });
+    const response = await this.#fetchWithTimeout('/tools', { method: 'GET' });
 
     if (!response.ok) {
       throw new MCPServerUnavailableError(this.#options.serverUrl);
     }
 
-    const body = (await response.json()) as { tools: ToolDefinition[] };
-    return body.tools;
+    const body = (await response.json()) as { tools: unknown[] };
+    if (!Array.isArray(body.tools)) {
+      throw new MCPServerUnavailableError(this.#options.serverUrl);
+    }
+
+    const valid: ToolDefinition[] = [];
+    const malformed: unknown[] = [];
+
+    for (const entry of body.tools) {
+      if (isToolDefinition(entry)) {
+        valid.push(entry);
+      } else {
+        malformed.push(entry);
+      }
+    }
+
+    if (malformed.length > 0) {
+      const names = malformed.map((entry) => {
+        const name = (entry as Record<string, unknown> | null)?.['name'];
+        return typeof name === 'string' ? name : '<unknown>';
+      });
+      console.warn(
+        `[MCP] ${malformed.length} malformed tool(s) filtered from ${this.#options.serverUrl}: ${names.join(', ')}`,
+      );
+    }
+
+    if (valid.length === 0 && body.tools.length > 0) {
+      throw new Error(
+        `All ${body.tools.length} tool(s) from ${this.#options.serverUrl} failed structural validation. Check that each tool has 'name' (string), 'description' (string), and 'inputSchema' (object).`,
+      );
+    }
+
+    return valid;
   }
 
   /** Invoke a tool on the MCP server. */
@@ -70,10 +101,22 @@ export class MCPClient {
   /** Health check the MCP server. */
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.#fetch('/health', { method: 'GET' });
+      const response = await this.#fetchWithTimeout('/health', { method: 'GET' });
       return response.ok;
     } catch {
       return false;
+    }
+  }
+
+  /** Fetch with the configured timeout applied via AbortController. */
+  async #fetchWithTimeout(path: string, init: RequestInit): Promise<Response> {
+    const timeout = this.#options.timeout ?? DEFAULT_TIMEOUT;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      return await this.#fetch(path, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -90,6 +133,19 @@ export class MCPClient {
       },
     });
   }
+}
+
+/** Structural validation for MCP tool definitions received from remote servers. */
+function isToolDefinition(value: unknown): value is ToolDefinition {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Record<string, unknown>)['name'] === 'string' &&
+    typeof (value as Record<string, unknown>)['description'] === 'string' &&
+    typeof (value as Record<string, unknown>)['inputSchema'] === 'object' &&
+    (value as Record<string, unknown>)['inputSchema'] !== null &&
+    !Array.isArray((value as Record<string, unknown>)['inputSchema'])
+  );
 }
 
 export class MCPServerUnavailableError extends Error {

@@ -246,6 +246,20 @@ export class DevelopmentWarningEvent extends Event {
   }
 }
 
+export class CleanupWarningEvent extends Event {
+  static readonly type = 'cleanup:warning' as const;
+  readonly source: string;
+  readonly error: Error;
+  readonly workflowId: string | undefined;
+
+  constructor(source: string, error: Error, workflowId?: string) {
+    super(CleanupWarningEvent.type);
+    this.source = source;
+    this.error = error;
+    this.workflowId = workflowId;
+  }
+}
+
 export type WeftEventMap = WeftAgentEventMap & {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
@@ -264,6 +278,7 @@ export type WeftEventMap = WeftAgentEventMap & {
   'update:completed': UpdateCompletedEvent;
   'checkpoint:size-warning': CheckpointSizeWarningEvent;
   'development:warning': DevelopmentWarningEvent;
+  'cleanup:warning': CleanupWarningEvent;
 };
 
 export interface TypedEventTarget<TEventMap extends Record<string, Event>> {

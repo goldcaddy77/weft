@@ -263,7 +263,7 @@
             </div>
 
             {#if workflow.executionDeadline !== undefined}
-              <ExecutionDeadline deadline={workflow.executionDeadline} />
+              <ExecutionDeadline deadline={workflow.executionDeadline} createdAt={workflow.createdAt} />
             {/if}
           </div>
         </Card>

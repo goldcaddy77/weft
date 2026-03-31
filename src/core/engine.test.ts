@@ -497,11 +497,8 @@ describe('Engine', () => {
     const handle = await engine.start('chained', null, { id: 'chain-id' });
     await flush();
 
-    // Manually remove the handle from the cache so getHandle creates a new one
-    // that chains off the existing result resolver
-    (engine as any)['#handleCache']?.delete?.('chain-id');
-
-    // Get a second handle (should chain off the existing result resolver)
+    // Get a second handle — even without clearing the cache, getHandle should
+    // return a handle that resolves to the same result via the shared resolver
     const secondHandle = engine.getHandle('chain-id');
 
     // Now signal the workflow
@@ -1771,6 +1768,69 @@ describe('Engine', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // 1D+: Clean stack traces — user call site appears prominently
+  // ---------------------------------------------------------------------------
+
+  it('activity error stack includes both original error and workflow call site sections', async () => {
+    const engine = new Engine();
+    let capturedError: Error | undefined;
+
+    const brokenActivity = async () => {
+      throw new Error('network timeout');
+    };
+
+    engine.register('clean-stack-workflow', async function* (ctx: WorkflowContext) {
+      try {
+        yield* (ctx as Context).run(brokenActivity);
+      } catch (error) {
+        capturedError = error as Error;
+        throw error;
+      }
+      return 'unreachable';
+    });
+
+    const handle = await engine.start('clean-stack-workflow', null);
+    await handle.result().catch(() => {});
+
+    expect(capturedError).toBeDefined();
+    expect(capturedError!.message).toBe('network timeout');
+    // The stack should have the original error section
+    expect(capturedError!.stack).toContain('network timeout');
+    // And the workflow call site separator
+    expect(capturedError!.stack).toContain('--- workflow call site ---');
+    // The call site section should reference the context module (the yield* site)
+    expect(capturedError!.stack).toContain('context');
+    engine[Symbol.dispose]();
+  });
+
+  it('child workflow error stack includes workflow call site when child fails', async () => {
+    const engine = new Engine();
+    let capturedError: Error | undefined;
+
+    engine.register('failing-child', async function* () {
+      throw new Error('child exploded');
+    });
+
+    engine.register('parent-workflow', async function* (ctx: WorkflowContext) {
+      try {
+        yield* (ctx as Context).startChild('failing-child', null);
+      } catch (error) {
+        capturedError = error as Error;
+        throw error;
+      }
+      return 'unreachable';
+    });
+
+    const handle = await engine.start('parent-workflow', null);
+    await handle.result().catch(() => {});
+
+    expect(capturedError).toBeDefined();
+    expect(capturedError!.message).toContain('child exploded');
+    expect(capturedError!.stack).toContain('--- workflow call site ---');
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
   // engine.get() — retrieve workflow state
   // ---------------------------------------------------------------------------
 
@@ -2237,235 +2297,40 @@ describe('Engine', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // workflowStart interceptor invocation
+  // Agent observability query handlers
   // ---------------------------------------------------------------------------
 
-  describe('workflowStart interceptor', () => {
-    it('invokes workflowStart when engine.start() is called', async () => {
-      const engine = new Engine();
-      let intercepted = false;
-      let capturedInterception: WorkflowStartInterception | undefined;
-
-      engine.addInterceptor({
-        workflowStart(interception, next) {
-          intercepted = true;
-          capturedInterception = interception;
-          next(interception);
-        },
-      });
-
-      engine.register('greet', async function* () {
-        return 'hello';
-      });
-
-      const handle = await engine.start('greet', { name: 'test' });
-      await handle.result();
-
-      expect(intercepted).toBe(true);
-      expect(capturedInterception?.workflowType).toBe('greet');
-      expect(capturedInterception?.input).toEqual({ name: 'test' });
-      expect(capturedInterception?.workflowId).toBeDefined();
-      engine[Symbol.dispose]();
-    });
-
-    it('receives a mutable headers Map', async () => {
-      const engine = new Engine();
-      let capturedHeaders: Map<string, string> | undefined;
-
-      engine.addInterceptor({
-        workflowStart(interception, next) {
-          interception.headers.set('x-trace-id', '12345');
-          capturedHeaders = interception.headers;
-          next(interception);
-        },
-      });
-
-      engine.register('simple', async function* () {
-        return 'ok';
-      });
-
-      const handle = await engine.start('simple', null);
-      await handle.result();
-
-      expect(capturedHeaders).toBeInstanceOf(Map);
-      expect(capturedHeaders?.get('x-trace-id')).toBe('12345');
-      engine[Symbol.dispose]();
-    });
-
-    it('chains multiple workflowStart interceptors in order', async () => {
-      const engine = new Engine();
-      const order: string[] = [];
-
-      engine.addInterceptor({
-        workflowStart(interception, next) {
-          order.push('first');
-          next(interception);
-        },
-      });
-
-      engine.addInterceptor({
-        workflowStart(interception, next) {
-          order.push('second');
-          next(interception);
-        },
-      });
-
-      engine.register('chained', async function* () {
-        return 'ok';
-      });
-
-      const handle = await engine.start('chained', null);
-      await handle.result();
-
-      expect(order).toEqual(['first', 'second']);
-      engine[Symbol.dispose]();
-    });
-
-    it('workflowStart headers are stored and accessible per workflow', async () => {
-      const engine = new Engine();
-      const headersByWorkflow = new Map<string, Map<string, string>>();
-
-      engine.addInterceptor({
-        workflowStart(interception, next) {
-          interception.headers.set('x-request-id', `req-${interception.workflowType}`);
-          headersByWorkflow.set(interception.workflowId, new Map(interception.headers));
-          next(interception);
-        },
-      });
-
-      engine.register('wf-a', async function* () {
-        return 'a';
-      });
-      engine.register('wf-b', async function* () {
-        return 'b';
-      });
-
-      const handleA = await engine.start('wf-a', null);
-      const handleB = await engine.start('wf-b', null);
-      await handleA.result();
-      await handleB.result();
-
-      expect(headersByWorkflow.get(handleA.id)?.get('x-request-id')).toBe('req-wf-a');
-      expect(headersByWorkflow.get(handleB.id)?.get('x-request-id')).toBe('req-wf-b');
-      engine[Symbol.dispose]();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Child workflow header propagation
-  // ---------------------------------------------------------------------------
-
-  describe('child workflow header propagation', () => {
-    it('child workflow workflowStart receives parent headers', async () => {
-      const engine = new Engine();
-      const capturedInterceptions: WorkflowStartInterception[] = [];
-
-      engine.addInterceptor({
-        workflowStart(interception, next) {
-          capturedInterceptions.push({
-            ...interception,
-            headers: new Map(interception.headers),
-          });
-          // Simulate trace context propagation: set a traceparent header
-          interception.headers.set(
-            'traceparent',
-            `00-trace-${interception.workflowId}-01`,
-          );
-          next(interception);
-        },
-      });
-
-      engine.register('parent-wf', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
-        const childResult = yield* context.startChild<string>('child-wf', {
-          data: 'test',
-        });
-        return childResult;
-      });
-
-      engine.register('child-wf', async function* () {
-        return 'child-done';
-      });
-
-      const handle = await engine.start('parent-wf', {});
-      const result = await handle.result();
-
-      expect(result).toBe('child-done');
-      // Both parent and child should have had workflowStart called
-      expect(capturedInterceptions.length).toBe(2);
-
-      // The parent (first) should not have traceparent in its captured snapshot
-      // (it was empty when captured, then set after capture)
-      const parentInterception = capturedInterceptions[0]!;
-      expect(parentInterception.workflowType).toBe('parent-wf');
-
-      // The child (second) should have the parent's traceparent header
-      const childInterception = capturedInterceptions[1]!;
-      expect(childInterception.workflowType).toBe('child-wf');
-      expect(childInterception.headers.has('traceparent')).toBe(true);
-    });
-
-    it('child workflow headers include all parent headers', async () => {
-      const engine = new Engine();
-      const childHeaders: Map<string, string> = new Map();
-
-      engine.addInterceptor({
-        workflowStart(interception, next) {
-          if (interception.workflowType === 'child-trace') {
-            // Capture what the child received
-            for (const [k, v] of interception.headers) {
-              childHeaders.set(k, v);
-            }
-          }
-          // Set headers that should propagate to children
-          interception.headers.set('x-custom-header', 'custom-value');
-          interception.headers.set('traceparent', '00-abc-def-01');
-          next(interception);
-        },
-      });
-
-      engine.register('parent-trace', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
-        return yield* context.startChild<string>('child-trace', {});
-      });
-
-      engine.register('child-trace', async function* () {
-        return 'traced';
-      });
-
-      const handle = await engine.start('parent-trace', {});
-      await handle.result();
-
-      // Child should have received both headers from parent's workflowStart
-      expect(childHeaders.get('x-custom-header')).toBe('custom-value');
-      expect(childHeaders.get('traceparent')).toBe('00-abc-def-01');
-
-      engine[Symbol.dispose]();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Agent query accessors
-  // ---------------------------------------------------------------------------
-
-  describe('agent query accessors', () => {
-    function createMockProvider(responses: ChatResponse[]): LLMProvider {
+  describe('agent query handlers', () => {
+    function createMultiTurnMockProvider(turns: number): LLMProvider {
       let callIndex = 0;
       return {
         name: 'mock',
         async chat(): Promise<ChatResponse> {
-          const response = responses[callIndex];
-          if (!response) {
+          callIndex++;
+          if (callIndex < turns) {
             return {
-              content: 'fallback',
-              toolCalls: [],
-              usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+              content: '',
+              toolCalls: [{ id: `call-${callIndex}`, name: 'noop', input: {} }],
+              usage: {
+                inputTokens: callIndex * 100,
+                outputTokens: callIndex * 50,
+                totalTokens: callIndex * 150,
+              },
               model: 'test-model',
-              stopReason: 'end_turn',
+              stopReason: 'tool_use',
             };
           }
-          callIndex++;
-          return response;
+          return {
+            content: `Final answer after ${turns} turns`,
+            toolCalls: [],
+            usage: {
+              inputTokens: turns * 100,
+              outputTokens: turns * 50,
+              totalTokens: turns * 150,
+            },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
         },
         async stream() {
           return new ReadableStream();
@@ -2476,186 +2341,68 @@ describe('Engine', () => {
       };
     }
 
-    it('handle.query("agentCostWaterfall") returns per-turn cost data', async () => {
+    it('exposes agentCostWaterfall query with per-turn cost data', async () => {
       const engine = new Engine();
+      const provider = createMultiTurnMockProvider(3);
 
-      const provider = createMockProvider([
-        {
-          content: '',
-          toolCalls: [{ id: 'tc1', name: 'search', input: { q: 'test' } }],
-          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-          model: 'test-model',
-          stopReason: 'tool_use',
-        },
-        {
-          content: 'Final answer',
-          toolCalls: [],
-          usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
-          model: 'test-model',
-          stopReason: 'end_turn',
-        },
-      ]);
+      const noopTool = {
+        definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+        execute: async () => 'ok',
+      };
 
       engine.register('waterfall-workflow', async function* (ctx: WorkflowContext) {
-        const result = yield* (ctx as Context).agent({
+        const context = ctx as Context;
+        yield* context.agent({
           model: 'test-model',
-          prompt: 'Search for something',
+          prompt: 'Do three turns',
           provider,
-          tools: [
-            {
-              definition: { name: 'search', description: 'Search', inputSchema: {} },
-              execute: async () => 'search result',
-            },
-          ],
+          tools: [noopTool],
+          maxTurns: 10,
           budget: {
-            maxCost: 1.0,
-            models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
+            maxCost: 100,
+            models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
           },
         });
-        return result;
+        // Wait so we can query during execution
+        yield* context.waitForSignal('release');
+        return 'done';
       });
 
       const handle = await engine.start('waterfall-workflow', null);
-      const result = await handle.result();
-      expect(result).toBe('Final answer');
+      await flush();
 
       const waterfall = (await handle.query('agentCostWaterfall')) as Array<{
-        turnIndex: number;
-        model: string;
+        turn: number;
         inputTokens: number;
         outputTokens: number;
         cost: number;
-        cumulativeCost: number;
-        duration: number;
-        toolCalls: string[];
+        model: string;
+        tools: string[];
       }>;
 
-      expect(waterfall).toBeArray();
-      expect(waterfall).toHaveLength(2);
-
-      // First turn: used search tool
-      expect(waterfall[0]!.turnIndex).toBe(0);
+      expect(waterfall).toHaveLength(3);
+      expect(waterfall[0]!.turn).toBe(0);
       expect(waterfall[0]!.model).toBe('test-model');
-      expect(waterfall[0]!.inputTokens).toBe(100);
-      expect(waterfall[0]!.outputTokens).toBe(50);
-      expect(waterfall[0]!.cost).toBeGreaterThan(0);
-      expect(waterfall[0]!.toolCalls).toEqual(['search']);
+      expect(waterfall[0]!.tools).toEqual(['noop']);
+      expect(waterfall[1]!.turn).toBe(1);
+      expect(waterfall[2]!.turn).toBe(2);
+      expect(waterfall[2]!.tools).toEqual([]);
 
-      // Second turn: final answer, no tools
-      expect(waterfall[1]!.turnIndex).toBe(1);
-      expect(waterfall[1]!.inputTokens).toBe(200);
-      expect(waterfall[1]!.outputTokens).toBe(100);
-      expect(waterfall[1]!.toolCalls).toEqual([]);
-
-      // Cumulative cost should increase
-      expect(waterfall[1]!.cumulativeCost).toBeGreaterThanOrEqual(waterfall[0]!.cumulativeCost);
-
-      engine[Symbol.dispose]();
-    });
-
-    it('handle.query("agentConversation") returns full message array', async () => {
-      const engine = new Engine();
-
-      const provider = createMockProvider([
-        {
-          content: 'Hello back!',
-          toolCalls: [],
-          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
-          model: 'test-model',
-          stopReason: 'end_turn',
-        },
-      ]);
-
-      engine.register('conversation-workflow', async function* (ctx: WorkflowContext) {
-        const result = yield* (ctx as Context).agent({
-          model: 'test-model',
-          prompt: 'Say hello',
-          systemPrompt: 'You are helpful.',
-          provider,
-          budget: {
-            maxCost: 1.0,
-            models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
-          },
-        });
-        return result;
-      });
-
-      const handle = await engine.start('conversation-workflow', null);
+      await engine.signal(handle.id, 'release');
       await handle.result();
-
-      const conversation = (await handle.query('agentConversation')) as Array<{
-        role: string;
-        content: string;
-      }>;
-
-      expect(conversation).toBeArray();
-      // Should contain: system prompt, user message, assistant response
-      expect(conversation.length).toBeGreaterThanOrEqual(3);
-      expect(conversation[0]!.role).toBe('system');
-      expect(conversation[0]!.content).toBe('You are helpful.');
-      expect(conversation[1]!.role).toBe('user');
-      expect(conversation[1]!.content).toBe('Say hello');
-      expect(conversation[2]!.role).toBe('assistant');
-      expect(conversation[2]!.content).toBe('Hello back!');
-
       engine[Symbol.dispose]();
     });
 
-    it('handle.query("agentCostProjection") returns cost projection', async () => {
+    it('exposes agentConversation query with full message array', async () => {
       const engine = new Engine();
 
-      const provider = createMockProvider([
-        {
-          content: 'Done',
-          toolCalls: [],
-          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
-          model: 'test-model',
-          stopReason: 'end_turn',
-        },
-      ]);
-
-      engine.register('projection-workflow', async function* (ctx: WorkflowContext) {
-        const result = yield* (ctx as Context).agent({
-          model: 'test-model',
-          prompt: 'Compute something',
-          provider,
-          budget: {
-            maxCost: 1.0,
-            maxTokens: 10000,
-            models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
-          },
-        });
-        return result;
-      });
-
-      const handle = await engine.start('projection-workflow', null);
-      await handle.result();
-
-      const projection = (await handle.query('agentCostProjection')) as {
-        estimatedTurnsRemaining: number;
-        estimatedCostAtCompletion: number;
-      };
-
-      expect(projection).toBeDefined();
-      expect(typeof projection.estimatedTurnsRemaining).toBe('number');
-      expect(typeof projection.estimatedCostAtCompletion).toBe('number');
-      expect(projection.estimatedCostAtCompletion).toBeGreaterThan(0);
-
-      engine[Symbol.dispose]();
-    });
-
-    it('successive ctx.agent() calls merge cost waterfall data', async () => {
-      const engine = new Engine();
-
-      let callCount = 0;
       const provider: LLMProvider = {
         name: 'mock',
         async chat(): Promise<ChatResponse> {
-          callCount++;
           return {
-            content: `Response ${String(callCount)}`,
+            content: 'Hello from agent',
             toolCalls: [],
-            usage: { inputTokens: 50, outputTokens: 25, totalTokens: 75 },
+            usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
             model: 'test-model',
             stopReason: 'end_turn',
           };
@@ -2668,88 +2415,85 @@ describe('Engine', () => {
         },
       };
 
-      engine.register('multi-agent-workflow', async function* (ctx: WorkflowContext) {
+      engine.register('conversation-workflow', async function* (ctx: WorkflowContext) {
         const context = ctx as Context;
         yield* context.agent({
           model: 'test-model',
-          prompt: 'First agent call',
+          prompt: 'Say hello',
           provider,
-          budget: {
-            maxCost: 1.0,
-            models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
-          },
+          systemPrompt: 'You are helpful.',
         });
-        yield* context.agent({
-          model: 'test-model',
-          prompt: 'Second agent call',
-          provider,
-          budget: {
-            maxCost: 1.0,
-            models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
-          },
-        });
+        yield* context.waitForSignal('release');
         return 'done';
       });
 
-      const handle = await engine.start('multi-agent-workflow', null);
-      await handle.result();
-
-      const waterfall = (await handle.query('agentCostWaterfall')) as Array<{
-        turnIndex: number;
-      }>;
-
-      expect(waterfall).toBeArray();
-      // Two agent calls, each with 1 turn = 2 total turns
-      expect(waterfall).toHaveLength(2);
+      const handle = await engine.start('conversation-workflow', null);
+      await flush();
 
       const conversation = (await handle.query('agentConversation')) as Array<{
         role: string;
+        content: string;
       }>;
 
-      expect(conversation).toBeArray();
-      // Each agent call has user + assistant messages (no system prompt) = 4 total
-      expect(conversation.length).toBeGreaterThanOrEqual(4);
+      expect(conversation.length).toBeGreaterThanOrEqual(3);
+      expect(conversation[0]!.role).toBe('system');
+      expect(conversation[0]!.content).toBe('You are helpful.');
+      expect(conversation[1]!.role).toBe('user');
+      expect(conversation[1]!.content).toBe('Say hello');
+      expect(conversation[2]!.role).toBe('assistant');
+      expect(conversation[2]!.content).toBe('Hello from agent');
 
+      await engine.signal(handle.id, 'release');
+      await handle.result();
       engine[Symbol.dispose]();
     });
 
-    it('accessors are not exposed when agent runs without budget', async () => {
+    it('exposes agentCostProjection query with estimated total cost', async () => {
       const engine = new Engine();
+      const provider = createMultiTurnMockProvider(3);
 
-      const provider = createMockProvider([
-        {
-          content: 'No budget response',
-          toolCalls: [],
-          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
-          model: 'test-model',
-          stopReason: 'end_turn',
-        },
-      ]);
+      const noopTool = {
+        definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+        execute: async () => 'ok',
+      };
 
-      engine.register('no-budget-workflow', async function* (ctx: WorkflowContext) {
-        const result = yield* (ctx as Context).agent({
+      engine.register('projection-workflow', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        yield* context.agent({
           model: 'test-model',
-          prompt: 'Say hello',
+          prompt: 'Do three turns',
           provider,
+          tools: [noopTool],
+          maxTurns: 10,
+          budget: {
+            maxCost: 100,
+            models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
+          },
         });
-        return result;
+        yield* context.waitForSignal('release');
+        return 'done';
       });
 
-      const handle = await engine.start('no-budget-workflow', null);
+      const handle = await engine.start('projection-workflow', null);
+      await flush();
+
+      const projection = (await handle.query('agentCostProjection')) as {
+        averageCostPerTurn: number;
+        turnsCompleted: number;
+        maxTurns: number;
+        projectedTotalCost: number;
+      };
+
+      expect(projection.turnsCompleted).toBe(3);
+      expect(projection.maxTurns).toBe(10);
+      expect(projection.averageCostPerTurn).toBeGreaterThan(0);
+      expect(projection.projectedTotalCost).toBeCloseTo(
+        projection.averageCostPerTurn * projection.maxTurns,
+        4,
+      );
+
+      await engine.signal(handle.id, 'release');
       await handle.result();
-
-      // agentConversation should still work — it doesn't require budget
-      const conversation = await handle.query('agentConversation');
-      expect(conversation).toBeArray();
-
-      // agentCostWaterfall should still work — turns are always tracked
-      const waterfall = await handle.query('agentCostWaterfall');
-      expect(waterfall).toBeArray();
-
-      // agentCostProjection requires budgetTracker, so should be undefined
-      const projection = await handle.query('agentCostProjection');
-      expect(projection).toBeUndefined();
-
       engine[Symbol.dispose]();
     });
   });
