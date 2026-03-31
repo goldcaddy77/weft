@@ -7,6 +7,7 @@ import {
   decodeAttributeValue,
   encodeAttributeValue,
   validateAttributeType,
+  validateEncodedValueSize,
 } from './search-attributes.ts';
 
 describe('search-attributes', () => {
@@ -230,28 +231,40 @@ describe('search-attributes', () => {
     });
   });
 
-  describe('encodeAttributeValue size validation', () => {
+  describe('validateEncodedValueSize', () => {
     it('accepts a string value within the size limit', () => {
-      const value = 'a'.repeat(1000);
-      expect(() => encodeAttributeValue(value)).not.toThrow();
+      const encoded = encodeAttributeValue('a'.repeat(1000));
+      expect(() => validateEncodedValueSize(encoded, 'test')).not.toThrow();
     });
 
-    it('rejects a string value exceeding the byte limit', () => {
-      const value = 'a'.repeat(MAX_ENCODED_VALUE_BYTES);
+    it('rejects an encoded value exceeding the byte limit', () => {
+      const encoded = encodeAttributeValue('a'.repeat(MAX_ENCODED_VALUE_BYTES));
       // The encoded form is "s:" + value, so it exceeds the limit
-      expect(() => encodeAttributeValue(value)).toThrow(/exceeds the 1024-byte limit/);
+      expect(() => validateEncodedValueSize(encoded, 'test')).toThrow(
+        /exceeds the 1024-byte limit/,
+      );
     });
 
     it('accounts for multi-byte characters in the size check', () => {
       // Each emoji is 4 bytes in UTF-8. 300 emojis = 1200 bytes payload + 2 bytes prefix > 1024.
-      const value = '\u{1F600}'.repeat(300);
-      expect(() => encodeAttributeValue(value)).toThrow(/exceeds the 1024-byte limit/);
+      const encoded = encodeAttributeValue('\u{1F600}'.repeat(300));
+      expect(() => validateEncodedValueSize(encoded, 'test')).toThrow(
+        /exceeds the 1024-byte limit/,
+      );
     });
 
     it('does not reject short number, boolean, or date values', () => {
-      expect(() => encodeAttributeValue(42)).not.toThrow();
-      expect(() => encodeAttributeValue(true)).not.toThrow();
-      expect(() => encodeAttributeValue(new Date())).not.toThrow();
+      expect(() => validateEncodedValueSize(encodeAttributeValue(42), 'test')).not.toThrow();
+      expect(() => validateEncodedValueSize(encodeAttributeValue(true), 'test')).not.toThrow();
+      expect(() =>
+        validateEncodedValueSize(encodeAttributeValue(new Date()), 'test'),
+      ).not.toThrow();
+    });
+
+    it('does not throw in encodeAttributeValue itself (cleanup path safe)', () => {
+      // Even oversized values should encode without error — validation is separate
+      const oversized = 'a'.repeat(2000);
+      expect(() => encodeAttributeValue(oversized)).not.toThrow();
     });
   });
 

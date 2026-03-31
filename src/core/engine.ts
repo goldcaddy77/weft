@@ -55,6 +55,7 @@ import {
   buildIndexOperations,
   encodeAttributeValue,
   validateAttributeType,
+  validateEncodedValueSize,
 } from './search-attributes.ts';
 import {
   compileStepWorkflow,
@@ -1271,6 +1272,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           }
           validateAttributeType(key, value, schema[key]!);
         }
+      }
+    }
+
+    // Validate encoded value sizes before building index operations.
+    for (const [key, value] of Object.entries(attributes)) {
+      if (Array.isArray(value)) {
+        for (const element of value) {
+          validateEncodedValueSize(encodeAttributeValue(element), key);
+        }
+      } else {
+        validateEncodedValueSize(encodeAttributeValue(value), key);
       }
     }
 

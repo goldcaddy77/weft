@@ -77,15 +77,23 @@ export function encodeAttributeValue(value: SearchAttributeValue): string {
     );
   }
 
+  return encoded;
+}
+
+/**
+ * Validate that an encoded attribute value does not exceed the storage key size limit.
+ * Call this in the attribute-setting path, NOT in the general-purpose encoder — the encoder
+ * is also used to reconstruct old keys for deletion, and throwing there would prevent
+ * cleanup of pre-existing oversized values.
+ */
+export function validateEncodedValueSize(encoded: string, attributeName: string): void {
   const byteLength = new TextEncoder().encode(encoded).byteLength;
   if (byteLength > MAX_ENCODED_VALUE_BYTES) {
     throw new Error(
-      `Encoded search attribute value exceeds the ${MAX_ENCODED_VALUE_BYTES}-byte limit (got ${byteLength} bytes). ` +
-        'Reduce the value size before setting the attribute.',
+      `Encoded search attribute "${attributeName}" exceeds the ${MAX_ENCODED_VALUE_BYTES}-byte limit ` +
+        `(got ${byteLength} bytes). Reduce the value size before setting the attribute.`,
     );
   }
-
-  return encoded;
 }
 
 /** Decode an encoded attribute value back to its original type. */
