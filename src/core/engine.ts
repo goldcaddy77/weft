@@ -2417,9 +2417,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     this.#workflowNestingDepths.delete(workflowId);
     this.#workflowHeaders.delete(workflowId);
-    // Note: #agentQueryData is intentionally NOT deleted here — query
-    // accessors must remain available after workflow completion. Cleanup
-    // happens in [Symbol.dispose] when the engine itself is torn down.
+    // Agent query data is retained after workflow completion so
+    // handle.query() can read it. Evict oldest entries when the map
+    // exceeds 1000 workflows to bound memory growth.
+    if (this.#agentQueryData.size > 1000) {
+      const oldest = this.#agentQueryData.keys().next().value;
+      if (oldest !== undefined) this.#agentQueryData.delete(oldest);
+    }
   }
 
   // -------------------------------------------------------------------------

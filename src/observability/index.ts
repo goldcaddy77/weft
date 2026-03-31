@@ -151,6 +151,8 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   workflow: WorkflowInterceptor;
   activity: ActivityInterceptor;
   metrics: MetricsCollectorClass;
+  /** End the workflow root span. Call from the engine when a workflow reaches terminal state. */
+  endWorkflowSpan: (status: 'ok' | 'error', errorMessage?: string) => void;
 } {
   const api = options?.otelApi ?? getOtelApi();
   const { trace, SpanStatusCode } = api;
@@ -164,7 +166,9 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   const metrics = options?.metrics ?? new MetricsCollectorClass();
 
   // Mutable state: the root span for the current workflow execution.
-  // Reset on each `workflowStart`. Used to parent child spans.
+  // Reset on each `workflowStart`. Ended via `endWorkflowSpan()` when
+  // the workflow reaches terminal state, or automatically when the next
+  // `workflowStart` fires (sequential workflows).
   //
   // LIMITATION: This is a single variable, not keyed by workflow ID.
   // If multiple workflows run concurrently on the same thread sharing
@@ -192,6 +196,12 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: WorkflowStartInterception,
       next: (interception: WorkflowStartInterception) => void,
     ): void {
+      // End any previous workflow span that wasn't explicitly ended
+      if (currentRootSpan) {
+        currentRootSpan.setStatus({ code: SpanStatusCode.OK });
+        currentRootSpan.end();
+      }
+
       const span = tracer.startSpan(`workflow:${interception.workflowType}`, {
         attributes: {
           'weft.workflow.id': interception.workflowId,
@@ -521,5 +531,19 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     },
   };
 
-  return { workflow, activity, metrics };
+  function endWorkflowSpan(status: 'ok' | 'error', message?: string): void {
+    if (!currentRootSpan) return;
+    if (status === 'error') {
+      currentRootSpan.setStatus({
+        code: SpanStatusCode.ERROR,
+        ...(message ? { message } : {}),
+      });
+    } else {
+      currentRootSpan.setStatus({ code: SpanStatusCode.OK });
+    }
+    currentRootSpan.end();
+    currentRootSpan = undefined;
+  }
+
+  return { workflow, activity, metrics, endWorkflowSpan };
 }
