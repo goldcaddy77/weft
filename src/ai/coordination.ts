@@ -7,7 +7,6 @@
  * @module coordination
  */
 
-import { formatTraceParent, generateSpanId, parseTraceParent } from '../observability/propagation';
 import type { AgentResult } from './agent';
 import { executeAgentLoop } from './agent';
 import type { BudgetTracker } from './budget';
@@ -80,33 +79,6 @@ export interface SuperviseResult {
   finalResult: string;
   workerResults: AgentResult[];
   strategy: string;
-}
-
-// ---------------------------------------------------------------------------
-// createChildHeaders
-// ---------------------------------------------------------------------------
-
-/**
- * Derive child trace headers from a parent headers record.
- *
- * Preserves the parent's traceId but generates a new spanId so the child
- * agent appears as a distinct span in the trace. Returns `undefined` when
- * no valid `traceparent` is present.
- */
-export function createChildHeaders(
-  parentHeaders: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-  if (!parentHeaders?.['traceparent']) return undefined;
-
-  const parsed = parseTraceParent(parentHeaders['traceparent']);
-  if (!parsed) return undefined;
-
-  const child = formatTraceParent({
-    ...parsed,
-    spanId: generateSpanId(),
-  });
-
-  return { ...parentHeaders, traceparent: child };
 }
 
 // ---------------------------------------------------------------------------

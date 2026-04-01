@@ -4,14 +4,7 @@ import { BudgetTracker } from './budget';
 import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message } from './providers/types';
 
-import { parseTraceParent } from '../observability/propagation';
-import {
-  createChildHeaders,
-  debate,
-  handoff,
-  summarizeConversation,
-  supervise,
-} from './coordination';
+import { debate, handoff, summarizeConversation, supervise } from './coordination';
 import { defineAgent, type AgentDefinition } from './declaration';
 
 // ---------------------------------------------------------------------------
@@ -679,48 +672,5 @@ describe('budget propagation', () => {
     // Budget was exceeded: 3 workers × 30 tokens = 90 > 50 limit
     expect(state.tokensUsed).toBeGreaterThan(50);
     expect(state.tokensRemaining).toBeLessThan(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Trace context propagation
-// ---------------------------------------------------------------------------
-
-const PARENT_TRACEPARENT = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01';
-
-describe('createChildHeaders', () => {
-  it('derives child traceparent with same traceId and new spanId', () => {
-    const child = createChildHeaders({ traceparent: PARENT_TRACEPARENT });
-
-    expect(child).toBeDefined();
-    const parsed = parseTraceParent(child!['traceparent']!);
-    const parentParsed = parseTraceParent(PARENT_TRACEPARENT);
-
-    expect(parsed).toBeDefined();
-    expect(parsed!.traceId).toBe(parentParsed!.traceId);
-    expect(parsed!.spanId).not.toBe(parentParsed!.spanId);
-    expect(parsed!.traceFlags).toBe(parentParsed!.traceFlags);
-  });
-
-  it('returns undefined when no headers provided', () => {
-    expect(createChildHeaders(undefined)).toBeUndefined();
-  });
-
-  it('returns undefined when traceparent is missing', () => {
-    expect(createChildHeaders({ 'x-custom': 'value' })).toBeUndefined();
-  });
-
-  it('returns undefined when traceparent is malformed', () => {
-    expect(createChildHeaders({ traceparent: 'garbage' })).toBeUndefined();
-  });
-
-  it('preserves other headers alongside the new traceparent', () => {
-    const child = createChildHeaders({
-      traceparent: PARENT_TRACEPARENT,
-      'x-custom': 'preserved',
-    });
-
-    expect(child).toBeDefined();
-    expect(child!['x-custom']).toBe('preserved');
   });
 });
