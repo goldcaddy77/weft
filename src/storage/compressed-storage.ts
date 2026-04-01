@@ -6,7 +6,7 @@
  * @module storage/compressed-storage
  */
 
-import type { CompressionOptions } from '../core/compression.ts';
+import type { CompressionOptions, Compressor } from '../core/compression.ts';
 import {
   compressPayload,
   createBunCompressor,
@@ -18,7 +18,7 @@ import type { BatchOperation, ScanOptions, Storage } from './interface.ts';
 
 export class CompressedStorage implements Storage {
   #inner: Storage;
-  #compressor;
+  #compressor: Compressor;
   #threshold: number;
 
   constructor(inner: Storage, options?: CompressionOptions) {

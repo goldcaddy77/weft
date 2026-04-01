@@ -1,8 +1,8 @@
 /**
  * Payload compression utilities for transparent gzip/brotli compression
- * at the storage layer. Uses a 1-byte header prefix for format detection,
- * enabling cross-algorithm reads and backward compatibility with
- * pre-compression data.
+ * at the storage layer. Uses a 2-byte header (magic byte `0xC1` + algorithm
+ * byte) for format detection, enabling cross-algorithm reads and backward
+ * compatibility with pre-compression data.
  *
  * @module core/compression
  */
@@ -24,7 +24,6 @@ export type CompressionOptions = {
 
 export type Compressor = {
   compress(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
-  decompress(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
   readonly algorithm: CompressionAlgorithm;
 };
 
@@ -71,9 +70,6 @@ export function createBunCompressor(algorithm: CompressionAlgorithm): Compressor
         compress(data: Uint8Array): Uint8Array {
           return new Uint8Array(Bun.gzipSync(new Uint8Array(data)));
         },
-        decompress(data: Uint8Array): Uint8Array {
-          return new Uint8Array(Bun.gunzipSync(new Uint8Array(data)));
-        },
       };
 
     case 'brotli':
@@ -82,18 +78,12 @@ export function createBunCompressor(algorithm: CompressionAlgorithm): Compressor
         compress(data: Uint8Array): Uint8Array {
           return new Uint8Array(brotliCompressSync(data));
         },
-        decompress(data: Uint8Array): Uint8Array {
-          return new Uint8Array(brotliDecompressSync(data));
-        },
       };
 
     case 'none':
       return {
         algorithm: 'none',
         compress(data: Uint8Array): Uint8Array {
-          return data;
-        },
-        decompress(data: Uint8Array): Uint8Array {
           return data;
         },
       };
@@ -126,6 +116,17 @@ export async function compressPayload(
   }
 
   const compressed = await compressor.compress(data);
+
+  // Fall back to uncompressed framing if compression expanded the data
+  // (common with high-entropy payloads like already-compressed images).
+  if (compressed.length + HEADER_SIZE >= data.length + HEADER_SIZE) {
+    const result = new Uint8Array(data.length + HEADER_SIZE);
+    result[0] = MAGIC_BYTE;
+    result[1] = ALGORITHM_UNCOMPRESSED;
+    result.set(data, HEADER_SIZE);
+    return result;
+  }
+
   const algorithmByte = compressor.algorithm === 'gzip' ? ALGORITHM_GZIP : ALGORITHM_BROTLI;
 
   const result = new Uint8Array(compressed.length + HEADER_SIZE);
