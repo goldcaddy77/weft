@@ -66,21 +66,19 @@ export class AlertManager implements Disposable {
     );
 
     if (hasFailureRate) {
+      const recordFailureRate = (failed: boolean) => {
+        const now = this.#getNow();
+        for (let i = 0; i < this.#options.rules.length; i++) {
+          const rule = this.#options.rules[i]!;
+          if (rule.metric !== 'workflow.failure_rate') continue;
+          const window = this.#windows.get(i) as CounterWindow;
+          window.record(now, failed);
+          this.#evaluate(i);
+        }
+      };
+
       // Success events
-      for (const eventType of ['workflow:completed'] as const) {
-        const handler = () => {
-          const now = this.#getNow();
-          for (let i = 0; i < this.#options.rules.length; i++) {
-            const rule = this.#options.rules[i]!;
-            if (rule.metric !== 'workflow.failure_rate') continue;
-            const window = this.#windows.get(i) as CounterWindow;
-            window.record(now, false);
-            this.#evaluate(i);
-          }
-        };
-        this.#listeners.push({ type: eventType, handler: handler as EventListener });
-        this.#target.addEventListener(eventType, handler as EventListener);
-      }
+      this.#addListener('workflow:completed', () => recordFailureRate(false));
 
       // Failure events
       for (const eventType of [
@@ -88,25 +86,13 @@ export class AlertManager implements Disposable {
         'workflow:timed-out',
         'workflow:cancelled',
       ] as const) {
-        const handler = () => {
-          const now = this.#getNow();
-          for (let i = 0; i < this.#options.rules.length; i++) {
-            const rule = this.#options.rules[i]!;
-            if (rule.metric !== 'workflow.failure_rate') continue;
-            const window = this.#windows.get(i) as CounterWindow;
-            window.record(now, true);
-            this.#evaluate(i);
-          }
-        };
-        this.#listeners.push({ type: eventType, handler: handler as EventListener });
-        this.#target.addEventListener(eventType, handler as EventListener);
+        this.#addListener(eventType, () => recordFailureRate(true));
       }
     }
 
     if (hasDuration) {
-      const handler = (event: Event) => {
+      this.#addListener('activity:completed', (event: Event) => {
         const now = this.#getNow();
-        // ActivityCompletedEvent has a `duration` property
         const duration = (event as Event & { duration: number }).duration;
         for (let i = 0; i < this.#options.rules.length; i++) {
           const rule = this.#options.rules[i]!;
@@ -115,10 +101,13 @@ export class AlertManager implements Disposable {
           window.record(now, duration);
           this.#evaluate(i);
         }
-      };
-      this.#listeners.push({ type: 'activity:completed', handler: handler as EventListener });
-      this.#target.addEventListener('activity:completed', handler as EventListener);
+      });
     }
+  }
+
+  #addListener(type: string, handler: EventListener): void {
+    this.#listeners.push({ type, handler });
+    this.#target.addEventListener(type, handler);
   }
 
   #evaluate(ruleIndex: number): void {
