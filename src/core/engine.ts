@@ -2031,6 +2031,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           );
           this.#feedOperationResult(workflowId, { status: 'completed', value: results });
         } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
           const enrichedError = error instanceof Error ? error : new Error(String(error));
           this.#feedOperationResult(
             workflowId,
@@ -2050,6 +2053,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           );
           this.#feedOperationResult(workflowId, { status: 'completed', value: result });
         } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
           const enrichedError = error instanceof Error ? error : new Error(String(error));
           this.#feedOperationResult(
             workflowId,
@@ -2065,6 +2071,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           const result = await callMemoFunction(operation.fn);
           this.#feedOperationResult(workflowId, { status: 'completed', value: result });
         } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
           const enrichedError = error instanceof Error ? error : new Error(String(error));
           this.#feedOperationResult(
             workflowId,
@@ -2112,8 +2121,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           const data = decode(raw);
           this.#feedOperationResult(workflowId, { status: 'completed', value: data });
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
         }
         break;
       }
@@ -2124,8 +2140,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           await this.#storage.put(KEYS.archive(workflowId, operation.key), encoded);
           this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
+          const enrichedError = error instanceof Error ? error : new Error(String(error));
+          this.#feedOperationResult(
+            workflowId,
+            { status: 'failed', error: enrichedError.message },
+            enrichedError,
+          );
         }
         break;
       }
@@ -2538,6 +2561,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         try {
           await this.#processReviewOperation(workflowId, operation.reviewOptions);
         } catch (error) {
+          if (error instanceof Error && operation.callerStack) {
+            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+          }
           const enrichedError = error instanceof Error ? error : new Error(String(error));
           this.#feedOperationResult(
             workflowId,

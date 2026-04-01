@@ -1145,6 +1145,77 @@ describe('Context', () => {
       expect(request.callerStack).toBeDefined();
       expect(typeof request.callerStack).toBe('string');
     });
+
+    it('ctx.sleep yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.sleep(5000);
+      const request = expectRequest(generator.next(), 'sleep');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.waitForSignal yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.waitForSignal('my-signal');
+      const request = expectRequest(generator.next(), 'wait-signal');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.waitForUpdate yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.waitForUpdate('my-update');
+      const request = expectRequest(generator.next(), 'wait-update');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.humanReview yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.humanReview({ artifact: { data: 'test' }, reviewType: 'approval' });
+      const request = expectRequest(generator.next(), 'wait-review');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.memo yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.memo('cache-key', () => 42);
+      const request = expectRequest(generator.next(), 'memo');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.load yields a request with callerStack', () => {
+      const context = createContext();
+      const reference: OffloadReference = { key: 'test-key', workflowId: 'wf-1', sizeBytes: 100 };
+      const generator = context.load(reference);
+      const request = expectRequest(generator.next(), 'load');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.archive yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.archive('archive-key', { data: 'value' });
+      const request = expectRequest(generator.next(), 'archive');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
   });
 
   describe('ctx.setBudget', () => {

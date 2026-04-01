@@ -138,8 +138,11 @@ export { UpdateCoordinator, UpdateTimeoutError, WorkflowTerminalError } from './
 export {
   VersionMismatchError,
   checkVersionCompatibility,
+  diffCheckpointShapes,
+  inferShape,
   migrateCheckpoint,
 } from './core/versioning';
+export type { FieldDiff, ShapeDescriptor, ShapeDiffOptions } from './core/versioning';
 
 // Timeouts
 export {

@@ -5357,7 +5357,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **TypeScript types infer everything.** Event listeners, workflow context, activity return types — all inferred.
 - [x] **`using` / `await using` works for all resources.** No manual cleanup ever required.
 - [x] **Testing: `MemoryStorage` + `TestEngine.advanceTime()`.** No real timers in tests. `TestEngine` provides deterministic time control via `TimeControl`.
-- [ ] **Error messages reference the user's code, not Weft internals.** Stack traces are clean. (Partially implemented — `callerStack` captured but not consistently used in all error paths.)
+- [x] **Error messages reference the user's code, not Weft internals.** Stack traces are clean. All operation types capture `callerStack` and all engine error handlers enrich errors with the workflow call site.
 - [ ] **Documentation: every public API has JSDoc with examples.** Visible in IDE hover. (Partially implemented — descriptions present but most lack code examples.)
 - [x] **Dashboard shows real-time workflow state.** WebSocket-powered via `websocket-client.svelte.ts`, updates without refresh.
 
@@ -5366,7 +5366,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Development mode detects non-cloneable checkpoint values.** Serializes/deserializes at each boundary, reports exact field paths that fail with fix suggestions.
 - [x] **Stack-trace-preserving errors.** Activity failure errors include the original workflow call site, not just the remote worker stack.
 - [x] **`weft version:check` CLI command.** Analyzes registered workflows against existing database, reports checkpoint compatibility before deployment.
-- [ ] **Automatic checkpoint schema inference.** Actionable error messages on version mismatch naming exact fields that changed.
+- [x] **Automatic checkpoint schema inference.** Actionable error messages on version mismatch naming exact fields that changed. `VersionMismatchError` accepts shape descriptors and includes field-level diffs (added, removed, type-changed). `inferShape()` and `diffCheckpointShapes()` are exported utilities.
 - [x] **`ctx.step()` sugar for non-generator workflows.** Progressive disclosure — wraps checkpoint boundaries in a familiar async function.
 - [x] **`ctx.explain()` development mode.** Logs what each context operation does and why at runtime via `#explainMode` flag.
 - [x] **`weft doctor` diagnostic command.** Reports database health, workflow statistics, queue depths, performance metrics, and recommendations.
