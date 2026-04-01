@@ -262,47 +262,75 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
   }
 
   // Wire budget enforcement: exceeding the budget aborts all parallel branches.
+  // Scoped to this call — cleared in finally so a shared BudgetTracker isn't
+  // left referencing a stale controller after supervise() returns.
   if (budget) {
     budget.setAbortController(controller);
   }
 
   const signal = controller.signal;
 
-  // Run all workers in parallel
-  const workerResults = await Promise.all(
-    workers.map((worker) =>
-      executeAgentLoop(
-        {
-          model: worker.model,
-          provider,
-          systemPrompt: worker.systemPrompt,
-          tools: worker.tools,
-          maxTurns: worker.maxTurns,
-          budget,
-          signal,
-        },
-        input,
+  try {
+    // Run all workers in parallel
+    const workerResults = await Promise.all(
+      workers.map((worker) =>
+        executeAgentLoop(
+          {
+            model: worker.model,
+            provider,
+            systemPrompt: worker.systemPrompt,
+            tools: worker.tools,
+            maxTurns: worker.maxTurns,
+            budget,
+            signal,
+          },
+          input,
+        ),
       ),
-    ),
-  );
+    );
 
-  let finalResult: string;
+    let finalResult: string;
 
-  switch (strategy) {
-    case 'consensus': {
-      // Check if all workers produced the same response
-      const allResponses = workerResults.map((result) => result.content);
-      const allAgree = allResponses.every((response) => response === allResponses[0]);
+    switch (strategy) {
+      case 'consensus': {
+        // Check if all workers produced the same response
+        const allResponses = workerResults.map((result) => result.content);
+        const allAgree = allResponses.every((response) => response === allResponses[0]);
 
-      if (allAgree) {
-        finalResult = allResponses[0]!;
-      } else {
-        // Workers disagree; ask supervisor to resolve
-        const workerSummary = allResponses
-          .map((response, index) => `Worker ${index + 1}: ${response}`)
+        if (allAgree) {
+          finalResult = allResponses[0]!;
+        } else {
+          // Workers disagree; ask supervisor to resolve
+          const workerSummary = allResponses
+            .map((response, index) => `Worker ${index + 1}: ${response}`)
+            .join('\n\n');
+
+          const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nThe workers disagree. Please determine the correct answer.`;
+
+          const supervisorResult = await executeAgentLoop(
+            {
+              model: supervisor.model,
+              provider,
+              systemPrompt: supervisor.systemPrompt,
+              tools: supervisor.tools,
+              maxTurns: supervisor.maxTurns,
+              budget,
+              signal,
+            },
+            supervisorInput,
+          );
+
+          finalResult = supervisorResult.content;
+        }
+        break;
+      }
+
+      case 'best-of-n': {
+        const workerSummary = workerResults
+          .map((result, index) => `Worker ${index + 1}: ${result.content}`)
           .join('\n\n');
 
-        const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nThe workers disagree. Please determine the correct answer.`;
+        const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nPick the best response and explain why.`;
 
         const supervisorResult = await executeAgentLoop(
           {
@@ -318,65 +346,46 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
         );
 
         finalResult = supervisorResult.content;
+        break;
       }
-      break;
+
+      case 'merge': {
+        const workerSummary = workerResults
+          .map((result, index) => `Worker ${index + 1}: ${result.content}`)
+          .join('\n\n');
+
+        const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nMerge these responses into a single comprehensive answer.`;
+
+        const supervisorResult = await executeAgentLoop(
+          {
+            model: supervisor.model,
+            provider,
+            systemPrompt: supervisor.systemPrompt,
+            tools: supervisor.tools,
+            maxTurns: supervisor.maxTurns,
+            budget,
+            signal,
+          },
+          supervisorInput,
+        );
+
+        finalResult = supervisorResult.content;
+        break;
+      }
+
+      default:
+        throw new Error(`Unknown supervise strategy: ${strategy as string}`);
     }
 
-    case 'best-of-n': {
-      const workerSummary = workerResults
-        .map((result, index) => `Worker ${index + 1}: ${result.content}`)
-        .join('\n\n');
-
-      const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nPick the best response and explain why.`;
-
-      const supervisorResult = await executeAgentLoop(
-        {
-          model: supervisor.model,
-          provider,
-          systemPrompt: supervisor.systemPrompt,
-          tools: supervisor.tools,
-          maxTurns: supervisor.maxTurns,
-          budget,
-          signal,
-        },
-        supervisorInput,
-      );
-
-      finalResult = supervisorResult.content;
-      break;
+    return {
+      finalResult,
+      workerResults,
+      strategy,
+    };
+  } finally {
+    // Detach so a shared BudgetTracker isn't left with a stale controller.
+    if (budget) {
+      budget.setAbortController(new AbortController());
     }
-
-    case 'merge': {
-      const workerSummary = workerResults
-        .map((result, index) => `Worker ${index + 1}: ${result.content}`)
-        .join('\n\n');
-
-      const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nMerge these responses into a single comprehensive answer.`;
-
-      const supervisorResult = await executeAgentLoop(
-        {
-          model: supervisor.model,
-          provider,
-          systemPrompt: supervisor.systemPrompt,
-          tools: supervisor.tools,
-          maxTurns: supervisor.maxTurns,
-          budget,
-          signal,
-        },
-        supervisorInput,
-      );
-
-      finalResult = supervisorResult.content;
-      break;
-    }
-
-    default:
-      throw new Error(`Unknown supervise strategy: ${strategy as string}`);
   }
-
-  return {
-    finalResult,
-    workerResults,
-    strategy,
-  };
 }
