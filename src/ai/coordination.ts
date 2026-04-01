@@ -250,14 +250,15 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
   // can't do because the budget tracker needs its own controller to fire abort.
   const controller = new AbortController();
 
-  // Forward parent abort to the local controller.
+  // Forward parent abort to the local controller. Named handler so we can
+  // remove it in finally — prevents leaking listeners on long-lived signals.
+  const onParentAbort = parentSignal ? () => controller.abort(parentSignal.reason) : undefined;
+
   if (parentSignal) {
     if (parentSignal.aborted) {
       controller.abort(parentSignal.reason);
     } else {
-      parentSignal.addEventListener('abort', () => controller.abort(parentSignal.reason), {
-        once: true,
-      });
+      parentSignal.addEventListener('abort', onParentAbort!, { once: true });
     }
   }
 
@@ -386,6 +387,10 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
     // Detach so a shared BudgetTracker isn't left with a stale controller.
     if (budget) {
       budget.setAbortController(new AbortController());
+    }
+    // Remove the parent signal listener to prevent leaking on long-lived signals.
+    if (parentSignal && onParentAbort) {
+      parentSignal.removeEventListener('abort', onParentAbort);
     }
   }
 }
