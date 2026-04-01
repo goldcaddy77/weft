@@ -42,11 +42,25 @@ export type {
   WorkflowSummary,
 } from './core/types';
 
+// Alerting
+export { AlertManager } from './alerting/index';
+export type {
+  AlertAction,
+  AlertMetric,
+  AlertRule,
+  AlertState,
+  AlertStatus,
+  AlertingOptions,
+  WebhookTarget,
+} from './alerting/types';
+
 // Events
 export {
   ActivityCompletedEvent,
   ActivityFailedEvent,
   ActivityStartedEvent,
+  AlertFiredEvent,
+  AlertResolvedEvent,
   AttributesChangedEvent,
   CheckpointSizeWarningEvent,
   DevelopmentWarningEvent,

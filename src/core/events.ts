@@ -260,6 +260,38 @@ export class CleanupWarningEvent extends Event {
   }
 }
 
+export class AlertFiredEvent extends Event {
+  static readonly type = 'alert:fired' as const;
+  readonly metric: string;
+  readonly threshold: number;
+  readonly currentValue: number;
+  readonly window: string | undefined;
+
+  constructor(metric: string, threshold: number, currentValue: number, window?: string) {
+    super(AlertFiredEvent.type);
+    this.metric = metric;
+    this.threshold = threshold;
+    this.currentValue = currentValue;
+    this.window = window;
+  }
+}
+
+export class AlertResolvedEvent extends Event {
+  static readonly type = 'alert:resolved' as const;
+  readonly metric: string;
+  readonly threshold: number;
+  readonly currentValue: number;
+  readonly window: string | undefined;
+
+  constructor(metric: string, threshold: number, currentValue: number, window?: string) {
+    super(AlertResolvedEvent.type);
+    this.metric = metric;
+    this.threshold = threshold;
+    this.currentValue = currentValue;
+    this.window = window;
+  }
+}
+
 export type WeftEventMap = WeftAgentEventMap & {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
@@ -279,6 +311,8 @@ export type WeftEventMap = WeftAgentEventMap & {
   'checkpoint:size-warning': CheckpointSizeWarningEvent;
   'development:warning': DevelopmentWarningEvent;
   'cleanup:warning': CleanupWarningEvent;
+  'alert:fired': AlertFiredEvent;
+  'alert:resolved': AlertResolvedEvent;
 };
 
 export interface TypedEventTarget<TEventMap extends Record<string, Event>> {
