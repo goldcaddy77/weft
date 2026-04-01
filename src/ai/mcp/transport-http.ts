@@ -15,9 +15,12 @@ import { MCPTransportError } from './transport';
 // Options
 // ---------------------------------------------------------------------------
 
+/** Static headers or an async factory that refreshes per-request (e.g., OAuth2 tokens). */
+export type HeaderSource = Record<string, string> | (() => Promise<Record<string, string>>);
+
 export type HttpTransportOptions = {
   serverUrl: string;
-  headers?: Record<string, string> | undefined;
+  headers?: HeaderSource | undefined;
   timeout?: number | undefined;
 };
 
@@ -29,17 +32,19 @@ const DEFAULT_TIMEOUT = 30_000;
 
 export class HttpTransport implements MCPTransport {
   #serverUrl: string;
-  #headers: Record<string, string>;
+  #headerSource: HeaderSource;
   #timeout: number;
 
   constructor(options: HttpTransportOptions) {
     this.#serverUrl = options.serverUrl;
-    this.#headers = options.headers ?? {};
+    this.#headerSource = options.headers ?? {};
     this.#timeout = options.timeout ?? DEFAULT_TIMEOUT;
   }
 
   async send(request: MCPRequest, signal?: AbortSignal): Promise<MCPResponse> {
     const { path, init } = this.#buildRequest(request);
+    const headers =
+      typeof this.#headerSource === 'function' ? await this.#headerSource() : this.#headerSource;
 
     const timeoutController = new AbortController();
     const timer = setTimeout(() => timeoutController.abort(), this.#timeout);
@@ -54,7 +59,7 @@ export class HttpTransport implements MCPTransport {
         signal: combinedSignal,
         headers: {
           'Content-Type': 'application/json',
-          ...this.#headers,
+          ...headers,
           ...(init.headers as Record<string, string> | undefined),
         },
       });
@@ -87,9 +92,11 @@ export class HttpTransport implements MCPTransport {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.#timeout);
     try {
+      const headers =
+        typeof this.#headerSource === 'function' ? await this.#headerSource() : this.#headerSource;
       const response = await fetch(`${this.#serverUrl}/health`, {
         method: 'GET',
-        headers: { ...this.#headers },
+        headers: { ...headers },
         signal: controller.signal,
       });
       return response.ok;

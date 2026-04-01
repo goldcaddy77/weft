@@ -14,9 +14,11 @@ import { MCPTransportError } from './transport';
 // Options
 // ---------------------------------------------------------------------------
 
+import type { HeaderSource } from './transport-http';
+
 export type HttpSseTransportOptions = {
   serverUrl: string;
-  headers?: Record<string, string> | undefined;
+  headers?: HeaderSource | undefined;
   timeout?: number | undefined;
 };
 
@@ -28,7 +30,7 @@ const DEFAULT_TIMEOUT = 30_000;
 
 export class HttpSseTransport implements MCPTransport {
   #serverUrl: string;
-  #headers: Record<string, string>;
+  #headerSource: HeaderSource;
   #timeout: number;
   #nextId = 1;
   #pending = new Map<number, PromiseWithResolvers<MCPResponse>>();
@@ -40,7 +42,7 @@ export class HttpSseTransport implements MCPTransport {
 
   constructor(options: HttpSseTransportOptions) {
     this.#serverUrl = options.serverUrl;
-    this.#headers = options.headers ?? {};
+    this.#headerSource = options.headers ?? {};
     this.#timeout = options.timeout ?? DEFAULT_TIMEOUT;
   }
 
@@ -87,7 +89,7 @@ export class HttpSseTransport implements MCPTransport {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...this.#headers,
+          ...(await this.#resolveHeaders()),
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
@@ -127,7 +129,7 @@ export class HttpSseTransport implements MCPTransport {
     try {
       const response = await fetch(`${this.#serverUrl}/health`, {
         method: 'GET',
-        headers: { ...this.#headers },
+        headers: { ...(await this.#resolveHeaders()) },
         signal: controller.signal,
       });
       return response.ok;
@@ -160,6 +162,14 @@ export class HttpSseTransport implements MCPTransport {
   }
 
   // ---------------------------------------------------------------------------
+  // Internal
+  // ---------------------------------------------------------------------------
+
+  async #resolveHeaders(): Promise<Record<string, string>> {
+    return typeof this.#headerSource === 'function' ? this.#headerSource() : this.#headerSource;
+  }
+
+  // ---------------------------------------------------------------------------
   // Internal: SSE connection
   // ---------------------------------------------------------------------------
 
@@ -189,12 +199,11 @@ export class HttpSseTransport implements MCPTransport {
         method: 'GET',
         headers: {
           Accept: 'text/event-stream',
-          ...this.#headers,
+          ...(await this.#resolveHeaders()),
         },
         signal: controller.signal,
       });
     } catch (error) {
-      clearTimeout(timer);
       throw new MCPTransportError(`Failed to establish SSE connection to ${this.#serverUrl}/sse`, {
         cause: error,
       });

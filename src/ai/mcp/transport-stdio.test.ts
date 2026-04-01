@@ -156,8 +156,9 @@ describe('StdioTransport', () => {
 
     const promise = transport.send({ method: 'test' });
 
-    // Give the process time to start
-    await Bun.sleep(20);
+    // send() populates #pending synchronously before its first await,
+    // so yielding the microtask queue is sufficient
+    await Promise.resolve();
     transport[Symbol.dispose]();
 
     await expect(promise).rejects.toThrow(MCPTransportError);

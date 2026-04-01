@@ -276,7 +276,7 @@ export { ToolSchemaValidationError, validateSchema } from './ai/mcp/schema-valid
 export { MCPTransportError, inferTransportKind, parseStdioUrl } from './ai/mcp/transport';
 export type { MCPRequest, MCPResponse, MCPTransport, TransportKind } from './ai/mcp/transport';
 export { HttpTransport } from './ai/mcp/transport-http';
-export type { HttpTransportOptions } from './ai/mcp/transport-http';
+export type { HeaderSource, HttpTransportOptions } from './ai/mcp/transport-http';
 export { HttpSseTransport } from './ai/mcp/transport-http-sse';
 export type { HttpSseTransportOptions } from './ai/mcp/transport-http-sse';
 export { StdioTransport } from './ai/mcp/transport-stdio';

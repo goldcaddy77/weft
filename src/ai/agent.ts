@@ -22,7 +22,7 @@ import {
 } from './events';
 import type { AgentHooks } from './hooks';
 import type { MCPAuthConfig } from './mcp/authentication';
-import { buildAuthHeaders, buildAuthHeadersAsync } from './mcp/authentication';
+import { buildAuthHeaders } from './mcp/authentication';
 import { MCPClient, MCPServerUnavailableError } from './mcp/client';
 import { createOAuth2TokenManager } from './mcp/oauth2-token-manager';
 import type { RegistryTool } from './mcp/registry';
@@ -173,17 +173,18 @@ function estimateConversationSizeBytes(conversation: Message[]): number {
 // ---------------------------------------------------------------------------
 
 /** Build the appropriate transport for an MCP tool source based on URL scheme and options. */
-async function createTransportForSource(
-  source: MCPToolSource,
-): Promise<import('./mcp/transport').MCPTransport> {
+function createTransportForSource(source: MCPToolSource): import('./mcp/transport').MCPTransport {
   const kind = inferTransportKind(source.mcp, source.transport);
 
-  // Resolve auth headers — OAuth2 requires async token fetching
-  let headers: Record<string, string> = {};
+  // Build header source — OAuth2 uses an async factory so tokens refresh automatically
+  let headers: import('./mcp/transport-http').HeaderSource = {};
   if (source.auth) {
     if (source.auth.type === 'oauth2') {
       const tokenManager = createOAuth2TokenManager(source.auth);
-      headers = await buildAuthHeadersAsync(source.auth, tokenManager);
+      headers = async () => {
+        const token = await tokenManager.getAccessToken();
+        return { Authorization: `Bearer ${token}` };
+      };
     } else {
       headers = buildAuthHeaders(source.auth);
     }
@@ -233,7 +234,7 @@ async function initializeTools(
   for (const entry of tools) {
     signal?.throwIfAborted();
     if (isMCPToolSource(entry)) {
-      const transport = await createTransportForSource(entry);
+      const transport = createTransportForSource(entry);
       const client = new MCPClient({ transport, timeout: entry.timeout });
 
       // Health check — fail fast if the server is unreachable
