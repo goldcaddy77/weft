@@ -397,6 +397,9 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       finalResult = supervisorResult.content;
       break;
     }
+
+    default:
+      throw new Error(`Unknown supervise strategy: ${strategy as string}`);
   }
 
   return {
