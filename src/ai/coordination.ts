@@ -31,8 +31,6 @@ export interface HandoffOptions {
   budget?: BudgetTracker | undefined;
   /** Abort signal propagated to the child agent. */
   signal?: AbortSignal | undefined;
-  /** W3C Trace Context headers for distributed tracing propagation. */
-  headers?: Record<string, string> | undefined;
 }
 
 export interface DebateOptions {
@@ -47,8 +45,6 @@ export interface DebateOptions {
   budget?: BudgetTracker | undefined;
   /** Abort signal propagated to all agents. */
   signal?: AbortSignal | undefined;
-  /** W3C Trace Context headers for distributed tracing propagation. */
-  headers?: Record<string, string> | undefined;
 }
 
 export interface SuperviseOptions {
@@ -61,8 +57,6 @@ export interface SuperviseOptions {
   budget?: BudgetTracker | undefined;
   /** Abort signal propagated to all workers and supervisor. */
   signal?: AbortSignal | undefined;
-  /** W3C Trace Context headers for distributed tracing propagation. */
-  headers?: Record<string, string> | undefined;
 }
 
 export interface HandoffResult {
@@ -278,7 +272,10 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
 export async function supervise(options: SuperviseOptions): Promise<SuperviseResult> {
   const { workers, supervisor, input, strategy, provider, budget, signal: parentSignal } = options;
 
-  // Create an AbortController so budget exhaustion can abort all branches.
+  // Unlike handoff/debate (sequential), supervise runs workers in parallel via
+  // Promise.all. A dedicated AbortController lets budget exhaustion in one
+  // branch abort all other in-flight branches — something a passthrough signal
+  // can't do because the budget tracker needs its own controller to fire abort.
   const controller = new AbortController();
 
   // Forward parent abort to the local controller.

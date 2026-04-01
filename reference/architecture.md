@@ -5187,7 +5187,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`ctx.supervise()` runs multiple agents with synthesis strategy.** Strategies: `"consensus"` (all agree), `"best-of-n"` (supervisor picks), `"merge"` (combine outputs).
 - [x] **`SharedState` primitive with durable CAS operations.** `ctx.sharedState(name, { initial })` returns a handle for concurrent read/write. Optimistic concurrency control with automatic retry on conflict.
 - [x] **`SharedState` uses `batch()` for atomic updates.** Writes committed atomically with checkpoint.
-- [x] **`ctx.handoff()` preserves OpenTelemetry trace context.** Child workflow spans link back to parent agent's span. Coordination functions accept `headers` option with `createChildHeaders()` helper deriving child `traceparent`.
+- [ ] **`ctx.handoff()` preserves OpenTelemetry trace context.** Child workflow spans link back to parent agent's span. `createChildHeaders()` utility exists in coordination module but not yet wired end-to-end.
 - [x] **`ctx.all()` with agent-typed branches.** Parallel agents with independent checkpointing, token budgets, and context windows. Each branch's cost tracked independently.
 - [x] **Agent-to-agent message passing via signals.** Agents within same workflow communicate via `ctx.signal()` on child handles.
 - [x] **Multi-agent fan-out respects workflow-level budget.** Shared `BudgetTracker` passed through `handoff()`, `debate()`, and `supervise()`. `supervise()` wires budget to `AbortController` for parallel branch enforcement.
