@@ -6,7 +6,7 @@
  * @module alerting/alert-manager
  */
 
-import { AlertFiredEvent, AlertResolvedEvent } from '../core/events.ts';
+import { ActivityCompletedEvent, AlertFiredEvent, AlertResolvedEvent } from '../core/events.ts';
 import { parseDuration } from '../core/scheduler.ts';
 import { parseSize } from './parse-size.ts';
 import { CounterWindow, HistogramWindow } from './sliding-window.ts';
@@ -21,11 +21,7 @@ export class AlertManager implements Disposable {
   #pendingWebhooks: Set<AbortController>;
   #getNow: () => number;
 
-  constructor(
-    target: EventTarget,
-    options: AlertingOptions,
-    getNow: () => number = Date.now,
-  ) {
+  constructor(target: EventTarget, options: AlertingOptions, getNow: () => number = Date.now) {
     this.#target = target;
     this.#options = options;
     this.#getNow = getNow;
@@ -50,7 +46,6 @@ export class AlertManager implements Disposable {
       } else if (rule.metric === 'activity.p99_duration') {
         this.#windows.set(i, new HistogramWindow(windowMs));
       }
-      // storage.size is not event-driven, skip
     }
 
     // Subscribe to engine events based on configured metrics
@@ -61,9 +56,7 @@ export class AlertManager implements Disposable {
     const hasFailureRate = this.#options.rules.some(
       (rule) => rule.metric === 'workflow.failure_rate',
     );
-    const hasDuration = this.#options.rules.some(
-      (rule) => rule.metric === 'activity.p99_duration',
-    );
+    const hasDuration = this.#options.rules.some((rule) => rule.metric === 'activity.p99_duration');
 
     if (hasFailureRate) {
       const recordFailureRate = (failed: boolean) => {
@@ -92,13 +85,13 @@ export class AlertManager implements Disposable {
 
     if (hasDuration) {
       this.#addListener('activity:completed', (event: Event) => {
+        if (!(event instanceof ActivityCompletedEvent)) return;
         const now = this.#getNow();
-        const duration = (event as Event & { duration: number }).duration;
         for (let i = 0; i < this.#options.rules.length; i++) {
           const rule = this.#options.rules[i]!;
           if (rule.metric !== 'activity.p99_duration') continue;
           const window = this.#windows.get(i) as HistogramWindow;
-          window.record(now, duration);
+          window.record(now, event.duration);
           this.#evaluate(i);
         }
       });

@@ -44,15 +44,13 @@ export type {
 
 // Alerting
 export { AlertManager } from './alerting/index.ts';
-export { parseSize } from './alerting/parse-size.ts';
-export { CounterWindow, HistogramWindow } from './alerting/sliding-window.ts';
 export type {
   AlertAction,
-  AlertingOptions,
   AlertMetric,
   AlertRule,
   AlertState,
   AlertStatus,
+  AlertingOptions,
   WebhookTarget,
 } from './alerting/types.ts';
 
