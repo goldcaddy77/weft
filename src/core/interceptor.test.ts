@@ -24,6 +24,7 @@ function makeHeaders(entries?: [string, string][]): Map<string, string> {
 
 function makeActivityInterception(overrides?: Partial<ActivityInterception>): ActivityInterception {
   return {
+    workflowId: 'wf-1',
     activityName: 'doWork',
     input: { value: 1 },
     attempt: 1,
@@ -34,6 +35,7 @@ function makeActivityInterception(overrides?: Partial<ActivityInterception>): Ac
 
 function makeSleepInterception(overrides?: Partial<SleepInterception>): SleepInterception {
   return {
+    workflowId: 'wf-1',
     duration: 1000,
     headers: makeHeaders(),
     ...overrides,
@@ -42,6 +44,7 @@ function makeSleepInterception(overrides?: Partial<SleepInterception>): SleepInt
 
 function makeSignalInterception(overrides?: Partial<SignalInterception>): SignalInterception {
   return {
+    workflowId: 'wf-1',
     signalName: 'approval',
     payload: null,
     headers: makeHeaders(),
@@ -75,6 +78,7 @@ function makeActivityExecutionInterception(
 
 function makeAgentInterception(overrides?: Partial<AgentInterception>): AgentInterception {
   return {
+    workflowId: 'wf-1',
     model: 'claude-sonnet-4-20250514',
     prompt: 'Summarize the data',
     headers: makeHeaders(),

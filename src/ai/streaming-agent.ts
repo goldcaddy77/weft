@@ -64,63 +64,67 @@ export function createStreamingProvider(
       const toolCalls: import('./providers/types.ts').ToolCall[] = [];
       const pendingToolCalls = new Map<string, { id: string; name: string; input: string }>();
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        switch (value.type) {
-          case 'token':
-            if (value.token !== undefined) {
-              content += value.token;
-              onToken(value.token);
-            }
-            break;
-          case 'tool_call_start':
-            if (value.toolCall?.id) {
-              pendingToolCalls.set(value.toolCall.id, {
-                id: value.toolCall.id,
-                name: value.toolCall.name ?? '',
-                input: '',
-              });
-            }
-            break;
-          case 'tool_call_delta':
-            if (value.toolCall?.id) {
-              const pending = pendingToolCalls.get(value.toolCall.id);
-              if (pending && value.toolCall.input !== undefined) {
-                // Tool call deltas carry input as string fragments
-                pending.input +=
-                  typeof value.toolCall.input === 'string'
-                    ? value.toolCall.input
-                    : JSON.stringify(value.toolCall.input);
+          switch (value.type) {
+            case 'token':
+              if (value.token !== undefined) {
+                content += value.token;
+                onToken(value.token);
               }
-            }
-            break;
-          case 'tool_call_end':
-            if (value.toolCall?.id) {
-              const pending = pendingToolCalls.get(value.toolCall.id);
-              if (pending) {
-                let parsedInput: unknown;
-                try {
-                  parsedInput = JSON.parse(pending.input);
-                } catch {
-                  parsedInput = pending.input || {};
-                }
-                toolCalls.push({
-                  id: pending.id,
-                  name: pending.name,
-                  input: parsedInput,
+              break;
+            case 'tool_call_start':
+              if (value.toolCall?.id) {
+                pendingToolCalls.set(value.toolCall.id, {
+                  id: value.toolCall.id,
+                  name: value.toolCall.name ?? '',
+                  input: '',
                 });
-                pendingToolCalls.delete(value.toolCall.id);
               }
-            }
-            break;
-          case 'done':
-            if (value.usage) {
-              usage = value.usage;
-            }
-            break;
+              break;
+            case 'tool_call_delta':
+              if (value.toolCall?.id) {
+                const pending = pendingToolCalls.get(value.toolCall.id);
+                if (pending && value.toolCall.input !== undefined) {
+                  // Tool call deltas carry input as string fragments
+                  pending.input +=
+                    typeof value.toolCall.input === 'string'
+                      ? value.toolCall.input
+                      : JSON.stringify(value.toolCall.input);
+                }
+              }
+              break;
+            case 'tool_call_end':
+              if (value.toolCall?.id) {
+                const pending = pendingToolCalls.get(value.toolCall.id);
+                if (pending) {
+                  let parsedInput: unknown;
+                  try {
+                    parsedInput = JSON.parse(pending.input);
+                  } catch {
+                    parsedInput = pending.input || {};
+                  }
+                  toolCalls.push({
+                    id: pending.id,
+                    name: pending.name,
+                    input: parsedInput,
+                  });
+                  pendingToolCalls.delete(value.toolCall.id);
+                }
+              }
+              break;
+            case 'done':
+              if (value.usage) {
+                usage = value.usage;
+              }
+              break;
+          }
         }
+      } finally {
+        reader.cancel().catch(() => {});
       }
 
       return {
@@ -171,28 +175,30 @@ export function executeStreamingAgent(
 
   let streamController: ReadableStreamDefaultController<string> | undefined;
   let streamClosed = false;
-  let bufferedBytes = 0;
 
-  const stream = new ReadableStream<string>({
-    start(controller) {
-      streamController = controller;
+  const stream = new ReadableStream<string>(
+    {
+      start(controller) {
+        streamController = controller;
+      },
+      cancel() {
+        streamClosed = true;
+      },
     },
-    cancel() {
-      streamClosed = true;
+    {
+      highWaterMark: maxStreamBufferSize,
+      size: (chunk) => new TextEncoder().encode(chunk).byteLength,
     },
-  });
+  );
 
   // Token callback — enqueue tokens into the stream and optionally dispatch events
   const onToken = (token: string): void => {
     if (streamClosed || !streamController) return;
 
-    // Backpressure: track cumulative enqueued bytes. When the buffer limit is
-    // exceeded, disconnect the consumer to prevent unbounded memory growth.
-    const tokenBytes = new TextEncoder().encode(token).byteLength;
-    bufferedBytes += tokenBytes;
-
-    if (bufferedBytes > maxStreamBufferSize) {
-      // Disconnect slow consumer
+    // Backpressure: use the Web Streams API's built-in queue tracking.
+    // When desiredSize drops to zero or below, the consumer is falling behind
+    // and the internal queue has exceeded the highWaterMark we configured.
+    if (streamController.desiredSize !== null && streamController.desiredSize <= 0) {
       try {
         streamController.error(new Error('Stream buffer exceeded maximum size'));
       } catch {
@@ -218,6 +224,8 @@ export function executeStreamingAgent(
   const streamingProvider = createStreamingProvider(options.provider, onToken);
 
   // Handle abort signal
+  let abortCleanup: (() => void) | undefined;
+
   if (signal) {
     const onAbort = (): void => {
       if (!streamClosed && streamController) {
@@ -234,6 +242,7 @@ export function executeStreamingAgent(
       onAbort();
     } else {
       signal.addEventListener('abort', onAbort, { once: true });
+      abortCleanup = () => signal.removeEventListener('abort', onAbort);
     }
   }
 
@@ -250,6 +259,7 @@ export function executeStreamingAgent(
     input,
   ).then(
     (result) => {
+      abortCleanup?.();
       // Close the stream when the agent loop completes
       if (!streamClosed && streamController) {
         try {
@@ -262,6 +272,7 @@ export function executeStreamingAgent(
       return result;
     },
     (error) => {
+      abortCleanup?.();
       // Error the stream if the agent loop fails
       if (!streamClosed && streamController) {
         try {
@@ -457,9 +468,11 @@ export function createSSEStream(
   const parsed = lastEventId ? parseInt(lastEventId, 10) : NaN;
   let eventId = Number.isNaN(parsed) ? 0 : parsed + 1;
 
+  let reader: ReadableStreamDefaultReader<string>;
+
   return new ReadableStream<Uint8Array>({
     async start(controller) {
-      const reader = tokenStream.getReader();
+      reader = tokenStream.getReader();
 
       try {
         while (true) {
@@ -492,6 +505,9 @@ export function createSSEStream(
           // Controller may already be closed
         }
       }
+    },
+    cancel() {
+      reader?.cancel().catch(() => {});
     },
   });
 }

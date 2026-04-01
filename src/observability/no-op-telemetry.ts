@@ -93,34 +93,31 @@ export type OtelApi = {
 // No-op implementations
 // ---------------------------------------------------------------------------
 
-/** Generate a random hex string of the given byte length. */
-function randomHex(bytes: number): string {
-  const array = new Uint8Array(bytes);
-  crypto.getRandomValues(array);
-  return Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
-}
+/**
+ * Static sentinel span context. Since no-op spans are never exported to a
+ * collector, unique IDs are unnecessary. Using fixed values avoids burning
+ * CPU on crypto operations in the hot path.
+ */
+const NO_OP_SPAN_CONTEXT: SpanContext = {
+  traceId: '0'.repeat(32),
+  spanId: '0'.repeat(16),
+  traceFlags: 0, // Not sampled
+};
 
-/** Create a fresh no-op span with unique trace/span IDs. */
-function createNoOpSpan(): OtelSpan {
-  const context: SpanContext = {
-    traceId: randomHex(16),
-    spanId: randomHex(8),
-    traceFlags: 1,
-  };
-  return {
-    setAttribute() {},
-    setStatus() {},
-    recordException() {},
-    end() {},
-    spanContext() {
-      return context;
-    },
-  };
-}
+/** Shared no-op span instance. All methods are no-ops, so one instance is safe to reuse. */
+const NO_OP_SPAN: OtelSpan = {
+  setAttribute() {},
+  setStatus() {},
+  recordException() {},
+  end() {},
+  spanContext() {
+    return NO_OP_SPAN_CONTEXT;
+  },
+};
 
 const noOpTracer: OtelTracer = {
   startSpan() {
-    return createNoOpSpan();
+    return NO_OP_SPAN;
   },
 };
 

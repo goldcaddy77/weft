@@ -372,6 +372,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     string,
     (entry: { id: string; workflowId: string }) => Promise<boolean>
   >;
+  #workflowReviewIds: Map<string, Set<string>>;
+  #pendingWebhooks: Set<AbortController>;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -456,6 +458,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
     this.#reviewWaiters = new Map();
     this.#reviewEscalationHandlers = new Map();
+    this.#workflowReviewIds = new Map();
+    this.#pendingWebhooks = new Set();
     this.#cleanupInterval = setInterval(() => {
       this.#updateCoordinator.cleanupExpiredResponses().catch((error: unknown) => {
         this.#handleCleanupError('cleanupExpiredResponses', error);
@@ -1612,6 +1616,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#updateWaiters.clear();
     this.#reviewWaiters.clear();
     this.#reviewEscalationHandlers.clear();
+    this.#workflowReviewIds.clear();
+    for (const controller of this.#pendingWebhooks) {
+      controller.abort();
+    }
+    this.#pendingWebhooks.clear();
     this.#sleepResolvers.clear();
     this.#sleepResolversByWorkflow.clear();
     this.#checkpoints.clear();
@@ -2331,6 +2340,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           // allowing observability interceptors to inject per-turn/per-tool
           // callbacks into the interception context.
           const agentInterception: import('./interceptor.ts').AgentInterception = {
+            workflowId,
             model: rest.model,
             prompt,
             headers: new Map<string, string>(),
@@ -2631,6 +2641,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const reviewId = parts[1]!;
       const handler = this.#reviewEscalationHandlers.get(reviewId);
       if (handler) {
+        // Guard: skip if the workflow is no longer running (e.g. cancelled/failed concurrently)
+        const state = await this.#loadWorkflowState(entry.workflowId);
+        if (!state || state.status !== 'running') return;
         await handler(entry);
       }
       return;
@@ -2700,8 +2713,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       ),
     );
 
-    // Fire webhook notification (fire-and-forget)
+    // Fire webhook notification with cancellation support tied to engine lifecycle
     if (options.webhookUrl) {
+      const webhookAbort = new AbortController();
+      this.#pendingWebhooks.add(webhookAbort);
       fetch(options.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2712,9 +2727,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           reviewers: reviewRequest.reviewers,
           artifact: reviewRequest.artifact,
         }),
-      }).catch((error: unknown) => {
-        console.warn(`[weft] Failed to send review webhook for ${reviewId}`, error);
-      });
+        signal: webhookAbort.signal,
+      })
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === 'AbortError') return;
+          console.warn(`[weft] Failed to send review webhook for ${reviewId}`, error);
+        })
+        .then(() => {
+          this.#pendingWebhooks.delete(webhookAbort);
+          return undefined;
+        })
+        .catch(() => {
+          // Guard: swallow errors from cleanup callback
+        });
     }
 
     // Set up escalation timers
@@ -2816,13 +2841,24 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return false;
     };
 
-    // Register the escalation handler
+    // Register the escalation handler and track the reviewId → workflowId association
     this.#reviewEscalationHandlers.set(reviewId, escalationListener);
+    let reviewIdSet = this.#workflowReviewIds.get(workflowId);
+    if (!reviewIdSet) {
+      reviewIdSet = new Set();
+      this.#workflowReviewIds.set(workflowId, reviewIdSet);
+    }
+    reviewIdSet.add(reviewId);
 
     const outcome = await promise;
 
-    // Clean up escalation handler
+    // Clean up escalation handler and workflow-reviewId tracking
     this.#reviewEscalationHandlers.delete(reviewId);
+    const trackedIds = this.#workflowReviewIds.get(workflowId);
+    if (trackedIds) {
+      trackedIds.delete(reviewId);
+      if (trackedIds.size === 0) this.#workflowReviewIds.delete(workflowId);
+    }
 
     // Cancel any remaining escalation/timeout timers
     if (options.escalation) {
@@ -2878,6 +2914,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
       this.#sleepResolversByWorkflow.delete(workflowId);
     }
+    // Clean up any review escalation handlers associated with this workflow
+    const reviewIds = this.#workflowReviewIds.get(workflowId);
+    if (reviewIds) {
+      for (const reviewId of reviewIds) {
+        this.#reviewEscalationHandlers.delete(reviewId);
+      }
+      this.#workflowReviewIds.delete(workflowId);
+    }
+
     this.#workflowNestingDepths.delete(workflowId);
     this.#workflowHeaders.delete(workflowId);
   }
@@ -3068,6 +3113,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const composedActivity = this.#getComposedActivityInterceptor();
     if (composedActivity) {
       const activityInterception = {
+        workflowId,
         activityName: operation.activityName,
         input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
         attempt: 1,
@@ -3093,6 +3139,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const composedWorkflow = this.#getComposedWorkflowInterceptor();
     if (composedWorkflow) {
       const interception = {
+        workflowId,
         activityName: operation.activityName,
         input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
         attempt: 1,

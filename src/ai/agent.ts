@@ -282,6 +282,7 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
   let turnCount = 0;
   let lastContent = '';
   let sizeWarningFired = false;
+  let budgetWarningFired = false;
   const previousModels: string[] = [];
   const reasoningTraces: string[] = [];
   const turnCosts: TurnCostEntry[] = [];
@@ -476,6 +477,29 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     // Record usage in budget tracker
     if (budget) {
       budget.recordUsage(currentModel, response.usage.inputTokens, response.usage.outputTokens);
+
+      // Fire the onBudgetWarning hook once when usage crosses the 80% threshold
+      if (hooks?.onBudgetWarning && !budgetWarningFired) {
+        const state = budget.budgetRemaining();
+        const tokenBudgetTotal = state.tokensUsed + state.tokensRemaining;
+        const costBudgetTotal = state.costUsed + state.costRemaining;
+        const tokenFraction =
+          tokenBudgetTotal > 0 && isFinite(tokenBudgetTotal)
+            ? state.tokensUsed / tokenBudgetTotal
+            : 0;
+        const costFraction =
+          costBudgetTotal > 0 && isFinite(costBudgetTotal) ? state.costUsed / costBudgetTotal : 0;
+        const budgetUsedPercent = Math.max(tokenFraction, costFraction) * 100;
+
+        if (budgetUsedPercent >= 80) {
+          budgetWarningFired = true;
+          await hooks.onBudgetWarning({
+            tokensRemaining: state.tokensRemaining,
+            costRemaining: state.costRemaining,
+            budgetUsedPercent,
+          });
+        }
+      }
     }
 
     const turnCost = (budget?.budgetRemaining().costUsed ?? 0) - costBefore;

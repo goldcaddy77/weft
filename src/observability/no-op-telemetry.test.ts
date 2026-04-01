@@ -49,19 +49,20 @@ describe('getOtelApi', () => {
       expect(typeof ctx.traceFlags).toBe('number');
     });
 
-    it('returns a no-op span context with unique random IDs', () => {
+    it('returns a static no-op span context with sentinel values', () => {
       const { trace } = getOtelApi();
       const tracer = trace.getTracer('test');
       const span1 = tracer.startSpan('span-1');
       const span2 = tracer.startSpan('span-2');
       const ctx1 = span1.spanContext();
-      const ctx2 = span2.spanContext();
 
       expect(ctx1.traceId).toHaveLength(32);
+      expect(ctx1.traceId).toBe('0'.repeat(32));
       expect(ctx1.spanId).toHaveLength(16);
-      expect(ctx1.traceFlags).toBe(1);
-      // Each span gets unique IDs
-      expect(ctx1.spanId).not.toBe(ctx2.spanId);
+      expect(ctx1.spanId).toBe('0'.repeat(16));
+      expect(ctx1.traceFlags).toBe(0); // Not sampled
+      // All no-op spans share the same instance
+      expect(span1).toBe(span2);
     });
   });
 
