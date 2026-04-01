@@ -5384,7 +5384,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`ctx.setBudget()` / `ctx.budgetRemaining()` for agent cost tracking.** Budget state stored in checkpoint, enforced via `AbortController`.
 - [x] **Tool result caching across agent turns.** Cache keyed by tool name + serialized arguments via `buildCacheKey`, configurable TTL.
 - [x] **`ctx.stream()` for large payloads.** Writes data to storage as chunks via `ReadableStream`, leaves lightweight reference in checkpoint.
-- [ ] **Automatic payload compression.** Transparent gzip/brotli compression above configurable threshold.
+- [x] **Automatic payload compression.** Transparent gzip/brotli compression above configurable threshold.
 - [x] **Pluggable serialization.** `Serializer` interface in `src/core/types.ts` with `serialize`/`deserialize` methods, passable to Engine options.
 
 ### Performance Targets

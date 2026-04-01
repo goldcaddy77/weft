@@ -64,6 +64,11 @@ export {
 } from './core/events';
 export type { TypedEventTarget, WeftEventMap } from './core/events';
 
+// Compression
+export { createBunCompressor } from './core/compression';
+export type { CompressionAlgorithm, CompressionOptions, Compressor } from './core/compression';
+export { CompressedStorage } from './storage/compressed-storage';
+
 // Storage
 export { BunSQLiteStorage } from './storage/bun-sql';
 export { KEYS } from './storage/interface';

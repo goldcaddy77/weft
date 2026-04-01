@@ -19,6 +19,7 @@ import {
   type HumanReviewResult,
   type ReviewRequest,
 } from '../ai/human-review.ts';
+import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -380,7 +381,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
 
-    const storage = options?.storage ?? new MemoryStorage();
+    const baseStorage = options?.storage ?? new MemoryStorage();
+    const storage =
+      options?.compression && options.compression.algorithm !== 'none'
+        ? new CompressedStorage(baseStorage, options.compression)
+        : baseStorage;
     const getNow = options?.getNow ?? Date.now;
 
     this.#storage = storage;

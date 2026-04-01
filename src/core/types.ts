@@ -1,5 +1,6 @@
 import type { ModelRouter } from '../ai/model-router.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
+import type { CompressionOptions } from './compression.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow identity
@@ -137,6 +138,8 @@ export interface EngineOptions {
   storage?: WeftStorage;
   development?: boolean;
   serializer?: Serializer;
+  /** Payload compression applied at the storage layer. */
+  compression?: CompressionOptions;
   checkpointHistory?: number;
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;
