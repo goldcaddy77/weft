@@ -293,14 +293,17 @@ describe('createObservabilityInterceptors', () => {
         next,
       );
 
+      let caught = false;
       try {
         let step = generator.next();
         while (!step.done) {
           step = generator.next(step.value);
         }
       } catch (error) {
+        caught = true;
         expect(error).toBe(theError);
       }
+      expect(caught).toBe(true);
 
       const errorSpan = spans.find((s) => s.name === 'activity:failingActivity');
       expect(errorSpan).toBeDefined();
@@ -416,14 +419,17 @@ describe('createObservabilityInterceptors', () => {
         next,
       );
 
+      let caught = false;
       try {
         let step = generator.next();
         while (!step.done) {
           step = generator.next(step.value);
         }
       } catch (error) {
+        caught = true;
         expect(error).toBe(theError);
       }
+      expect(caught).toBe(true);
 
       const errorSpan = spans.find((s) => s.name === 'waitForSignal');
       expect(errorSpan).toBeDefined();
@@ -494,14 +500,17 @@ describe('createObservabilityInterceptors', () => {
         next,
       );
 
+      let caught = false;
       try {
         let step = generator.next();
         while (!step.done) {
           step = generator.next(step.value);
         }
       } catch (error) {
+        caught = true;
         expect(error).toBe(theError);
       }
+      expect(caught).toBe(true);
 
       const errorSpan = spans.find((s) => s.name === 'agent');
       expect(errorSpan).toBeDefined();
@@ -1587,11 +1596,14 @@ describe('createObservabilityInterceptors', () => {
         },
       );
 
+      let caught = false;
       try {
         driveGenerator(gen);
       } catch (error) {
+        caught = true;
         expect(error).toBe(theError);
       }
+      expect(caught).toBe(true);
 
       // Agent, turn, and tool spans should all be ended with ERROR status
       expect(spans.find((s) => s.name === 'agent')!.ended).toBe(true);

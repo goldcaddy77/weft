@@ -170,13 +170,12 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   const workflowSpans = new Map<string, OtelSpan>();
 
   /** End and remove the span for a given workflow ID. */
-  function endAndRemoveWorkflowSpan(workflowId: string): OtelSpan | undefined {
+  function endAndRemoveWorkflowSpan(workflowId: string): void {
     const span = workflowSpans.get(workflowId);
     if (span) {
       span.end();
       workflowSpans.delete(workflowId);
     }
-    return span;
   }
 
   /** Apply custom attributes from the extractor to a span. */

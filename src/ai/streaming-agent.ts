@@ -38,6 +38,9 @@ export interface StreamingAgentResult {
 /** Frame types used for replay buffer and live streaming. */
 export type StreamFrame = { type: 'replay'; content: string } | { type: 'token'; token: string };
 
+/** Shared encoder instance — avoids allocation per token in the hot path. */
+const textEncoder = new TextEncoder();
+
 // ---------------------------------------------------------------------------
 // Streaming wrapper for LLM provider
 // ---------------------------------------------------------------------------
@@ -187,7 +190,7 @@ export function executeStreamingAgent(
     },
     {
       highWaterMark: maxStreamBufferSize,
-      size: (chunk) => new TextEncoder().encode(chunk).byteLength,
+      size: (chunk) => textEncoder.encode(chunk).byteLength,
     },
   );
 
@@ -464,7 +467,7 @@ export function createSSEStream(
   tokenStream: ReadableStream<string>,
   lastEventId?: string,
 ): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
+  const encoder = textEncoder;
   const parsed = lastEventId ? parseInt(lastEventId, 10) : NaN;
   let eventId = Number.isNaN(parsed) ? 0 : parsed + 1;
 

@@ -373,6 +373,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     (entry: { id: string; workflowId: string }) => Promise<boolean>
   >;
   #workflowReviewIds: Map<string, Set<string>>;
+  /** Timer IDs scheduled for each review (escalation + timeout), keyed by reviewId. */
+  #reviewTimerIds: Map<string, string[]>;
   #pendingWebhooks: Set<AbortController>;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
@@ -459,6 +461,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#reviewWaiters = new Map();
     this.#reviewEscalationHandlers = new Map();
     this.#workflowReviewIds = new Map();
+    this.#reviewTimerIds = new Map();
     this.#pendingWebhooks = new Set();
     this.#cleanupInterval = setInterval(() => {
       this.#updateCoordinator.cleanupExpiredResponses().catch((error: unknown) => {
@@ -1617,6 +1620,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#reviewWaiters.clear();
     this.#reviewEscalationHandlers.clear();
     this.#workflowReviewIds.clear();
+    this.#reviewTimerIds.clear();
     for (const controller of this.#pendingWebhooks) {
       controller.abort();
     }
@@ -2742,12 +2746,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         });
     }
 
-    // Set up escalation timers
+    // Set up escalation timers and track their IDs for cleanup
+    const timerIds: string[] = [];
     if (options.escalation && options.escalation.length > 0) {
       for (const step of options.escalation) {
         const fireAt = now + step.after;
+        const timerId = `review-escalation:${reviewId}:${step.after}`;
+        timerIds.push(timerId);
         await this.#scheduler.schedule({
-          id: `review-escalation:${reviewId}:${step.after}`,
+          id: timerId,
           workflowId,
           fireAt,
           kind: 'sleep', // Reuse sleep kind — the timer handler checks the id prefix
@@ -2758,8 +2765,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Set up timeout timer
     if (options.timeout !== undefined) {
       const timeoutFireAt = now + options.timeout;
+      const timeoutTimerId = `review-timeout:${reviewId}`;
+      timerIds.push(timeoutTimerId);
       await this.#scheduler.schedule({
-        id: `review-timeout:${reviewId}`,
+        id: timeoutTimerId,
         workflowId,
         fireAt: timeoutFireAt,
         kind: 'sleep',
@@ -2843,6 +2852,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Register the escalation handler and track the reviewId → workflowId association
     this.#reviewEscalationHandlers.set(reviewId, escalationListener);
+    if (timerIds.length > 0) {
+      this.#reviewTimerIds.set(reviewId, timerIds);
+    }
     let reviewIdSet = this.#workflowReviewIds.get(workflowId);
     if (!reviewIdSet) {
       reviewIdSet = new Set();
@@ -2852,8 +2864,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const outcome = await promise;
 
-    // Clean up escalation handler and workflow-reviewId tracking
+    // Clean up escalation handler, timer IDs, and workflow-reviewId tracking
     this.#reviewEscalationHandlers.delete(reviewId);
+    this.#reviewTimerIds.delete(reviewId);
     const trackedIds = this.#workflowReviewIds.get(workflowId);
     if (trackedIds) {
       trackedIds.delete(reviewId);
@@ -2914,11 +2927,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
       this.#sleepResolversByWorkflow.delete(workflowId);
     }
-    // Clean up any review escalation handlers associated with this workflow
+    // Clean up any review escalation handlers and their scheduled timers
     const reviewIds = this.#workflowReviewIds.get(workflowId);
     if (reviewIds) {
       for (const reviewId of reviewIds) {
         this.#reviewEscalationHandlers.delete(reviewId);
+        const timers = this.#reviewTimerIds.get(reviewId);
+        if (timers) {
+          for (const timerId of timers) {
+            this.#scheduler.cancel(timerId, workflowId).catch(() => {});
+          }
+          this.#reviewTimerIds.delete(reviewId);
+        }
       }
       this.#workflowReviewIds.delete(workflowId);
     }
