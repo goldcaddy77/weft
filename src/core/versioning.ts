@@ -90,33 +90,131 @@ export function buildVersionUpdateOperations(
 }
 
 // ---------------------------------------------------------------------------
+// Checkpoint shape diffing
+// ---------------------------------------------------------------------------
+
+/** Description of a single field-level difference between checkpoint shapes. */
+export type FieldDiff =
+  | { field: string; change: 'added'; newType: string }
+  | { field: string; change: 'removed'; oldType: string }
+  | { field: string; change: 'type-changed'; oldType: string; newType: string };
+
+/** Shape descriptor: maps field names to their type names (e.g., `"string"`, `"object"`). */
+export type ShapeDescriptor = Record<string, string>;
+
+/**
+ * Compare two checkpoint shape descriptors and return the field-level diffs.
+ *
+ * Returns an empty array when the shapes are identical.
+ */
+export function diffCheckpointShapes(
+  oldShape: ShapeDescriptor,
+  newShape: ShapeDescriptor,
+): FieldDiff[] {
+  const diffs: FieldDiff[] = [];
+  const allKeys = new Set([...Object.keys(oldShape), ...Object.keys(newShape)]);
+
+  for (const key of allKeys) {
+    const inOld = key in oldShape;
+    const inNew = key in newShape;
+
+    if (inOld && !inNew) {
+      diffs.push({ field: key, change: 'removed', oldType: oldShape[key]! });
+    } else if (!inOld && inNew) {
+      diffs.push({ field: key, change: 'added', newType: newShape[key]! });
+    } else if (inOld && inNew && oldShape[key] !== newShape[key]) {
+      diffs.push({
+        field: key,
+        change: 'type-changed',
+        oldType: oldShape[key]!,
+        newType: newShape[key]!,
+      });
+    }
+  }
+
+  return diffs;
+}
+
+/**
+ * Infer a shape descriptor from an arbitrary value by walking its top-level keys
+ * and recording the `typeof` of each value.
+ */
+export function inferShape(value: unknown): ShapeDescriptor {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  const shape: ShapeDescriptor = {};
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    shape[key] = val === null ? 'null' : Array.isArray(val) ? 'array' : typeof val;
+  }
+  return shape;
+}
+
+/** Format field diffs into a human-readable summary. */
+function formatFieldDiffs(diffs: FieldDiff[]): string {
+  if (diffs.length === 0) return '';
+
+  const lines = diffs.map((diff) => {
+    switch (diff.change) {
+      case 'added':
+        return `  - field \`${diff.field}\` was added (type: ${diff.newType})`;
+      case 'removed':
+        return `  - field \`${diff.field}\` was removed (was: ${diff.oldType})`;
+      case 'type-changed':
+        return `  - field \`${diff.field}\` changed type: ${diff.oldType} → ${diff.newType}`;
+    }
+  });
+
+  return `\nCheckpoint shape changes:\n${lines.join('\n')}`;
+}
+
+// ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------
+
+/** Options for providing shape information to VersionMismatchError. */
+export type ShapeDiffOptions = {
+  oldShape: ShapeDescriptor;
+  newShape: ShapeDescriptor;
+};
 
 /**
  * Thrown when a workflow's stored version does not match its registered
  * version and no migration path is available or the migration failed.
+ *
+ * When shape information is provided, the error message includes a
+ * field-level diff describing exactly which fields changed.
  */
 export class VersionMismatchError extends Error {
   readonly workflowId: string;
   readonly storedVersion: string;
   readonly registeredVersion: string;
   readonly workflowType: string;
+  readonly fieldDiffs: FieldDiff[] | undefined;
 
   constructor(
     workflowId: string,
     workflowType: string,
     storedVersion: string,
     registeredVersion: string,
+    shapeDiff?: ShapeDiffOptions,
   ) {
-    super(
+    const diffs = shapeDiff
+      ? diffCheckpointShapes(shapeDiff.oldShape, shapeDiff.newShape)
+      : undefined;
+
+    const baseMessage =
       `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
-        `stored version ${storedVersion} does not match registered version ${registeredVersion}`,
-    );
+      `stored version ${storedVersion} does not match registered version ${registeredVersion}`;
+
+    const diffSuffix = diffs && diffs.length > 0 ? formatFieldDiffs(diffs) : '';
+
+    super(baseMessage + diffSuffix);
     this.name = 'VersionMismatchError';
     this.workflowId = workflowId;
     this.workflowType = workflowType;
     this.storedVersion = storedVersion;
     this.registeredVersion = registeredVersion;
+    this.fieldDiffs = diffs;
   }
 }

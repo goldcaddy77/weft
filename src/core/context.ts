@@ -98,32 +98,38 @@ export type ContextOperationRequest =
       operationId: string;
       duration: number;
       scheduledFireAt: number;
+      callerStack?: string;
     }
   | {
       type: 'wait-signal';
       operationId: string;
       signalName: string;
+      callerStack?: string;
     }
   | {
       type: 'wait-update';
       operationId: string;
       updateName: string;
+      callerStack?: string;
     }
   | {
       type: 'parallel';
       operationId: string;
       operations: ContextOperationRequest[];
+      callerStack?: string;
     }
   | {
       type: 'race';
       operationId: string;
       operations: ContextOperationRequest[];
+      callerStack?: string;
     }
   | {
       type: 'memo';
       operationId: string;
       key: string;
       fn: () => unknown;
+      callerStack?: string;
     }
   | {
       type: 'child-workflow';
@@ -144,12 +150,14 @@ export type ContextOperationRequest =
       type: 'load';
       operationId: string;
       reference: OffloadReference;
+      callerStack?: string;
     }
   | {
       type: 'archive';
       operationId: string;
       key: string;
       data: unknown;
+      callerStack?: string;
     }
   | {
       type: 'run-all';
@@ -174,6 +182,7 @@ export type ContextOperationRequest =
       type: 'wait-review';
       operationId: string;
       reviewOptions: HumanReviewOptions;
+      callerStack?: string;
     }
   | {
       type: 'handoff';
@@ -409,6 +418,7 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
 
     // Use the sleep reference time (checkpoint createdAt on resume) so that
     // the engine's expired-timer fast path can detect sleeps whose original
@@ -422,6 +432,7 @@ export class Context implements WorkflowContext {
       operationId,
       duration: milliseconds,
       scheduledFireAt: referenceTime + milliseconds,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, undefined);
@@ -441,10 +452,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'wait-signal',
       operationId,
       signalName: name,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -474,10 +487,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'wait-update',
       operationId,
       updateName: name,
+      callerStack,
     };
 
     const envelope = result as { payload: T; respond: (result: unknown) => void };
@@ -511,10 +526,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'wait-review' as const,
       operationId,
       reviewOptions: options,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -539,10 +556,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'parallel',
       operationId,
       operations: subOperations,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -567,10 +586,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'race',
       operationId,
       operations: subOperations,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -593,11 +614,13 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'memo',
       operationId,
       key,
       fn,
+      callerStack,
     };
 
     this.#memoCache.set(key, result);
@@ -679,10 +702,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'load' as const,
       operationId,
       reference,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -701,11 +726,13 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     yield {
       type: 'archive' as const,
       operationId,
       key,
       data,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, undefined);
