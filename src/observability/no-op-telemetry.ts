@@ -15,10 +15,16 @@
 
 type SpanAttributes = Record<string, string | number | boolean>;
 
-type SpanContext = {
+export type SpanContext = {
   traceId: string;
   spanId: string;
   traceFlags: number;
+};
+
+/** A link to another span, used to express causal relationships without parent-child hierarchy. */
+export type SpanLink = {
+  context: SpanContext;
+  attributes?: SpanAttributes;
 };
 
 type SpanStatus = {
@@ -38,6 +44,7 @@ export type OtelSpan = {
 type SpanOptions = {
   attributes?: SpanAttributes;
   startTime?: number;
+  links?: SpanLink[];
 };
 
 /** Minimal tracer interface. */

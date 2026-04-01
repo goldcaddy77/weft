@@ -114,6 +114,7 @@ export type {
   ActivityInterception,
   ActivityInterceptor,
   AgentInterception,
+  ChildWorkflowInterception,
   ComposedActivityInterceptor,
   ComposedWorkflowInterceptor,
   QueryInterception,
@@ -192,7 +193,7 @@ export type { BudgetPolicyOptions } from './ai/budget-policy';
 export { slidingWindowStrategy } from './ai/context-strategies/sliding-window';
 export { ContextWindowManager, composeStrategies, noopStrategy } from './ai/context-window';
 export type { ContextStrategy } from './ai/context-window';
-export { debate, handoff, supervise } from './ai/coordination';
+export { createChildHeaders, debate, handoff, supervise } from './ai/coordination';
 export { defineAgent, isAgentDefinition } from './ai/declaration';
 export type { AgentDefinition } from './ai/declaration';
 export type { AgentHooks } from './ai/hooks';

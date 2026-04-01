@@ -15,6 +15,35 @@ import type { LLMProvider } from './providers/interface';
 import type { Message } from './providers/types';
 
 // ---------------------------------------------------------------------------
+// Trace context propagation
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a new headers map for a child agent, preserving trace context from
+ * the parent workflow's headers. This ensures OpenTelemetry spans from child
+ * agents link back to the parent agent's span.
+ */
+export function createChildHeaders(parentHeaders?: Map<string, string>): Map<string, string> {
+  const childHeaders = new Map<string, string>();
+  if (!parentHeaders) return childHeaders;
+
+  // Forward the W3C traceparent header so the child agent's spans
+  // participate in the same trace.
+  const traceparent = parentHeaders.get('traceparent');
+  if (traceparent) {
+    childHeaders.set('traceparent', traceparent);
+  }
+
+  // Forward tracestate if present (W3C Trace Context Level 2).
+  const tracestate = parentHeaders.get('tracestate');
+  if (tracestate) {
+    childHeaders.set('tracestate', tracestate);
+  }
+
+  return childHeaders;
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -30,6 +59,8 @@ export interface HandoffOptions {
   budget?: BudgetTracker | undefined;
   /** Abort signal propagated to the child agent. */
   signal?: AbortSignal | undefined;
+  /** Trace context headers from the parent workflow, used for OTel propagation. */
+  headers?: Map<string, string> | undefined;
 }
 
 export interface DebateOptions {

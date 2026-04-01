@@ -83,6 +83,16 @@ export interface AgentToolReturnInfo {
   success: boolean;
 }
 
+export interface ChildWorkflowInterception {
+  workflowId: string;
+  childWorkflowId: string;
+  workflowType: string;
+  input: unknown;
+  headers: Map<string, string>;
+  /** Headers from the parent workflow, used for span link creation. */
+  parentHeaders: Map<string, string>;
+}
+
 export interface AgentInterception {
   workflowId: string;
   model: string;
@@ -135,6 +145,11 @@ export interface WorkflowInterceptor {
     next: (interception: WorkflowStartInterception) => void,
   ): void;
 
+  childWorkflow?(
+    interception: ChildWorkflowInterception,
+    next: (interception: ChildWorkflowInterception) => Promise<unknown>,
+  ): Promise<unknown>;
+
   agent?(
     interception: AgentInterception,
     next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
@@ -182,6 +197,11 @@ export interface ComposedWorkflowInterceptor {
     interception: WorkflowStartInterception,
     execute: (interception: WorkflowStartInterception) => void,
   ): void;
+
+  childWorkflow(
+    interception: ChildWorkflowInterception,
+    execute: (interception: ChildWorkflowInterception) => Promise<unknown>,
+  ): Promise<unknown>;
 
   agent(
     interception: AgentInterception,
@@ -335,6 +355,37 @@ function composeWorkflowStartHook(
 }
 
 /**
+ * Compose the `childWorkflow` hooks of all workflow interceptors into a single
+ * async chain.
+ */
+function composeChildWorkflowHook(
+  interceptors: WorkflowInterceptor[],
+): ComposedWorkflowInterceptor['childWorkflow'] {
+  return async function composedChildWorkflow(
+    interception: ChildWorkflowInterception,
+    execute: (interception: ChildWorkflowInterception) => Promise<unknown>,
+  ): Promise<unknown> {
+    type Next = (ctx: ChildWorkflowInterception) => Promise<unknown>;
+
+    let chain: Next = execute;
+
+    for (let i = interceptors.length - 1; i >= 0; i--) {
+      const interceptor = interceptors[i]!;
+
+      if (interceptor.childWorkflow) {
+        const innerNext = chain;
+        const bound = interceptor.childWorkflow.bind(interceptor);
+        chain = (ctx: ChildWorkflowInterception): Promise<unknown> => {
+          return bound(ctx, innerNext);
+        };
+      }
+    }
+
+    return chain(interception);
+  };
+}
+
+/**
  * Compose the `agent` hooks of all workflow interceptors into a single
  * generator chain.
  */
@@ -436,6 +487,7 @@ export function composeWorkflowInterceptors(
     sleep: composeSleepHook(interceptors),
     waitForSignal: composeWaitForSignalHook(interceptors),
     workflowStart: composeWorkflowStartHook(interceptors),
+    childWorkflow: composeChildWorkflowHook(interceptors),
     agent: composeAgentHook(interceptors),
     query: composeQueryHook(interceptors),
     signalReceived: composeSignalReceivedHook(interceptors),
