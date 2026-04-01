@@ -1,25 +1,26 @@
 import type { OAuth2TokenManager } from './oauth2-token-manager';
 
-export type MCPAuthConfig =
+/** Auth configurations that can produce headers synchronously. */
+export type SyncMCPAuthConfig =
   | { type: 'bearer'; token: string }
   | { type: 'api-key'; headerName: string; apiKey: string }
+  | { type: 'none' };
+
+/** Full auth configuration including async OAuth2 variant. */
+export type MCPAuthConfig =
+  | SyncMCPAuthConfig
   | {
       type: 'oauth2';
       tokenEndpoint: string;
       clientId: string;
       clientSecret: string;
       scope?: string;
-    }
-  | { type: 'none' };
+    };
 
 const RESERVED_HEADERS = new Set(['content-type', 'authorization', 'host']);
 
-/**
- * Build authentication headers synchronously.
- *
- * Throws on `oauth2` — use `buildAuthHeadersAsync` for that variant.
- */
-export function buildAuthHeaders(auth: MCPAuthConfig): Record<string, string> {
+/** Build authentication headers synchronously (bearer, API key, or none). */
+export function buildAuthHeaders(auth: SyncMCPAuthConfig): Record<string, string> {
   switch (auth.type) {
     case 'bearer':
       return { Authorization: `Bearer ${auth.token}` };
@@ -30,10 +31,6 @@ export function buildAuthHeaders(auth: MCPAuthConfig): Record<string, string> {
       }
       return { [auth.headerName]: auth.apiKey };
     }
-    case 'oauth2':
-      throw new Error(
-        'OAuth2 auth requires async token fetch. Use buildAuthHeadersAsync() instead.',
-      );
     case 'none':
       return {};
   }

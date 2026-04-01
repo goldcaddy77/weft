@@ -129,6 +129,23 @@ describe('createOAuth2TokenManager', () => {
     expect(fetchCount).toBe(1);
   });
 
+  it('rejects all concurrent waiters when refresh fails', async () => {
+    mockFetch(async () => {
+      await Bun.sleep(20);
+      return new Response('Server Error', { status: 500 });
+    });
+
+    const manager = createOAuth2TokenManager(DEFAULT_CONFIG);
+
+    const results = await Promise.allSettled([
+      manager.getAccessToken(),
+      manager.getAccessToken(),
+      manager.getAccessToken(),
+    ]);
+
+    expect(results.every((r) => r.status === 'rejected')).toBe(true);
+  });
+
   it('retries after a failed refresh', async () => {
     let fetchCount = 0;
 

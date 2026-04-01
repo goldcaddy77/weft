@@ -26,17 +26,6 @@ describe('buildAuthHeaders', () => {
 
     expect(headers).toEqual({});
   });
-
-  it('throws when called with oauth2 config', () => {
-    expect(() =>
-      buildAuthHeaders({
-        type: 'oauth2',
-        tokenEndpoint: 'https://auth.example.com/token',
-        clientId: 'id',
-        clientSecret: 'secret',
-      }),
-    ).toThrow('Use buildAuthHeadersAsync()');
-  });
 });
 
 describe('buildAuthHeadersAsync', () => {

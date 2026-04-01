@@ -131,6 +131,10 @@ describe('HttpSseTransport', () => {
   it('includes custom headers in requests', async () => {
     let capturedSseHeaders: Headers | undefined;
     let capturedPostHeaders: Headers | undefined;
+    let postArrived!: () => void;
+    const postReady = new Promise<void>((resolve) => {
+      postArrived = resolve;
+    });
 
     mockFetch(async (input: any, init: any) => {
       const url = typeof input === 'string' ? input : input.url;
@@ -138,19 +142,15 @@ describe('HttpSseTransport', () => {
 
       if (url.endsWith('/sse')) {
         capturedSseHeaders = headers;
-        // Return a stream that never sends data
-        return new Response(
-          new ReadableStream({
-            start() {
-              // Keep open
-            },
-          }),
-          { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
-        );
+        return new Response(new ReadableStream({ start() {} }), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
       }
 
       if (url.endsWith('/jsonrpc')) {
         capturedPostHeaders = headers;
+        postArrived();
         return new Response('', { status: 202 });
       }
 
@@ -161,13 +161,14 @@ describe('HttpSseTransport', () => {
       new HttpSseTransport({
         serverUrl: 'https://mcp.example.com',
         headers: { Authorization: 'Bearer test-token' },
-        timeout: 200,
+        timeout: 5000,
       }),
     );
 
-    // Will timeout but we only care about headers
+    // Fire send but don't await — it will wait for SSE response that never comes
     transport.send({ method: 'test' }).catch(() => {});
-    await Bun.sleep(50);
+    // Wait for POST to arrive (event-driven, no sleep)
+    await postReady;
 
     expect(capturedSseHeaders!.get('Authorization')).toBe('Bearer test-token');
     expect(capturedPostHeaders!.get('Authorization')).toBe('Bearer test-token');
@@ -226,6 +227,10 @@ describe('HttpSseTransport', () => {
 
   it('respects external abort signal', async () => {
     let sseEstablished = false;
+    let postArrived!: () => void;
+    const postReady = new Promise<void>((resolve) => {
+      postArrived = resolve;
+    });
 
     mockFetch(async (input: any) => {
       const url = typeof input === 'string' ? input : input.url;
@@ -239,7 +244,7 @@ describe('HttpSseTransport', () => {
       }
 
       if (url.endsWith('/jsonrpc')) {
-        // Accept the POST, but never send an SSE response
+        postArrived();
         return new Response('', { status: 202 });
       }
 
@@ -253,8 +258,8 @@ describe('HttpSseTransport', () => {
     const controller = new AbortController();
     const promise = transport.send({ method: 'test' }, controller.signal);
 
-    // Wait for SSE to establish and POST to complete, then abort
-    await Bun.sleep(30);
+    // Wait for POST to arrive (event-driven), then abort
+    await postReady;
     controller.abort();
 
     await expect(promise).rejects.toThrow(DOMException);

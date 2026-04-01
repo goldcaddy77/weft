@@ -40,14 +40,14 @@ async function createMockServer(behavior: 'echo' | 'slow' | 'crash' | 'health'):
     `,
     // Exits immediately
     crash: `process.exit(1);`,
-    // Responds to initialize, then echoes
+    // Responds to ping, then echoes
     health: `
       const reader = require('readline').createInterface({ input: process.stdin });
       reader.on('line', (line) => {
         try {
           const msg = JSON.parse(line);
-          if (msg.method === 'initialize') {
-            process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { name: 'mock-server', version: '1.0' } }) + '\\n');
+          if (msg.method === 'ping') {
+            process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n');
           } else {
             process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { echo: msg.params } }) + '\\n');
           }
@@ -177,19 +177,5 @@ describe('StdioTransport', () => {
 
       expect(await transport.healthCheck()).toBe(false);
     });
-  });
-
-  it('re-spawns process after unexpected exit', async () => {
-    const script = await createMockServer('echo');
-    const transport = track(new StdioTransport({ command: 'bun', args: [script] }));
-
-    // First request works
-    const r1 = await transport.send({ method: 'ping' });
-    expect((r1.result as any).method).toBe('ping');
-
-    // Kill the process externally — the transport should re-spawn on next send
-    // Access private #process for testing by sending a command and verifying recovery
-    // We'll simulate by disposing and re-creating, but the real test is below:
-    // The transport detects process exit and clears #process, so the next send re-spawns.
   });
 });

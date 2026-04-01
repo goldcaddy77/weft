@@ -22,8 +22,9 @@ import {
 } from './events';
 import type { AgentHooks } from './hooks';
 import type { MCPAuthConfig } from './mcp/authentication';
-import { buildAuthHeaders } from './mcp/authentication';
+import { buildAuthHeaders, buildAuthHeadersAsync } from './mcp/authentication';
 import { MCPClient, MCPServerUnavailableError } from './mcp/client';
+import { createOAuth2TokenManager } from './mcp/oauth2-token-manager';
 import type { RegistryTool } from './mcp/registry';
 import { ToolRegistry } from './mcp/registry';
 import { ToolSchemaValidationError, validateSchema } from './mcp/schema-validator';
@@ -172,12 +173,21 @@ function estimateConversationSizeBytes(conversation: Message[]): number {
 // ---------------------------------------------------------------------------
 
 /** Build the appropriate transport for an MCP tool source based on URL scheme and options. */
-function createTransportForSource(source: MCPToolSource): import('./mcp/transport').MCPTransport {
+async function createTransportForSource(
+  source: MCPToolSource,
+): Promise<import('./mcp/transport').MCPTransport> {
   const kind = inferTransportKind(source.mcp, source.transport);
 
-  // Build auth headers synchronously for non-OAuth2 auth types.
-  // OAuth2 is handled at a higher level since it requires async token fetching.
-  const headers = source.auth && source.auth.type !== 'oauth2' ? buildAuthHeaders(source.auth) : {};
+  // Resolve auth headers — OAuth2 requires async token fetching
+  let headers: Record<string, string> = {};
+  if (source.auth) {
+    if (source.auth.type === 'oauth2') {
+      const tokenManager = createOAuth2TokenManager(source.auth);
+      headers = await buildAuthHeadersAsync(source.auth, tokenManager);
+    } else {
+      headers = buildAuthHeaders(source.auth);
+    }
+  }
 
   switch (kind) {
     case 'stdio': {
@@ -223,7 +233,7 @@ async function initializeTools(
   for (const entry of tools) {
     signal?.throwIfAborted();
     if (isMCPToolSource(entry)) {
-      const transport = createTransportForSource(entry);
+      const transport = await createTransportForSource(entry);
       const client = new MCPClient({ transport, timeout: entry.timeout });
 
       // Health check — fail fast if the server is unreachable

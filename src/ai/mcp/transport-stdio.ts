@@ -88,7 +88,7 @@ export class StdioTransport implements MCPTransport {
 
     try {
       const stdin = process.stdin as import('bun').FileSink;
-      void stdin.write(jsonRpc + '\n');
+      await stdin.write(jsonRpc + '\n');
       const result = await promise;
       clearTimeout(timeoutId);
       return result;
@@ -104,7 +104,7 @@ export class StdioTransport implements MCPTransport {
 
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.send({ method: 'initialize' });
+      const response = await this.send({ method: 'ping' });
       return response.error === undefined;
     } catch {
       return false;

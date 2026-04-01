@@ -180,13 +180,27 @@ export class HttpSseTransport implements MCPTransport {
   }
 
   async #connect(): Promise<void> {
-    const response = await fetch(`${this.#serverUrl}/sse`, {
-      method: 'GET',
-      headers: {
-        Accept: 'text/event-stream',
-        ...this.#headers,
-      },
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.#timeout);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.#serverUrl}/sse`, {
+        method: 'GET',
+        headers: {
+          Accept: 'text/event-stream',
+          ...this.#headers,
+        },
+        signal: controller.signal,
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      throw new MCPTransportError(`Failed to establish SSE connection to ${this.#serverUrl}/sse`, {
+        cause: error,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!response.ok || !response.body) {
       throw new MCPTransportError(`Failed to establish SSE connection to ${this.#serverUrl}/sse`);
@@ -215,6 +229,7 @@ export class HttpSseTransport implements MCPTransport {
       // Stream closed or errored
     } finally {
       this.#connected = false;
+      this.#sseReader = null;
 
       if (!this.#disposed) {
         // Reject pending requests on unexpected disconnect

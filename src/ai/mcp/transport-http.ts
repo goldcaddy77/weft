@@ -64,7 +64,7 @@ export class HttpTransport implements MCPTransport {
       }
 
       const body = (await response.json()) as Record<string, unknown>;
-      return { result: body } as MCPResponse;
+      return { result: body };
     } catch (error) {
       if (error instanceof MCPTransportError) throw error;
       if (

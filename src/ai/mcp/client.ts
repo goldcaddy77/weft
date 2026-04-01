@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '../providers/types';
-import type { MCPAuthConfig } from './authentication';
+import type { SyncMCPAuthConfig } from './authentication';
 import type { MCPTransport } from './transport';
 
 import { buildAuthHeaders } from './authentication';
@@ -10,10 +10,11 @@ import { HttpTransport } from './transport-http';
 // Options
 // ---------------------------------------------------------------------------
 
-/** Legacy options: construct an HttpTransport automatically from a server URL. */
+/** Options to construct an HttpTransport automatically from a server URL. */
 export type MCPClientUrlOptions = {
   serverUrl: string;
-  auth?: MCPAuthConfig;
+  /** OAuth2 is not supported via URL options — use a transport with pre-fetched headers. */
+  auth?: SyncMCPAuthConfig;
   timeout?: number;
 };
 
@@ -60,7 +61,7 @@ export class MCPClient implements Disposable {
       response = await this.#transport.send({ method: 'tools/list' });
     } catch (error) {
       if (error instanceof MCPTransportError) {
-        throw new MCPServerUnavailableError(this.#serverUrl, error as Error);
+        throw new MCPServerUnavailableError(this.#serverUrl, error);
       }
       throw error;
     }
@@ -127,7 +128,7 @@ export class MCPClient implements Disposable {
       return body?.result ?? body;
     } catch (error) {
       if (error instanceof MCPTransportError) {
-        throw new MCPServerUnavailableError(this.#serverUrl, error as Error);
+        throw new MCPServerUnavailableError(this.#serverUrl, error);
       }
       if (
         error instanceof DOMException &&

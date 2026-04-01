@@ -36,15 +36,6 @@ export type MCPTransport = {
 
 export type TransportKind = 'http' | 'sse' | 'stdio';
 
-export type CreateTransportOptions = {
-  /** Override automatic scheme detection. */
-  transport?: TransportKind;
-  /** Auth headers to include on HTTP/SSE requests. */
-  headers?: Record<string, string>;
-  /** Request timeout in milliseconds. */
-  timeout?: number;
-};
-
 /**
  * Infer the transport kind from a URL string.
  *
@@ -61,7 +52,7 @@ export function inferTransportKind(url: string, override?: TransportKind): Trans
 // Stdio URL parsing
 // ---------------------------------------------------------------------------
 
-export type StdioTarget = {
+type StdioTarget = {
   command: string;
   args: string[];
 };

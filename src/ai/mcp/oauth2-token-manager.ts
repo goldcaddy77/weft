@@ -101,13 +101,9 @@ export function createOAuth2TokenManager(config: OAuth2Config): OAuth2TokenManag
     return { accessToken, expiresAt };
   }
 
-  function isTokenValid(): boolean {
-    return cached !== null && Date.now() < cached.expiresAt - EXPIRY_BUFFER_MS;
-  }
-
   async function getAccessToken(): Promise<string> {
-    if (isTokenValid()) {
-      return cached!.accessToken;
+    if (cached !== null && Date.now() < cached.expiresAt - EXPIRY_BUFFER_MS) {
+      return cached.accessToken;
     }
 
     // Thread-safe: concurrent callers share one in-flight refresh
