@@ -1,52 +1,44 @@
 # Code Review Findings
 
-Last reviewed: 2026-03-31
-
-## Architecture Doc Discrepancies
-
-All three items below have been resolved by updating the architecture doc to mark unimplemented APIs as planned:
-
-- [x] **`engine.profile()` not implemented**: Marked as "not yet implemented" in architecture doc.
-- [x] **`alerts` configuration not implemented**: Marked as "not yet implemented" in architecture doc.
-- [x] **`engine.getReview()` not exposed on Engine**: Doc pseudo-code corrected to use `engine.listReviews()` without unsupported filter arguments.
+Last reviewed: 2026-04-01
 
 ## Not Yet Implemented (Notable Gaps)
 
-- [ ] **Single binary distribution** (`bun build --compile`). No build script for standalone executables.
-- [ ] **MCP server integration** for agent tools. Full section is unimplemented.
-- [ ] **Context window management strategies** (sliding-window, summarize, RAG). Full section is unimplemented.
-- [ ] **Multi-agent coordination** (handoff, debate, supervise, SharedState). Full section is unimplemented.
 - [ ] **Remote worker interceptors**: Architecture doc specifies `Worker` accepts `interceptors` option but this is not implemented. Activity interceptors only apply to local workers via `engine.addActivityInterceptor()`.
-- [ ] **OpenTelemetry integration** via interceptors. Adapter file exists (`src/observability/opentelemetry.ts`) but acceptance criteria for trace context propagation to remote workers, span links for child workflows, and custom `attributeExtractor` are not met.
-- [ ] **Model routing and fallback chains** for agents. Full section is unimplemented.
+- [ ] **MCP OAuth2 authentication**: Only bearer token and API-key auth supported. OAuth2 client credentials specified in architecture doc but not implemented.
+- [ ] **MCP stdio and SSE transports**: Only HTTP transport implemented. Stdio and SSE transports specified in architecture doc but not built.
+- [ ] **`onBudgetWarning` hook not invoked**: Defined in `AgentHooks` interface in `declaration.ts` but never called in `executeAgentLoop()`. Budget warnings fire as events only; the hook callback is dead code.
+- [ ] **Multi-agent fan-out budget enforcement**: Budget tracking exists but enforcement during parallel multi-agent execution (via `ctx.all()`) is not fully verified. Total cost across branches should count against `ctx.setBudget()`.
+- [ ] **OTel trace context in coordination functions**: W3C Trace Context utilities exist in `src/observability/propagation.ts`, but `ctx.handoff()`, `ctx.debate()`, and `ctx.supervise()` do not inject or propagate trace context headers.
+- [ ] **Built-in alerting**: Architecture doc specifies alert rules as engine event listeners with webhook notifications. No alerting mechanism exists.
+- [ ] **Automatic payload compression**: No gzip/brotli compression above configurable threshold. Only context summarization (compressing old messages) exists.
+- [ ] **Performance benchmarks not meeting architecture targets**: Benchmark tests exist with relaxed thresholds (e.g., >5K workflows/sec vs. spec'd >50K; ≤10KB/workflow vs. spec'd ≤2KB). Tests pass at relaxed thresholds but the architecture doc's aspirational targets are unverified.
+- [ ] **IndexedDB not covered in multi-backend tests**: `search-attributes-multibackend.test.ts` and `updates-multibackend.test.ts` cover MemoryStorage, BunSQLiteStorage, LMDBStorage, and TursoStorage but not IndexedDB.
 
 ## Code Review Issues
 
 ### High Severity
 
-- [x] **Fire-and-forget `transitionInflightToResolved` in WebSocket message handler**: Replaced `void` with `.catch()` that logs the error with the operation ID.
-- [x] **Fire-and-forget `transitionInflightToResolved` in long-poll result handler**: Same fix applied to the HTTP handler.
+- [ ] **Streaming agent backpressure logic is fundamentally flawed** (`streaming-agent.ts:192-206`): `bufferedBytes` is incremented on each `onToken` call but never decremented when the consumer drains the buffer. The stream will always disconnect after approximately `maxStreamBufferSize` bytes regardless of consumer speed. The backpressure tracking counts bytes enqueued but not bytes dequeued.
 
-- [x] **Timer leak in synchronous update `Promise.race`** (`engine.ts:946-952`): Fixed by storing the timer ID and clearing it on both race outcomes via try/finally.
+- [ ] **SSE stream reader not released on cancellation** (`streaming-agent.ts:462`): In `createSSEStream()`, the `reader` obtained from `tokenStream.getReader()` is never released if the outer SSE stream is cancelled. The underlying token stream becomes locked indefinitely, preventing other consumers from reading. Add a `cancel()` method to the outer `ReadableStream` that calls `reader.cancel()`.
+
+- [ ] **Reader not cleaned up on error in `createStreamingProvider`** (`streaming-agent.ts:68`): If `reader.read()` throws (network failure, provider error), the reader is never cancelled or released. The lock on the provider stream persists even after the chat promise rejects, potentially preventing retry logic. Wrap the read loop in `try/finally { reader.cancel().catch(() => {}) }`.
+
+- [ ] **Observability interceptor uses single mutable root span for concurrent workflows** (`observability/index.ts:179-180`): `currentRootSpan` and `currentWorkflowId` are single variables, not keyed by workflow ID. If multiple workflows run concurrently sharing one interceptor instance, the last `workflowStart` wins and earlier workflows' spans get mis-parented. This is documented in a comment but is a real correctness issue for production use.
+
+- [ ] **Escalation handlers not cleaned up on workflow termination** (`engine.ts:2860-2883`): `#cleanupWaiters` cleans up signal waiters, update waiters, review waiters, and sleep resolvers, but does NOT clean up `#reviewEscalationHandlers`. If a workflow is cancelled while waiting for a human review, the escalation handler remains in the map indefinitely. Add `#reviewEscalationHandlers` cleanup to `#cleanupWaiters`.
 
 ### Medium Severity
 
-- [ ] **Zero resource leaks test missing**: Architecture doc claims a test starts/stops the engine 1000 times with no file handle or memory growth. No such test exists. Write the test or remove the criterion.
+- [ ] **Race condition between escalation timer and workflow termination** (`engine.ts:2627-2636`): If an escalation timer fires concurrently with `#terminateWorkflow`, the handler at line 2634 can execute after the workflow is already failed/cancelled. The handler calls `#failWorkflow` on an already-terminated workflow. Pre-emptively cancel escalation timers during `#terminateWorkflow` and clean up handlers before cleanup runs.
 
-- [x] **`@types/bun` missing from devDependencies**: TypeScript `typecheck` was failing because `@types/bun` was not installed despite `tsconfig.json` declaring `"types": ["bun"]`. Added as a dev dependency.
+- [ ] **Event listener not removed on stream close** (`streaming-agent.ts:236`): Abort signal listener registered with `{ once: true }` but never explicitly removed if the stream closes before the signal fires. Holds closure references to `streamController` and other variables.
 
-- [x] **`workerAffinity` entries not cleaned up on workflow completion**: Added event listeners for terminal workflow events that delete the corresponding affinity entry.
+- [ ] **Observability agent event listener accumulation** (`observability/index.ts:444-449, 462-467`): If the eventTarget exists and an exception throws before the first event fires, listeners stay registered and can fire for unrelated workflows since the interceptor instance may be reused. The workflowId check partially mitigates but doesn't prevent listener accumulation.
 
-- [x] **`scanExpiredTasks` iterates all inflight records on every tick**: Replaced full storage scan with an in-memory `DeadlineTracker` min-heap. The scanner now drains only expired entries. A reconciliation scan runs at a much lower frequency as a safety net.
+- [ ] **No-op span generates random IDs on every call** (`no-op-telemetry.ts:104-119`): When OTel is not installed, every span creation calls `randomHex()` to generate traceId/spanId that are never used. This burns CPU on crypto operations on the hot path. Consider using static sentinel values for no-op spans.
 
-- [x] **Search attribute value size unbounded** (`search-attributes.ts`): Added 1024-byte limit on encoded attribute values with clear error message. Validated via unit tests for within-limit, over-limit, and multi-byte character cases.
+- [ ] **Review webhook fire-and-forget not tied to engine lifecycle** (`engine.ts:2705-2717`): The webhook `fetch()` is fire-and-forget with `.catch()` logging, but not wrapped in `AbortController`-based cancellation tied to engine disposal. If the engine is disposed while the fetch is pending, the error handler may not execute properly.
 
-- [x] **Search attribute type not validated against schema** (`engine.ts`): Added `validateAttributeType` that checks runtime typeof against all five schema types (string, number, boolean, datetime, keyword_list). Integration tests verify mismatches are rejected.
-
-- [x] **Interceptor error propagation in `composeWorkflowStartHook`** (`interceptor.ts`): Verified that synchronous function call chain correctly propagates errors. Added 13 tests confirming error propagation from interceptors, through nested chains, and from execute callbacks.
-
-- [x] **Swallowed errors in fire-and-forget cleanup operations** (`engine.ts`): Replaced 4 silent `.catch(() => {})` blocks with `.catch((error) => { console.warn(...) })` that logs operation context and error details.
-
-- [x] **Multi-backend test coverage for search attributes and updates**: Added parametrized test suites running against MemoryStorage, BunSQLiteStorage, LMDBStorage, and TursoStorage (112 additional test cases). Shared `storageBackends` infrastructure makes adding new backends automatic.
-
-- [x] **`headers` propagation to remote workers verified**: Added 2 end-to-end integration tests confirming headers flow from `dispatchTask` through WebSocket to `RemoteWorker` activity interceptors, including the empty-headers case.
+- [ ] **Zero resource leaks test exists but does not meet original criteria**: `resource-leaks.test.ts` runs 1000 iterations and checks heap growth stays under 5MB. Architecture doc claims "no file handle or memory growth" — the test uses a generous 5MB threshold which may mask slow leaks.
