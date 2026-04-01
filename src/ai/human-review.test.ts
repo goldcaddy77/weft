@@ -70,6 +70,38 @@ describe('ReviewCoordinator', () => {
       expect(request.workflowId).toBe('wf-1');
       expect(request.createdAt).toBeGreaterThan(0);
     });
+
+    it('dispatches HumanReviewRequestedEvent when eventTarget is provided', async () => {
+      const eventTarget = new EventTarget();
+      const coordinatorWithEvents = new ReviewCoordinator(storage, { eventTarget });
+      const receivedEvents: HumanReviewRequestedEvent[] = [];
+
+      eventTarget.addEventListener(HumanReviewRequestedEvent.type, (event) => {
+        receivedEvents.push(event as HumanReviewRequestedEvent);
+      });
+
+      const request = await coordinatorWithEvents.createReview('wf-event-1', {
+        artifact: { content: 'review this' },
+        reviewType: 'code-review',
+        reviewers: ['alice', 'bob'],
+      });
+
+      expect(receivedEvents).toHaveLength(1);
+      expect(receivedEvents[0]!.workflowId).toBe('wf-event-1');
+      expect(receivedEvents[0]!.reviewId).toBe(request.reviewId);
+      expect(receivedEvents[0]!.reviewType).toBe('code-review');
+      expect(receivedEvents[0]!.reviewers).toEqual(['alice', 'bob']);
+    });
+
+    it('does not dispatch HumanReviewRequestedEvent when no eventTarget is provided', async () => {
+      // This test verifies that the coordinator works fine without an eventTarget.
+      // If it throws, the test will fail.
+      const request = await coordinator.createReview('wf-no-events', {
+        artifact: 'some artifact',
+      });
+
+      expect(request.workflowId).toBe('wf-no-events');
+    });
   });
 
   describe('getReview', () => {

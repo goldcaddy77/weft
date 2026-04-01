@@ -357,7 +357,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #checkpoints: Map<string, Checkpoint>;
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
+  #pendingParentHeaders: Map<string, string> | undefined;
   #workflowNestingDepths: Map<string, number>;
+  #workflowHeaders: Map<string, Map<string, string>>;
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
@@ -396,7 +398,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#checkpoints = new Map();
     this.#broadcastChannel = null;
     this.#pendingNestingDepth = undefined;
+    this.#pendingParentHeaders = undefined;
     this.#workflowNestingDepths = new Map();
+    this.#workflowHeaders = new Map();
     this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
       this.#handleCache.delete(id);
     });
@@ -620,6 +624,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const workflowId = options?.id ?? crypto.randomUUID();
 
+    // Capture and clear pending parent headers immediately, before any async
+    // work, to prevent a concurrent child-workflow start from overwriting them.
+    const parentHeaders = this.#pendingParentHeaders;
+    this.#pendingParentHeaders = undefined;
+
     // Atomic check-and-reserve: prevent two concurrent start() calls with the
     // same ID from both passing the storage check before either writes state.
     if (this.#pendingStarts.has(workflowId)) {
@@ -706,18 +715,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         });
       }
 
-      // Invoke workflowStart interceptor hook (before execution begins)
+      // Invoke workflowStart interceptor hook (before execution begins).
+      // Seed headers from parent workflow if this is a child workflow.
       const composedInterceptor = this.#getComposedWorkflowInterceptor();
       if (composedInterceptor) {
+        const headers = new Map<string, string>();
+        if (parentHeaders) {
+          for (const [k, v] of parentHeaders) {
+            headers.set(k, v);
+          }
+        }
         composedInterceptor.workflowStart(
           {
             workflowId,
             workflowType: type,
             input,
-            headers: new Map(),
+            headers,
           },
-          () => {
-            /* no-op execute — the actual start happens below */
+          (interception) => {
+            this.#workflowHeaders.set(workflowId, interception.headers);
           },
         );
       }
@@ -1600,6 +1616,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#sleepResolversByWorkflow.clear();
     this.#checkpoints.clear();
     this.#workflowNestingDepths.clear();
+    this.#workflowHeaders.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
     this.#broadcastChannel?.close();
@@ -2483,8 +2500,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         }
 
         try {
-          // Set pending nesting depth for the child workflow
+          // Set pending nesting depth and parent headers for the child workflow
           this.#pendingNestingDepth = currentDepth + 1;
+          this.#pendingParentHeaders = this.#workflowHeaders.get(workflowId);
           const childHandle = await this.start(operation.workflowType, operation.input);
           const childResult = await childHandle.result();
           this.#feedOperationResult(workflowId, { status: 'completed', value: childResult });
@@ -2861,6 +2879,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#sleepResolversByWorkflow.delete(workflowId);
     }
     this.#workflowNestingDepths.delete(workflowId);
+    this.#workflowHeaders.delete(workflowId);
   }
 
   // -------------------------------------------------------------------------

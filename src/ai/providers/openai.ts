@@ -260,7 +260,7 @@ export class OpenAIProvider implements LLMProvider {
       }
     }
 
-    return {
+    const response: ChatResponse = {
       content,
       toolCalls,
       usage: {
@@ -271,6 +271,14 @@ export class OpenAIProvider implements LLMProvider {
       model,
       stopReason: this.#mapFinishReason(finishReason),
     };
+
+    // OpenAI reasoning models (o1, o3, etc.) may include reasoning content
+    const reasoningTrace = message['reasoning_content'] as string | undefined;
+    if (reasoningTrace) {
+      response.reasoningTrace = reasoningTrace;
+    }
+
+    return response;
   }
 
   #mapFinishReason(finishReason: string): 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' {

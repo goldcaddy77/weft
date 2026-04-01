@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { MetricDefinition } from './metrics';
-import { METRICS, MetricsCollector } from './metrics';
+import { METRICS, MetricsCollector, createOtelMetrics } from './metrics';
+import type { OtelMeter } from './no-op-telemetry';
 
 describe('metrics', () => {
   const entries = Object.entries(METRICS) as [string, MetricDefinition][];
@@ -176,5 +177,118 @@ describe('MetricsCollector', () => {
       const snapshot = collector.snapshot();
       expect(Object.keys(snapshot)).toHaveLength(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createOtelMetrics
+// ---------------------------------------------------------------------------
+
+/** Build a recording meter that captures all instrument creation and calls. */
+function createRecordingMeter(): {
+  meter: OtelMeter;
+  created: Array<{ type: string; name: string; options?: { unit?: string } }>;
+  recordings: Array<{
+    instrument: string;
+    value: number;
+    attributes?: Record<string, string | number | boolean>;
+  }>;
+} {
+  const created: Array<{ type: string; name: string; options?: { unit?: string } }> = [];
+  const recordings: Array<{
+    instrument: string;
+    value: number;
+    attributes?: Record<string, string | number | boolean>;
+  }> = [];
+
+  const meter: OtelMeter = {
+    createHistogram(name: string, options?: { unit?: string }) {
+      created.push({ type: 'histogram', name, ...(options ? { options } : {}) });
+      return {
+        record(value: number, attributes?: Record<string, string | number | boolean>) {
+          recordings.push({ instrument: name, value, ...(attributes ? { attributes } : {}) });
+        },
+      };
+    },
+    createCounter(name: string, options?: { unit?: string }) {
+      created.push({ type: 'counter', name, ...(options ? { options } : {}) });
+      return {
+        add(value: number, attributes?: Record<string, string | number | boolean>) {
+          recordings.push({ instrument: name, value, ...(attributes ? { attributes } : {}) });
+        },
+      };
+    },
+    createUpDownCounter(name: string, options?: { unit?: string }) {
+      created.push({ type: 'upDownCounter', name, ...(options ? { options } : {}) });
+      return {
+        add(value: number, attributes?: Record<string, string | number | boolean>) {
+          recordings.push({ instrument: name, value, ...(attributes ? { attributes } : {}) });
+        },
+      };
+    },
+  };
+
+  return { meter, created, recordings };
+}
+
+describe('createOtelMetrics', () => {
+  it('creates the expected OTel instruments when given a meter', () => {
+    const { meter, created } = createRecordingMeter();
+    const otelMetrics = createOtelMetrics(meter);
+
+    expect(otelMetrics).toBeDefined();
+    expect(otelMetrics.workflowDuration).toBeDefined();
+    expect(otelMetrics.activityDuration).toBeDefined();
+    expect(otelMetrics.activityAttempts).toBeDefined();
+    expect(otelMetrics.activeWorkflows).toBeDefined();
+
+    const names = created.map((c) => c.name);
+    expect(names).toContain('weft.workflow.duration');
+    expect(names).toContain('weft.activity.duration');
+    expect(names).toContain('weft.activity.attempts');
+    expect(names).toContain('weft.workflow.active');
+  });
+
+  it('creates histograms with correct units', () => {
+    const { meter, created } = createRecordingMeter();
+    createOtelMetrics(meter);
+
+    const workflowDuration = created.find((c) => c.name === 'weft.workflow.duration');
+    expect(workflowDuration).toBeDefined();
+    expect(workflowDuration!.options?.unit).toBe('ms');
+
+    const activityDuration = created.find((c) => c.name === 'weft.activity.duration');
+    expect(activityDuration).toBeDefined();
+    expect(activityDuration!.options?.unit).toBe('ms');
+  });
+
+  it('instruments are callable', () => {
+    const { meter, recordings } = createRecordingMeter();
+    const otelMetrics = createOtelMetrics(meter);
+
+    otelMetrics.workflowDuration.record(150);
+    otelMetrics.activityDuration.record(42);
+    otelMetrics.activityAttempts.add(1);
+    otelMetrics.activeWorkflows.add(1);
+    otelMetrics.activeWorkflows.add(-1);
+
+    expect(recordings).toHaveLength(5);
+    expect(recordings[0]!.instrument).toBe('weft.workflow.duration');
+    expect(recordings[0]!.value).toBe(150);
+  });
+
+  it('uses the no-op meter when called without arguments', () => {
+    // Should not throw even without @opentelemetry/api installed
+    const otelMetrics = createOtelMetrics();
+    expect(otelMetrics).toBeDefined();
+    expect(() => otelMetrics.workflowDuration.record(100)).not.toThrow();
+    expect(() => otelMetrics.activityAttempts.add(1)).not.toThrow();
+  });
+
+  it('accepts a string meter name', () => {
+    // Should use getOtelApi().metrics.getMeter(name) under the hood
+    const otelMetrics = createOtelMetrics('my-service');
+    expect(otelMetrics).toBeDefined();
+    expect(() => otelMetrics.workflowDuration.record(100)).not.toThrow();
   });
 });

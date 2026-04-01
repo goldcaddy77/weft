@@ -1,15 +1,120 @@
 import { describe, expect, it } from 'bun:test';
 
+import {
+  AgentToolCalledEvent,
+  AgentToolReturnedEvent,
+  AgentTurnCompletedEvent,
+  AgentTurnStartedEvent,
+} from '../ai/events';
 import type {
-  ActivityExecutionInterception,
   ActivityInterception,
   AgentInterception,
   SignalInterception,
   SleepInterception,
 } from '../core/interceptor';
-import type { SpanInfo } from './index';
 import { createObservabilityInterceptors } from './index';
 import { MetricsCollector } from './metrics';
+import type { OtelApi, OtelSpan, OtelTracer } from './no-op-telemetry';
+
+// ---------------------------------------------------------------------------
+// Recording tracer: captures all span operations for assertions
+// ---------------------------------------------------------------------------
+
+type RecordedSpan = {
+  name: string;
+  attributes: Record<string, string | number | boolean>;
+  status?: { code: number; message?: string };
+  exceptions: Array<Error | string>;
+  ended: boolean;
+  parentContext?: unknown;
+};
+
+function createRecordingTracer(): {
+  tracer: OtelTracer;
+  spans: RecordedSpan[];
+} {
+  const spans: RecordedSpan[] = [];
+
+  const tracer: OtelTracer = {
+    startSpan(name: string, options?, _context?): OtelSpan {
+      const recorded: RecordedSpan = {
+        name,
+        attributes: { ...options?.attributes },
+        exceptions: [],
+        ended: false,
+        parentContext: _context,
+      };
+      spans.push(recorded);
+
+      return {
+        setAttribute(key: string, value: string | number | boolean) {
+          recorded.attributes[key] = value;
+        },
+        setStatus(status: { code: number; message?: string }) {
+          recorded.status = status;
+        },
+        recordException(exception: Error | string) {
+          recorded.exceptions.push(exception);
+        },
+        end() {
+          recorded.ended = true;
+        },
+        spanContext() {
+          return {
+            traceId: 'abcd1234abcd1234abcd1234abcd1234',
+            spanId: 'ef56ef56ef56ef56',
+            traceFlags: 1,
+          };
+        },
+      };
+    },
+  };
+
+  return { tracer, spans };
+}
+
+/**
+ * Build a mock OTel API that uses our recording tracer.
+ * This lets us verify that the interceptors call OTel correctly.
+ */
+function createMockOtelApi(tracer: OtelTracer): OtelApi {
+  return {
+    trace: {
+      getTracer() {
+        return tracer;
+      },
+      setSpan(context: unknown) {
+        return context;
+      },
+    },
+    metrics: {
+      getMeter() {
+        return {
+          createHistogram() {
+            return { record() {} };
+          },
+          createCounter() {
+            return { add() {} };
+          },
+          createUpDownCounter() {
+            return { add() {} };
+          },
+        };
+      },
+    },
+    context: {
+      ROOT_CONTEXT: Symbol('ROOT'),
+      with<T>(_ctx: unknown, fn: () => T): T {
+        return fn();
+      },
+    },
+    SpanStatusCode: { OK: 1, ERROR: 2, UNSET: 0 },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 describe('createObservabilityInterceptors', () => {
   it('returns workflow and activity interceptors', () => {
@@ -18,26 +123,42 @@ describe('createObservabilityInterceptors', () => {
     expect(interceptors.activity).toBeDefined();
   });
 
+  it('returns a metrics collector even when not explicitly provided', () => {
+    const { metrics } = createObservabilityInterceptors();
+    expect(metrics).toBeDefined();
+    expect(typeof metrics.increment).toBe('function');
+    expect(typeof metrics.snapshot).toBe('function');
+  });
+
   describe('workflow interceptor', () => {
-    it('injects trace context on activity', () => {
-      const { workflow } = createObservabilityInterceptors();
+    it('injects traceparent header on workflowStart', () => {
+      const { tracer } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
       const headers = new Map<string, string>();
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-1',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers,
+        },
+        () => {},
+      );
 
-      const interception = {
-        activityName: 'doSomething',
-        input: 'hello',
-        attempt: 1,
-        headers,
-      };
+      expect(headers.has('traceparent')).toBe(true);
+      const traceparent = headers.get('traceparent')!;
+      expect(traceparent).toContain('abcd1234abcd1234abcd1234abcd1234');
+    });
 
-      const mockResult = 'activity-result';
-      const next = function* (ctx: ActivityInterception) {
-        // Verify headers were injected before calling next
-        expect(ctx.headers.has('traceparent')).toBe(true);
-        return mockResult;
-      };
+    it('creates a span for workflowStart with correct attributes', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
 
-      // The workflow needs a start context to establish a trace
       workflow.workflowStart!(
         {
           workflowId: 'wf-1',
@@ -47,6 +168,42 @@ describe('createObservabilityInterceptors', () => {
         },
         () => {},
       );
+
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.name).toBe('workflow:TestWorkflow');
+      expect(spans[0]!.attributes['weft.workflow.id']).toBe('wf-1');
+      expect(spans[0]!.attributes['weft.workflow.type']).toBe('TestWorkflow');
+    });
+
+    it('injects traceparent header on activity', () => {
+      const { tracer } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-1',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const headers = new Map<string, string>();
+      const interception = {
+        activityName: 'doSomething',
+        input: 'hello',
+        attempt: 1,
+        headers,
+      };
+
+      const mockResult = 'activity-result';
+      const next = function* (ctx: ActivityInterception) {
+        expect(ctx.headers.has('traceparent')).toBe(true);
+        return mockResult;
+      };
 
       const generator = workflow.activity!(interception, next);
       let step = generator.next();
@@ -58,16 +215,10 @@ describe('createObservabilityInterceptors', () => {
       expect(headers.has('traceparent')).toBe(true);
     });
 
-    it('records span for sleep duration', () => {
-      const spans: SpanInfo[] = [];
+    it('creates a span for activity with correct attributes', () => {
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => spans.push({ ...span }),
-        onSpanEnd: (span) => {
-          const index = spans.findIndex((s) => s.spanId === span.spanId);
-          if (index >= 0) {
-            spans[index] = { ...span };
-          }
-        },
+        otelApi: createMockOtelApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -80,275 +231,33 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      const interception = {
-        duration: 5000,
-        headers: new Map<string, string>(),
+      const next = function* (_ctx: ActivityInterception) {
+        return 'result';
       };
 
-      const next = function* (_ctx: typeof interception) {};
-
-      const generator = workflow.sleep!(interception, next);
+      const generator = workflow.activity!(
+        { activityName: 'doSomething', input: undefined, attempt: 1, headers: new Map() },
+        next,
+      );
       let step = generator.next();
       while (!step.done) {
         step = generator.next(step.value);
       }
 
-      const sleepSpan = spans.find((s) => s.name === 'sleep');
-      expect(sleepSpan).toBeDefined();
-      expect(sleepSpan!.attributes['sleep.duration']).toBe(5000);
+      // spans[0] is workflowStart, spans[1] is activity
+      const activitySpan = spans.find((s) => s.name.startsWith('activity:'));
+      expect(activitySpan).toBeDefined();
+      expect(activitySpan!.name).toBe('activity:doSomething');
+      expect(activitySpan!.attributes['weft.activity.name']).toBe('doSomething');
+      expect(activitySpan!.attributes['weft.activity.attempt']).toBe(1);
+      expect(activitySpan!.status?.code).toBe(1); // OK
+      expect(activitySpan!.ended).toBe(true);
     });
 
-    it('records span for signal wait', () => {
-      const spans: SpanInfo[] = [];
-      const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => spans.push({ ...span }),
-        onSpanEnd: (span) => {
-          const index = spans.findIndex((s) => s.spanId === span.spanId);
-          if (index >= 0) {
-            spans[index] = { ...span };
-          }
-        },
-      });
-
-      workflow.workflowStart!(
-        {
-          workflowId: 'wf-1',
-          workflowType: 'TestWorkflow',
-          input: undefined,
-          headers: new Map<string, string>(),
-        },
-        () => {},
-      );
-
-      const interception = {
-        signalName: 'approval',
-        payload: { approved: true },
-        headers: new Map<string, string>(),
-      };
-
-      const next = function* (_ctx: SignalInterception) {
-        return 'signal-result';
-      };
-
-      const generator = workflow.waitForSignal!(interception, next);
-      let step = generator.next();
-      while (!step.done) {
-        step = generator.next(step.value);
-      }
-
-      const signalSpan = spans.find((s) => s.name === 'waitForSignal');
-      expect(signalSpan).toBeDefined();
-      expect(signalSpan!.attributes['signal.name']).toBe('approval');
-    });
-  });
-
-  describe('activity interceptor', () => {
-    it('extracts trace context from headers', async () => {
-      const { activity } = createObservabilityInterceptors();
-      const headers = new Map<string, string>([
-        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
-      ]);
-
-      const interception = {
-        activityName: 'doSomething',
-        input: 'hello',
-        attempt: 1,
-        headers,
-      };
-
-      const next = async (_ctx: ActivityExecutionInterception) => 'result';
-
-      const result = await activity.execute!(interception, next);
-      expect(result).toBe('result');
-    });
-  });
-
-  describe('callbacks', () => {
-    it('onSpanStart and onSpanEnd callbacks fire', async () => {
-      const startedSpans: SpanInfo[] = [];
-      const endedSpans: SpanInfo[] = [];
-
-      const { activity } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push(span),
-        onSpanEnd: (span) => endedSpans.push(span),
-      });
-
-      const headers = new Map<string, string>([
-        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
-      ]);
-
-      await activity.execute!(
-        {
-          activityName: 'doSomething',
-          input: 'hello',
-          attempt: 1,
-          headers,
-        },
-        async () => 'ok',
-      );
-
-      expect(startedSpans).toHaveLength(1);
-      expect(startedSpans[0]!.name).toBe('activity:doSomething');
-      expect(endedSpans).toHaveLength(1);
-      expect(endedSpans[0]!.status).toBe('ok');
-      expect(endedSpans[0]!.endTime).toBeDefined();
-    });
-  });
-
-  describe('recordPayloads option', () => {
-    it('includes input as attribute when enabled', async () => {
-      const endedSpans: SpanInfo[] = [];
-
-      const { activity } = createObservabilityInterceptors({
-        recordPayloads: true,
-        onSpanEnd: (span) => endedSpans.push(span),
-      });
-
-      const headers = new Map<string, string>([
-        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
-      ]);
-
-      await activity.execute!(
-        {
-          activityName: 'doSomething',
-          input: 'hello-world',
-          attempt: 1,
-          headers,
-        },
-        async () => 'ok',
-      );
-
-      expect(endedSpans).toHaveLength(1);
-      expect(endedSpans[0]!.attributes['input']).toBe('"hello-world"');
-    });
-
-    it('does not include input when disabled', async () => {
-      const endedSpans: SpanInfo[] = [];
-
-      const { activity } = createObservabilityInterceptors({
-        recordPayloads: false,
-        onSpanEnd: (span) => endedSpans.push(span),
-      });
-
-      const headers = new Map<string, string>([
-        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
-      ]);
-
-      await activity.execute!(
-        {
-          activityName: 'doSomething',
-          input: 'hello-world',
-          attempt: 1,
-          headers,
-        },
-        async () => 'ok',
-      );
-
-      expect(endedSpans).toHaveLength(1);
-      expect(endedSpans[0]!.attributes['input']).toBeUndefined();
-    });
-
-    it('truncates payloads exceeding maxPayloadSize', async () => {
-      const endedSpans: SpanInfo[] = [];
-
-      const { activity } = createObservabilityInterceptors({
-        recordPayloads: true,
-        maxPayloadSize: 10,
-        onSpanEnd: (span) => endedSpans.push(span),
-      });
-
-      const headers = new Map<string, string>([
-        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
-      ]);
-
-      await activity.execute!(
-        {
-          activityName: 'doSomething',
-          input: 'this is a very long input string that exceeds the max',
-          attempt: 1,
-          headers,
-        },
-        async () => 'ok',
-      );
-
-      expect(endedSpans).toHaveLength(1);
-      const inputAttribute = endedSpans[0]!.attributes['input'] as string;
-      expect(inputAttribute.length).toBeLessThanOrEqual(13); // 10 + "..."
-    });
-  });
-
-  describe('error handling', () => {
-    it('error spans include error details', async () => {
-      const endedSpans: SpanInfo[] = [];
-
-      const { activity } = createObservabilityInterceptors({
-        onSpanEnd: (span) => endedSpans.push(span),
-      });
-
-      const headers = new Map<string, string>([
-        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
-      ]);
-
-      try {
-        await activity.execute!(
-          {
-            activityName: 'failingActivity',
-            input: undefined,
-            attempt: 1,
-            headers,
-          },
-          async () => {
-            throw new Error('something went wrong');
-          },
-        );
-      } catch {
-        // Expected
-      }
-
-      expect(endedSpans).toHaveLength(1);
-      expect(endedSpans[0]!.status).toBe('error');
-      expect(endedSpans[0]!.error).toBe('something went wrong');
-    });
-
-    it('activity interceptor handles non-Error thrown values', async () => {
-      const endedSpans: SpanInfo[] = [];
-
-      const { activity } = createObservabilityInterceptors({
-        onSpanEnd: (span) => endedSpans.push(span),
-      });
-
-      const headers = new Map<string, string>([
-        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
-      ]);
-
-      try {
-        await activity.execute!(
-          {
-            activityName: 'stringThrower',
-            input: undefined,
-            attempt: 1,
-            headers,
-          },
-          async () => {
-            throw 'string error value';
-          },
-        );
-      } catch {
-        // Expected
-      }
-
-      expect(endedSpans).toHaveLength(1);
-      expect(endedSpans[0]!.status).toBe('error');
-      expect(endedSpans[0]!.error).toBe('string error value');
-    });
-  });
-
-  describe('workflow activity interceptor error handling', () => {
     it('records error span when activity generator throws', () => {
-      const endedSpans: SpanInfo[] = [];
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: () => {},
-        onSpanEnd: (span) => endedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -361,19 +270,16 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      const interception = {
-        activityName: 'failingActivity',
-        input: undefined,
-        attempt: 1,
-        headers: new Map<string, string>(),
-      };
-
       const theError = new Error('activity failed');
       const next = function* (_ctx: ActivityInterception) {
         throw theError;
       };
 
-      const generator = workflow.activity!(interception, next);
+      const generator = workflow.activity!(
+        { activityName: 'failingActivity', input: undefined, attempt: 1, headers: new Map() },
+        next,
+      );
+
       try {
         let step = generator.next();
         while (!step.done) {
@@ -383,21 +289,23 @@ describe('createObservabilityInterceptors', () => {
         expect(error).toBe(theError);
       }
 
-      const errorSpan = endedSpans.find((s) => s.status === 'error');
+      const errorSpan = spans.find((s) => s.name === 'activity:failingActivity');
       expect(errorSpan).toBeDefined();
-      expect(errorSpan!.error).toBe('activity failed');
+      expect(errorSpan!.status?.code).toBe(2); // ERROR
+      expect(errorSpan!.status?.message).toBe('activity failed');
+      expect(errorSpan!.exceptions).toHaveLength(1);
+      expect(errorSpan!.ended).toBe(true);
     });
 
-    it('records error span with non-Error thrown value', () => {
-      const endedSpans: SpanInfo[] = [];
+    it('records span for sleep with correct attributes', () => {
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: () => {},
-        onSpanEnd: (span) => endedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
       });
 
       workflow.workflowStart!(
         {
-          workflowId: 'wf-err-2',
+          workflowId: 'wf-1',
           workflowType: 'TestWorkflow',
           input: undefined,
           headers: new Map<string, string>(),
@@ -405,39 +313,61 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      const interception = {
-        activityName: 'stringThrower',
-        input: undefined,
-        attempt: 1,
-        headers: new Map<string, string>(),
-      };
+      const next = function* (_ctx: SleepInterception) {};
 
-      const next = function* (_ctx: ActivityInterception) {
-        throw 'non-error value';
-      };
-
-      const generator = workflow.activity!(interception, next);
-      try {
-        let step = generator.next();
-        while (!step.done) {
-          step = generator.next(step.value);
-        }
-      } catch {
-        // Expected
+      const generator = workflow.sleep!({ duration: 5000, headers: new Map() }, next);
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
       }
 
-      const errorSpan = endedSpans.find((s) => s.status === 'error');
-      expect(errorSpan).toBeDefined();
-      expect(errorSpan!.error).toBe('non-error value');
+      const sleepSpan = spans.find((s) => s.name === 'sleep');
+      expect(sleepSpan).toBeDefined();
+      expect(sleepSpan!.attributes['weft.sleep.duration']).toBe(5000);
+      expect(sleepSpan!.status?.code).toBe(1); // OK
+      expect(sleepSpan!.ended).toBe(true);
     });
-  });
 
-  describe('waitForSignal error handling', () => {
-    it('records error span when waitForSignal generator throws', () => {
-      const endedSpans: SpanInfo[] = [];
+    it('records span for waitForSignal with correct attributes', () => {
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: () => {},
-        onSpanEnd: (span) => endedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-1',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const next = function* (_ctx: SignalInterception) {
+        return 'signal-result';
+      };
+
+      const generator = workflow.waitForSignal!(
+        { signalName: 'approval', payload: { approved: true }, headers: new Map() },
+        next,
+      );
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      const signalSpan = spans.find((s) => s.name === 'waitForSignal');
+      expect(signalSpan).toBeDefined();
+      expect(signalSpan!.attributes['weft.signal.name']).toBe('approval');
+      expect(signalSpan!.status?.code).toBe(1); // OK
+      expect(signalSpan!.ended).toBe(true);
+    });
+
+    it('records error span when waitForSignal throws', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -450,18 +380,16 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      const interception = {
-        signalName: 'test-signal',
-        payload: undefined,
-        headers: new Map<string, string>(),
-      };
-
       const theError = new Error('signal failed');
       const next = function* (_ctx: SignalInterception) {
         throw theError;
       };
 
-      const generator = workflow.waitForSignal!(interception, next);
+      const generator = workflow.waitForSignal!(
+        { signalName: 'test-signal', payload: undefined, headers: new Map() },
+        next,
+      );
+
       try {
         let step = generator.next();
         while (!step.done) {
@@ -471,21 +399,22 @@ describe('createObservabilityInterceptors', () => {
         expect(error).toBe(theError);
       }
 
-      const errorSpan = endedSpans.find((s) => s.status === 'error');
+      const errorSpan = spans.find((s) => s.name === 'waitForSignal');
       expect(errorSpan).toBeDefined();
-      expect(errorSpan!.error).toBe('signal failed');
+      expect(errorSpan!.status?.code).toBe(2); // ERROR
+      expect(errorSpan!.exceptions).toHaveLength(1);
+      expect(errorSpan!.ended).toBe(true);
     });
 
-    it('records error span with non-Error thrown value in waitForSignal', () => {
-      const endedSpans: SpanInfo[] = [];
+    it('records span for agent with correct attributes', () => {
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: () => {},
-        onSpanEnd: (span) => endedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
       });
 
       workflow.workflowStart!(
         {
-          workflowId: 'wf-sig-err-2',
+          workflowId: 'wf-1',
           workflowType: 'TestWorkflow',
           input: undefined,
           headers: new Map<string, string>(),
@@ -493,66 +422,285 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      const interception = {
-        signalName: 'test-signal',
-        payload: undefined,
-        headers: new Map<string, string>(),
+      const next = function* (_ctx: AgentInterception) {
+        return 'agent-result';
       };
 
-      const next = function* (_ctx: SignalInterception) {
-        throw 42;
+      const generator = workflow.agent!(
+        { model: 'gpt-4', prompt: 'hello', headers: new Map() },
+        next,
+      );
+      let step = generator.next();
+      while (!step.done) {
+        step = generator.next(step.value);
+      }
+
+      const agentSpan = spans.find((s) => s.name === 'agent');
+      expect(agentSpan).toBeDefined();
+      expect(agentSpan!.attributes['weft.agent.model']).toBe('gpt-4');
+      expect(agentSpan!.status?.code).toBe(1); // OK
+      expect(agentSpan!.ended).toBe(true);
+    });
+
+    it('records error span when agent throws', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-agent-err',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const theError = new Error('agent failed');
+      const next = function* (_ctx: AgentInterception) {
+        throw theError;
       };
 
-      const generator = workflow.waitForSignal!(interception, next);
+      const generator = workflow.agent!(
+        { model: 'gpt-4', prompt: 'hello', headers: new Map() },
+        next,
+      );
+
       try {
         let step = generator.next();
         while (!step.done) {
           step = generator.next(step.value);
         }
+      } catch (error) {
+        expect(error).toBe(theError);
+      }
+
+      const errorSpan = spans.find((s) => s.name === 'agent');
+      expect(errorSpan).toBeDefined();
+      expect(errorSpan!.status?.code).toBe(2); // ERROR
+      expect(errorSpan!.ended).toBe(true);
+    });
+
+    it('creates standalone span for signalReceived', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.signalReceived!(
+        {
+          workflowId: 'wf-1',
+          signalName: 'approval',
+          payload: undefined,
+          headers: new Map(),
+        },
+        () => {},
+      );
+
+      const signalSpan = spans.find((s) => s.name === 'signal:received:approval');
+      expect(signalSpan).toBeDefined();
+      expect(signalSpan!.attributes['weft.signal.name']).toBe('approval');
+      expect(signalSpan!.attributes['weft.signal.workflow_id']).toBe('wf-1');
+      expect(signalSpan!.status?.code).toBe(1); // OK
+      expect(signalSpan!.ended).toBe(true);
+    });
+
+    it('records error span when signalReceived throws', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      const theError = new Error('signal handler failed');
+      expect(() => {
+        workflow.signalReceived!(
+          {
+            workflowId: 'wf-1',
+            signalName: 'approval',
+            payload: undefined,
+            headers: new Map(),
+          },
+          () => {
+            throw theError;
+          },
+        );
+      }).toThrow(theError);
+
+      const signalSpan = spans.find((s) => s.name === 'signal:received:approval');
+      expect(signalSpan).toBeDefined();
+      expect(signalSpan!.status?.code).toBe(2); // ERROR
+      expect(signalSpan!.ended).toBe(true);
+    });
+  });
+
+  describe('activity interceptor', () => {
+    it('extracts trace context from headers and creates child span', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { activity } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      const headers = new Map<string, string>([
+        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
+      ]);
+
+      const result = await activity.execute!(
+        { activityName: 'doSomething', input: 'hello', attempt: 1, headers },
+        async () => 'result',
+      );
+
+      expect(result).toBe('result');
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.name).toBe('activity:execute:doSomething');
+      expect(spans[0]!.status?.code).toBe(1); // OK
+      expect(spans[0]!.ended).toBe(true);
+    });
+
+    it('handles errors in activity execution', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { activity } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      const headers = new Map<string, string>([
+        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
+      ]);
+
+      try {
+        await activity.execute!(
+          { activityName: 'failingActivity', input: undefined, attempt: 1, headers },
+          async () => {
+            throw new Error('something went wrong');
+          },
+        );
       } catch {
         // Expected
       }
 
-      const errorSpan = endedSpans.find((s) => s.status === 'error');
-      expect(errorSpan).toBeDefined();
-      expect(errorSpan!.error).toBe('42');
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.status?.code).toBe(2); // ERROR
+      expect(spans[0]!.status?.message).toBe('something went wrong');
+      expect(spans[0]!.exceptions).toHaveLength(1);
+      expect(spans[0]!.ended).toBe(true);
+    });
+
+    it('handles non-Error thrown values', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { activity } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      const headers = new Map<string, string>([
+        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
+      ]);
+
+      try {
+        await activity.execute!(
+          { activityName: 'stringThrower', input: undefined, attempt: 1, headers },
+          async () => {
+            throw 'string error value';
+          },
+        );
+      } catch {
+        // Expected
+      }
+
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.status?.code).toBe(2); // ERROR
+      expect(spans[0]!.status?.message).toBe('string error value');
+      expect(spans[0]!.ended).toBe(true);
+    });
+
+    it('generates a new trace when no traceparent header exists', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { activity } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      await activity.execute!(
+        { activityName: 'noTrace', input: undefined, attempt: 1, headers: new Map() },
+        async () => 'ok',
+      );
+
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.name).toBe('activity:execute:noTrace');
+      expect(spans[0]!.ended).toBe(true);
     });
   });
 
-  describe('payload serialization', () => {
-    it('handles non-serializable payloads in serializePayload', async () => {
-      const endedSpans: SpanInfo[] = [];
+  describe('recordPayloads option', () => {
+    it('includes input as attribute when enabled', async () => {
+      const { tracer, spans } = createRecordingTracer();
       const { activity } = createObservabilityInterceptors({
         recordPayloads: true,
-        onSpanEnd: (span) => endedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
       });
-
-      // Create a circular reference that JSON.stringify will fail on
-      const circular: any = {};
-      circular.self = circular;
-
-      const headers = new Map<string, string>();
 
       await activity.execute!(
         {
-          activityName: 'circularInput',
-          input: circular,
+          activityName: 'doSomething',
+          input: 'hello-world',
           attempt: 1,
-          headers,
+          headers: new Map(),
         },
         async () => 'ok',
       );
 
-      expect(endedSpans).toHaveLength(1);
-      // When JSON.stringify fails, it falls back to String(input)
-      expect(endedSpans[0]!.attributes['input']).toBeDefined();
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.attributes['weft.payload.input']).toBe('"hello-world"');
+    });
+
+    it('does not include input when disabled', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { activity } = createObservabilityInterceptors({
+        recordPayloads: false,
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      await activity.execute!(
+        {
+          activityName: 'doSomething',
+          input: 'hello-world',
+          attempt: 1,
+          headers: new Map(),
+        },
+        async () => 'ok',
+      );
+
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.attributes['weft.payload.input']).toBeUndefined();
+    });
+
+    it('truncates payloads exceeding maxPayloadSize', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { activity } = createObservabilityInterceptors({
+        recordPayloads: true,
+        maxPayloadSize: 10,
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      await activity.execute!(
+        {
+          activityName: 'doSomething',
+          input: 'this is a very long input string that exceeds the max',
+          attempt: 1,
+          headers: new Map(),
+        },
+        async () => 'ok',
+      );
+
+      expect(spans).toHaveLength(1);
+      const inputAttribute = spans[0]!.attributes['weft.payload.input'] as string;
+      expect(inputAttribute.length).toBeLessThanOrEqual(13); // 10 + "..."
     });
 
     it('records workflow start input when recordPayloads is enabled', () => {
-      const startedSpans: SpanInfo[] = [];
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
         recordPayloads: true,
-        onSpanStart: (span) => startedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -565,16 +713,16 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      const startSpan = startedSpans.find((s) => s.name.startsWith('workflow:'));
+      const startSpan = spans.find((s) => s.name.startsWith('workflow:'));
       expect(startSpan).toBeDefined();
-      expect(startSpan!.attributes['input']).toBe('{"key":"value"}');
+      expect(startSpan!.attributes['weft.payload.input']).toBe('{"key":"value"}');
     });
 
     it('records activity input when recordPayloads is enabled (workflow interceptor)', () => {
-      const startedSpans: SpanInfo[] = [];
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
         recordPayloads: true,
-        onSpanStart: (span) => startedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
       });
 
       workflow.workflowStart!(
@@ -587,92 +735,90 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      const interception = {
-        activityName: 'doSomething',
-        input: 'hello',
-        attempt: 1,
-        headers: new Map<string, string>(),
-      };
-
       const next = function* (_ctx: ActivityInterception) {
         return 'result';
       };
 
-      const generator = workflow.activity!(interception, next);
+      const generator = workflow.activity!(
+        { activityName: 'doSomething', input: 'hello', attempt: 1, headers: new Map() },
+        next,
+      );
       let step = generator.next();
       while (!step.done) {
         step = generator.next(step.value);
       }
 
-      const activitySpan = startedSpans.find((s) => s.name.startsWith('activity:'));
+      const activitySpan = spans.find((s) => s.name.startsWith('activity:'));
       expect(activitySpan).toBeDefined();
-      expect(activitySpan!.attributes['input']).toBe('"hello"');
+      expect(activitySpan!.attributes['weft.payload.input']).toBe('"hello"');
     });
-  });
 
-  describe('activity interceptor without trace parent', () => {
-    it('generates a new traceId when no traceparent header exists', async () => {
-      const startedSpans: SpanInfo[] = [];
+    it('handles non-serializable payloads', async () => {
+      const { tracer, spans } = createRecordingTracer();
       const { activity } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push(span),
+        recordPayloads: true,
+        otelApi: createMockOtelApi(tracer),
       });
 
-      const headers = new Map<string, string>(); // No traceparent
+      // Create a circular reference that JSON.stringify will fail on
+      const circular: any = {};
+      circular.self = circular;
 
       await activity.execute!(
         {
-          activityName: 'noTrace',
-          input: undefined,
+          activityName: 'circularInput',
+          input: circular,
           attempt: 1,
-          headers,
+          headers: new Map(),
         },
         async () => 'ok',
       );
 
-      expect(startedSpans).toHaveLength(1);
-      expect(startedSpans[0]!.traceId).toBeDefined();
-      expect(startedSpans[0]!.traceId.length).toBeGreaterThan(0);
-      // No parent span id when there's no traceparent
-      expect(startedSpans[0]!.parentSpanId).toBeUndefined();
+      expect(spans).toHaveLength(1);
+      expect(spans[0]!.attributes['weft.payload.input']).toBeDefined();
     });
-  });
 
-  describe('workflow activity interceptor without prior workflowStart', () => {
-    it('generates a new traceId when currentTraceId is empty', () => {
-      const startedSpans: SpanInfo[] = [];
+    it('records agent prompt when recordPayloads is enabled', () => {
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push(span),
+        recordPayloads: true,
+        otelApi: createMockOtelApi(tracer),
       });
 
-      // Call activity without calling workflowStart first
-      const interception = {
-        activityName: 'orphanActivity',
-        input: undefined,
-        attempt: 1,
-        headers: new Map<string, string>(),
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-agent-payload',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const next = function* (_ctx: AgentInterception) {
+        return 'agent-result';
       };
 
-      const next = function* (_ctx: ActivityInterception) {
-        return 'result';
-      };
-
-      const generator = workflow.activity!(interception, next);
+      const generator = workflow.agent!(
+        { model: 'gpt-4', prompt: 'hello world', headers: new Map() },
+        next,
+      );
       let step = generator.next();
       while (!step.done) {
         step = generator.next(step.value);
       }
 
-      expect(startedSpans).toHaveLength(1);
-      // traceparent should still be injected with a generated traceId
-      expect(interception.headers.has('traceparent')).toBe(true);
+      const agentSpan = spans.find((s) => s.name === 'agent');
+      expect(agentSpan).toBeDefined();
+      expect(agentSpan!.attributes['weft.agent.prompt']).toBe('"hello world"');
     });
   });
 
   describe('attributeExtractor', () => {
     it('merges custom attributes into workflowStart span', () => {
-      const startedSpans: SpanInfo[] = [];
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
         attributeExtractor: () => ({ 'custom.region': 'us-east', 'custom.priority': 1 }),
       });
 
@@ -686,16 +832,16 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      const span = startedSpans.find((s) => s.name.startsWith('workflow:'));
+      const span = spans.find((s) => s.name.startsWith('workflow:'));
       expect(span).toBeDefined();
       expect(span!.attributes['custom.region']).toBe('us-east');
       expect(span!.attributes['custom.priority']).toBe(1);
     });
 
     it('merges custom attributes into activity span', () => {
-      const startedSpans: SpanInfo[] = [];
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
         attributeExtractor: () => ({ 'custom.region': 'us-east' }),
       });
 
@@ -722,15 +868,15 @@ describe('createObservabilityInterceptors', () => {
         step = generator.next(step.value);
       }
 
-      const activitySpan = startedSpans.find((s) => s.name.startsWith('activity:'));
+      const activitySpan = spans.find((s) => s.name.startsWith('activity:'));
       expect(activitySpan).toBeDefined();
       expect(activitySpan!.attributes['custom.region']).toBe('us-east');
     });
 
     it('merges custom attributes into sleep span', () => {
-      const startedSpans: SpanInfo[] = [];
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
         attributeExtractor: () => ({ 'custom.region': 'eu-west' }),
       });
 
@@ -752,15 +898,15 @@ describe('createObservabilityInterceptors', () => {
         step = generator.next(step.value);
       }
 
-      const sleepSpan = startedSpans.find((s) => s.name === 'sleep');
+      const sleepSpan = spans.find((s) => s.name === 'sleep');
       expect(sleepSpan).toBeDefined();
       expect(sleepSpan!.attributes['custom.region']).toBe('eu-west');
     });
 
     it('merges custom attributes into agent span', () => {
-      const startedSpans: SpanInfo[] = [];
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push(span),
+        otelApi: createMockOtelApi(tracer),
         attributeExtractor: () => ({ 'custom.env': 'production' }),
       });
 
@@ -787,34 +933,34 @@ describe('createObservabilityInterceptors', () => {
         step = generator.next(step.value);
       }
 
-      const agentSpan = startedSpans.find((s) => s.name === 'agent');
+      const agentSpan = spans.find((s) => s.name === 'agent');
       expect(agentSpan).toBeDefined();
       expect(agentSpan!.attributes['custom.env']).toBe('production');
     });
 
-    it('passes interception context to the extractor', () => {
-      const extractorCalls: Record<string, unknown>[] = [];
+    it('receives actual interception context', () => {
+      const extractorCalls: unknown[] = [];
+      const { tracer } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
         attributeExtractor: (ctx) => {
-          extractorCalls.push({ ...ctx });
+          extractorCalls.push(ctx);
           return {};
         },
       });
 
-      workflow.workflowStart!(
-        {
-          workflowId: 'wf-ctx-check',
-          workflowType: 'MyWorkflow',
-          input: { data: 123 },
-          headers: new Map<string, string>(),
-        },
-        () => {},
-      );
+      const interception = {
+        workflowId: 'wf-ctx-check',
+        workflowType: 'MyWorkflow',
+        input: { data: 123 },
+        headers: new Map<string, string>(),
+      };
+
+      workflow.workflowStart!(interception, () => {});
 
       expect(extractorCalls.length).toBeGreaterThanOrEqual(1);
-      const call = extractorCalls[0]!;
-      expect(call['workflowId']).toBe('wf-ctx-check');
-      expect(call['workflowType']).toBe('MyWorkflow');
+      // The extractor receives the actual interception object
+      expect(extractorCalls[0]).toBe(interception);
     });
   });
 
@@ -877,27 +1023,51 @@ describe('createObservabilityInterceptors', () => {
           snapshot['weft.activity.attempts']!.value,
       ).toBe(1);
     });
+  });
 
-    it('returns a metrics collector even when not explicitly provided', () => {
-      const { metrics } = createObservabilityInterceptors();
-      expect(metrics).toBeDefined();
-      expect(typeof metrics.increment).toBe('function');
-      expect(typeof metrics.snapshot).toBe('function');
+  describe('without OTel API (default no-op)', () => {
+    it('works without any options — uses no-op OTel API', () => {
+      const { workflow } = createObservabilityInterceptors();
+
+      const headers = new Map<string, string>();
+      expect(() => {
+        workflow.workflowStart!(
+          {
+            workflowId: 'wf-noop',
+            workflowType: 'TestWorkflow',
+            input: undefined,
+            headers,
+          },
+          () => {},
+        );
+      }).not.toThrow();
+
+      // With the no-op API, traceparent still gets injected (using no-op span context)
+      expect(headers.has('traceparent')).toBe(true);
+    });
+
+    it('activity interceptor works without OTel', async () => {
+      const { activity } = createObservabilityInterceptors();
+
+      const result = await activity.execute!(
+        { activityName: 'noOtel', input: undefined, attempt: 1, headers: new Map() },
+        async () => 'ok',
+      );
+
+      expect(result).toBe('ok');
     });
   });
 
-  describe('agent per-turn and per-tool-call span hierarchy', () => {
-    it('creates child spans for agent turns', () => {
-      const startedSpans: SpanInfo[] = [];
-      const endedSpans: SpanInfo[] = [];
+  describe('non-Error thrown values', () => {
+    it('records non-Error thrown value in activity generator', () => {
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push({ ...span }),
-        onSpanEnd: (span) => endedSpans.push({ ...span }),
+        otelApi: createMockOtelApi(tracer),
       });
 
       workflow.workflowStart!(
         {
-          workflowId: 'wf-turn-spans',
+          workflowId: 'wf-err-2',
           workflowType: 'TestWorkflow',
           input: undefined,
           headers: new Map<string, string>(),
@@ -905,81 +1075,39 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      // The next function simulates the agent execution by invoking the
-      // injected callbacks that the interceptor set on the interception.
-      const next = function* (ctx: AgentInterception) {
-        // Simulate turn 0
-        ctx.onTurnStarted?.({ turnIndex: 0, model: 'test-model' });
-        ctx.onTurnCompleted?.({
-          turnIndex: 0,
-          model: 'test-model',
-          inputTokens: 100,
-          outputTokens: 50,
-          cost: 0.01,
-          duration: 500,
-          toolCallCount: 0,
-        });
-
-        // Simulate turn 1
-        ctx.onTurnStarted?.({ turnIndex: 1, model: 'test-model' });
-        ctx.onTurnCompleted?.({
-          turnIndex: 1,
-          model: 'test-model',
-          inputTokens: 200,
-          outputTokens: 100,
-          cost: 0.02,
-          duration: 600,
-          toolCallCount: 0,
-        });
-
-        return 'agent-result';
+      const next = function* (_ctx: ActivityInterception) {
+        throw 'non-error value';
       };
 
-      const generator = workflow.agent!(
-        { model: 'test-model', prompt: 'hello', headers: new Map() },
+      const generator = workflow.activity!(
+        { activityName: 'stringThrower', input: undefined, attempt: 1, headers: new Map() },
         next,
       );
-      let step = generator.next();
-      while (!step.done) {
-        step = generator.next(step.value);
+
+      try {
+        let step = generator.next();
+        while (!step.done) {
+          step = generator.next(step.value);
+        }
+      } catch {
+        // Expected
       }
 
-      // Verify the span hierarchy: agent > turn:0, turn:1
-      const agentSpan = startedSpans.find((s) => s.name === 'agent');
-      expect(agentSpan).toBeDefined();
-
-      const turnSpans = startedSpans.filter((s) => s.name.startsWith('agent:turn:'));
-      expect(turnSpans).toHaveLength(2);
-      expect(turnSpans[0]!.name).toBe('agent:turn:0');
-      expect(turnSpans[1]!.name).toBe('agent:turn:1');
-
-      // Turn spans should be children of the agent span
-      expect(turnSpans[0]!.parentSpanId).toBe(agentSpan!.spanId);
-      expect(turnSpans[1]!.parentSpanId).toBe(agentSpan!.spanId);
-
-      // Turn spans should have correct attributes
-      expect(turnSpans[0]!.attributes['weft.agent.model']).toBe('test-model');
-      expect(turnSpans[0]!.attributes['weft.agent.turn_index']).toBe(0);
-      expect(turnSpans[1]!.attributes['weft.agent.turn_index']).toBe(1);
-
-      // Turn spans should be ended with cost attribute
-      const endedTurnSpans = endedSpans.filter((s) => s.name.startsWith('agent:turn:'));
-      expect(endedTurnSpans).toHaveLength(2);
-      expect(endedTurnSpans[0]!.attributes['weft.agent.cost']).toBe(0.01);
-      expect(endedTurnSpans[1]!.attributes['weft.agent.cost']).toBe(0.02);
+      const errorSpan = spans.find((s) => s.name === 'activity:stringThrower');
+      expect(errorSpan).toBeDefined();
+      expect(errorSpan!.status?.code).toBe(2); // ERROR
+      expect(errorSpan!.status?.message).toBe('non-error value');
     });
 
-    it('creates child spans for tool calls within turns', () => {
-      const startedSpans: SpanInfo[] = [];
-      const endedSpans: SpanInfo[] = [];
+    it('records non-Error thrown value in waitForSignal', () => {
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push({ ...span }),
-        onSpanEnd: (span) => endedSpans.push({ ...span }),
+        otelApi: createMockOtelApi(tracer),
       });
 
       workflow.workflowStart!(
         {
-          workflowId: 'wf-tool-spans',
+          workflowId: 'wf-sig-err-2',
           workflowType: 'TestWorkflow',
           input: undefined,
           headers: new Map<string, string>(),
@@ -987,217 +1115,447 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      const next = function* (ctx: AgentInterception) {
-        // Simulate turn 0 with 2 tool calls
-        ctx.onTurnStarted?.({ turnIndex: 0, model: 'test-model' });
-        ctx.onToolCalled?.({ turnIndex: 0, toolName: 'readFile' });
-        ctx.onToolReturned?.({ turnIndex: 0, toolName: 'readFile', duration: 100, success: true });
-        ctx.onToolCalled?.({ turnIndex: 0, toolName: 'writeFile' });
-        ctx.onToolReturned?.({
-          turnIndex: 0,
-          toolName: 'writeFile',
-          duration: 50,
-          success: false,
-        });
-        ctx.onTurnCompleted?.({
-          turnIndex: 0,
-          model: 'test-model',
-          inputTokens: 100,
-          outputTokens: 50,
-          cost: 0.01,
-          duration: 500,
-          toolCallCount: 2,
-        });
-
-        return 'agent-result';
+      const next = function* (_ctx: SignalInterception) {
+        throw 42;
       };
 
-      const generator = workflow.agent!(
-        { model: 'test-model', prompt: 'hello', headers: new Map() },
+      const generator = workflow.waitForSignal!(
+        { signalName: 'test-signal', payload: undefined, headers: new Map() },
         next,
       );
-      let step = generator.next();
-      while (!step.done) {
-        step = generator.next(step.value);
+
+      try {
+        let step = generator.next();
+        while (!step.done) {
+          step = generator.next(step.value);
+        }
+      } catch {
+        // Expected
       }
 
-      // Verify tool call spans were created
-      const toolCallStartSpans = startedSpans.filter((s) => s.name.startsWith('agent:tool:call:'));
-      expect(toolCallStartSpans).toHaveLength(2);
-      expect(toolCallStartSpans[0]!.name).toBe('agent:tool:call:readFile');
-      expect(toolCallStartSpans[1]!.name).toBe('agent:tool:call:writeFile');
-
-      // Verify tool return spans were ended
-      const toolEndSpans = endedSpans.filter((s) => s.name.startsWith('agent:tool:call:'));
-      expect(toolEndSpans).toHaveLength(2);
-      expect(toolEndSpans[0]!.status).toBe('ok');
-      expect(toolEndSpans[1]!.status).toBe('error');
-      expect(toolEndSpans[0]!.attributes['tool.name']).toBe('readFile');
-      expect(toolEndSpans[1]!.attributes['tool.name']).toBe('writeFile');
-      expect(toolEndSpans[0]!.attributes['tool.success']).toBe(true);
-      expect(toolEndSpans[1]!.attributes['tool.success']).toBe(false);
+      const errorSpan = spans.find((s) => s.name === 'waitForSignal');
+      expect(errorSpan).toBeDefined();
+      expect(errorSpan!.status?.code).toBe(2); // ERROR
+      expect(errorSpan!.status?.message).toBe('42');
     });
+  });
 
-    it('produces correct span tree: agent > turn > tool', () => {
-      const startedSpans: SpanInfo[] = [];
-      const endedSpans: SpanInfo[] = [];
+  describe('workflow activity interceptor without prior workflowStart', () => {
+    it('still creates a span when no workflowStart was called', () => {
+      const { tracer, spans } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push({ ...span }),
-        onSpanEnd: (span) => endedSpans.push({ ...span }),
+        otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
-        {
-          workflowId: 'wf-tree',
-          workflowType: 'TestWorkflow',
-          input: undefined,
-          headers: new Map<string, string>(),
-        },
-        () => {},
-      );
-
-      const next = function* (ctx: AgentInterception) {
-        // Turn 0: 2 tool calls
-        ctx.onTurnStarted?.({ turnIndex: 0, model: 'claude-3' });
-        ctx.onToolCalled?.({ turnIndex: 0, toolName: 'tool_a' });
-        ctx.onToolReturned?.({ turnIndex: 0, toolName: 'tool_a', duration: 10, success: true });
-        ctx.onToolCalled?.({ turnIndex: 0, toolName: 'tool_b' });
-        ctx.onToolReturned?.({ turnIndex: 0, toolName: 'tool_b', duration: 20, success: true });
-        ctx.onTurnCompleted?.({
-          turnIndex: 0,
-          model: 'claude-3',
-          inputTokens: 100,
-          outputTokens: 50,
-          cost: 0.01,
-          duration: 500,
-          toolCallCount: 2,
-        });
-
-        // Turn 1: 1 tool call
-        ctx.onTurnStarted?.({ turnIndex: 1, model: 'claude-3' });
-        ctx.onToolCalled?.({ turnIndex: 1, toolName: 'tool_c' });
-        ctx.onToolReturned?.({ turnIndex: 1, toolName: 'tool_c', duration: 15, success: true });
-        ctx.onTurnCompleted?.({
-          turnIndex: 1,
-          model: 'claude-3',
-          inputTokens: 200,
-          outputTokens: 100,
-          cost: 0.02,
-          duration: 600,
-          toolCallCount: 1,
-        });
-
-        // Turn 2: final answer (no tools)
-        ctx.onTurnStarted?.({ turnIndex: 2, model: 'claude-3' });
-        ctx.onTurnCompleted?.({
-          turnIndex: 2,
-          model: 'claude-3',
-          inputTokens: 300,
-          outputTokens: 150,
-          cost: 0.03,
-          duration: 400,
-          toolCallCount: 0,
-        });
-
-        return 'done';
+      const interception = {
+        activityName: 'orphanActivity',
+        input: undefined,
+        attempt: 1,
+        headers: new Map<string, string>(),
       };
 
-      const generator = workflow.agent!(
-        { model: 'claude-3', prompt: 'do stuff', headers: new Map() },
-        next,
-      );
-      let step = generator.next();
-      while (!step.done) {
-        step = generator.next(step.value);
-      }
-
-      // Verify the full span tree
-      const agentSpan = startedSpans.find((s) => s.name === 'agent');
-      const turnSpans = startedSpans.filter((s) => s.name.startsWith('agent:turn:'));
-      const toolCallStartSpans = startedSpans.filter((s) => s.name.startsWith('agent:tool:call:'));
-
-      expect(agentSpan).toBeDefined();
-      expect(turnSpans).toHaveLength(3);
-      expect(toolCallStartSpans).toHaveLength(3);
-
-      // All turn spans are children of the agent span
-      for (const turnSpan of turnSpans) {
-        expect(turnSpan.parentSpanId).toBe(agentSpan!.spanId);
-      }
-
-      // Tool call start spans: readFile and writeFile in turn 0 should be
-      // parented to turn 0's span
-      const turn0Span = turnSpans.find((s) => s.name === 'agent:turn:0');
-      const toolASpan = toolCallStartSpans.find((s) => s.name === 'agent:tool:call:tool_a');
-      const toolBSpan = toolCallStartSpans.find((s) => s.name === 'agent:tool:call:tool_b');
-      expect(toolASpan!.parentSpanId).toBe(turn0Span!.spanId);
-      expect(toolBSpan!.parentSpanId).toBe(turn0Span!.spanId);
-
-      // Tool call in turn 1 should be parented to turn 1's span
-      const turn1Span = turnSpans.find((s) => s.name === 'agent:turn:1');
-      const toolCSpan = toolCallStartSpans.find((s) => s.name === 'agent:tool:call:tool_c');
-      expect(toolCSpan!.parentSpanId).toBe(turn1Span!.spanId);
-
-      // Agent span should have same traceId as all children
-      for (const childSpan of [...turnSpans, ...toolCallStartSpans]) {
-        expect(childSpan.traceId).toBe(agentSpan!.traceId);
-      }
-
-      // Agent span should be ended
-      const endedAgentSpan = endedSpans.find((s) => s.name === 'agent');
-      expect(endedAgentSpan).toBeDefined();
-      expect(endedAgentSpan!.status).toBe('ok');
-    });
-
-    it('preserves original callbacks when interceptor injects new ones', () => {
-      const startedSpans: SpanInfo[] = [];
-      const { workflow } = createObservabilityInterceptors({
-        onSpanStart: (span) => startedSpans.push({ ...span }),
-        onSpanEnd: () => {},
-      });
-
-      workflow.workflowStart!(
-        {
-          workflowId: 'wf-preserve-callbacks',
-          workflowType: 'TestWorkflow',
-          input: undefined,
-          headers: new Map<string, string>(),
-        },
-        () => {},
-      );
-
-      const originalTurnStartCalls: number[] = [];
-      const originalInterception: AgentInterception = {
-        model: 'test-model',
-        prompt: 'hello',
-        headers: new Map(),
-        onTurnStarted: (info) => originalTurnStartCalls.push(info.turnIndex),
-      };
-
-      const next = function* (ctx: AgentInterception) {
-        ctx.onTurnStarted?.({ turnIndex: 0, model: 'test-model' });
-        ctx.onTurnCompleted?.({
-          turnIndex: 0,
-          model: 'test-model',
-          inputTokens: 10,
-          outputTokens: 5,
-          cost: 0,
-          duration: 100,
-          toolCallCount: 0,
-        });
+      const next = function* (_ctx: ActivityInterception) {
         return 'result';
       };
 
-      const generator = workflow.agent!(originalInterception, next);
+      const generator = workflow.activity!(interception, next);
       let step = generator.next();
       while (!step.done) {
         step = generator.next(step.value);
       }
 
-      // Both the original callback and the interceptor's spans should fire
-      expect(originalTurnStartCalls).toEqual([0]);
-      const turnSpans = startedSpans.filter((s) => s.name.startsWith('agent:turn:'));
-      expect(turnSpans).toHaveLength(1);
+      expect(spans).toHaveLength(1);
+      expect(interception.headers.has('traceparent')).toBe(true);
+    });
+  });
+
+  describe('agent turn and tool child spans', () => {
+    function driveGenerator<T>(gen: Generator<unknown, T, unknown>): T {
+      let step = gen.next();
+      while (!step.done) {
+        step = gen.next(step.value);
+      }
+      return step.value;
+    }
+
+    function setupWorkflow(eventTarget: EventTarget) {
+      const { tracer, spans } = createRecordingTracer();
+      const otelApi = createMockOtelApi(tracer);
+
+      const { workflow } = createObservabilityInterceptors({
+        eventTarget,
+        otelApi,
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-agent-spans',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      return { workflow, spans };
+    }
+
+    it('creates agent:turn child spans from turn events', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'claude',
+              'claude',
+              100,
+              50,
+              0.01,
+              0.01,
+              500,
+              1,
+              0,
+              undefined,
+            ),
+          );
+          return 'agent-result';
+        },
+      );
+
+      const result = driveGenerator(gen);
+      expect(result).toBe('agent-result');
+
+      const turnSpan = spans.find((s) => s.name === 'agent:turn:0');
+      expect(turnSpan).toBeDefined();
+      expect(turnSpan!.attributes['weft.agent.turn_index']).toBe(0);
+      expect(turnSpan!.attributes['weft.agent.model']).toBe('claude');
+      expect(turnSpan!.attributes['weft.agent.input_tokens']).toBe(100);
+      expect(turnSpan!.attributes['weft.agent.output_tokens']).toBe(50);
+      expect(turnSpan!.attributes['weft.agent.cost']).toBe(0.01);
+      expect(turnSpan!.ended).toBe(true);
+    });
+
+    it('creates agent:tool child spans from tool events', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'webSearch',
+              '{}',
+              'local',
+              'op-1',
+            ),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'webSearch',
+              50,
+              true,
+              'op-1',
+            ),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'claude',
+              'claude',
+              100,
+              50,
+              0.01,
+              0.01,
+              500,
+              1,
+              0,
+              undefined,
+            ),
+          );
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      const toolSpan = spans.find((s) => s.name === 'agent:tool:webSearch');
+      expect(toolSpan).toBeDefined();
+      expect(toolSpan!.attributes['weft.agent.tool_name']).toBe('webSearch');
+      expect(toolSpan!.attributes['weft.agent.tool_duration']).toBe(50);
+      expect(toolSpan!.attributes['weft.agent.tool_success']).toBe(true);
+      expect(toolSpan!.ended).toBe(true);
+    });
+
+    it('creates spans for multiple turns with tools', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'search',
+              '{}',
+              'local',
+              'op-1',
+            ),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent('wf-agent-spans', 'agent-1', 0, 'search', 30, true, 'op-1'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'claude',
+              'claude',
+              100,
+              50,
+              0.01,
+              0.01,
+              500,
+              1,
+              0,
+              undefined,
+            ),
+          );
+
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 1, 'claude', 200, 3),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              1,
+              'analyze',
+              '{}',
+              'local',
+              'op-2',
+            ),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent('wf-agent-spans', 'agent-1', 1, 'analyze', 80, true, 'op-2'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              1,
+              'claude',
+              'claude',
+              200,
+              100,
+              0.02,
+              0.03,
+              600,
+              1,
+              0,
+              undefined,
+            ),
+          );
+
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      expect(spans.filter((s) => s.name.startsWith('agent:turn:'))).toHaveLength(2);
+      expect(spans.filter((s) => s.name.startsWith('agent:tool:'))).toHaveLength(2);
+      expect(spans.find((s) => s.name === 'agent:turn:0')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent:turn:1')!.ended).toBe(true);
+    });
+
+    it('handles multiple tool calls within a single turn', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'search',
+              '{}',
+              'local',
+              'op-1',
+            ),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'readDoc',
+              '{}',
+              'local',
+              'op-2',
+            ),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent('wf-agent-spans', 'agent-1', 0, 'search', 30, true, 'op-1'),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'readDoc',
+              40,
+              false,
+              'op-2',
+            ),
+          );
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'claude',
+              'claude',
+              100,
+              50,
+              0.01,
+              0.01,
+              500,
+              2,
+              0,
+              undefined,
+            ),
+          );
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      const toolSpans = spans.filter((s) => s.name.startsWith('agent:tool:'));
+      expect(toolSpans).toHaveLength(2);
+
+      const readDocSpan = spans.find((s) => s.name === 'agent:tool:readDoc');
+      expect(readDocSpan!.status?.code).toBe(2); // ERROR
+    });
+
+    it('does not create child spans when eventTarget is not provided', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        { workflowId: 'wf-no-et', workflowType: 'Test', input: undefined, headers: new Map() },
+        () => {},
+      );
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      expect(spans.filter((s) => s.name.startsWith('agent:turn:'))).toHaveLength(0);
+      expect(spans.filter((s) => s.name.startsWith('agent:tool:'))).toHaveLength(0);
+      expect(spans.find((s) => s.name === 'agent')!.ended).toBe(true);
+    });
+
+    it('cleans up orphaned turn and tool spans on agent error', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+      const theError = new Error('agent exploded');
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          eventTarget.dispatchEvent(
+            new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
+          );
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent(
+              'wf-agent-spans',
+              'agent-1',
+              0,
+              'search',
+              '{}',
+              'local',
+              'op-1',
+            ),
+          );
+          throw theError;
+        },
+      );
+
+      try {
+        driveGenerator(gen);
+      } catch (error) {
+        expect(error).toBe(theError);
+      }
+
+      // Agent, turn, and tool spans should all be ended with ERROR status
+      expect(spans.find((s) => s.name === 'agent')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent')!.status?.code).toBe(2); // ERROR
+      expect(spans.find((s) => s.name === 'agent:turn:0')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent:turn:0')!.status?.code).toBe(2); // ERROR
+      expect(spans.find((s) => s.name === 'agent:tool:search')!.ended).toBe(true);
+      expect(spans.find((s) => s.name === 'agent:tool:search')!.status?.code).toBe(2); // ERROR
+    });
+
+    it('removes event listeners after agent completes', () => {
+      const eventTarget = new EventTarget();
+      const { workflow, spans } = setupWorkflow(eventTarget);
+
+      const gen = workflow.agent!(
+        { model: 'claude', prompt: 'test', headers: new Map() },
+        function* () {
+          return 'done';
+        },
+      );
+
+      driveGenerator(gen);
+
+      const spanCountBefore = spans.length;
+      eventTarget.dispatchEvent(
+        new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
+      );
+      expect(spans.length).toBe(spanCountBefore);
     });
   });
 });

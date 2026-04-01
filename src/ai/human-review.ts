@@ -10,6 +10,7 @@
 import { decode, encode } from '../core/codec.ts';
 import type { BatchOperation, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
+import { HumanReviewRequestedEvent } from './events.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,13 +94,26 @@ export class ReviewTimeoutError extends Error {
 // Coordinator
 // ---------------------------------------------------------------------------
 
+export interface ReviewCoordinatorOptions {
+  /** When provided, the coordinator dispatches human review events. */
+  eventTarget?: EventTarget;
+  /** Custom time source for testing. Defaults to `Date.now`. */
+  getNow?: () => number;
+}
+
 export class ReviewCoordinator {
   #storage: Storage;
   #getNow: () => number;
+  #eventTarget: EventTarget | undefined;
 
-  constructor(storage: Storage, getNow?: () => number) {
+  constructor(storage: Storage, optionsOrGetNow?: ReviewCoordinatorOptions | (() => number)) {
     this.#storage = storage;
-    this.#getNow = getNow ?? Date.now;
+    if (typeof optionsOrGetNow === 'function') {
+      this.#getNow = optionsOrGetNow;
+    } else {
+      this.#getNow = optionsOrGetNow?.getNow ?? Date.now;
+      this.#eventTarget = optionsOrGetNow?.eventTarget;
+    }
   }
 
   /** Create a review request and persist it. */
@@ -126,6 +140,12 @@ export class ReviewCoordinator {
 
     const key = KEYS.review(workflowId, reviewId);
     await this.#storage.put(key, encode(request));
+
+    if (this.#eventTarget) {
+      this.#eventTarget.dispatchEvent(
+        new HumanReviewRequestedEvent(workflowId, reviewId, request.reviewType, request.reviewers),
+      );
+    }
 
     return request;
   }
