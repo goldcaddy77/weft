@@ -1,3 +1,4 @@
+import type { AlertingOptions } from '../alerting/types.ts';
 import type { ModelRouter } from '../ai/model-router.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 
@@ -176,6 +177,9 @@ export interface EngineOptions {
    * provide their own `modelRouter`. Per-call routers override this.
    */
   defaultModelRouter?: ModelRouter | undefined;
+
+  /** Built-in alerting configuration. */
+  alerts?: AlertingOptions;
 }
 
 // ---------------------------------------------------------------------------

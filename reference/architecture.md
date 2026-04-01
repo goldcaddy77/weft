@@ -5370,7 +5370,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`ctx.step()` sugar for non-generator workflows.** Progressive disclosure — wraps checkpoint boundaries in a familiar async function.
 - [x] **`ctx.explain()` development mode.** Logs what each context operation does and why at runtime via `#explainMode` flag.
 - [x] **`weft doctor` diagnostic command.** Reports database health, workflow statistics, queue depths, performance metrics, and recommendations.
-- [ ] **Built-in alerting with zero external dependencies.** Alert rules as engine event listeners, webhook notifications via `fetch()`.
+- [x] **Built-in alerting with zero external dependencies.** Alert rules as engine event listeners, webhook notifications via `fetch()`.
 - [x] **Automatic checkpoint size warnings.** `CheckpointSizeWarningEvent` emitted when checkpoints exceed configurable threshold (default: 64KB).
 - [x] **`ctx.offload()` stores large data separately.** Leaves only a lightweight reference in the checkpoint. `ctx.load()` retrieves on demand.
 - [x] **Built-in profiling mode.** `MemoryProfiler` class provides interval-based memory profiling with stability analysis. Exported from index.

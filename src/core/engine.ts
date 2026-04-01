@@ -10,6 +10,7 @@
  * @module core/engine
  */
 
+import { AlertManager } from '../alerting/alert-manager.ts';
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
 import {
@@ -376,6 +377,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   /** Timer IDs scheduled for each review (escalation + timeout), keyed by reviewId. */
   #reviewTimerIds: Map<string, string[]>;
   #pendingWebhooks: Set<AbortController>;
+  #alertManager: AlertManager | null;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -481,6 +483,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Wire up the strategy message handler
     this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
+
+    // Initialize built-in alerting (optional)
+    if (options?.alerts) {
+      this.#alertManager = new AlertManager(this, options.alerts, getNow);
+    } else {
+      this.#alertManager = null;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1603,6 +1612,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   [Symbol.dispose](): void {
+    this.#alertManager?.[Symbol.dispose]();
+    this.#alertManager = null;
     this.#abortController.abort();
     this.#scheduler[Symbol.dispose]();
     this.#strategy[Symbol.dispose]();

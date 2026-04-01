@@ -42,11 +42,27 @@ export type {
   WorkflowSummary,
 } from './core/types';
 
+// Alerting
+export { AlertManager } from './alerting/index.ts';
+export { parseSize } from './alerting/parse-size.ts';
+export { CounterWindow, HistogramWindow } from './alerting/sliding-window.ts';
+export type {
+  AlertAction,
+  AlertingOptions,
+  AlertMetric,
+  AlertRule,
+  AlertState,
+  AlertStatus,
+  WebhookTarget,
+} from './alerting/types.ts';
+
 // Events
 export {
   ActivityCompletedEvent,
   ActivityFailedEvent,
   ActivityStartedEvent,
+  AlertFiredEvent,
+  AlertResolvedEvent,
   AttributesChangedEvent,
   CheckpointSizeWarningEvent,
   DevelopmentWarningEvent,
