@@ -29,20 +29,28 @@ export type Compressor = {
 };
 
 // ---------------------------------------------------------------------------
-// Header byte constants
+// Header constants
 // ---------------------------------------------------------------------------
 
-/** Header byte indicating the payload is stored uncompressed. */
-const HEADER_UNCOMPRESSED = 0x00;
+/**
+ * Magic byte that prefixes all compressed-storage payloads. Uses msgpack's
+ * reserved `0xC1` byte, which is defined as "never used" in the msgpack
+ * specification and will never appear as the first byte of valid msgpack data.
+ * This guarantees zero collisions with legacy (pre-compression) data.
+ */
+const MAGIC_BYTE = 0xc1;
 
-/** Header byte indicating the payload is gzip-compressed. */
-const HEADER_GZIP = 0x01;
+/** Algorithm byte indicating the payload is stored uncompressed (with header). */
+const ALGORITHM_UNCOMPRESSED = 0x00;
 
-/** Header byte indicating the payload is brotli-compressed. */
-const HEADER_BROTLI = 0x02;
+/** Algorithm byte indicating gzip compression. */
+const ALGORITHM_GZIP = 0x01;
 
-/** Set of recognized header bytes for format detection. */
-const KNOWN_HEADERS = new Set([HEADER_UNCOMPRESSED, HEADER_GZIP, HEADER_BROTLI]);
+/** Algorithm byte indicating brotli compression. */
+const ALGORITHM_BROTLI = 0x02;
+
+/** The total header size: magic byte + algorithm byte. */
+const HEADER_SIZE = 2;
 
 // ---------------------------------------------------------------------------
 // Compressor factory
@@ -97,10 +105,12 @@ export function createBunCompressor(algorithm: CompressionAlgorithm): Compressor
 // ---------------------------------------------------------------------------
 
 /**
- * Compress a payload, prepending a 1-byte header that identifies the format.
+ * Compress a payload, prepending a 2-byte header: magic byte (`0xC1`) +
+ * algorithm byte. This distinguishes compressed-storage data from legacy
+ * (pre-compression) data with zero risk of collision.
  *
  * If the data is below the threshold or the algorithm is `'none'`, the payload
- * is stored with a `0x00` (uncompressed) header and no compression is applied.
+ * is stored with a `[0xC1, 0x00]` header and no compression is applied.
  */
 export async function compressPayload(
   data: Uint8Array,
@@ -108,56 +118,58 @@ export async function compressPayload(
   threshold: number,
 ): Promise<Uint8Array> {
   if (data.length < threshold || compressor.algorithm === 'none') {
-    const result = new Uint8Array(data.length + 1);
-    result[0] = HEADER_UNCOMPRESSED;
-    result.set(data, 1);
+    const result = new Uint8Array(data.length + HEADER_SIZE);
+    result[0] = MAGIC_BYTE;
+    result[1] = ALGORITHM_UNCOMPRESSED;
+    result.set(data, HEADER_SIZE);
     return result;
   }
 
   const compressed = await compressor.compress(data);
-  const headerByte = compressor.algorithm === 'gzip' ? HEADER_GZIP : HEADER_BROTLI;
+  const algorithmByte = compressor.algorithm === 'gzip' ? ALGORITHM_GZIP : ALGORITHM_BROTLI;
 
-  const result = new Uint8Array(compressed.length + 1);
-  result[0] = headerByte;
-  result.set(compressed, 1);
+  const result = new Uint8Array(compressed.length + HEADER_SIZE);
+  result[0] = MAGIC_BYTE;
+  result[1] = algorithmByte;
+  result.set(compressed, HEADER_SIZE);
   return result;
 }
 
 /**
- * Decompress a payload by reading the 1-byte header to determine format.
+ * Decompress a payload by reading the 2-byte header (magic + algorithm).
  *
- * - `0x00` → uncompressed, return the rest as-is
- * - `0x01` → gzip-compressed, decompress with `Bun.gunzipSync`
- * - `0x02` → brotli-compressed, decompress with `brotliDecompressSync`
+ * - `[0xC1, 0x00]` → uncompressed, return the rest as-is
+ * - `[0xC1, 0x01]` → gzip-compressed, decompress with `Bun.gunzipSync`
+ * - `[0xC1, 0x02]` → brotli-compressed, decompress with `brotliDecompressSync`
  * - Any other first byte → legacy data without header, return as-is
  *   (backward compatible with pre-compression storage)
  */
 export async function decompressPayload(data: Uint8Array): Promise<Uint8Array> {
-  if (data.length === 0) {
+  if (data.length < HEADER_SIZE) {
+    // Too short to contain a header — must be legacy data or empty.
     return data;
   }
 
-  // Safe: we've already returned early when data.length === 0 above.
-  const header = data[0]!;
-
-  if (!KNOWN_HEADERS.has(header)) {
-    // Legacy data without a compression header — return unchanged.
+  if (data[0] !== MAGIC_BYTE) {
+    // First byte is not the magic byte — legacy data, return unchanged.
     return data;
   }
 
-  const body = data.slice(1);
+  const algorithm = data[1]!;
+  const body = data.slice(HEADER_SIZE);
 
-  switch (header) {
-    case HEADER_UNCOMPRESSED:
+  switch (algorithm) {
+    case ALGORITHM_UNCOMPRESSED:
       return body;
 
-    case HEADER_GZIP:
+    case ALGORITHM_GZIP:
       return new Uint8Array(Bun.gunzipSync(new Uint8Array(body)));
 
-    case HEADER_BROTLI:
+    case ALGORITHM_BROTLI:
       return new Uint8Array(brotliDecompressSync(body));
 
     default:
+      // Unrecognized algorithm byte after magic — return as-is for safety.
       return data;
   }
 }

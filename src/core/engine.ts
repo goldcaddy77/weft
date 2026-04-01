@@ -382,10 +382,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     super();
 
     const baseStorage = options?.storage ?? new MemoryStorage();
-    const storage =
-      options?.compression && options.compression.algorithm !== 'none'
-        ? new CompressedStorage(baseStorage, options.compression)
-        : baseStorage;
+    const storage = options?.compression
+      ? new CompressedStorage(baseStorage, options.compression)
+      : baseStorage;
     const getNow = options?.getNow ?? Date.now;
 
     this.#storage = storage;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { CompressedStorage } from './compressed-storage';
+import type { Storage } from './interface';
 import { MemoryStorage } from './memory';
 
 // ---------------------------------------------------------------------------
@@ -47,15 +48,16 @@ describe('put/get round-trip', () => {
 // ---------------------------------------------------------------------------
 
 describe('storage format', () => {
-  it('stores small values with 0x00 prefix (uncompressed)', async () => {
+  it('stores small values with [0xC1, 0x00] prefix (uncompressed)', async () => {
     const { storage, inner } = createStorage({ threshold: 1024 });
     const value = new Uint8Array([10, 20, 30]);
     await storage.put('small', value);
 
     const stored = await inner.get('small');
     expect(stored).not.toBeNull();
-    expect(stored![0]).toBe(0x00);
-    expect(stored!.slice(1)).toEqual(value);
+    expect(stored![0]).toBe(0xc1); // magic byte
+    expect(stored![1]).toBe(0x00); // uncompressed algorithm byte
+    expect(stored!.slice(2)).toEqual(value);
   });
 
   it('stores large values compressed (inner has smaller data)', async () => {
@@ -66,7 +68,8 @@ describe('storage format', () => {
 
     const stored = await inner.get('large');
     expect(stored).not.toBeNull();
-    expect(stored![0]).toBe(0x01); // gzip header
+    expect(stored![0]).toBe(0xc1); // magic byte
+    expect(stored![1]).toBe(0x01); // gzip algorithm byte
     // The stored data (including header) should be smaller than the original
     expect(stored!.length).toBeLessThan(value.length);
   });
@@ -204,7 +207,7 @@ describe('delete', () => {
 describe('query forwarding', () => {
   it('returns undefined when inner storage has no query method', () => {
     const inner = new MemoryStorage();
-    const storage = new CompressedStorage(inner);
+    const storage: Storage = new CompressedStorage(inner);
     expect(storage.query).toBeUndefined();
   });
 
@@ -217,7 +220,7 @@ describe('query forwarding', () => {
       query: async (_sql: string, _params?: unknown[]) => queryResults,
     });
 
-    const storage = new CompressedStorage(inner);
+    const storage: Storage = new CompressedStorage(inner);
     expect(storage.query).toBeDefined();
     const result = await storage.query!('SELECT 1', []);
     expect(result).toEqual(queryResults);
