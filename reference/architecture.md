@@ -5159,11 +5159,11 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Checkpoint at MCP tool call boundary.** Each MCP invocation preceded by `yield*` checkpoint. Identical durability to local tool calls.
 - [x] **MCP tool results flow through same durable pipeline as local tools.** Results annotated with `source: "mcp"` in conversation history and events.
 - [x] **Tool registry merges local functions and MCP server tools.** Name collisions produce `ToolNameConflictError` at agent initialization, not at first conflicting call.
-- [ ] **MCP server authentication.** Supports bearer token and API key. OAuth2 client credentials not yet implemented.
+- [x] **MCP server authentication.** Supports bearer token, API key, and OAuth2 client credentials via `createOAuth2TokenManager()` with thread-safe token caching and refresh.
 - [x] **MCP server health checking at agent start.** Unreachable servers produce `MCPServerUnavailableError` immediately.
 - [x] **MCP tool call timeout.** Each invocation respects configurable timeout (default: 30s) via `AbortSignal.timeout()`. Timeout fires `MCPToolTimeoutError`.
 - [x] **`AgentToolCalledEvent` includes `source` field.** Distinguishes `"local"` from `"mcp"` in observability events.
-- [ ] **MCP stdio and HTTP+SSE transports supported.** Currently HTTP-only. Stdio and SSE transports not yet implemented.
+- [x] **MCP stdio and HTTP+SSE transports supported.** Transport inferred from URL scheme (`stdio://` → `StdioTransport`, `http(s)://` → `HttpTransport` or `HttpSseTransport`). Explicit override via `transport: 'sse'` on `MCPToolSource`.
 
 ### Agent-Native Engine: Context Window Management
 

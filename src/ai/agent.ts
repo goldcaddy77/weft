@@ -22,10 +22,16 @@ import {
 } from './events';
 import type { AgentHooks } from './hooks';
 import type { MCPAuthConfig } from './mcp/authentication';
+import { buildAuthHeaders } from './mcp/authentication';
 import { MCPClient, MCPServerUnavailableError } from './mcp/client';
 import type { RegistryTool } from './mcp/registry';
 import { ToolRegistry } from './mcp/registry';
 import { ToolSchemaValidationError, validateSchema } from './mcp/schema-validator';
+import type { TransportKind } from './mcp/transport';
+import { inferTransportKind, parseStdioUrl } from './mcp/transport';
+import { HttpTransport } from './mcp/transport-http';
+import { HttpSseTransport } from './mcp/transport-http-sse';
+import { StdioTransport } from './mcp/transport-stdio';
 import type { ModelRouter, RoutingContext } from './model-router';
 import type { ProviderHealthTracker } from './provider-health';
 import type { LLMProvider } from './providers/interface';
@@ -40,6 +46,13 @@ export interface MCPToolSource {
   mcp: string;
   auth?: MCPAuthConfig | undefined;
   timeout?: number | undefined;
+  /**
+   * Override transport auto-detection.
+   * - `'http'` (default for `http(s)://` URLs): plain HTTP request/response
+   * - `'sse'`: HTTP POST for requests, Server-Sent Events for responses
+   * - `'stdio'` (default for `stdio://` URLs): JSON-RPC over child process stdin/stdout
+   */
+  transport?: TransportKind | undefined;
 }
 
 /** Type guard: is the tools entry an MCP server URL source? */
@@ -155,6 +168,42 @@ function estimateConversationSizeBytes(conversation: Message[]): number {
 }
 
 // ---------------------------------------------------------------------------
+// Transport creation
+// ---------------------------------------------------------------------------
+
+/** Build the appropriate transport for an MCP tool source based on URL scheme and options. */
+function createTransportForSource(source: MCPToolSource): import('./mcp/transport').MCPTransport {
+  const kind = inferTransportKind(source.mcp, source.transport);
+
+  // Build auth headers synchronously for non-OAuth2 auth types.
+  // OAuth2 is handled at a higher level since it requires async token fetching.
+  const headers = source.auth && source.auth.type !== 'oauth2' ? buildAuthHeaders(source.auth) : {};
+
+  switch (kind) {
+    case 'stdio': {
+      const target = parseStdioUrl(source.mcp);
+      return new StdioTransport({
+        command: target.command,
+        args: target.args,
+        timeout: source.timeout,
+      });
+    }
+    case 'sse':
+      return new HttpSseTransport({
+        serverUrl: source.mcp,
+        headers,
+        timeout: source.timeout,
+      });
+    case 'http':
+      return new HttpTransport({
+        serverUrl: source.mcp,
+        headers,
+        timeout: source.timeout,
+      });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Tool initialization
 // ---------------------------------------------------------------------------
 
@@ -174,17 +223,13 @@ async function initializeTools(
   for (const entry of tools) {
     signal?.throwIfAborted();
     if (isMCPToolSource(entry)) {
-      const clientOptions: { serverUrl: string; auth?: MCPAuthConfig; timeout?: number } = {
-        serverUrl: entry.mcp,
-      };
-      if (entry.auth !== undefined) clientOptions.auth = entry.auth;
-      if (entry.timeout !== undefined) clientOptions.timeout = entry.timeout;
-
-      const client = new MCPClient(clientOptions);
+      const transport = createTransportForSource(entry);
+      const client = new MCPClient({ transport, timeout: entry.timeout });
 
       // Health check — fail fast if the server is unreachable
       const healthy = await client.healthCheck();
       if (!healthy) {
+        client[Symbol.dispose]();
         throw new MCPServerUnavailableError(entry.mcp);
       }
 

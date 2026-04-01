@@ -260,12 +260,34 @@ export type {
 } from './ai/providers/types';
 
 // MCP
-export { buildAuthHeaders } from './ai/mcp/authentication';
+export { buildAuthHeaders, buildAuthHeadersAsync } from './ai/mcp/authentication';
 export type { MCPAuthConfig } from './ai/mcp/authentication';
 export { MCPClient, MCPServerUnavailableError, MCPToolTimeoutError } from './ai/mcp/client';
+export type {
+  MCPClientOptions,
+  MCPClientTransportOptions,
+  MCPClientUrlOptions,
+} from './ai/mcp/client';
+export { OAuth2TokenError, createOAuth2TokenManager } from './ai/mcp/oauth2-token-manager';
+export type { OAuth2Config, OAuth2TokenManager } from './ai/mcp/oauth2-token-manager';
 export { ToolNameConflictError, ToolRegistry } from './ai/mcp/registry';
 export type { RegistryTool } from './ai/mcp/registry';
 export { ToolSchemaValidationError, validateSchema } from './ai/mcp/schema-validator';
+export { MCPTransportError, inferTransportKind, parseStdioUrl } from './ai/mcp/transport';
+export type {
+  CreateTransportOptions,
+  MCPRequest,
+  MCPResponse,
+  MCPTransport,
+  StdioTarget,
+  TransportKind,
+} from './ai/mcp/transport';
+export { HttpTransport } from './ai/mcp/transport-http';
+export type { HttpTransportOptions } from './ai/mcp/transport-http';
+export { HttpSseTransport } from './ai/mcp/transport-http-sse';
+export type { HttpSseTransportOptions } from './ai/mcp/transport-http-sse';
+export { StdioTransport } from './ai/mcp/transport-stdio';
+export type { StdioTransportOptions } from './ai/mcp/transport-stdio';
 
 // Observability
 export { createObservabilityInterceptors } from './observability/index';

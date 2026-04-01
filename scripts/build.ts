@@ -37,7 +37,7 @@ await Bun.build({
   target: 'browser',
   minify: true,
   sourcemap: 'external',
-  plugins: [sveltePlugin()],
+  plugins: [sveltePlugin],
 });
 
 await $`bunx tsc --declaration --emitDeclarationOnly --project tsconfig.build.json`;

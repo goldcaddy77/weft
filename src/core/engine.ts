@@ -10,7 +10,6 @@
  * @module core/engine
  */
 
-import { AlertManager } from '../alerting/alert-manager.ts';
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
 import {
@@ -20,6 +19,7 @@ import {
   type HumanReviewResult,
   type ReviewRequest,
 } from '../ai/human-review.ts';
+import { AlertManager } from '../alerting/alert-manager.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
