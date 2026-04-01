@@ -7,8 +7,10 @@
  * @module coordination
  */
 
+import { formatTraceParent, generateSpanId, parseTraceParent } from '../observability/propagation';
 import type { AgentResult } from './agent';
 import { executeAgentLoop } from './agent';
+import type { BudgetTracker } from './budget';
 import type { AgentDefinition } from './declaration';
 import type { LLMProvider } from './providers/interface';
 import type { Message } from './providers/types';
@@ -25,6 +27,12 @@ export interface HandoffOptions {
   provider: LLMProvider;
   forwardContext?: ForwardContext;
   parentConversation?: Message[];
+  /** Shared budget tracker. Child agent usage accumulates here. */
+  budget?: BudgetTracker | undefined;
+  /** Abort signal propagated to the child agent. */
+  signal?: AbortSignal | undefined;
+  /** W3C Trace Context headers for distributed tracing propagation. */
+  headers?: Record<string, string> | undefined;
 }
 
 export interface DebateOptions {
@@ -35,6 +43,12 @@ export interface DebateOptions {
   /** Number of advocate-critic rounds before the judge renders a verdict. */
   rounds: number;
   provider: LLMProvider;
+  /** Shared budget tracker. All round usage accumulates here. */
+  budget?: BudgetTracker | undefined;
+  /** Abort signal propagated to all agents. */
+  signal?: AbortSignal | undefined;
+  /** W3C Trace Context headers for distributed tracing propagation. */
+  headers?: Record<string, string> | undefined;
 }
 
 export interface SuperviseOptions {
@@ -43,6 +57,12 @@ export interface SuperviseOptions {
   input: string;
   strategy: 'consensus' | 'best-of-n' | 'merge';
   provider: LLMProvider;
+  /** Shared budget tracker. All worker usage accumulates here. */
+  budget?: BudgetTracker | undefined;
+  /** Abort signal propagated to all workers and supervisor. */
+  signal?: AbortSignal | undefined;
+  /** W3C Trace Context headers for distributed tracing propagation. */
+  headers?: Record<string, string> | undefined;
 }
 
 export interface HandoffResult {
@@ -69,6 +89,33 @@ export interface SuperviseResult {
 }
 
 // ---------------------------------------------------------------------------
+// createChildHeaders
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive child trace headers from a parent headers record.
+ *
+ * Preserves the parent's traceId but generates a new spanId so the child
+ * agent appears as a distinct span in the trace. Returns `undefined` when
+ * no valid `traceparent` is present.
+ */
+export function createChildHeaders(
+  parentHeaders: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!parentHeaders?.['traceparent']) return undefined;
+
+  const parsed = parseTraceParent(parentHeaders['traceparent']);
+  if (!parsed) return undefined;
+
+  const child = formatTraceParent({
+    ...parsed,
+    spanId: generateSpanId(),
+  });
+
+  return { ...parentHeaders, traceparent: child };
+}
+
+// ---------------------------------------------------------------------------
 // summarizeConversation
 // ---------------------------------------------------------------------------
 
@@ -90,7 +137,15 @@ export function summarizeConversation(messages: Message[]): string {
 
 /** Hand off execution to another agent, optionally forwarding context. */
 export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
-  const { agent, input, provider, forwardContext = 'none', parentConversation = [] } = options;
+  const {
+    agent,
+    input,
+    provider,
+    forwardContext = 'none',
+    parentConversation = [],
+    budget,
+    signal,
+  } = options;
 
   let effectiveInput: string;
 
@@ -120,6 +175,8 @@ export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
       systemPrompt: agent.systemPrompt,
       tools: agent.tools,
       maxTurns: agent.maxTurns,
+      budget,
+      signal,
     },
     effectiveInput,
   );
@@ -136,7 +193,7 @@ export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
 
 /** Run adversarial multi-agent debate. */
 export async function debate(options: DebateOptions): Promise<DebateResult> {
-  const { advocate, critic, judge, topic, rounds: roundCount, provider } = options;
+  const { advocate, critic, judge, topic, rounds: roundCount, provider, budget, signal } = options;
 
   const debateRounds: DebateRound[] = [];
   let transcript = `Topic: ${topic}\n\n`;
@@ -155,6 +212,8 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
         systemPrompt: advocate.systemPrompt,
         tools: advocate.tools,
         maxTurns: advocate.maxTurns,
+        budget,
+        signal,
       },
       advocateInput,
     );
@@ -172,6 +231,8 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
         systemPrompt: critic.systemPrompt,
         tools: critic.tools,
         maxTurns: critic.maxTurns,
+        budget,
+        signal,
       },
       criticInput,
     );
@@ -196,6 +257,8 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
       systemPrompt: judge.systemPrompt,
       tools: judge.tools,
       maxTurns: judge.maxTurns,
+      budget,
+      signal,
     },
     judgeInput,
   );
@@ -213,7 +276,28 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
 
 /** Run supervised multi-agent execution with synthesis. */
 export async function supervise(options: SuperviseOptions): Promise<SuperviseResult> {
-  const { workers, supervisor, input, strategy, provider } = options;
+  const { workers, supervisor, input, strategy, provider, budget, signal: parentSignal } = options;
+
+  // Create an AbortController so budget exhaustion can abort all branches.
+  const controller = new AbortController();
+
+  // Forward parent abort to the local controller.
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      controller.abort(parentSignal.reason);
+    } else {
+      parentSignal.addEventListener('abort', () => controller.abort(parentSignal.reason), {
+        once: true,
+      });
+    }
+  }
+
+  // Wire budget enforcement: exceeding the budget aborts all parallel branches.
+  if (budget) {
+    budget.setAbortController(controller);
+  }
+
+  const signal = controller.signal;
 
   // Run all workers in parallel
   const workerResults = await Promise.all(
@@ -225,6 +309,8 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
           systemPrompt: worker.systemPrompt,
           tools: worker.tools,
           maxTurns: worker.maxTurns,
+          budget,
+          signal,
         },
         input,
       ),
@@ -256,6 +342,8 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
             systemPrompt: supervisor.systemPrompt,
             tools: supervisor.tools,
             maxTurns: supervisor.maxTurns,
+            budget,
+            signal,
           },
           supervisorInput,
         );
@@ -279,6 +367,8 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
           systemPrompt: supervisor.systemPrompt,
           tools: supervisor.tools,
           maxTurns: supervisor.maxTurns,
+          budget,
+          signal,
         },
         supervisorInput,
       );
@@ -301,6 +391,8 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
           systemPrompt: supervisor.systemPrompt,
           tools: supervisor.tools,
           maxTurns: supervisor.maxTurns,
+          budget,
+          signal,
         },
         supervisorInput,
       );

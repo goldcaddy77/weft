@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'bun:test';
 
+import { BudgetTracker } from './budget';
 import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message } from './providers/types';
 
-import { debate, handoff, summarizeConversation, supervise } from './coordination';
+import { parseTraceParent } from '../observability/propagation';
+import {
+  createChildHeaders,
+  debate,
+  handoff,
+  summarizeConversation,
+  supervise,
+} from './coordination';
 import { defineAgent, type AgentDefinition } from './declaration';
 
 // ---------------------------------------------------------------------------
@@ -535,5 +543,192 @@ describe('summarizeConversation', () => {
   it('returns an empty string for an empty conversation', () => {
     const summary = summarizeConversation([]);
     expect(summary).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Budget propagation
+// ---------------------------------------------------------------------------
+
+const BUDGET_OPTIONS = {
+  maxTokens: 10_000,
+  models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
+};
+
+describe('budget propagation', () => {
+  it('handoff passes budget to child agent and tokens are recorded', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    const provider = createMockProvider([createChatResponse('done')]);
+
+    await handoff({
+      agent: createAgentDefinition(),
+      input: 'Go',
+      provider,
+      budget,
+    });
+
+    const state = budget.budgetRemaining();
+    // The mock returns usage: { inputTokens: 10, outputTokens: 20 }
+    expect(state.tokensUsed).toBe(30);
+  });
+
+  it('debate shares budget across all rounds', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    // 1 round = advocate + critic + judge = 3 calls, each 30 tokens
+    const provider = createMockProvider([
+      createChatResponse('advocate'),
+      createChatResponse('critic'),
+      createChatResponse('verdict'),
+    ]);
+
+    await debate({
+      advocate: createAgentDefinition({ name: 'advocate' }),
+      critic: createAgentDefinition({ name: 'critic' }),
+      judge: createAgentDefinition({ name: 'judge' }),
+      topic: 'Test',
+      rounds: 1,
+      provider,
+      budget,
+    });
+
+    const state = budget.budgetRemaining();
+    // 3 calls × 30 tokens each = 90 tokens
+    expect(state.tokensUsed).toBe(90);
+  });
+
+  it('supervise shares budget across parallel workers', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    // 2 workers + 1 supervisor = 3 calls
+    const provider = createMockProvider([
+      createChatResponse('worker-1'),
+      createChatResponse('worker-2'),
+      createChatResponse('best pick'),
+    ]);
+
+    await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'sup' }),
+      input: 'Go',
+      strategy: 'best-of-n',
+      provider,
+      budget,
+    });
+
+    const state = budget.budgetRemaining();
+    // 3 calls × 30 tokens each = 90 tokens
+    expect(state.tokensUsed).toBe(90);
+  });
+
+  it('handoff accepts and forwards signal option without error', async () => {
+    const controller = new AbortController();
+    const provider = createMockProvider([createChatResponse('done')]);
+
+    const result = await handoff({
+      agent: createAgentDefinition(),
+      input: 'Go',
+      provider,
+      signal: controller.signal,
+    });
+
+    // Signal was forwarded (no abort triggered), handoff completes normally
+    expect(result.result.content).toBe('done');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Trace context propagation
+// ---------------------------------------------------------------------------
+
+const PARENT_TRACEPARENT = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01';
+
+describe('createChildHeaders', () => {
+  it('derives child traceparent with same traceId and new spanId', () => {
+    const child = createChildHeaders({ traceparent: PARENT_TRACEPARENT });
+
+    expect(child).toBeDefined();
+    const parsed = parseTraceParent(child!['traceparent']!);
+    const parentParsed = parseTraceParent(PARENT_TRACEPARENT);
+
+    expect(parsed).toBeDefined();
+    expect(parsed!.traceId).toBe(parentParsed!.traceId);
+    expect(parsed!.spanId).not.toBe(parentParsed!.spanId);
+    expect(parsed!.traceFlags).toBe(parentParsed!.traceFlags);
+  });
+
+  it('returns undefined when no headers provided', () => {
+    expect(createChildHeaders(undefined)).toBeUndefined();
+  });
+
+  it('returns undefined when traceparent is missing', () => {
+    expect(createChildHeaders({ 'x-custom': 'value' })).toBeUndefined();
+  });
+
+  it('returns undefined when traceparent is malformed', () => {
+    expect(createChildHeaders({ traceparent: 'garbage' })).toBeUndefined();
+  });
+
+  it('preserves other headers alongside the new traceparent', () => {
+    const child = createChildHeaders({
+      traceparent: PARENT_TRACEPARENT,
+      'x-custom': 'preserved',
+    });
+
+    expect(child).toBeDefined();
+    expect(child!['x-custom']).toBe('preserved');
+  });
+});
+
+describe('trace context propagation', () => {
+  it('handoff without headers works unchanged', async () => {
+    const provider = createMockProvider([createChatResponse('done')]);
+
+    const result = await handoff({
+      agent: createAgentDefinition(),
+      input: 'Go',
+      provider,
+      // No headers
+    });
+
+    expect(result.result.content).toBe('done');
+    expect(result.contextForwarded).toBe('none');
+  });
+
+  it('debate works with trace headers', async () => {
+    const provider = createMockProvider([
+      createChatResponse('advocate'),
+      createChatResponse('critic'),
+      createChatResponse('verdict'),
+    ]);
+
+    const result = await debate({
+      advocate: createAgentDefinition({ name: 'advocate' }),
+      critic: createAgentDefinition({ name: 'critic' }),
+      judge: createAgentDefinition({ name: 'judge' }),
+      topic: 'Test',
+      rounds: 1,
+      provider,
+      headers: { traceparent: PARENT_TRACEPARENT },
+    });
+
+    expect(result.verdict).toBe('verdict');
+  });
+
+  it('supervise works with trace headers', async () => {
+    const provider = createMockProvider([
+      createChatResponse('w1'),
+      createChatResponse('w2'),
+      createChatResponse('merged'),
+    ]);
+
+    const result = await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'sup' }),
+      input: 'Go',
+      strategy: 'merge',
+      provider,
+      headers: { traceparent: PARENT_TRACEPARENT },
+    });
+
+    expect(result.finalResult).toBe('merged');
   });
 });

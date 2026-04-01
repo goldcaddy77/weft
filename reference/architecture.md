@@ -5187,10 +5187,10 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`ctx.supervise()` runs multiple agents with synthesis strategy.** Strategies: `"consensus"` (all agree), `"best-of-n"` (supervisor picks), `"merge"` (combine outputs).
 - [x] **`SharedState` primitive with durable CAS operations.** `ctx.sharedState(name, { initial })` returns a handle for concurrent read/write. Optimistic concurrency control with automatic retry on conflict.
 - [x] **`SharedState` uses `batch()` for atomic updates.** Writes committed atomically with checkpoint.
-- [ ] **`ctx.handoff()` preserves OpenTelemetry trace context.** Child workflow spans link back to parent agent's span. (Trace context utilities exist but are not integrated into coordination functions.)
+- [x] **`ctx.handoff()` preserves OpenTelemetry trace context.** Child workflow spans link back to parent agent's span. Coordination functions accept `headers` option with `createChildHeaders()` helper deriving child `traceparent`.
 - [x] **`ctx.all()` with agent-typed branches.** Parallel agents with independent checkpointing, token budgets, and context windows. Each branch's cost tracked independently.
 - [x] **Agent-to-agent message passing via signals.** Agents within same workflow communicate via `ctx.signal()` on child handles.
-- [ ] **Multi-agent fan-out respects workflow-level budget.** Budget tracking exists but enforcement during parallel multi-agent execution is not fully verified.
+- [x] **Multi-agent fan-out respects workflow-level budget.** Shared `BudgetTracker` passed through `handoff()`, `debate()`, and `supervise()`. `supervise()` wires budget to `AbortController` for parallel branch enforcement.
 
 ### Agent-Native Engine: Observability
 
@@ -5227,7 +5227,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`defineAgent()` top-level declaration API.** Declares a reusable agent definition passable to `engine.register()`, `ctx.agent()`, `ctx.handoff()`, and `ctx.debate()`.
 - [x] **Durable hooks: `beforeTurn`.** Runs before each LLM call within checkpoint boundary. Can modify messages, inject context, or skip turn.
 - [x] **Durable hooks: `afterToolCall`.** Runs after each tool call. Can modify tool result, trigger human review.
-- [ ] **Durable hooks: `onBudgetWarning`.** Defined in `AgentHooks` interface but not yet invoked in the agent loop. Budget warnings fire as events only.
+- [x] **Durable hooks: `onBudgetWarning`.** Invoked in the agent loop when budget usage crosses 80% threshold. Fires once per agent execution.
 - [x] **Context strategy declared on agent definition.** Applies to all invocations. Per-call override via `ctx.agent({ contextStrategy })`.
 - [x] **Model router declared on agent definition.** Applies to all invocations. Per-call override available.
 - [ ] **Engine optimizes for agent-shaped workflows.** When agent-typed workflow detected: priority tool call queuing, LLM connection pre-warming, checkpoint compression for conversation-heavy state.
@@ -5313,12 +5313,12 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **All interceptor hooks are optional.** An interceptor can implement only the hooks it cares about.
 - [x] **`engine.addInterceptor(interceptor)` registers workflow interceptors.** Multiple registrations compose in order.
 - [x] **`engine.addActivityInterceptor(interceptor)` registers activity interceptors for local workers.**
-- [ ] **Remote `Worker` accepts `interceptors` option.** Activity interceptors apply on the remote worker side.
+- [x] **Remote `Worker` accepts `interceptors` option.** Activity interceptors apply on the remote worker side.
 - [x] **Interceptors compose via `next()` delegation.** First registered = outermost wrapper.
 - [x] **Workflow interceptor hooks return generators.** Preserves `yield*` checkpoint semantics.
 - [x] **Activity interceptor `execute` hook returns a Promise.**
 - [x] **`headers` Map propagates across Worker boundaries.** Set in workflow interceptor, serialized into `postMessage`/WebSocket, read in activity interceptor.
-- [ ] **`headers` Map propagates across network boundaries (remote workers).** Serialized as part of the WebSocket `task` message.
+- [x] **`headers` Map propagates across network boundaries (remote workers).** Serialized as part of the WebSocket `task` message.
 - [x] **Interceptor errors propagate naturally.** An exception in an interceptor fails the operation as if the underlying operation failed.
 - [x] **Zero overhead when no interceptors are registered.** Context operations call the underlying implementation directly.
 - [x] **Workflow code does not need modification.** Interceptors are transparent to workflow definitions.
