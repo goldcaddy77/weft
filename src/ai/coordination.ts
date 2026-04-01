@@ -290,6 +290,11 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       ),
     );
 
+    // If the budget was exhausted during the worker phase, the signal is
+    // already aborted. Throw now rather than silently running the supervisor
+    // with a dead signal (which would return empty content).
+    signal.throwIfAborted();
+
     let finalResult: string;
 
     switch (strategy) {
