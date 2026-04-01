@@ -9,6 +9,7 @@
 
 import type { AgentResult } from './agent';
 import { executeAgentLoop } from './agent';
+import type { BudgetTracker } from './budget';
 import type { AgentDefinition } from './declaration';
 import type { LLMProvider } from './providers/interface';
 import type { Message } from './providers/types';
@@ -25,6 +26,10 @@ export interface HandoffOptions {
   provider: LLMProvider;
   forwardContext?: ForwardContext;
   parentConversation?: Message[];
+  /** Shared budget tracker. Child agent usage accumulates here. */
+  budget?: BudgetTracker | undefined;
+  /** Abort signal propagated to the child agent. */
+  signal?: AbortSignal | undefined;
 }
 
 export interface DebateOptions {
@@ -35,6 +40,10 @@ export interface DebateOptions {
   /** Number of advocate-critic rounds before the judge renders a verdict. */
   rounds: number;
   provider: LLMProvider;
+  /** Shared budget tracker. All round usage accumulates here. */
+  budget?: BudgetTracker | undefined;
+  /** Abort signal propagated to all agents. */
+  signal?: AbortSignal | undefined;
 }
 
 export interface SuperviseOptions {
@@ -43,6 +52,10 @@ export interface SuperviseOptions {
   input: string;
   strategy: 'consensus' | 'best-of-n' | 'merge';
   provider: LLMProvider;
+  /** Shared budget tracker. All worker usage accumulates here. */
+  budget?: BudgetTracker | undefined;
+  /** Abort signal propagated to all workers and supervisor. */
+  signal?: AbortSignal | undefined;
 }
 
 export interface HandoffResult {
@@ -90,7 +103,15 @@ export function summarizeConversation(messages: Message[]): string {
 
 /** Hand off execution to another agent, optionally forwarding context. */
 export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
-  const { agent, input, provider, forwardContext = 'none', parentConversation = [] } = options;
+  const {
+    agent,
+    input,
+    provider,
+    forwardContext = 'none',
+    parentConversation = [],
+    budget,
+    signal,
+  } = options;
 
   let effectiveInput: string;
 
@@ -120,6 +141,8 @@ export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
       systemPrompt: agent.systemPrompt,
       tools: agent.tools,
       maxTurns: agent.maxTurns,
+      budget,
+      signal,
     },
     effectiveInput,
   );
@@ -136,7 +159,7 @@ export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
 
 /** Run adversarial multi-agent debate. */
 export async function debate(options: DebateOptions): Promise<DebateResult> {
-  const { advocate, critic, judge, topic, rounds: roundCount, provider } = options;
+  const { advocate, critic, judge, topic, rounds: roundCount, provider, budget, signal } = options;
 
   const debateRounds: DebateRound[] = [];
   let transcript = `Topic: ${topic}\n\n`;
@@ -155,6 +178,8 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
         systemPrompt: advocate.systemPrompt,
         tools: advocate.tools,
         maxTurns: advocate.maxTurns,
+        budget,
+        signal,
       },
       advocateInput,
     );
@@ -172,6 +197,8 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
         systemPrompt: critic.systemPrompt,
         tools: critic.tools,
         maxTurns: critic.maxTurns,
+        budget,
+        signal,
       },
       criticInput,
     );
@@ -196,6 +223,8 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
       systemPrompt: judge.systemPrompt,
       tools: judge.tools,
       maxTurns: judge.maxTurns,
+      budget,
+      signal,
     },
     judgeInput,
   );
@@ -213,41 +242,101 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
 
 /** Run supervised multi-agent execution with synthesis. */
 export async function supervise(options: SuperviseOptions): Promise<SuperviseResult> {
-  const { workers, supervisor, input, strategy, provider } = options;
+  const { workers, supervisor, input, strategy, provider, budget, signal: parentSignal } = options;
 
-  // Run all workers in parallel
-  const workerResults = await Promise.all(
-    workers.map((worker) =>
-      executeAgentLoop(
-        {
-          model: worker.model,
-          provider,
-          systemPrompt: worker.systemPrompt,
-          tools: worker.tools,
-          maxTurns: worker.maxTurns,
-        },
-        input,
+  // Unlike handoff/debate (sequential), supervise runs workers in parallel via
+  // Promise.all. A dedicated AbortController lets budget exhaustion in one
+  // branch abort all other in-flight branches — something a passthrough signal
+  // can't do because the budget tracker needs its own controller to fire abort.
+  const controller = new AbortController();
+
+  // Forward parent abort to the local controller. Named handler so we can
+  // remove it in finally — prevents leaking listeners on long-lived signals.
+  const onParentAbort = parentSignal ? () => controller.abort(parentSignal.reason) : undefined;
+
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      controller.abort(parentSignal.reason);
+    } else {
+      parentSignal.addEventListener('abort', onParentAbort!, { once: true });
+    }
+  }
+
+  // Wire budget enforcement: exceeding the budget aborts all parallel branches.
+  // Scoped to this call — cleared in finally so a shared BudgetTracker isn't
+  // left referencing a stale controller after supervise() returns.
+  if (budget) {
+    budget.setAbortController(controller);
+  }
+
+  const signal = controller.signal;
+
+  try {
+    // Run all workers in parallel
+    const workerResults = await Promise.all(
+      workers.map((worker) =>
+        executeAgentLoop(
+          {
+            model: worker.model,
+            provider,
+            systemPrompt: worker.systemPrompt,
+            tools: worker.tools,
+            maxTurns: worker.maxTurns,
+            budget,
+            signal,
+          },
+          input,
+        ),
       ),
-    ),
-  );
+    );
 
-  let finalResult: string;
+    // If the budget was exhausted during the worker phase, the signal is
+    // already aborted. Throw now rather than silently running the supervisor
+    // with a dead signal (which would return empty content).
+    signal.throwIfAborted();
 
-  switch (strategy) {
-    case 'consensus': {
-      // Check if all workers produced the same response
-      const allResponses = workerResults.map((result) => result.content);
-      const allAgree = allResponses.every((response) => response === allResponses[0]);
+    let finalResult: string;
 
-      if (allAgree) {
-        finalResult = allResponses[0]!;
-      } else {
-        // Workers disagree; ask supervisor to resolve
-        const workerSummary = allResponses
-          .map((response, index) => `Worker ${index + 1}: ${response}`)
+    switch (strategy) {
+      case 'consensus': {
+        // Check if all workers produced the same response
+        const allResponses = workerResults.map((result) => result.content);
+        const allAgree = allResponses.every((response) => response === allResponses[0]);
+
+        if (allAgree) {
+          finalResult = allResponses[0]!;
+        } else {
+          // Workers disagree; ask supervisor to resolve
+          const workerSummary = allResponses
+            .map((response, index) => `Worker ${index + 1}: ${response}`)
+            .join('\n\n');
+
+          const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nThe workers disagree. Please determine the correct answer.`;
+
+          const supervisorResult = await executeAgentLoop(
+            {
+              model: supervisor.model,
+              provider,
+              systemPrompt: supervisor.systemPrompt,
+              tools: supervisor.tools,
+              maxTurns: supervisor.maxTurns,
+              budget,
+              signal,
+            },
+            supervisorInput,
+          );
+
+          finalResult = supervisorResult.content;
+        }
+        break;
+      }
+
+      case 'best-of-n': {
+        const workerSummary = workerResults
+          .map((result, index) => `Worker ${index + 1}: ${result.content}`)
           .join('\n\n');
 
-        const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nThe workers disagree. Please determine the correct answer.`;
+        const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nPick the best response and explain why.`;
 
         const supervisorResult = await executeAgentLoop(
           {
@@ -256,63 +345,57 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
             systemPrompt: supervisor.systemPrompt,
             tools: supervisor.tools,
             maxTurns: supervisor.maxTurns,
+            budget,
+            signal,
           },
           supervisorInput,
         );
 
         finalResult = supervisorResult.content;
+        break;
       }
-      break;
+
+      case 'merge': {
+        const workerSummary = workerResults
+          .map((result, index) => `Worker ${index + 1}: ${result.content}`)
+          .join('\n\n');
+
+        const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nMerge these responses into a single comprehensive answer.`;
+
+        const supervisorResult = await executeAgentLoop(
+          {
+            model: supervisor.model,
+            provider,
+            systemPrompt: supervisor.systemPrompt,
+            tools: supervisor.tools,
+            maxTurns: supervisor.maxTurns,
+            budget,
+            signal,
+          },
+          supervisorInput,
+        );
+
+        finalResult = supervisorResult.content;
+        break;
+      }
+
+      default:
+        throw new Error(`Unknown supervise strategy: ${strategy as string}`);
     }
 
-    case 'best-of-n': {
-      const workerSummary = workerResults
-        .map((result, index) => `Worker ${index + 1}: ${result.content}`)
-        .join('\n\n');
-
-      const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nPick the best response and explain why.`;
-
-      const supervisorResult = await executeAgentLoop(
-        {
-          model: supervisor.model,
-          provider,
-          systemPrompt: supervisor.systemPrompt,
-          tools: supervisor.tools,
-          maxTurns: supervisor.maxTurns,
-        },
-        supervisorInput,
-      );
-
-      finalResult = supervisorResult.content;
-      break;
+    return {
+      finalResult,
+      workerResults,
+      strategy,
+    };
+  } finally {
+    // Detach so a shared BudgetTracker isn't left with a stale controller.
+    if (budget) {
+      budget.setAbortController(new AbortController());
     }
-
-    case 'merge': {
-      const workerSummary = workerResults
-        .map((result, index) => `Worker ${index + 1}: ${result.content}`)
-        .join('\n\n');
-
-      const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nMerge these responses into a single comprehensive answer.`;
-
-      const supervisorResult = await executeAgentLoop(
-        {
-          model: supervisor.model,
-          provider,
-          systemPrompt: supervisor.systemPrompt,
-          tools: supervisor.tools,
-          maxTurns: supervisor.maxTurns,
-        },
-        supervisorInput,
-      );
-
-      finalResult = supervisorResult.content;
-      break;
+    // Remove the parent signal listener to prevent leaking on long-lived signals.
+    if (parentSignal && onParentAbort) {
+      parentSignal.removeEventListener('abort', onParentAbort);
     }
   }
-
-  return {
-    finalResult,
-    workerResults,
-    strategy,
-  };
 }

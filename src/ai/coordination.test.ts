@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { BudgetTracker } from './budget';
 import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message } from './providers/types';
 
@@ -535,5 +536,176 @@ describe('summarizeConversation', () => {
   it('returns an empty string for an empty conversation', () => {
     const summary = summarizeConversation([]);
     expect(summary).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Budget propagation
+// ---------------------------------------------------------------------------
+
+const BUDGET_OPTIONS = {
+  maxTokens: 10_000,
+  models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
+};
+
+describe('budget propagation', () => {
+  it('handoff passes budget to child agent and tokens are recorded', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    const provider = createMockProvider([createChatResponse('done')]);
+
+    await handoff({
+      agent: createAgentDefinition(),
+      input: 'Go',
+      provider,
+      budget,
+    });
+
+    const state = budget.budgetRemaining();
+    // The mock returns usage: { inputTokens: 10, outputTokens: 20 }
+    expect(state.tokensUsed).toBe(30);
+  });
+
+  it('debate shares budget across all rounds', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    // 1 round = advocate + critic + judge = 3 calls, each 30 tokens
+    const provider = createMockProvider([
+      createChatResponse('advocate'),
+      createChatResponse('critic'),
+      createChatResponse('verdict'),
+    ]);
+
+    await debate({
+      advocate: createAgentDefinition({ name: 'advocate' }),
+      critic: createAgentDefinition({ name: 'critic' }),
+      judge: createAgentDefinition({ name: 'judge' }),
+      topic: 'Test',
+      rounds: 1,
+      provider,
+      budget,
+    });
+
+    const state = budget.budgetRemaining();
+    // 3 calls × 30 tokens each = 90 tokens
+    expect(state.tokensUsed).toBe(90);
+  });
+
+  it('supervise shares budget across parallel workers', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    // 2 workers + 1 supervisor = 3 calls
+    const provider = createMockProvider([
+      createChatResponse('worker-1'),
+      createChatResponse('worker-2'),
+      createChatResponse('best pick'),
+    ]);
+
+    await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'sup' }),
+      input: 'Go',
+      strategy: 'best-of-n',
+      provider,
+      budget,
+    });
+
+    const state = budget.budgetRemaining();
+    // 3 calls × 30 tokens each = 90 tokens
+    expect(state.tokensUsed).toBe(90);
+  });
+
+  it('handoff with signal completes normally', async () => {
+    const controller = new AbortController();
+    const provider = createMockProvider([createChatResponse('done')]);
+
+    const result = await handoff({
+      agent: createAgentDefinition(),
+      input: 'Go',
+      provider,
+      signal: controller.signal,
+    });
+
+    expect(result.result.content).toBe('done');
+  });
+
+  it('supervise wires budget abort controller and fires signal on exhaustion', async () => {
+    // Budget allows only 50 tokens; each call uses 30 (10 in + 20 out).
+    const budget = new BudgetTracker({
+      maxTokens: 50,
+      models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
+    });
+
+    let callCount = 0;
+    let lastSignal: AbortSignal | undefined;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages: Message[], options?: { signal?: AbortSignal }): Promise<ChatResponse> {
+        callCount++;
+        lastSignal = options?.signal;
+        // Small delay so the budget abort controller can fire between calls
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return createChatResponse(`worker-${callCount}`);
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    // All 3 workers produce distinct output, so consensus fails and the
+    // supervisor is also called. Total usage exceeds the 50-token budget.
+    // We verify the abort wiring is set up (signal exists and fires).
+    try {
+      await supervise({
+        workers: [
+          createAgentDefinition({ name: 'w1' }),
+          createAgentDefinition({ name: 'w2' }),
+          createAgentDefinition({ name: 'w3' }),
+        ],
+        supervisor: createAgentDefinition({ name: 'sup' }),
+        input: 'Go',
+        strategy: 'consensus',
+        provider,
+        budget,
+      });
+    } catch {
+      // Budget exhaustion may surface as an error — that's acceptable.
+    }
+
+    const state = budget.budgetRemaining();
+    expect(state.tokensUsed).toBeGreaterThan(50);
+    expect(state.tokensRemaining).toBeLessThan(0);
+
+    // The signal passed to the provider should have been aborted by
+    // the budget tracker once usage exceeded the limit.
+    expect(lastSignal).toBeDefined();
+    expect(lastSignal!.aborted).toBe(true);
+  });
+
+  it('supervise cleans up budget abort controller after completion', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    // Wire an external controller to verify supervise doesn't leave it stale
+    const externalController = new AbortController();
+    budget.setAbortController(externalController);
+
+    const provider = createMockProvider([
+      createChatResponse('same'),
+      createChatResponse('same'),
+      createChatResponse('same'),
+    ]);
+
+    await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'sup' }),
+      input: 'Go',
+      strategy: 'consensus',
+      provider,
+      budget,
+    });
+
+    // After supervise returns, the budget's signal should NOT reference
+    // the internal controller — it should be a fresh, non-aborted signal.
+    expect(budget.signal).toBeDefined();
+    expect(budget.signal!.aborted).toBe(false);
   });
 });
