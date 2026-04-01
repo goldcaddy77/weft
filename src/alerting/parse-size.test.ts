@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { parseSize } from './parse-size.ts';
+import { parseSize } from './parse-size';
 
 describe('parseSize', () => {
   it('parses gigabytes', () => {

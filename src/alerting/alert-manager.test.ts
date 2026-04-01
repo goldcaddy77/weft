@@ -7,9 +7,9 @@ import {
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
   WorkflowTimedOutEvent,
-} from '../core/events.ts';
-import { AlertManager } from './alert-manager.ts';
-import type { AlertingOptions } from './types.ts';
+} from '../core/events';
+import { AlertManager } from './alert-manager';
+import type { AlertingOptions } from './types';
 
 describe('AlertManager', () => {
   let target: EventTarget;
@@ -185,9 +185,7 @@ describe('AlertManager', () => {
       // Record 97 fast activities — p99 stays below threshold
       for (let i = 0; i < 97; i++) {
         time += 100;
-        target.dispatchEvent(
-          new ActivityCompletedEvent(`op-${i}`, 'wf-1', 'process', 100),
-        );
+        target.dispatchEvent(new ActivityCompletedEvent(`op-${i}`, 'wf-1', 'process', 100));
       }
       expect(fired.length).toBe(0);
 
@@ -195,9 +193,7 @@ describe('AlertManager', () => {
       // pushing p99 above threshold
       for (let i = 0; i < 3; i++) {
         time += 100;
-        target.dispatchEvent(
-          new ActivityCompletedEvent(`op-slow-${i}`, 'wf-1', 'process', 10_000),
-        );
+        target.dispatchEvent(new ActivityCompletedEvent(`op-slow-${i}`, 'wf-1', 'process', 10_000));
       }
 
       expect(fired.length).toBe(1);
@@ -226,9 +222,7 @@ describe('AlertManager', () => {
       const manager = new AlertManager(target, options, getNow);
       target.dispatchEvent(new WorkflowFailedEvent('wf-1', new Error('fail')));
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[weft:alert] alert:fired'),
-      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[weft:alert] alert:fired'));
 
       warnSpy.mockRestore();
       manager[Symbol.dispose]();
@@ -286,14 +280,13 @@ describe('AlertManager', () => {
       expect(body.alert.metric).toBe('workflow.failure_rate');
       expect(body.alert.threshold).toBe(0.5);
       expect(body.alert.currentValue).toBe(1);
+      expect(body.alert.timestamp).toBe(1000);
 
       manager[Symbol.dispose]();
     });
 
     it('filters webhooks by event type', () => {
-      const fetchMock = mock(() =>
-        Promise.resolve(new Response('ok', { status: 200 })),
-      );
+      const fetchMock = mock(() => Promise.resolve(new Response('ok', { status: 200 })));
       globalThis.fetch = fetchMock as any;
 
       const options: AlertingOptions = {

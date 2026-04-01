@@ -43,7 +43,7 @@ export type {
 } from './core/types';
 
 // Alerting
-export { AlertManager } from './alerting/index.ts';
+export { AlertManager } from './alerting/index';
 export type {
   AlertAction,
   AlertMetric,
@@ -52,7 +52,7 @@ export type {
   AlertStatus,
   AlertingOptions,
   WebhookTarget,
-} from './alerting/types.ts';
+} from './alerting/types';
 
 // Events
 export {

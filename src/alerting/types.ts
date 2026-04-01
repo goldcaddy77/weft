@@ -4,7 +4,7 @@ export type AlertMetric = 'workflow.failure_rate' | 'activity.p99_duration';
 
 export type AlertRule = {
   metric: AlertMetric;
-  threshold: number | string; // number for rate/duration, string like '8 GB' for size
+  threshold: number;
   window?: string; // duration string like '5m', '1m' — parsed by parseDuration
   action: AlertAction;
 };

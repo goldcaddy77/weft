@@ -6,11 +6,13 @@
  * @module alerting/alert-manager
  */
 
-import { ActivityCompletedEvent, AlertFiredEvent, AlertResolvedEvent } from '../core/events.ts';
-import { parseDuration } from '../core/scheduler.ts';
-import { parseSize } from './parse-size.ts';
-import { CounterWindow, HistogramWindow } from './sliding-window.ts';
-import type { AlertRule, AlertState, AlertingOptions } from './types.ts';
+import { ActivityCompletedEvent, AlertFiredEvent, AlertResolvedEvent } from '../core/events';
+import { parseDuration } from '../core/scheduler';
+import { CounterWindow, HistogramWindow } from './sliding-window';
+import type { AlertRule, AlertState, AlertingOptions } from './types';
+
+/** Periodic re-evaluation interval in milliseconds. */
+const TICK_INTERVAL_MS = 10_000;
 
 export class AlertManager implements Disposable {
   #target: EventTarget;
@@ -20,6 +22,7 @@ export class AlertManager implements Disposable {
   #listeners: Array<{ type: string; handler: EventListener }>;
   #pendingWebhooks: Set<AbortController>;
   #getNow: () => number;
+  #tickInterval: ReturnType<typeof setInterval> | null;
 
   constructor(target: EventTarget, options: AlertingOptions, getNow: () => number = Date.now) {
     this.#target = target;
@@ -50,6 +53,14 @@ export class AlertManager implements Disposable {
 
     // Subscribe to engine events based on configured metrics
     this.#subscribeToEvents();
+
+    // Periodic tick to re-evaluate rules even when no events arrive,
+    // so alerts in 'firing' state can auto-resolve once the window expires.
+    this.#tickInterval = setInterval(() => {
+      for (let i = 0; i < this.#options.rules.length; i++) {
+        this.#evaluate(i);
+      }
+    }, TICK_INTERVAL_MS);
   }
 
   #subscribeToEvents(): void {
@@ -109,8 +120,7 @@ export class AlertManager implements Disposable {
     const now = this.#getNow();
 
     let currentValue = 0;
-    const threshold =
-      typeof rule.threshold === 'string' ? parseSize(rule.threshold) : rule.threshold;
+    const threshold = rule.threshold;
 
     if (rule.metric === 'workflow.failure_rate') {
       const window = this.#windows.get(ruleIndex) as CounterWindow;
@@ -164,24 +174,21 @@ export class AlertManager implements Disposable {
       if (!target.events.includes(eventType)) continue;
       const controller = new AbortController();
       this.#pendingWebhooks.add(controller);
-      const threshold =
-        typeof rule.threshold === 'string' ? parseSize(rule.threshold) : rule.threshold;
       const payload = {
         event: eventType,
         alert: {
           metric: rule.metric,
-          threshold,
+          threshold: rule.threshold,
           currentValue,
           window: rule.window,
-          firedAt: this.#getNow(),
+          timestamp: this.#getNow(),
         },
-        engine: { timestamp: this.#getNow() },
       };
       fetch(target.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
       })
         .then(() => this.#pendingWebhooks.delete(controller))
         .catch(() => this.#pendingWebhooks.delete(controller));
@@ -194,6 +201,12 @@ export class AlertManager implements Disposable {
   }
 
   [Symbol.dispose](): void {
+    // Stop periodic re-evaluation
+    if (this.#tickInterval !== null) {
+      clearInterval(this.#tickInterval);
+      this.#tickInterval = null;
+    }
+
     // Remove all event listeners from target
     for (const { type, handler } of this.#listeners) {
       this.#target.removeEventListener(type, handler);
