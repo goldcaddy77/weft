@@ -115,8 +115,8 @@ export function diffCheckpointShapes(
   const allKeys = new Set([...Object.keys(oldShape), ...Object.keys(newShape)]);
 
   for (const key of allKeys) {
-    const inOld = key in oldShape;
-    const inNew = key in newShape;
+    const inOld = Object.hasOwn(oldShape, key);
+    const inNew = Object.hasOwn(newShape, key);
 
     if (inOld && !inNew) {
       diffs.push({ field: key, change: 'removed', oldType: oldShape[key]! });
