@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { OAuth2TokenManager } from './oauth2-token-manager';
-
-import { buildAuthHeaders, buildAuthHeadersAsync } from './authentication';
+import { buildAuthHeaders } from './authentication';
 
 describe('buildAuthHeaders', () => {
   it('produces an Authorization header for bearer tokens', () => {
@@ -25,46 +23,5 @@ describe('buildAuthHeaders', () => {
     const headers = buildAuthHeaders({ type: 'none' });
 
     expect(headers).toEqual({});
-  });
-});
-
-describe('buildAuthHeadersAsync', () => {
-  it('delegates bearer/api-key/none to sync builder', async () => {
-    const bearer = await buildAuthHeadersAsync({ type: 'bearer', token: 'tok' });
-    expect(bearer).toEqual({ Authorization: 'Bearer tok' });
-
-    const none = await buildAuthHeadersAsync({ type: 'none' });
-    expect(none).toEqual({});
-  });
-
-  it('produces Authorization header from OAuth2 token manager', async () => {
-    const mockManager: OAuth2TokenManager = {
-      async getAccessToken() {
-        return 'oauth-token-xyz';
-      },
-    };
-
-    const headers = await buildAuthHeadersAsync(
-      {
-        type: 'oauth2',
-        tokenEndpoint: 'https://auth.example.com/token',
-        clientId: 'id',
-        clientSecret: 'secret',
-      },
-      mockManager,
-    );
-
-    expect(headers).toEqual({ Authorization: 'Bearer oauth-token-xyz' });
-  });
-
-  it('throws when oauth2 is used without a token manager', async () => {
-    await expect(
-      buildAuthHeadersAsync({
-        type: 'oauth2',
-        tokenEndpoint: 'https://auth.example.com/token',
-        clientId: 'id',
-        clientSecret: 'secret',
-      }),
-    ).rejects.toThrow('requires a token manager');
   });
 });

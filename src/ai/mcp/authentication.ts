@@ -1,5 +1,3 @@
-import type { OAuth2TokenManager } from './oauth2-token-manager';
-
 /** Auth configurations that can produce headers synchronously. */
 export type SyncMCPAuthConfig =
   | { type: 'bearer'; token: string }
@@ -34,25 +32,4 @@ export function buildAuthHeaders(auth: SyncMCPAuthConfig): Record<string, string
     case 'none':
       return {};
   }
-}
-
-/**
- * Build authentication headers, supporting all auth types including OAuth2.
- *
- * For OAuth2, the `tokenManager` parameter is required and provides cached,
- * thread-safe access tokens.
- */
-export async function buildAuthHeadersAsync(
-  auth: MCPAuthConfig,
-  tokenManager?: OAuth2TokenManager,
-): Promise<Record<string, string>> {
-  if (auth.type === 'oauth2') {
-    if (!tokenManager) {
-      throw new Error('OAuth2 auth requires a token manager');
-    }
-    const token = await tokenManager.getAccessToken();
-    return { Authorization: `Bearer ${token}` };
-  }
-
-  return buildAuthHeaders(auth);
 }

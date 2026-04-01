@@ -260,7 +260,7 @@ export type {
 } from './ai/providers/types';
 
 // MCP
-export { buildAuthHeaders, buildAuthHeadersAsync } from './ai/mcp/authentication';
+export { buildAuthHeaders } from './ai/mcp/authentication';
 export type { MCPAuthConfig, SyncMCPAuthConfig } from './ai/mcp/authentication';
 export { MCPClient, MCPServerUnavailableError, MCPToolTimeoutError } from './ai/mcp/client';
 export type {
