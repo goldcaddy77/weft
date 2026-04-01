@@ -20,6 +20,7 @@ import type {
   ActivityInterception,
   ActivityInterceptor,
   AgentInterception,
+  ChildWorkflowInterception,
   SignalInterception,
   SignalReceivedInterception,
   SleepInterception,
@@ -27,7 +28,7 @@ import type {
   WorkflowStartInterception,
 } from '../core/interceptor';
 import { MetricsCollector as MetricsCollectorClass } from './metrics';
-import type { OtelApi, OtelSpan } from './no-op-telemetry';
+import type { OtelApi, OtelSpan, SpanLink } from './no-op-telemetry';
 import { getOtelApi } from './no-op-telemetry';
 import { extractTraceParent, injectTraceParent } from './propagation';
 
@@ -61,6 +62,7 @@ export type InterceptionContext =
   | SleepInterception
   | SignalInterception
   | AgentInterception
+  | ChildWorkflowInterception
   | SignalReceivedInterception;
 
 export type ObservabilityOptions = {
@@ -478,6 +480,62 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
           orphanedTurn.setStatus({ code: SpanStatusCode.ERROR });
           orphanedTurn.end();
         }
+      }
+    },
+
+    async childWorkflow(
+      interception: ChildWorkflowInterception,
+      next: (interception: ChildWorkflowInterception) => Promise<unknown>,
+    ): Promise<unknown> {
+      // Build span links from the parent workflow's traceparent header.
+      // Child workflows have independent lifecycles, so we use links instead
+      // of parent-child span relationships.
+      const links: SpanLink[] = [];
+      const parentTrace = extractTraceParent(interception.parentHeaders);
+      if (parentTrace) {
+        links.push({
+          context: {
+            traceId: parentTrace.traceId,
+            spanId: parentTrace.spanId,
+            traceFlags: parentTrace.traceFlags,
+          },
+        });
+      }
+
+      const span = tracer.startSpan(
+        `childWorkflow:${interception.workflowType}`,
+        {
+          attributes: {
+            'weft.child_workflow.type': interception.workflowType,
+            'weft.child_workflow.id': interception.childWorkflowId,
+            'weft.child_workflow.parent_id': interception.workflowId,
+          },
+          links,
+        },
+        api.context.ROOT_CONTEXT,
+      );
+
+      injectSpanContext(span, interception.headers);
+
+      if (recordPayloads && interception.input !== undefined) {
+        span.setAttribute(
+          'weft.payload.input',
+          serializePayload(interception.input, maxPayloadSize),
+        );
+      }
+
+      metrics.increment('weft.child_workflow.started');
+
+      try {
+        const result = await next(interception);
+        span.setStatus({ code: SpanStatusCode.OK });
+        span.end();
+        return result;
+      } catch (error) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
+        span.recordException(toError(error));
+        span.end();
+        throw error;
       }
     },
 

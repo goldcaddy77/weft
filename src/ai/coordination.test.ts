@@ -4,7 +4,13 @@ import { BudgetTracker } from './budget';
 import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message } from './providers/types';
 
-import { debate, handoff, summarizeConversation, supervise } from './coordination';
+import {
+  createChildHeaders,
+  debate,
+  handoff,
+  summarizeConversation,
+  supervise,
+} from './coordination';
 import { defineAgent, type AgentDefinition } from './declaration';
 
 // ---------------------------------------------------------------------------
@@ -45,6 +51,61 @@ function createAgentDefinition(overrides?: Partial<AgentDefinition>): AgentDefin
     ...overrides,
   });
 }
+
+// ---------------------------------------------------------------------------
+// createChildHeaders
+// ---------------------------------------------------------------------------
+
+describe('createChildHeaders', () => {
+  it('returns empty map when parentHeaders is undefined', () => {
+    const headers = createChildHeaders(undefined);
+    expect(headers.size).toBe(0);
+  });
+
+  it('returns empty map when parentHeaders has no trace headers', () => {
+    const parent = new Map<string, string>([['x-custom', 'value']]);
+    const headers = createChildHeaders(parent);
+    expect(headers.size).toBe(0);
+  });
+
+  it('forwards traceparent header from parent', () => {
+    const parent = new Map<string, string>([
+      ['traceparent', '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01'],
+    ]);
+
+    const headers = createChildHeaders(parent);
+
+    expect(headers.get('traceparent')).toBe(
+      '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01',
+    );
+  });
+
+  it('forwards tracestate header when present', () => {
+    const parent = new Map<string, string>([
+      ['traceparent', '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01'],
+      ['tracestate', 'vendor1=value1,vendor2=value2'],
+    ]);
+
+    const headers = createChildHeaders(parent);
+
+    expect(headers.get('traceparent')).toBeDefined();
+    expect(headers.get('tracestate')).toBe('vendor1=value1,vendor2=value2');
+  });
+
+  it('does not forward non-trace headers', () => {
+    const parent = new Map<string, string>([
+      ['traceparent', '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01'],
+      ['authorization', 'Bearer secret'],
+      ['x-request-id', '12345'],
+    ]);
+
+    const headers = createChildHeaders(parent);
+
+    expect(headers.size).toBe(1);
+    expect(headers.has('authorization')).toBe(false);
+    expect(headers.has('x-request-id')).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // handoff

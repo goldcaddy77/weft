@@ -9,12 +9,13 @@ import {
 import type {
   ActivityInterception,
   AgentInterception,
+  ChildWorkflowInterception,
   SignalInterception,
   SleepInterception,
 } from '../core/interceptor';
 import { createObservabilityInterceptors } from './index';
 import { MetricsCollector } from './metrics';
-import type { OtelApi, OtelSpan, OtelTracer } from './no-op-telemetry';
+import type { OtelApi, OtelSpan, OtelTracer, SpanLink } from './no-op-telemetry';
 
 // ---------------------------------------------------------------------------
 // Recording tracer: captures all span operations for assertions
@@ -27,6 +28,7 @@ type RecordedSpan = {
   exceptions: Array<Error | string>;
   ended: boolean;
   parentContext?: unknown;
+  links?: SpanLink[];
 };
 
 function createRecordingTracer(): {
@@ -43,6 +45,7 @@ function createRecordingTracer(): {
         exceptions: [],
         ended: false,
         parentContext: _context,
+        links: options?.links ?? [],
       };
       spans.push(recorded);
 
@@ -103,7 +106,7 @@ function createMockOtelApi(tracer: OtelTracer): OtelApi {
       },
     },
     context: {
-      ROOT_CONTEXT: Symbol('ROOT'),
+      ROOT_CONTEXT: Symbol.for('ROOT'),
       with<T>(_ctx: unknown, fn: () => T): T {
         return fn();
       },
@@ -1632,6 +1635,245 @@ describe('createObservabilityInterceptors', () => {
         new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
       );
       expect(spans.length).toBe(spanCountBefore);
+    });
+  });
+
+  describe('child workflow interceptor', () => {
+    it('creates a span with link to parent, not parent-child relationship', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      // Start parent workflow to populate the root span
+      workflow.workflowStart!(
+        {
+          workflowId: 'parent-wf',
+          workflowType: 'ParentWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      // Parent traceparent header simulating what the engine would pass
+      const parentHeaders = new Map<string, string>([
+        ['traceparent', '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01'],
+      ]);
+
+      const interception: ChildWorkflowInterception = {
+        workflowId: 'parent-wf',
+        childWorkflowId: 'child-wf-1',
+        workflowType: 'ChildWorkflow',
+        input: { task: 'process' },
+        headers: new Map<string, string>(),
+        parentHeaders,
+      };
+
+      const result = await workflow.childWorkflow!(interception, async () => 'child-result');
+
+      expect(result).toBe('child-result');
+
+      const childSpan = spans.find((s) => s.name === 'childWorkflow:ChildWorkflow');
+      expect(childSpan).toBeDefined();
+      expect(childSpan!.attributes['weft.child_workflow.type']).toBe('ChildWorkflow');
+      expect(childSpan!.attributes['weft.child_workflow.id']).toBe('child-wf-1');
+      expect(childSpan!.attributes['weft.child_workflow.parent_id']).toBe('parent-wf');
+
+      // The span should have a link to the parent, not a parent context
+      expect(childSpan!.links).toBeDefined();
+      expect(childSpan!.links).toHaveLength(1);
+      expect(childSpan!.links![0]!.context.traceId).toBe('abcd1234abcd1234abcd1234abcd1234');
+      expect(childSpan!.links![0]!.context.spanId).toBe('ef56ef56ef56ef56');
+
+      // The span should NOT have a parent context (root context means independent lifecycle)
+      // In our mock, ROOT_CONTEXT is a Symbol — if parentContext is that symbol, the span is a root.
+      expect(childSpan!.parentContext).toBe(Symbol.for('ROOT'));
+      expect(childSpan!.ended).toBe(true);
+      expect(childSpan!.status?.code).toBe(1); // OK
+    });
+
+    it('injects traceparent header into child workflow headers', async () => {
+      const { tracer } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'parent-wf',
+          workflowType: 'ParentWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const childHeaders = new Map<string, string>();
+      const interception: ChildWorkflowInterception = {
+        workflowId: 'parent-wf',
+        childWorkflowId: 'child-wf-2',
+        workflowType: 'ChildWorkflow',
+        input: undefined,
+        headers: childHeaders,
+        parentHeaders: new Map([
+          ['traceparent', '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01'],
+        ]),
+      };
+
+      await workflow.childWorkflow!(interception, async () => 'ok');
+
+      expect(childHeaders.has('traceparent')).toBe(true);
+      const traceparent = childHeaders.get('traceparent')!;
+      // The traceparent should contain the recording span's trace ID
+      expect(traceparent).toContain('abcd1234abcd1234abcd1234abcd1234');
+    });
+
+    it('records error span when child workflow fails', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'parent-wf',
+          workflowType: 'ParentWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const theError = new Error('child workflow failed');
+      const interception: ChildWorkflowInterception = {
+        workflowId: 'parent-wf',
+        childWorkflowId: 'child-wf-err',
+        workflowType: 'FailingChild',
+        input: undefined,
+        headers: new Map<string, string>(),
+        parentHeaders: new Map([
+          ['traceparent', '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01'],
+        ]),
+      };
+
+      let caught = false;
+      try {
+        await workflow.childWorkflow!(interception, async () => {
+          throw theError;
+        });
+      } catch (error) {
+        caught = true;
+        expect(error).toBe(theError);
+      }
+      expect(caught).toBe(true);
+
+      const childSpan = spans.find((s) => s.name === 'childWorkflow:FailingChild');
+      expect(childSpan).toBeDefined();
+      expect(childSpan!.status?.code).toBe(2); // ERROR
+      expect(childSpan!.status?.message).toBe('child workflow failed');
+      expect(childSpan!.exceptions).toHaveLength(1);
+      expect(childSpan!.ended).toBe(true);
+    });
+
+    it('creates span with empty links when no parent traceparent exists', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'parent-wf',
+          workflowType: 'ParentWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const interception: ChildWorkflowInterception = {
+        workflowId: 'parent-wf',
+        childWorkflowId: 'child-wf-no-parent',
+        workflowType: 'OrphanChild',
+        input: undefined,
+        headers: new Map<string, string>(),
+        parentHeaders: new Map<string, string>(), // No traceparent
+      };
+
+      await workflow.childWorkflow!(interception, async () => 'ok');
+
+      const childSpan = spans.find((s) => s.name === 'childWorkflow:OrphanChild');
+      expect(childSpan).toBeDefined();
+      // No link when parent has no traceparent
+      expect(childSpan!.links ?? []).toHaveLength(0);
+      expect(childSpan!.ended).toBe(true);
+    });
+
+    it('records input when recordPayloads is enabled', async () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        recordPayloads: true,
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'parent-wf',
+          workflowType: 'ParentWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const interception: ChildWorkflowInterception = {
+        workflowId: 'parent-wf',
+        childWorkflowId: 'child-wf-payload',
+        workflowType: 'PayloadChild',
+        input: { data: 'important' },
+        headers: new Map<string, string>(),
+        parentHeaders: new Map<string, string>(),
+      };
+
+      await workflow.childWorkflow!(interception, async () => 'ok');
+
+      const childSpan = spans.find((s) => s.name === 'childWorkflow:PayloadChild');
+      expect(childSpan).toBeDefined();
+      expect(childSpan!.attributes['weft.payload.input']).toBe('{"data":"important"}');
+    });
+
+    it('records child workflow started metric', async () => {
+      const metricsCollector = new MetricsCollector();
+      const { workflow } = createObservabilityInterceptors({ metrics: metricsCollector });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'parent-wf',
+          workflowType: 'ParentWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const interception: ChildWorkflowInterception = {
+        workflowId: 'parent-wf',
+        childWorkflowId: 'child-wf-metric',
+        workflowType: 'MetricChild',
+        input: undefined,
+        headers: new Map<string, string>(),
+        parentHeaders: new Map<string, string>(),
+      };
+
+      await workflow.childWorkflow!(interception, async () => 'ok');
+
+      const snapshot = metricsCollector.snapshot();
+      expect(snapshot['weft.child_workflow.started']).toBeDefined();
+      expect(
+        snapshot['weft.child_workflow.started']!.type === 'counter' &&
+          snapshot['weft.child_workflow.started']!.value,
+      ).toBe(1);
     });
   });
 });

@@ -2537,11 +2537,40 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         }
 
         try {
-          // Set pending nesting depth and parent headers for the child workflow
-          this.#pendingNestingDepth = currentDepth + 1;
-          this.#pendingParentHeaders = this.#workflowHeaders.get(workflowId);
-          const childHandle = await this.start(operation.workflowType, operation.input);
-          const childResult = await childHandle.result();
+          const rawId = operation.options?.['id'];
+          const childWorkflowId = typeof rawId === 'string' ? rawId : crypto.randomUUID();
+
+          // Run through the child workflow interceptor so observability
+          // creates a span with links (not parent-child) to the parent span.
+          const composedInterceptor = this.#getComposedWorkflowInterceptor();
+          const parentHeaders = this.#workflowHeaders.get(workflowId) ?? new Map<string, string>();
+
+          const executeChild = async () => {
+            this.#pendingNestingDepth = currentDepth + 1;
+            this.#pendingParentHeaders = this.#workflowHeaders.get(workflowId);
+            const childHandle = await this.start(operation.workflowType, operation.input, {
+              id: childWorkflowId,
+            });
+            return childHandle.result();
+          };
+
+          let childResult: unknown;
+          if (composedInterceptor) {
+            childResult = await composedInterceptor.childWorkflow(
+              {
+                workflowId,
+                childWorkflowId,
+                workflowType: operation.workflowType,
+                input: operation.input,
+                headers: new Map<string, string>(),
+                parentHeaders,
+              },
+              async () => executeChild(),
+            );
+          } else {
+            childResult = await executeChild();
+          }
+
           this.#feedOperationResult(workflowId, { status: 'completed', value: childResult });
         } catch (error) {
           if (error instanceof Error && operation.callerStack) {
@@ -2576,8 +2605,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       case 'handoff': {
         try {
-          const { handoff: executeHandoff } = await import('../ai/coordination.ts');
-          const handoffResult = await executeHandoff(operation.options);
+          const { handoff: executeHandoff, createChildHeaders } =
+            await import('../ai/coordination.ts');
+          // Inject parent workflow's trace context headers into handoff options
+          // so child agent spans link back to the parent workflow's span.
+          const parentHeaders = this.#workflowHeaders.get(workflowId);
+          const handoffOptions = {
+            ...operation.options,
+            headers: createChildHeaders(parentHeaders),
+          };
+          const handoffResult = await executeHandoff(handoffOptions);
           this.#feedOperationResult(workflowId, { status: 'completed', value: handoffResult });
         } catch (error) {
           if (error instanceof Error && operation.callerStack) {
