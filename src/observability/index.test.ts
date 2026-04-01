@@ -193,6 +193,7 @@ describe('createObservabilityInterceptors', () => {
 
       const headers = new Map<string, string>();
       const interception = {
+        workflowId: 'wf-1',
         activityName: 'doSomething',
         input: 'hello',
         attempt: 1,
@@ -236,7 +237,13 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.activity!(
-        { activityName: 'doSomething', input: undefined, attempt: 1, headers: new Map() },
+        {
+          workflowId: 'wf-1',
+          activityName: 'doSomething',
+          input: undefined,
+          attempt: 1,
+          headers: new Map(),
+        },
         next,
       );
       let step = generator.next();
@@ -276,18 +283,27 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.activity!(
-        { activityName: 'failingActivity', input: undefined, attempt: 1, headers: new Map() },
+        {
+          workflowId: 'wf-err',
+          activityName: 'failingActivity',
+          input: undefined,
+          attempt: 1,
+          headers: new Map(),
+        },
         next,
       );
 
+      let caught = false;
       try {
         let step = generator.next();
         while (!step.done) {
           step = generator.next(step.value);
         }
       } catch (error) {
+        caught = true;
         expect(error).toBe(theError);
       }
+      expect(caught).toBe(true);
 
       const errorSpan = spans.find((s) => s.name === 'activity:failingActivity');
       expect(errorSpan).toBeDefined();
@@ -315,7 +331,10 @@ describe('createObservabilityInterceptors', () => {
 
       const next = function* (_ctx: SleepInterception) {};
 
-      const generator = workflow.sleep!({ duration: 5000, headers: new Map() }, next);
+      const generator = workflow.sleep!(
+        { workflowId: 'wf-1', duration: 5000, headers: new Map() },
+        next,
+      );
       let step = generator.next();
       while (!step.done) {
         step = generator.next(step.value);
@@ -349,7 +368,12 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.waitForSignal!(
-        { signalName: 'approval', payload: { approved: true }, headers: new Map() },
+        {
+          workflowId: 'wf-1',
+          signalName: 'approval',
+          payload: { approved: true },
+          headers: new Map(),
+        },
         next,
       );
       let step = generator.next();
@@ -386,18 +410,26 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.waitForSignal!(
-        { signalName: 'test-signal', payload: undefined, headers: new Map() },
+        {
+          workflowId: 'wf-sig-err',
+          signalName: 'test-signal',
+          payload: undefined,
+          headers: new Map(),
+        },
         next,
       );
 
+      let caught = false;
       try {
         let step = generator.next();
         while (!step.done) {
           step = generator.next(step.value);
         }
       } catch (error) {
+        caught = true;
         expect(error).toBe(theError);
       }
+      expect(caught).toBe(true);
 
       const errorSpan = spans.find((s) => s.name === 'waitForSignal');
       expect(errorSpan).toBeDefined();
@@ -427,7 +459,7 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.agent!(
-        { model: 'gpt-4', prompt: 'hello', headers: new Map() },
+        { workflowId: 'wf-1', model: 'gpt-4', prompt: 'hello', headers: new Map() },
         next,
       );
       let step = generator.next();
@@ -464,18 +496,21 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.agent!(
-        { model: 'gpt-4', prompt: 'hello', headers: new Map() },
+        { workflowId: 'wf-agent-err', model: 'gpt-4', prompt: 'hello', headers: new Map() },
         next,
       );
 
+      let caught = false;
       try {
         let step = generator.next();
         while (!step.done) {
           step = generator.next(step.value);
         }
       } catch (error) {
+        caught = true;
         expect(error).toBe(theError);
       }
+      expect(caught).toBe(true);
 
       const errorSpan = spans.find((s) => s.name === 'agent');
       expect(errorSpan).toBeDefined();
@@ -740,7 +775,13 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.activity!(
-        { activityName: 'doSomething', input: 'hello', attempt: 1, headers: new Map() },
+        {
+          workflowId: 'wf-act-payload',
+          activityName: 'doSomething',
+          input: 'hello',
+          attempt: 1,
+          headers: new Map(),
+        },
         next,
       );
       let step = generator.next();
@@ -800,7 +841,12 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.agent!(
-        { model: 'gpt-4', prompt: 'hello world', headers: new Map() },
+        {
+          workflowId: 'wf-agent-payload',
+          model: 'gpt-4',
+          prompt: 'hello world',
+          headers: new Map(),
+        },
         next,
       );
       let step = generator.next();
@@ -860,7 +906,13 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.activity!(
-        { activityName: 'doSomething', input: undefined, attempt: 1, headers: new Map() },
+        {
+          workflowId: 'wf-attr-act',
+          activityName: 'doSomething',
+          input: undefined,
+          attempt: 1,
+          headers: new Map(),
+        },
         next,
       );
       let step = generator.next();
@@ -892,7 +944,10 @@ describe('createObservabilityInterceptors', () => {
 
       const next = function* (_ctx: SleepInterception) {};
 
-      const generator = workflow.sleep!({ duration: 5000, headers: new Map() }, next);
+      const generator = workflow.sleep!(
+        { workflowId: 'wf-attr-sleep', duration: 5000, headers: new Map() },
+        next,
+      );
       let step = generator.next();
       while (!step.done) {
         step = generator.next(step.value);
@@ -925,7 +980,7 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.agent!(
-        { model: 'gpt-4', prompt: 'hello', headers: new Map() },
+        { workflowId: 'wf-attr-agent', model: 'gpt-4', prompt: 'hello', headers: new Map() },
         next,
       );
       let step = generator.next();
@@ -1006,7 +1061,13 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.activity!(
-        { activityName: 'myActivity', input: undefined, attempt: 1, headers: new Map() },
+        {
+          workflowId: 'wf-m2',
+          activityName: 'myActivity',
+          input: undefined,
+          attempt: 1,
+          headers: new Map(),
+        },
         next,
       );
       let step = generator.next();
@@ -1080,7 +1141,13 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.activity!(
-        { activityName: 'stringThrower', input: undefined, attempt: 1, headers: new Map() },
+        {
+          workflowId: 'wf-err-2',
+          activityName: 'stringThrower',
+          input: undefined,
+          attempt: 1,
+          headers: new Map(),
+        },
         next,
       );
 
@@ -1120,7 +1187,12 @@ describe('createObservabilityInterceptors', () => {
       };
 
       const generator = workflow.waitForSignal!(
-        { signalName: 'test-signal', payload: undefined, headers: new Map() },
+        {
+          workflowId: 'wf-sig-err-2',
+          signalName: 'test-signal',
+          payload: undefined,
+          headers: new Map(),
+        },
         next,
       );
 
@@ -1148,6 +1220,7 @@ describe('createObservabilityInterceptors', () => {
       });
 
       const interception = {
+        workflowId: 'wf-orphan',
         activityName: 'orphanActivity',
         input: undefined,
         attempt: 1,
@@ -1205,7 +1278,7 @@ describe('createObservabilityInterceptors', () => {
       const { workflow, spans } = setupWorkflow(eventTarget);
 
       const gen = workflow.agent!(
-        { model: 'claude', prompt: 'test', headers: new Map() },
+        { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
             new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
@@ -1249,7 +1322,7 @@ describe('createObservabilityInterceptors', () => {
       const { workflow, spans } = setupWorkflow(eventTarget);
 
       const gen = workflow.agent!(
-        { model: 'claude', prompt: 'test', headers: new Map() },
+        { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
             new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
@@ -1312,7 +1385,7 @@ describe('createObservabilityInterceptors', () => {
       const { workflow, spans } = setupWorkflow(eventTarget);
 
       const gen = workflow.agent!(
-        { model: 'claude', prompt: 'test', headers: new Map() },
+        { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
             new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
@@ -1401,7 +1474,7 @@ describe('createObservabilityInterceptors', () => {
       const { workflow, spans } = setupWorkflow(eventTarget);
 
       const gen = workflow.agent!(
-        { model: 'claude', prompt: 'test', headers: new Map() },
+        { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
             new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
@@ -1484,7 +1557,7 @@ describe('createObservabilityInterceptors', () => {
       );
 
       const gen = workflow.agent!(
-        { model: 'claude', prompt: 'test', headers: new Map() },
+        { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           return 'done';
         },
@@ -1503,7 +1576,7 @@ describe('createObservabilityInterceptors', () => {
       const theError = new Error('agent exploded');
 
       const gen = workflow.agent!(
-        { model: 'claude', prompt: 'test', headers: new Map() },
+        { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
             new AgentTurnStartedEvent('wf-agent-spans', 'agent-1', 0, 'claude', 100, 1),
@@ -1523,11 +1596,14 @@ describe('createObservabilityInterceptors', () => {
         },
       );
 
+      let caught = false;
       try {
         driveGenerator(gen);
       } catch (error) {
+        caught = true;
         expect(error).toBe(theError);
       }
+      expect(caught).toBe(true);
 
       // Agent, turn, and tool spans should all be ended with ERROR status
       expect(spans.find((s) => s.name === 'agent')!.ended).toBe(true);
@@ -1543,7 +1619,7 @@ describe('createObservabilityInterceptors', () => {
       const { workflow, spans } = setupWorkflow(eventTarget);
 
       const gen = workflow.agent!(
-        { model: 'claude', prompt: 'test', headers: new Map() },
+        { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           return 'done';
         },

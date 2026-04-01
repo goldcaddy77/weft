@@ -129,6 +129,7 @@ describe('remote worker trace propagation', () => {
     // 2. Dispatch an activity — the workflow interceptor injects traceparent.
     const activityHeaders = new Map<string, string>();
     const activityInterception: ActivityInterception = {
+      workflowId: 'wf-e2e-1',
       activityName: 'chargeCard',
       input: { amount: 99 },
       attempt: 1,
@@ -201,7 +202,7 @@ describe('remote worker trace propagation', () => {
     const headers = new Map<string, string>();
     driveGenerator(
       workflowSide.workflow.activity!(
-        { activityName: 'process', input: 'data', attempt: 1, headers },
+        { workflowId: 'wf-json-rt', activityName: 'process', input: 'data', attempt: 1, headers },
         function* () {
           return 'ok';
         },
@@ -272,7 +273,13 @@ describe('remote worker trace propagation', () => {
     const headers1 = new Map<string, string>();
     driveGenerator(
       workflowSide.workflow.activity!(
-        { activityName: 'step1', input: 'a', attempt: 1, headers: headers1 },
+        {
+          workflowId: 'wf-multi',
+          activityName: 'step1',
+          input: 'a',
+          attempt: 1,
+          headers: headers1,
+        },
         function* () {
           return 'r1';
         },
@@ -282,7 +289,13 @@ describe('remote worker trace propagation', () => {
     const headers2 = new Map<string, string>();
     driveGenerator(
       workflowSide.workflow.activity!(
-        { activityName: 'step2', input: 'b', attempt: 1, headers: headers2 },
+        {
+          workflowId: 'wf-multi',
+          activityName: 'step2',
+          input: 'b',
+          attempt: 1,
+          headers: headers2,
+        },
         function* () {
           return 'r2';
         },

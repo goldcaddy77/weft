@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 export interface ActivityInterception {
+  workflowId: string;
   activityName: string;
   input: unknown;
   attempt: number;
@@ -21,11 +22,13 @@ export interface ActivityInterception {
 }
 
 export interface SleepInterception {
+  workflowId: string;
   duration: number;
   headers: Map<string, string>;
 }
 
 export interface SignalInterception {
+  workflowId: string;
   signalName: string;
   payload: unknown;
   headers: Map<string, string>;
@@ -81,6 +84,7 @@ export interface AgentToolReturnInfo {
 }
 
 export interface AgentInterception {
+  workflowId: string;
   model: string;
   prompt: string;
   headers: Map<string, string>;

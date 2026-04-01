@@ -1070,19 +1070,104 @@ describe('executeAgentLoop', () => {
     expect(toolReturned[0]!.success).toBe(false);
   });
 
-  it('hooks.onBudgetWarning receives callback context', async () => {
-    // This test verifies the hooks interface accepts onBudgetWarning.
-    // The actual budget warning firing is tested in budget.test.ts;
-    // here we just verify the option is accepted without errors.
+  it('hooks.onBudgetWarning fires when budget crosses 80% threshold', async () => {
+    // Budget: maxTokens = 100. Each response uses 30 tokens (10 input + 20 output).
+    // After 3 turns: 90 tokens used = 90% > 80% threshold.
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }]),
+      createToolCallResponse([{ id: 'call-2', name: 'noop', input: {} }]),
+      createChatResponse('Done'),
+    ]);
+
+    const budget = new BudgetTracker({
+      maxTokens: 100,
+      models: { 'test-model': { inputCostPer1K: 0, outputCostPer1K: 0 } },
+    });
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    let warningContext: import('./hooks').BudgetWarningContext | undefined;
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        budget,
+        hooks: {
+          onBudgetWarning: (context) => {
+            warningContext = context;
+          },
+        },
+      },
+      'Hello',
+    );
+
+    expect(result.content).toBe('Done');
+    expect(warningContext).toBeDefined();
+    expect(warningContext!.budgetUsedPercent).toBeGreaterThanOrEqual(80);
+    expect(warningContext!.tokensRemaining).toBeLessThan(100);
+  });
+
+  it('hooks.onBudgetWarning fires only once across multiple turns', async () => {
+    // Budget: maxTokens = 100. Each turn uses 30 tokens.
+    // Turn 1: 30% — no warning. Turn 2: 60% — no warning. Turn 3: 90% — warning.
+    // Turn 4 would also be above threshold, but warning should not fire again.
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }]),
+      createToolCallResponse([{ id: 'call-2', name: 'noop', input: {} }]),
+      createToolCallResponse([{ id: 'call-3', name: 'noop', input: {} }]),
+      createChatResponse('Done'),
+    ]);
+
+    const budget = new BudgetTracker({
+      maxTokens: 100,
+      models: { 'test-model': { inputCostPer1K: 0, outputCostPer1K: 0 } },
+    });
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    let warningCallCount = 0;
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        budget,
+        hooks: {
+          onBudgetWarning: () => {
+            warningCallCount++;
+          },
+        },
+      },
+      'Hello',
+    );
+
+    expect(warningCallCount).toBe(1);
+  });
+
+  it('hooks.onBudgetWarning does not fire when budget is below threshold', async () => {
+    // Budget: maxTokens = 1000. One turn uses 30 tokens = 3% — well below 80%.
     const provider = createMockProvider([createChatResponse('Done')]);
+
+    const budget = new BudgetTracker({
+      maxTokens: 1000,
+      models: { 'test-model': { inputCostPer1K: 0, outputCostPer1K: 0 } },
+    });
 
     let warningCalled = false;
     const result = await executeAgentLoop(
       {
         model: 'test-model',
         provider,
+        budget,
         hooks: {
-          onBudgetWarning: (_context) => {
+          onBudgetWarning: () => {
             warningCalled = true;
           },
         },
@@ -1091,8 +1176,27 @@ describe('executeAgentLoop', () => {
     );
 
     expect(result.content).toBe('Done');
-    // onBudgetWarning is not called by the agent loop itself; it's for
-    // external budget trackers to invoke. Just verify it compiles and runs.
+    expect(warningCalled).toBe(false);
+  });
+
+  it('hooks.onBudgetWarning is not called when no budget tracker is provided', async () => {
+    const provider = createMockProvider([createChatResponse('Done')]);
+
+    let warningCalled = false;
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        hooks: {
+          onBudgetWarning: () => {
+            warningCalled = true;
+          },
+        },
+      },
+      'Hello',
+    );
+
+    expect(result.content).toBe('Done');
     expect(warningCalled).toBe(false);
   });
 

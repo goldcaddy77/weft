@@ -372,6 +372,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     string,
     (entry: { id: string; workflowId: string }) => Promise<boolean>
   >;
+  #workflowReviewIds: Map<string, Set<string>>;
+  /** Timer IDs scheduled for each review (escalation + timeout), keyed by reviewId. */
+  #reviewTimerIds: Map<string, string[]>;
+  #pendingWebhooks: Set<AbortController>;
 
   constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
     super();
@@ -456,6 +460,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
     this.#reviewWaiters = new Map();
     this.#reviewEscalationHandlers = new Map();
+    this.#workflowReviewIds = new Map();
+    this.#reviewTimerIds = new Map();
+    this.#pendingWebhooks = new Set();
     this.#cleanupInterval = setInterval(() => {
       this.#updateCoordinator.cleanupExpiredResponses().catch((error: unknown) => {
         this.#handleCleanupError('cleanupExpiredResponses', error);
@@ -1612,6 +1619,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#updateWaiters.clear();
     this.#reviewWaiters.clear();
     this.#reviewEscalationHandlers.clear();
+    this.#workflowReviewIds.clear();
+    this.#reviewTimerIds.clear();
+    for (const controller of this.#pendingWebhooks) {
+      controller.abort();
+    }
+    this.#pendingWebhooks.clear();
     this.#sleepResolvers.clear();
     this.#sleepResolversByWorkflow.clear();
     this.#checkpoints.clear();
@@ -2331,6 +2344,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           // allowing observability interceptors to inject per-turn/per-tool
           // callbacks into the interception context.
           const agentInterception: import('./interceptor.ts').AgentInterception = {
+            workflowId,
             model: rest.model,
             prompt,
             headers: new Map<string, string>(),
@@ -2631,6 +2645,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const reviewId = parts[1]!;
       const handler = this.#reviewEscalationHandlers.get(reviewId);
       if (handler) {
+        // Guard: skip if the workflow is no longer running (e.g. cancelled/failed concurrently)
+        const state = await this.#loadWorkflowState(entry.workflowId);
+        if (!state || state.status !== 'running') return;
         await handler(entry);
       }
       return;
@@ -2700,8 +2717,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       ),
     );
 
-    // Fire webhook notification (fire-and-forget)
+    // Fire webhook notification with cancellation support tied to engine lifecycle
     if (options.webhookUrl) {
+      const webhookAbort = new AbortController();
+      this.#pendingWebhooks.add(webhookAbort);
       fetch(options.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2712,17 +2731,30 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           reviewers: reviewRequest.reviewers,
           artifact: reviewRequest.artifact,
         }),
-      }).catch((error: unknown) => {
-        console.warn(`[weft] Failed to send review webhook for ${reviewId}`, error);
-      });
+        signal: webhookAbort.signal,
+      })
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === 'AbortError') return;
+          console.warn(`[weft] Failed to send review webhook for ${reviewId}`, error);
+        })
+        .then(() => {
+          this.#pendingWebhooks.delete(webhookAbort);
+          return undefined;
+        })
+        .catch(() => {
+          // Guard: swallow errors from cleanup callback
+        });
     }
 
-    // Set up escalation timers
+    // Set up escalation timers and track their IDs for cleanup
+    const timerIds: string[] = [];
     if (options.escalation && options.escalation.length > 0) {
       for (const step of options.escalation) {
         const fireAt = now + step.after;
+        const timerId = `review-escalation:${reviewId}:${step.after}`;
+        timerIds.push(timerId);
         await this.#scheduler.schedule({
-          id: `review-escalation:${reviewId}:${step.after}`,
+          id: timerId,
           workflowId,
           fireAt,
           kind: 'sleep', // Reuse sleep kind — the timer handler checks the id prefix
@@ -2733,8 +2765,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Set up timeout timer
     if (options.timeout !== undefined) {
       const timeoutFireAt = now + options.timeout;
+      const timeoutTimerId = `review-timeout:${reviewId}`;
+      timerIds.push(timeoutTimerId);
       await this.#scheduler.schedule({
-        id: `review-timeout:${reviewId}`,
+        id: timeoutTimerId,
         workflowId,
         fireAt: timeoutFireAt,
         kind: 'sleep',
@@ -2816,13 +2850,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return false;
     };
 
-    // Register the escalation handler
+    // Register the escalation handler and track the reviewId → workflowId association
     this.#reviewEscalationHandlers.set(reviewId, escalationListener);
+    if (timerIds.length > 0) {
+      this.#reviewTimerIds.set(reviewId, timerIds);
+    }
+    let reviewIdSet = this.#workflowReviewIds.get(workflowId);
+    if (!reviewIdSet) {
+      reviewIdSet = new Set();
+      this.#workflowReviewIds.set(workflowId, reviewIdSet);
+    }
+    reviewIdSet.add(reviewId);
 
     const outcome = await promise;
 
-    // Clean up escalation handler
+    // Clean up escalation handler, timer IDs, and workflow-reviewId tracking
     this.#reviewEscalationHandlers.delete(reviewId);
+    this.#reviewTimerIds.delete(reviewId);
+    const trackedIds = this.#workflowReviewIds.get(workflowId);
+    if (trackedIds) {
+      trackedIds.delete(reviewId);
+      if (trackedIds.size === 0) this.#workflowReviewIds.delete(workflowId);
+    }
 
     // Cancel any remaining escalation/timeout timers
     if (options.escalation) {
@@ -2878,6 +2927,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
       this.#sleepResolversByWorkflow.delete(workflowId);
     }
+    // Clean up any review escalation handlers and their scheduled timers
+    const reviewIds = this.#workflowReviewIds.get(workflowId);
+    if (reviewIds) {
+      for (const reviewId of reviewIds) {
+        this.#reviewEscalationHandlers.delete(reviewId);
+        const timers = this.#reviewTimerIds.get(reviewId);
+        if (timers) {
+          for (const timerId of timers) {
+            this.#scheduler.cancel(timerId, workflowId).catch(() => {});
+          }
+          this.#reviewTimerIds.delete(reviewId);
+        }
+      }
+      this.#workflowReviewIds.delete(workflowId);
+    }
+
     this.#workflowNestingDepths.delete(workflowId);
     this.#workflowHeaders.delete(workflowId);
   }
@@ -3068,6 +3133,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const composedActivity = this.#getComposedActivityInterceptor();
     if (composedActivity) {
       const activityInterception = {
+        workflowId,
         activityName: operation.activityName,
         input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
         attempt: 1,
@@ -3093,6 +3159,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const composedWorkflow = this.#getComposedWorkflowInterceptor();
     if (composedWorkflow) {
       const interception = {
+        workflowId,
         activityName: operation.activityName,
         input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
         attempt: 1,
