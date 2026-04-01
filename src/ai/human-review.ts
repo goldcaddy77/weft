@@ -97,6 +97,8 @@ export class ReviewTimeoutError extends Error {
 export interface ReviewCoordinatorOptions {
   /** When provided, the coordinator dispatches human review events. */
   eventTarget?: EventTarget;
+  /** Custom time source for testing. Defaults to `Date.now`. */
+  getNow?: () => number;
 }
 
 export class ReviewCoordinator {
@@ -109,7 +111,7 @@ export class ReviewCoordinator {
     if (typeof optionsOrGetNow === 'function') {
       this.#getNow = optionsOrGetNow;
     } else {
-      this.#getNow = Date.now;
+      this.#getNow = optionsOrGetNow?.getNow ?? Date.now;
       this.#eventTarget = optionsOrGetNow?.eventTarget;
     }
   }

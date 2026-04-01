@@ -177,6 +177,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   // to all interception types or using AsyncLocalStorage for context.
   // For now, each concurrent workflow should use its own interceptor instance.
   let currentRootSpan: OtelSpan | undefined;
+  let currentWorkflowId: string | undefined;
 
   /** Apply custom attributes from the extractor to a span. */
   function applyCustomAttributes(span: OtelSpan, interception: InterceptionContext): void {
@@ -210,6 +211,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       });
 
       currentRootSpan = span;
+      currentWorkflowId = interception.workflowId;
 
       injectSpanContext(span, interception.headers);
 
@@ -374,8 +376,10 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       const turnSpans = new Map<number, OtelSpan>();
       const toolSpans = new Map<string, OtelSpan>();
 
+      const agentWorkflowId = currentWorkflowId;
       const onTurnStarted = (event: Event) => {
         if (!(event instanceof AgentTurnStartedEvent)) return;
+        if (event.workflowId !== agentWorkflowId) return;
         const turnSpan = tracer.startSpan(
           `agent:turn:${event.turnIndex}`,
           {
@@ -391,6 +395,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
       const onTurnCompleted = (event: Event) => {
         if (!(event instanceof AgentTurnCompletedEvent)) return;
+        if (event.workflowId !== agentWorkflowId) return;
         const turnSpan = turnSpans.get(event.turnIndex);
         if (turnSpan) {
           turnSpan.setAttribute('weft.agent.input_tokens', event.inputTokens);
@@ -404,6 +409,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
       const onToolCalled = (event: Event) => {
         if (!(event instanceof AgentToolCalledEvent)) return;
+        if (event.workflowId !== agentWorkflowId) return;
         const parentTurnSpan = turnSpans.get(event.turnIndex);
         const toolParentCtx = parentTurnSpan
           ? trace.setSpan(api.context.ROOT_CONTEXT, parentTurnSpan)
@@ -422,6 +428,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
       const onToolReturned = (event: Event) => {
         if (!(event instanceof AgentToolReturnedEvent)) return;
+        if (event.workflowId !== agentWorkflowId) return;
         const toolSpan = toolSpans.get(event.operationId);
         if (toolSpan) {
           toolSpan.setAttribute('weft.agent.tool_duration', event.duration);
