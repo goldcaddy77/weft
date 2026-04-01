@@ -42,79 +42,123 @@
   let streamingText = $state('');
   let fetchGeneration = 0;
 
-  // ---------------------------------------------------------------------------
-  // Agent-specific derived state
-  // ---------------------------------------------------------------------------
+  function readEventString(
+    data: WorkflowEvent['data'],
+    key: string,
+    fallback: string,
+  ): string {
+    const value = data[key];
+    return typeof value === 'string' ? value : fallback;
+  }
 
-  const turns: AgentTurnData[] = $derived.by(() => {
+  function readEventNumber(
+    data: WorkflowEvent['data'],
+    key: string,
+    fallback: number,
+  ): number {
+    const value = data[key];
+    return typeof value === 'number' ? value : fallback;
+  }
+
+  function createAgentTurn(
+    turnIndex: number,
+    data?: WorkflowEvent['data'],
+  ): AgentTurnData {
+    return {
+      turnIndex,
+      model: data ? readEventString(data, 'model', 'unknown') : 'unknown',
+      inputTokens: data ? readEventNumber(data, 'inputTokens', 0) : 0,
+      outputTokens: data ? readEventNumber(data, 'outputTokens', 0) : 0,
+      cost: data ? readEventNumber(data, 'cost', 0) : 0,
+      toolCalls: [],
+      response: '',
+    };
+  }
+
+  function getOrCreateTurn(
+    turnMap: Map<number, AgentTurnData>,
+    turnIndex: number,
+    data?: WorkflowEvent['data'],
+  ): AgentTurnData {
+    const existingTurn = turnMap.get(turnIndex);
+    if (existingTurn) {
+      return existingTurn;
+    }
+
+    const turn = createAgentTurn(turnIndex, data);
+    turnMap.set(turnIndex, turn);
+    return turn;
+  }
+
+  function applyCompletedTurnEvent(
+    turnMap: Map<number, AgentTurnData>,
+    data: WorkflowEvent['data'],
+  ): void {
+    const turnIndex = readEventNumber(data, 'turnIndex', 0);
+    const turn = getOrCreateTurn(turnMap, turnIndex, data);
+    turn.model = readEventString(data, 'model', turn.model);
+    turn.inputTokens = readEventNumber(data, 'inputTokens', turn.inputTokens);
+    turn.outputTokens = readEventNumber(data, 'outputTokens', turn.outputTokens);
+    turn.cost = readEventNumber(data, 'cost', turn.cost);
+  }
+
+  function applyToolCalledEvent(
+    turnMap: Map<number, AgentTurnData>,
+    data: WorkflowEvent['data'],
+  ): void {
+    const turnIndex = readEventNumber(data, 'turnIndex', 0);
+    const turn = getOrCreateTurn(turnMap, turnIndex);
+    turn.toolCalls.push({
+      name: readEventString(data, 'toolName', 'unknown'),
+      input: data['toolInput'] ?? null,
+      output: null,
+    });
+  }
+
+  function applyToolReturnedEvent(
+    turnMap: Map<number, AgentTurnData>,
+    data: WorkflowEvent['data'],
+  ): void {
+    const turnIndex = readEventNumber(data, 'turnIndex', 0);
+    const toolName = readEventString(data, 'toolName', '');
+    const turn = turnMap.get(turnIndex);
+    if (!turn) {
+      return;
+    }
+
+    const matchingCall = turn.toolCalls.find((toolCall) => {
+      return toolCall.name === toolName && toolCall.output === null;
+    });
+    if (matchingCall) {
+      matchingCall.output = data['result'] ?? { success: data['success'] };
+    }
+  }
+
+  function buildAgentTurns(workflowEvents: WorkflowEvent[]): AgentTurnData[] {
     const turnMap = new Map<number, AgentTurnData>();
 
-    for (const event of events) {
-      if (event.type === 'agent:turn:completed') {
-        const data = event.data;
-        const turnIndex = (data['turnIndex'] as number) ?? 0;
-
-        if (!turnMap.has(turnIndex)) {
-          turnMap.set(turnIndex, {
-            turnIndex,
-            model: (data['model'] as string) ?? 'unknown',
-            inputTokens: (data['inputTokens'] as number) ?? 0,
-            outputTokens: (data['outputTokens'] as number) ?? 0,
-            cost: (data['cost'] as number) ?? 0,
-            toolCalls: [],
-            response: '',
-          });
-        }
-
-        const turn = turnMap.get(turnIndex)!;
-        turn.model = (data['model'] as string) ?? turn.model;
-        turn.inputTokens = (data['inputTokens'] as number) ?? turn.inputTokens;
-        turn.outputTokens = (data['outputTokens'] as number) ?? turn.outputTokens;
-        turn.cost = (data['cost'] as number) ?? turn.cost;
-      }
-
-      if (event.type === 'agent:tool:called') {
-        const data = event.data;
-        const turnIndex = (data['turnIndex'] as number) ?? 0;
-
-        if (!turnMap.has(turnIndex)) {
-          turnMap.set(turnIndex, {
-            turnIndex,
-            model: 'unknown',
-            inputTokens: 0,
-            outputTokens: 0,
-            cost: 0,
-            toolCalls: [],
-            response: '',
-          });
-        }
-
-        turnMap.get(turnIndex)!.toolCalls.push({
-          name: (data['toolName'] as string) ?? 'unknown',
-          input: data['toolInput'] ?? null,
-          output: null,
-        });
-      }
-
-      if (event.type === 'agent:tool:returned') {
-        const data = event.data;
-        const turnIndex = (data['turnIndex'] as number) ?? 0;
-        const toolName = (data['toolName'] as string) ?? '';
-        const turn = turnMap.get(turnIndex);
-
-        if (turn) {
-          const matchingCall = turn.toolCalls.find(
-            (tc) => tc.name === toolName && tc.output === null,
-          );
-          if (matchingCall) {
-            matchingCall.output = data['result'] ?? { success: data['success'] };
-          }
-        }
+    for (const event of workflowEvents) {
+      switch (event.type) {
+        case 'agent:turn:completed':
+          applyCompletedTurnEvent(turnMap, event.data);
+          break;
+        case 'agent:tool:called':
+          applyToolCalledEvent(turnMap, event.data);
+          break;
+        case 'agent:tool:returned':
+          applyToolReturnedEvent(turnMap, event.data);
+          break;
       }
     }
 
     return Array.from(turnMap.values()).toSorted((a, b) => a.turnIndex - b.turnIndex);
-  });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Agent-specific derived state
+  // ---------------------------------------------------------------------------
+
+  const turns: AgentTurnData[] = $derived.by(() => buildAgentTurns(events));
 
   const tokensUsed = $derived(turns.reduce((sum, turn) => sum + turn.inputTokens + turn.outputTokens, 0));
   const costUsed = $derived(turns.reduce((sum, turn) => sum + turn.cost, 0));
