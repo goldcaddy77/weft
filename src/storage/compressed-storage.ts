@@ -133,11 +133,16 @@ export class CompressedStorage implements Storage {
 
 /**
  * Extract the workflow ID from a storage key. Workflow-related keys follow
- * the pattern `wf:{workflowId}:*`. Returns null if the key doesn't match.
+ * the pattern `wf:{workflowId}` or `wf:{workflowId}:*`. Returns null if the
+ * key doesn't match.
  */
 function extractWorkflowIdFromKey(key: string): string | null {
   if (!key.startsWith('wf:')) return null;
   const secondColon = key.indexOf(':', 3);
-  if (secondColon === -1) return null;
+  if (secondColon === -1) {
+    // Key is of the form `wf:{workflowId}`
+    return key.slice(3);
+  }
+  // Key is of the form `wf:{workflowId}:*`
   return key.slice(3, secondColon);
 }

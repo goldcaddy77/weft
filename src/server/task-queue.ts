@@ -110,7 +110,7 @@ export class TaskQueue {
 
     const tasks = this.#pending.get(queue) ?? [];
     const taskPriority = task.priority ?? 0;
-    if (taskPriority > 0 && tasks.length > 0) {
+    if (tasks.length > 0) {
       // Priority-sorted insertion: find the first task with lower priority.
       const insertAt = tasks.findIndex((t) => (t.priority ?? 0) < taskPriority);
       if (insertAt === -1) {

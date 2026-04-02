@@ -839,7 +839,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // Agent optimization: track agent workflows and pre-warm LLM connections.
       if (registration.isAgent) {
         this.#agentWorkflowIds.add(workflowId);
-        registration.provider?.warmup?.().catch(() => {});
+        try {
+          const warmupResult = registration.provider?.warmup?.();
+          warmupResult?.catch(() => {});
+        } catch {
+          // Warmup is best-effort; ignore synchronous failures.
+        }
       }
 
       this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
@@ -1435,6 +1440,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(
         `No workflow registered with name "${state.type}" (needed to resume "${workflowId}")`,
       );
+    }
+
+    // Agent optimization: track resumed agent workflows for storage-layer optimization.
+    if (registration.isAgent) {
+      this.#agentWorkflowIds.add(workflowId);
     }
 
     // Check version compatibility

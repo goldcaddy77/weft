@@ -1346,7 +1346,7 @@ export function serve(options: ServeOptions): WeftServer {
       retryPolicy: task.retryPolicy,
       visibilityTimeout,
       ...(task.headers ? { headers: task.headers } : {}),
-      ...(task.priority ? { priority: task.priority } : {}),
+      ...(task.priority !== undefined ? { priority: task.priority } : {}),
     });
   }
 
