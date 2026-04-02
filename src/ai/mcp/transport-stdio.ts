@@ -150,13 +150,16 @@ export class StdioTransport implements MCPTransport {
     const proc = Bun.spawn([this.#command, ...this.#args], {
       stdin: 'pipe',
       stdout: 'pipe',
-      stderr: 'ignore',
+      stderr: 'pipe',
     });
 
     this.#process = proc;
 
     // Start reading stdout for responses
     void this.#startReadLoop(proc);
+
+    // Forward stderr to console.warn for debugging
+    void this.#startStderrLoop(proc);
 
     // Handle unexpected exit
     void proc.exited.then(() => {
@@ -172,6 +175,31 @@ export class StdioTransport implements MCPTransport {
     });
 
     return proc;
+  }
+
+  async #startStderrLoop(proc: ReturnType<typeof Bun.spawn>): Promise<void> {
+    const stderr = proc.stderr;
+    if (!stderr) return;
+    const reader = (stderr as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true }).trimEnd();
+        if (text) {
+          console.warn(`[weft:mcp:stdio:stderr] ${text}`);
+        }
+      }
+      // Flush any trailing partial UTF-8 sequence from the streaming decoder
+      const remaining = decoder.decode().trimEnd();
+      if (remaining) {
+        console.warn(`[weft:mcp:stdio:stderr] ${remaining}`);
+      }
+    } catch {
+      // Stream closed — handled by process exit handler
+    }
   }
 
   async #startReadLoop(proc: ReturnType<typeof Bun.spawn>): Promise<void> {
@@ -214,7 +242,10 @@ export class StdioTransport implements MCPTransport {
               }
             }
           } catch {
-            // Ignore non-JSON lines (e.g., log output)
+            // Log malformed responses to aid debugging — the pending request
+            // will still time out, but the operator gets a diagnostic signal.
+            const preview = line.length > 200 ? line.slice(0, 200) + '…' : line;
+            console.warn(`[weft:mcp:stdio] Ignoring malformed JSON from child process: ${preview}`);
           }
         }
       }

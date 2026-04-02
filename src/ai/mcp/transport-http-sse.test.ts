@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { MCPTransportError } from './transport';
 import { HttpSseTransport } from './transport-http-sse';
@@ -339,5 +339,64 @@ describe('HttpSseTransport', () => {
       const response = await transport.send({ method: 'bad-request' });
       expect(response.error).toEqual({ code: -32600, message: 'Invalid Request' });
     });
+
+    it('warns on malformed SSE data but processes valid events', async () => {
+      let sseController: ReadableStreamDefaultController<Uint8Array> | null = null;
+      const encoder = new TextEncoder();
+
+      mockFetch(async (input: any, init: any) => {
+        const url = typeof input === 'string' ? input : input.url;
+
+        if (url.endsWith('/sse')) {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                sseController = controller;
+              },
+            }),
+            { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+          );
+        }
+
+        if (url.endsWith('/jsonrpc')) {
+          const body = JSON.parse(init?.body ?? '{}');
+          setTimeout(() => {
+            if (sseController) {
+              // Send malformed event first
+              sseController.enqueue(encoder.encode('data: {not valid json}\n\n'));
+              // Then send valid response
+              sseController.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ jsonrpc: '2.0', id: body.id, result: 'ok' })}\n\n`,
+                ),
+              );
+            }
+          }, 10);
+          return new Response('', { status: 202 });
+        }
+
+        return new Response('OK', { status: 200 });
+      });
+
+      const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+      const transport = track(new HttpSseTransport({ serverUrl: 'https://mcp.example.com' }));
+
+      try {
+        const response = await transport.send({ method: 'test' });
+
+        expect(response.result).toBe('ok');
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('[weft:mcp:sse] Ignoring malformed JSON'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+  });
+
+  it('handles double dispose without error', () => {
+    const transport = new HttpSseTransport({ serverUrl: 'https://mcp.example.com' });
+    transport[Symbol.dispose]();
+    expect(() => transport[Symbol.dispose]()).not.toThrow();
   });
 });

@@ -17,13 +17,8 @@ Last reviewed: 2026-04-02
 
 ### Medium Severity
 
-- [ ] **Zero resource leaks test uses generous threshold**: `resource-leaks.test.ts` runs 1000 iterations and checks heap growth stays under 5MB. Architecture doc claims "no file handle or memory growth" — the 5MB threshold may mask slow leaks.
-- [ ] **MCP transport: malformed JSON silently ignored in stdio and SSE transports**: In `transport-stdio.ts` (lines 200-218) and `transport-http-sse.ts` (lines 280-298), JSON parse failures are caught and silently discarded. A malformed response leaves the pending request waiting until timeout with no diagnostic logging.
-- [ ] **MCP transport: `response.json()` errors not wrapped consistently**: In `transport-http.ts` (line 78), a JSON parse error propagates as a raw `SyntaxError` instead of being wrapped in `MCPTransportError` like other transport errors.
-- [ ] **OAuth2 token manager: `response.json()` not catch-guarded**: In `oauth2-token-manager.ts` (line 87), if the token endpoint returns malformed JSON, the error is an unhandled rejection rather than an `OAuth2TokenError`.
-- [ ] **StdioTransport stderr output is discarded**: `transport-stdio.ts` (line 153) sets `stderr: 'ignore'`. Diagnostic output from MCP server child processes is lost, making debugging transport issues harder.
+(No outstanding medium-severity issues.)
 
 ### Low Severity
 
-- [ ] **MCP transport test coverage gaps**: Missing tests for: malformed JSON from stdio server, malformed SSE event data, double-dispose behavior on transports, JSON parse failure in HttpTransport, network error vs. JSON error in OAuth2TokenManager.
-- [ ] **Alerting only supports two metric types**: `AlertMetric` type is `'workflow.failure_rate' | 'activity.p99_duration'`. The architecture doc example showed `storage.size` as a third metric, but this is not implemented.
+(No outstanding low-severity issues.)

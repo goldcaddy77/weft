@@ -260,6 +260,16 @@ export class CleanupWarningEvent extends Event {
   }
 }
 
+export class StorageSizeReportedEvent extends Event {
+  static readonly type = 'storage:size-reported' as const;
+  readonly sizeBytes: number;
+
+  constructor(sizeBytes: number) {
+    super(StorageSizeReportedEvent.type);
+    this.sizeBytes = sizeBytes;
+  }
+}
+
 export class AlertFiredEvent extends Event {
   static readonly type = 'alert:fired' as const;
   readonly metric: string;
@@ -311,6 +321,7 @@ export type WeftEventMap = WeftAgentEventMap & {
   'checkpoint:size-warning': CheckpointSizeWarningEvent;
   'development:warning': DevelopmentWarningEvent;
   'cleanup:warning': CleanupWarningEvent;
+  'storage:size-reported': StorageSizeReportedEvent;
   'alert:fired': AlertFiredEvent;
   'alert:resolved': AlertResolvedEvent;
 };

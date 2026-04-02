@@ -66,6 +66,7 @@ export {
   DevelopmentWarningEvent,
   SignalDeliveredEvent,
   SignalReceivedEvent,
+  StorageSizeReportedEvent,
   TokenEvent,
   UpdateCompletedEvent,
   UpdateReceivedEvent,

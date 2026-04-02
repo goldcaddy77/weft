@@ -34,8 +34,8 @@ export class OAuth2TokenError extends Error {
   readonly tokenEndpoint: string;
   readonly statusCode: number | undefined;
 
-  constructor(message: string, tokenEndpoint: string, statusCode?: number) {
-    super(message);
+  constructor(message: string, tokenEndpoint: string, statusCode?: number, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'OAuth2TokenError';
     this.tokenEndpoint = tokenEndpoint;
     this.statusCode = statusCode;
@@ -84,7 +84,17 @@ export function createOAuth2TokenManager(config: OAuth2Config): OAuth2TokenManag
       );
     }
 
-    const data = (await response.json()) as Record<string, unknown>;
+    let data: Record<string, unknown>;
+    try {
+      data = (await response.json()) as Record<string, unknown>;
+    } catch (cause) {
+      throw new OAuth2TokenError(
+        'Token endpoint returned invalid JSON',
+        config.tokenEndpoint,
+        response.status,
+        { cause },
+      );
+    }
     const accessToken = data['access_token'];
     const expiresIn = data['expires_in'];
 

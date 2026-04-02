@@ -6,7 +6,12 @@
  * @module alerting/alert-manager
  */
 
-import { ActivityCompletedEvent, AlertFiredEvent, AlertResolvedEvent } from '../core/events';
+import {
+  ActivityCompletedEvent,
+  AlertFiredEvent,
+  AlertResolvedEvent,
+  StorageSizeReportedEvent,
+} from '../core/events';
 import { parseDuration } from '../core/scheduler';
 import { CounterWindow, HistogramWindow } from './sliding-window';
 import type { AlertRule, AlertState, AlertingOptions } from './types';
@@ -20,6 +25,7 @@ export class AlertManager implements Disposable {
   #states: AlertState[];
   #windows: Map<number, CounterWindow | HistogramWindow>;
   #listeners: Array<{ type: string; handler: EventListener }>;
+  #latestStorageSize: number;
   #pendingWebhooks: Set<AbortController>;
   #getNow: () => number;
   #tickInterval: ReturnType<typeof setInterval> | null;
@@ -28,6 +34,7 @@ export class AlertManager implements Disposable {
     this.#target = target;
     this.#options = options;
     this.#getNow = getNow;
+    this.#latestStorageSize = 0;
     this.#pendingWebhooks = new Set();
     this.#listeners = [];
 
@@ -107,6 +114,20 @@ export class AlertManager implements Disposable {
         }
       });
     }
+
+    const hasStorageSize = this.#options.rules.some((rule) => rule.metric === 'storage.size');
+
+    if (hasStorageSize) {
+      this.#addListener('storage:size-reported', (event: Event) => {
+        if (!(event instanceof StorageSizeReportedEvent)) return;
+        this.#latestStorageSize = event.sizeBytes;
+        for (let i = 0; i < this.#options.rules.length; i++) {
+          const rule = this.#options.rules[i]!;
+          if (rule.metric !== 'storage.size') continue;
+          this.#evaluate(i);
+        }
+      });
+    }
   }
 
   #addListener(type: string, handler: EventListener): void {
@@ -128,6 +149,8 @@ export class AlertManager implements Disposable {
     } else if (rule.metric === 'activity.p99_duration') {
       const window = this.#windows.get(ruleIndex) as HistogramWindow;
       currentValue = window.percentile(99, now);
+    } else if (rule.metric === 'storage.size') {
+      currentValue = this.#latestStorageSize;
     }
 
     state.currentValue = currentValue;
