@@ -32,7 +32,7 @@ import type { AuthConfig, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
 import { handleRequest } from './handler.ts';
-import { TaskQueue } from './task-queue.ts';
+import { TaskQueue, type PendingTask } from './task-queue.ts';
 import type { InflightRecord, QueuedRecord } from './task-state.ts';
 import {
   markQueued,
@@ -195,6 +195,14 @@ async function withRetry<T>(
 
 function isWorkerConnection(pathname: string): boolean {
   return WORKER_STREAM_RE.test(pathname);
+}
+
+async function parseTaskResultBody(request: Request): Promise<Record<string, unknown> | null> {
+  try {
+    return (await request.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 /** Classify a WebSocket pathname and extract relevant parameters. */
@@ -582,6 +590,151 @@ export function serve(options: ServeOptions): WeftServer {
     routes['/ui/*'] = dashboard;
   }
 
+  async function authenticateRequest(request: Request): Promise<Response | null> {
+    if (!authenticatorPromise) {
+      return null;
+    }
+
+    const authenticator = await authenticatorPromise;
+    const authResult = await authenticator(request);
+    if (authResult.authenticated) {
+      return null;
+    }
+
+    return new Response(JSON.stringify({ error: authResult.error }), {
+      status: 401,
+      headers: {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': 'Bearer',
+      },
+    });
+  }
+
+  function createLongPollInflightRecord(queue: string, task: PendingTask): InflightRecord {
+    const visibilityTimeout = task.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT;
+    const deadline = Date.now() + visibilityTimeout;
+
+    return {
+      operationId: task.operationId,
+      workerId: `longpoll-${crypto.randomUUID().slice(0, 8)}`,
+      deadline,
+      activityName: task.activityName,
+      queue,
+      input: task.input,
+      attempt: task.attempt ?? 1,
+      visibilityTimeout,
+      retryPolicy: task.retryPolicy,
+    };
+  }
+
+  function markTaskClaimedByLongPollWorker(queue: string, task: PendingTask): void {
+    const inflightRecord = createLongPollInflightRecord(queue, task);
+    deadlineTracker.add({
+      operationId: task.operationId,
+      deadline: inflightRecord.deadline,
+    });
+    void transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
+  }
+
+  function handleWebSocketUpgrade(request: Request, pathname: string): Response | undefined | null {
+    if (request.headers.get('upgrade') !== 'websocket') {
+      return null;
+    }
+
+    const classification = classifyConnection(pathname);
+    const upgraded = server.upgrade(request, {
+      data: { pathname, ...classification },
+    });
+    if (upgraded) {
+      return undefined;
+    }
+
+    return new Response('WebSocket upgrade failed', { status: 400 });
+  }
+
+  async function handleTaskPollRequest(request: Request, url: URL): Promise<Response | null> {
+    if (request.method !== 'GET') {
+      return null;
+    }
+
+    const pollMatch = TASK_POLL_RE.exec(url.pathname);
+    if (!pollMatch?.[1]) {
+      return null;
+    }
+
+    const queue = decodeURIComponent(pollMatch[1]);
+    const activities = url.searchParams.getAll('activity');
+    if (activities.length === 0) {
+      return Response.json(
+        { error: 'At least one "activity" query parameter is required' },
+        { status: 400 },
+      );
+    }
+
+    const rawTimeout = url.searchParams.get('timeout');
+    const timeout =
+      rawTimeout !== null
+        ? Math.min(Math.max(0, Number(rawTimeout)), MAX_POLL_TIMEOUT)
+        : DEFAULT_POLL_TIMEOUT;
+
+    const task = await taskQueue.poll(queue, activities, timeout);
+    if (task !== null) {
+      markTaskClaimedByLongPollWorker(queue, task);
+      return Response.json(task);
+    }
+
+    return new Response(null, { status: 204 });
+  }
+
+  async function handleTaskResultRequest(request: Request, url: URL): Promise<Response | null> {
+    if (request.method !== 'POST') {
+      return null;
+    }
+
+    const completeMatch = TASK_RESULT_RE.exec(url.pathname);
+    if (!completeMatch?.[1]) {
+      return null;
+    }
+
+    const body = await parseTaskResultBody(request);
+    if (body === null) {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+
+    const operationId = body['operationId'];
+    const status = body['status'];
+    if (typeof operationId !== 'string' || typeof status !== 'string') {
+      return Response.json(
+        { error: 'Missing required fields: operationId, status' },
+        { status: 400 },
+      );
+    }
+
+    if (status !== 'completed' && status !== 'failed') {
+      return Response.json({ error: 'status must be "completed" or "failed"' }, { status: 400 });
+    }
+
+    taskQueue.complete({
+      operationId,
+      status,
+      value: body['value'],
+      error: typeof body['error'] === 'string' ? body['error'] : undefined,
+    });
+
+    deadlineTracker.remove(operationId);
+    const resolvedStatus = status === 'failed' ? 'failed' : ('completed' as const);
+    transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus).catch(
+      (error) => {
+        console.error(
+          `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
+          error,
+        );
+      },
+    );
+
+    return Response.json({ ok: true });
+  }
+
   const server = Bun.serve<WebSocketData>({
     port,
     hostname,
@@ -591,132 +744,24 @@ export function serve(options: ServeOptions): WeftServer {
     async fetch(request) {
       const url = new URL(request.url);
 
-      // Authenticate all requests (HTTP and WebSocket upgrades) when auth is configured.
-      if (authenticatorPromise) {
-        const authenticator = await authenticatorPromise;
-        const authResult = await authenticator(request);
-        if (!authResult.authenticated) {
-          return new Response(JSON.stringify({ error: authResult.error }), {
-            status: 401,
-            headers: {
-              'Content-Type': 'application/json',
-              'WWW-Authenticate': 'Bearer',
-            },
-          });
-        }
+      const authResponse = await authenticateRequest(request);
+      if (authResponse) {
+        return authResponse;
       }
 
-      // WebSocket upgrade
-      if (request.headers.get('upgrade') === 'websocket') {
-        const classification = classifyConnection(url.pathname);
-        const upgraded = server.upgrade(request, {
-          data: { pathname: url.pathname, ...classification },
-        });
-        if (upgraded) return undefined;
-        return new Response('WebSocket upgrade failed', { status: 400 });
+      const websocketResponse = handleWebSocketUpgrade(request, url.pathname);
+      if (websocketResponse !== null) {
+        return websocketResponse;
       }
 
-      // Long-poll task endpoints (handled here because they need task queue access)
-      if (request.method === 'GET') {
-        const pollMatch = TASK_POLL_RE.exec(url.pathname);
-        if (pollMatch?.[1]) {
-          const queue = decodeURIComponent(pollMatch[1]);
-          const activities = url.searchParams.getAll('activity');
-
-          if (activities.length === 0) {
-            return Response.json(
-              { error: 'At least one "activity" query parameter is required' },
-              { status: 400 },
-            );
-          }
-
-          const rawTimeout = url.searchParams.get('timeout');
-          const timeout =
-            rawTimeout !== null
-              ? Math.min(Math.max(0, Number(rawTimeout)), MAX_POLL_TIMEOUT)
-              : DEFAULT_POLL_TIMEOUT;
-
-          const task = await taskQueue.poll(queue, activities, timeout);
-
-          // Transition queued → inflight when a long-poll worker claims a task.
-          if (task) {
-            const vt = task.visibilityTimeout ?? DEFAULT_VISIBILITY_TIMEOUT;
-            const deadline = Date.now() + vt;
-            const inflightRecord: InflightRecord = {
-              operationId: task.operationId,
-              workerId: `longpoll-${crypto.randomUUID().slice(0, 8)}`,
-              deadline,
-              activityName: task.activityName,
-              queue,
-              input: task.input,
-              attempt: task.attempt ?? 1,
-              visibilityTimeout: vt,
-              retryPolicy: task.retryPolicy,
-            };
-            deadlineTracker.add({ operationId: task.operationId, deadline });
-            void transitionQueuedToInflight(
-              options.engine.storage,
-              task.operationId,
-              inflightRecord,
-            );
-          }
-
-          if (task === null) {
-            return new Response(null, { status: 204 });
-          }
-
-          return Response.json(task);
-        }
+      const taskPollResponse = await handleTaskPollRequest(request, url);
+      if (taskPollResponse !== null) {
+        return taskPollResponse;
       }
 
-      if (request.method === 'POST') {
-        const completeMatch = TASK_RESULT_RE.exec(url.pathname);
-        if (completeMatch?.[1]) {
-          let body: Record<string, unknown>;
-          try {
-            body = (await request.json()) as Record<string, unknown>;
-          } catch {
-            return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
-          }
-
-          const operationId = body['operationId'];
-          const status = body['status'];
-
-          if (typeof operationId !== 'string' || typeof status !== 'string') {
-            return Response.json(
-              { error: 'Missing required fields: operationId, status' },
-              { status: 400 },
-            );
-          }
-
-          if (status !== 'completed' && status !== 'failed') {
-            return Response.json(
-              { error: 'status must be "completed" or "failed"' },
-              { status: 400 },
-            );
-          }
-
-          taskQueue.complete({
-            operationId,
-            status,
-            value: body['value'],
-            error: typeof body['error'] === 'string' ? body['error'] : undefined,
-          });
-
-          // Remove from deadline tracker and transition inflight → resolved in durable storage.
-          deadlineTracker.remove(operationId);
-          const resolvedStatus = status === 'failed' ? 'failed' : ('completed' as const);
-          transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus).catch(
-            (error) => {
-              console.error(
-                `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
-                error,
-              );
-            },
-          );
-
-          return Response.json({ ok: true });
-        }
+      const taskResultResponse = await handleTaskResultRequest(request, url);
+      if (taskResultResponse !== null) {
+        return taskResultResponse;
       }
 
       // API routes via existing platform-agnostic handler

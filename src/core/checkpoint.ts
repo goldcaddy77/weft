@@ -226,78 +226,19 @@ function compareValues(
     return;
   }
 
-  // Date comparison
-  if (original instanceof Date && deserialized instanceof Date) {
-    if (original.getTime() !== deserialized.getTime()) {
-      divergences.push({
-        path: path || '(root)',
-        original,
-        deserialized,
-        suggestion: 'Date value changed during round-trip.',
-      });
-    }
+  if (compareDateValues(original, deserialized, path, divergences)) {
     return;
   }
 
-  // RegExp comparison
-  if (original instanceof RegExp && deserialized instanceof RegExp) {
-    if (original.source !== deserialized.source || original.flags !== deserialized.flags) {
-      divergences.push({
-        path: path || '(root)',
-        original,
-        deserialized,
-        suggestion: 'RegExp value changed during round-trip.',
-      });
-    }
+  if (compareRegExpValues(original, deserialized, path, divergences)) {
     return;
   }
 
-  // Map comparison
-  if (original instanceof Map && deserialized instanceof Map) {
-    for (const [key] of original) {
-      const keyPath = path ? `${path}.Map(${String(key)})` : `Map(${String(key)})`;
-      if (!deserialized.has(key)) {
-        divergences.push({
-          path: keyPath,
-          original: original.get(key),
-          deserialized: undefined,
-          suggestion: 'Map key missing after round-trip.',
-        });
-      } else {
-        compareValues(original.get(key), deserialized.get(key), keyPath, divergences);
-      }
-    }
-    for (const [key] of deserialized) {
-      if (!original.has(key)) {
-        const keyPath = path ? `${path}.Map(${String(key)})` : `Map(${String(key)})`;
-        divergences.push({
-          path: keyPath,
-          original: undefined,
-          deserialized: deserialized.get(key),
-          suggestion: 'Extra Map key appeared after round-trip.',
-        });
-      }
-    }
+  if (compareMapValues(original, deserialized, path, divergences)) {
     return;
   }
 
-  // Set comparison
-  if (original instanceof Set && deserialized instanceof Set) {
-    const originalValues = [...original.values()];
-    const deserializedValues = [...deserialized.values()];
-    if (originalValues.length !== deserializedValues.length) {
-      divergences.push({
-        path: path || '(root)',
-        original,
-        deserialized,
-        suggestion: 'Set size changed during round-trip.',
-      });
-      return;
-    }
-    for (let i = 0; i < originalValues.length; i++) {
-      const elementPath = path ? `${path}.Set[${i}]` : `Set[${i}]`;
-      compareValues(originalValues[i], deserializedValues[i], elementPath, divergences);
-    }
+  if (compareSetValues(original, deserialized, path, divergences)) {
     return;
   }
 
@@ -325,56 +266,226 @@ function compareValues(
     return;
   }
 
-  // Array comparison
   if (Array.isArray(original) && Array.isArray(deserialized)) {
-    const maxLength = Math.max(original.length, deserialized.length);
-    for (let i = 0; i < maxLength; i++) {
-      const elementPath = path ? `${path}[${i}]` : `[${i}]`;
-      if (i >= original.length) {
-        divergences.push({
-          path: elementPath,
-          original: undefined,
-          deserialized: deserialized[i],
-          suggestion: 'Extra array element appeared after round-trip.',
-        });
-      } else if (i >= deserialized.length) {
-        divergences.push({
-          path: elementPath,
-          original: original[i],
-          deserialized: undefined,
-          suggestion: 'Array element missing after round-trip.',
-        });
-      } else {
-        compareValues(original[i], deserialized[i], elementPath, divergences);
-      }
-    }
+    compareArrayValues(original, deserialized, path, divergences);
     return;
   }
 
-  // Plain object comparison
-  const originalRecord = original as Record<string, unknown>;
-  const deserializedRecord = deserialized as Record<string, unknown>;
+  compareRecordValues(
+    original as Record<string, unknown>,
+    deserialized as Record<string, unknown>,
+    path,
+    divergences,
+  );
+}
 
-  const allKeys = new Set([...Object.keys(originalRecord), ...Object.keys(deserializedRecord)]);
+function checkpointPath(path: string): string {
+  return path || '(root)';
+}
+
+function recordDivergence(
+  divergences: CheckpointDivergence[],
+  path: string,
+  original: unknown,
+  deserialized: unknown,
+  suggestion: string,
+): void {
+  divergences.push({
+    path: checkpointPath(path),
+    original,
+    deserialized,
+    suggestion,
+  });
+}
+
+function compareDateValues(
+  original: unknown,
+  deserialized: unknown,
+  path: string,
+  divergences: CheckpointDivergence[],
+): boolean {
+  if (!(original instanceof Date && deserialized instanceof Date)) {
+    return false;
+  }
+
+  if (original.getTime() !== deserialized.getTime()) {
+    recordDivergence(
+      divergences,
+      path,
+      original,
+      deserialized,
+      'Date value changed during round-trip.',
+    );
+  }
+
+  return true;
+}
+
+function compareRegExpValues(
+  original: unknown,
+  deserialized: unknown,
+  path: string,
+  divergences: CheckpointDivergence[],
+): boolean {
+  if (!(original instanceof RegExp && deserialized instanceof RegExp)) {
+    return false;
+  }
+
+  if (original.source !== deserialized.source || original.flags !== deserialized.flags) {
+    recordDivergence(
+      divergences,
+      path,
+      original,
+      deserialized,
+      'RegExp value changed during round-trip.',
+    );
+  }
+
+  return true;
+}
+
+function compareMapValues(
+  original: unknown,
+  deserialized: unknown,
+  path: string,
+  divergences: CheckpointDivergence[],
+): boolean {
+  if (!(original instanceof Map && deserialized instanceof Map)) {
+    return false;
+  }
+
+  for (const [key] of original) {
+    const keyPath = path ? `${path}.Map(${String(key)})` : `Map(${String(key)})`;
+    if (!deserialized.has(key)) {
+      recordDivergence(
+        divergences,
+        keyPath,
+        original.get(key),
+        undefined,
+        'Map key missing after round-trip.',
+      );
+      continue;
+    }
+
+    compareValues(original.get(key), deserialized.get(key), keyPath, divergences);
+  }
+
+  for (const [key] of deserialized) {
+    if (original.has(key)) {
+      continue;
+    }
+
+    const keyPath = path ? `${path}.Map(${String(key)})` : `Map(${String(key)})`;
+    recordDivergence(
+      divergences,
+      keyPath,
+      undefined,
+      deserialized.get(key),
+      'Extra Map key appeared after round-trip.',
+    );
+  }
+
+  return true;
+}
+
+function compareSetValues(
+  original: unknown,
+  deserialized: unknown,
+  path: string,
+  divergences: CheckpointDivergence[],
+): boolean {
+  if (!(original instanceof Set && deserialized instanceof Set)) {
+    return false;
+  }
+
+  const originalValues = [...original.values()];
+  const deserializedValues = [...deserialized.values()];
+  if (originalValues.length !== deserializedValues.length) {
+    recordDivergence(
+      divergences,
+      path,
+      original,
+      deserialized,
+      'Set size changed during round-trip.',
+    );
+    return true;
+  }
+
+  for (let index = 0; index < originalValues.length; index++) {
+    const elementPath = path ? `${path}.Set[${index}]` : `Set[${index}]`;
+    compareValues(originalValues[index], deserializedValues[index], elementPath, divergences);
+  }
+
+  return true;
+}
+
+function compareArrayValues(
+  original: unknown[],
+  deserialized: unknown[],
+  path: string,
+  divergences: CheckpointDivergence[],
+): void {
+  const maxLength = Math.max(original.length, deserialized.length);
+  for (let index = 0; index < maxLength; index++) {
+    const elementPath = path ? `${path}[${index}]` : `[${index}]`;
+    if (index >= original.length) {
+      recordDivergence(
+        divergences,
+        elementPath,
+        undefined,
+        deserialized[index],
+        'Extra array element appeared after round-trip.',
+      );
+      continue;
+    }
+
+    if (index >= deserialized.length) {
+      recordDivergence(
+        divergences,
+        elementPath,
+        original[index],
+        undefined,
+        'Array element missing after round-trip.',
+      );
+      continue;
+    }
+
+    compareValues(original[index], deserialized[index], elementPath, divergences);
+  }
+}
+
+function compareRecordValues(
+  original: Record<string, unknown>,
+  deserialized: Record<string, unknown>,
+  path: string,
+  divergences: CheckpointDivergence[],
+): void {
+  const allKeys = new Set([...Object.keys(original), ...Object.keys(deserialized)]);
 
   for (const key of allKeys) {
     const propertyPath = path ? `${path}.${key}` : key;
-    if (!(key in originalRecord)) {
-      divergences.push({
-        path: propertyPath,
-        original: undefined,
-        deserialized: deserializedRecord[key],
-        suggestion: 'Extra key appeared in deserialized object.',
-      });
-    } else if (!(key in deserializedRecord)) {
-      divergences.push({
-        path: propertyPath,
-        original: originalRecord[key],
-        deserialized: undefined,
-        suggestion: 'Key missing from deserialized object.',
-      });
-    } else {
-      compareValues(originalRecord[key], deserializedRecord[key], propertyPath, divergences);
+    if (!(key in original)) {
+      recordDivergence(
+        divergences,
+        propertyPath,
+        undefined,
+        deserialized[key],
+        'Extra key appeared in deserialized object.',
+      );
+      continue;
     }
+
+    if (!(key in deserialized)) {
+      recordDivergence(
+        divergences,
+        propertyPath,
+        original[key],
+        undefined,
+        'Key missing from deserialized object.',
+      );
+      continue;
+    }
+
+    compareValues(original[key], deserialized[key], propertyPath, divergences);
   }
 }
