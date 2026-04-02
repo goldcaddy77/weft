@@ -61,6 +61,10 @@ export class StdioTransport implements MCPTransport {
     const { promise, resolve, reject } = Promise.withResolvers<MCPResponse>();
     this.#pending.set(id, { promise, resolve, reject });
 
+    // Suppress unhandled rejection — the promise may be rejected by the timeout/abort
+    // handler while we're awaiting the stdin write, but we handle the error in catch.
+    promise.catch(() => {});
+
     // Only apply transport-level timeout when no external signal is provided.
     // When an external signal exists (e.g., from MCPClient), trust it to handle
     // timeouts — adding a second timer creates a race that produces wrong error types.
