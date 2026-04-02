@@ -15,6 +15,11 @@ export interface PendingTask {
   enqueuedAt?: number | undefined;
   /** Propagated interceptor headers (e.g. W3C trace context, auth tokens). */
   headers?: Record<string, string> | undefined;
+  /**
+   * Task priority. Higher values are dequeued first. Tasks with equal priority
+   * maintain FIFO order. Default: 0. Agent workflow tasks use priority 10.
+   */
+  priority?: number | undefined;
 }
 
 /** Result reported by a long-poll worker after executing a task. */
@@ -104,7 +109,18 @@ export class TaskQueue {
     }
 
     const tasks = this.#pending.get(queue) ?? [];
-    tasks.push(task);
+    const taskPriority = task.priority ?? 0;
+    if (tasks.length > 0) {
+      // Priority-sorted insertion: find the first task with lower priority.
+      const insertAt = tasks.findIndex((t) => (t.priority ?? 0) < taskPriority);
+      if (insertAt === -1) {
+        tasks.push(task);
+      } else {
+        tasks.splice(insertAt, 0, task);
+      }
+    } else {
+      tasks.push(task);
+    }
     this.#pending.set(queue, tasks);
 
     this.#scheduleExpiration(queue, task.operationId);

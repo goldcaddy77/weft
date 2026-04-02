@@ -151,6 +151,21 @@ export class AnthropicProvider implements LLMProvider {
     return estimateTokens(messages);
   }
 
+  async warmup(): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      await fetch(`${this.#options.baseUrl}/v1/messages`, {
+        method: 'HEAD',
+        signal: controller.signal,
+      });
+    } catch {
+      // Best-effort: silently swallow connection errors and timeouts.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   #buildRequestBody(messages: Message[], options: ChatOptions): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model: options.model,

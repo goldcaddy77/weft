@@ -12,6 +12,7 @@
 
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
+import type { LLMProvider } from '../ai/providers/interface.ts';
 import {
   ReviewCoordinator,
   ReviewTimeoutError,
@@ -120,12 +121,16 @@ interface RegistrationEntry {
   version: string;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
+  /** True when this registration originated from an AgentDefinition. */
+  isAgent?: boolean;
+  /** LLM provider for agent-typed registrations (used for connection pre-warming). */
+  provider?: LLMProvider;
 }
 
 /** Options required when registering an AgentDefinition as a workflow. */
 export interface AgentRegistrationOptions {
   /** The LLM provider to use when running the agent. */
-  provider: import('../ai/providers/interface.ts').LLMProvider;
+  provider: LLMProvider;
 }
 
 interface ResolvedOptions {
@@ -192,11 +197,26 @@ function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
   return decode(bytes) as WorkflowState;
 }
 
-function resolveEngineStorage(options?: EngineConstructorOptions): WeftStorage {
+function resolveEngineStorage(
+  options?: EngineConstructorOptions,
+  getAgentWorkflowIds?: () => ReadonlySet<string>,
+): WeftStorage {
   const baseStorage = options?.storage ?? new MemoryStorage();
-  return options?.compression
-    ? new CompressedStorage(baseStorage, options.compression)
-    : baseStorage;
+  if (!options?.compression) return baseStorage;
+  return new CompressedStorage(baseStorage, {
+    ...options.compression,
+    ...(getAgentWorkflowIds
+      ? {
+          agentWorkflowIds: getAgentWorkflowIds,
+          // Default to brotli for agent checkpoints (conversation data compresses
+          // exceptionally well with brotli). Users may override via compression.agentAlgorithm.
+          agentAlgorithm: options.compression.agentAlgorithm ?? 'brotli',
+          ...(options.compression.agentThreshold !== undefined
+            ? { agentThreshold: options.compression.agentThreshold }
+            : {}),
+        }
+      : {}),
+  });
 }
 
 function resolveEngineOptions(
@@ -543,6 +563,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #reviewTimerIds: Map<string, string[]>;
   #pendingWebhooks: Set<AbortController>;
   #alertManager: AlertManager | null;
+  /** Tracks workflow IDs that belong to agent-typed workflows for optimization. */
+  #agentWorkflowIds = new Set<string>();
   #operationHandlers: OperationHandlerMap = {
     activity: (workflowId, operation) => this.#processActivityOperation(workflowId, operation),
     sleep: (workflowId, operation) => this.#processSleepOperation(workflowId, operation),
@@ -571,7 +593,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   constructor(options?: EngineConstructorOptions) {
     super();
 
-    const storage = resolveEngineStorage(options);
+    const storage = resolveEngineStorage(options, () => this.#agentWorkflowIds);
     const getNow = options?.getNow ?? Date.now;
     const resolvedOptions = resolveEngineOptions(storage, options, getNow);
     const strategyBundle = createExecutionStrategyBundle({
@@ -689,6 +711,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#registrations.set(agentDef.name, {
         handler,
         version: '1',
+        isAgent: true,
+        provider: agentOptions.provider,
       });
       return;
     }
@@ -803,6 +827,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`Workflow with id "${workflowId}" already exists`);
     }
     this.#pendingStarts.add(workflowId);
+    let startSucceeded = false;
 
     try {
       const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
@@ -820,18 +845,39 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const checkpoint = this.#createInitialCheckpoint(workflowId, registration, options);
       this.#checkpoints.set(workflowId, checkpoint);
 
+      // Agent optimization: register before the initial storage batch so the
+      // first checkpoint write uses agent-specific compression (brotli).
+      if (registration.isAgent) {
+        this.#agentWorkflowIds.add(workflowId);
+      }
+
       await this.#storage.batch(
         this.#buildStartBatchOperations(workflowId, state, checkpoint, registration, options),
       );
       await this.#scheduleExecutionDeadlineIfNeeded(workflowId, state.executionDeadline);
       this.#runWorkflowStartInterceptor(workflowId, type, input, parentHeaders);
+
+      // Pre-warm LLM connection after the batch write (fire-and-forget).
+      if (registration.isAgent) {
+        try {
+          const warmupResult = registration.provider?.warmup?.();
+          warmupResult?.catch(() => {});
+        } catch {
+          // Warmup is best-effort; ignore synchronous failures.
+        }
+      }
+
       this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
 
       const handle = this.#createWorkflowHandle(workflowId);
       this.#startWorkflowExecution(workflowId, type, input, checkpoint, state.executionDeadline);
+      startSucceeded = true;
       return handle;
     } finally {
       this.#pendingStarts.delete(workflowId);
+      if (!startSucceeded && registration.isAgent) {
+        this.#agentWorkflowIds.delete(workflowId);
+      }
     }
   }
 
@@ -1420,6 +1466,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
     }
 
+    // Agent optimization: track resumed agent workflows for storage-layer optimization.
+    if (registration.isAgent) {
+      this.#agentWorkflowIds.add(workflowId);
+    }
+
     // Check version compatibility
     const compatibility = checkVersionCompatibility(
       checkpoint.version,
@@ -1545,6 +1596,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#terminateWorkflow(workflowId, 'timed-out');
   }
 
+  /** Returns true if the given workflow ID belongs to an agent-typed workflow. */
+  isAgentWorkflow(workflowId: string): boolean {
+    return this.#agentWorkflowIds.has(workflowId);
+  }
+
+  /** Returns the set of currently tracked agent workflow IDs (for storage layer optimization). */
+  get agentWorkflowIds(): ReadonlySet<string> {
+    return this.#agentWorkflowIds;
+  }
+
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#strategy.cancelWorkflow(workflowId);
 
@@ -1557,6 +1618,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
     this.#cleanupWaiters(workflowId);
     this.#heartbeatDetails.delete(workflowId);
+    this.#agentWorkflowIds.delete(workflowId);
 
     const event =
       status === 'timed-out'
@@ -1850,6 +1912,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowHeaders.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
+    this.#agentWorkflowIds.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
   }
@@ -3267,6 +3330,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);
+    this.#agentWorkflowIds.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
@@ -3301,6 +3365,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);
+    this.#agentWorkflowIds.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
     const event = new WorkflowFailedEvent(workflowId, error);

@@ -148,6 +148,21 @@ export class OpenAIProvider implements LLMProvider {
     return estimateTokens(messages);
   }
 
+  async warmup(): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      await fetch(`${this.#options.baseUrl}/chat/completions`, {
+        method: 'HEAD',
+        signal: controller.signal,
+      });
+    } catch {
+      // Best-effort: silently swallow connection errors and timeouts.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   #buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'content-type': 'application/json',

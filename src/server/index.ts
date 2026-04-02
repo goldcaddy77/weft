@@ -95,6 +95,8 @@ export interface TaskDispatch {
   retryPolicy?: RetryPolicy;
   /** Propagated interceptor headers (e.g. W3C trace context, auth tokens). */
   headers?: Record<string, string>;
+  /** Task priority. Higher values are dequeued first. Agent tasks default to 10. */
+  priority?: number;
 }
 
 export interface WeftServer extends AsyncDisposable {
@@ -1234,9 +1236,16 @@ export function serve(options: ServeOptions): WeftServer {
     pendingTimers.clear();
   });
 
+  function resolveTaskPriority(task: TaskDispatch): number | undefined {
+    if (task.priority !== undefined) return task.priority;
+    if (task.workflowId && options.engine.isAgentWorkflow(task.workflowId)) return 10;
+    return undefined;
+  }
+
   async function dispatchTaskImpl(task: TaskDispatch): Promise<boolean> {
     const queue = task.queue ?? 'default';
     const visibilityTimeout = clampVisibilityTimeout(task.visibilityTimeout);
+    const resolvedPriority = resolveTaskPriority(task);
 
     // Each task assigned to exactly one worker — reject duplicates.
     if (registry.isAssigned(task.operationId) || taskQueue.isTracked(task.operationId)) {
@@ -1344,6 +1353,7 @@ export function serve(options: ServeOptions): WeftServer {
       retryPolicy: task.retryPolicy,
       visibilityTimeout,
       ...(task.headers ? { headers: task.headers } : {}),
+      ...(resolvedPriority !== undefined ? { priority: resolvedPriority } : {}),
     });
   }
 
