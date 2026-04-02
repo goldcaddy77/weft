@@ -148,7 +148,8 @@ async function runCommand(command: string): Promise<void> {
   }
 }
 
-const DEFAULT_COMMAND = 'codex exec "Get the test coverage up to 100%."';
+const DEFAULT_COMMAND =
+  'codex exec "Get the test coverage up to 100%." --dangerously-bypass-approvals-and-sandbox --search';
 const DEFAULT_ITERATIONS = 100;
 
 // CLI entrypoint
