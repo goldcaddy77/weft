@@ -835,15 +835,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const checkpoint = this.#createInitialCheckpoint(workflowId, registration, options);
       this.#checkpoints.set(workflowId, checkpoint);
 
+      // Agent optimization: register before the initial storage batch so the
+      // first checkpoint write uses agent-specific compression (brotli).
+      if (registration.isAgent) {
+        this.#agentWorkflowIds.add(workflowId);
+      }
+
       await this.#storage.batch(
         this.#buildStartBatchOperations(workflowId, state, checkpoint, registration, options),
       );
       await this.#scheduleExecutionDeadlineIfNeeded(workflowId, state.executionDeadline);
       this.#runWorkflowStartInterceptor(workflowId, type, input, parentHeaders);
 
-      // Agent optimization: track agent workflows and pre-warm LLM connections.
+      // Pre-warm LLM connection after the batch write (fire-and-forget).
       if (registration.isAgent) {
-        this.#agentWorkflowIds.add(workflowId);
         try {
           const warmupResult = registration.provider?.warmup?.();
           warmupResult?.catch(() => {});
