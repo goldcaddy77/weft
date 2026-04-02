@@ -233,17 +233,15 @@ Recommendations:
   ⚠ Queue "payments" has only 1 worker. Consider adding redundancy.
 ```
 
-**Going further: built-in alerting with zero external dependencies** _(not yet implemented)._ Alert rules will be event listeners on the engine's internal metrics. No Prometheus, no Grafana, no alert manager required:
+**Going further: built-in alerting with zero external dependencies.** Alert rules are event listeners on the engine's internal metrics. No Prometheus, no Grafana, no alert manager required. The `AlertManager` evaluates rules against sliding time windows and dispatches `AlertFiredEvent`/`AlertResolvedEvent` with optional webhook notifications:
 
 ```typescript
-// Planned API — not yet available
 const engine = new Engine({
   storage: new BunSQLiteStorage('./weft.db'),
   alerts: {
     rules: [
       { metric: 'workflow.failure_rate', threshold: 0.05, window: '5m', action: 'log' },
       { metric: 'activity.p99_duration', threshold: 30_000, window: '1m', action: 'webhook' },
-      { metric: 'storage.size', threshold: '8 GB', action: 'webhook' },
     ],
     webhooks: [{ url: 'https://hooks.slack.com/...', events: ['alert:fired', 'alert:resolved'] }],
   },
@@ -283,16 +281,20 @@ async function* batchWorkflow(ctx: Context, items: string[]) {
 }
 ```
 
-**Going further: built-in profiling mode** _(not yet implemented)._ When `profiling: true`, the engine will record per-operation timing with `performance.now()` — zero overhead when disabled:
+**Going further: built-in profiling mode.** `MemoryProfiler` provides interval-based memory sampling with stability analysis. Start a profiling session, run a workload, then retrieve summary statistics including RSS growth slope and stability verdict:
 
 ```typescript
-// Planned API — not yet available
-const profile = engine.profile();
-// {
-//   checkpointWrite: { p50: "15μs", p99: "89μs", count: 47293 },
-//   checkpointRead: { p50: "8μs", p99: "34μs", count: 12847 },
-//   taskClaim: { p50: "22μs", p99: "110μs", count: 35102 },
-// }
+import { MemoryProfiler, analyzeStability } from 'weft';
+
+const profiler = new MemoryProfiler();
+profiler.start(1000); // sample every second
+
+// ... run workload ...
+
+profiler.stop();
+const { samples, summary } = profiler.profile();
+const stability = analyzeStability(samples);
+// { stable: true, slope: 0.0023, verdict: "No significant memory growth detected" }
 ```
 
 ### 6. TypeScript SDK-Specific Pain: Webpack Bundling and Sandbox
@@ -3437,7 +3439,8 @@ ToolSchemaValidationError: Invalid arguments for tool "readFile"
 ```typescript
 tools: [
   { mcp: 'stdio:///usr/local/bin/mcp-filesystem' }, // Local process via stdio
-  { mcp: 'https://tools.example.com/mcp' }, // Remote server via HTTP+SSE
+  { mcp: 'https://tools.example.com/mcp' }, // Remote server via HTTP (default)
+  { mcp: 'https://tools.example.com/mcp', transport: 'sse' }, // Remote server via HTTP+SSE
 ];
 ```
 
