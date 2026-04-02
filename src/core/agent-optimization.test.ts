@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 
 import { defineAgent } from '../ai/declaration.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
@@ -211,8 +211,29 @@ describe('LLM connection pre-warming', () => {
 
   it('does NOT call warmup for normal workflows', async () => {
     const warmupCalls: string[] = [];
-    // Even if a provider with warmup exists, normal workflows shouldn't trigger it
     const engine = new TestEngine();
+
+    // Register an agent with a warmup-capable provider on the same engine
+    const agent = defineAgent({ name: 'agent-with-warmup', model: 'test-model' });
+    engine.register(agent, {
+      provider: {
+        name: 'with-warmup',
+        async chat(): Promise<ChatResponse> {
+          return createChatResponse('done');
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+        async warmup() {
+          warmupCalls.push('warmed');
+        },
+      },
+    });
+
+    // Register and start a normal (non-agent) workflow
     engine.register('normal', async function* () {
       return 'done';
     });
@@ -221,6 +242,7 @@ describe('LLM connection pre-warming', () => {
     await flush();
     await handle.result();
 
+    // The agent's warmup should NOT have been triggered by the normal workflow start
     expect(warmupCalls).toEqual([]);
   });
 

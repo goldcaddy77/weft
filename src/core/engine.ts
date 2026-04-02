@@ -12,6 +12,7 @@
 
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
+import type { LLMProvider } from '../ai/providers/interface.ts';
 import {
   ReviewCoordinator,
   ReviewTimeoutError,
@@ -122,12 +123,14 @@ interface RegistrationEntry {
   searchAttributes?: SearchAttributeSchema;
   /** True when this registration originated from an AgentDefinition. */
   isAgent?: boolean;
+  /** LLM provider for agent-typed registrations (used for connection pre-warming). */
+  provider?: LLMProvider;
 }
 
 /** Options required when registering an AgentDefinition as a workflow. */
 export interface AgentRegistrationOptions {
   /** The LLM provider to use when running the agent. */
-  provider: import('../ai/providers/interface.ts').LLMProvider;
+  provider: LLMProvider;
 }
 
 interface ResolvedOptions {
@@ -547,8 +550,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #alertManager: AlertManager | null;
   /** Tracks workflow IDs that belong to agent-typed workflows for optimization. */
   #agentWorkflowIds: Set<string>;
-  /** Stores LLM providers for agent-typed registrations, keyed by workflow type name. */
-  #agentProviders: Map<string, import('../ai/providers/interface.ts').LLMProvider>;
   #operationHandlers: OperationHandlerMap = {
     activity: (workflowId, operation) => this.#processActivityOperation(workflowId, operation),
     sleep: (workflowId, operation) => this.#processSleepOperation(workflowId, operation),
@@ -644,7 +645,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#activityWorkerDispatcher = createActivityWorkerDispatcher(options?.activityExecution);
     this.#agentWorkflowIds = new Set();
-    this.#agentProviders = new Map();
 
     // Wire up the strategy message handler
     this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
@@ -698,8 +698,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         handler,
         version: '1',
         isAgent: true,
+        provider: agentOptions.provider,
       });
-      this.#agentProviders.set(agentDef.name, agentOptions.provider);
       return;
     }
 
@@ -839,10 +839,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // Agent optimization: track agent workflows and pre-warm LLM connections.
       if (registration.isAgent) {
         this.#agentWorkflowIds.add(workflowId);
-        const provider = this.#agentProviders.get(type);
-        if (provider?.warmup) {
-          provider.warmup().catch(() => {});
-        }
+        registration.provider?.warmup?.().catch(() => {});
       }
 
       this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));

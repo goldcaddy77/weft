@@ -44,10 +44,12 @@ export class CompressedStorage implements Storage {
     this.#compressor = createBunCompressor(resolved.algorithm);
     this.#threshold = resolved.threshold;
 
-    // Agent-aware compression: only create a separate compressor when the
-    // caller provides agent options with a distinct algorithm.
-    if (options?.agentWorkflowIds && options.agentAlgorithm) {
-      this.#agentCompressor = createBunCompressor(options.agentAlgorithm);
+    // Agent-aware compression: create a separate compressor when the caller
+    // provides an agent workflow ID source. When `agentAlgorithm` is omitted,
+    // falls back to the main algorithm (only the threshold may differ).
+    if (options?.agentWorkflowIds) {
+      const agentAlg = options.agentAlgorithm ?? resolved.algorithm;
+      this.#agentCompressor = createBunCompressor(agentAlg);
       this.#agentThreshold = options.agentThreshold ?? resolved.threshold;
       this.#getAgentWorkflowIds = options.agentWorkflowIds;
     } else {
