@@ -22,10 +22,17 @@ import {
 } from './events';
 import type { AgentHooks } from './hooks';
 import type { MCPAuthConfig } from './mcp/authentication';
+import { buildAuthHeaders } from './mcp/authentication';
 import { MCPClient, MCPServerUnavailableError } from './mcp/client';
+import { createOAuth2TokenManager } from './mcp/oauth2-token-manager';
 import type { RegistryTool } from './mcp/registry';
 import { ToolRegistry } from './mcp/registry';
 import { ToolSchemaValidationError, validateSchema } from './mcp/schema-validator';
+import type { TransportKind } from './mcp/transport';
+import { inferTransportKind, parseStdioUrl } from './mcp/transport';
+import { HttpTransport } from './mcp/transport-http';
+import { HttpSseTransport } from './mcp/transport-http-sse';
+import { StdioTransport } from './mcp/transport-stdio';
 import type { ModelRouter, RoutingContext } from './model-router';
 import type { ProviderHealthTracker } from './provider-health';
 import type { LLMProvider } from './providers/interface';
@@ -47,6 +54,13 @@ export interface MCPToolSource {
   mcp: string;
   auth?: MCPAuthConfig | undefined;
   timeout?: number | undefined;
+  /**
+   * Override transport auto-detection.
+   * - `'http'` (default for `http(s)://` URLs): plain HTTP request/response
+   * - `'sse'`: HTTP POST for requests, Server-Sent Events for responses
+   * - `'stdio'` (default for `stdio://` URLs): JSON-RPC over child process stdin/stdout
+   */
+  transport?: TransportKind | undefined;
 }
 
 /** Type guard: is the tools entry an MCP server URL source? */
@@ -180,6 +194,8 @@ interface AgentRuntime {
   toolMap: Map<string, RegistryTool>;
   toolDefinitions: ToolDefinition[];
   state: AgentLoopState;
+  /** Dispose MCP transports and their child processes/connections. */
+  dispose: () => void;
 }
 
 type PreparedTurn = ActiveTurn | SkippedTurn;
@@ -237,6 +253,69 @@ function estimateConversationSizeBytes(conversation: Message[]): number {
 // Tool initialization
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Transport creation
+// ---------------------------------------------------------------------------
+
+/** Build the appropriate transport for an MCP tool source based on URL scheme and options. */
+function createTransportForSource(source: MCPToolSource): import('./mcp/transport').MCPTransport {
+  const kind = inferTransportKind(source.mcp, source.transport);
+
+  // Stdio transport communicates via stdin/stdout — HTTP auth headers don't apply
+  if (kind === 'stdio') {
+    if (source.auth && source.auth.type !== 'none') {
+      console.warn(
+        `[MCP] Auth config ignored for stdio transport: ${source.mcp}. Stdio uses process-level credentials, not HTTP headers.`,
+      );
+    }
+    const target = parseStdioUrl(source.mcp);
+    return new StdioTransport({
+      command: target.command,
+      args: target.args,
+      timeout: source.timeout,
+    });
+  }
+
+  // Build header source — OAuth2 uses an async factory so tokens refresh automatically
+  let headers: import('./mcp/transport-http').HeaderSource = {};
+  if (source.auth) {
+    if (source.auth.type === 'oauth2') {
+      const tokenManager = createOAuth2TokenManager(source.auth);
+      headers = async () => {
+        const token = await tokenManager.getAccessToken();
+        return { Authorization: `Bearer ${token}` };
+      };
+    } else {
+      headers = buildAuthHeaders(source.auth);
+    }
+  }
+
+  switch (kind) {
+    case 'sse':
+      return new HttpSseTransport({
+        serverUrl: source.mcp,
+        headers,
+        timeout: source.timeout,
+      });
+    case 'http':
+      return new HttpTransport({
+        serverUrl: source.mcp,
+        headers,
+        timeout: source.timeout,
+      });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tool initialization
+// ---------------------------------------------------------------------------
+
+type InitializeToolsResult = {
+  registry: ToolRegistry;
+  /** Dispose all MCP clients and their underlying transports. */
+  dispose: () => void;
+};
+
 /**
  * Process a mixed tools array (local `AgentTool` + `MCPToolSource` entries).
  *
@@ -247,54 +326,61 @@ function estimateConversationSizeBytes(conversation: Message[]): number {
 async function initializeTools(
   tools: (AgentTool | MCPToolSource)[],
   signal?: AbortSignal,
-): Promise<ToolRegistry> {
+): Promise<InitializeToolsResult> {
   const registry = new ToolRegistry();
+  const clients: MCPClient[] = [];
 
-  for (const entry of tools) {
-    signal?.throwIfAborted();
-    if (isMCPToolSource(entry)) {
-      const clientOptions: { serverUrl: string; auth?: MCPAuthConfig; timeout?: number } = {
-        serverUrl: entry.mcp,
-      };
-      if (entry.auth !== undefined) clientOptions.auth = entry.auth;
-      if (entry.timeout !== undefined) clientOptions.timeout = entry.timeout;
+  try {
+    for (const entry of tools) {
+      signal?.throwIfAborted();
+      if (isMCPToolSource(entry)) {
+        const transport = createTransportForSource(entry);
+        const client = new MCPClient({ transport, timeout: entry.timeout });
+        clients.push(client);
 
-      const client = new MCPClient(clientOptions);
-
-      // Health check — fail fast if the server is unreachable
-      const healthy = await client.healthCheck();
-      if (!healthy) {
-        throw new MCPServerUnavailableError(entry.mcp);
-      }
-
-      // Discover tools
-      const discovered = await client.discoverTools();
-
-      // Pre-index discovered tools by name for O(1) schema lookup
-      const schemaIndex = new Map(discovered.map((t) => [t.name, t]));
-
-      // Register MCP tools with a dispatch function that validates input
-      // and invokes through the client
-      registry.registerMCP(discovered, entry.mcp, async (toolName: string, input: unknown) => {
-        const toolDef = schemaIndex.get(toolName);
-        if (toolDef && Object.keys(toolDef.inputSchema).length > 0) {
-          const validation = validateSchema(input, toolDef.inputSchema);
-          if (!validation.valid) {
-            throw new ToolSchemaValidationError(toolName, validation.errors);
-          }
+        // Health check — fail fast if the server is unreachable
+        const healthy = await client.healthCheck();
+        if (!healthy) {
+          throw new MCPServerUnavailableError(entry.mcp);
         }
 
-        return client.invokeTool(toolName, input, signal);
-      });
-    } else {
-      registry.registerLocal(entry.definition, entry.execute);
+        // Discover tools
+        const discovered = await client.discoverTools();
+
+        // Pre-index discovered tools by name for O(1) schema lookup
+        const schemaIndex = new Map(discovered.map((t) => [t.name, t]));
+
+        // Register MCP tools with a dispatch function that validates input
+        // and invokes through the client
+        registry.registerMCP(discovered, entry.mcp, async (toolName: string, input: unknown) => {
+          const toolDef = schemaIndex.get(toolName);
+          if (toolDef && Object.keys(toolDef.inputSchema).length > 0) {
+            const validation = validateSchema(input, toolDef.inputSchema);
+            if (!validation.valid) {
+              throw new ToolSchemaValidationError(toolName, validation.errors);
+            }
+          }
+
+          return client.invokeTool(toolName, input, signal);
+        });
+      } else {
+        registry.registerLocal(entry.definition, entry.execute);
+      }
     }
+  } catch (error) {
+    // Dispose all clients on any initialization failure
+    for (const client of clients) client[Symbol.dispose]();
+    throw error;
   }
 
   // Validate for name conflicts before the agent loop starts
   registry.validate();
 
-  return registry;
+  const dispose = () => {
+    for (const client of clients) client[Symbol.dispose]();
+  };
+
+  return { registry, dispose };
 }
 
 // ---------------------------------------------------------------------------
@@ -351,13 +437,14 @@ function createInitialConversation(systemPrompt: string | undefined, input: stri
 
 async function createAgentRuntime(options: AgentOptions, input: string): Promise<AgentRuntime> {
   const resolvedOptions = resolveAgentOptions(options);
-  const registry = await initializeTools(options.tools ?? [], resolvedOptions.signal);
+  const { registry, dispose } = await initializeTools(options.tools ?? [], resolvedOptions.signal);
   const { toolMap, toolDefinitions } = createToolLookups(registry.getAll());
 
   return {
     options: resolvedOptions,
     toolMap,
     toolDefinitions,
+    dispose,
     state: {
       conversation: createInitialConversation(resolvedOptions.systemPrompt, input),
       toolCache: new Map<string, CacheEntry>(),
@@ -1006,12 +1093,16 @@ async function executeAgentTurn(runtime: AgentRuntime, turnIndex: number): Promi
 export async function executeAgentLoop(options: AgentOptions, input: string): Promise<AgentResult> {
   const runtime = await createAgentRuntime(options, input);
 
-  for (let turnIndex = 0; turnIndex < runtime.options.maxTurns; turnIndex++) {
-    const shouldContinue = await executeAgentTurn(runtime, turnIndex);
-    if (!shouldContinue) {
-      break;
+  try {
+    for (let turnIndex = 0; turnIndex < runtime.options.maxTurns; turnIndex++) {
+      const shouldContinue = await executeAgentTurn(runtime, turnIndex);
+      if (!shouldContinue) {
+        break;
+      }
     }
-  }
 
-  return buildAgentResult(runtime.state);
+    return buildAgentResult(runtime.state);
+  } finally {
+    runtime.dispose();
+  }
 }
