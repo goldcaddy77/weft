@@ -1,7 +1,7 @@
 import type { ModelRouter } from '../ai/model-router.ts';
 import type { AlertingOptions } from '../alerting/types.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
-import type { CompressionOptions } from './compression.ts';
+import type { CompressionAlgorithm, CompressionOptions } from './compression.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow identity
@@ -140,7 +140,12 @@ export interface EngineOptions {
   development?: boolean;
   serializer?: Serializer;
   /** Payload compression applied at the storage layer. */
-  compression?: CompressionOptions;
+  compression?: CompressionOptions & {
+    /** Compression algorithm for agent workflow checkpoints. Default: 'brotli'. */
+    agentAlgorithm?: CompressionAlgorithm;
+    /** Compression threshold for agent workflow checkpoints. Default: same as main threshold. */
+    agentThreshold?: number;
+  };
   checkpointHistory?: number;
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;

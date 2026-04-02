@@ -202,12 +202,21 @@ function resolveEngineStorage(
   getAgentWorkflowIds?: () => ReadonlySet<string>,
 ): WeftStorage {
   const baseStorage = options?.storage ?? new MemoryStorage();
-  return options?.compression
-    ? new CompressedStorage(baseStorage, {
-        ...options.compression,
-        ...(getAgentWorkflowIds ? { agentWorkflowIds: getAgentWorkflowIds } : {}),
-      })
-    : baseStorage;
+  if (!options?.compression) return baseStorage;
+  return new CompressedStorage(baseStorage, {
+    ...options.compression,
+    ...(getAgentWorkflowIds
+      ? {
+          agentWorkflowIds: getAgentWorkflowIds,
+          // Default to brotli for agent checkpoints (conversation data compresses
+          // exceptionally well with brotli). Users may override via compression.agentAlgorithm.
+          agentAlgorithm: options.compression.agentAlgorithm ?? 'brotli',
+          ...(options.compression.agentThreshold !== undefined
+            ? { agentThreshold: options.compression.agentThreshold }
+            : {}),
+        }
+      : {}),
+  });
 }
 
 function resolveEngineOptions(
