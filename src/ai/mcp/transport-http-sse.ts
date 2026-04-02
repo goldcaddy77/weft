@@ -58,34 +58,32 @@ export class HttpSseTransport implements MCPTransport {
     const { promise, resolve, reject } = Promise.withResolvers<MCPResponse>();
     this.#pending.set(id, { promise, resolve, reject });
 
-    // Timeout handling
-    const timeoutId = setTimeout(() => {
+    // Timeout controller aborts both the POST fetch and the pending SSE response
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), this.#timeout);
+
+    // Combine timeout + external signal so both abort the fetch and reject the pending entry
+    const combinedSignal = signal
+      ? AbortSignal.any([signal, timeoutController.signal])
+      : timeoutController.signal;
+
+    // When either signal fires, reject the pending SSE response entry
+    const onAbort = () => {
       const pending = this.#pending.get(id);
       if (pending) {
         this.#pending.delete(id);
-        pending.reject(new MCPTransportError(`SSE request timed out after ${this.#timeout}ms`));
-      }
-    }, this.#timeout);
-
-    // External abort signal handling
-    const abortHandler = signal
-      ? () => {
-          const pending = this.#pending.get(id);
-          if (pending) {
-            this.#pending.delete(id);
-            clearTimeout(timeoutId);
-            pending.reject(new DOMException('The operation was aborted.', 'AbortError'));
-          }
+        if (signal?.aborted) {
+          pending.reject(new DOMException('The operation was aborted.', 'AbortError'));
+        } else {
+          pending.reject(new MCPTransportError(`SSE request timed out after ${this.#timeout}ms`));
         }
-      : undefined;
-
-    if (abortHandler && signal) {
-      signal.addEventListener('abort', abortHandler, { once: true });
-    }
+      }
+    };
+    combinedSignal.addEventListener('abort', onAbort, { once: true });
 
     try {
-      // Send request via POST
-      const fetchInit: RequestInit = {
+      // Send request via POST — abort signal ensures fetch won't hang
+      const response = await fetch(`${this.#serverUrl}/jsonrpc`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -97,29 +95,23 @@ export class HttpSseTransport implements MCPTransport {
           method: request.method,
           params: request.params,
         }),
-      };
-      if (signal) fetchInit.signal = signal;
-
-      const response = await fetch(`${this.#serverUrl}/jsonrpc`, fetchInit);
+        signal: combinedSignal,
+      });
 
       if (!response.ok) {
         this.#pending.delete(id);
-        clearTimeout(timeoutId);
         throw new MCPTransportError(`HTTP ${response.status} from ${this.#serverUrl}/jsonrpc`);
       }
 
       // Wait for the response to arrive via SSE
       const result = await promise;
-      clearTimeout(timeoutId);
       return result;
     } catch (error) {
-      clearTimeout(timeoutId);
       this.#pending.delete(id);
       throw error;
     } finally {
-      if (abortHandler && signal) {
-        signal.removeEventListener('abort', abortHandler);
-      }
+      clearTimeout(timeoutId);
+      combinedSignal.removeEventListener('abort', onAbort);
     }
   }
 

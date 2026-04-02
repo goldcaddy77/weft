@@ -165,7 +165,7 @@ describe('StdioTransport', () => {
   });
 
   describe('healthCheck', () => {
-    it('returns true when server responds to initialize', async () => {
+    it('returns true when server responds to ping', async () => {
       const script = await createMockServer('health');
       const transport = track(new StdioTransport({ command: 'bun', args: [script] }));
 

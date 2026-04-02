@@ -225,22 +225,30 @@ function createTransportForSource(source: MCPToolSource): import('./mcp/transpor
  * For each local tool: register in the registry.
  * Finally, validate for name conflicts and return the populated registry.
  */
+type InitializeToolsResult = {
+  registry: ToolRegistry;
+  /** Dispose all MCP clients and their underlying transports. */
+  dispose: () => void;
+};
+
 async function initializeTools(
   tools: (AgentTool | MCPToolSource)[],
   signal?: AbortSignal,
-): Promise<ToolRegistry> {
+): Promise<InitializeToolsResult> {
   const registry = new ToolRegistry();
+  const clients: MCPClient[] = [];
 
   for (const entry of tools) {
     signal?.throwIfAborted();
     if (isMCPToolSource(entry)) {
       const transport = createTransportForSource(entry);
       const client = new MCPClient({ transport, timeout: entry.timeout });
+      clients.push(client);
 
       // Health check — fail fast if the server is unreachable
       const healthy = await client.healthCheck();
       if (!healthy) {
-        client[Symbol.dispose]();
+        for (const c of clients) c[Symbol.dispose]();
         throw new MCPServerUnavailableError(entry.mcp);
       }
 
@@ -271,7 +279,11 @@ async function initializeTools(
   // Validate for name conflicts before the agent loop starts
   registry.validate();
 
-  return registry;
+  const dispose = () => {
+    for (const client of clients) client[Symbol.dispose]();
+  };
+
+  return { registry, dispose };
 }
 
 // ---------------------------------------------------------------------------
@@ -307,7 +319,9 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
   const resolvedAgentId = optionsAgentId ?? '';
 
   // Build the tool registry from mixed local + MCP entries
-  const registry = await initializeTools(tools, signal);
+  const toolsResult = await initializeTools(tools, signal);
+  const registry = toolsResult.registry;
+  const disposeTransports = toolsResult.dispose;
 
   // Build the tool lookup map and definition list from the registry
   const registryTools = registry.getAll();
@@ -318,280 +332,460 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     toolDefinitions.push(tool.definition);
   }
 
-  // Tool result cache
-  const toolCache = new Map<string, CacheEntry>();
+  try {
+    // Tool result cache
+    const toolCache = new Map<string, CacheEntry>();
 
-  // Initialize conversation
-  const conversation: Message[] = [];
-  if (systemPrompt !== undefined) {
-    conversation.push({ role: 'system', content: systemPrompt });
-  }
-  conversation.push({ role: 'user', content: input });
-
-  // Accumulate totals
-  const totalTokens: TokenUsage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-  };
-  let totalCost = 0;
-  let turnCount = 0;
-  let lastContent = '';
-  let sizeWarningFired = false;
-  let budgetWarningFired = false;
-  const previousModels: string[] = [];
-  const reasoningTraces: string[] = [];
-  const turnCosts: TurnCostEntry[] = [];
-
-  for (let turnIndex = 0; turnIndex < maxTurns; turnIndex++) {
-    // Exit path: cancellation
-    if (signal?.aborted) {
-      break;
+    // Initialize conversation
+    const conversation: Message[] = [];
+    if (systemPrompt !== undefined) {
+      conversation.push({ role: 'system', content: systemPrompt });
     }
+    conversation.push({ role: 'user', content: input });
 
-    // Exit path: budget exhausted
-    if (budget) {
-      try {
-        budget.checkBudget();
-      } catch (error: unknown) {
-        if (error instanceof BudgetExceededError) {
-          break;
-        }
-        throw error;
-      }
-    }
+    // Accumulate totals
+    const totalTokens: TokenUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    };
+    let totalCost = 0;
+    let turnCount = 0;
+    let lastContent = '';
+    let sizeWarningFired = false;
+    let budgetWarningFired = false;
+    const previousModels: string[] = [];
+    const reasoningTraces: string[] = [];
+    const turnCosts: TurnCostEntry[] = [];
 
-    // Select model via router or use default
-    let currentModel = defaultModel;
-    let fallbackModels: string[] = [];
-    if (modelRouter) {
-      const routingContext: RoutingContext = {
-        workflowId: resolvedWorkflowId,
-        turnIndex,
-        conversationLength: conversation.length,
-        budgetRemaining: budget
-          ? {
-              tokensRemaining: budget.budgetRemaining().tokensRemaining,
-              costRemaining: budget.budgetRemaining().costRemaining,
-            }
-          : undefined,
-        previousModels: [...previousModels],
-      };
-      const selection = modelRouter.select(routingContext);
-      currentModel = selection.model;
-      fallbackModels = selection.fallback ?? [];
-    }
-
-    // Apply context window strategy if configured.
-    // Always pass the full conversation — the strategy decides what to keep.
-    let messagesToSend = [...conversation];
-    if (contextManager) {
-      const tokenCount = await provider.countTokens(messagesToSend);
-      if (contextManager.shouldCompact(tokenCount)) {
-        const compacted = await contextManager.compact(messagesToSend);
-        messagesToSend = compacted.messages;
-
-        // Dispatch context-compacted event
-        if (eventTarget && resolvedWorkflowId) {
-          eventTarget.dispatchEvent(
-            new AgentContextCompactedEvent(
-              resolvedWorkflowId,
-              resolvedAgentId,
-              contextManager.strategyName,
-              compacted.tokensBefore,
-              compacted.tokensAfter,
-              compacted.messagesDropped,
-            ),
-          );
-        }
-      }
-    }
-
-    // Run beforeTurn hook if provided
-    if (hooks?.beforeTurn) {
-      const hookResult = await hooks.beforeTurn({
-        turnIndex,
-        messages: messagesToSend,
-        model: currentModel,
-      });
-
-      if (hookResult.action === 'skip') {
-        // Use skip result as the final content and break
-        lastContent = hookResult.result ?? '';
+    for (let turnIndex = 0; turnIndex < maxTurns; turnIndex++) {
+      // Exit path: cancellation
+      if (signal?.aborted) {
         break;
       }
 
-      // If the hook returned modified messages, use them
-      if (hookResult.action === 'continue' && hookResult.messages) {
-        messagesToSend = hookResult.messages;
-      }
-    }
-
-    // Dispatch event to eventTarget if provided
-    if (eventTarget && resolvedWorkflowId) {
-      eventTarget.dispatchEvent(
-        new AgentTurnStartedEvent(
-          resolvedWorkflowId,
-          resolvedAgentId,
-          turnIndex,
-          currentModel,
-          0,
-          messagesToSend.length,
-        ),
-      );
-    }
-
-    // Fire turn-started callback
-    onTurnStarted?.({
-      turnIndex,
-      model: currentModel,
-      conversationLength: messagesToSend.length,
-    });
-
-    const turnStart = Date.now();
-    const costBefore = budget?.budgetRemaining().costUsed ?? 0;
-
-    // Call LLM provider with fallback chain
-    let response: ChatResponse | undefined;
-    let fallbackAttempts = 0;
-    const modelsToTry = [currentModel, ...fallbackModels];
-    const originalModel = currentModel;
-    let lastError: unknown;
-
-    for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
-      const attemptModel = modelsToTry[attempt]!;
-      try {
-        const chatOptions: import('./providers/interface').ChatOptions = {
-          model: attemptModel,
-        };
-        if (toolDefinitions.length > 0) {
-          chatOptions.tools = toolDefinitions;
-        }
-        if (signal) {
-          chatOptions.signal = signal;
-        }
-        response = await provider.chat(messagesToSend, chatOptions);
-
-        // Record success in health tracker
-        if (healthTracker) {
-          healthTracker.recordSuccess(provider.name);
-        }
-
-        // Update currentModel to whichever one succeeded
-        currentModel = attemptModel;
-        break;
-      } catch (error: unknown) {
-        lastError = error;
-
-        // If the request was aborted, stop immediately — do not try fallback models.
-        if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+      // Exit path: budget exhausted
+      if (budget) {
+        try {
+          budget.checkBudget();
+        } catch (error: unknown) {
+          if (error instanceof BudgetExceededError) {
+            break;
+          }
           throw error;
         }
+      }
 
-        // Record failure in health tracker
-        if (healthTracker) {
-          healthTracker.recordFailure(provider.name);
-        }
+      // Select model via router or use default
+      let currentModel = defaultModel;
+      let fallbackModels: string[] = [];
+      if (modelRouter) {
+        const routingContext: RoutingContext = {
+          workflowId: resolvedWorkflowId,
+          turnIndex,
+          conversationLength: conversation.length,
+          budgetRemaining: budget
+            ? {
+                tokensRemaining: budget.budgetRemaining().tokensRemaining,
+                costRemaining: budget.budgetRemaining().costRemaining,
+              }
+            : undefined,
+          previousModels: [...previousModels],
+        };
+        const selection = modelRouter.select(routingContext);
+        currentModel = selection.model;
+        fallbackModels = selection.fallback ?? [];
+      }
 
-        // If there are more fallbacks to try, dispatch fallback event and continue
-        const nextModel = modelsToTry[attempt + 1];
-        if (nextModel) {
-          fallbackAttempts++;
+      // Apply context window strategy if configured.
+      // Always pass the full conversation — the strategy decides what to keep.
+      let messagesToSend = [...conversation];
+      if (contextManager) {
+        const tokenCount = await provider.countTokens(messagesToSend);
+        if (contextManager.shouldCompact(tokenCount)) {
+          const compacted = await contextManager.compact(messagesToSend);
+          messagesToSend = compacted.messages;
+
+          // Dispatch context-compacted event
           if (eventTarget && resolvedWorkflowId) {
-            const reason = error instanceof Error ? error.message : String(error);
             eventTarget.dispatchEvent(
-              new AgentModelFallbackEvent(
+              new AgentContextCompactedEvent(
                 resolvedWorkflowId,
                 resolvedAgentId,
-                turnIndex,
-                attemptModel,
-                reason,
-                nextModel,
-                fallbackAttempts,
+                contextManager.strategyName,
+                compacted.tokensBefore,
+                compacted.tokensAfter,
+                compacted.messagesDropped,
               ),
             );
           }
         }
       }
-    }
 
-    // If no model succeeded, throw the last error
-    if (response === undefined) {
-      throw lastError;
-    }
+      // Run beforeTurn hook if provided
+      if (hooks?.beforeTurn) {
+        const hookResult = await hooks.beforeTurn({
+          turnIndex,
+          messages: messagesToSend,
+          model: currentModel,
+        });
 
-    // Track which model was used for this turn
-    previousModels.push(currentModel);
+        if (hookResult.action === 'skip') {
+          // Use skip result as the final content and break
+          lastContent = hookResult.result ?? '';
+          break;
+        }
 
-    const turnDuration = Date.now() - turnStart;
-
-    // Accumulate usage
-    totalTokens.inputTokens += response.usage.inputTokens;
-    totalTokens.outputTokens += response.usage.outputTokens;
-    totalTokens.totalTokens += response.usage.totalTokens;
-
-    // Record usage in budget tracker
-    if (budget) {
-      budget.recordUsage(currentModel, response.usage.inputTokens, response.usage.outputTokens);
-
-      // Fire the onBudgetWarning hook once when usage crosses the 80% threshold
-      if (hooks?.onBudgetWarning && !budgetWarningFired) {
-        const state = budget.budgetRemaining();
-        const tokenBudgetTotal = state.tokensUsed + state.tokensRemaining;
-        const costBudgetTotal = state.costUsed + state.costRemaining;
-        const tokenFraction =
-          tokenBudgetTotal > 0 && isFinite(tokenBudgetTotal)
-            ? state.tokensUsed / tokenBudgetTotal
-            : 0;
-        const costFraction =
-          costBudgetTotal > 0 && isFinite(costBudgetTotal) ? state.costUsed / costBudgetTotal : 0;
-        const budgetUsedPercent = Math.max(tokenFraction, costFraction) * 100;
-
-        if (budgetUsedPercent >= 80) {
-          budgetWarningFired = true;
-          await hooks.onBudgetWarning({
-            tokensRemaining: state.tokensRemaining,
-            costRemaining: state.costRemaining,
-            budgetUsedPercent,
-          });
+        // If the hook returned modified messages, use them
+        if (hookResult.action === 'continue' && hookResult.messages) {
+          messagesToSend = hookResult.messages;
         }
       }
-    }
 
-    const turnCost = (budget?.budgetRemaining().costUsed ?? 0) - costBefore;
-    totalCost += turnCost;
+      // Dispatch event to eventTarget if provided
+      if (eventTarget && resolvedWorkflowId) {
+        eventTarget.dispatchEvent(
+          new AgentTurnStartedEvent(
+            resolvedWorkflowId,
+            resolvedAgentId,
+            turnIndex,
+            currentModel,
+            0,
+            messagesToSend.length,
+          ),
+        );
+      }
 
-    turnCount++;
-    lastContent = response.content;
+      // Fire turn-started callback
+      onTurnStarted?.({
+        turnIndex,
+        model: currentModel,
+        conversationLength: messagesToSend.length,
+      });
 
-    // Add assistant message to conversation
-    const assistantMessage: Message = {
-      role: 'assistant',
-      content: response.content,
-    };
-    if (response.toolCalls.length > 0) {
-      assistantMessage.toolCalls = response.toolCalls;
-    }
-    conversation.push(assistantMessage);
+      const turnStart = Date.now();
+      const costBefore = budget?.budgetRemaining().costUsed ?? 0;
 
-    // Capture reasoning trace if present
-    if (response.reasoningTrace) {
-      reasoningTraces.push(response.reasoningTrace);
-    }
+      // Call LLM provider with fallback chain
+      let response: ChatResponse | undefined;
+      let fallbackAttempts = 0;
+      const modelsToTry = [currentModel, ...fallbackModels];
+      const originalModel = currentModel;
+      let lastError: unknown;
 
-    // Exit path: final answer (no tool calls)
-    if (response.toolCalls.length === 0) {
-      // Record turn cost entry
+      for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
+        const attemptModel = modelsToTry[attempt]!;
+        try {
+          const chatOptions: import('./providers/interface').ChatOptions = {
+            model: attemptModel,
+          };
+          if (toolDefinitions.length > 0) {
+            chatOptions.tools = toolDefinitions;
+          }
+          if (signal) {
+            chatOptions.signal = signal;
+          }
+          response = await provider.chat(messagesToSend, chatOptions);
+
+          // Record success in health tracker
+          if (healthTracker) {
+            healthTracker.recordSuccess(provider.name);
+          }
+
+          // Update currentModel to whichever one succeeded
+          currentModel = attemptModel;
+          break;
+        } catch (error: unknown) {
+          lastError = error;
+
+          // If the request was aborted, stop immediately — do not try fallback models.
+          if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+            throw error;
+          }
+
+          // Record failure in health tracker
+          if (healthTracker) {
+            healthTracker.recordFailure(provider.name);
+          }
+
+          // If there are more fallbacks to try, dispatch fallback event and continue
+          const nextModel = modelsToTry[attempt + 1];
+          if (nextModel) {
+            fallbackAttempts++;
+            if (eventTarget && resolvedWorkflowId) {
+              const reason = error instanceof Error ? error.message : String(error);
+              eventTarget.dispatchEvent(
+                new AgentModelFallbackEvent(
+                  resolvedWorkflowId,
+                  resolvedAgentId,
+                  turnIndex,
+                  attemptModel,
+                  reason,
+                  nextModel,
+                  fallbackAttempts,
+                ),
+              );
+            }
+          }
+        }
+      }
+
+      // If no model succeeded, throw the last error
+      if (response === undefined) {
+        throw lastError;
+      }
+
+      // Track which model was used for this turn
+      previousModels.push(currentModel);
+
+      const turnDuration = Date.now() - turnStart;
+
+      // Accumulate usage
+      totalTokens.inputTokens += response.usage.inputTokens;
+      totalTokens.outputTokens += response.usage.outputTokens;
+      totalTokens.totalTokens += response.usage.totalTokens;
+
+      // Record usage in budget tracker
+      if (budget) {
+        budget.recordUsage(currentModel, response.usage.inputTokens, response.usage.outputTokens);
+
+        // Fire the onBudgetWarning hook once when usage crosses the 80% threshold
+        if (hooks?.onBudgetWarning && !budgetWarningFired) {
+          const state = budget.budgetRemaining();
+          const tokenBudgetTotal = state.tokensUsed + state.tokensRemaining;
+          const costBudgetTotal = state.costUsed + state.costRemaining;
+          const tokenFraction =
+            tokenBudgetTotal > 0 && isFinite(tokenBudgetTotal)
+              ? state.tokensUsed / tokenBudgetTotal
+              : 0;
+          const costFraction =
+            costBudgetTotal > 0 && isFinite(costBudgetTotal) ? state.costUsed / costBudgetTotal : 0;
+          const budgetUsedPercent = Math.max(tokenFraction, costFraction) * 100;
+
+          if (budgetUsedPercent >= 80) {
+            budgetWarningFired = true;
+            await hooks.onBudgetWarning({
+              tokensRemaining: state.tokensRemaining,
+              costRemaining: state.costRemaining,
+              budgetUsedPercent,
+            });
+          }
+        }
+      }
+
+      const turnCost = (budget?.budgetRemaining().costUsed ?? 0) - costBefore;
+      totalCost += turnCost;
+
+      turnCount++;
+      lastContent = response.content;
+
+      // Add assistant message to conversation
+      const assistantMessage: Message = {
+        role: 'assistant',
+        content: response.content,
+      };
+      if (response.toolCalls.length > 0) {
+        assistantMessage.toolCalls = response.toolCalls;
+      }
+      conversation.push(assistantMessage);
+
+      // Capture reasoning trace if present
+      if (response.reasoningTrace) {
+        reasoningTraces.push(response.reasoningTrace);
+      }
+
+      // Exit path: final answer (no tool calls)
+      if (response.toolCalls.length === 0) {
+        // Record turn cost entry
+        turnCosts.push({
+          turn: turnIndex,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          cost: turnCost,
+          model: currentModel,
+          tools: [],
+        });
+
+        // Dispatch turn-completed event
+        if (eventTarget && resolvedWorkflowId) {
+          eventTarget.dispatchEvent(
+            new AgentTurnCompletedEvent(
+              resolvedWorkflowId,
+              resolvedAgentId,
+              turnIndex,
+              originalModel,
+              currentModel,
+              response.usage.inputTokens,
+              response.usage.outputTokens,
+              turnCost,
+              totalCost,
+              turnDuration,
+              0,
+              fallbackAttempts,
+              response.reasoningTrace,
+            ),
+          );
+        }
+        // Fire turn-completed callback
+        onTurnCompleted?.({
+          turnIndex,
+          model: currentModel,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          cost: turnCost,
+          duration: turnDuration,
+          toolCallCount: 0,
+        });
+
+        // Check conversation size on final-answer path too
+        if (eventTarget && resolvedWorkflowId && !sizeWarningFired) {
+          const sizeBytes = estimateConversationSizeBytes(conversation);
+          if (sizeBytes >= checkpointSizeWarningThreshold) {
+            sizeWarningFired = true;
+            eventTarget.dispatchEvent(
+              new AgentCheckpointSizeWarningEvent(
+                resolvedWorkflowId,
+                resolvedAgentId,
+                sizeBytes,
+                turnIndex,
+              ),
+            );
+          }
+        }
+        break;
+      }
+
+      // Execute tool calls
+      const toolResults: Message['toolResults'] = [];
+
+      for (const toolCall of response.toolCalls) {
+        const toolOperationId = crypto.randomUUID();
+
+        // Look up tool to determine source for events
+        const tool = toolMap.get(toolCall.name);
+        const toolSource: 'local' | 'mcp' = tool?.source ?? 'local';
+
+        // Dispatch tool-called event
+        if (eventTarget && resolvedWorkflowId) {
+          eventTarget.dispatchEvent(
+            new AgentToolCalledEvent(
+              resolvedWorkflowId,
+              resolvedAgentId,
+              turnIndex,
+              toolCall.name,
+              toolCall.input,
+              toolSource,
+              toolOperationId,
+            ),
+          );
+        }
+
+        // Fire tool-called callback
+        onToolCalled?.({
+          turnIndex,
+          toolName: toolCall.name,
+          toolInput: toolCall.input,
+        });
+
+        const toolStart = Date.now();
+        let output: string;
+        let success = true;
+
+        // Check cache first
+        const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
+        const cached = toolCache.get(cacheKey);
+        const now = Date.now();
+
+        if (cached && now - cached.timestamp < toolCacheTTL) {
+          output = cached.output;
+        } else {
+          // Look up tool
+          if (!tool) {
+            output = JSON.stringify({ error: `Unknown tool: ${toolCall.name}` });
+            success = false;
+          } else {
+            try {
+              const rawOutput = await tool.execute(toolCall.input);
+              output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
+              // Cache the result
+              toolCache.set(cacheKey, { output, timestamp: Date.now() });
+            } catch (error: unknown) {
+              const message = error instanceof Error ? error.message : String(error);
+              output = JSON.stringify({ error: message });
+              success = false;
+            }
+          }
+        }
+
+        // Run afterToolCall hook if provided
+        if (hooks?.afterToolCall && success) {
+          const hookResult = await hooks.afterToolCall({
+            turnIndex,
+            toolCall,
+            result: output,
+          });
+
+          if (hookResult.action === 'reject') {
+            output = JSON.stringify({ error: hookResult.reason });
+            success = false;
+          } else if (hookResult.action === 'continue' && hookResult.result !== undefined) {
+            output =
+              typeof hookResult.result === 'string'
+                ? hookResult.result
+                : JSON.stringify(hookResult.result);
+          }
+        }
+
+        const toolDuration = Date.now() - toolStart;
+
+        // Dispatch tool-returned event
+        if (eventTarget && resolvedWorkflowId) {
+          eventTarget.dispatchEvent(
+            new AgentToolReturnedEvent(
+              resolvedWorkflowId,
+              resolvedAgentId,
+              turnIndex,
+              toolCall.name,
+              toolDuration,
+              success,
+              toolOperationId,
+            ),
+          );
+        }
+
+        // Fire tool-returned callback
+        onToolReturned?.({
+          turnIndex,
+          toolName: toolCall.name,
+          duration: toolDuration,
+          success,
+        });
+
+        toolResults.push({
+          toolCallId: toolCall.id,
+          output,
+          isError: !success,
+        });
+      }
+
+      // Add tool results as a tool message
+      conversation.push({
+        role: 'tool',
+        content: '',
+        toolResults,
+      });
+
+      // Record turn cost entry (with tool names)
       turnCosts.push({
         turn: turnIndex,
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
         cost: turnCost,
         model: currentModel,
-        tools: [],
+        tools: response.toolCalls.map((tc) => tc.name),
       });
 
-      // Dispatch turn-completed event
+      // Dispatch turn-completed event (with tool calls)
       if (eventTarget && resolvedWorkflowId) {
         eventTarget.dispatchEvent(
           new AgentTurnCompletedEvent(
@@ -605,12 +799,13 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
             turnCost,
             totalCost,
             turnDuration,
-            0,
+            response.toolCalls.length,
             fallbackAttempts,
             response.reasoningTrace,
           ),
         );
       }
+
       // Fire turn-completed callback
       onTurnCompleted?.({
         turnIndex,
@@ -619,11 +814,11 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
         outputTokens: response.usage.outputTokens,
         cost: turnCost,
         duration: turnDuration,
-        toolCallCount: 0,
+        toolCallCount: response.toolCalls.length,
       });
 
-      // Check conversation size on final-answer path too
-      if (eventTarget && resolvedWorkflowId && !sizeWarningFired) {
+      // Check conversation size and dispatch warning if threshold exceeded
+      if (eventTarget && !sizeWarningFired) {
         const sizeBytes = estimateConversationSizeBytes(conversation);
         if (sizeBytes >= checkpointSizeWarningThreshold) {
           sizeWarningFired = true;
@@ -637,195 +832,18 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
           );
         }
       }
-      break;
     }
 
-    // Execute tool calls
-    const toolResults: Message['toolResults'] = [];
-
-    for (const toolCall of response.toolCalls) {
-      const toolOperationId = crypto.randomUUID();
-
-      // Look up tool to determine source for events
-      const tool = toolMap.get(toolCall.name);
-      const toolSource: 'local' | 'mcp' = tool?.source ?? 'local';
-
-      // Dispatch tool-called event
-      if (eventTarget && resolvedWorkflowId) {
-        eventTarget.dispatchEvent(
-          new AgentToolCalledEvent(
-            resolvedWorkflowId,
-            resolvedAgentId,
-            turnIndex,
-            toolCall.name,
-            toolCall.input,
-            toolSource,
-            toolOperationId,
-          ),
-        );
-      }
-
-      // Fire tool-called callback
-      onToolCalled?.({
-        turnIndex,
-        toolName: toolCall.name,
-        toolInput: toolCall.input,
-      });
-
-      const toolStart = Date.now();
-      let output: string;
-      let success = true;
-
-      // Check cache first
-      const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
-      const cached = toolCache.get(cacheKey);
-      const now = Date.now();
-
-      if (cached && now - cached.timestamp < toolCacheTTL) {
-        output = cached.output;
-      } else {
-        // Look up tool
-        if (!tool) {
-          output = JSON.stringify({ error: `Unknown tool: ${toolCall.name}` });
-          success = false;
-        } else {
-          try {
-            const rawOutput = await tool.execute(toolCall.input);
-            output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
-            // Cache the result
-            toolCache.set(cacheKey, { output, timestamp: Date.now() });
-          } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : String(error);
-            output = JSON.stringify({ error: message });
-            success = false;
-          }
-        }
-      }
-
-      // Run afterToolCall hook if provided
-      if (hooks?.afterToolCall && success) {
-        const hookResult = await hooks.afterToolCall({
-          turnIndex,
-          toolCall,
-          result: output,
-        });
-
-        if (hookResult.action === 'reject') {
-          output = JSON.stringify({ error: hookResult.reason });
-          success = false;
-        } else if (hookResult.action === 'continue' && hookResult.result !== undefined) {
-          output =
-            typeof hookResult.result === 'string'
-              ? hookResult.result
-              : JSON.stringify(hookResult.result);
-        }
-      }
-
-      const toolDuration = Date.now() - toolStart;
-
-      // Dispatch tool-returned event
-      if (eventTarget && resolvedWorkflowId) {
-        eventTarget.dispatchEvent(
-          new AgentToolReturnedEvent(
-            resolvedWorkflowId,
-            resolvedAgentId,
-            turnIndex,
-            toolCall.name,
-            toolDuration,
-            success,
-            toolOperationId,
-          ),
-        );
-      }
-
-      // Fire tool-returned callback
-      onToolReturned?.({
-        turnIndex,
-        toolName: toolCall.name,
-        duration: toolDuration,
-        success,
-      });
-
-      toolResults.push({
-        toolCallId: toolCall.id,
-        output,
-        isError: !success,
-      });
-    }
-
-    // Add tool results as a tool message
-    conversation.push({
-      role: 'tool',
-      content: '',
-      toolResults,
-    });
-
-    // Record turn cost entry (with tool names)
-    turnCosts.push({
-      turn: turnIndex,
-      inputTokens: response.usage.inputTokens,
-      outputTokens: response.usage.outputTokens,
-      cost: turnCost,
-      model: currentModel,
-      tools: response.toolCalls.map((tc) => tc.name),
-    });
-
-    // Dispatch turn-completed event (with tool calls)
-    if (eventTarget && resolvedWorkflowId) {
-      eventTarget.dispatchEvent(
-        new AgentTurnCompletedEvent(
-          resolvedWorkflowId,
-          resolvedAgentId,
-          turnIndex,
-          originalModel,
-          currentModel,
-          response.usage.inputTokens,
-          response.usage.outputTokens,
-          turnCost,
-          totalCost,
-          turnDuration,
-          response.toolCalls.length,
-          fallbackAttempts,
-          response.reasoningTrace,
-        ),
-      );
-    }
-
-    // Fire turn-completed callback
-    onTurnCompleted?.({
-      turnIndex,
-      model: currentModel,
-      inputTokens: response.usage.inputTokens,
-      outputTokens: response.usage.outputTokens,
-      cost: turnCost,
-      duration: turnDuration,
-      toolCallCount: response.toolCalls.length,
-    });
-
-    // Check conversation size and dispatch warning if threshold exceeded
-    if (eventTarget && !sizeWarningFired) {
-      const sizeBytes = estimateConversationSizeBytes(conversation);
-      if (sizeBytes >= checkpointSizeWarningThreshold) {
-        sizeWarningFired = true;
-        eventTarget.dispatchEvent(
-          new AgentCheckpointSizeWarningEvent(
-            resolvedWorkflowId,
-            resolvedAgentId,
-            sizeBytes,
-            turnIndex,
-          ),
-        );
-      }
-    }
+    return {
+      content: lastContent,
+      conversation,
+      totalTokens,
+      totalCost,
+      turnCount,
+      reasoningTraces,
+      turnCosts,
+    };
+  } finally {
+    disposeTransports();
   }
-
-  return {
-    content: lastContent,
-    conversation,
-    totalTokens,
-    totalCost,
-    turnCount,
-    reasoningTraces,
-    turnCosts,
-  };
 }

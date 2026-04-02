@@ -2,9 +2,9 @@
  * HTTP transport for MCP servers.
  *
  * Maps MCP JSON-RPC methods to REST endpoints:
- * - `tools/list`   → `GET  /tools`
+ * - `tools/list`    → `GET  /tools`
  * - `tools/invoke`  → `POST /tools/invoke`
- * - `initialize`    → `GET  /health`
+ * - `health`        → `GET  /health`
  */
 
 import type { MCPRequest, MCPResponse, MCPTransport } from './transport';
@@ -46,23 +46,30 @@ export class HttpTransport implements MCPTransport {
     const headers =
       typeof this.#headerSource === 'function' ? await this.#headerSource() : this.#headerSource;
 
-    const timeoutController = new AbortController();
-    const timer = setTimeout(() => timeoutController.abort(), this.#timeout);
+    // Only apply transport-level timeout when no external signal is provided.
+    // When an external signal exists (e.g., from MCPClient), trust it to handle
+    // timeouts — adding a second timer creates a race that produces wrong error types.
+    let effectiveSignal = signal;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const combinedSignal = signal
-      ? AbortSignal.any([signal, timeoutController.signal])
-      : timeoutController.signal;
+    if (!signal) {
+      const timeoutController = new AbortController();
+      timer = setTimeout(() => timeoutController.abort(), this.#timeout);
+      effectiveSignal = timeoutController.signal;
+    }
 
     try {
-      const response = await fetch(`${this.#serverUrl}${path}`, {
+      const fetchInit: RequestInit = {
         ...init,
-        signal: combinedSignal,
         headers: {
           'Content-Type': 'application/json',
           ...headers,
           ...(init.headers as Record<string, string> | undefined),
         },
-      });
+      };
+      if (effectiveSignal) fetchInit.signal = effectiveSignal;
+
+      const response = await fetch(`${this.#serverUrl}${path}`, fetchInit);
 
       if (!response.ok) {
         throw new MCPTransportError(`HTTP ${response.status} from ${this.#serverUrl}${path}`);
@@ -72,19 +79,14 @@ export class HttpTransport implements MCPTransport {
       return { result: body };
     } catch (error) {
       if (error instanceof MCPTransportError) throw error;
-      if (
-        error instanceof DOMException &&
-        error.name === 'AbortError' &&
-        timeoutController.signal.aborted &&
-        !signal?.aborted
-      ) {
+      if (error instanceof DOMException && error.name === 'AbortError' && !signal) {
         throw new MCPTransportError(`Request timed out after ${this.#timeout}ms`, {
           cause: error,
         });
       }
       throw error;
     } finally {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
     }
   }
 
