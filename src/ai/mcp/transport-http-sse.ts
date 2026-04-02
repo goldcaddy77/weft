@@ -293,8 +293,9 @@ export class HttpSseTransport implements MCPTransport {
             pending.resolve(response);
           }
         }
-      } catch {
-        // Ignore non-JSON events
+      } catch (parseError) {
+        const preview = data.length > 200 ? data.slice(0, 200) + '…' : data;
+        console.warn(`[weft:mcp:sse] Ignoring malformed JSON in SSE event: ${preview}`);
       }
     }
   }

@@ -3,6 +3,7 @@ import {
   ActivityCompletedEvent,
   AlertFiredEvent,
   AlertResolvedEvent,
+  StorageSizeReportedEvent,
   WorkflowCancelledEvent,
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
@@ -199,6 +200,99 @@ describe('AlertManager', () => {
       expect(fired.length).toBe(1);
       expect(fired[0]!.metric).toBe('activity.p99_duration');
       expect(fired[0]!.currentValue).toBeGreaterThanOrEqual(5000);
+
+      manager[Symbol.dispose]();
+    });
+  });
+
+  describe('storage.size', () => {
+    it('fires when storage size exceeds threshold', () => {
+      const options: AlertingOptions = {
+        rules: [
+          {
+            metric: 'storage.size',
+            threshold: 1_000_000, // 1 MB
+            action: 'log',
+          },
+        ],
+      };
+
+      const manager = new AlertManager(target, options, getNow);
+      const fired: AlertFiredEvent[] = [];
+      target.addEventListener('alert:fired', (event) => {
+        fired.push(event as AlertFiredEvent);
+      });
+
+      // Report a size below threshold — no alert
+      target.dispatchEvent(new StorageSizeReportedEvent(500_000));
+      expect(fired.length).toBe(0);
+      expect(manager.states[0]!.status).toBe('idle');
+
+      // Report a size at threshold — alert fires
+      target.dispatchEvent(new StorageSizeReportedEvent(1_000_000));
+      expect(fired.length).toBe(1);
+      expect(fired[0]!.metric).toBe('storage.size');
+      expect(fired[0]!.threshold).toBe(1_000_000);
+      expect(fired[0]!.currentValue).toBe(1_000_000);
+      expect(manager.states[0]!.status).toBe('firing');
+
+      manager[Symbol.dispose]();
+    });
+
+    it('resolves when storage size drops below threshold', () => {
+      const options: AlertingOptions = {
+        rules: [
+          {
+            metric: 'storage.size',
+            threshold: 1_000_000,
+            action: 'log',
+          },
+        ],
+      };
+
+      const manager = new AlertManager(target, options, getNow);
+      const resolved: AlertResolvedEvent[] = [];
+      target.addEventListener('alert:resolved', (event) => {
+        resolved.push(event as AlertResolvedEvent);
+      });
+
+      // Push above threshold to enter firing state
+      target.dispatchEvent(new StorageSizeReportedEvent(2_000_000));
+      expect(manager.states[0]!.status).toBe('firing');
+
+      // Drop below threshold — should resolve
+      target.dispatchEvent(new StorageSizeReportedEvent(500_000));
+      expect(resolved.length).toBe(1);
+      expect(resolved[0]!.metric).toBe('storage.size');
+      expect(resolved[0]!.currentValue).toBe(500_000);
+      expect(manager.states[0]!.status).toBe('idle');
+
+      manager[Symbol.dispose]();
+    });
+
+    it('does not fire duplicate alerts while already firing', () => {
+      const options: AlertingOptions = {
+        rules: [
+          {
+            metric: 'storage.size',
+            threshold: 1_000_000,
+            action: 'log',
+          },
+        ],
+      };
+
+      const manager = new AlertManager(target, options, getNow);
+      const fired: AlertFiredEvent[] = [];
+      target.addEventListener('alert:fired', (event) => {
+        fired.push(event as AlertFiredEvent);
+      });
+
+      target.dispatchEvent(new StorageSizeReportedEvent(2_000_000));
+      target.dispatchEvent(new StorageSizeReportedEvent(3_000_000));
+      target.dispatchEvent(new StorageSizeReportedEvent(4_000_000));
+
+      // Only one fired event despite multiple reports above threshold
+      expect(fired.length).toBe(1);
 
       manager[Symbol.dispose]();
     });

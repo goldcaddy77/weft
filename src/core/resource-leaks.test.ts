@@ -7,13 +7,14 @@ import type { WorkflowContext } from './types.ts';
 // ---------------------------------------------------------------------------
 // A6: Zero resource leaks test
 //
-// Create and complete 1000 workflows, verifying that heap growth stays
-// bounded. This catches leaked handles, uncollected WeakRefs, lingering
-// closures from result resolvers, or timers that hold engine references.
+// Create and complete 1000 workflows, verifying no meaningful heap growth
+// occurs across iterations. This catches leaked handles, uncollected
+// WeakRefs, lingering closures from result resolvers, or timers that
+// hold engine references.
 // ---------------------------------------------------------------------------
 
 describe('Resource leaks', () => {
-  it('1000 create/run/dispose cycles keep heap growth under 5MB', async () => {
+  it('1000 create/run/dispose cycles keep heap growth under 2MB', async () => {
     const ITERATIONS = 1000;
     const WARMUP = 100;
     const SNAPSHOT_INTERVAL = 100;
@@ -48,13 +49,13 @@ describe('Resource leaks', () => {
     // Verify we got enough snapshots
     expect(heapSnapshots.length).toBeGreaterThanOrEqual(2);
 
-    // Check that the heap did not grow by more than 5MB between first and last snapshot
+    // Check that the heap did not grow by more than 2MB between first and last snapshot
     const firstSnapshot = heapSnapshots[0]!;
     const lastSnapshot = heapSnapshots[heapSnapshots.length - 1]!;
     const growth = lastSnapshot - firstSnapshot;
 
-    // 5MB in bytes
-    const MAX_GROWTH_BYTES = 5 * 1024 * 1024;
+    // 2MB in bytes
+    const MAX_GROWTH_BYTES = 2 * 1024 * 1024;
 
     expect(growth).toBeLessThan(MAX_GROWTH_BYTES);
   }, 30_000); // generous timeout for 1000 iterations

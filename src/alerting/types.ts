@@ -1,6 +1,6 @@
 export type AlertAction = 'log' | 'webhook';
 
-export type AlertMetric = 'workflow.failure_rate' | 'activity.p99_duration';
+export type AlertMetric = 'workflow.failure_rate' | 'activity.p99_duration' | 'storage.size';
 
 export type AlertRule = {
   metric: AlertMetric;

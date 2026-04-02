@@ -168,6 +168,19 @@ describe('createOAuth2TokenManager', () => {
     expect(fetchCount).toBe(2);
   });
 
+  it('throws OAuth2TokenError when response body is malformed JSON', async () => {
+    mockFetch(async () => {
+      return new Response('this is not json', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    });
+
+    const manager = createOAuth2TokenManager(DEFAULT_CONFIG);
+
+    await expect(manager.getAccessToken()).rejects.toThrow(OAuth2TokenError);
+  });
+
   it('throws OAuth2TokenError when server returns non-ok', async () => {
     mockFetch(async () => {
       return new Response('Bad Request', { status: 400 });

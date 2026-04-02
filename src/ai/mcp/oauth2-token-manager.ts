@@ -84,7 +84,12 @@ export function createOAuth2TokenManager(config: OAuth2Config): OAuth2TokenManag
       );
     }
 
-    const data = (await response.json()) as Record<string, unknown>;
+    let data: Record<string, unknown>;
+    try {
+      data = (await response.json()) as Record<string, unknown>;
+    } catch (cause) {
+      throw new OAuth2TokenError('Token endpoint returned invalid JSON', config.tokenEndpoint);
+    }
     const accessToken = data['access_token'];
     const expiresIn = data['expires_in'];
 

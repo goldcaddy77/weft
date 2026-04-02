@@ -115,6 +115,19 @@ describe('HttpTransport', () => {
       await expect(transport.send({ method: 'tools/list' })).rejects.toThrow(TypeError);
     });
 
+    it('wraps JSON parse errors as MCPTransportError', async () => {
+      mockFetch(async () => {
+        return new Response('not json at all', {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain' },
+        });
+      });
+
+      const transport = new HttpTransport({ serverUrl: 'https://mcp.example.com' });
+
+      await expect(transport.send({ method: 'tools/list' })).rejects.toThrow(MCPTransportError);
+    });
+
     it('respects external abort signal', async () => {
       const controller = new AbortController();
 
@@ -172,6 +185,12 @@ describe('HttpTransport', () => {
   describe('dispose', () => {
     it('implements Symbol.dispose without error', () => {
       const transport = new HttpTransport({ serverUrl: 'https://mcp.example.com' });
+      expect(() => transport[Symbol.dispose]()).not.toThrow();
+    });
+
+    it('handles double dispose without error', () => {
+      const transport = new HttpTransport({ serverUrl: 'https://mcp.example.com' });
+      transport[Symbol.dispose]();
       expect(() => transport[Symbol.dispose]()).not.toThrow();
     });
   });

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,7 +13,9 @@ import { StdioTransport } from './transport-stdio';
  * Write a small Node/Bun script to a temp file that reads JSON-RPC from stdin
  * and writes JSON-RPC responses to stdout. Returns the script path.
  */
-async function createMockServer(behavior: 'echo' | 'slow' | 'crash' | 'health'): Promise<string> {
+async function createMockServer(
+  behavior: 'echo' | 'slow' | 'crash' | 'health' | 'malformed',
+): Promise<string> {
   const scripts: Record<string, string> = {
     // Echoes back the method and params as the result
     echo: `
@@ -40,6 +42,18 @@ async function createMockServer(behavior: 'echo' | 'slow' | 'crash' | 'health'):
     `,
     // Exits immediately
     crash: `process.exit(1);`,
+    // Sends non-JSON garbage before a valid response
+    malformed: `
+      const reader = require('readline').createInterface({ input: process.stdin });
+      reader.on('line', (line) => {
+        try {
+          const msg = JSON.parse(line);
+          // Send garbage first, then valid response
+          process.stdout.write('this is not json\\n');
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: 'ok' }) + '\\n');
+        } catch {}
+      });
+    `,
     // Responds to ping, then echoes
     health: `
       const reader = require('readline').createInterface({ input: process.stdin });
@@ -162,6 +176,30 @@ describe('StdioTransport', () => {
     transport[Symbol.dispose]();
 
     await expect(promise).rejects.toThrow(MCPTransportError);
+  });
+
+  it('warns on malformed JSON but still processes valid responses', async () => {
+    const script = await createMockServer('malformed');
+    const transport = track(new StdioTransport({ command: 'bun', args: [script] }));
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    const response = await transport.send({ method: 'test' });
+
+    expect(response.result).toBe('ok');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[weft:mcp:stdio] Ignoring malformed JSON'),
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it('handles double dispose without error', async () => {
+    const script = await createMockServer('echo');
+    const transport = new StdioTransport({ command: 'bun', args: [script] });
+    // Send one request to start the process
+    await transport.send({ method: 'test' });
+    transport[Symbol.dispose]();
+    expect(() => transport[Symbol.dispose]()).not.toThrow();
   });
 
   describe('healthCheck', () => {

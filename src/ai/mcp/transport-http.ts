@@ -75,7 +75,14 @@ export class HttpTransport implements MCPTransport {
         throw new MCPTransportError(`HTTP ${response.status} from ${this.#serverUrl}${path}`);
       }
 
-      const body = (await response.json()) as Record<string, unknown>;
+      let body: Record<string, unknown>;
+      try {
+        body = (await response.json()) as Record<string, unknown>;
+      } catch (cause) {
+        throw new MCPTransportError(`Invalid JSON response from ${this.#serverUrl}${path}`, {
+          cause,
+        });
+      }
       return { result: body };
     } catch (error) {
       if (error instanceof MCPTransportError) throw error;
