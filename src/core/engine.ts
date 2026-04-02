@@ -197,10 +197,16 @@ function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
   return decode(bytes) as WorkflowState;
 }
 
-function resolveEngineStorage(options?: EngineConstructorOptions): WeftStorage {
+function resolveEngineStorage(
+  options?: EngineConstructorOptions,
+  getAgentWorkflowIds?: () => ReadonlySet<string>,
+): WeftStorage {
   const baseStorage = options?.storage ?? new MemoryStorage();
   return options?.compression
-    ? new CompressedStorage(baseStorage, options.compression)
+    ? new CompressedStorage(baseStorage, {
+        ...options.compression,
+        ...(getAgentWorkflowIds ? { agentWorkflowIds: getAgentWorkflowIds } : {}),
+      })
     : baseStorage;
 }
 
@@ -549,7 +555,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #pendingWebhooks: Set<AbortController>;
   #alertManager: AlertManager | null;
   /** Tracks workflow IDs that belong to agent-typed workflows for optimization. */
-  #agentWorkflowIds: Set<string>;
+  #agentWorkflowIds = new Set<string>();
   #operationHandlers: OperationHandlerMap = {
     activity: (workflowId, operation) => this.#processActivityOperation(workflowId, operation),
     sleep: (workflowId, operation) => this.#processSleepOperation(workflowId, operation),
@@ -578,7 +584,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   constructor(options?: EngineConstructorOptions) {
     super();
 
-    const storage = resolveEngineStorage(options);
+    const storage = resolveEngineStorage(options, () => this.#agentWorkflowIds);
     const getNow = options?.getNow ?? Date.now;
     const resolvedOptions = resolveEngineOptions(storage, options, getNow);
     const strategyBundle = createExecutionStrategyBundle({
@@ -644,7 +650,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }, 60_000);
 
     this.#activityWorkerDispatcher = createActivityWorkerDispatcher(options?.activityExecution);
-    this.#agentWorkflowIds = new Set();
 
     // Wire up the strategy message handler
     this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));

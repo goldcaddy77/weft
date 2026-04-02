@@ -1236,9 +1236,16 @@ export function serve(options: ServeOptions): WeftServer {
     pendingTimers.clear();
   });
 
+  function resolveTaskPriority(task: TaskDispatch): number | undefined {
+    if (task.priority !== undefined) return task.priority;
+    if (task.workflowId && options.engine.isAgentWorkflow(task.workflowId)) return 10;
+    return undefined;
+  }
+
   async function dispatchTaskImpl(task: TaskDispatch): Promise<boolean> {
     const queue = task.queue ?? 'default';
     const visibilityTimeout = clampVisibilityTimeout(task.visibilityTimeout);
+    const resolvedPriority = resolveTaskPriority(task);
 
     // Each task assigned to exactly one worker — reject duplicates.
     if (registry.isAssigned(task.operationId) || taskQueue.isTracked(task.operationId)) {
@@ -1346,7 +1353,7 @@ export function serve(options: ServeOptions): WeftServer {
       retryPolicy: task.retryPolicy,
       visibilityTimeout,
       ...(task.headers ? { headers: task.headers } : {}),
-      ...(task.priority !== undefined ? { priority: task.priority } : {}),
+      ...(resolvedPriority !== undefined ? { priority: resolvedPriority } : {}),
     });
   }
 
