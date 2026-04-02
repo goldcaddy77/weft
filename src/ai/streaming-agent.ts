@@ -13,7 +13,13 @@ import { TokenEvent } from '../core/events.ts';
 import type { AgentOptions, AgentResult } from './agent.ts';
 import { executeAgentLoop } from './agent.ts';
 import type { LLMProvider } from './providers/interface.ts';
-import type { ChatResponse, Message } from './providers/types.ts';
+import type {
+  ChatResponse,
+  Message,
+  StreamChunk,
+  TokenUsage,
+  ToolCall,
+} from './providers/types.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,6 +47,99 @@ export type StreamFrame = { type: 'replay'; content: string } | { type: 'token';
 /** Shared encoder instance — avoids allocation per token in the hot path. */
 const textEncoder = new TextEncoder();
 
+type PendingStreamingToolCall = {
+  id: string;
+  name: string;
+  input: string;
+};
+
+type StreamingChatState = {
+  content: string;
+  usage: TokenUsage;
+  toolCalls: ToolCall[];
+  pendingToolCalls: Map<string, PendingStreamingToolCall>;
+};
+
+function createStreamingChatState(): StreamingChatState {
+  return {
+    content: '',
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    toolCalls: [],
+    pendingToolCalls: new Map<string, PendingStreamingToolCall>(),
+  };
+}
+
+function appendToolCallInput(pendingToolCall: PendingStreamingToolCall, input: unknown): void {
+  if (input === undefined) {
+    return;
+  }
+
+  pendingToolCall.input += typeof input === 'string' ? input : JSON.stringify(input);
+}
+
+function finalizePendingToolCall(toolCallId: string, state: StreamingChatState): void {
+  const pendingToolCall = state.pendingToolCalls.get(toolCallId);
+  if (!pendingToolCall) {
+    return;
+  }
+
+  let parsedInput: unknown;
+  try {
+    parsedInput = JSON.parse(pendingToolCall.input);
+  } catch {
+    parsedInput = pendingToolCall.input || {};
+  }
+
+  state.toolCalls.push({
+    id: pendingToolCall.id,
+    name: pendingToolCall.name,
+    input: parsedInput,
+  });
+  state.pendingToolCalls.delete(toolCallId);
+}
+
+function handleStreamingChunk(
+  chunk: StreamChunk,
+  state: StreamingChatState,
+  onToken: (token: string) => void,
+): void {
+  switch (chunk.type) {
+    case 'token':
+      if (chunk.token !== undefined) {
+        state.content += chunk.token;
+        onToken(chunk.token);
+      }
+      return;
+    case 'tool_call_start':
+      if (chunk.toolCall?.id) {
+        state.pendingToolCalls.set(chunk.toolCall.id, {
+          id: chunk.toolCall.id,
+          name: chunk.toolCall.name ?? '',
+          input: '',
+        });
+      }
+      return;
+    case 'tool_call_delta':
+      if (chunk.toolCall?.id) {
+        const pendingToolCall = state.pendingToolCalls.get(chunk.toolCall.id);
+        if (pendingToolCall) {
+          appendToolCallInput(pendingToolCall, chunk.toolCall.input);
+        }
+      }
+      return;
+    case 'tool_call_end':
+      if (chunk.toolCall?.id) {
+        finalizePendingToolCall(chunk.toolCall.id, state);
+      }
+      return;
+    case 'done':
+      if (chunk.usage) {
+        state.usage = chunk.usage;
+      }
+      return;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Streaming wrapper for LLM provider
 // ---------------------------------------------------------------------------
@@ -62,80 +161,24 @@ export function createStreamingProvider(
     ): Promise<ChatResponse> {
       const stream = await provider.stream(messages, options);
       const reader = stream.getReader();
-      let content = '';
-      let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-      const toolCalls: import('./providers/types.ts').ToolCall[] = [];
-      const pendingToolCalls = new Map<string, { id: string; name: string; input: string }>();
+      const state = createStreamingChatState();
 
       try {
         while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          switch (value.type) {
-            case 'token':
-              if (value.token !== undefined) {
-                content += value.token;
-                onToken(value.token);
-              }
-              break;
-            case 'tool_call_start':
-              if (value.toolCall?.id) {
-                pendingToolCalls.set(value.toolCall.id, {
-                  id: value.toolCall.id,
-                  name: value.toolCall.name ?? '',
-                  input: '',
-                });
-              }
-              break;
-            case 'tool_call_delta':
-              if (value.toolCall?.id) {
-                const pending = pendingToolCalls.get(value.toolCall.id);
-                if (pending && value.toolCall.input !== undefined) {
-                  // Tool call deltas carry input as string fragments
-                  pending.input +=
-                    typeof value.toolCall.input === 'string'
-                      ? value.toolCall.input
-                      : JSON.stringify(value.toolCall.input);
-                }
-              }
-              break;
-            case 'tool_call_end':
-              if (value.toolCall?.id) {
-                const pending = pendingToolCalls.get(value.toolCall.id);
-                if (pending) {
-                  let parsedInput: unknown;
-                  try {
-                    parsedInput = JSON.parse(pending.input);
-                  } catch {
-                    parsedInput = pending.input || {};
-                  }
-                  toolCalls.push({
-                    id: pending.id,
-                    name: pending.name,
-                    input: parsedInput,
-                  });
-                  pendingToolCalls.delete(value.toolCall.id);
-                }
-              }
-              break;
-            case 'done':
-              if (value.usage) {
-                usage = value.usage;
-              }
-              break;
-          }
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          handleStreamingChunk(chunk.value, state, onToken);
         }
       } finally {
         reader.cancel().catch(() => {});
       }
 
       return {
-        content,
-        toolCalls,
-        usage,
+        content: state.content,
+        toolCalls: state.toolCalls,
+        usage: state.usage,
         model: options.model,
-        stopReason: toolCalls.length > 0 ? 'tool_use' : 'end_turn',
+        stopReason: state.toolCalls.length > 0 ? 'tool_use' : 'end_turn',
       };
     },
 
