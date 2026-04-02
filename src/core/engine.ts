@@ -827,6 +827,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`Workflow with id "${workflowId}" already exists`);
     }
     this.#pendingStarts.add(workflowId);
+    let startSucceeded = false;
 
     try {
       const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
@@ -870,9 +871,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       const handle = this.#createWorkflowHandle(workflowId);
       this.#startWorkflowExecution(workflowId, type, input, checkpoint, state.executionDeadline);
+      startSucceeded = true;
       return handle;
     } finally {
       this.#pendingStarts.delete(workflowId);
+      if (!startSucceeded && registration.isAgent) {
+        this.#agentWorkflowIds.delete(workflowId);
+      }
     }
   }
 
