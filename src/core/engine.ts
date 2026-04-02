@@ -2090,10 +2090,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #processOperation(workflowId: string, operation: ContextOperationRequest): Promise<void> {
-    const handler = this.#operationHandlers[operation.type] as (
-      workflowId: string,
-      operation: ContextOperationRequest,
-    ) => Promise<void>;
+    const handler = this.#operationHandlers[operation.type] as
+      | ((workflowId: string, operation: ContextOperationRequest) => Promise<void>)
+      | undefined;
+
+    if (!handler) {
+      throw new Error(`Unknown operation type: ${String(operation.type)}`);
+    }
+
     return handler(workflowId, operation);
   }
 
