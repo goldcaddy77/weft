@@ -58,6 +58,10 @@ export class HttpSseTransport implements MCPTransport {
     const { promise, resolve, reject } = Promise.withResolvers<MCPResponse>();
     this.#pending.set(id, { promise, resolve, reject });
 
+    // Suppress unhandled rejection — the promise may be rejected by the abort
+    // handler while we're awaiting the fetch, but we handle the error in catch.
+    promise.catch(() => {});
+
     // Timeout controller aborts both the POST fetch and the pending SSE response
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(() => timeoutController.abort(), this.#timeout);
@@ -67,7 +71,9 @@ export class HttpSseTransport implements MCPTransport {
       ? AbortSignal.any([signal, timeoutController.signal])
       : timeoutController.signal;
 
-    // When either signal fires, reject the pending SSE response entry
+    // When either signal fires, reject the pending SSE response entry.
+    // This ensures `await promise` below doesn't hang when the POST succeeds
+    // but the SSE response never arrives.
     const onAbort = () => {
       const pending = this.#pending.get(id);
       if (pending) {
@@ -104,8 +110,7 @@ export class HttpSseTransport implements MCPTransport {
       }
 
       // Wait for the response to arrive via SSE
-      const result = await promise;
-      return result;
+      return await promise;
     } catch (error) {
       this.#pending.delete(id);
       throw error;

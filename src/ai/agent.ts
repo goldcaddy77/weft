@@ -176,6 +176,21 @@ function estimateConversationSizeBytes(conversation: Message[]): number {
 function createTransportForSource(source: MCPToolSource): import('./mcp/transport').MCPTransport {
   const kind = inferTransportKind(source.mcp, source.transport);
 
+  // Stdio transport communicates via stdin/stdout — HTTP auth headers don't apply
+  if (kind === 'stdio') {
+    if (source.auth && source.auth.type !== 'none') {
+      console.warn(
+        `[MCP] Auth config ignored for stdio transport: ${source.mcp}. Stdio uses process-level credentials, not HTTP headers.`,
+      );
+    }
+    const target = parseStdioUrl(source.mcp);
+    return new StdioTransport({
+      command: target.command,
+      args: target.args,
+      timeout: source.timeout,
+    });
+  }
+
   // Build header source — OAuth2 uses an async factory so tokens refresh automatically
   let headers: import('./mcp/transport-http').HeaderSource = {};
   if (source.auth) {
@@ -191,14 +206,6 @@ function createTransportForSource(source: MCPToolSource): import('./mcp/transpor
   }
 
   switch (kind) {
-    case 'stdio': {
-      const target = parseStdioUrl(source.mcp);
-      return new StdioTransport({
-        command: target.command,
-        args: target.args,
-        timeout: source.timeout,
-      });
-    }
     case 'sse':
       return new HttpSseTransport({
         serverUrl: source.mcp,
