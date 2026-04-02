@@ -367,7 +367,7 @@ const result = await handle2.result();
 
 ### 7. `continueAsNew` for Long-Running Workflows
 
-**The Temporal problem.** Temporal has a ~50K event history limit per workflow execution. Long-running workflows — subscription loops, monitoring agents, order lifecycle management — must periodically call `continueAsNew()` to reset their history. This requires manually serializing all state into `continueAsNew` arguments, re-registering all signal handlers in the new execution, and reconstructing all local variables. Getting this wrong causes data loss.
+**The Temporal problem.** Temporal has a ~50K event history limit per workflow execution. Long-running workflows — subscription loops, monitoring agents, order lifecycle management — must periodically call `continueAsNew()` to reset their history. This requires manually serializing all state into `continueAsNew` arguments, re-registering all signal handlers in the new execution, and reconstructing all local variables. Getting this wrong causes data loss. Temporal's 2025 "Upgrade on Continue-as-New" feature (explicitly motivated by AI agent use cases where agents "sleep for weeks between interactions") helps with versioning during continuation, but the fundamental mechanism—manual state serialization at artificial boundaries—remains a sharp edge.
 
 **The Weft answer.** Checkpoints are fixed-size snapshots of the current state, not a growing event log. A workflow that has executed 1 million activities has the same checkpoint size as one that has executed 10. There is no `continueAsNew`, no history limit, no manual state serialization. A workflow can run for years without any special handling. (See: [Checkpoint, Don't Replay](#1-checkpoint-dont-replay).)
 
@@ -495,7 +495,7 @@ const results =
 
 ### 9. No AI/Agent-Native Primitives
 
-**The Temporal problem.** Teams building AI agent orchestration on Temporal must model agent loops as activities, manually handle token streaming, build their own cost tracking, and figure out human-in-the-loop patterns from scratch. Temporal's primitives were designed for microservice RPC, not multi-turn LLM interactions.
+**The Temporal problem.** Teams building AI agent orchestration on Temporal must model agent loops as activities, manually handle token streaming, build their own cost tracking, and figure out human-in-the-loop patterns from scratch. Temporal's primitives were designed for microservice RPC, not multi-turn LLM interactions. The Temporal community calls this the "Lord of the Loop" problem: when integrating third-party agent frameworks (OpenAI Agents SDK, PydanticAI, LangGraph), who controls the execution loop? Temporal or the framework? A community member's extensive analysis argues that current integrations force agents to be "extremely narrow in scope—with only a few tools available." Community members have explicitly requested an "Agent Builder layer over Temporal," and multiple forum threads ask for higher-level orchestration primitives: conversation history management, guardrail hooks, agent task queues. Temporal's response: "We are examining higher level primitives...no roadmap or announcements to share about that yet."
 
 **The Weft answer.** `ctx.agent()` as a first-class primitive with durable tool execution, token streaming, budget enforcement, and human-in-the-loop built in. (See: [AI-First Primitives](#12-ai-first-primitives).)
 
@@ -583,7 +583,7 @@ On cache hit, the tool is not re-executed and no checkpoint boundary is created.
 
 ### 10. Payload Size Sensitivity
 
-**The Temporal problem.** The docs warn extensively about keeping workflow inputs, outputs, and activity results small because everything is serialized into the event history. Large payloads degrade replay performance and bloat storage. This is a tax on the developer experience — you have to constantly think about data size.
+**The Temporal problem.** The docs warn extensively about keeping workflow inputs, outputs, and activity results small because everything is serialized into the event history. Large payloads degrade replay performance and bloat storage. This is a tax on the developer experience — you have to constantly think about data size. For AI workloads, this tax is acute: a single GPT-4 response with tool calls can be 10–50KB, and multi-turn conversations with function calling reach megabytes quickly. Individual payloads are capped at 2MB with a 4MB gRPC message limit. Every AI team on Temporal builds the same claim-check pattern—externalize large payloads to S3, pass references through the history. The official `temporal-ai-agent` demo warns explicitly: "In a prod setting, I would need to ensure that payload data is stored separately."
 
 **The Weft answer.** Checkpoints store only the current state — the values of local variables at the pause point. Activity inputs are not stored in the checkpoint (they are derived from the workflow code). Previous activity results are only stored if they are still live in a local variable. A workflow that processed 1,000 large API responses but only keeps the final summary in a local variable has a checkpoint containing only that summary. (See: [Checkpoint, Don't Replay](#1-checkpoint-dont-replay).)
 
@@ -650,6 +650,100 @@ const engine = new Engine({
 ```
 
 The default uses MessagePack with `structuredClone` semantics. Custom serializers plug in at the same boundary. The engine validates the serializer at startup by round-tripping a test value.
+
+---
+
+## AI Workloads: Three Structural Mismatches Temporal Cannot Fix
+
+The ten design failures above are architectural consequences of replay-based execution. They affect _all_ Temporal workloads. But AI/LLM workloads hit three additional structural mismatches that make the friction acute enough to drive teams toward workaround infrastructure or alternative platforms entirely. These are not bugs Temporal will patch—they are consequences of design decisions that predate the agent era.
+
+The pain points below are sourced from Temporal's own community forums, GitHub issues, and webinar Q&As. They represent what production teams building AI products on Temporal are hitting _right now_.
+
+### 1. Event Sourcing Assumes Small, Discrete State Transitions—LLM Interactions Produce Large, Continuous Data Flows
+
+Temporal's event history records every activity result. A single GPT-4 response with tool calls can be 10–50KB. Multi-turn conversations with function calling reach megabytes. This creates compounding pressure against the 51,200-event / 50MB execution limits, degrades replay performance proportionally, and forces aggressive `continueAsNew` policies. Individual payloads are capped at 2MB with a 4MB gRPC message limit.
+
+The streaming gap is worse. Token-by-token delivery is the primary output mode for LLM applications—users cannot wait 30–60 seconds for a complete response. Every team building AI on Temporal constructs the same workaround: a Redis pub/sub or SSE sidecar that streams tokens from activities to frontends _outside_ Temporal's durability model. A Temporal engineer confirmed in December 2025 that native streaming plans exist but remain in early design, with activity-to-workflow streaming described as "a longer term project." Scale AI confirmed using Redis pub/sub as their production workaround.
+
+**How Weft eliminates this.** Checkpoints store only the current state—not the history of every activity result. A workflow that processed 100 large LLM responses but only keeps the current conversation in a local variable has a checkpoint containing only that conversation. No history bloat, no payload caps, no `continueAsNew`. For streaming, `ctx.agent()` returns a `ReadableStream<string>` that bridges to `EventTarget`, WebSocket observers, and SSE endpoints natively. No Redis sidecar, no infrastructure outside the durability model. (See: [First-Class Streaming](#agent-native-engine-first-class-streaming), [ctx.offload()](#5-performance-issues-out-of-the-box), [Payload Compression](#10-payload-size-sensitivity).)
+
+### 2. The Activity Boundary Is Too Coarse for Agent Loop Durability
+
+This is the most architecturally significant friction. When teams integrate agent frameworks (OpenAI Agents SDK, PydanticAI, LangGraph) with Temporal, they face a fundamental question: _who controls the agent's execution loop?_
+
+Today, the agent framework runs inside a Temporal activity. Temporal cannot provide durability, signals, child workflows, or timers within the agent's tool-calling cycle. If the agent makes 10 tool calls inside a single activity, Temporal sees one opaque operation—it can retry the whole thing, but cannot checkpoint between tool calls 5 and 6.
+
+The alternative—decomposing the agent loop into individual Temporal activities—preserves durability at the right granularity but forces teams to abandon the framework and reimplement the loop in workflow code. A community member authored an extensive analysis of this dilemma ("The Lord of the Loop"), arguing that current integrations force agents to be "extremely narrow in scope—with only a few tools available." Temporal's response was candid: "You would need to find a way of breaking LangGraph up into serializable payloads...Until then, executing your LangGraph agents as one Temporal activity will work."
+
+**How Weft eliminates this.** There is no dilemma because Weft's generator model makes each tool call a `yield*` boundary—independently checkpointed, individually retryable, observable at the right granularity. The agent loop _is_ the workflow. `defineAgent()` provides the durable ReAct loop as a first-class primitive: each LLM turn is a checkpoint, each tool call is a checkpoint, budget enforcement fires at turn boundaries, and token streaming flows through standard `ReadableStream` and `EventTarget`. No framework wrapping, no opaque activities, no forced choice between durability and agent ecosystem compatibility. (See: [Agent-Native Engine](#12-agent-native-engine), [Dynamic Execution Shape](#agent-native-engine-dynamic-execution-shape).)
+
+### 3. The Python Sandbox Conflicts with Every Major AI/ML Library
+
+Temporal's Python SDK sandbox—designed to enforce determinism via import isolation—conflicts with virtually every major AI/ML library. PyTorch, httpx, Pydantic V2, cryptography, debugpy, Loguru, and Protobuf all have documented sandbox conflicts. A GitHub issue requesting a "make option for all passthrough" is upvoted by an OpenAI employee. The practical result is that most AI teams either maintain extensive custom passthrough lists or disable the sandbox entirely with `UnsandboxedWorkflowRunner()`.
+
+Nearly every AI/ML Python library depends on Pydantic V2, and the sandbox's re-importing causes models to be created with incorrect field types. An official Pydantic contrib module has been requested but not yet shipped.
+
+**How Weft sidesteps this entirely.** Weft is TypeScript-native. There is no Python sandbox, no import isolation, no passthrough lists. The isolation that Temporal achieves through Webpack + sandbox, Weft achieves through Web Workers—OS-level process boundaries that don't restrict the language. You do not need to hobble the runtime to get safety. (See: [Web Worker Execution Model](#2-web-worker-execution-model), [TypeScript SDK-Specific Pain](#6-typescript-sdk-specific-pain-webpack-bundling-and-sandbox).)
+
+---
+
+## Competitive Landscape
+
+Three durable execution platforms explicitly target Temporal's AI workload gaps. Teams evaluating Weft will encounter all of them. Here is how they compare architecturally—not as feature checklists, but as design trade-offs.
+
+### Inngest
+
+Inngest has the most complete AI-specific feature set among Temporal alternatives. `step.ai.infer()` provides native AI inference as a durable step with automatic token counting. `step.ai.wrap()` wraps any AI SDK with observability. `useAgent` provides a React hook for parts-based streaming from durable workflows to frontends via their Realtime feature. AgentKit provides first-class agent/network/router abstractions. Their observability dashboard offers SQL-queryable token usage and cost analysis.
+
+**Where Inngest leads:** Serverless suspension during LLM inference waits. When `step.ai.infer()` calls an LLM API, the function doesn't run (or charge) while waiting for the response. Weft workers must remain running during all LLM wait times—this is a genuine capability gap.
+
+**Where Weft leads:** Durability model. Inngest uses an event-driven step function model, not checkpoint-based recovery. Weft's O(1) checkpoint recovery, constant-size state regardless of history length, and no event/history limits provide stronger durability guarantees for long-running agent workflows. Weft's generator-based agent loop provides finer-grained checkpointing than Inngest's step-level boundaries. Weft also runs as a self-contained library or single binary with embedded storage—no cloud dependency required.
+
+### Restate
+
+Restate competes on architecture and latency. Virtual Objects provide session-scoped stateful entities—a natural fit for multi-turn AI conversations where each session maintains state. Their durable AI loops approach demonstrates wrapping existing AI SDKs (Vercel AI SDK, OpenAI Agent SDK, Google ADK, Pydantic AI) via simple middleware. Single-binary, zero-dependency deployment targets Temporal's infrastructure complexity.
+
+**Where Restate leads:** Virtual Objects provide built-in session affinity with co-located state—no sticky routing configuration needed. User code suspension during async waits (similar to Inngest) allows processes to be shut down during LLM calls.
+
+**Where Weft leads:** Agent-native primitives. Restate provides durable execution primitives; Weft provides agent-level abstractions (budget enforcement, context window management, model routing, human-in-the-loop, multi-agent coordination) built into the core. Restate requires building these from scratch. Weft's `SharedState` with optimistic concurrency provides similar concurrent state access to Virtual Objects but within the checkpoint model.
+
+### Hatchet
+
+Hatchet positions as simpler Temporal with AI-first design. Native result streaming, FIFO/LIFO/Round Robin/Priority queue policies for multi-tenant fairness, built-in human-in-the-loop eventing, and Postgres-only self-hosting.
+
+**Where Hatchet leads:** Queue scheduling policies (priority, FIFO, round-robin) are more sophisticated than Weft's current least-loaded routing.
+
+**Where Weft leads:** Weft exceeds Hatchet on streaming (multiplexed ReadableStream with backpressure vs. result streaming), storage flexibility (SQLite, LMDB, Turso, IndexedDB vs. Postgres-only), agent primitives (budgets, model routing, context strategies, MCP integration), and deployment flexibility (library mode, single binary, browser via Service Worker).
+
+### Summary
+
+| Capability                | Temporal           | Inngest            | Restate            | Hatchet           | Weft                     |
+| ------------------------- | ------------------ | ------------------ | ------------------ | ----------------- | ------------------------ |
+| Durability model          | Event replay       | Step functions     | Journal replay     | Event-driven      | Checkpoint               |
+| Recovery cost             | O(n) history       | Step-level         | O(n) journal       | Step-level        | O(1) checkpoint          |
+| Native streaming          | No (Redis sidecar) | Realtime + hooks   | No                 | Result streaming  | ReadableStream           |
+| Agent loop durability     | Activity-level     | Step-level         | Context call-level | Step-level        | Yield-level              |
+| AI observability          | External only      | Built-in dashboard | External only      | Basic             | Events + OTel            |
+| Budget enforcement        | DIY                | Token counting     | DIY                | DIY               | Per-agent + org          |
+| Human-in-the-loop         | DIY                | DIY                | DIY                | Built-in eventing | Built-in protocol        |
+| Context window management | DIY                | DIY                | DIY                | DIY               | Pluggable strategies     |
+| Multi-agent coordination  | DIY                | AgentKit           | DIY                | DIY               | Handoff/Debate/Supervise |
+| Model routing             | DIY                | DIY                | DIY                | DIY               | Fallback/Cost-tier/A-B   |
+| Serverless suspension     | No                 | Yes                | Yes                | No                | No                       |
+| Self-hosted single binary | No                 | No                 | Yes                | No (Postgres)     | Yes (SQLite)             |
+| Browser runtime           | No                 | No                 | No                 | No                | Yes (Service Worker)     |
+
+---
+
+## Honest Gaps
+
+Weft addresses the majority of Temporal's AI workload pain points through architectural choices (checkpoint vs. replay) and built-in agent primitives. Three gaps remain:
+
+**Serverless suspension during LLM inference waits.** When a Weft activity calls an LLM API, the worker process sits idle waiting for the response—often for seconds to minutes. Inngest's `step.ai.infer()` and Restate's journal-based suspension offload inference and suspend the function entirely, meaning the function doesn't run (or charge) while waiting. Weft workers must remain running and consuming resources during all LLM wait times. A future yield-and-resume pattern for remote workers could address this, but it isn't implemented.
+
+**AI observability dashboard.** The _data_ is comprehensive: `AgentTurnStartedEvent`, `AgentTurnCompletedEvent`, `AgentToolCalledEvent`, `AgentBudgetWarningEvent`, per-turn cost waterfall, conversation history queries, OTel spans with agent attributes. What's missing is a dedicated AI dashboard view for prompt/response inspection, token usage visualization over time, cost analytics, and model performance comparison. The built-in dashboard shows workflow-level state; it doesn't yet surface the agent-specific observability data in a purpose-built UI.
+
+**Multi-tenant workflow behavior customization.** Weft provides namespace-scoped budget enforcement (`BudgetPolicyEnforcer` with daily/monthly limits), search attributes for tenant filtering, and task queue names for routing. But per-tenant tool sets, custom validation logic, or conditional workflow steps require application-level parameterization—there's no built-in mechanism for multi-tenant workflow behavior branching beyond what you'd build yourself with configuration objects.
 
 ---
 
