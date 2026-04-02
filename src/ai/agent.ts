@@ -245,42 +245,47 @@ async function initializeTools(
   const registry = new ToolRegistry();
   const clients: MCPClient[] = [];
 
-  for (const entry of tools) {
-    signal?.throwIfAborted();
-    if (isMCPToolSource(entry)) {
-      const transport = createTransportForSource(entry);
-      const client = new MCPClient({ transport, timeout: entry.timeout });
-      clients.push(client);
+  try {
+    for (const entry of tools) {
+      signal?.throwIfAborted();
+      if (isMCPToolSource(entry)) {
+        const transport = createTransportForSource(entry);
+        const client = new MCPClient({ transport, timeout: entry.timeout });
+        clients.push(client);
 
-      // Health check — fail fast if the server is unreachable
-      const healthy = await client.healthCheck();
-      if (!healthy) {
-        for (const c of clients) c[Symbol.dispose]();
-        throw new MCPServerUnavailableError(entry.mcp);
-      }
-
-      // Discover tools
-      const discovered = await client.discoverTools();
-
-      // Pre-index discovered tools by name for O(1) schema lookup
-      const schemaIndex = new Map(discovered.map((t) => [t.name, t]));
-
-      // Register MCP tools with a dispatch function that validates input
-      // and invokes through the client
-      registry.registerMCP(discovered, entry.mcp, async (toolName: string, input: unknown) => {
-        const toolDef = schemaIndex.get(toolName);
-        if (toolDef && Object.keys(toolDef.inputSchema).length > 0) {
-          const validation = validateSchema(input, toolDef.inputSchema);
-          if (!validation.valid) {
-            throw new ToolSchemaValidationError(toolName, validation.errors);
-          }
+        // Health check — fail fast if the server is unreachable
+        const healthy = await client.healthCheck();
+        if (!healthy) {
+          throw new MCPServerUnavailableError(entry.mcp);
         }
 
-        return client.invokeTool(toolName, input, signal);
-      });
-    } else {
-      registry.registerLocal(entry.definition, entry.execute);
+        // Discover tools
+        const discovered = await client.discoverTools();
+
+        // Pre-index discovered tools by name for O(1) schema lookup
+        const schemaIndex = new Map(discovered.map((t) => [t.name, t]));
+
+        // Register MCP tools with a dispatch function that validates input
+        // and invokes through the client
+        registry.registerMCP(discovered, entry.mcp, async (toolName: string, input: unknown) => {
+          const toolDef = schemaIndex.get(toolName);
+          if (toolDef && Object.keys(toolDef.inputSchema).length > 0) {
+            const validation = validateSchema(input, toolDef.inputSchema);
+            if (!validation.valid) {
+              throw new ToolSchemaValidationError(toolName, validation.errors);
+            }
+          }
+
+          return client.invokeTool(toolName, input, signal);
+        });
+      } else {
+        registry.registerLocal(entry.definition, entry.execute);
+      }
     }
+  } catch (error) {
+    // Dispose all clients on any initialization failure
+    for (const client of clients) client[Symbol.dispose]();
+    throw error;
   }
 
   // Validate for name conflicts before the agent loop starts

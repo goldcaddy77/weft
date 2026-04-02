@@ -70,7 +70,7 @@ export function parseStdioUrl(url: string): StdioTarget {
   }
 
   const parsed = new URL(url);
-  const command = parsed.pathname;
+  const command = decodeURIComponent(parsed.pathname);
 
   if (!command || command === '/') {
     throw new MCPTransportError(`Missing command path in stdio URL: ${url}`);

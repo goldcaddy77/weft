@@ -61,14 +61,19 @@ export class StdioTransport implements MCPTransport {
     const { promise, resolve, reject } = Promise.withResolvers<MCPResponse>();
     this.#pending.set(id, { promise, resolve, reject });
 
-    // Timeout handling
-    const timeoutId = setTimeout(() => {
-      const pending = this.#pending.get(id);
-      if (pending) {
-        this.#pending.delete(id);
-        pending.reject(new MCPTransportError(`Stdio request timed out after ${this.#timeout}ms`));
-      }
-    }, this.#timeout);
+    // Only apply transport-level timeout when no external signal is provided.
+    // When an external signal exists (e.g., from MCPClient), trust it to handle
+    // timeouts — adding a second timer creates a race that produces wrong error types.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (!signal) {
+      timer = setTimeout(() => {
+        const pending = this.#pending.get(id);
+        if (pending) {
+          this.#pending.delete(id);
+          pending.reject(new MCPTransportError(`Stdio request timed out after ${this.#timeout}ms`));
+        }
+      }, this.#timeout);
+    }
 
     // External abort signal handling
     const abortHandler = signal
@@ -76,7 +81,6 @@ export class StdioTransport implements MCPTransport {
           const pending = this.#pending.get(id);
           if (pending) {
             this.#pending.delete(id);
-            clearTimeout(timeoutId);
             pending.reject(new DOMException('The operation was aborted.', 'AbortError'));
           }
         }
@@ -90,12 +94,13 @@ export class StdioTransport implements MCPTransport {
       const stdin = process.stdin as import('bun').FileSink;
       await stdin.write(jsonRpc + '\n');
       const result = await promise;
-      clearTimeout(timeoutId);
       return result;
     } catch (error) {
-      clearTimeout(timeoutId);
+      // Clean up pending entry on any failure (write error, abort, etc.)
+      this.#pending.delete(id);
       throw error;
     } finally {
+      if (timer) clearTimeout(timer);
       if (abortHandler && signal) {
         signal.removeEventListener('abort', abortHandler);
       }

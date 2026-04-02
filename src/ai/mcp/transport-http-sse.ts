@@ -58,20 +58,25 @@ export class HttpSseTransport implements MCPTransport {
     const { promise, resolve, reject } = Promise.withResolvers<MCPResponse>();
     this.#pending.set(id, { promise, resolve, reject });
 
-    // Suppress unhandled rejection — the promise may be rejected by the abort
+    // Suppress unhandled rejection — the promise may be rejected by the timeout/abort
     // handler while we're awaiting the fetch, but we handle the error in catch.
     promise.catch(() => {});
 
-    // Timeout controller aborts both the POST fetch and the pending SSE response
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), this.#timeout);
+    // Only apply transport-level timeout when no external signal is provided.
+    // When an external signal exists (e.g., from MCPClient), trust it to handle
+    // timeouts — adding a second timer creates a race that produces wrong error types.
+    let timeoutController: AbortController | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    // Combine timeout + external signal so both abort the fetch and reject the pending entry
-    const combinedSignal = signal
-      ? AbortSignal.any([signal, timeoutController.signal])
-      : timeoutController.signal;
+    if (!signal) {
+      timeoutController = new AbortController();
+      timeoutId = setTimeout(() => timeoutController!.abort(), this.#timeout);
+    }
 
-    // When either signal fires, reject the pending SSE response entry.
+    // Effective signal: external signal, transport timeout signal, or none
+    const effectiveSignal = signal ?? timeoutController?.signal;
+
+    // When the effective signal fires, reject the pending SSE response entry.
     // This ensures `await promise` below doesn't hang when the POST succeeds
     // but the SSE response never arrives.
     const onAbort = () => {
@@ -85,11 +90,13 @@ export class HttpSseTransport implements MCPTransport {
         }
       }
     };
-    combinedSignal.addEventListener('abort', onAbort, { once: true });
+    if (effectiveSignal) {
+      effectiveSignal.addEventListener('abort', onAbort, { once: true });
+    }
 
     try {
       // Send request via POST — abort signal ensures fetch won't hang
-      const response = await fetch(`${this.#serverUrl}/jsonrpc`, {
+      const fetchInit: RequestInit = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -101,8 +108,10 @@ export class HttpSseTransport implements MCPTransport {
           method: request.method,
           params: request.params,
         }),
-        signal: combinedSignal,
-      });
+      };
+      if (effectiveSignal) fetchInit.signal = effectiveSignal;
+
+      const response = await fetch(`${this.#serverUrl}/jsonrpc`, fetchInit);
 
       if (!response.ok) {
         this.#pending.delete(id);
@@ -115,8 +124,8 @@ export class HttpSseTransport implements MCPTransport {
       this.#pending.delete(id);
       throw error;
     } finally {
-      clearTimeout(timeoutId);
-      combinedSignal.removeEventListener('abort', onAbort);
+      if (timeoutId) clearTimeout(timeoutId);
+      if (effectiveSignal) effectiveSignal.removeEventListener('abort', onAbort);
     }
   }
 
@@ -248,6 +257,9 @@ export class HttpSseTransport implements MCPTransport {
   }
 
   #processBuffer(): void {
+    // Normalize CRLF to LF (SSE spec allows both)
+    this.#sseBuffer = this.#sseBuffer.replaceAll('\r\n', '\n');
+
     // SSE events are separated by double newlines
     let eventEnd: number;
     while ((eventEnd = this.#sseBuffer.indexOf('\n\n')) !== -1) {
