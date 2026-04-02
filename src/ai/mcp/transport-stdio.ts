@@ -192,6 +192,11 @@ export class StdioTransport implements MCPTransport {
           console.warn(`[weft:mcp:stdio:stderr] ${text}`);
         }
       }
+      // Flush any trailing partial UTF-8 sequence from the streaming decoder
+      const remaining = decoder.decode().trimEnd();
+      if (remaining) {
+        console.warn(`[weft:mcp:stdio:stderr] ${remaining}`);
+      }
     } catch {
       // Stream closed — handled by process exit handler
     }
@@ -236,7 +241,7 @@ export class StdioTransport implements MCPTransport {
                 pending.resolve(response);
               }
             }
-          } catch (parseError) {
+          } catch {
             // Log malformed responses to aid debugging — the pending request
             // will still time out, but the operator gets a diagnostic signal.
             const preview = line.length > 200 ? line.slice(0, 200) + '…' : line;

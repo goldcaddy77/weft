@@ -91,7 +91,7 @@ export function createOAuth2TokenManager(config: OAuth2Config): OAuth2TokenManag
       throw new OAuth2TokenError(
         'Token endpoint returned invalid JSON',
         config.tokenEndpoint,
-        undefined,
+        response.status,
         { cause },
       );
     }
