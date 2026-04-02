@@ -183,14 +183,16 @@ describe('StdioTransport', () => {
     const transport = track(new StdioTransport({ command: 'bun', args: [script] }));
     const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
 
-    const response = await transport.send({ method: 'test' });
+    try {
+      const response = await transport.send({ method: 'test' });
 
-    expect(response.result).toBe('ok');
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[weft:mcp:stdio] Ignoring malformed JSON'),
-    );
-
-    warnSpy.mockRestore();
+      expect(response.result).toBe('ok');
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[weft:mcp:stdio] Ignoring malformed JSON'),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('handles double dispose without error', async () => {

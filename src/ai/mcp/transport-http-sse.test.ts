@@ -381,14 +381,16 @@ describe('HttpSseTransport', () => {
       const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
       const transport = track(new HttpSseTransport({ serverUrl: 'https://mcp.example.com' }));
 
-      const response = await transport.send({ method: 'test' });
+      try {
+        const response = await transport.send({ method: 'test' });
 
-      expect(response.result).toBe('ok');
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[weft:mcp:sse] Ignoring malformed JSON'),
-      );
-
-      warnSpy.mockRestore();
+        expect(response.result).toBe('ok');
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('[weft:mcp:sse] Ignoring malformed JSON'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 

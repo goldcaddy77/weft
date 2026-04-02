@@ -54,7 +54,7 @@ describe('Resource leaks', () => {
     const lastSnapshot = heapSnapshots[heapSnapshots.length - 1]!;
     const growth = lastSnapshot - firstSnapshot;
 
-    // 2MB in bytes
+    // Observed growth in steady state is < 500KB; 2MB gives a ~4x safety margin.
     const MAX_GROWTH_BYTES = 2 * 1024 * 1024;
 
     expect(growth).toBeLessThan(MAX_GROWTH_BYTES);

@@ -178,9 +178,9 @@ export class StdioTransport implements MCPTransport {
   }
 
   async #startStderrLoop(proc: ReturnType<typeof Bun.spawn>): Promise<void> {
-    const stderr = proc.stderr as ReadableStream<Uint8Array>;
+    const stderr = proc.stderr;
     if (!stderr) return;
-    const reader = stderr.getReader();
+    const reader = (stderr as ReadableStream<Uint8Array>).getReader();
     const decoder = new TextDecoder();
 
     try {
