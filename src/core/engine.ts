@@ -120,6 +120,8 @@ interface RegistrationEntry {
   version: string;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
+  /** True when this registration originated from an AgentDefinition. */
+  isAgent?: boolean;
 }
 
 /** Options required when registering an AgentDefinition as a workflow. */
@@ -543,6 +545,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #reviewTimerIds: Map<string, string[]>;
   #pendingWebhooks: Set<AbortController>;
   #alertManager: AlertManager | null;
+  /** Tracks workflow IDs that belong to agent-typed workflows for optimization. */
+  #agentWorkflowIds: Set<string>;
+  /** Stores LLM providers for agent-typed registrations, keyed by workflow type name. */
+  #agentProviders: Map<string, import('../ai/providers/interface.ts').LLMProvider>;
   #operationHandlers: OperationHandlerMap = {
     activity: (workflowId, operation) => this.#processActivityOperation(workflowId, operation),
     sleep: (workflowId, operation) => this.#processSleepOperation(workflowId, operation),
@@ -637,6 +643,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }, 60_000);
 
     this.#activityWorkerDispatcher = createActivityWorkerDispatcher(options?.activityExecution);
+    this.#agentWorkflowIds = new Set();
+    this.#agentProviders = new Map();
 
     // Wire up the strategy message handler
     this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
@@ -689,7 +697,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#registrations.set(agentDef.name, {
         handler,
         version: '1',
+        isAgent: true,
       });
+      this.#agentProviders.set(agentDef.name, agentOptions.provider);
       return;
     }
 
@@ -825,6 +835,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
       await this.#scheduleExecutionDeadlineIfNeeded(workflowId, state.executionDeadline);
       this.#runWorkflowStartInterceptor(workflowId, type, input, parentHeaders);
+
+      // Agent optimization: track agent workflows and pre-warm LLM connections.
+      if (registration.isAgent) {
+        this.#agentWorkflowIds.add(workflowId);
+        const provider = this.#agentProviders.get(type);
+        if (provider?.warmup) {
+          provider.warmup().catch(() => {});
+        }
+      }
+
       this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
 
       const handle = this.#createWorkflowHandle(workflowId);
@@ -1545,6 +1565,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#terminateWorkflow(workflowId, 'timed-out');
   }
 
+  /** Returns true if the given workflow ID belongs to an agent-typed workflow. */
+  isAgentWorkflow(workflowId: string): boolean {
+    return this.#agentWorkflowIds.has(workflowId);
+  }
+
+  /** Returns the set of currently tracked agent workflow IDs (for storage layer optimization). */
+  get agentWorkflowIds(): ReadonlySet<string> {
+    return this.#agentWorkflowIds;
+  }
+
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#strategy.cancelWorkflow(workflowId);
 
@@ -1557,6 +1587,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
     this.#cleanupWaiters(workflowId);
     this.#heartbeatDetails.delete(workflowId);
+    this.#agentWorkflowIds.delete(workflowId);
 
     const event =
       status === 'timed-out'
@@ -3267,6 +3298,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);
+    this.#agentWorkflowIds.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
@@ -3301,6 +3333,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);
+    this.#agentWorkflowIds.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
     const event = new WorkflowFailedEvent(workflowId, error);

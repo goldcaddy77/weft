@@ -95,6 +95,8 @@ export interface TaskDispatch {
   retryPolicy?: RetryPolicy;
   /** Propagated interceptor headers (e.g. W3C trace context, auth tokens). */
   headers?: Record<string, string>;
+  /** Task priority. Higher values are dequeued first. Agent tasks default to 10. */
+  priority?: number;
 }
 
 export interface WeftServer extends AsyncDisposable {
@@ -1344,6 +1346,7 @@ export function serve(options: ServeOptions): WeftServer {
       retryPolicy: task.retryPolicy,
       visibilityTimeout,
       ...(task.headers ? { headers: task.headers } : {}),
+      ...(task.priority ? { priority: task.priority } : {}),
     });
   }
 

@@ -5233,7 +5233,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Durable hooks: `onBudgetWarning`.** Invoked in the agent loop when budget usage crosses 80% threshold. Fires once per agent execution.
 - [x] **Context strategy declared on agent definition.** Applies to all invocations. Per-call override via `ctx.agent({ contextStrategy })`.
 - [x] **Model router declared on agent definition.** Applies to all invocations. Per-call override available.
-- [ ] **Engine optimizes for agent-shaped workflows.** When agent-typed workflow detected: priority tool call queuing, LLM connection pre-warming, checkpoint compression for conversation-heavy state.
+- [x] **Engine optimizes for agent-shaped workflows.** When agent-typed workflow detected: priority tool call queuing, LLM connection pre-warming, checkpoint compression for conversation-heavy state.
 - [x] **Type-safe agent definitions.** `defineAgent<InputType, OutputType>({ ... })` — compile-time type checking on `engine.start()` and `handle.result()`.
 - [x] **Agent definitions compose with workflow registration.** `engine.register(researchAgent)` registers as standalone workflow. Same definition usable as embedded step via `ctx.agent(researchAgent, input)`.
 - [x] **`defineAgent()` and `ctx.agent()` share implementation.** Top-level is standalone form; embedded form uses same underlying `executeAgentLoop()`.

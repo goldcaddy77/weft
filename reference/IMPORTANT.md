@@ -4,7 +4,7 @@ Last reviewed: 2026-04-02
 
 ## Not Yet Implemented (Notable Gaps)
 
-- [ ] **Agent-shaped workflow optimizations**: Architecture doc specifies priority tool call queuing, LLM connection pre-warming, and checkpoint compression for agent-typed workflows. None of these optimizations exist in the engine.
+- [x] **Agent-shaped workflow optimizations**: Priority tool call queuing, LLM connection pre-warming, and checkpoint compression for agent-typed workflows implemented in engine.
 - [ ] **Multi-agent fan-out budget enforcement verification**: Budget tracking and `AbortController` wiring exist in `supervise()`, but enforcement during parallel multi-agent execution (via `ctx.all()`) is not fully verified end-to-end. Total cost across parallel branches should count against `ctx.setBudget()`.
 - [ ] **Performance benchmarks not meeting architecture targets**: Benchmark tests exist with relaxed thresholds (e.g., 3K-5K workflows/sec vs. spec'd >50K; 10-16KB/workflow vs. spec'd <=2KB; cold start 200ms vs. spec'd <100ms). Tests pass at relaxed thresholds but the architecture doc's aspirational targets are unverified.
 - [ ] **IndexedDB not covered in multi-backend tests**: `search-attributes-multibackend.test.ts` and `updates-multibackend.test.ts` cover MemoryStorage, BunSQLiteStorage, LMDBStorage, and TursoStorage but not IndexedDB.
