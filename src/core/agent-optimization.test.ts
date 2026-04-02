@@ -3,6 +3,8 @@ import { describe, expect, it } from 'bun:test';
 import { defineAgent } from '../ai/declaration.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
+import { Context } from '../core/context.ts';
+import type { WorkflowContext } from '../core/types.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { TestEngine } from '../testing/test-engine.ts';
@@ -125,8 +127,8 @@ describe('Agent detection infrastructure', () => {
     const engine = new TestEngine();
 
     // Use a workflow that sleeps so we have time to cancel it
-    engine.register('cancel-wf', async function* (ctx) {
-      yield* ctx.sleep('1 hour');
+    engine.register('cancel-wf', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).sleep('1 hour');
       return 'done';
     });
 

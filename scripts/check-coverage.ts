@@ -60,17 +60,14 @@ function parseLcov(content: string): CoverageResult {
 export async function checkCoverage(): Promise<boolean> {
   const lcovPath = 'coverage/lcov.info';
 
-  // Remove stale data so we never read a previous run's report.
-  const lcovFile = Bun.file(lcovPath);
-  if (await lcovFile.exists()) {
-    const { unlink } = await import('node:fs/promises');
-    await unlink(lcovPath);
-  }
+  // Remove the entire coverage directory so we never read a previous run's report.
+  await $`rm -rf coverage`.quiet().nothrow();
 
   // .nothrow() prevents throwing when tests fail — we still want the coverage report.
-  const result = await $`bun test --coverage --coverage-reporter=lcov --coverage-dir=coverage`
-    .quiet()
-    .nothrow();
+  const result =
+    await $`bun test --timeout 15000 --coverage --coverage-reporter=lcov --coverage-dir=coverage`
+      .quiet()
+      .nothrow();
 
   if (result.exitCode !== 0) {
     console.error(`bun test exited with code ${result.exitCode} — some tests may be failing.`);
@@ -149,7 +146,7 @@ async function runCommand(command: string): Promise<void> {
 }
 
 const DEFAULT_COMMAND =
-  'codex exec "Get the test coverage up to 100%." --dangerously-bypass-approvals-and-sandbox --search';
+  'codex exec "Get the test coverage up to 100%." --dangerously-bypass-approvals-and-sandbox';
 const DEFAULT_ITERATIONS = 100;
 
 // CLI entrypoint
