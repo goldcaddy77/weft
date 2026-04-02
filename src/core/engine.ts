@@ -1907,6 +1907,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowHeaders.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
+    this.#agentWorkflowIds.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
   }
