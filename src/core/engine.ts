@@ -3002,7 +3002,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           agentResult.totalCost,
         );
 
-        return agentResult;
+        return agentResult.content;
       }
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);

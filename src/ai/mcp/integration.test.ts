@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 
 import type { LLMProvider } from '../providers/interface';
 import type { ChatResponse } from '../providers/types';
@@ -8,6 +8,7 @@ import { executeAgentLoop } from '../agent';
 import { AgentToolCalledEvent } from '../events';
 import { MCPServerUnavailableError } from './client';
 import { ToolNameConflictError } from './registry';
+import { HttpTransport } from './transport-http';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -317,6 +318,53 @@ describe('MCP integration: conflict detection', () => {
         'Hello',
       ),
     ).rejects.toThrow(ToolNameConflictError);
+  });
+
+  it('disposes MCP clients when registry.validate() throws ToolNameConflictError', async () => {
+    // Regression: registry.validate() was previously called outside the try-catch
+    // block in initializeTools(). A ToolNameConflictError caused MCP clients that
+    // had already been created to leak — their transports were never disposed.
+    const mcpTools = [
+      {
+        name: 'conflicting_tool',
+        description: 'MCP tool whose name collides with a local tool',
+        inputSchema: { type: 'object' },
+      },
+    ];
+
+    setupMockMCPServer('https://mcp.example.com', mcpTools, () => ({}));
+
+    const localTool: AgentTool = {
+      definition: {
+        name: 'conflicting_tool',
+        description: 'Local tool with the same name',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => 'local result',
+    };
+
+    const provider = createMockProvider([createChatResponse('Should not reach')]);
+
+    // Spy on HttpTransport[Symbol.dispose] to verify the transport is torn down
+    // even though the error is thrown after the client was already constructed.
+    const disposeSpy = spyOn(HttpTransport.prototype, Symbol.dispose as unknown as never);
+
+    try {
+      await expect(
+        executeAgentLoop(
+          {
+            model: 'test-model',
+            provider,
+            tools: [{ mcp: 'https://mcp.example.com' }, localTool],
+          },
+          'Use the tool',
+        ),
+      ).rejects.toThrow(ToolNameConflictError);
+
+      expect(disposeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      disposeSpy.mockRestore();
+    }
   });
 });
 

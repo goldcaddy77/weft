@@ -258,7 +258,9 @@ const TOOL_CACHE_SWEEP_THRESHOLD = 100;
 function sweepExpiredCacheEntries(cache: Map<string, CacheEntry>, ttl: number): void {
   const now = Date.now();
 
-  // First pass: remove expired entries
+  // First pass: remove expired entries.
+  // Deleting the current key during Map iteration is safe per the ECMAScript
+  // specification — visited entries are not revisited after deletion.
   for (const [key, entry] of cache) {
     if (now - entry.timestamp >= ttl) {
       cache.delete(key);
