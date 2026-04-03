@@ -236,6 +236,47 @@ interface CacheEntry {
   timestamp: number;
 }
 
+/**
+ * Maximum number of entries the tool cache can hold. When the cache exceeds
+ * this size during an eviction sweep, oldest entries are dropped until the
+ * cache is within budget.
+ */
+const TOOL_CACHE_MAX_ENTRIES = 1000;
+
+/**
+ * Number of entries that triggers a proactive eviction sweep when checking
+ * an individual cache entry's TTL. Below this threshold the per-access
+ * overhead of a full sweep is skipped.
+ */
+const TOOL_CACHE_SWEEP_THRESHOLD = 100;
+
+/**
+ * Remove all expired entries from the cache and enforce a hard size cap.
+ * Called proactively during cache reads once the map exceeds
+ * {@link TOOL_CACHE_SWEEP_THRESHOLD} entries.
+ */
+function sweepExpiredCacheEntries(cache: Map<string, CacheEntry>, ttl: number): void {
+  const now = Date.now();
+
+  // First pass: remove expired entries
+  for (const [key, entry] of cache) {
+    if (now - entry.timestamp >= ttl) {
+      cache.delete(key);
+    }
+  }
+
+  // If still over the hard cap, evict oldest entries first
+  if (cache.size <= TOOL_CACHE_MAX_ENTRIES) {
+    return;
+  }
+
+  const sorted = [...cache.entries()].toSorted((a, b) => a[1].timestamp - b[1].timestamp);
+  const toEvict = sorted.slice(0, cache.size - TOOL_CACHE_MAX_ENTRIES);
+  for (const [key] of toEvict) {
+    cache.delete(key);
+  }
+}
+
 function buildCacheKey(toolName: string, input: unknown): string {
   return `${toolName}:${JSON.stringify(input)}`;
 }
@@ -367,14 +408,16 @@ async function initializeTools(
         registry.registerLocal(entry.definition, entry.execute);
       }
     }
+
+    // Validate for name conflicts before the agent loop starts.
+    // Must stay inside the try block so that a ToolNameConflictError
+    // triggers the catch-block disposal of already-created MCP clients.
+    registry.validate();
   } catch (error) {
     // Dispose all clients on any initialization failure
     for (const client of clients) client[Symbol.dispose]();
     throw error;
   }
-
-  // Validate for name conflicts before the agent loop starts
-  registry.validate();
 
   const dispose = () => {
     for (const client of clients) client[Symbol.dispose]();
@@ -837,6 +880,12 @@ async function resolveToolExecution(
   tool: RegistryTool | undefined,
 ): Promise<ToolExecutionOutcome> {
   const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
+
+  // Proactively evict expired entries when the cache grows large
+  if (runtime.state.toolCache.size >= TOOL_CACHE_SWEEP_THRESHOLD) {
+    sweepExpiredCacheEntries(runtime.state.toolCache, runtime.options.toolCacheTTL);
+  }
+
   const cached = runtime.state.toolCache.get(cacheKey);
   const now = Date.now();
 
