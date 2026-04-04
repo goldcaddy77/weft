@@ -236,6 +236,9 @@ interface CacheEntry {
   timestamp: number;
 }
 
+/** Maximum tool cache entries before triggering proactive eviction of expired items. */
+const TOOL_CACHE_EVICTION_THRESHOLD = 1000;
+
 function buildCacheKey(toolName: string, input: unknown): string {
   return `${toolName}:${JSON.stringify(input)}`;
 }
@@ -367,14 +370,14 @@ async function initializeTools(
         registry.registerLocal(entry.definition, entry.execute);
       }
     }
+
+    // Validate for name conflicts before the agent loop starts
+    registry.validate();
   } catch (error) {
     // Dispose all clients on any initialization failure
     for (const client of clients) client[Symbol.dispose]();
     throw error;
   }
-
-  // Validate for name conflicts before the agent loop starts
-  registry.validate();
 
   const dispose = () => {
     for (const client of clients) client[Symbol.dispose]();
@@ -852,6 +855,16 @@ async function resolveToolExecution(
       const rawOutput = await tool.execute(toolCall.input);
       output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
       runtime.state.toolCache.set(cacheKey, { output, timestamp: Date.now() });
+
+      // Proactively evict expired entries when the cache grows large
+      if (runtime.state.toolCache.size > TOOL_CACHE_EVICTION_THRESHOLD) {
+        const evictionNow = Date.now();
+        for (const [key, entry] of runtime.state.toolCache) {
+          if (evictionNow - entry.timestamp >= runtime.options.toolCacheTTL) {
+            runtime.state.toolCache.delete(key);
+          }
+        }
+      }
     } catch (error: unknown) {
       output = JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
       success = false;

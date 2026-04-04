@@ -12,7 +12,6 @@
 
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
-import type { LLMProvider } from '../ai/providers/interface.ts';
 import {
   ReviewCoordinator,
   ReviewTimeoutError,
@@ -20,6 +19,7 @@ import {
   type HumanReviewResult,
   type ReviewRequest,
 } from '../ai/human-review.ts';
+import type { LLMProvider } from '../ai/providers/interface.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
@@ -1616,6 +1616,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+    await this.#cleanupReviews(workflowId);
+    this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);
     this.#heartbeatDetails.delete(workflowId);
     this.#agentWorkflowIds.delete(workflowId);
@@ -2380,13 +2382,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'race' }>,
   ): Promise<void> {
-    return this.#runOperationWithResult(workflowId, operation, async () =>
-      Promise.race(
-        operation.operations.map((subOperation) =>
-          this.#executeSubOperation(workflowId, subOperation),
-        ),
-      ),
-    );
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      const controller = new AbortController();
+      try {
+        return await Promise.race(
+          operation.operations.map((subOperation) =>
+            this.#executeSubOperation(workflowId, subOperation, controller.signal),
+          ),
+        );
+      } finally {
+        controller.abort();
+      }
+    });
   }
 
   async #processMemoOperation(
@@ -2969,25 +2976,40 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #executeSubOperation(
-    _workflowId: string,
+    workflowId: string,
     operation: ContextOperationRequest,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     switch (operation.type) {
       case 'activity':
+        signal?.throwIfAborted();
         return callActivityFunction(operation.fn, operation.args);
       case 'memo':
+        signal?.throwIfAborted();
         return callMemoFunction(operation.fn);
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
         const { BudgetTracker } = await import('../ai/budget.ts');
-        const { prompt, budget, ...rest } = operation.options;
+        const { prompt, budget, budgetNamespace, ...rest } = operation.options;
+
+        const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
+        await this.#checkAgentBudgetPolicy(workflowId, budget, resolvedBudgetNamespace);
+
         const agentResult = await executeAgentLoop(
           {
             ...rest,
             budget: budget ? new BudgetTracker(budget) : undefined,
+            signal,
           },
           prompt,
         );
+
+        await this.#recordAgentBudgetCost(
+          operation.operationId,
+          resolvedBudgetNamespace,
+          agentResult.totalCost,
+        );
+
         return agentResult;
       }
       default:
