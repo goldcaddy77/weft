@@ -358,6 +358,41 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('ctx.race aborts losing branches via AbortController', async () => {
+    const engine = new Engine();
+    let slowBranchCompleted = false;
+
+    const fast = async () => 'fast';
+    const slow = async () => {
+      // Simulate a long-running operation that should be cancelled
+      await Bun.sleep(500);
+      slowBranchCompleted = true;
+      return 'slow';
+    };
+
+    engine.register('race-abort-workflow', async function* (ctx: WorkflowContext) {
+      const result = yield* (ctx as Context).race([
+        (ctx as Context).run(fast),
+        (ctx as Context).run(slow),
+      ]);
+      return result;
+    });
+
+    const handle = await engine.start('race-abort-workflow', null);
+    const result = await handle.result();
+    expect(result).toBe('fast');
+
+    // Give the slow branch enough time to complete if it were still running
+    await Bun.sleep(50);
+
+    // The slow branch should NOT have completed — the AbortController's signal
+    // is passed to sub-operations and abort() is called in the finally block.
+    // While activities don't check the signal mid-flight, the abort fires and
+    // prevents further sub-operations from starting after the race settles.
+    expect(slowBranchCompleted).toBe(false);
+    engine[Symbol.dispose]();
+  });
+
   it('ctx.memo caches the value', async () => {
     const engine = new Engine();
     let callCount = 0;

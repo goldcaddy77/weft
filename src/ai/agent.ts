@@ -854,16 +854,9 @@ async function resolveToolExecution(
     try {
       const rawOutput = await tool.execute(toolCall.input);
       output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
-      runtime.state.toolCache.set(cacheKey, { output, timestamp: Date.now() });
-
-      // Proactively evict expired entries when the cache grows large
-      if (runtime.state.toolCache.size > TOOL_CACHE_EVICTION_THRESHOLD) {
-        const evictionNow = Date.now();
-        for (const [key, entry] of runtime.state.toolCache) {
-          if (evictionNow - entry.timestamp >= runtime.options.toolCacheTTL) {
-            runtime.state.toolCache.delete(key);
-          }
-        }
+      // Only cache if under the cap — prevents unbounded growth without an O(n) scan
+      if (runtime.state.toolCache.size < TOOL_CACHE_EVICTION_THRESHOLD) {
+        runtime.state.toolCache.set(cacheKey, { output, timestamp: Date.now() });
       }
     } catch (error: unknown) {
       output = JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
