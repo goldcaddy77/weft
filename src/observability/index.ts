@@ -663,7 +663,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     const cutoff = Date.now() - maxAgeMs;
     let evicted = 0;
     for (const [workflowId, entry] of workflowSpans) {
-      if (entry.createdAt < cutoff) {
+      if (entry.createdAt <= cutoff) {
         entry.span.setStatus({ code: SpanStatusCode.ERROR, message: 'span evicted (stale)' });
         entry.span.end();
         workflowSpans.delete(workflowId);

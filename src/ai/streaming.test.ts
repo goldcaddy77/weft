@@ -278,4 +278,58 @@ describe('ReconnectionBuffer', () => {
     turns.push('delta');
     expect(buffer.getTurns()).toEqual(['alpha', 'beta', 'gamma']);
   });
+
+  it('evicts oldest turns when byte budget is exceeded', () => {
+    // estimateTurnBytes uses text.length * 2, so a 100-char string = 200 bytes
+    const buffer = new ReconnectionBuffer({ maxBytes: 400 });
+
+    buffer.addTurn('A'.repeat(100)); // 200 bytes
+    buffer.addTurn('B'.repeat(100)); // 200 bytes — total 400, at limit
+    buffer.addTurn('C'.repeat(100)); // 200 bytes — would be 600, must evict oldest
+
+    expect(buffer.turnCount).toBe(2);
+    expect(buffer.getTurns()).toEqual(['B'.repeat(100), 'C'.repeat(100)]);
+  });
+
+  it('tracks currentBytes correctly after eviction', () => {
+    const buffer = new ReconnectionBuffer({ maxBytes: 400 });
+    buffer.addTurn('A'.repeat(100)); // 200 bytes
+    buffer.addTurn('B'.repeat(100)); // 200 bytes
+    expect(buffer.currentBytes).toBe(400);
+
+    buffer.addTurn('C'.repeat(100)); // forces eviction of 'A'
+    expect(buffer.currentBytes).toBe(400); // 'B' + 'C'
+  });
+
+  it('keeps a single oversized turn rather than leaving buffer empty', () => {
+    const buffer = new ReconnectionBuffer({ maxBytes: 10 });
+    buffer.addTurn('X'.repeat(100)); // 200 bytes, exceeds budget alone
+
+    // The while loop stops at length > 1, so the lone entry is kept
+    expect(buffer.turnCount).toBe(1);
+    expect(buffer.currentBytes).toBe(200);
+  });
+
+  it('resets currentBytes on clear', () => {
+    const buffer = new ReconnectionBuffer({ maxBytes: 1000 });
+    buffer.addTurn('A'.repeat(100));
+    buffer.addTurn('B'.repeat(100));
+    expect(buffer.currentBytes).toBe(400);
+
+    buffer.clear();
+    expect(buffer.currentBytes).toBe(0);
+    expect(buffer.turnCount).toBe(0);
+  });
+
+  it('enforces both maxTurns and maxBytes together', () => {
+    // maxTurns = 5 but byte budget only fits 2 turns
+    const buffer = new ReconnectionBuffer({ maxTurns: 5, maxBytes: 400 });
+
+    buffer.addTurn('A'.repeat(100)); // 200 bytes
+    buffer.addTurn('B'.repeat(100)); // 200 bytes
+    buffer.addTurn('C'.repeat(100)); // 200 bytes — byte budget forces eviction
+
+    expect(buffer.turnCount).toBe(2);
+    expect(buffer.getTurns()).toEqual(['B'.repeat(100), 'C'.repeat(100)]);
+  });
 });
