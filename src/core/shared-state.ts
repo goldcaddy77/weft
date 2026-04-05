@@ -98,7 +98,7 @@ export class SharedState<T> {
       if (attempt < this.#maxRetries - 1) {
         const baseDelay = 10;
         const delay = baseDelay * Math.pow(2, attempt) + Math.random() * baseDelay;
-        await Bun.sleep(delay);
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
 

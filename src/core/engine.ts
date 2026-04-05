@@ -3020,7 +3020,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
         const { BudgetTracker } = await import('../ai/budget.ts');
-        const { prompt, budget: budgetOptions, budgetNamespace, ...rest } = operation.options;
+        const {
+          prompt,
+          budget: budgetOptions,
+          budgetNamespace,
+          contextStrategy: _contextStrategy,
+          ...rest
+        } = operation.options;
         const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
 
         // Enforce org-level budget policy before execution (mirrors #processAgentContextOperation)
