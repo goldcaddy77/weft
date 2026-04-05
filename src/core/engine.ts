@@ -2405,13 +2405,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, async () => {
       const raceAbortController = new AbortController();
+      // Capture individual promises so we can suppress expected abort rejections
+      // from losing branches after Promise.race settles.
+      const branchPromises = operation.operations.map((subOperation) =>
+        this.#executeSubOperation(workflowId, subOperation, raceAbortController.signal),
+      );
+
+      // Attach no-op catch handlers to prevent unhandled rejection from abort
+      // errors on the losing branches. These fire after raceAbortController.abort().
+      for (const p of branchPromises) {
+        p.catch((error: unknown) => {
+          // Swallow AbortErrors from cancelled branches; re-throw anything else
+          // so genuine failures still surface as unhandled rejections.
+          if (error instanceof DOMException && error.name === 'AbortError') return;
+          throw error;
+        });
+      }
+
       try {
-        const result = await Promise.race(
-          operation.operations.map((subOperation) =>
-            this.#executeSubOperation(workflowId, subOperation, raceAbortController.signal),
-          ),
-        );
-        return result;
+        return await Promise.race(branchPromises);
       } finally {
         // Cancel all losing branches so agent sub-operations stop making LLM calls
         raceAbortController.abort();
