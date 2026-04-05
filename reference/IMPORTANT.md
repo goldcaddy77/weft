@@ -1,6 +1,6 @@
 # Code Review Findings
 
-Last reviewed: 2026-04-04
+Last reviewed: 2026-04-05
 
 ## Not Yet Implemented (Notable Gaps)
 
@@ -25,7 +25,13 @@ Last reviewed: 2026-04-04
 - [ ] **`Promise.race` in `#processRaceOperation` never cancels losing branches** (`src/core/engine.ts:2379-2390`): When `Promise.race` settles, all losing sub-operations continue executing to completion in the background. If a losing sub-operation is of type `agent`, it spawns a full `executeAgentLoop` that makes LLM API calls and consumes budget with no abort signal. Fix: thread an `AbortController` through `#executeSubOperation`, abort it when `Promise.race` settles, and pass the signal into `executeAgentLoop`.
 - [ ] **Event broadcasting sequence maps grow unbounded** (`src/server/index.ts:282-290`): `sequenceCounters`, `sequenceInitPromises`, and `sequenceChains` Maps inside `wireEventBroadcasting` are never cleaned up when a workflow reaches a terminal state. Every workflow that emits at least one event adds permanent entries for the server process lifetime. Fix: listen for terminal workflow events and delete entries from all three Maps.
 
+- [ ] **`ProviderHealthTracker` entries array grows unbounded in `closed` state** (`src/ai/provider-health.ts:98,113`): `state.entries.push()` adds a `RequestEntry` on every `recordSuccess`/`recordFailure` call. `#windowEntries()` (line 183) filters by timestamp but never trims the underlying array. Entries are only cleared on circuit state transitions (lines 94, 109), not during normal closed-state operation. A provider that stays healthy accumulates entries indefinitely. Fix: prune expired entries in `recordSuccess`/`recordFailure` after the push, e.g. `state.entries = state.entries.filter(e => e.timestamp > cutoff)`.
+- [ ] **`StreamMultiplexer#pump` does not clear `#buffer` on source error** (`src/ai/streaming.ts:122-133`): When the source stream errors, consumers are closed and `#consumers` is cleared, but `#buffer` retains all previously received chunks. If the multiplexer instance is retained (e.g. in a reconnection map), the buffered data leaks. Fix: add `this.#buffer = []` in the catch block at line 132.
+- [ ] **`ReconnectionBuffer` has no byte-size limit** (`src/ai/streaming.ts:173-204`): `addTurn()` limits turn count via `#maxTurns` but individual turns can be arbitrarily large. A single multi-megabyte agent response stored in the buffer can cause unexpected memory pressure. Fix: add a `maxBytes` option and evict oldest turns when the byte budget is exceeded.
+- [ ] **`createSSEStream` reader not released on normal stream completion** (`src/ai/streaming-agent.ts:517-557`): The reader obtained from `tokenStream.getReader()` is only released in the `cancel()` callback. On normal completion (source `done: true`), the reader lock is not released, preventing the source stream from being garbage collected until the SSE stream itself is GC'd. Fix: call `reader.releaseLock()` after the read loop exits normally and in the catch block.
+
 ### Low Severity
 
 - [ ] **Observability workflow spans map grows unbounded** (`src/observability/index.ts:171-180`): The `workflowSpans` Map stores spans by workflowId. If a workflow never reaches a terminal state (orphaned or long-running), the span entry remains indefinitely. Fix: add periodic eviction or tie span cleanup to engine disposal.
 - [ ] **Agent tool cache never proactively evicted** (`src/ai/agent.ts:180,450`): The `toolCache` Map in `AgentLoopState` is checked against TTL during access but never proactively pruned. Over a long-running agent with many unique tool calls, entries accumulate without bound. Fix: add periodic eviction or cap the cache size.
+- [ ] **`SharedState` CAS retry loop has no backoff** (`src/core/shared-state.ts:68-97`): The `update()` method retries up to `maxRetries` (default 10) in a tight loop with no delay between attempts. Under contention from multiple concurrent writers, all retries fire immediately, increasing storage read load and reducing the chance of a successful CAS. Fix: add exponential backoff with jitter between retries.
