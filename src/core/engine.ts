@@ -3012,6 +3012,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     operation: ContextOperationRequest,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    // Check for abort before starting any sub-operation so that losing race
+    // branches are skipped if the winner has already settled.
+    signal?.throwIfAborted();
+
     switch (operation.type) {
       case 'activity':
         return callActivityFunction(operation.fn, operation.args);
