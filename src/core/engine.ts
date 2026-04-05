@@ -2411,15 +2411,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.#executeSubOperation(workflowId, subOperation, raceAbortController.signal),
       );
 
-      // Attach no-op catch handlers to prevent unhandled rejection from abort
-      // errors on the losing branches. These fire after raceAbortController.abort().
+      // Attach no-op catch handlers to prevent unhandled rejection from losing
+      // branches. After raceAbortController.abort(), losers reject with AbortError;
+      // genuine failures from losers are also swallowed here because the winner's
+      // result (or error) already propagated through Promise.race above.
       for (const p of branchPromises) {
-        p.catch((error: unknown) => {
-          // Swallow AbortErrors from cancelled branches; re-throw anything else
-          // so genuine failures still surface as unhandled rejections.
-          if (error instanceof DOMException && error.name === 'AbortError') return;
-          throw error;
-        });
+        p.catch(() => {});
       }
 
       try {
@@ -3095,21 +3092,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * workflow-scoped keys are removed—including offload, blob/stream, and shared
    * state—since no consumer will retrieve them from a terminated workflow.
    *
-   * When false (used by complete/fail paths), only signal and event keys are
-   * removed. Offload, blob, and shared-state keys are left intact because they
-   * are output artifacts the caller may still need to consume after the workflow
-   * finishes.
+   * When false (used by complete/fail paths), only signal keys are removed.
+   * Event history (`ev:`), offload, blob, and shared-state keys are left intact
+   * because they are output artifacts that consumers (getEvents, WebSocket
+   * replay) still read after the workflow finishes.
    */
   async #cleanupWorkflowStorage(
     workflowId: string,
     includeOutputArtifacts: boolean,
   ): Promise<void> {
-    // Signal and event keys are always cleaned—they are workflow-internal state
+    // Signal keys are always cleaned — they are workflow-internal state
     // that no external consumer reads after terminal.
-    const prefixes: string[] = [`sig:${workflowId}:`, `ev:${workflowId}:`];
+    const prefixes: string[] = [`sig:${workflowId}:`];
 
     if (includeOutputArtifacts) {
-      prefixes.push(`offload:${workflowId}:`, `blob:${workflowId}:`, `shared:${workflowId}:`);
+      // Terminated workflows have no consumers — clean everything including
+      // event history, offloaded data, stream chunks, and shared state.
+      prefixes.push(
+        `ev:${workflowId}:`,
+        `offload:${workflowId}:`,
+        `blob:${workflowId}:`,
+        `shared:${workflowId}:`,
+      );
     }
 
     const deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
@@ -3422,7 +3426,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Clean up any remaining review entries for this workflow
     await this.#cleanupReviews(workflowId);
 
-    // Clean up leaked signal/event keys; preserve output artifacts (offload, blob, shared)
+    // Clean up leaked signal keys; preserve output artifacts (events, offload, blob, shared)
     await this.#cleanupWorkflowStorage(workflowId, false);
 
     this.#checkpoints.delete(workflowId);
@@ -3460,7 +3464,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Clean up any remaining review entries for this workflow
     await this.#cleanupReviews(workflowId);
 
-    // Clean up leaked signal/event keys; preserve output artifacts (offload, blob, shared)
+    // Clean up leaked signal keys; preserve output artifacts (events, offload, blob, shared)
     await this.#cleanupWorkflowStorage(workflowId, false);
 
     this.#checkpoints.delete(workflowId);
