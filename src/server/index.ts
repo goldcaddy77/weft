@@ -1165,7 +1165,11 @@ export function serve(options: ServeOptions): WeftServer {
       const expired = deadlineTracker.drainExpired(now);
 
       for (const { operationId, deadline } of expired) {
-        if (processingOperations.has(operationId)) continue;
+        if (processingOperations.has(operationId)) {
+          // Re-add to the heap so it isn't permanently lost after being drained.
+          deadlineTracker.add({ operationId, deadline });
+          continue;
+        }
         processingOperations.add(operationId);
         try {
           const inflightKey = KEYS.operationInflight(operationId);
