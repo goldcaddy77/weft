@@ -881,11 +881,13 @@ async function resolveToolExecution(
       const rawOutput = await tool.execute(toolCall.input);
       output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
       runtime.state.toolCache.set(cacheKey, { output, timestamp: Date.now() });
-      pruneToolCacheIfNeeded(runtime.state.toolCache, runtime.options.toolCacheTTL);
     } catch (error: unknown) {
       output = JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
       success = false;
     }
+    // Prune outside the try-catch so a pruning failure cannot mask a successful
+    // tool call by overwriting `output` with an error in the catch block.
+    pruneToolCacheIfNeeded(runtime.state.toolCache, runtime.options.toolCacheTTL);
   }
 
   if (!(runtime.options.hooks?.afterToolCall && success)) {
