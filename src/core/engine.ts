@@ -12,7 +12,6 @@
 
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
-import type { LLMProvider } from '../ai/providers/interface.ts';
 import {
   ReviewCoordinator,
   ReviewTimeoutError,
@@ -20,6 +19,7 @@ import {
   type HumanReviewResult,
   type ReviewRequest,
 } from '../ai/human-review.ts';
+import type { LLMProvider } from '../ai/providers/interface.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
@@ -528,6 +528,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #inlineStrategy: InlineExecutionStrategy | null;
   #handleCache: Map<string, WeakRef<WorkflowHandle>>;
   #finalizationRegistry: FinalizationRegistry<string>;
+  /** Tokens used to unregister stale FinalizationRegistry entries when a handle is replaced. */
+  #finalizationTokens: Map<string, object>;
   #resultResolvers: Map<string, WorkflowResultResolver>;
   #signalWaiters: Map<string, () => void>;
   #updateWaiters: Map<string, (payload: unknown) => void>;
@@ -609,6 +611,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#registrations = new Map();
     this.#abortController = new AbortController();
     this.#handleCache = new Map();
+    this.#finalizationTokens = new Map();
     this.#resultResolvers = new Map();
     this.#signalWaiters = new Map();
     this.#updateWaiters = new Map();
@@ -629,6 +632,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowHeaders = new Map();
     this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
       this.#handleCache.delete(id);
+      this.#finalizationTokens.delete(id);
     });
 
     this.#options = resolvedOptions;
@@ -918,7 +922,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const handle = new WorkflowHandle(workflowId, this, resultPromise);
     this.#handleCache.set(workflowId, new WeakRef(handle));
-    this.#finalizationRegistry.register(handle, workflowId);
+
+    // Unregister any stale FinalizationRegistry entry for this workflowId so the
+    // old callback doesn't evict the new cache entry when the previous handle is GC'd.
+    const previousToken = this.#finalizationTokens.get(workflowId);
+    if (previousToken) {
+      this.#finalizationRegistry.unregister(previousToken);
+    }
+    const token = {};
+    this.#finalizationTokens.set(workflowId, token);
+    this.#finalizationRegistry.register(handle, workflowId, token);
+
     return handle;
   }
 
@@ -1616,6 +1630,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+
+    // Clean up review entries and checkpoint (matches #completeWorkflow / #failWorkflow)
+    await this.#cleanupReviews(workflowId);
+
+    // Terminated workflows have no consumers—clean all storage including output artifacts
+    await this.#cleanupWorkflowStorage(workflowId, true);
+
+    this.#checkpoints.delete(workflowId);
+
     this.#cleanupWaiters(workflowId);
     this.#heartbeatDetails.delete(workflowId);
     this.#agentWorkflowIds.delete(workflowId);
@@ -2380,13 +2403,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'race' }>,
   ): Promise<void> {
-    return this.#runOperationWithResult(workflowId, operation, async () =>
-      Promise.race(
-        operation.operations.map((subOperation) =>
-          this.#executeSubOperation(workflowId, subOperation),
-        ),
-      ),
-    );
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      const raceAbortController = new AbortController();
+      try {
+        const result = await Promise.race(
+          operation.operations.map((subOperation) =>
+            this.#executeSubOperation(workflowId, subOperation, raceAbortController.signal),
+          ),
+        );
+        return result;
+      } finally {
+        // Cancel all losing branches so agent sub-operations stop making LLM calls
+        raceAbortController.abort();
+      }
+    });
   }
 
   async #processMemoOperation(
@@ -2969,8 +2999,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #executeSubOperation(
-    _workflowId: string,
+    workflowId: string,
     operation: ContextOperationRequest,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     switch (operation.type) {
       case 'activity':
@@ -2980,14 +3011,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
         const { BudgetTracker } = await import('../ai/budget.ts');
-        const { prompt, budget, ...rest } = operation.options;
+        const { prompt, budget: budgetOptions, budgetNamespace, ...rest } = operation.options;
+        const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
+
+        // Enforce org-level budget policy before execution (mirrors #processAgentContextOperation)
+        await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
+
         const agentResult = await executeAgentLoop(
           {
             ...rest,
-            budget: budget ? new BudgetTracker(budget) : undefined,
+            budget: budgetOptions ? new BudgetTracker(budgetOptions) : undefined,
+            signal,
           },
           prompt,
         );
+
+        // Record org-level budget cost after execution
+        await this.#recordAgentBudgetCost(
+          operation.operationId,
+          resolvedBudgetNamespace,
+          agentResult.totalCost,
+        );
+
         return agentResult;
       }
       default:
@@ -3027,6 +3072,43 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
     } else if (entry.kind === 'execution-deadline') {
       await this.timeout(entry.workflowId);
+    }
+  }
+
+  /**
+   * Delete workflow-prefixed storage keys that leak when a workflow reaches a
+   * terminal state.
+   *
+   * When `includeOutputArtifacts` is true (used by cancel/timeout paths), all
+   * workflow-scoped keys are removed—including offload, blob/stream, and shared
+   * state—since no consumer will retrieve them from a terminated workflow.
+   *
+   * When false (used by complete/fail paths), only signal and event keys are
+   * removed. Offload, blob, and shared-state keys are left intact because they
+   * are output artifacts the caller may still need to consume after the workflow
+   * finishes.
+   */
+  async #cleanupWorkflowStorage(
+    workflowId: string,
+    includeOutputArtifacts: boolean,
+  ): Promise<void> {
+    // Signal and event keys are always cleaned—they are workflow-internal state
+    // that no external consumer reads after terminal.
+    const prefixes: string[] = [`sig:${workflowId}:`, `ev:${workflowId}:`];
+
+    if (includeOutputArtifacts) {
+      prefixes.push(`offload:${workflowId}:`, `blob:${workflowId}:`, `shared:${workflowId}:`);
+    }
+
+    const deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
+    for (const prefix of prefixes) {
+      for await (const [key] of this.#storage.scan(prefix)) {
+        deleteOperations.push({ type: 'delete', key });
+      }
+    }
+
+    if (deleteOperations.length > 0) {
+      await this.#storage.batch(deleteOperations);
     }
   }
 
@@ -3328,6 +3410,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Clean up any remaining review entries for this workflow
     await this.#cleanupReviews(workflowId);
 
+    // Clean up leaked signal/event keys; preserve output artifacts (offload, blob, shared)
+    await this.#cleanupWorkflowStorage(workflowId, false);
+
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);
     this.#agentWorkflowIds.delete(workflowId);
@@ -3362,6 +3447,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Clean up any remaining review entries for this workflow
     await this.#cleanupReviews(workflowId);
+
+    // Clean up leaked signal/event keys; preserve output artifacts (offload, blob, shared)
+    await this.#cleanupWorkflowStorage(workflowId, false);
 
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);

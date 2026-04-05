@@ -374,6 +374,14 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     }
   }
 
+  /** Event types that indicate a workflow has reached a terminal state. */
+  const terminalBroadcastEventTypes = new Set<string>([
+    WorkflowCompletedEvent.type,
+    WorkflowFailedEvent.type,
+    WorkflowCancelledEvent.type,
+    WorkflowTimedOutEvent.type,
+  ]);
+
   const eventTypes = [
     WorkflowStartedEvent.type,
     WorkflowCompletedEvent.type,
@@ -414,6 +422,16 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
         const previousChain = sequenceChains.get(workflowId) ?? Promise.resolve();
         const nextChain = previousChain
           .then(() => persistAndPublishEvent(workflowId, eventType, message))
+          .then(() => {
+            // When a workflow reaches a terminal state, clean up per-workflow
+            // sequence tracking Maps to prevent unbounded growth.
+            if (terminalBroadcastEventTypes.has(eventType)) {
+              sequenceCounters.delete(workflowId);
+              sequenceInitPromises.delete(workflowId);
+              sequenceChains.delete(workflowId);
+            }
+            return undefined;
+          })
           .catch((error) => {
             console.error(
               `[weft] Failed to persist event "${eventType}" for workflow "${workflowId}":`,
@@ -1122,6 +1140,14 @@ export function serve(options: ServeOptions): WeftServer {
   let scanRunning = false;
 
   /**
+   * Operations currently being processed by either the visibility scanner or
+   * the reconciliation scanner. Both paths call `reassignOrExpireTask` which
+   * can dispatch `ActivityFailedEvent` and re-queue tasks — processing the
+   * same operationId concurrently would produce duplicate side-effects.
+   */
+  const processingOperations = new Set<string>();
+
+  /**
    * Drain expired entries from the in-memory deadline heap and reassign
    * their tasks. Only touches storage for the specific operations whose
    * deadlines have actually passed — no full `op:inflight:*` scan.
@@ -1134,6 +1160,8 @@ export function serve(options: ServeOptions): WeftServer {
       const expired = deadlineTracker.drainExpired(now);
 
       for (const { operationId, deadline } of expired) {
+        if (processingOperations.has(operationId)) continue;
+        processingOperations.add(operationId);
         try {
           const inflightKey = KEYS.operationInflight(operationId);
           const existing = await options.engine.storage.get(inflightKey);
@@ -1165,6 +1193,8 @@ export function serve(options: ServeOptions): WeftServer {
             `[weft] Failed to process expired task "${operationId}" — will retry:`,
             error,
           );
+        } finally {
+          processingOperations.delete(operationId);
         }
       }
     } catch (error) {
@@ -1202,11 +1232,18 @@ export function serve(options: ServeOptions): WeftServer {
             continue;
           }
 
-          // Expired orphan — remove from heap, registry, and workflow index, then reassign.
-          deadlineTracker.remove(decoded.operationId);
-          registry.completeTask(decoded.operationId);
-          cleanupWorkflowIndex(decoded.operationId);
-          await reassignOrExpireTask(decoded.operationId, decoded);
+          // Skip if the visibility scanner is already processing this operation.
+          if (processingOperations.has(decoded.operationId)) continue;
+          processingOperations.add(decoded.operationId);
+          try {
+            // Expired orphan — remove from heap, registry, and workflow index, then reassign.
+            deadlineTracker.remove(decoded.operationId);
+            registry.completeTask(decoded.operationId);
+            cleanupWorkflowIndex(decoded.operationId);
+            await reassignOrExpireTask(decoded.operationId, decoded);
+          } finally {
+            processingOperations.delete(decoded.operationId);
+          }
         } catch (error) {
           console.error('[weft] Failed to reconcile inflight record — skipping:', error);
         }

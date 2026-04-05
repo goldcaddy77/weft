@@ -236,8 +236,36 @@ interface CacheEntry {
   timestamp: number;
 }
 
+const TOOL_CACHE_MAX_SIZE = 1000;
+
 function buildCacheKey(toolName: string, input: unknown): string {
   return `${toolName}:${JSON.stringify(input)}`;
+}
+
+/**
+ * Proactively evict expired entries when the cache exceeds the size threshold.
+ * First removes expired entries; if still over limit, evicts oldest entries.
+ */
+function pruneToolCacheIfNeeded(cache: Map<string, CacheEntry>, ttl: number): void {
+  if (cache.size <= TOOL_CACHE_MAX_SIZE) return;
+
+  const now = Date.now();
+
+  // First pass: remove expired entries
+  for (const [key, entry] of cache) {
+    if (now - entry.timestamp >= ttl) {
+      cache.delete(key);
+    }
+  }
+
+  // Second pass: if still over limit, evict oldest entries
+  if (cache.size <= TOOL_CACHE_MAX_SIZE) return;
+
+  const entries = [...cache.entries()].toSorted((a, b) => a[1].timestamp - b[1].timestamp);
+  const toEvict = entries.length - TOOL_CACHE_MAX_SIZE;
+  for (let i = 0; i < toEvict; i++) {
+    cache.delete(entries[i]![0]);
+  }
 }
 
 /**
@@ -367,14 +395,15 @@ async function initializeTools(
         registry.registerLocal(entry.definition, entry.execute);
       }
     }
+    // Validate for name conflicts before the agent loop starts.
+    // Must be inside try so that on ToolNameConflictError the catch
+    // block still disposes all previously created MCP clients.
+    registry.validate();
   } catch (error) {
     // Dispose all clients on any initialization failure
     for (const client of clients) client[Symbol.dispose]();
     throw error;
   }
-
-  // Validate for name conflicts before the agent loop starts
-  registry.validate();
 
   const dispose = () => {
     for (const client of clients) client[Symbol.dispose]();
@@ -852,6 +881,7 @@ async function resolveToolExecution(
       const rawOutput = await tool.execute(toolCall.input);
       output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
       runtime.state.toolCache.set(cacheKey, { output, timestamp: Date.now() });
+      pruneToolCacheIfNeeded(runtime.state.toolCache, runtime.options.toolCacheTTL);
     } catch (error: unknown) {
       output = JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
       success = false;

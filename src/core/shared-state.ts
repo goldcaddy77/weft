@@ -93,7 +93,13 @@ export class SharedState<T> {
         return { value: newValue, version: newVersion, operations };
       }
 
-      // Step 5: Version changed, retry
+      // Step 5: Version changed — back off before retrying to reduce contention.
+      // Exponential backoff with jitter: baseDelay * 2^attempt + random jitter.
+      if (attempt < this.#maxRetries - 1) {
+        const baseDelay = 10;
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * baseDelay;
+        await Bun.sleep(delay);
+      }
     }
 
     // Step 6: Max retries exceeded
