@@ -20,7 +20,11 @@ import type {
   WorkflowStatus,
 } from '../core/types.ts';
 import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
-import { METRICS, type MetricsCollector, type MetricsSnapshot } from '../observability/metrics.ts';
+import {
+  createMetricsCollectorExporter,
+  type MetricsCollector,
+  type PrometheusExporter,
+} from '../observability/metrics.ts';
 
 // ---------------------------------------------------------------------------
 // Route matching
@@ -898,34 +902,13 @@ async function handleStreamSSE(
 // Metrics route
 // ---------------------------------------------------------------------------
 
-function handleGetMetrics(metricsCollector?: MetricsCollector): Response {
-  const snapshot: MetricsSnapshot = metricsCollector?.snapshot() ?? {};
-  const lines: string[] = [];
-
-  for (const metric of Object.values(METRICS)) {
-    const safeName = metric.name.replace(/\./g, '_');
-    const collected = snapshot[metric.name];
-
-    lines.push(`# HELP ${safeName} ${metric.description}`);
-
-    if (metric.type === 'histogram') {
-      lines.push(`# TYPE ${safeName} histogram`);
-      const count = collected?.type === 'histogram' ? collected.count : 0;
-      const sum = collected?.type === 'histogram' ? collected.sum : 0;
-      lines.push(`${safeName}_count ${count}`);
-      lines.push(`${safeName}_sum ${sum}`);
-    } else if (metric.type === 'counter') {
-      lines.push(`# TYPE ${safeName} counter`);
-      const value = collected?.type === 'counter' ? collected.value : 0;
-      lines.push(`${safeName}_total ${value}`);
-    } else {
-      lines.push(`# TYPE ${safeName} gauge`);
-      const value = collected?.type === 'gauge' ? collected.value : 0;
-      lines.push(`${safeName} ${value}`);
-    }
-  }
-
-  return new Response(lines.join('\n') + '\n', {
+async function handleGetMetrics(
+  prometheusExporter: PrometheusExporter | undefined,
+  metricsCollector: MetricsCollector | undefined,
+): Promise<Response> {
+  const exporter = prometheusExporter ?? createMetricsCollectorExporter(metricsCollector);
+  const body = await exporter.serialize();
+  return new Response(body, {
     status: 200,
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
   });
@@ -964,7 +947,8 @@ const ROUTE_EXECUTORS: Record<RouteHandlerName, RouteExecutor> = {
   getAttributes: async ({ engine, param }) => handleGetAttributes(engine, param('id')),
   setAttributes: async ({ request, engine, param }) =>
     handleSetAttributes(request, engine, param('id')),
-  getMetrics: async ({ options }) => handleGetMetrics(options?.metricsCollector),
+  getMetrics: async ({ options }) =>
+    handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
   getWorkflowEvents: async ({ engine, param }) => handleGetWorkflowEvents(engine, param('id')),
   listReviews: async ({ engine }) => handleListReviews(engine),
   submitReviewDecision: async ({ request, engine, param }) =>
@@ -980,7 +964,22 @@ const ROUTE_EXECUTORS: Record<RouteHandlerName, RouteExecutor> = {
 // ---------------------------------------------------------------------------
 
 export interface HandlerOptions {
-  /** Optional metrics collector for the /v1/metrics endpoint. */
+  /**
+   * Optional {@link PrometheusExporter} used to produce the body of
+   * `/v1/metrics`. When set, it takes precedence over `metricsCollector` —
+   * this is the recommended plug point for projects that source metrics from
+   * the OpenTelemetry SDK (e.g. via `@opentelemetry/exporter-prometheus`).
+   */
+  prometheusExporter?: PrometheusExporter;
+  /**
+   * Optional metrics collector for the /v1/metrics endpoint. Used when no
+   * `prometheusExporter` is provided.
+   *
+   * @deprecated Prefer `prometheusExporter` — wrap your metrics source (OTel
+   * or otherwise) in a {@link PrometheusExporter} and pass it there. This
+   * field remains for projects still using the legacy `MetricsCollector`
+   * path and has lower precedence if both are set.
+   */
   metricsCollector?: MetricsCollector;
 }
 

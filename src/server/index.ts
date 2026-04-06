@@ -26,7 +26,9 @@ import {
 } from '../core/events.ts';
 import { calculateBackoff } from '../core/scheduler.ts';
 import type { RetryPolicy } from '../core/types.ts';
+import type { MetricsCollector, PrometheusExporter } from '../observability/metrics.ts';
 import { KEYS } from '../storage/interface.ts';
+import type { RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
@@ -37,7 +39,7 @@ import {
   evictOldestAffinityEntries,
   restoreExtendedDeadlineIfStillActive,
 } from './runtime-helpers.ts';
-import { TaskQueue, type PendingTask } from './task-queue.ts';
+import { TaskQueue, type PendingTask, type SchedulingPolicy } from './task-queue.ts';
 import type { InflightRecord, QueuedRecord } from './task-state.ts';
 import {
   markQueued,
@@ -81,6 +83,43 @@ export interface ServeOptions {
   auth?: AuthConfig;
   /** How often (in ms) the server scans `op:inflight:*` for expired visibility deadlines. Defaults to 5 000. */
   visibilityPollIntervalMs?: number;
+  /**
+   * Routing policy used by the {@link WorkerRegistry} when dispatching tasks.
+   * Defaults to `'least-loaded'`. Set to `'round-robin'` for deterministic
+   * rotation across workers.
+   *
+   * **Note on `'fair-share'`:** fair-share requires a `fairShareKey` to be
+   * passed at dispatch time (per-call, via `TaskDispatch`), which `serve()`
+   * does not currently derive from `ctx.tenant` automatically. Setting
+   * `routingPolicy: 'fair-share'` here without wiring `fairShareKey` on
+   * each `dispatchTask()` call makes the policy silently fall back to
+   * least-loaded. Use the {@link WorkerRegistry} directly, or pass
+   * `fairShareKey` explicitly on every dispatch, until an end-to-end hook
+   * is added.
+   */
+  routingPolicy?: RoutingPolicy;
+  /**
+   * Scheduling policy used by the {@link TaskQueue} when ordering pending tasks
+   * within a queue. Defaults to `'priority'`.
+   */
+  schedulingPolicy?: SchedulingPolicy;
+  /**
+   * Optional {@link PrometheusExporter} that produces the body of `/v1/metrics`.
+   * Recommended for projects that source metrics from the OpenTelemetry SDK —
+   * e.g. wrap `@opentelemetry/exporter-prometheus` to satisfy the interface.
+   * When set, it takes precedence over {@link ServeOptions.metricsCollector}.
+   */
+  prometheusExporter?: PrometheusExporter;
+  /**
+   * Optional {@link MetricsCollector} used as the default metrics source for
+   * `/v1/metrics` when no `prometheusExporter` is supplied.
+   *
+   * @deprecated Prefer `prometheusExporter` — wrap your metrics source (OTel
+   * or otherwise) in a {@link PrometheusExporter} and pass it there. This
+   * field remains for projects still using the legacy `MetricsCollector`
+   * path and has lower precedence if both are set.
+   */
+  metricsCollector?: MetricsCollector;
 }
 
 export interface TaskDispatch {
@@ -521,8 +560,14 @@ export function serve(options: ServeOptions): WeftServer {
   // with HMR in dev mode and cached assets in production mode.
   const dashboard = options.dashboard ?? null;
 
-  const registry = new WorkerRegistry();
-  const taskQueue = new TaskQueue();
+  const registry = new WorkerRegistry(
+    options.routingPolicy !== undefined ? { policy: options.routingPolicy } : undefined,
+  );
+  const taskQueue = new TaskQueue(
+    options.schedulingPolicy !== undefined
+      ? { schedulingPolicy: options.schedulingPolicy }
+      : undefined,
+  );
   const workerSockets = new Map<string, ServerWebSocket<WebSocketData>>();
   /** Tracks per-workflow worker affinity for sticky routing. Maps workflowId → workerId. */
   const workerAffinity = new Map<string, string>();
@@ -835,8 +880,18 @@ export function serve(options: ServeOptions): WeftServer {
         return taskResultResponse;
       }
 
-      // API routes via existing platform-agnostic handler
-      return handleRequest(request, options.engine);
+      // API routes via existing platform-agnostic handler. Under
+      // `exactOptionalPropertyTypes` we can't spread `undefined` values into
+      // an options object whose fields are `T?: U` (not `T?: U | undefined`),
+      // so each optional field is attached only when present.
+      return handleRequest(request, options.engine, {
+        ...(options.prometheusExporter !== undefined
+          ? { prometheusExporter: options.prometheusExporter }
+          : {}),
+        ...(options.metricsCollector !== undefined
+          ? { metricsCollector: options.metricsCollector }
+          : {}),
+      });
     },
     websocket: {
       open(ws) {

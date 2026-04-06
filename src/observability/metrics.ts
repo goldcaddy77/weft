@@ -179,6 +179,82 @@ function sumNumbers(values: number[]): number {
 }
 
 // ---------------------------------------------------------------------------
+// Prometheus exporter
+// ---------------------------------------------------------------------------
+
+/**
+ * Pluggable interface for producing Prometheus text-format output at
+ * `/v1/metrics`. Weft ships with a default implementation that serializes a
+ * {@link MetricsCollector} snapshot, but consumers who already use OTel can
+ * adapt `@opentelemetry/exporter-prometheus` (or any other source) to this
+ * interface and pass it via `HandlerOptions.prometheusExporter`.
+ *
+ * Keeping this as an interface rather than hard-wiring the OTel SDK avoids
+ * pulling `@opentelemetry/sdk-metrics` into the runtime footprint while still
+ * giving projects that *do* want full OTel a clean plug point.
+ */
+export interface PrometheusExporter {
+  /**
+   * Produce Prometheus text-format output for the current state of the metrics
+   * source. Must be safe to call repeatedly — each invocation should reflect
+   * the latest values.
+   */
+  serialize(): string | Promise<string>;
+}
+
+/**
+ * Serialize a {@link MetricsSnapshot} as Prometheus text format using the
+ * definitions registered in {@link METRICS}. Metrics that aren't in the
+ * snapshot still emit their `# HELP` / `# TYPE` lines with zero values so
+ * Prometheus scrapers see a stable schema.
+ */
+export function serializeMetricsSnapshotForPrometheus(snapshot: MetricsSnapshot): string {
+  const lines: string[] = [];
+
+  for (const metric of Object.values(METRICS)) {
+    const safeName = metric.name.replace(/\./g, '_');
+    const collected = snapshot[metric.name];
+
+    lines.push(`# HELP ${safeName} ${metric.description}`);
+
+    if (metric.type === 'histogram') {
+      lines.push(`# TYPE ${safeName} histogram`);
+      const count = collected?.type === 'histogram' ? collected.count : 0;
+      const sum = collected?.type === 'histogram' ? collected.sum : 0;
+      lines.push(`${safeName}_count ${count}`);
+      lines.push(`${safeName}_sum ${sum}`);
+    } else if (metric.type === 'counter') {
+      lines.push(`# TYPE ${safeName} counter`);
+      const value = collected?.type === 'counter' ? collected.value : 0;
+      lines.push(`${safeName}_total ${value}`);
+    } else {
+      lines.push(`# TYPE ${safeName} gauge`);
+      const value = collected?.type === 'gauge' ? collected.value : 0;
+      lines.push(`${safeName} ${value}`);
+    }
+  }
+
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * Default {@link PrometheusExporter} that sources its values from a
+ * {@link MetricsCollector}. Equivalent to the previous inline serializer in
+ * the server's `/v1/metrics` handler — extracted here so it can be reused and
+ * so a custom implementation can be substituted without touching the server.
+ */
+export function createMetricsCollectorExporter(
+  collector: MetricsCollector | undefined,
+): PrometheusExporter {
+  return {
+    serialize(): string {
+      const snapshot = collector?.snapshot() ?? {};
+      return serializeMetricsSnapshotForPrometheus(snapshot);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Metric catalogue
 // ---------------------------------------------------------------------------
 

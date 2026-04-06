@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { MetricDefinition } from './metrics';
-import { METRICS, MetricsCollector, createOtelMetrics } from './metrics';
+import type { MetricDefinition, PrometheusExporter } from './metrics';
+import {
+  METRICS,
+  MetricsCollector,
+  createMetricsCollectorExporter,
+  createOtelMetrics,
+} from './metrics';
 import type { OtelMeter } from './no-op-telemetry';
 
 describe('metrics', () => {
@@ -290,5 +295,45 @@ describe('createOtelMetrics', () => {
     const otelMetrics = createOtelMetrics('my-service');
     expect(otelMetrics).toBeDefined();
     expect(() => otelMetrics.workflowDuration.record(100)).not.toThrow();
+  });
+});
+
+describe('Prometheus exporter', () => {
+  it('serializes a MetricsCollector snapshot into Prometheus text format', () => {
+    const collector = new MetricsCollector();
+    collector.increment('weft.workflow.started', 3);
+    collector.record('weft.workflow.duration', 120);
+    collector.record('weft.workflow.duration', 180);
+    collector.gauge('weft.workflow.active', 2);
+
+    const exporter = createMetricsCollectorExporter(collector);
+    const text = exporter.serialize() as string;
+
+    // Dots must be normalized to underscores per Prometheus naming rules.
+    expect(text).toContain('# TYPE weft_workflow_started counter');
+    expect(text).toContain('weft_workflow_started_total 3');
+    expect(text).toContain('# TYPE weft_workflow_duration histogram');
+    expect(text).toContain('weft_workflow_duration_count 2');
+    expect(text).toContain('weft_workflow_duration_sum 300');
+    expect(text).toContain('# TYPE weft_workflow_active gauge');
+    expect(text).toContain('weft_workflow_active 2');
+  });
+
+  it('emits zero values for metrics not present in the snapshot', () => {
+    const exporter = createMetricsCollectorExporter(undefined);
+    const text = exporter.serialize() as string;
+    for (const metric of Object.values(METRICS)) {
+      const safeName = metric.name.replace(/\./g, '_');
+      expect(text).toContain(`# HELP ${safeName} ${metric.description}`);
+    }
+  });
+
+  it('is pluggable — any PrometheusExporter implementation works', () => {
+    const custom: PrometheusExporter = {
+      serialize() {
+        return '# HELP custom 1\n# TYPE custom gauge\ncustom 1\n';
+      },
+    };
+    expect(custom.serialize()).toContain('custom 1');
   });
 });

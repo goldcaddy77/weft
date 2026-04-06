@@ -13,6 +13,7 @@
 import type { ContextOperationRequest } from './context.ts';
 import { Context } from './context.ts';
 import type { ExecutionStrategy } from './execution-strategy.ts';
+import type { TenantContext } from './tenant.ts';
 import type {
   OperationOutcome,
   SearchAttributeSchema,
@@ -72,6 +73,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     nestingDepth?: number;
     deadline?: number;
     headers?: [string, string][];
+    tenant?: TenantContext;
   }): void {
     const registration = this.#dependencies.getRegistration(parameters.workflowType);
     if (!registration) {
@@ -97,6 +99,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
         searchAttributeSchema: registration.searchAttributes,
       }),
       ...(parameters.deadline !== undefined && { deadline: parameters.deadline }),
+      ...(parameters.tenant !== undefined && { tenant: parameters.tenant }),
     });
 
     if (this.#dependencies.development) {

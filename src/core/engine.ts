@@ -149,6 +149,7 @@ interface ResolvedOptions {
   maxNestingDepth: number;
   broadcastEvents: boolean;
   getNow: () => number;
+  tenantResolver: import('./tenant.ts').TenantResolver | undefined;
 }
 
 interface WorkflowResultResolver {
@@ -256,6 +257,7 @@ function resolveEngineOptions(
     maxNestingDepth: options?.maxNestingDepth ?? 10,
     broadcastEvents: options?.broadcastEvents ?? false,
     getNow,
+    tenantResolver: options?.tenantResolver,
   };
 }
 
@@ -533,6 +535,44 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
 // Engine
 // ---------------------------------------------------------------------------
 
+/**
+ * Durable execution engine.
+ *
+ * Register workflow functions with {@link Engine.register}, start them with
+ * {@link Engine.start}, and query or cancel them via the returned
+ * {@link WorkflowHandle}. Each workflow is a generator that yields to a
+ * {@link Context}; the engine persists a checkpoint at every yield so the
+ * workflow survives crashes, restarts, and worker reassignment without
+ * losing progress.
+ *
+ * @example Run a workflow with an activity
+ * ```ts
+ * import { Engine, activity } from 'weft';
+ *
+ * const fetchUser = activity('fetchUser', async (id: string) => {
+ *   const response = await fetch(`https://api.example.com/users/${id}`);
+ *   return response.json();
+ * });
+ *
+ * const engine = new Engine();
+ * engine.register('greet-user', async function* (ctx, id: string) {
+ *   const user = yield* ctx.run(fetchUser, id);
+ *   return `Hello, ${(user as { name: string }).name}`;
+ * });
+ *
+ * const handle = await engine.start('greet-user', 'user-123');
+ * const greeting = await handle.result();
+ * ```
+ *
+ * @example Run with a SQLite backend
+ * ```ts
+ * import { Engine, BunSQLiteStorage } from 'weft';
+ *
+ * await using storage = new BunSQLiteStorage('./weft.db');
+ * await using engine = new Engine({ storage });
+ * // ...register and start workflows
+ * ```
+ */
 export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #storage: WeftStorage;
   #registrations: Map<string, RegistrationEntry>;
@@ -872,6 +912,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // agent execution flows through the engine's operation handler for budget
       // policy enforcement, observability, and durable checkpointing.
       const handler: WorkflowFunction = async function* (ctx, input) {
+        const tenant = ctx.tenant;
+
+        // Per-tenant input validation runs before any tool resolution so a
+        // malformed payload fails fast without burning budget.
+        if (agentDef.validateInput) {
+          agentDef.validateInput(input, tenant);
+        }
+
+        // Resolve the effective tool set: per-tenant override takes precedence
+        // over the static definition.
+        const effectiveTools = agentDef.toolsForTenant
+          ? agentDef.toolsForTenant(tenant)
+          : agentDef.tools;
+
         const prompt = typeof input === 'string' ? input : JSON.stringify(input);
         const agentOpts: import('./context.ts').AgentContextOptions = {
           model: agentDef.model,
@@ -879,7 +933,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           provider: agentOptions.provider,
         };
         if (agentDef.systemPrompt) agentOpts.systemPrompt = agentDef.systemPrompt;
-        if (agentDef.tools) agentOpts.tools = agentDef.tools;
+        if (effectiveTools) agentOpts.tools = effectiveTools;
         if (agentDef.maxTurns !== undefined) agentOpts.maxTurns = agentDef.maxTurns;
         if (agentDef.budget) agentOpts.budget = agentDef.budget;
         if (agentDef.modelRouter) agentOpts.modelRouter = agentDef.modelRouter;
@@ -1017,12 +1071,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         throw new Error(`Workflow with id "${workflowId}" already exists`);
       }
 
+      // Resolve the tenant context before the first checkpoint is written so
+      // it gets persisted as part of the initial state blob.
+      const tenant = await this.#resolveTenantForStart(workflowId, type, input);
+
       const state = this.#createInitialWorkflowState(
         workflowId,
         type,
         input,
         registration,
         options,
+        tenant,
       );
       const checkpoint = this.#createInitialCheckpoint(workflowId, registration, options);
       this.#checkpoints.set(workflowId, checkpoint);
@@ -1052,7 +1111,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
 
       const handle = this.#createWorkflowHandle(workflowId);
-      this.#startWorkflowExecution(workflowId, type, input, checkpoint, state.executionDeadline);
+      this.#startWorkflowExecution(
+        workflowId,
+        type,
+        input,
+        checkpoint,
+        state.executionDeadline,
+        tenant,
+      );
       startSucceeded = true;
       return handle;
     } finally {
@@ -1106,6 +1172,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const items: WorkflowSummary[] = [];
 
+    // Fast path: when attribute filters constrained the set of candidate IDs,
+    // load only those rows by key instead of scanning every `wf:*` entry.
+    // This turns the cost from O(total workflows) into O(matches), which is
+    // the shape the architecture "<1ms single-attribute equality" target
+    // assumes.
+    if (constrainedIds !== null) {
+      for (const workflowId of constrainedIds) {
+        const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
+        if (!stateBytes) continue;
+
+        const state = decodeWorkflowState(stateBytes);
+        if (!matchesListFilter(state, filter, constrainedIds)) continue;
+
+        items.push({
+          id: state.id,
+          type: state.type,
+          status: state.status,
+          version: state.version,
+          createdAt: state.createdAt,
+          updatedAt: state.updatedAt,
+        });
+      }
+      return paginateWorkflowSummaries(items, filter);
+    }
+
     for await (const [key, value] of this.#storage.scan('wf:')) {
       if (!this.#isTopLevelWorkflowStateKey(key)) continue;
 
@@ -1131,6 +1222,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     input: unknown,
     registration: RegistrationEntry,
     options?: StartOptions,
+    tenant?: import('./tenant.ts').TenantContext,
   ): WorkflowState {
     const now = this.#options.getNow();
     const state: WorkflowState = {
@@ -1147,7 +1239,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       state.executionDeadline = now + parseDuration(options.executionTimeout);
     }
 
+    if (tenant !== undefined) {
+      state.tenant = tenant;
+    }
+
     return state;
+  }
+
+  /**
+   * Resolve the tenant for a new workflow via the configured resolver. Returns
+   * `undefined` when no resolver is set or the resolver itself returned
+   * `undefined`. Thrown errors are surfaced to the caller of `start()` so
+   * misconfigured resolvers fail loudly instead of silently bypassing tenancy.
+   */
+  async #resolveTenantForStart(
+    workflowId: string,
+    workflowType: string,
+    input: unknown,
+  ): Promise<import('./tenant.ts').TenantContext | undefined> {
+    const resolver = this.#options.tenantResolver;
+    if (!resolver) return undefined;
+    const resolved = await resolver.resolve(workflowId, input, workflowType);
+    return resolved;
   }
 
   #createInitialCheckpoint(
@@ -1304,6 +1417,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     input: unknown,
     checkpoint: Checkpoint,
     executionDeadline: number | undefined,
+    tenant: import('./tenant.ts').TenantContext | undefined,
   ): void {
     const nestingDepth = this.#pendingNestingDepth ?? 0;
     this.#pendingNestingDepth = undefined;
@@ -1315,6 +1429,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       checkpoint: serializeCheckpoint(checkpoint),
       nestingDepth,
       ...(executionDeadline !== undefined && { deadline: executionDeadline }),
+      ...(tenant !== undefined && { tenant }),
     });
   }
 
@@ -1730,6 +1845,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         }),
         sleepReferenceTime: resumeCheckpoint.createdAt,
         ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+        ...(state.tenant !== undefined && { tenant: state.tenant }),
       });
 
       if (this.#options.development) {
@@ -1756,6 +1872,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         checkpoint: serialized,
         nestingDepth: this.#workflowNestingDepths.get(workflowId) ?? 0,
         ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+        ...(state.tenant !== undefined && { tenant: state.tenant }),
       });
     }
 

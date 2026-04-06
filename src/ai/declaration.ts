@@ -1,3 +1,4 @@
+import type { TenantContext } from '../core/tenant.ts';
 import type { BudgetOptions } from './budget.ts';
 import type { ContextStrategy } from './context-window.ts';
 import type { AgentHooks } from './hooks.ts';
@@ -20,6 +21,26 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   contextStrategy?: ContextStrategy;
   hooks?: AgentHooks;
   description?: string;
+  /**
+   * Return the tool set this agent should expose for the given tenant. When
+   * present, the engine calls this on each `ctx.agent()` invocation and uses
+   * the returned list instead of `tools`. Use this to hide tools from
+   * tenants that lack permission, or to inject tenant-scoped credentials.
+   */
+  toolsForTenant?: (tenant: TenantContext | undefined) => AgentToolDefinition[];
+  /**
+   * Validate workflow input for a given tenant before the agent runs. Throw
+   * any error to fail the workflow. Use this to enforce per-tenant payload
+   * schemas without adding custom logic inside the agent handler.
+   *
+   * The stored signature accepts `unknown` instead of the declaration-time
+   * `TInput` so that `AgentDefinition<{...}>` remains assignable *into* the
+   * erased `AgentDefinition<unknown, unknown>` form used by
+   * `engine.register()`. Call sites that want to author the validator with
+   * the typed shape should use the {@link AgentDefinitionOptions} form,
+   * where `TInput` is preserved and `defineAgent()` bridges the variance.
+   */
+  validateInput?: (input: unknown, tenant: TenantContext | undefined) => void;
   /** @internal Phantom field to carry the input type parameter. */
   readonly _inputType?: TInput;
   /** @internal Phantom field to carry the output type parameter. */
@@ -42,6 +63,10 @@ export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
   contextStrategy?: ContextStrategy;
   hooks?: AgentHooks;
   description?: string;
+  /** See {@link AgentDefinition.toolsForTenant}. */
+  toolsForTenant?: (tenant: TenantContext | undefined) => AgentToolDefinition[];
+  /** See {@link AgentDefinition.validateInput}. */
+  validateInput?: (input: TInput, tenant: TenantContext | undefined) => void;
   /** @internal Phantom field to carry the input type parameter. */
   readonly _inputType?: TInput;
   /** @internal Phantom field to carry the output type parameter. */
@@ -59,9 +84,69 @@ export function isAgentDefinition(value: unknown): value is AgentDefinition {
   );
 }
 
-/** Declare a reusable agent definition. */
+/**
+ * Declare a reusable agent definition.
+ *
+ * An agent is a workflow that drives an LLM in a tool-calling loop: pick a
+ * model, provide a system prompt, list the tools the model may call, and
+ * optionally cap cost and turns. `defineAgent` returns a definition object
+ * that can be registered directly on an {@link Engine} (where it becomes a
+ * top-level workflow) or invoked from inside another workflow via
+ * `ctx.agent()`.
+ *
+ * @example Standalone agent registered on an engine
+ * ```ts
+ * import { Engine, defineAgent } from 'weft';
+ *
+ * const assistant = defineAgent({
+ *   name: 'travel-assistant',
+ *   model: 'claude-sonnet-4-5',
+ *   systemPrompt: 'You help users book trips.',
+ *   maxTurns: 5,
+ *   budget: { maxCost: 1.0 },
+ * });
+ *
+ * const engine = new Engine();
+ * engine.register(assistant, { provider: myProvider });
+ *
+ * const handle = await engine.start('travel-assistant', 'Book me a flight to Tokyo');
+ * const answer = await handle.result();
+ * ```
+ *
+ * @example Per-tenant tool customization
+ * ```ts
+ * const searchTool = { definition: { name: 'search', ... }, execute: async () => [] };
+ * const adminTool = { definition: { name: 'refund', ... }, execute: async () => null };
+ *
+ * const agent = defineAgent({
+ *   name: 'support-agent',
+ *   model: 'claude-sonnet-4-5',
+ *   toolsForTenant(tenant) {
+ *     if (tenant?.attributes?.role === 'admin') return [searchTool, adminTool];
+ *     return [searchTool];
+ *   },
+ *   validateInput(input, tenant) {
+ *     if (!tenant) throw new Error('tenant required');
+ *   },
+ * });
+ * ```
+ */
 export function defineAgent<TInput = unknown, TOutput = unknown>(
   options: AgentDefinitionOptions<TInput, TOutput>,
 ): AgentDefinition<TInput, TOutput> {
-  return { ...options, _brand: AGENT_DEFINITION_BRAND };
+  const { validateInput, ...rest } = options;
+  const definition: AgentDefinition<TInput, TOutput> = {
+    ...rest,
+    _brand: AGENT_DEFINITION_BRAND,
+  };
+  // Widen the caller's typed validator to the stored `unknown` signature so
+  // the resulting AgentDefinition stays assignable to the erased form used
+  // by `engine.register()`. Runtime behavior is unchanged.
+  if (validateInput !== undefined) {
+    definition.validateInput = validateInput as (
+      input: unknown,
+      tenant: TenantContext | undefined,
+    ) => void;
+  }
+  return definition;
 }

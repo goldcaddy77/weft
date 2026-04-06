@@ -267,6 +267,12 @@ export interface ContextOptions {
   getNow?: () => number;
   nestingDepth?: number;
   /**
+   * The {@link TenantContext} resolved for this workflow, if any. Made
+   * available to workflow code via `ctx.tenant`. Undefined when the engine
+   * has no tenant resolver or the resolver returned `undefined`.
+   */
+  tenant?: import('./tenant.ts').TenantContext;
+  /**
    * Reference timestamp used to compute `scheduledFireAt` for sleep operations.
    * When resuming from a checkpoint, this should be the checkpoint's `createdAt`
    * so that expired sleeps resolve immediately via the engine's fast path.
@@ -298,6 +304,7 @@ export class Context implements WorkflowContext {
   #explainMode: boolean;
   #budgetTracker: BudgetTracker | undefined;
   #nestingDepth: number;
+  #tenant: import('./tenant.ts').TenantContext | undefined;
 
   #captureCallerStack(): string {
     const error = new Error();
@@ -324,6 +331,17 @@ export class Context implements WorkflowContext {
     this.#explainMode = false;
     this.#budgetTracker = undefined;
     this.#nestingDepth = options.nestingDepth ?? 0;
+    this.#tenant = options.tenant;
+  }
+
+  /**
+   * The {@link TenantContext} this workflow is running on behalf of, if any.
+   * Populated from the engine's `tenantResolver` at start time and restored
+   * from the workflow state on recovery. `undefined` when the engine has no
+   * resolver configured or the resolver returned `undefined`.
+   */
+  get tenant(): import('./tenant.ts').TenantContext | undefined {
+    return this.#tenant;
   }
 
   // -------------------------------------------------------------------------
@@ -445,6 +463,38 @@ export class Context implements WorkflowContext {
     };
 
     this.#accumulatedResults.set(step, undefined);
+  }
+
+  /**
+   * Pause the workflow until an external caller delivers a signal with the
+   * matching `resumeToken` as its name. Semantically identical to
+   * `waitForSignal(resumeToken)` — the caller generates the token, hands it
+   * to the external world, then yields. The engine persists a checkpoint and
+   * releases control; when `POST /v1/workflows/:id/signal/:resumeToken`
+   * arrives, the generator resumes with the signal payload.
+   *
+   * This primitive closes the "serverless suspension" gap vs Inngest's
+   * `step.ai.infer()` and Restate's journal-based suspension — the worker is
+   * free to pick up other work while the workflow is parked in its checkpoint.
+   *
+   * **Token collision caveat:** resume tokens share the signal namespace with
+   * `waitForSignal`. Pick tokens that can't collide with named signals the
+   * workflow also listens for (a UUID is safest).
+   *
+   * @example
+   * ```ts
+   * import type { Context } from 'weft';
+   *
+   * engine.register('await-webhook', async function* (ctx, input: { callbackUrl: string }) {
+   *   const token = crypto.randomUUID();
+   *   yield* (ctx as Context).run(registerCallback, { url: input.callbackUrl, token });
+   *   const payload = yield* (ctx as Context).suspendUntil<{ status: string }>(token);
+   *   return payload.status;
+   * });
+   * ```
+   */
+  *suspendUntil<T = unknown>(resumeToken: string): Generator<ContextOperationRequest, T, unknown> {
+    return yield* this.waitForSignal<T>(resumeToken);
   }
 
   *waitForSignal<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown> {

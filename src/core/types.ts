@@ -38,6 +38,13 @@ export interface WorkflowState {
   createdAt: number;
   updatedAt: number;
   executionDeadline?: number;
+  /**
+   * Optional {@link TenantContext} resolved at start time by the engine's
+   * `tenantResolver`. Persisted here so it survives workflow recovery — the
+   * field is only present on workflows started while a resolver was
+   * configured and the resolver returned a value.
+   */
+  tenant?: import('./tenant.ts').TenantContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +195,14 @@ export interface EngineOptions {
 
   /** Built-in alerting configuration. */
   alerts?: AlertingOptions;
+
+  /**
+   * Optional {@link TenantResolver} that populates `ctx.tenant` for every new
+   * workflow. When set, the engine calls `resolver.resolve(workflowId, input)`
+   * once at `start()` time and persists the returned context on the workflow
+   * state so it survives recovery. Leave unset for single-tenant deployments.
+   */
+  tenantResolver?: import('./tenant.ts').TenantResolver;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,11 +323,43 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
 // Forward-declared WorkflowContext interface (full implementation in context.ts)
 // ---------------------------------------------------------------------------
 
+/**
+ * The minimal context contract that every workflow function receives. For
+ * most operations — `run`, `sleep`, `waitForSignal`, `setAttribute`,
+ * `stream`, `suspendUntil`, `agent`, and the multi-agent primitives — cast
+ * to the concrete `Context` class from `src/core/context.ts`:
+ *
+ * ```ts
+ * import type { Context } from 'weft';
+ *
+ * engine.register('example', async function* (ctx) {
+ *   const result = yield* (ctx as Context).run(myActivity, input);
+ *   yield* (ctx as Context).suspendUntil('resume-token');
+ * });
+ * ```
+ *
+ * `tenant` is surfaced directly on this interface (not via the cast) because
+ * reading it is a common lightweight path that doesn't need the full method
+ * surface.
+ */
 export interface WorkflowContext {
   readonly workflowId: WorkflowId;
   readonly signal: AbortSignal;
   readonly executionTimeRemaining: number;
   readonly startedAt: number;
+  /**
+   * The {@link import('./tenant.ts').TenantContext} this workflow is running
+   * on behalf of, populated from the engine's `tenantResolver` at start time
+   * and restored from persisted state on recovery. `undefined` when the
+   * engine has no resolver configured or the resolver returned `undefined`.
+   *
+   * Declared as `T | undefined` rather than `tenant?: T` so the field is
+   * always present on the type — the `Context` class implementation has a
+   * getter that returns `undefined` when absent, and under
+   * `exactOptionalPropertyTypes` the optional-key form would be a stricter
+   * contract that the getter can't satisfy.
+   */
+  readonly tenant: import('./tenant.ts').TenantContext | undefined;
 }
 
 // ---------------------------------------------------------------------------
