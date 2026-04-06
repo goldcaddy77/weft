@@ -910,6 +910,50 @@ describe('Bug fix: SSE stream reader released on cancellation', () => {
     // The underlying token stream should have been cancelled too
     expect(readerCancelled).toBe(true);
   });
+
+  it('releases the underlying reader after the token stream completes normally', async () => {
+    const tokenStream = new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue('a');
+        controller.enqueue('b');
+        controller.close();
+      },
+    });
+
+    const sseStream = createSSEStream(tokenStream);
+    // Drain fully — the start() callback should releaseLock() after seeing done.
+    await collectByteStream(sseStream);
+
+    // The token stream should no longer be locked: we should be able to
+    // acquire a fresh reader without an "already locked" error.
+    expect(() => tokenStream.getReader()).not.toThrow();
+  });
+
+  it('releases the underlying reader after the token stream errors', async () => {
+    const tokenStream = new ReadableStream<string>({
+      pull(controller) {
+        controller.error(new Error('token stream failed'));
+      },
+    });
+
+    const sseStream = createSSEStream(tokenStream);
+    const reader = sseStream.getReader();
+
+    // Drain until the error surfaces
+    let errored = false;
+    try {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    } catch {
+      errored = true;
+    }
+    expect(errored).toBe(true);
+
+    // After the error, the underlying token stream must not remain locked.
+    expect(() => tokenStream.getReader()).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------

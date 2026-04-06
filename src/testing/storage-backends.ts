@@ -1,9 +1,12 @@
+import 'fake-indexeddb/auto';
+
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Engine } from '../core/engine.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
+import { IndexedDBStorage } from '../storage/indexeddb.ts';
 import type { Storage } from '../storage/interface.ts';
 import { LMDBStorage } from '../storage/lmdb.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -77,6 +80,25 @@ export const storageBackends: StorageBackendDescriptor[] = [
       return {
         storage,
         cleanup: () => storage[Symbol.dispose](),
+      };
+    },
+  },
+  {
+    name: 'IndexedDBStorage',
+    factory: () => {
+      const databaseName = `weft-test-${crypto.randomUUID()}`;
+      const storage = new IndexedDBStorage(databaseName);
+      return {
+        storage,
+        cleanup: () => {
+          storage[Symbol.dispose]();
+          // Delete the database to keep fake-indexeddb state isolated across tests.
+          try {
+            indexedDB.deleteDatabase(databaseName);
+          } catch {
+            // Best-effort cleanup; ignore errors.
+          }
+        },
       };
     },
   },

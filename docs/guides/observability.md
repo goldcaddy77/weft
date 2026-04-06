@@ -4,18 +4,22 @@ Your workflows are running in production. Something is slow, but you can't tell 
 
 ## Quick setup
 
-Import the factory, create the interceptors, and register them with your engine.
+Import the factory, pass the engine as the `eventTarget`, and register the interceptors.
 
 ```typescript
 import { createObservabilityInterceptors } from 'weft/observability';
 
-const { workflow, activity } = createObservabilityInterceptors();
+const { workflow, activity, dispose } = createObservabilityInterceptors({
+  eventTarget: engine,
+});
 
 engine.addInterceptor(workflow);
 engine.addActivityInterceptor(activity);
 ```
 
-That's it. Every workflow start, activity call, sleep, and signal wait now produces spans with trace context propagation. If you're using [remote workers](./remote-workers.md), pass the activity interceptor to them too.
+That's it. Every workflow start, activity call, sleep, and signal wait now produces spans with trace context propagation. Wiring the engine as the `eventTarget` lets the factory subscribe to workflow lifecycle events (`workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`) and automatically end the root workflow span with the right status. Without it, root spans would stay "in progress" forever and the internal span map would grow unbounded.
+
+When tearing down the engine, call `dispose()` to unsubscribe those listeners and end any spans that are still open. If you're using [remote workers](./remote-workers.md), pass the activity interceptor to them too.
 
 ## Configuration
 

@@ -279,57 +279,123 @@ describe('ReconnectionBuffer', () => {
     expect(buffer.getTurns()).toEqual(['alpha', 'beta', 'gamma']);
   });
 
-  it('evicts oldest turns when byte budget is exceeded', () => {
-    // estimateTurnBytes uses text.length * 2, so a 100-char string = 200 bytes
-    const buffer = new ReconnectionBuffer({ maxBytes: 400 });
+  it('respects maxBytes and evicts oldest turns when budget exceeded', () => {
+    // JSON.stringify('x'.repeat(n)).length === n + 2 (the quotes)
+    // Pick a budget that fits exactly two 10-character turns (12 bytes each) plus nothing more.
+    const buffer = new ReconnectionBuffer({ maxTurns: 100, maxBytes: 30 });
 
-    buffer.addTurn('A'.repeat(100)); // 200 bytes
-    buffer.addTurn('B'.repeat(100)); // 200 bytes — total 400, at limit
-    buffer.addTurn('C'.repeat(100)); // 200 bytes — would be 600, must evict oldest
+    buffer.addTurn('x'.repeat(10)); // 12 bytes
+    buffer.addTurn('y'.repeat(10)); // 24 bytes total
+    expect(buffer.turnCount).toBe(2);
+    expect(buffer.byteSize).toBe(24);
+
+    // Adding a third 10-char turn pushes total to 36 bytes, which is over the 30-byte budget.
+    // The oldest turn should be evicted.
+    buffer.addTurn('z'.repeat(10));
+    expect(buffer.turnCount).toBe(2);
+    expect(buffer.byteSize).toBe(24);
+    expect(buffer.getTurns()).toEqual(['y'.repeat(10), 'z'.repeat(10)]);
+  });
+
+  it('keeps a single oversized turn rather than wiping the buffer entirely', () => {
+    const buffer = new ReconnectionBuffer({ maxBytes: 10 });
+    const bigTurn = 'a'.repeat(1000);
+    buffer.addTurn(bigTurn);
+
+    // A single turn exceeding the budget is retained so the client can still replay it.
+    expect(buffer.turnCount).toBe(1);
+    expect(buffer.getTurns()).toEqual([bigTurn]);
+  });
+
+  it('maxTurns still applies when byte budget is generous', () => {
+    const buffer = new ReconnectionBuffer({ maxTurns: 2, maxBytes: 1024 * 1024 });
+    buffer.addTurn('first');
+    buffer.addTurn('second');
+    buffer.addTurn('third');
 
     expect(buffer.turnCount).toBe(2);
-    expect(buffer.getTurns()).toEqual(['B'.repeat(100), 'C'.repeat(100)]);
+    expect(buffer.getTurns()).toEqual(['second', 'third']);
   });
 
-  it('tracks currentBytes correctly after eviction', () => {
-    const buffer = new ReconnectionBuffer({ maxBytes: 400 });
-    buffer.addTurn('A'.repeat(100)); // 200 bytes
-    buffer.addTurn('B'.repeat(100)); // 200 bytes
-    expect(buffer.currentBytes).toBe(400);
-
-    buffer.addTurn('C'.repeat(100)); // forces eviction of 'A'
-    expect(buffer.currentBytes).toBe(400); // 'B' + 'C'
-  });
-
-  it('keeps a single oversized turn rather than leaving buffer empty', () => {
-    const buffer = new ReconnectionBuffer({ maxBytes: 10 });
-    buffer.addTurn('X'.repeat(100)); // 200 bytes, exceeds budget alone
-
-    // The while loop stops at length > 1, so the lone entry is kept
-    expect(buffer.turnCount).toBe(1);
-    expect(buffer.currentBytes).toBe(200);
-  });
-
-  it('resets currentBytes on clear', () => {
-    const buffer = new ReconnectionBuffer({ maxBytes: 1000 });
-    buffer.addTurn('A'.repeat(100));
-    buffer.addTurn('B'.repeat(100));
-    expect(buffer.currentBytes).toBe(400);
+  it('clear resets the byte counter', () => {
+    const buffer = new ReconnectionBuffer();
+    buffer.addTurn('hello');
+    expect(buffer.byteSize).toBeGreaterThan(0);
 
     buffer.clear();
-    expect(buffer.currentBytes).toBe(0);
+    expect(buffer.byteSize).toBe(0);
     expect(buffer.turnCount).toBe(0);
   });
+});
 
-  it('enforces both maxTurns and maxBytes together', () => {
-    // maxTurns = 5 but byte budget only fits 2 turns
-    const buffer = new ReconnectionBuffer({ maxTurns: 5, maxBytes: 400 });
+describe('StreamMultiplexer source error', () => {
+  it('clears the replay buffer when the source stream errors', async () => {
+    let sourceController: ReadableStreamDefaultController<StreamChunk> | undefined;
+    const source = new ReadableStream<StreamChunk>({
+      start(controller) {
+        sourceController = controller;
+      },
+    });
 
-    buffer.addTurn('A'.repeat(100)); // 200 bytes
-    buffer.addTurn('B'.repeat(100)); // 200 bytes
-    buffer.addTurn('C'.repeat(100)); // 200 bytes — byte budget forces eviction
+    const multiplexer = new StreamMultiplexer(source);
+    const consumer = multiplexer.createConsumer();
+    const reader = consumer.getReader();
 
-    expect(buffer.turnCount).toBe(2);
-    expect(buffer.getTurns()).toEqual(['B'.repeat(100), 'C'.repeat(100)]);
+    // Enqueue two chunks to populate the replay buffer, then error the source.
+    sourceController!.enqueue({ type: 'token', token: 'one' });
+    sourceController!.enqueue({ type: 'token', token: 'two' });
+
+    // Drain what's available before the error.
+    const firstRead = await reader.read();
+    expect(firstRead.value).toEqual({ type: 'token', token: 'one' });
+    const secondRead = await reader.read();
+    expect(secondRead.value).toEqual({ type: 'token', token: 'two' });
+
+    sourceController!.error(new Error('source boom'));
+
+    // Let the catch block in #pump run.
+    const afterError = await reader.read();
+    expect(afterError.done).toBe(true);
+
+    // A late consumer attaches after the source has errored. It must NOT receive stale
+    // buffered chunks — the buffer should have been cleared on error.
+    const lateConsumer = multiplexer.createConsumer();
+    const lateReader = lateConsumer.getReader();
+    const lateFirst = await lateReader.read();
+    expect(lateFirst.done).toBe(true);
+  });
+});
+
+describe('TokenBridge reader release', () => {
+  it('releases the reader after normal completion so the source can be re-read', async () => {
+    const stream = createTestStream([{ type: 'token', token: 'Hello' }, { type: 'done' }]);
+
+    const bridge = new TokenBridge(new EventTarget(), 'workflow-1', 'gpt-4');
+    await bridge.pipe(stream);
+
+    // After pipe exits normally, attempting to acquire a new reader on the
+    // underlying stream must not throw with "already locked".
+    expect(() => stream.getReader()).not.toThrow();
+  });
+
+  it('releases the reader after an error in the source stream', async () => {
+    const stream = new ReadableStream<StreamChunk>({
+      pull(controller) {
+        controller.error(new Error('source failed'));
+      },
+    });
+
+    const bridge = new TokenBridge(new EventTarget(), 'workflow-1', 'gpt-4');
+
+    let thrown: Error | undefined;
+    try {
+      await bridge.pipe(stream);
+    } catch (error) {
+      thrown = error as Error;
+    }
+
+    expect(thrown).toBeDefined();
+    // After the finally runs, the stream should no longer be locked.
+    expect(() => stream.getReader()).not.toThrow();
   });
 });

@@ -20,7 +20,7 @@ import {
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
   WorkflowTimedOutEvent,
-} from '../core/events.ts';
+} from '../core/events';
 import type {
   ActivityExecutionInterception,
   ActivityInterception,
@@ -96,9 +96,19 @@ export type ObservabilityOptions = {
    */
   otelApi?: OtelApi;
   /**
-   * Event target that the agent loop dispatches lifecycle events on.
-   * When provided, the agent interceptor creates child spans for each
-   * turn (`agent:turn:N`) and tool call (`agent:tool:name`).
+   * Event target that the engine dispatches lifecycle events on.
+   *
+   * When provided, the factory subscribes to the engine's workflow lifecycle
+   * events (`workflow:completed`, `workflow:failed`, `workflow:cancelled`,
+   * `workflow:timed-out`) and automatically ends the root workflow span with
+   * the appropriate status. This prevents the internal `workflowSpans` map
+   * from growing unbounded and ensures exported traces reflect terminal state.
+   *
+   * The same target is also used by the agent interceptor to create child
+   * spans for each turn (`agent:turn:N`) and tool call (`agent:tool:name`).
+   *
+   * In practice, pass your `Engine` instance here—it dispatches both agent
+   * and workflow lifecycle events on itself.
    */
   eventTarget?: EventTarget;
 };
@@ -159,14 +169,21 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   workflow: WorkflowInterceptor;
   activity: ActivityInterceptor;
   metrics: MetricsCollectorClass;
-  /** End the workflow root span. Call from the engine when a workflow reaches terminal state. */
+  /**
+   * End the workflow root span. Usually wired automatically via `eventTarget`,
+   * but exposed for callers that need to end spans manually.
+   */
   endWorkflowSpan: (workflowId: string, status: 'ok' | 'error', errorMessage?: string) => void;
   /**
    * Evict workflow spans that have been open longer than `maxAgeMs` (default: 1 hour).
    * Call periodically to prevent unbounded growth from orphaned or long-running workflows.
    */
   evictStaleSpans: (maxAgeMs?: number) => number;
-  /** Dispose all tracked workflow spans and clear the internal map. */
+  /**
+   * Unsubscribe any workflow lifecycle listeners registered on the `eventTarget`
+   * and end any still-open workflow spans. Call this when tearing down the
+   * engine so the interceptor doesn't leak listeners or spans.
+   */
   dispose: () => void;
 } {
   const api = options?.otelApi ?? getOtelApi();
@@ -225,35 +242,6 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     if (entry) {
       entry.span.end();
       workflowSpans.delete(workflowId);
-    }
-  }
-
-  // Automatically clean up workflow spans when workflows reach terminal states.
-  if (eventTarget) {
-    const terminalHandler = (event: Event) => {
-      if (
-        !(event instanceof WorkflowCompletedEvent) &&
-        !(event instanceof WorkflowFailedEvent) &&
-        !(event instanceof WorkflowCancelledEvent) &&
-        !(event instanceof WorkflowTimedOutEvent)
-      ) {
-        return;
-      }
-
-      const isError =
-        event instanceof WorkflowFailedEvent || event instanceof WorkflowTimedOutEvent;
-      const errorMsg = event instanceof WorkflowFailedEvent ? event.error.message : undefined;
-
-      endWorkflowSpan(event.workflowId, isError ? 'error' : 'ok', errorMsg);
-    };
-
-    for (const type of [
-      WorkflowCompletedEvent.type,
-      WorkflowFailedEvent.type,
-      WorkflowCancelledEvent.type,
-      WorkflowTimedOutEvent.type,
-    ]) {
-      eventTarget.addEventListener(type, terminalHandler);
     }
   }
 
@@ -724,12 +712,54 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     workflowSpans.delete(workflowId);
   }
 
+  // -----------------------------------------------------------------------
+  // Workflow lifecycle subscription
+  // -----------------------------------------------------------------------
+  //
+  // When an event target is provided (typically the engine), subscribe to
+  // workflow terminal events so root spans are automatically ended with the
+  // correct status. Without this, `workflowSpans` would grow unbounded and
+  // exported traces would show workflow spans as "in progress" forever.
+
+  const onWorkflowCompleted = (event: Event): void => {
+    if (!(event instanceof WorkflowCompletedEvent)) return;
+    endWorkflowSpan(event.workflowId, 'ok');
+  };
+
+  const onWorkflowFailed = (event: Event): void => {
+    if (!(event instanceof WorkflowFailedEvent)) return;
+    endWorkflowSpan(event.workflowId, 'error', event.error.message);
+  };
+
+  const onWorkflowCancelled = (event: Event): void => {
+    if (!(event instanceof WorkflowCancelledEvent)) return;
+    endWorkflowSpan(event.workflowId, 'error', 'Workflow cancelled');
+  };
+
+  const onWorkflowTimedOut = (event: Event): void => {
+    if (!(event instanceof WorkflowTimedOutEvent)) return;
+    endWorkflowSpan(
+      event.workflowId,
+      'error',
+      `Workflow timed out (${event.timeoutType}) after ${event.elapsed}ms`,
+    );
+  };
+
+  if (eventTarget) {
+    eventTarget.addEventListener(WorkflowCompletedEvent.type, onWorkflowCompleted);
+    eventTarget.addEventListener(WorkflowFailedEvent.type, onWorkflowFailed);
+    eventTarget.addEventListener(WorkflowCancelledEvent.type, onWorkflowCancelled);
+    eventTarget.addEventListener(WorkflowTimedOutEvent.type, onWorkflowTimedOut);
+  }
+
   const DEFAULT_STALE_SPAN_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
   /**
    * Evict workflow spans older than `maxAgeMs`. Returns the number of
    * evicted entries. Orphaned or long-running workflows that never reach
-   * a terminal state will accumulate spans indefinitely without this.
+   * a terminal state will accumulate spans indefinitely without this —
+   * the terminal-event subscription only covers workflows that actually
+   * complete.
    */
   function evictStaleSpans(maxAgeMs: number = DEFAULT_STALE_SPAN_MAX_AGE_MS): number {
     const cutoff = Date.now() - maxAgeMs;
@@ -745,9 +775,17 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     return evicted;
   }
 
-  /** End all tracked workflow spans and clear the map. */
   function dispose(): void {
-    for (const [, entry] of workflowSpans) {
+    if (eventTarget) {
+      eventTarget.removeEventListener(WorkflowCompletedEvent.type, onWorkflowCompleted);
+      eventTarget.removeEventListener(WorkflowFailedEvent.type, onWorkflowFailed);
+      eventTarget.removeEventListener(WorkflowCancelledEvent.type, onWorkflowCancelled);
+      eventTarget.removeEventListener(WorkflowTimedOutEvent.type, onWorkflowTimedOut);
+    }
+
+    // End any still-open workflow spans so the map cannot leak past dispose.
+    for (const entry of workflowSpans.values()) {
+      entry.span.setStatus({ code: SpanStatusCode.ERROR, message: 'Observability disposed' });
       entry.span.end();
     }
     workflowSpans.clear();

@@ -44,6 +44,12 @@ import type {
   ToolDefinition,
   ToolResult,
 } from './providers/types';
+import type { CacheEntry } from './tool-cache';
+import {
+  setToolCacheEntry,
+  sweepExpiredCacheEntries,
+  TOOL_CACHE_SWEEP_THRESHOLD,
+} from './tool-cache';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -81,6 +87,12 @@ export interface AgentOptions {
   healthTracker?: ProviderHealthTracker | undefined;
   /** Tool result cache TTL in milliseconds. Defaults to 300 000 (5 minutes). */
   toolCacheTTL?: number | undefined;
+  /**
+   * Maximum number of tool result cache entries. When the cache grows past
+   * this cap, the oldest entry (by insertion order) is evicted to make room.
+   * Defaults to 1000.
+   */
+  toolCacheMaxSize?: number | undefined;
   signal?: AbortSignal | undefined;
   hooks?: AgentHooks | undefined;
   eventTarget?: EventTarget | undefined;
@@ -163,6 +175,7 @@ interface ResolvedAgentOptions {
   contextManager?: ContextWindowManager | undefined;
   healthTracker?: ProviderHealthTracker | undefined;
   toolCacheTTL: number;
+  toolCacheMaxSize: number;
   signal?: AbortSignal | undefined;
   hooks?: AgentHooks | undefined;
   eventTarget?: EventTarget | undefined;
@@ -230,54 +243,6 @@ interface ToolExecutionOutcome {
 // ---------------------------------------------------------------------------
 // Tool result cache
 // ---------------------------------------------------------------------------
-
-interface CacheEntry {
-  output: string;
-  timestamp: number;
-}
-
-/**
- * Maximum number of entries the tool cache can hold. When the cache exceeds
- * this size during an eviction sweep, oldest entries are dropped until the
- * cache is within budget.
- */
-const TOOL_CACHE_MAX_ENTRIES = 1000;
-
-/**
- * Number of entries that triggers a proactive eviction sweep when checking
- * an individual cache entry's TTL. Below this threshold the per-access
- * overhead of a full sweep is skipped.
- */
-const TOOL_CACHE_SWEEP_THRESHOLD = 100;
-
-/**
- * Remove all expired entries from the cache and enforce a hard size cap.
- * Called proactively during cache reads once the map exceeds
- * {@link TOOL_CACHE_SWEEP_THRESHOLD} entries.
- */
-function sweepExpiredCacheEntries(cache: Map<string, CacheEntry>, ttl: number): void {
-  const now = Date.now();
-
-  // First pass: remove expired entries.
-  // Deleting the current key during Map iteration is safe per the ECMAScript
-  // specification — visited entries are not revisited after deletion.
-  for (const [key, entry] of cache) {
-    if (now - entry.timestamp >= ttl) {
-      cache.delete(key);
-    }
-  }
-
-  // If still over the hard cap, evict oldest entries first
-  if (cache.size <= TOOL_CACHE_MAX_ENTRIES) {
-    return;
-  }
-
-  const sorted = [...cache.entries()].toSorted((a, b) => a[1].timestamp - b[1].timestamp);
-  const toEvict = sorted.slice(0, cache.size - TOOL_CACHE_MAX_ENTRIES);
-  for (const [key] of toEvict) {
-    cache.delete(key);
-  }
-}
 
 function buildCacheKey(toolName: string, input: unknown): string {
   return `${toolName}:${JSON.stringify(input)}`;
@@ -360,15 +325,31 @@ type InitializeToolsResult = {
 };
 
 /**
+ * Factory that constructs an MCP client for a given tool source. Injectable
+ * so tests can substitute a stub that records lifecycle calls.
+ *
+ * @internal
+ */
+export type MCPClientFactory = (source: MCPToolSource) => MCPClient;
+
+const defaultMCPClientFactory: MCPClientFactory = (source) => {
+  const transport = createTransportForSource(source);
+  return new MCPClient({ transport, timeout: source.timeout });
+};
+
+/**
  * Process a mixed tools array (local `AgentTool` + `MCPToolSource` entries).
  *
  * For each MCP source: health check, discover tools, register in the registry.
  * For each local tool: register in the registry.
  * Finally, validate for name conflicts and return the populated registry.
+ *
+ * @internal
  */
-async function initializeTools(
+export async function initializeTools(
   tools: (AgentTool | MCPToolSource)[],
   signal?: AbortSignal,
+  createClient: MCPClientFactory = defaultMCPClientFactory,
 ): Promise<InitializeToolsResult> {
   const registry = new ToolRegistry();
   const clients: MCPClient[] = [];
@@ -377,8 +358,7 @@ async function initializeTools(
     for (const entry of tools) {
       signal?.throwIfAborted();
       if (isMCPToolSource(entry)) {
-        const transport = createTransportForSource(entry);
-        const client = new MCPClient({ transport, timeout: entry.timeout });
+        const client = createClient(entry);
         clients.push(client);
 
         // Health check — fail fast if the server is unreachable
@@ -411,9 +391,10 @@ async function initializeTools(
       }
     }
 
-    // Validate for name conflicts before the agent loop starts.
-    // Must stay inside the try block so that a ToolNameConflictError
-    // triggers the catch-block disposal of already-created MCP clients.
+    // Validate for name conflicts before the agent loop starts. Must stay
+    // inside the try block so that a ToolNameConflictError (or any other
+    // validation failure) triggers the catch-block disposal of already-
+    // created MCP clients.
     registry.validate();
   } catch (error) {
     // Dispose all clients on any initialization failure
@@ -443,6 +424,7 @@ function resolveAgentOptions(options: AgentOptions): ResolvedAgentOptions {
     contextManager: options.contextManager,
     healthTracker: options.healthTracker,
     toolCacheTTL: options.toolCacheTTL ?? 300_000,
+    toolCacheMaxSize: options.toolCacheMaxSize ?? 1000,
     signal: options.signal,
     hooks: options.hooks,
     eventTarget: options.eventTarget,
@@ -883,9 +865,16 @@ async function resolveToolExecution(
 ): Promise<ToolExecutionOutcome> {
   const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
 
-  // Proactively evict expired entries when the cache grows large
+  // Proactively evict expired entries when the cache grows large. The
+  // sweep uses the caller's configured `toolCacheMaxSize` so the proactive
+  // read-time eviction agrees with the write-time eviction in
+  // `setToolCacheEntry`.
   if (runtime.state.toolCache.size >= TOOL_CACHE_SWEEP_THRESHOLD) {
-    sweepExpiredCacheEntries(runtime.state.toolCache, runtime.options.toolCacheTTL);
+    sweepExpiredCacheEntries(
+      runtime.state.toolCache,
+      runtime.options.toolCacheTTL,
+      runtime.options.toolCacheMaxSize,
+    );
   }
 
   const cached = runtime.state.toolCache.get(cacheKey);
@@ -902,7 +891,12 @@ async function resolveToolExecution(
     try {
       const rawOutput = await tool.execute(toolCall.input);
       output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
-      runtime.state.toolCache.set(cacheKey, { output, timestamp: Date.now() });
+      setToolCacheEntry(
+        runtime.state.toolCache,
+        cacheKey,
+        { output, timestamp: Date.now() },
+        runtime.options.toolCacheMaxSize,
+      );
     } catch (error: unknown) {
       output = JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
       success = false;
