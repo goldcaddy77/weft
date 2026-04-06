@@ -140,12 +140,12 @@ export class OpenAIProvider implements LLMProvider {
             }
           }
         } finally {
-          // Cancel the inner reader so the fetch body stops buffering, and
-          // then explicitly release the lock so the response body is no
-          // longer pinned. `cancel()` alone does NOT release the reader lock
-          // in Bun — `releaseLock()` does. Both ignore errors because the
-          // reader may already be in a terminal state when we get here.
-          releaseInnerReader(reader);
+          // Cancel the inner reader and wait for it to settle before
+          // releasing the lock. `cancel()` alone does NOT release the
+          // reader lock in Bun — `releaseLock()` does. Awaiting the cancel
+          // ensures any in-flight read is fully settled so `releaseLock()`
+          // never throws "cannot release a reader with pending reads".
+          await releaseInnerReader(reader);
           // `controller.close()` throws if the stream is already closed
           // or errored — which is exactly what happens when the consumer
           // cancelled the outer stream before we reached this block.
@@ -156,11 +156,11 @@ export class OpenAIProvider implements LLMProvider {
           }
         }
       },
-      cancel(reason) {
+      async cancel(reason) {
         // Consumer aborted (e.g. budget exceeded, workflow cancellation).
         // Propagate the cancel to the inner reader and release its lock so
         // the fetch response body does not stay locked forever.
-        releaseInnerReader(reader, reason);
+        await releaseInnerReader(reader, reason);
       },
     });
   }

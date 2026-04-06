@@ -6,22 +6,28 @@
  * response body pinned even though the stream itself is drained, preventing
  * GC of buffered network chunks.
  *
- * This helper performs both steps and swallows errors from either call: the
- * reader may already be in a terminal state by the time we get here (e.g.
- * the consumer cancelled the outer stream, or the source stream errored),
- * and neither path should crash the caller.
+ * This helper awaits `cancel()` first so any pending read operation on the
+ * reader is fully settled before calling `releaseLock()` — calling
+ * `releaseLock()` while a read is in-flight throws a `TypeError` and leaves
+ * the stream locked forever. Both steps swallow errors because the reader
+ * may already be in a terminal state when we get here (consumer cancelled
+ * the outer stream, source stream errored, etc.), and neither path should
+ * crash the caller.
  *
  * @internal
  */
-export function releaseInnerReader(
+export async function releaseInnerReader(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   reason?: unknown,
-): void {
-  reader.cancel(reason).catch(() => {});
+): Promise<void> {
+  try {
+    await reader.cancel(reason);
+  } catch {
+    // Ignore: reader is already in a terminal state.
+  }
   try {
     reader.releaseLock();
   } catch {
-    // Ignore: lock was already released (e.g. cancel() resolved first) or
-    // the reader is already in a terminal state.
+    // Ignore: lock was already released or the reader is in a terminal state.
   }
 }
