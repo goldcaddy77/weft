@@ -45,7 +45,11 @@ import type {
   ToolResult,
 } from './providers/types';
 import type { CacheEntry } from './tool-cache';
-import { setToolCacheEntry } from './tool-cache';
+import {
+  setToolCacheEntry,
+  sweepExpiredCacheEntries,
+  TOOL_CACHE_SWEEP_THRESHOLD,
+} from './tool-cache';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -387,9 +391,10 @@ export async function initializeTools(
       }
     }
 
-    // Validate for name conflicts before the agent loop starts.
-    // Kept inside the try block so that a ToolNameConflictError (or any
-    // other validation failure) still disposes the MCP clients we created.
+    // Validate for name conflicts before the agent loop starts. Must stay
+    // inside the try block so that a ToolNameConflictError (or any other
+    // validation failure) triggers the catch-block disposal of already-
+    // created MCP clients.
     registry.validate();
   } catch (error) {
     // Dispose all clients on any initialization failure
@@ -859,6 +864,12 @@ async function resolveToolExecution(
   tool: RegistryTool | undefined,
 ): Promise<ToolExecutionOutcome> {
   const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
+
+  // Proactively evict expired entries when the cache grows large
+  if (runtime.state.toolCache.size >= TOOL_CACHE_SWEEP_THRESHOLD) {
+    sweepExpiredCacheEntries(runtime.state.toolCache, runtime.options.toolCacheTTL);
+  }
+
   const cached = runtime.state.toolCache.get(cacheKey);
   const now = Date.now();
 

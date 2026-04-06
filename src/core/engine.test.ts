@@ -1,5 +1,6 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 
+import { BudgetPolicyEnforcer } from '../ai/budget-policy.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
@@ -2790,6 +2791,95 @@ describe('Engine', () => {
 
       await engine.signal('finalize-stable-id', 'release');
       await handle.result();
+      engine[Symbol.dispose]();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Budget policy enforcement through ctx.all() (additional regressions)
+  // ---------------------------------------------------------------------------
+
+  describe('org-level budget policy enforcement via ctx.all()', () => {
+    function createSimpleMockProvider(): LLMProvider {
+      return {
+        name: 'mock',
+        async chat(): Promise<ChatResponse> {
+          return {
+            content: 'Agent response',
+            toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      };
+    }
+
+    it('rejects agent sub-operation inside ctx.all() when org budget is exhausted', async () => {
+      const provider = createSimpleMockProvider();
+
+      // Pre-seed a MemoryStorage with an exhausted daily counter so the engine's
+      // BudgetPolicyEnforcer will reject the first checkBudget() call.
+      const storage = new MemoryStorage();
+      const seeder = new BudgetPolicyEnforcer(storage, Date.now);
+      seeder.setPolicy({ namespace: 'org', daily: { maxCost: 0.01 } });
+      await seeder.recordCost('org', 1.0);
+
+      // Build the engine on top of the same storage so the exhausted counter is visible.
+      const engine = new Engine({ storage });
+      await engine.setBudgetPolicy({ namespace: 'org', daily: { maxCost: 0.01 } });
+
+      engine.register('parallel-agent-budget-workflow', async function* (ctx: WorkflowContext) {
+        const results = yield* (ctx as Context).all([
+          (ctx as Context).agent({
+            model: 'test-model',
+            prompt: 'Say hello',
+            provider,
+            budgetNamespace: 'org',
+          }),
+        ]);
+        return results;
+      });
+
+      const handle = await engine.start('parallel-agent-budget-workflow', null);
+
+      // The engine serialises workflow errors to their message string and reconstructs a
+      // plain Error on retrieval, so match on the well-known OrganizationBudgetExceededError
+      // message prefix rather than the class constructor.
+      await expect(handle.result()).rejects.toThrow('Organization budget exceeded: org daily');
+
+      engine[Symbol.dispose]();
+    });
+
+    it('returns agentResult.content (not the full result struct) from ctx.all()', async () => {
+      const engine = new Engine();
+      const provider = createSimpleMockProvider();
+
+      engine.register('parallel-agent-content-workflow', async function* (ctx: WorkflowContext) {
+        const results = yield* (ctx as Context).all([
+          (ctx as Context).agent({
+            model: 'test-model',
+            prompt: 'Say hello',
+            provider,
+          }),
+        ]);
+        return results;
+      });
+
+      const handle = await engine.start('parallel-agent-content-workflow', null);
+      const result = (await handle.result()) as unknown[];
+
+      // The result must be the plain string content, not an object with a `content` property.
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe('Agent response');
+      expect(typeof result[0]).toBe('string');
+
       engine[Symbol.dispose]();
     });
   });

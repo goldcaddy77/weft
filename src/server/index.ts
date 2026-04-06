@@ -1285,6 +1285,7 @@ export function serve(options: ServeOptions): WeftServer {
           if (processingOperations.has(decoded.operationId)) continue;
           processingOperations.add(decoded.operationId);
           try {
+            // Expired orphan — remove from heap, registry, and workflow index, then reassign.
             deadlineTracker.remove(decoded.operationId);
             registry.completeTask(decoded.operationId);
             cleanupWorkflowIndex(decoded.operationId);

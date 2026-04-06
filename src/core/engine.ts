@@ -3046,20 +3046,29 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return callMemoFunction(operation.fn);
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
-        const { BudgetTracker } = await import('../ai/budget.ts');
-        const { prompt, budget, budgetNamespace, ...rest } = operation.options;
+        const { prompt, budget: budgetOptions, budgetNamespace, ...rest } = operation.options;
+
+        // Use the shared helper so agent sub-operations get the same
+        // warning/exceeded event wiring as standalone `ctx.agent()` calls.
+        const budgetTracker = await this.#createAgentBudgetTracker(
+          workflowId,
+          operation,
+          budgetOptions,
+        );
 
         // Enforce organization-level budget policy before starting the agent
         // loop so that agents embedded in ctx.all()/ctx.race() collectively
         // count against the shared namespace cap, matching the behavior of
         // #processAgentContextOperation.
         const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
-        await this.#checkAgentBudgetPolicy(workflowId, budget, resolvedBudgetNamespace);
+        await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
 
         const agentResult = await executeAgentLoop(
           {
             ...rest,
-            budget: budget ? new BudgetTracker(budget) : undefined,
+            budget: budgetTracker,
+            // Thread the abort signal so losing branches of `ctx.race()`
+            // stop consuming budget after the race settles.
             signal,
           },
           prompt,
