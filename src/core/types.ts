@@ -323,6 +323,25 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
 // Forward-declared WorkflowContext interface (full implementation in context.ts)
 // ---------------------------------------------------------------------------
 
+/**
+ * The minimal context contract that every workflow function receives. For
+ * most operations — `run`, `sleep`, `waitForSignal`, `setAttribute`,
+ * `stream`, `suspendUntil`, `agent`, and the multi-agent primitives — cast
+ * to the concrete `Context` class from `src/core/context.ts`:
+ *
+ * ```ts
+ * import type { Context } from 'weft';
+ *
+ * engine.register('example', async function* (ctx) {
+ *   const result = yield* (ctx as Context).run(myActivity, input);
+ *   yield* (ctx as Context).suspendUntil('resume-token');
+ * });
+ * ```
+ *
+ * `tenant` is surfaced directly on this interface (not via the cast) because
+ * reading it is a common lightweight path that doesn't need the full method
+ * surface.
+ */
 export interface WorkflowContext {
   readonly workflowId: WorkflowId;
   readonly signal: AbortSignal;

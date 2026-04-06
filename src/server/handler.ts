@@ -974,6 +974,11 @@ export interface HandlerOptions {
   /**
    * Optional metrics collector for the /v1/metrics endpoint. Used when no
    * `prometheusExporter` is provided.
+   *
+   * @deprecated Prefer `prometheusExporter` — wrap your metrics source (OTel
+   * or otherwise) in a {@link PrometheusExporter} and pass it there. This
+   * field remains for projects still using the legacy `MetricsCollector`
+   * path and has lower precedence if both are set.
    */
   metricsCollector?: MetricsCollector;
 }

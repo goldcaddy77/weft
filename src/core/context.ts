@@ -483,6 +483,8 @@ export class Context implements WorkflowContext {
    *
    * @example
    * ```ts
+   * import type { Context } from 'weft';
+   *
    * engine.register('await-webhook', async function* (ctx, input: { callbackUrl: string }) {
    *   const token = crypto.randomUUID();
    *   yield* (ctx as Context).run(registerCallback, { url: input.callbackUrl, token });
