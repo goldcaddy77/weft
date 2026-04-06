@@ -1,21 +1,10 @@
 # Code Review Findings
 
-Last reviewed: 2026-03-29
-
-## Architecture Doc Discrepancies
-
-- [ ] **`engine.profile()` not implemented**: Architecture doc shows `engine.profile()` returning checkpoint/task timing metrics. No such method exists on the Engine class. Either implement or remove from doc.
-
-- [ ] **`alerts` configuration not implemented**: Architecture doc shows alert rules and webhook hooks in Engine constructor options. No `alerts` property exists in `EngineOptions`. Either implement or remove from doc.
+Last reviewed: 2026-04-06
 
 ## Not Yet Implemented (Notable Gaps)
 
-- [ ] **Single binary distribution** (`bun build --compile`). No build script for standalone executables.
-- [ ] **MCP server integration** for agent tools. Full section is unimplemented.
-- [ ] **Context window management strategies** (sliding-window, summarize, RAG). Full section is unimplemented.
-- [ ] **Multi-agent coordination** (handoff, debate, supervise, SharedState). Full section is unimplemented.
-- [ ] **Interceptor system**: Remote worker interceptors not supported. Types defined but runtime wiring incomplete.
-- [ ] **OpenTelemetry integration** via interceptors. Full section is unimplemented.
-- [ ] **Model routing and fallback chains** for agents. Full section is unimplemented.
-- [ ] **Graceful shutdown via `shutdown` message**: No handler for worker-initiated graceful shutdown.
-- [ ] **Server cancellation propagated to workers**: Server does not send `cancel` messages over WebSocket.
+- [ ] **Performance benchmarks not meeting architecture targets**: Benchmark tests exist with relaxed thresholds (e.g., 3K-5K workflows/sec vs. spec'd >50K; 10-16KB/workflow vs. spec'd <=2KB; cold start 200ms vs. spec'd <100ms). Tests pass at relaxed thresholds but the architecture doc's aspirational targets are unverified.
+- [ ] **Index scan performance benchmark missing**: No benchmark exists for the spec'd "<1ms for single-attribute equality filter on 100K workflows" target.
+- [ ] **OTel metrics not backed by standard exporter**: `/v1/metrics` uses a custom `MetricsCollector` that outputs Prometheus text manually. OTel metric definitions exist in `src/observability/metrics.ts` but aren't wired to the endpoint via a standard OTel Prometheus exporter.
+- [ ] **JSDoc examples incomplete**: Public API functions have descriptions but most lack inline code examples in their JSDoc.

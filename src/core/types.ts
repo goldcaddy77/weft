@@ -1,4 +1,7 @@
+import type { ModelRouter } from '../ai/model-router.ts';
+import type { AlertingOptions } from '../alerting/types.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
+import type { CompressionAlgorithm, CompressionOptions } from './compression.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow identity
@@ -136,6 +139,13 @@ export interface EngineOptions {
   storage?: WeftStorage;
   development?: boolean;
   serializer?: Serializer;
+  /** Payload compression applied at the storage layer. */
+  compression?: CompressionOptions & {
+    /** Compression algorithm for agent workflow checkpoints. Default: 'brotli'. */
+    agentAlgorithm?: CompressionAlgorithm;
+    /** Compression threshold for agent workflow checkpoints. Default: same as main threshold. */
+    agentThreshold?: number;
+  };
   checkpointHistory?: number;
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;
@@ -169,6 +179,15 @@ export interface EngineOptions {
     /** Use Bun's `smol` worker option for smaller memory footprint. */
     smol?: boolean;
   };
+
+  /**
+   * Default model router applied to all `ctx.agent()` calls that don't
+   * provide their own `modelRouter`. Per-call routers override this.
+   */
+  defaultModelRouter?: ModelRouter | undefined;
+
+  /** Built-in alerting configuration. */
+  alerts?: AlertingOptions;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +347,8 @@ export interface ListFilter {
 export interface AttributeFilter {
   key: string;
   value?: SearchAttributeValue;
+  gt?: SearchAttributeValue;
+  lt?: SearchAttributeValue;
   gte?: SearchAttributeValue;
   lte?: SearchAttributeValue;
 }
@@ -376,6 +397,8 @@ export interface SubmitReviewOptions {
   decision: ReviewDecision;
   reviewer: string;
   feedback?: string;
+  /** Per-section decisions for partial approval workflows. */
+  sectionDecisions?: Record<string, 'approved' | 'rejected'>;
   /** When provided, enables O(1) direct key lookup instead of scanning. */
   workflowId?: string;
 }

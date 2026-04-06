@@ -190,6 +190,89 @@ describe('ActivityWorkerDispatcher', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Error and timeout handling
+  // ---------------------------------------------------------------------------
+
+  describe('error and timeout handling', () => {
+    it('returns a failed result when the worker emits an error event', async () => {
+      const worker = new EventTarget() as EventTarget & {
+        postMessage: (request: ActivityExecutionRequest) => void;
+        terminate: () => void;
+      };
+
+      worker.postMessage = () => {
+        worker.dispatchEvent(new ErrorEvent('error', { message: 'worker exploded' }));
+      };
+      worker.terminate = () => {};
+
+      const fakePool = {
+        acquire: async () => worker,
+        release: () => {},
+        availableCount: 0,
+        totalCount: 1,
+        pendingCount: 0,
+        [Symbol.dispose]: () => {},
+        [Symbol.asyncDispose]: async () => {},
+      } as unknown as WorkerPool;
+
+      const fakeDispatcher = new ActivityWorkerDispatcher(fakePool);
+
+      const result = await fakeDispatcher.execute({
+        operationId: 'op-error',
+        activityName: 'explode',
+        input: null,
+        attempt: 1,
+      });
+
+      expect(result).toEqual({
+        operationId: 'op-error',
+        status: 'failed',
+        error: 'Activity worker crashed: worker exploded',
+      });
+    });
+
+    it('returns a failed result and terminates the worker on timeout', async () => {
+      let terminated = false;
+      let released = false;
+      const worker = new EventTarget() as EventTarget & {
+        postMessage: (_request: ActivityExecutionRequest) => void;
+        terminate: () => void;
+      };
+
+      worker.postMessage = () => {};
+      worker.terminate = () => {
+        terminated = true;
+      };
+
+      const fakePool = {
+        acquire: async () => worker,
+        release: () => {
+          released = true;
+        },
+        availableCount: 0,
+        totalCount: 1,
+        pendingCount: 0,
+        [Symbol.dispose]: () => {},
+        [Symbol.asyncDispose]: async () => {},
+      } as unknown as WorkerPool;
+
+      const fakeDispatcher = new ActivityWorkerDispatcher(fakePool, { timeoutMilliseconds: 5 });
+
+      const result = await fakeDispatcher.execute({
+        operationId: 'op-timeout',
+        activityName: 'slow',
+        input: null,
+        attempt: 1,
+      });
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('timed out after 5ms');
+      expect(terminated).toBe(true);
+      expect(released).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Worker reuse
   // ---------------------------------------------------------------------------
 

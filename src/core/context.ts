@@ -14,13 +14,25 @@ import type { AgentTool } from '../ai/agent.ts';
 import type { BudgetOptions, BudgetState } from '../ai/budget.ts';
 import { BudgetTracker } from '../ai/budget.ts';
 import type { ContextStrategy } from '../ai/context-window.ts';
+import type {
+  DebateOptions,
+  DebateResult,
+  HandoffOptions,
+  HandoffResult,
+  SuperviseOptions,
+  SuperviseResult,
+} from '../ai/coordination.ts';
 import type { AgentHooks } from '../ai/hooks.ts';
+import type { HumanReviewOptions, HumanReviewResult } from '../ai/human-review.ts';
 import type { ModelRouter } from '../ai/model-router.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import { parseDuration } from './scheduler.ts';
+import { validateAttributeType } from './search-attributes.ts';
+import { isAsyncGeneratorFunction, isGeneratorFunction } from './step-context.ts';
 import type {
   ActivityCallOptions,
   Duration,
+  SearchAttributeSchema,
   SearchAttributeValue,
   WorkflowContext,
 } from './types.ts';
@@ -74,42 +86,50 @@ export type ContextOperationRequest =
       type: 'activity';
       operationId: string;
       activityName: string;
-      fn: Function;
+      fn: (...args: unknown[]) => unknown;
       args: unknown[];
       callerStack?: string;
       options?: Record<string, unknown>;
+      /** Serialized interceptor headers (Map entries) for remote worker propagation. */
+      headers?: [string, string][];
     }
   | {
       type: 'sleep';
       operationId: string;
       duration: number;
       scheduledFireAt: number;
+      callerStack?: string;
     }
   | {
       type: 'wait-signal';
       operationId: string;
       signalName: string;
+      callerStack?: string;
     }
   | {
       type: 'wait-update';
       operationId: string;
       updateName: string;
+      callerStack?: string;
     }
   | {
       type: 'parallel';
       operationId: string;
       operations: ContextOperationRequest[];
+      callerStack?: string;
     }
   | {
       type: 'race';
       operationId: string;
       operations: ContextOperationRequest[];
+      callerStack?: string;
     }
   | {
       type: 'memo';
       operationId: string;
       key: string;
       fn: () => unknown;
+      callerStack?: string;
     }
   | {
       type: 'child-workflow';
@@ -130,12 +150,14 @@ export type ContextOperationRequest =
       type: 'load';
       operationId: string;
       reference: OffloadReference;
+      callerStack?: string;
     }
   | {
       type: 'archive';
       operationId: string;
       key: string;
       data: unknown;
+      callerStack?: string;
     }
   | {
       type: 'run-all';
@@ -155,6 +177,30 @@ export type ContextOperationRequest =
       key: string;
       fn: (sink: StreamSink) => AsyncGenerator<unknown, void, unknown>;
       callerStack?: string;
+    }
+  | {
+      type: 'wait-review';
+      operationId: string;
+      reviewOptions: HumanReviewOptions;
+      callerStack?: string;
+    }
+  | {
+      type: 'handoff';
+      operationId: string;
+      options: HandoffOptions;
+      callerStack?: string;
+    }
+  | {
+      type: 'debate';
+      operationId: string;
+      options: DebateOptions;
+      callerStack?: string;
+    }
+  | {
+      type: 'supervise';
+      operationId: string;
+      options: SuperviseOptions;
+      callerStack?: string;
     };
 
 // ---------------------------------------------------------------------------
@@ -170,11 +216,38 @@ const ACTIVITY_CALL_OPTION_KEYS = new Set<string>([
   'visibilityTimeout',
 ]);
 
+/**
+ * Strict subset of ACTIVITY_CALL_OPTION_KEYS that unambiguously identify an
+ * ActivityCallOptions object. `timeout` is excluded because `{ timeout: 5000 }`
+ * could be plain activity input. When adding a new option key, add it to both
+ * sets if it should act as a discriminator.
+ */
+const DISCRIMINATOR_KEYS = new Set<string>([
+  'queue',
+  'retry',
+  'idempotencyKey',
+  'sticky',
+  'visibilityTimeout',
+]);
+
 /** Detect whether a value is an {@link ActivityCallOptions} object. */
 function isActivityCallOptions(value: unknown): value is ActivityCallOptions {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const keys = Object.keys(value as Record<string, unknown>);
-  return keys.length > 0 && keys.every((key) => ACTIVITY_CALL_OPTION_KEYS.has(key));
+  if (keys.length === 0) return false;
+  for (const key of keys) {
+    if (!ACTIVITY_CALL_OPTION_KEYS.has(key)) {
+      return false;
+    }
+  }
+  // Require at least one discriminator key to avoid misidentifying plain data
+  // objects (e.g., `{ timeout: 5000 }`) as options.
+  for (const key of keys) {
+    if (DISCRIMINATOR_KEYS.has(key)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +263,7 @@ export interface ContextOptions {
   initialStep?: number;
   accumulatedResults?: Map<number, unknown>;
   searchAttributes?: Record<string, SearchAttributeValue>;
+  searchAttributeSchema?: SearchAttributeSchema;
   getNow?: () => number;
   nestingDepth?: number;
   /**
@@ -213,6 +287,7 @@ export class Context implements WorkflowContext {
   #stepIndex: number;
   #accumulatedResults: Map<number, unknown>;
   #searchAttributes: Record<string, SearchAttributeValue>;
+  #searchAttributeSchema: SearchAttributeSchema | undefined;
   #pendingAttributeChanges: Record<string, SearchAttributeValue>;
   #updateHandlers: Map<string, (payload: unknown) => unknown>;
   #exposedValues: Map<string, () => unknown>;
@@ -238,6 +313,7 @@ export class Context implements WorkflowContext {
     this.#stepIndex = options.initialStep ?? 0;
     this.#accumulatedResults = options.accumulatedResults ?? new Map();
     this.#searchAttributes = options.searchAttributes ? { ...options.searchAttributes } : {};
+    this.#searchAttributeSchema = options.searchAttributeSchema;
     this.#pendingAttributeChanges = {};
     this.#updateHandlers = new Map();
     this.#exposedValues = new Map();
@@ -343,7 +419,15 @@ export class Context implements WorkflowContext {
     if (this.#accumulatedResults.has(step)) return;
 
     const milliseconds = parseDuration(duration);
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.sleep(${JSON.stringify(duration)})`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Scheduling timer for ${milliseconds}ms`);
+    }
+
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
 
     // Use the sleep reference time (checkpoint createdAt on resume) so that
     // the engine's expired-timer fast path can detect sleeps whose original
@@ -357,6 +441,7 @@ export class Context implements WorkflowContext {
       operationId,
       duration: milliseconds,
       scheduledFireAt: referenceTime + milliseconds,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, undefined);
@@ -369,33 +454,97 @@ export class Context implements WorkflowContext {
       return this.#accumulatedResults.get(step) as T;
     }
 
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.waitForSignal("${name}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Waiting for signal "${name}"`);
+    }
+
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'wait-signal',
       operationId,
       signalName: name,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
     return result as T;
   }
 
-  *waitForUpdate<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown> {
+  *waitForUpdate<T = unknown>(
+    name: string,
+  ): Generator<
+    ContextOperationRequest,
+    { payload: T; respond: (result: unknown) => void },
+    unknown
+  > {
     const step = this.#stepIndex++;
 
     if (this.#accumulatedResults.has(step)) {
-      return this.#accumulatedResults.get(step) as T;
+      // Recovery path: the response was already sent in the original execution.
+      // Return the cached payload with a no-op respond function.
+      const cached = this.#accumulatedResults.get(step) as { payload: T };
+      return { payload: cached.payload, respond: () => {} };
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.waitForUpdate("${name}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Waiting for update "${name}"`);
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'wait-update',
       operationId,
       updateName: name,
+      callerStack,
+    };
+
+    const envelope = result as { payload: T; respond: (result: unknown) => void };
+
+    // Store only the serializable payload in accumulatedResults (functions
+    // cannot survive checkpoint serialization). On recovery, a no-op respond
+    // function is provided instead.
+    this.#accumulatedResults.set(step, { payload: envelope.payload });
+    return envelope;
+  }
+
+  /**
+   * Pause the workflow for human review. Creates a durable review request
+   * in storage and blocks until a decision is submitted via
+   * `engine.submitReview()`, or until the review times out / auto-decides
+   * via escalation.
+   */
+  *humanReview(
+    options: HumanReviewOptions,
+  ): Generator<ContextOperationRequest, HumanReviewResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as HumanReviewResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.humanReview(${JSON.stringify(options.reviewType ?? 'general')})`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Pausing for human review`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
+    const result = yield {
+      type: 'wait-review' as const,
+      operationId,
+      reviewOptions: options,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
-    return result as T;
+    return result as HumanReviewResult;
   }
 
   *all(
@@ -416,10 +565,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'parallel',
       operationId,
       operations: subOperations,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -444,10 +595,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'race',
       operationId,
       operations: subOperations,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -470,11 +623,13 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'memo',
       operationId,
       key,
       fn,
+      callerStack,
     };
 
     this.#memoCache.set(key, result);
@@ -556,10 +711,12 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     const result = yield {
       type: 'load' as const,
       operationId,
       reference,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, result);
@@ -578,11 +735,13 @@ export class Context implements WorkflowContext {
     }
 
     const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
     yield {
       type: 'archive' as const,
       operationId,
       key,
       data,
+      callerStack,
     };
 
     this.#accumulatedResults.set(step, undefined);
@@ -667,7 +826,20 @@ export class Context implements WorkflowContext {
     const step = this.#stepIndex++;
 
     if (this.#accumulatedResults.has(step)) {
+      if (this.#explainMode) {
+        console.log(
+          `[weft] ctx.agent(model="${options.model}") → Returning cached result from step ${step}`,
+        );
+      }
       return this.#accumulatedResults.get(step);
+    }
+
+    if (this.#explainMode) {
+      const toolCount = options.tools?.length ?? 0;
+      const maxTurns = options.maxTurns ?? 'default';
+      console.log(`[weft] ctx.agent(model="${options.model}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Starting agent loop with ${toolCount} tool(s), maxTurns=${maxTurns}`);
     }
 
     const operationId = crypto.randomUUID();
@@ -681,6 +853,97 @@ export class Context implements WorkflowContext {
 
     this.#accumulatedResults.set(step, result);
     return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // Multi-agent coordination (durable)
+  // -------------------------------------------------------------------------
+
+  /** Hand off execution to another agent, optionally forwarding conversation context. */
+  *handoff(options: HandoffOptions): Generator<ContextOperationRequest, HandoffResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as HandoffResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.handoff("${options.agent.name}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(
+        `  → Handing off to agent "${options.agent.name}" with context=${options.forwardContext ?? 'none'}`,
+      );
+    }
+
+    const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
+    const result = yield {
+      type: 'handoff' as const,
+      operationId,
+      options,
+      callerStack,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as HandoffResult;
+  }
+
+  /** Run an adversarial multi-agent debate as a durable operation. */
+  *debate(options: DebateOptions): Generator<ContextOperationRequest, DebateResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as DebateResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.debate("${options.topic}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(`  → Running ${options.rounds} debate rounds`);
+    }
+
+    const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
+    const result = yield {
+      type: 'debate' as const,
+      operationId,
+      options,
+      callerStack,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as DebateResult;
+  }
+
+  /** Run supervised parallel multi-agent execution with synthesis as a durable operation. */
+  *supervise(
+    options: SuperviseOptions,
+  ): Generator<ContextOperationRequest, SuperviseResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as SuperviseResult;
+    }
+
+    if (this.#explainMode) {
+      console.log(`[weft] ctx.supervise("${options.strategy}")`);
+      console.log(`  → Creating checkpoint at step ${step}`);
+      console.log(
+        `  → Running ${options.workers.length} workers with "${options.strategy}" strategy`,
+      );
+    }
+
+    const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
+    const result = yield {
+      type: 'supervise' as const,
+      operationId,
+      options,
+      callerStack,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as SuperviseResult;
   }
 
   // -------------------------------------------------------------------------
@@ -706,14 +969,30 @@ export class Context implements WorkflowContext {
   // -------------------------------------------------------------------------
 
   setAttribute(key: string, value: SearchAttributeValue): void {
+    this.#validateAttribute(key, value);
     this.#searchAttributes[key] = value;
     this.#pendingAttributeChanges[key] = value;
   }
 
   setAttributes(attributes: Record<string, SearchAttributeValue>): void {
+    // Validate all keys and types before mutating to ensure atomicity
+    for (const [key, value] of Object.entries(attributes)) {
+      this.#validateAttribute(key, value);
+    }
     for (const [key, value] of Object.entries(attributes)) {
       this.#searchAttributes[key] = value;
       this.#pendingAttributeChanges[key] = value;
+    }
+  }
+
+  #validateAttribute(key: string, value: SearchAttributeValue): void {
+    if (this.#searchAttributeSchema) {
+      if (!(key in this.#searchAttributeSchema)) {
+        throw new Error(
+          `Unknown search attribute "${key}". Registered attributes: ${Object.keys(this.#searchAttributeSchema).join(', ')}`,
+        );
+      }
+      validateAttributeType(key, value, this.#searchAttributeSchema[key]!);
     }
   }
 
@@ -726,6 +1005,14 @@ export class Context implements WorkflowContext {
   }
 
   onUpdate(name: string, handler: (payload: unknown) => unknown): void {
+    // Reject generator functions at registration time — they cannot yield
+    // inside an update handler.
+    if (isGeneratorFunction(handler) || isAsyncGeneratorFunction(handler)) {
+      throw new TypeError(
+        `Update handler "${name}" cannot be a generator function. ` +
+          `Use a plain function — update handlers run synchronously at checkpoint boundaries and cannot yield.`,
+      );
+    }
     this.#updateHandlers.set(name, handler);
   }
 

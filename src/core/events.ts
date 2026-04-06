@@ -246,6 +246,62 @@ export class DevelopmentWarningEvent extends Event {
   }
 }
 
+export class CleanupWarningEvent extends Event {
+  static readonly type = 'cleanup:warning' as const;
+  readonly source: string;
+  readonly error: Error;
+  readonly workflowId: string | undefined;
+
+  constructor(source: string, error: Error, workflowId?: string) {
+    super(CleanupWarningEvent.type);
+    this.source = source;
+    this.error = error;
+    this.workflowId = workflowId;
+  }
+}
+
+export class StorageSizeReportedEvent extends Event {
+  static readonly type = 'storage:size-reported' as const;
+  readonly sizeBytes: number;
+
+  constructor(sizeBytes: number) {
+    super(StorageSizeReportedEvent.type);
+    this.sizeBytes = sizeBytes;
+  }
+}
+
+export class AlertFiredEvent extends Event {
+  static readonly type = 'alert:fired' as const;
+  readonly metric: string;
+  readonly threshold: number;
+  readonly currentValue: number;
+  readonly window: string | undefined;
+
+  constructor(metric: string, threshold: number, currentValue: number, window?: string) {
+    super(AlertFiredEvent.type);
+    this.metric = metric;
+    this.threshold = threshold;
+    this.currentValue = currentValue;
+    this.window = window;
+  }
+}
+
+export class AlertResolvedEvent extends Event {
+  static readonly type = 'alert:resolved' as const;
+  readonly metric: string;
+  readonly threshold: number;
+  readonly currentValue: number;
+  readonly window: string | undefined;
+
+  constructor(metric: string, threshold: number, currentValue: number, window?: string) {
+    super(AlertResolvedEvent.type);
+    this.metric = metric;
+    this.threshold = threshold;
+    this.currentValue = currentValue;
+    this.window = window;
+  }
+}
+
 export type WeftEventMap = WeftAgentEventMap & {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
@@ -264,6 +320,10 @@ export type WeftEventMap = WeftAgentEventMap & {
   'update:completed': UpdateCompletedEvent;
   'checkpoint:size-warning': CheckpointSizeWarningEvent;
   'development:warning': DevelopmentWarningEvent;
+  'cleanup:warning': CleanupWarningEvent;
+  'storage:size-reported': StorageSizeReportedEvent;
+  'alert:fired': AlertFiredEvent;
+  'alert:resolved': AlertResolvedEvent;
 };
 
 export interface TypedEventTarget<TEventMap extends Record<string, Event>> {

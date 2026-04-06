@@ -2,12 +2,21 @@
 // HTTP long-poll fallback worker for environments without WebSocket support
 // ---------------------------------------------------------------------------
 
+import type { ActivityInterceptor } from '../core/interceptor.ts';
+import {
+  buildComposedInterceptor,
+  executeWithInterceptors,
+  type ComposedInterceptor,
+} from './execute-with-interceptors.ts';
+
 export interface LongPollWorkerOptions {
   serverUrl: string;
   activities: Record<string, (input: unknown) => Promise<unknown>>;
   concurrency?: number;
   queue?: string;
   pollTimeout?: number; // ms, default: 30000
+  /** Activity interceptors to run around each activity execution on this worker. */
+  interceptors?: ActivityInterceptor[];
 }
 
 // ---------------------------------------------------------------------------
@@ -27,6 +36,7 @@ export class LongPollWorker implements Disposable {
   #running: boolean;
   #inFlight: number;
   #abortController: AbortController;
+  #composedInterceptor: ComposedInterceptor | null;
 
   constructor(options: LongPollWorkerOptions) {
     this.#options = {
@@ -38,6 +48,7 @@ export class LongPollWorker implements Disposable {
     this.#running = false;
     this.#inFlight = 0;
     this.#abortController = new AbortController();
+    this.#composedInterceptor = buildComposedInterceptor(options.interceptors);
   }
 
   /** Start polling for tasks. */
@@ -126,6 +137,8 @@ export class LongPollWorker implements Disposable {
           operationId: string;
           activityName: string;
           input: unknown;
+          attempt?: number;
+          headers?: Record<string, string>;
         };
 
         void this.#executeTask(task, resultUrl);
@@ -139,7 +152,13 @@ export class LongPollWorker implements Disposable {
   }
 
   async #executeTask(
-    task: { operationId: string; activityName: string; input: unknown },
+    task: {
+      operationId: string;
+      activityName: string;
+      input: unknown;
+      attempt?: number;
+      headers?: Record<string, string>;
+    },
     resultUrl: string,
   ): Promise<void> {
     this.#inFlight += 1;
@@ -160,7 +179,11 @@ export class LongPollWorker implements Disposable {
         return;
       }
 
-      const result = await activityFunction(task.input);
+      const result = await executeWithInterceptors(
+        activityFunction,
+        task,
+        this.#composedInterceptor,
+      );
 
       await fetch(resultUrl, {
         method: 'POST',

@@ -11,6 +11,7 @@ export function slidingWindowStrategy(options?: SlidingWindowOptions): ContextSt
   const preserveRecentCount = options?.preserveRecentCount ?? 10;
 
   return {
+    name: 'sliding-window',
     async *compact(
       messages: Message[],
       _options: CompactOptions,

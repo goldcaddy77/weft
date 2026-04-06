@@ -5,6 +5,7 @@ import type {
   ActivityInterception,
   ActivityInterceptor,
   AgentInterception,
+  ChildWorkflowInterception,
   QueryInterception,
   SignalInterception,
   SignalReceivedInterception,
@@ -24,6 +25,7 @@ function makeHeaders(entries?: [string, string][]): Map<string, string> {
 
 function makeActivityInterception(overrides?: Partial<ActivityInterception>): ActivityInterception {
   return {
+    workflowId: 'wf-1',
     activityName: 'doWork',
     input: { value: 1 },
     attempt: 1,
@@ -34,6 +36,7 @@ function makeActivityInterception(overrides?: Partial<ActivityInterception>): Ac
 
 function makeSleepInterception(overrides?: Partial<SleepInterception>): SleepInterception {
   return {
+    workflowId: 'wf-1',
     duration: 1000,
     headers: makeHeaders(),
     ...overrides,
@@ -42,6 +45,7 @@ function makeSleepInterception(overrides?: Partial<SleepInterception>): SleepInt
 
 function makeSignalInterception(overrides?: Partial<SignalInterception>): SignalInterception {
   return {
+    workflowId: 'wf-1',
     signalName: 'approval',
     payload: null,
     headers: makeHeaders(),
@@ -75,6 +79,7 @@ function makeActivityExecutionInterception(
 
 function makeAgentInterception(overrides?: Partial<AgentInterception>): AgentInterception {
   return {
+    workflowId: 'wf-1',
     model: 'claude-sonnet-4-20250514',
     prompt: 'Summarize the data',
     headers: makeHeaders(),
@@ -98,6 +103,20 @@ function makeSignalReceivedInterception(
     signalName: 'approval',
     payload: { approved: true },
     headers: makeHeaders(),
+    ...overrides,
+  };
+}
+
+function makeChildWorkflowInterception(
+  overrides?: Partial<ChildWorkflowInterception>,
+): ChildWorkflowInterception {
+  return {
+    workflowId: 'parent-wf',
+    childWorkflowId: 'child-wf-1',
+    workflowType: 'ChildFlow',
+    input: { task: 'process' },
+    headers: makeHeaders(),
+    parentHeaders: makeHeaders(),
     ...overrides,
   };
 }
@@ -471,6 +490,162 @@ describe('composeWorkflowInterceptors', () => {
 
       expect(executeCalled).toBe(true);
     });
+
+    it('propagates errors from an interceptor to the caller', () => {
+      const interceptor: WorkflowInterceptor = {
+        workflowStart(_ctx, _next) {
+          throw new Error('workflowStart boom');
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+
+      expect(() => {
+        composed.workflowStart(makeWorkflowStartInterception(), () => {});
+      }).toThrow('workflowStart boom');
+    });
+
+    it('propagates errors thrown by execute through the interceptor chain', () => {
+      const order: string[] = [];
+
+      const interceptor: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          order.push('before');
+          next(ctx);
+          order.push('after');
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+
+      expect(() => {
+        composed.workflowStart(makeWorkflowStartInterception(), () => {
+          throw new Error('execute boom');
+        });
+      }).toThrow('execute boom');
+
+      // 'after' should not be reached because the error propagates
+      expect(order).toEqual(['before']);
+    });
+
+    it('propagates errors from the second interceptor through the first', () => {
+      const order: string[] = [];
+
+      const first: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          order.push('first:before');
+          next(ctx);
+          order.push('first:after');
+        },
+      };
+
+      const second: WorkflowInterceptor = {
+        workflowStart(_ctx, _next) {
+          order.push('second:before');
+          throw new Error('second interceptor boom');
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([first, second]);
+
+      expect(() => {
+        composed.workflowStart(makeWorkflowStartInterception(), () => {
+          order.push('execute');
+        });
+      }).toThrow('second interceptor boom');
+
+      expect(order).toEqual(['first:before', 'second:before']);
+    });
+
+    it('allows an interceptor to modify interception before next()', () => {
+      const interceptor: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          next({ ...ctx, workflowType: 'modifiedFlow' });
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+      let capturedType: string | undefined;
+
+      composed.workflowStart(makeWorkflowStartInterception(), (ctx) => {
+        capturedType = ctx.workflowType;
+      });
+
+      expect(capturedType).toBe('modifiedFlow');
+    });
+
+    it('passes through when an interceptor does not define the hook', () => {
+      const emptyInterceptor: WorkflowInterceptor = {};
+      const composed = composeWorkflowInterceptors([emptyInterceptor]);
+      let executeCalled = false;
+
+      composed.workflowStart(makeWorkflowStartInterception(), () => {
+        executeCalled = true;
+      });
+
+      expect(executeCalled).toBe(true);
+    });
+
+    it('composes two interceptors in order (first is outermost)', () => {
+      const order: string[] = [];
+
+      const first: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          order.push('first');
+          next(ctx);
+        },
+      };
+
+      const second: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          order.push('second');
+          next(ctx);
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([first, second]);
+
+      composed.workflowStart(makeWorkflowStartInterception(), () => {
+        order.push('execute');
+      });
+
+      expect(order).toEqual(['first', 'second', 'execute']);
+    });
+
+    it('propagates headers between interceptors', () => {
+      const interceptor: WorkflowInterceptor = {
+        workflowStart(ctx, next) {
+          ctx.headers.set('x-start-trace', 'traced');
+          next(ctx);
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+      let capturedHeaders: Map<string, string> | undefined;
+
+      composed.workflowStart(makeWorkflowStartInterception(), (ctx) => {
+        capturedHeaders = ctx.headers;
+      });
+
+      expect(capturedHeaders?.get('x-start-trace')).toBe('traced');
+    });
+
+    it('interceptor can block execution by not calling next', () => {
+      const interceptor: WorkflowInterceptor = {
+        workflowStart() {
+          // deliberately does not call next
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+      let executeCalled = false;
+
+      composed.workflowStart(makeWorkflowStartInterception(), () => {
+        executeCalled = true;
+      });
+
+      expect(executeCalled).toBe(false);
+    });
   });
 });
 
@@ -720,6 +895,100 @@ describe('composeWorkflowInterceptors — agent hook', () => {
 
     runGenerator(generator);
     expect(order).toEqual(['with:before', 'execute', 'with:after']);
+  });
+
+  it('three interceptors compose in correct order (first = outermost)', () => {
+    const order: string[] = [];
+
+    const first: WorkflowInterceptor = {
+      *agent(interception, next) {
+        order.push('first:before');
+        const result = yield* next(interception);
+        order.push('first:after');
+        return result;
+      },
+    };
+
+    const second: WorkflowInterceptor = {
+      *agent(interception, next) {
+        order.push('second:before');
+        const result = yield* next(interception);
+        order.push('second:after');
+        return result;
+      },
+    };
+
+    const third: WorkflowInterceptor = {
+      *agent(interception, next) {
+        order.push('third:before');
+        const result = yield* next(interception);
+        order.push('third:after');
+        return result;
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([first, second, third]);
+
+    const generator = composed.agent(makeAgentInterception(), function* () {
+      order.push('execute');
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(order).toEqual([
+      'first:before',
+      'second:before',
+      'third:before',
+      'execute',
+      'third:after',
+      'second:after',
+      'first:after',
+    ]);
+  });
+
+  it('interceptor can modify the agent prompt before calling next', () => {
+    const interceptor: WorkflowInterceptor = {
+      *agent(interception, next) {
+        return yield* next({
+          ...interception,
+          prompt: `[SYSTEM] ${interception.prompt}`,
+        });
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let capturedPrompt: string | undefined;
+
+    const generator = composed.agent(makeAgentInterception(), function* (ctx) {
+      capturedPrompt = ctx.prompt;
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(capturedPrompt).toBe('[SYSTEM] Summarize the data');
+  });
+
+  it('interceptor sets headers that are visible in execute', () => {
+    const interceptor: WorkflowInterceptor = {
+      *agent(interception, next) {
+        interception.headers.set('x-request-id', 'req-42');
+        interception.headers.set('x-org-id', 'org-7');
+        return yield* next(interception);
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+    let capturedHeaders: Map<string, string> | undefined;
+
+    const generator = composed.agent(makeAgentInterception(), function* (ctx) {
+      capturedHeaders = ctx.headers;
+      return 'done';
+    });
+
+    runGenerator(generator);
+    expect(capturedHeaders?.get('x-request-id')).toBe('req-42');
+    expect(capturedHeaders?.get('x-org-id')).toBe('org-7');
+    expect(capturedHeaders?.size).toBe(2);
   });
 });
 
@@ -1011,5 +1280,124 @@ describe('composeWorkflowInterceptors — signalReceived hook', () => {
     });
 
     expect(order).toEqual(['with', 'execute']);
+  });
+
+  it('propagates errors from an interceptor to the caller', () => {
+    const interceptor: WorkflowInterceptor = {
+      signalReceived(_interception, _next) {
+        throw new Error('signalReceived boom');
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+
+    expect(() => {
+      composed.signalReceived(makeSignalReceivedInterception(), () => {});
+    }).toThrow('signalReceived boom');
+  });
+
+  it('propagates errors thrown by execute through the interceptor chain', () => {
+    const order: string[] = [];
+
+    const interceptor: WorkflowInterceptor = {
+      signalReceived(interception, next) {
+        order.push('before');
+        next(interception);
+        order.push('after');
+      },
+    };
+
+    const composed = composeWorkflowInterceptors([interceptor]);
+
+    expect(() => {
+      composed.signalReceived(makeSignalReceivedInterception(), () => {
+        throw new Error('execute boom');
+      });
+    }).toThrow('execute boom');
+
+    expect(order).toEqual(['before']);
+  });
+
+  describe('childWorkflow hook', () => {
+    it('calls execute directly when interceptor array is empty', async () => {
+      const composed = composeWorkflowInterceptors([]);
+      const interception = makeChildWorkflowInterception();
+
+      const result = await composed.childWorkflow(interception, async (ctx) => {
+        return `child:${ctx.workflowType}`;
+      });
+
+      expect(result).toBe('child:ChildFlow');
+    });
+
+    it('chains interceptors in order around execute', async () => {
+      const order: string[] = [];
+
+      const first: WorkflowInterceptor = {
+        async childWorkflow(interception, next) {
+          order.push('first:before');
+          const result = await next(interception);
+          order.push('first:after');
+          return result;
+        },
+      };
+
+      const second: WorkflowInterceptor = {
+        async childWorkflow(interception, next) {
+          order.push('second:before');
+          const result = await next(interception);
+          order.push('second:after');
+          return result;
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([first, second]);
+
+      await composed.childWorkflow(makeChildWorkflowInterception(), async () => {
+        order.push('execute');
+        return 'done';
+      });
+
+      expect(order).toEqual([
+        'first:before',
+        'second:before',
+        'execute',
+        'second:after',
+        'first:after',
+      ]);
+    });
+
+    it('allows interceptor to modify headers', async () => {
+      const interceptor: WorkflowInterceptor = {
+        async childWorkflow(interception, next) {
+          interception.headers.set('x-trace', 'child-trace');
+          return next(interception);
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+      const interception = makeChildWorkflowInterception();
+
+      await composed.childWorkflow(interception, async (ctx) => {
+        expect(ctx.headers.get('x-trace')).toBe('child-trace');
+        return 'ok';
+      });
+    });
+
+    it('propagates errors from execute through the interceptor chain', async () => {
+      const interceptor: WorkflowInterceptor = {
+        async childWorkflow(interception, next) {
+          return next(interception);
+        },
+      };
+
+      const composed = composeWorkflowInterceptors([interceptor]);
+
+      await expect(
+        composed.childWorkflow(makeChildWorkflowInterception(), async () => {
+          throw new Error('child workflow failed');
+        }),
+      ).rejects.toThrow('child workflow failed');
+    });
   });
 });

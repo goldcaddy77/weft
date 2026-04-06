@@ -12,26 +12,68 @@ import type { BudgetTracker } from './budget';
 import { BudgetExceededError } from './budget';
 import type { ContextWindowManager } from './context-window';
 import {
+  AgentCheckpointSizeWarningEvent,
+  AgentContextCompactedEvent,
+  AgentModelFallbackEvent,
   AgentToolCalledEvent,
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
 } from './events';
 import type { AgentHooks } from './hooks';
+import type { MCPAuthConfig } from './mcp/authentication';
+import { MCPClient, MCPServerUnavailableError } from './mcp/client';
+import type { RegistryTool } from './mcp/registry';
+import { ToolRegistry } from './mcp/registry';
+import { ToolSchemaValidationError, validateSchema } from './mcp/schema-validator';
+import type { TransportKind } from './mcp/transport';
+import { createTransportForSource } from './mcp/transport-factory';
 import type { ModelRouter, RoutingContext } from './model-router';
 import type { ProviderHealthTracker } from './provider-health';
 import type { LLMProvider } from './providers/interface';
-import type { ChatResponse, Message, TokenUsage, ToolDefinition } from './providers/types';
+import type {
+  ChatResponse,
+  Message,
+  TokenUsage,
+  ToolCall,
+  ToolDefinition,
+  ToolResult,
+} from './providers/types';
+import type { CacheEntry } from './tool-cache';
+import {
+  setToolCacheEntry,
+  sweepExpiredCacheEntries,
+  TOOL_CACHE_SWEEP_THRESHOLD,
+} from './tool-cache';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
+/** An MCP server URL to discover tools from at agent initialization. */
+export interface MCPToolSource {
+  mcp: string;
+  auth?: MCPAuthConfig | undefined;
+  timeout?: number | undefined;
+  /**
+   * Override transport auto-detection.
+   * - `'http'` (default for `http(s)://` URLs): plain HTTP request/response
+   * - `'sse'`: HTTP POST for requests, Server-Sent Events for responses
+   * - `'stdio'` (default for `stdio://` URLs): JSON-RPC over child process stdin/stdout
+   */
+  transport?: TransportKind | undefined;
+}
+
+/** Type guard: is the tools entry an MCP server URL source? */
+function isMCPToolSource(entry: AgentTool | MCPToolSource): entry is MCPToolSource {
+  return 'mcp' in entry && typeof entry.mcp === 'string';
+}
+
 export interface AgentOptions {
   model: string;
   provider: LLMProvider;
   systemPrompt?: string | undefined;
-  tools?: AgentTool[] | undefined;
+  tools?: (AgentTool | MCPToolSource)[] | undefined;
   /** Maximum number of LLM turns before returning. Defaults to 10. */
   maxTurns?: number | undefined;
   budget?: BudgetTracker | undefined;
@@ -40,6 +82,12 @@ export interface AgentOptions {
   healthTracker?: ProviderHealthTracker | undefined;
   /** Tool result cache TTL in milliseconds. Defaults to 300 000 (5 minutes). */
   toolCacheTTL?: number | undefined;
+  /**
+   * Maximum number of tool result cache entries. When the cache grows past
+   * this cap, the oldest entry (by insertion order) is evicted to make room.
+   * Defaults to 1000.
+   */
+  toolCacheMaxSize?: number | undefined;
   signal?: AbortSignal | undefined;
   hooks?: AgentHooks | undefined;
   eventTarget?: EventTarget | undefined;
@@ -49,6 +97,11 @@ export interface AgentOptions {
   onTurnCompleted?: ((turn: TurnResult) => void) | undefined;
   onToolCalled?: ((call: ToolCallInfo) => void) | undefined;
   onToolReturned?: ((result: ToolReturnInfo) => void) | undefined;
+  /**
+   * Conversation size in bytes at which an `AgentCheckpointSizeWarningEvent`
+   * is dispatched via the eventTarget. Defaults to 65 536 (64 KB).
+   */
+  checkpointSizeWarningThreshold?: number | undefined;
 }
 
 export interface AgentTool {
@@ -85,421 +138,954 @@ export interface ToolReturnInfo {
   success: boolean;
 }
 
+/** Per-turn cost breakdown entry returned as part of the agent result. */
+export interface TurnCostEntry {
+  turn: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  model: string;
+  tools: string[];
+}
+
 export interface AgentResult {
   content: string;
   conversation: Message[];
   totalTokens: TokenUsage;
   totalCost: number;
   turnCount: number;
+  /** Reasoning/thinking traces captured from each turn's provider response. */
+  reasoningTraces: string[];
+  /** Per-turn cost breakdown with token counts, model, and tools used. */
+  turnCosts: TurnCostEntry[];
+}
+
+interface ResolvedAgentOptions {
+  defaultModel: string;
+  provider: LLMProvider;
+  systemPrompt?: string | undefined;
+  maxTurns: number;
+  budget?: BudgetTracker | undefined;
+  modelRouter?: ModelRouter | undefined;
+  contextManager?: ContextWindowManager | undefined;
+  healthTracker?: ProviderHealthTracker | undefined;
+  toolCacheTTL: number;
+  toolCacheMaxSize: number;
+  signal?: AbortSignal | undefined;
+  hooks?: AgentHooks | undefined;
+  eventTarget?: EventTarget | undefined;
+  workflowId: string;
+  agentId: string;
+  onTurnStarted?: ((turn: TurnInfo) => void) | undefined;
+  onTurnCompleted?: ((turn: TurnResult) => void) | undefined;
+  onToolCalled?: ((call: ToolCallInfo) => void) | undefined;
+  onToolReturned?: ((result: ToolReturnInfo) => void) | undefined;
+  checkpointSizeWarningThreshold: number;
+}
+
+interface AgentLoopState {
+  conversation: Message[];
+  toolCache: Map<string, CacheEntry>;
+  totalTokens: TokenUsage;
+  totalCost: number;
+  turnCount: number;
+  lastContent: string;
+  sizeWarningFired: boolean;
+  budgetWarningFired: boolean;
+  previousModels: string[];
+  reasoningTraces: string[];
+  turnCosts: TurnCostEntry[];
+}
+
+interface AgentRuntime {
+  options: ResolvedAgentOptions;
+  toolMap: Map<string, RegistryTool>;
+  toolDefinitions: ToolDefinition[];
+  state: AgentLoopState;
+  /** Dispose MCP transports and their child processes/connections. */
+  dispose: () => void;
+}
+
+type PreparedTurn = ActiveTurn | SkippedTurn;
+
+interface ActiveTurn {
+  currentModel: string;
+  originalModel: string;
+  fallbackModels: string[];
+  messagesToSend: Message[];
+  turnStart: number;
+  costBefore: number;
+}
+
+interface SkippedTurn {
+  skippedResult: string;
+}
+
+interface ChatTurnResult {
+  response: ChatResponse;
+  currentModel: string;
+  originalModel: string;
+  fallbackAttempts: number;
+  turnCost: number;
+  turnDuration: number;
+}
+
+interface ToolExecutionOutcome {
+  output: string;
+  success: boolean;
 }
 
 // ---------------------------------------------------------------------------
 // Tool result cache
 // ---------------------------------------------------------------------------
 
-interface CacheEntry {
-  output: string;
-  timestamp: number;
-}
-
 function buildCacheKey(toolName: string, input: unknown): string {
   return `${toolName}:${JSON.stringify(input)}`;
+}
+
+/**
+ * Estimate the serialized size of a conversation in bytes.
+ * Uses JSON.stringify as a reasonable approximation of the size
+ * the conversation would occupy in a checkpoint blob.
+ */
+function estimateConversationSizeBytes(conversation: Message[]): number {
+  return new TextEncoder().encode(JSON.stringify(conversation)).byteLength;
+}
+
+// ---------------------------------------------------------------------------
+// Tool initialization
+// ---------------------------------------------------------------------------
+
+type InitializeToolsResult = {
+  registry: ToolRegistry;
+  /** Dispose all MCP clients and their underlying transports. */
+  dispose: () => void;
+};
+
+/**
+ * Factory that constructs an MCP client for a given tool source. Injectable
+ * so tests can substitute a stub that records lifecycle calls.
+ *
+ * @internal
+ */
+export type MCPClientFactory = (source: MCPToolSource) => MCPClient;
+
+const defaultMCPClientFactory: MCPClientFactory = (source) => {
+  const transport = createTransportForSource(source);
+  return new MCPClient({ transport, timeout: source.timeout });
+};
+
+/**
+ * Process a mixed tools array (local `AgentTool` + `MCPToolSource` entries).
+ *
+ * For each MCP source: health check, discover tools, register in the registry.
+ * For each local tool: register in the registry.
+ * Finally, validate for name conflicts and return the populated registry.
+ *
+ * @internal
+ */
+export async function initializeTools(
+  tools: (AgentTool | MCPToolSource)[],
+  signal?: AbortSignal,
+  createClient: MCPClientFactory = defaultMCPClientFactory,
+): Promise<InitializeToolsResult> {
+  const registry = new ToolRegistry();
+  const clients: MCPClient[] = [];
+
+  try {
+    for (const entry of tools) {
+      signal?.throwIfAborted();
+      if (isMCPToolSource(entry)) {
+        const client = createClient(entry);
+        clients.push(client);
+
+        // Health check — fail fast if the server is unreachable
+        const healthy = await client.healthCheck();
+        if (!healthy) {
+          throw new MCPServerUnavailableError(entry.mcp);
+        }
+
+        // Discover tools
+        const discovered = await client.discoverTools();
+
+        // Pre-index discovered tools by name for O(1) schema lookup
+        const schemaIndex = new Map(discovered.map((t) => [t.name, t]));
+
+        // Register MCP tools with a dispatch function that validates input
+        // and invokes through the client
+        registry.registerMCP(discovered, entry.mcp, async (toolName: string, input: unknown) => {
+          const toolDef = schemaIndex.get(toolName);
+          if (toolDef && Object.keys(toolDef.inputSchema).length > 0) {
+            const validation = validateSchema(input, toolDef.inputSchema);
+            if (!validation.valid) {
+              throw new ToolSchemaValidationError(toolName, validation.errors);
+            }
+          }
+
+          return client.invokeTool(toolName, input, signal);
+        });
+      } else {
+        registry.registerLocal(entry.definition, entry.execute);
+      }
+    }
+
+    // Validate for name conflicts before the agent loop starts. Must stay
+    // inside the try block so that a ToolNameConflictError (or any other
+    // validation failure) triggers the catch-block disposal of already-
+    // created MCP clients.
+    registry.validate();
+  } catch (error) {
+    // Dispose all clients on any initialization failure
+    for (const client of clients) client[Symbol.dispose]();
+    throw error;
+  }
+
+  const dispose = () => {
+    for (const client of clients) client[Symbol.dispose]();
+  };
+
+  return { registry, dispose };
 }
 
 // ---------------------------------------------------------------------------
 // executeAgentLoop
 // ---------------------------------------------------------------------------
 
-/** Execute a durable ReAct agent loop. Returns the final agent result. */
-export async function executeAgentLoop(options: AgentOptions, input: string): Promise<AgentResult> {
-  const {
-    model: defaultModel,
-    provider,
-    systemPrompt,
-    tools = [],
-    maxTurns = 10,
-    budget,
-    modelRouter,
-    contextManager,
-    healthTracker,
-    toolCacheTTL = 300_000,
-    signal,
-    hooks,
-    eventTarget,
-    workflowId: optionsWorkflowId,
-    agentId: optionsAgentId,
-    onTurnStarted,
-    onTurnCompleted,
-    onToolCalled,
-    onToolReturned,
-  } = options;
+function resolveAgentOptions(options: AgentOptions): ResolvedAgentOptions {
+  return {
+    defaultModel: options.model,
+    provider: options.provider,
+    systemPrompt: options.systemPrompt,
+    maxTurns: options.maxTurns ?? 10,
+    budget: options.budget,
+    modelRouter: options.modelRouter,
+    contextManager: options.contextManager,
+    healthTracker: options.healthTracker,
+    toolCacheTTL: options.toolCacheTTL ?? 300_000,
+    toolCacheMaxSize: options.toolCacheMaxSize ?? 1000,
+    signal: options.signal,
+    hooks: options.hooks,
+    eventTarget: options.eventTarget,
+    workflowId: options.workflowId ?? '',
+    agentId: options.agentId ?? '',
+    onTurnStarted: options.onTurnStarted,
+    onTurnCompleted: options.onTurnCompleted,
+    onToolCalled: options.onToolCalled,
+    onToolReturned: options.onToolReturned,
+    checkpointSizeWarningThreshold: options.checkpointSizeWarningThreshold ?? 65_536,
+  };
+}
 
-  const resolvedWorkflowId = optionsWorkflowId ?? '';
-  const resolvedAgentId = optionsAgentId ?? '';
-
-  // Build the tool lookup map and definition list
-  const toolMap = new Map<string, AgentTool>();
+function createToolLookups(registryTools: RegistryTool[]): {
+  toolMap: Map<string, RegistryTool>;
+  toolDefinitions: ToolDefinition[];
+} {
+  const toolMap = new Map<string, RegistryTool>();
   const toolDefinitions: ToolDefinition[] = [];
-  for (const tool of tools) {
+
+  for (const tool of registryTools) {
     toolMap.set(tool.definition.name, tool);
     toolDefinitions.push(tool.definition);
   }
 
-  // Tool result cache
-  const toolCache = new Map<string, CacheEntry>();
+  return { toolMap, toolDefinitions };
+}
 
-  // Initialize conversation
+function createInitialConversation(systemPrompt: string | undefined, input: string): Message[] {
   const conversation: Message[] = [];
   if (systemPrompt !== undefined) {
     conversation.push({ role: 'system', content: systemPrompt });
   }
   conversation.push({ role: 'user', content: input });
+  return conversation;
+}
 
-  // Accumulate totals
-  const totalTokens: TokenUsage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
+async function createAgentRuntime(options: AgentOptions, input: string): Promise<AgentRuntime> {
+  const resolvedOptions = resolveAgentOptions(options);
+  const { registry, dispose } = await initializeTools(options.tools ?? [], resolvedOptions.signal);
+  const { toolMap, toolDefinitions } = createToolLookups(registry.getAll());
+
+  return {
+    options: resolvedOptions,
+    toolMap,
+    toolDefinitions,
+    dispose,
+    state: {
+      conversation: createInitialConversation(resolvedOptions.systemPrompt, input),
+      toolCache: new Map<string, CacheEntry>(),
+      totalTokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      totalCost: 0,
+      turnCount: 0,
+      lastContent: '',
+      sizeWarningFired: false,
+      budgetWarningFired: false,
+      previousModels: [],
+      reasoningTraces: [],
+      turnCosts: [],
+    },
   };
-  let totalCost = 0;
-  let turnCount = 0;
-  let lastContent = '';
+}
 
-  for (let turnIndex = 0; turnIndex < maxTurns; turnIndex++) {
-    // Exit path: cancellation
-    if (signal?.aborted) {
-      break;
+function buildAgentResult(state: AgentLoopState): AgentResult {
+  return {
+    content: state.lastContent,
+    conversation: state.conversation,
+    totalTokens: state.totalTokens,
+    totalCost: state.totalCost,
+    turnCount: state.turnCount,
+    reasoningTraces: state.reasoningTraces,
+    turnCosts: state.turnCosts,
+  };
+}
+
+function shouldStopBeforeTurn(runtime: AgentRuntime): boolean {
+  if (runtime.options.signal?.aborted) {
+    return true;
+  }
+
+  if (!runtime.options.budget) {
+    return false;
+  }
+
+  try {
+    runtime.options.budget.checkBudget();
+    return false;
+  } catch (error: unknown) {
+    if (error instanceof BudgetExceededError) {
+      return true;
     }
+    throw error;
+  }
+}
 
-    // Exit path: budget exhausted
-    if (budget) {
-      try {
-        budget.checkBudget();
-      } catch (error: unknown) {
-        if (error instanceof BudgetExceededError) {
-          break;
+function selectModelForTurn(
+  runtime: AgentRuntime,
+  turnIndex: number,
+): { currentModel: string; fallbackModels: string[] } {
+  if (!runtime.options.modelRouter) {
+    return { currentModel: runtime.options.defaultModel, fallbackModels: [] };
+  }
+
+  const budgetRemaining = runtime.options.budget?.budgetRemaining();
+  const routingContext: RoutingContext = {
+    workflowId: runtime.options.workflowId,
+    turnIndex,
+    conversationLength: runtime.state.conversation.length,
+    budgetRemaining: budgetRemaining
+      ? {
+          tokensRemaining: budgetRemaining.tokensRemaining,
+          costRemaining: budgetRemaining.costRemaining,
         }
-        throw error;
-      }
-    }
+      : undefined,
+    previousModels: [...runtime.state.previousModels],
+  };
+  const selection = runtime.options.modelRouter.select(routingContext);
+  return {
+    currentModel: selection.model,
+    fallbackModels: selection.fallback ?? [],
+  };
+}
 
-    // Select model via router or use default
-    let currentModel = defaultModel;
-    if (modelRouter) {
-      const routingContext: RoutingContext = {
-        workflowId: '',
-        turnIndex,
-        conversationLength: conversation.length,
-        budgetRemaining: budget
-          ? {
-              tokensRemaining: budget.budgetRemaining().tokensRemaining,
-              costRemaining: budget.budgetRemaining().costRemaining,
-            }
-          : undefined,
-        previousModels: [],
-      };
-      const selection = modelRouter.select(routingContext);
-      currentModel = selection.model;
-    }
+async function prepareMessagesForTurn(runtime: AgentRuntime): Promise<Message[]> {
+  let messagesToSend = [...runtime.state.conversation];
+  if (!runtime.options.contextManager) {
+    return messagesToSend;
+  }
 
-    // Apply context window strategy if configured
-    let messagesToSend = conversation;
-    if (contextManager) {
-      const tokenCount = await provider.countTokens(conversation);
-      if (contextManager.shouldCompact(tokenCount)) {
-        const compacted = await contextManager.compact(conversation);
-        messagesToSend = compacted.messages;
-      }
-    }
+  const tokenCount = await runtime.options.provider.countTokens(messagesToSend);
+  if (!runtime.options.contextManager.shouldCompact(tokenCount)) {
+    return messagesToSend;
+  }
 
-    // Run beforeTurn hook if provided
-    if (hooks?.beforeTurn) {
-      const hookResult = await hooks.beforeTurn({
-        turnIndex,
-        messages: messagesToSend,
-        model: currentModel,
-      });
+  const compacted = await runtime.options.contextManager.compact(messagesToSend);
+  messagesToSend = compacted.messages;
+  if (runtime.options.eventTarget && runtime.options.workflowId) {
+    runtime.options.eventTarget.dispatchEvent(
+      new AgentContextCompactedEvent(
+        runtime.options.workflowId,
+        runtime.options.agentId,
+        runtime.options.contextManager.strategyName,
+        compacted.tokensBefore,
+        compacted.tokensAfter,
+        compacted.messagesDropped,
+      ),
+    );
+  }
 
-      if (hookResult.action === 'skip') {
-        // Use skip result as the final content and break
-        lastContent = hookResult.result ?? '';
-        break;
-      }
+  return messagesToSend;
+}
 
-      // If the hook returned modified messages, use them
-      if (hookResult.action === 'continue' && hookResult.messages) {
-        messagesToSend = hookResult.messages;
-      }
-    }
-
-    // Dispatch event to eventTarget if provided
-    if (eventTarget && resolvedWorkflowId) {
-      eventTarget.dispatchEvent(
-        new AgentTurnStartedEvent(
-          resolvedWorkflowId,
-          resolvedAgentId,
-          turnIndex,
-          currentModel,
-          0,
-          messagesToSend.length,
-        ),
-      );
-    }
-
-    // Fire turn-started callback
-    onTurnStarted?.({
-      turnIndex,
-      model: currentModel,
-      conversationLength: messagesToSend.length,
-    });
-
-    const turnStart = Date.now();
-    const costBefore = budget?.budgetRemaining().costUsed ?? 0;
-
-    // Call LLM provider
-    let response: ChatResponse;
-    try {
-      const chatOptions: import('./providers/interface').ChatOptions = {
-        model: currentModel,
-      };
-      if (toolDefinitions.length > 0) {
-        chatOptions.tools = toolDefinitions;
-      }
-      if (signal) {
-        chatOptions.signal = signal;
-      }
-      response = await provider.chat(messagesToSend, chatOptions);
-    } catch (error: unknown) {
-      // Record failure in health tracker if available
-      if (healthTracker) {
-        healthTracker.recordFailure(provider.name);
-      }
-      throw error;
-    }
-
-    // Record success in health tracker
-    if (healthTracker) {
-      healthTracker.recordSuccess(provider.name);
-    }
-
-    const turnDuration = Date.now() - turnStart;
-
-    // Accumulate usage
-    totalTokens.inputTokens += response.usage.inputTokens;
-    totalTokens.outputTokens += response.usage.outputTokens;
-    totalTokens.totalTokens += response.usage.totalTokens;
-
-    // Record usage in budget tracker
-    if (budget) {
-      budget.recordUsage(currentModel, response.usage.inputTokens, response.usage.outputTokens);
-    }
-
-    const turnCost = (budget?.budgetRemaining().costUsed ?? 0) - costBefore;
-    totalCost += turnCost;
-
-    turnCount++;
-    lastContent = response.content;
-
-    // Add assistant message to conversation
-    const assistantMessage: Message = {
-      role: 'assistant',
-      content: response.content,
+async function applyBeforeTurnHook(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  messagesToSend: Message[],
+  model: string,
+): Promise<PreparedTurn> {
+  if (!runtime.options.hooks?.beforeTurn) {
+    return {
+      currentModel: model,
+      originalModel: model,
+      fallbackModels: [],
+      messagesToSend,
+      turnStart: Date.now(),
+      costBefore: runtime.options.budget?.budgetRemaining().costUsed ?? 0,
     };
-    if (response.toolCalls.length > 0) {
-      assistantMessage.toolCalls = response.toolCalls;
-    }
-    conversation.push(assistantMessage);
+  }
 
-    // Exit path: final answer (no tool calls)
-    if (response.toolCalls.length === 0) {
-      // Dispatch turn-completed event
-      if (eventTarget && resolvedWorkflowId) {
-        eventTarget.dispatchEvent(
-          new AgentTurnCompletedEvent(
-            resolvedWorkflowId,
-            resolvedAgentId,
-            turnIndex,
-            currentModel,
-            currentModel,
-            response.usage.inputTokens,
-            response.usage.outputTokens,
-            turnCost,
-            totalCost,
-            turnDuration,
-            0,
-            0,
-            undefined,
-          ),
-        );
-      }
-      // Fire turn-completed callback
-      onTurnCompleted?.({
-        turnIndex,
-        model: currentModel,
-        inputTokens: response.usage.inputTokens,
-        outputTokens: response.usage.outputTokens,
-        cost: turnCost,
-        duration: turnDuration,
-        toolCallCount: 0,
-      });
-      break;
-    }
+  const hookResult = await runtime.options.hooks.beforeTurn({
+    turnIndex,
+    messages: messagesToSend,
+    model,
+  });
 
-    // Execute tool calls
-    const toolResults: Message['toolResults'] = [];
-
-    for (const toolCall of response.toolCalls) {
-      const toolOperationId = crypto.randomUUID();
-
-      // Dispatch tool-called event
-      if (eventTarget && resolvedWorkflowId) {
-        eventTarget.dispatchEvent(
-          new AgentToolCalledEvent(
-            resolvedWorkflowId,
-            resolvedAgentId,
-            turnIndex,
-            toolCall.name,
-            toolCall.input,
-            'local',
-            toolOperationId,
-          ),
-        );
-      }
-
-      // Fire tool-called callback
-      onToolCalled?.({
-        turnIndex,
-        toolName: toolCall.name,
-        toolInput: toolCall.input,
-      });
-
-      const toolStart = Date.now();
-      let output: string;
-      let success = true;
-
-      // Check cache first
-      const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
-      const cached = toolCache.get(cacheKey);
-      const now = Date.now();
-
-      if (cached && now - cached.timestamp < toolCacheTTL) {
-        output = cached.output;
-      } else {
-        // Look up tool
-        const tool = toolMap.get(toolCall.name);
-        if (!tool) {
-          output = JSON.stringify({ error: `Unknown tool: ${toolCall.name}` });
-          success = false;
-        } else {
-          try {
-            const rawOutput = await tool.execute(toolCall.input);
-            output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
-            // Cache the result
-            toolCache.set(cacheKey, { output, timestamp: Date.now() });
-          } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : String(error);
-            output = JSON.stringify({ error: message });
-            success = false;
-          }
-        }
-      }
-
-      // Run afterToolCall hook if provided
-      if (hooks?.afterToolCall && success) {
-        const hookResult = await hooks.afterToolCall({
-          turnIndex,
-          toolCall,
-          result: output,
-        });
-
-        if (hookResult.action === 'reject') {
-          output = JSON.stringify({ error: hookResult.reason });
-          success = false;
-        } else if (hookResult.action === 'continue' && hookResult.result !== undefined) {
-          output =
-            typeof hookResult.result === 'string'
-              ? hookResult.result
-              : JSON.stringify(hookResult.result);
-        }
-      }
-
-      const toolDuration = Date.now() - toolStart;
-
-      // Dispatch tool-returned event
-      if (eventTarget && resolvedWorkflowId) {
-        eventTarget.dispatchEvent(
-          new AgentToolReturnedEvent(
-            resolvedWorkflowId,
-            resolvedAgentId,
-            turnIndex,
-            toolCall.name,
-            toolDuration,
-            success,
-            toolOperationId,
-          ),
-        );
-      }
-
-      // Fire tool-returned callback
-      onToolReturned?.({
-        turnIndex,
-        toolName: toolCall.name,
-        duration: toolDuration,
-        success,
-      });
-
-      toolResults.push({
-        toolCallId: toolCall.id,
-        output,
-        isError: !success,
-      });
-    }
-
-    // Add tool results as a tool message
-    conversation.push({
-      role: 'tool',
-      content: '',
-      toolResults,
-    });
-
-    // Dispatch turn-completed event (with tool calls)
-    if (eventTarget && resolvedWorkflowId) {
-      eventTarget.dispatchEvent(
-        new AgentTurnCompletedEvent(
-          resolvedWorkflowId,
-          resolvedAgentId,
-          turnIndex,
-          currentModel,
-          currentModel,
-          response.usage.inputTokens,
-          response.usage.outputTokens,
-          turnCost,
-          totalCost,
-          turnDuration,
-          response.toolCalls.length,
-          0,
-          undefined,
-        ),
-      );
-    }
-
-    // Fire turn-completed callback
-    onTurnCompleted?.({
-      turnIndex,
-      model: currentModel,
-      inputTokens: response.usage.inputTokens,
-      outputTokens: response.usage.outputTokens,
-      cost: turnCost,
-      duration: turnDuration,
-      toolCallCount: response.toolCalls.length,
-    });
+  if (hookResult.action === 'skip') {
+    return { skippedResult: hookResult.result ?? '' };
   }
 
   return {
-    content: lastContent,
-    conversation,
-    totalTokens,
-    totalCost,
-    turnCount,
+    currentModel: model,
+    originalModel: model,
+    fallbackModels: [],
+    messagesToSend: hookResult.messages ?? messagesToSend,
+    turnStart: Date.now(),
+    costBefore: runtime.options.budget?.budgetRemaining().costUsed ?? 0,
   };
+}
+
+function dispatchTurnStarted(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  currentModel: string,
+  conversationLength: number,
+): void {
+  if (runtime.options.eventTarget && runtime.options.workflowId) {
+    runtime.options.eventTarget.dispatchEvent(
+      new AgentTurnStartedEvent(
+        runtime.options.workflowId,
+        runtime.options.agentId,
+        turnIndex,
+        currentModel,
+        0,
+        conversationLength,
+      ),
+    );
+  }
+
+  runtime.options.onTurnStarted?.({
+    turnIndex,
+    model: currentModel,
+    conversationLength,
+  });
+}
+
+async function prepareTurn(runtime: AgentRuntime, turnIndex: number): Promise<PreparedTurn> {
+  const { currentModel, fallbackModels } = selectModelForTurn(runtime, turnIndex);
+  const messagesToSend = await prepareMessagesForTurn(runtime);
+  const preparedTurn = await applyBeforeTurnHook(runtime, turnIndex, messagesToSend, currentModel);
+  if ('skippedResult' in preparedTurn) {
+    return preparedTurn;
+  }
+
+  preparedTurn.fallbackModels = fallbackModels;
+  dispatchTurnStarted(runtime, turnIndex, currentModel, preparedTurn.messagesToSend.length);
+  return preparedTurn;
+}
+
+function createChatOptions(
+  runtime: AgentRuntime,
+  model: string,
+): import('./providers/interface').ChatOptions {
+  const chatOptions: import('./providers/interface').ChatOptions = { model };
+  if (runtime.toolDefinitions.length > 0) {
+    chatOptions.tools = runtime.toolDefinitions;
+  }
+  if (runtime.options.signal) {
+    chatOptions.signal = runtime.options.signal;
+  }
+  return chatOptions;
+}
+
+function isAbortError(signal: AbortSignal | undefined, error: unknown): boolean {
+  return signal?.aborted === true || (error instanceof DOMException && error.name === 'AbortError');
+}
+
+function dispatchFallbackEvent(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  attemptModel: string,
+  nextModel: string,
+  fallbackAttempts: number,
+  error: unknown,
+): void {
+  if (!(runtime.options.eventTarget && runtime.options.workflowId)) {
+    return;
+  }
+
+  const reason = error instanceof Error ? error.message : String(error);
+  runtime.options.eventTarget.dispatchEvent(
+    new AgentModelFallbackEvent(
+      runtime.options.workflowId,
+      runtime.options.agentId,
+      turnIndex,
+      attemptModel,
+      reason,
+      nextModel,
+      fallbackAttempts,
+    ),
+  );
+}
+
+async function maybeTriggerBudgetWarning(runtime: AgentRuntime): Promise<void> {
+  if (!runtime.options.budget || !runtime.options.hooks?.onBudgetWarning) {
+    return;
+  }
+
+  if (runtime.state.budgetWarningFired) {
+    return;
+  }
+
+  const state = runtime.options.budget.budgetRemaining();
+  const tokenBudgetTotal = state.tokensUsed + state.tokensRemaining;
+  const costBudgetTotal = state.costUsed + state.costRemaining;
+  const tokenFraction =
+    tokenBudgetTotal > 0 && isFinite(tokenBudgetTotal) ? state.tokensUsed / tokenBudgetTotal : 0;
+  const costFraction =
+    costBudgetTotal > 0 && isFinite(costBudgetTotal) ? state.costUsed / costBudgetTotal : 0;
+  const budgetUsedPercent = Math.max(tokenFraction, costFraction) * 100;
+
+  if (budgetUsedPercent < 80) {
+    return;
+  }
+
+  runtime.state.budgetWarningFired = true;
+  await runtime.options.hooks.onBudgetWarning({
+    tokensRemaining: state.tokensRemaining,
+    costRemaining: state.costRemaining,
+    budgetUsedPercent,
+  });
+}
+
+function createAssistantMessage(response: ChatResponse): Message {
+  const assistantMessage: Message = {
+    role: 'assistant',
+    content: response.content,
+  };
+  if (response.toolCalls.length > 0) {
+    assistantMessage.toolCalls = response.toolCalls;
+  }
+  return assistantMessage;
+}
+
+async function recordTurnResponse(
+  runtime: AgentRuntime,
+  currentModel: string,
+  response: ChatResponse,
+  costBefore: number,
+): Promise<number> {
+  runtime.state.totalTokens.inputTokens += response.usage.inputTokens;
+  runtime.state.totalTokens.outputTokens += response.usage.outputTokens;
+  runtime.state.totalTokens.totalTokens += response.usage.totalTokens;
+
+  if (runtime.options.budget) {
+    runtime.options.budget.recordUsage(
+      currentModel,
+      response.usage.inputTokens,
+      response.usage.outputTokens,
+    );
+    await maybeTriggerBudgetWarning(runtime);
+  }
+
+  const turnCost = (runtime.options.budget?.budgetRemaining().costUsed ?? 0) - costBefore;
+  runtime.state.totalCost += turnCost;
+  runtime.state.turnCount++;
+  runtime.state.lastContent = response.content;
+  runtime.state.conversation.push(createAssistantMessage(response));
+
+  if (response.reasoningTrace) {
+    runtime.state.reasoningTraces.push(response.reasoningTrace);
+  }
+
+  return turnCost;
+}
+
+async function executeChatWithFallbacks(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  preparedTurn: ActiveTurn,
+): Promise<ChatTurnResult> {
+  const modelsToTry = [preparedTurn.currentModel, ...preparedTurn.fallbackModels];
+  let currentModel = preparedTurn.currentModel;
+  let response: ChatResponse | undefined;
+  let lastError: unknown;
+  let fallbackAttempts = 0;
+
+  for (let attempt = 0; attempt < modelsToTry.length; attempt++) {
+    const attemptModel = modelsToTry[attempt]!;
+    try {
+      response = await runtime.options.provider.chat(
+        preparedTurn.messagesToSend,
+        createChatOptions(runtime, attemptModel),
+      );
+      runtime.options.healthTracker?.recordSuccess(runtime.options.provider.name);
+      currentModel = attemptModel;
+      break;
+    } catch (error: unknown) {
+      lastError = error;
+      if (isAbortError(runtime.options.signal, error)) {
+        throw error;
+      }
+
+      runtime.options.healthTracker?.recordFailure(runtime.options.provider.name);
+      const nextModel = modelsToTry[attempt + 1];
+      if (nextModel) {
+        fallbackAttempts++;
+        dispatchFallbackEvent(runtime, turnIndex, attemptModel, nextModel, fallbackAttempts, error);
+      }
+    }
+  }
+
+  if (response === undefined) {
+    throw lastError;
+  }
+
+  runtime.state.previousModels.push(currentModel);
+  const turnDuration = Date.now() - preparedTurn.turnStart;
+  const turnCost = await recordTurnResponse(
+    runtime,
+    currentModel,
+    response,
+    preparedTurn.costBefore,
+  );
+
+  return {
+    response,
+    currentModel,
+    originalModel: preparedTurn.originalModel,
+    fallbackAttempts,
+    turnCost,
+    turnDuration,
+  };
+}
+
+function dispatchToolCalled(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  toolCall: ToolCall,
+  toolSource: 'local' | 'mcp',
+  toolOperationId: string,
+): void {
+  if (runtime.options.eventTarget && runtime.options.workflowId) {
+    runtime.options.eventTarget.dispatchEvent(
+      new AgentToolCalledEvent(
+        runtime.options.workflowId,
+        runtime.options.agentId,
+        turnIndex,
+        toolCall.name,
+        toolCall.input,
+        toolSource,
+        toolOperationId,
+      ),
+    );
+  }
+
+  runtime.options.onToolCalled?.({
+    turnIndex,
+    toolName: toolCall.name,
+    toolInput: toolCall.input,
+  });
+}
+
+async function resolveToolExecution(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  toolCall: ToolCall,
+  tool: RegistryTool | undefined,
+): Promise<ToolExecutionOutcome> {
+  const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
+
+  // Proactively evict expired entries when the cache grows large. The
+  // sweep uses the caller's configured `toolCacheMaxSize` so the proactive
+  // read-time eviction agrees with the write-time eviction in
+  // `setToolCacheEntry`.
+  if (runtime.state.toolCache.size >= TOOL_CACHE_SWEEP_THRESHOLD) {
+    sweepExpiredCacheEntries(
+      runtime.state.toolCache,
+      runtime.options.toolCacheTTL,
+      runtime.options.toolCacheMaxSize,
+    );
+  }
+
+  const cached = runtime.state.toolCache.get(cacheKey);
+  const now = Date.now();
+
+  let output: string;
+  let success = true;
+  if (cached && now - cached.timestamp < runtime.options.toolCacheTTL) {
+    output = cached.output;
+  } else if (!tool) {
+    output = JSON.stringify({ error: `Unknown tool: ${toolCall.name}` });
+    success = false;
+  } else {
+    try {
+      const rawOutput = await tool.execute(toolCall.input);
+      output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
+      setToolCacheEntry(
+        runtime.state.toolCache,
+        cacheKey,
+        { output, timestamp: Date.now() },
+        runtime.options.toolCacheMaxSize,
+      );
+    } catch (error: unknown) {
+      output = JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
+      success = false;
+    }
+  }
+
+  if (!(runtime.options.hooks?.afterToolCall && success)) {
+    return { output, success };
+  }
+
+  const hookResult = await runtime.options.hooks.afterToolCall({
+    turnIndex,
+    toolCall,
+    result: output,
+  });
+  if (hookResult.action === 'reject') {
+    return {
+      output: JSON.stringify({ error: hookResult.reason }),
+      success: false,
+    };
+  }
+
+  if (hookResult.action === 'continue' && hookResult.result !== undefined) {
+    return {
+      output:
+        typeof hookResult.result === 'string'
+          ? hookResult.result
+          : JSON.stringify(hookResult.result),
+      success,
+    };
+  }
+
+  return { output, success };
+}
+
+function dispatchToolReturned(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  toolCall: ToolCall,
+  toolDuration: number,
+  success: boolean,
+  toolOperationId: string,
+): void {
+  if (runtime.options.eventTarget && runtime.options.workflowId) {
+    runtime.options.eventTarget.dispatchEvent(
+      new AgentToolReturnedEvent(
+        runtime.options.workflowId,
+        runtime.options.agentId,
+        turnIndex,
+        toolCall.name,
+        toolDuration,
+        success,
+        toolOperationId,
+      ),
+    );
+  }
+
+  runtime.options.onToolReturned?.({
+    turnIndex,
+    toolName: toolCall.name,
+    duration: toolDuration,
+    success,
+  });
+}
+
+async function executeToolCall(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  toolCall: ToolCall,
+): Promise<ToolResult> {
+  const toolOperationId = crypto.randomUUID();
+  const tool = runtime.toolMap.get(toolCall.name);
+  const toolSource: 'local' | 'mcp' = tool?.source ?? 'local';
+  dispatchToolCalled(runtime, turnIndex, toolCall, toolSource, toolOperationId);
+
+  const toolStart = Date.now();
+  const outcome = await resolveToolExecution(runtime, turnIndex, toolCall, tool);
+  const toolDuration = Date.now() - toolStart;
+  dispatchToolReturned(
+    runtime,
+    turnIndex,
+    toolCall,
+    toolDuration,
+    outcome.success,
+    toolOperationId,
+  );
+
+  return {
+    toolCallId: toolCall.id,
+    output: outcome.output,
+    isError: !outcome.success,
+  };
+}
+
+async function executeToolCalls(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  toolCalls: ToolCall[],
+): Promise<ToolResult[]> {
+  const toolResults: ToolResult[] = [];
+  for (const toolCall of toolCalls) {
+    toolResults.push(await executeToolCall(runtime, turnIndex, toolCall));
+  }
+  return toolResults;
+}
+
+function recordTurnCostEntry(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  response: ChatResponse,
+  currentModel: string,
+  turnCost: number,
+  toolNames: string[],
+): void {
+  runtime.state.turnCosts.push({
+    turn: turnIndex,
+    inputTokens: response.usage.inputTokens,
+    outputTokens: response.usage.outputTokens,
+    cost: turnCost,
+    model: currentModel,
+    tools: toolNames,
+  });
+}
+
+function dispatchTurnCompleted(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  response: ChatResponse,
+  turnResult: ChatTurnResult,
+  toolCallCount: number,
+): void {
+  if (runtime.options.eventTarget && runtime.options.workflowId) {
+    runtime.options.eventTarget.dispatchEvent(
+      new AgentTurnCompletedEvent(
+        runtime.options.workflowId,
+        runtime.options.agentId,
+        turnIndex,
+        turnResult.originalModel,
+        turnResult.currentModel,
+        response.usage.inputTokens,
+        response.usage.outputTokens,
+        turnResult.turnCost,
+        runtime.state.totalCost,
+        turnResult.turnDuration,
+        toolCallCount,
+        turnResult.fallbackAttempts,
+        response.reasoningTrace,
+      ),
+    );
+  }
+
+  runtime.options.onTurnCompleted?.({
+    turnIndex,
+    model: turnResult.currentModel,
+    inputTokens: response.usage.inputTokens,
+    outputTokens: response.usage.outputTokens,
+    cost: turnResult.turnCost,
+    duration: turnResult.turnDuration,
+    toolCallCount,
+  });
+}
+
+function maybeDispatchCheckpointWarning(runtime: AgentRuntime, turnIndex: number): void {
+  if (!(runtime.options.eventTarget && runtime.options.workflowId)) {
+    return;
+  }
+
+  if (runtime.state.sizeWarningFired) {
+    return;
+  }
+
+  const sizeBytes = estimateConversationSizeBytes(runtime.state.conversation);
+  if (sizeBytes < runtime.options.checkpointSizeWarningThreshold) {
+    return;
+  }
+
+  runtime.state.sizeWarningFired = true;
+  runtime.options.eventTarget.dispatchEvent(
+    new AgentCheckpointSizeWarningEvent(
+      runtime.options.workflowId,
+      runtime.options.agentId,
+      sizeBytes,
+      turnIndex,
+    ),
+  );
+}
+
+function finalizeTurn(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  turnResult: ChatTurnResult,
+  toolNames: string[],
+): void {
+  recordTurnCostEntry(
+    runtime,
+    turnIndex,
+    turnResult.response,
+    turnResult.currentModel,
+    turnResult.turnCost,
+    toolNames,
+  );
+  dispatchTurnCompleted(runtime, turnIndex, turnResult.response, turnResult, toolNames.length);
+  maybeDispatchCheckpointWarning(runtime, turnIndex);
+}
+
+async function executeAgentTurn(runtime: AgentRuntime, turnIndex: number): Promise<boolean> {
+  if (shouldStopBeforeTurn(runtime)) {
+    return false;
+  }
+
+  const preparedTurn = await prepareTurn(runtime, turnIndex);
+  if ('skippedResult' in preparedTurn) {
+    runtime.state.lastContent = preparedTurn.skippedResult;
+    return false;
+  }
+
+  const turnResult = await executeChatWithFallbacks(runtime, turnIndex, preparedTurn);
+  if (turnResult.response.toolCalls.length === 0) {
+    finalizeTurn(runtime, turnIndex, turnResult, []);
+    return false;
+  }
+
+  const toolResults = await executeToolCalls(runtime, turnIndex, turnResult.response.toolCalls);
+  runtime.state.conversation.push({
+    role: 'tool',
+    content: '',
+    toolResults,
+  });
+  finalizeTurn(
+    runtime,
+    turnIndex,
+    turnResult,
+    turnResult.response.toolCalls.map((toolCall) => toolCall.name),
+  );
+  return true;
+}
+
+/** Execute a durable ReAct agent loop. Returns the final agent result. */
+export async function executeAgentLoop(options: AgentOptions, input: string): Promise<AgentResult> {
+  const runtime = await createAgentRuntime(options, input);
+
+  try {
+    for (let turnIndex = 0; turnIndex < runtime.options.maxTurns; turnIndex++) {
+      const shouldContinue = await executeAgentTurn(runtime, turnIndex);
+      if (!shouldContinue) {
+        break;
+      }
+    }
+
+    return buildAgentResult(runtime.state);
+  } finally {
+    runtime.dispose();
+  }
 }

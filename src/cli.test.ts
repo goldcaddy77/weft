@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'bun:test';
 
+import { existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
   type CliCommand,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
+  createStorage,
   executeDoctor,
   executeVersionCheck,
   parseCliArguments,
 } from './cli.ts';
+import { encode } from './core/codec.ts';
+import { KEYS } from './storage/interface.ts';
 
 type ServeCommand = Extract<CliCommand, { command: 'serve' }>;
 type DoctorCommand = Extract<CliCommand, { command: 'doctor' }>;
@@ -93,11 +100,68 @@ describe('CLI argument parsing', () => {
       expect(result.port).toBe('5000');
     });
 
+    it('parses --storage flag with sqlite', () => {
+      const result = parseCliArguments(['--storage', 'sqlite']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.storage).toBe('sqlite');
+    });
+
+    it('parses --storage flag with lmdb', () => {
+      const result = parseCliArguments(['--storage', 'lmdb']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.storage).toBe('lmdb');
+    });
+
+    it('parses --storage flag with memory', () => {
+      const result = parseCliArguments(['--storage', 'memory']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.storage).toBe('memory');
+    });
+
+    it('throws for an invalid storage backend', () => {
+      expect(() => parseCliArguments(['--storage', 'postgres'])).toThrow(
+        "Invalid storage backend 'postgres'",
+      );
+    });
+
+    it('parses -s short flag for storage', () => {
+      const result = parseCliArguments(['-s', 'lmdb']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.storage).toBe('lmdb');
+    });
+
+    it('defaults storage to sqlite', () => {
+      const result = parseCliArguments([]) as ServeCommand;
+      expect(result.storage).toBe('sqlite');
+    });
+
+    it('enables ui by default', () => {
+      const result = parseCliArguments([]) as ServeCommand;
+      expect(result.ui).toBe(true);
+    });
+
+    it('parses --no-ui to disable the dashboard', () => {
+      const result = parseCliArguments(['--no-ui']) as ServeCommand;
+      expect(result.command).toBe('serve');
+      expect(result.ui).toBe(false);
+    });
+
     it('parses all flags combined', () => {
-      const result = parseCliArguments(['-p', '4000', '-d', '/tmp/all.db', '-h']) as ServeCommand;
+      const result = parseCliArguments([
+        '-p',
+        '4000',
+        '-d',
+        '/tmp/all.db',
+        '-s',
+        'memory',
+        '--no-ui',
+        '-h',
+      ]) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.port).toBe('4000');
       expect(result.database).toBe('/tmp/all.db');
+      expect(result.storage).toBe('memory');
+      expect(result.ui).toBe(false);
       expect(result.help).toBe(true);
     });
 
@@ -329,6 +393,20 @@ describe('help text', () => {
   it('VERSION_CHECK_HELP_TEXT contains --help flag', () => {
     expect(VERSION_CHECK_HELP_TEXT).toContain('--help');
   });
+
+  it('HELP_TEXT documents --storage flag', () => {
+    expect(HELP_TEXT).toContain('--storage');
+  });
+
+  it('HELP_TEXT documents --no-ui flag', () => {
+    expect(HELP_TEXT).toContain('--no-ui');
+  });
+
+  it('HELP_TEXT lists all storage backends', () => {
+    expect(HELP_TEXT).toContain('sqlite');
+    expect(HELP_TEXT).toContain('lmdb');
+    expect(HELP_TEXT).toContain('memory');
+  });
 });
 
 describe('executeDoctor', () => {
@@ -362,11 +440,77 @@ describe('executeVersionCheck', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('--workflows');
   });
+
+  it('returns a JSON report for a valid workflows module', async () => {
+    const database = join(tmpdir(), `weft-version-check-${crypto.randomUUID()}.db`);
+    const workflows = join(tmpdir(), `weft-workflows-${crypto.randomUUID()}.ts`);
+    const storage = await createStorage('sqlite', database);
+
+    try {
+      await storage.put(
+        KEYS.workflow('wf-version-check'),
+        encode({
+          id: 'wf-version-check',
+          type: 'order',
+          status: 'running',
+          input: null,
+          version: '1.0.0',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+      );
+
+      await Bun.write(
+        workflows,
+        [
+          'export default {',
+          '  order: {',
+          '    version: "1.0.0",',
+          '    handler: async function* () {',
+          '      return null;',
+          '    },',
+          '  },',
+          '};',
+        ].join('\n'),
+      );
+
+      const workflowModule = await import(workflows);
+      const registrations = workflowModule.default as Record<
+        string,
+        { handler: () => AsyncGenerator<unknown, unknown, unknown> }
+      >;
+      const generator = registrations['order']!.handler();
+      await generator.next();
+
+      const result = await executeVersionCheck({
+        database,
+        workflows,
+        json: true,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBeUndefined();
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        overallVerdict: 'safe',
+        workflowTypes: [
+          {
+            type: 'order',
+            storedVersion: '1.0.0',
+            registeredVersion: '1.0.0',
+          },
+        ],
+      });
+    } finally {
+      storage[Symbol.dispose]();
+      rmSync(workflows, { force: true });
+      rmSync(database, { force: true });
+    }
+  });
 });
 
 describe('CLI direct execution', () => {
   it('runs the CLI binary with --help and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', '--help'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '--help'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -384,7 +528,7 @@ describe('CLI direct execution', () => {
   });
 
   it('runs the CLI binary with -h short flag and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', '-h'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '-h'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -397,7 +541,7 @@ describe('CLI direct execution', () => {
   });
 
   it('runs doctor --help and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', 'doctor', '--help'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'doctor', '--help'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -412,7 +556,7 @@ describe('CLI direct execution', () => {
   });
 
   it('runs version:check --help and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', 'version:check', '--help'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'version:check', '--help'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -428,7 +572,7 @@ describe('CLI direct execution', () => {
   });
 
   it('runs doctor against an in-memory database and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', 'doctor', '--database', ':memory:'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'doctor', '--database', ':memory:'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -445,7 +589,7 @@ describe('CLI direct execution', () => {
 
   it('runs doctor with --json flag and outputs valid JSON', async () => {
     const process = Bun.spawn(
-      ['bun', './src/cli.ts', 'doctor', '--database', ':memory:', '--json'],
+      ['bun', './src/cli-main.ts', 'doctor', '--database', ':memory:', '--json'],
       {
         stdout: 'pipe',
         stderr: 'pipe',
@@ -463,11 +607,27 @@ describe('CLI direct execution', () => {
     expect(report).toHaveProperty('recommendations');
   });
 
-  it('exits with error when version:check is missing --workflows flag', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', 'version:check', '--database', ':memory:'], {
+  it('exits with an error for an invalid storage backend', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '--storage', 'postgres'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
+
+    const exitCode = await process.exited;
+    const stderr = await new Response(process.stderr).text();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Invalid storage backend 'postgres'");
+  });
+
+  it('exits with error when version:check is missing --workflows flag', async () => {
+    const process = Bun.spawn(
+      ['bun', './src/cli-main.ts', 'version:check', '--database', ':memory:'],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
 
     const exitCode = await process.exited;
     const stderr = await new Response(process.stderr).text();
@@ -479,7 +639,7 @@ describe('CLI direct execution', () => {
   it('starts the server and responds to health check', async () => {
     const port = 17233 + Math.floor(Math.random() * 1000);
     const process = Bun.spawn(
-      ['bun', './src/cli.ts', '--port', String(port), '--database', ':memory:'],
+      ['bun', './src/cli-main.ts', '--port', String(port), '--database', ':memory:'],
       {
         stdout: 'pipe',
         stderr: 'pipe',
@@ -507,5 +667,74 @@ describe('CLI direct execution', () => {
       process.kill('SIGTERM');
       await process.exited;
     }
+  });
+
+  it('accepts --storage flag via the CLI binary', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '--help', '--storage', 'memory'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    expect(exitCode).toBe(0);
+  });
+
+  it('accepts --no-ui flag via the CLI binary', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '--help', '--no-ui'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe('createStorage', () => {
+  it('creates BunSQLiteStorage for sqlite backend', async () => {
+    const storage = await createStorage('sqlite', ':memory:');
+    expect(storage).toBeDefined();
+    expect(typeof storage.get).toBe('function');
+    expect(typeof storage.put).toBe('function');
+    storage[Symbol.dispose]();
+  });
+
+  it('creates MemoryStorage for memory backend', async () => {
+    const storage = await createStorage('memory', './unused.db');
+    expect(storage).toBeDefined();
+    expect(typeof storage.get).toBe('function');
+    expect(typeof storage.put).toBe('function');
+    storage[Symbol.dispose]();
+  });
+
+  it('creates LMDBStorage for lmdb backend', async () => {
+    const path = join(
+      tmpdir(),
+      `lmdb-cli-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    const storage = await createStorage('lmdb', path);
+
+    expect(storage).toBeDefined();
+    expect(typeof storage.get).toBe('function');
+    expect(typeof storage.put).toBe('function');
+    storage[Symbol.dispose]();
+
+    if (existsSync(path)) {
+      rmSync(path, { recursive: true, force: true });
+    }
+  });
+
+  it('returns storage implementing get/put/delete/scan', async () => {
+    const storage = await createStorage('memory', '');
+
+    await storage.put('test-key', new Uint8Array([1, 2, 3]));
+    const result = await storage.get('test-key');
+    expect(result).toEqual(new Uint8Array([1, 2, 3]));
+
+    await storage.delete('test-key');
+    const deleted = await storage.get('test-key');
+    expect(deleted).toBeNull();
+
+    storage[Symbol.dispose]();
   });
 });

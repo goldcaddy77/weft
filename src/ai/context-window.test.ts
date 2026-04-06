@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
 import { slidingWindowStrategy } from './context-strategies/sliding-window.ts';
+import { createSummarizeStrategy } from './context-strategies/summarize.ts';
+import type { CompactOptions, ContextStrategy } from './context-window.ts';
 import { ContextWindowManager, composeStrategies, noopStrategy } from './context-window.ts';
+import { AgentContextCompactedEvent } from './events.ts';
 import type { Message } from './providers/types.ts';
 
 function createMessage(role: Message['role'], content: string): Message {
@@ -71,6 +74,20 @@ describe('ContextWindowManager', () => {
       });
 
       expect(manager.inputBudget).toBe(800);
+    });
+  });
+
+  describe('constructor defaults', () => {
+    it('uses the noop strategy and default token counter when not provided', async () => {
+      const manager = new ContextWindowManager({ maxTokens: 100 });
+      const messages = [createMessage('user', 'hello there')];
+
+      expect(manager.strategyName).toBe('noop');
+
+      const compacted = await manager.compact(messages);
+      expect(compacted.tokensBefore).toBeGreaterThan(0);
+      expect(compacted.tokensAfter).toBe(compacted.tokensBefore);
+      expect(compacted.messages).toEqual(messages);
     });
   });
 
@@ -222,6 +239,68 @@ describe('ContextWindowManager', () => {
       expect(compacted).toHaveLength(5);
       expect(compacted).toEqual(messages.slice(-5));
     });
+
+    it('composes sliding window then summarize', async () => {
+      // Strategy 1: sliding window keeps system + last 10 non-system
+      const sliding = slidingWindowStrategy({
+        preserveRecentCount: 10,
+        preserveSystemMessage: true,
+      });
+
+      // Strategy 2: summarize compresses all but last 3 non-system messages
+      const summarize = createSummarizeStrategy({
+        provider: {
+          summarize: async () => 'Summary of messages 0-6.',
+        },
+        keepRecent: 3,
+      });
+
+      const composed = composeStrategies(sliding, summarize);
+      const messages = createMessages(20, { withSystem: true });
+
+      const generator = composed.compact(messages, {
+        maxTokens: 1000,
+        reservedForOutput: 250,
+        currentTokenCount: 500,
+      });
+
+      const result = await generator.next();
+      const compacted = result.value;
+
+      // First pass (sliding): 21 messages -> system + last 10 = 11
+      // Second pass (summarize): 11 messages -> system + summary + last 3 = 5
+      expect(compacted).toHaveLength(5);
+      expect(compacted[0]!.role).toBe('system');
+      expect(compacted[0]!.content).toBe('You are a helpful assistant.');
+      expect(compacted[1]!.role).toBe('assistant');
+      expect(compacted[1]!.content).toBe('Summary of messages 0-6.');
+      // Last 3 non-system messages from the sliding window output
+      expect(compacted.slice(-3)).toEqual(messages.slice(-3));
+    });
+
+    it('composes with a noop strategy', async () => {
+      const noop = noopStrategy();
+      const sliding = slidingWindowStrategy({
+        preserveRecentCount: 5,
+        preserveSystemMessage: false,
+      });
+
+      const composed = composeStrategies(noop, sliding);
+      const messages = createMessages(20);
+
+      const generator = composed.compact(messages, {
+        maxTokens: 1000,
+        reservedForOutput: 250,
+        currentTokenCount: 500,
+      });
+
+      const result = await generator.next();
+      const compacted = result.value;
+
+      // Noop passes through, then sliding keeps last 5
+      expect(compacted).toHaveLength(5);
+      expect(compacted).toEqual(messages.slice(-5));
+    });
   });
 
   describe('compact returns correct metrics', () => {
@@ -275,6 +354,279 @@ describe('ContextWindowManager', () => {
       // The default countTokens uses content.length / 4
       expect(result.tokensBefore).toBeGreaterThan(0);
       expect(result.messages).toHaveLength(3);
+    });
+  });
+
+  describe('checkpoint and recovery', () => {
+    it('stores compacted messages that survive checkpoint/restore', async () => {
+      const strategy = slidingWindowStrategy({ preserveRecentCount: 3 });
+      const manager = new ContextWindowManager({
+        maxTokens: 1000,
+        compactAt: 0.85,
+        strategy,
+        countTokens,
+      });
+
+      const messages = createMessages(15, { withSystem: true });
+      const compacted = await manager.compact(messages);
+
+      // Take a checkpoint
+      const checkpoint = manager.checkpoint();
+      expect(checkpoint.compactedMessages).toEqual(compacted.messages);
+
+      // Simulate crash: create a new manager and restore
+      const restoredManager = new ContextWindowManager({
+        maxTokens: 1000,
+        compactAt: 0.85,
+        strategy,
+        countTokens,
+      });
+      restoredManager.restore(checkpoint);
+
+      // The restored manager should return the compacted messages directly
+      expect(restoredManager.getCompactedMessages()).toEqual(compacted.messages);
+    });
+
+    it('does not re-run strategy when compacted messages are restored', async () => {
+      let strategyCallCount = 0;
+      const trackingStrategy: ContextStrategy = {
+        name: 'tracking',
+        async *compact(
+          messages: Message[],
+          _options: CompactOptions,
+        ): AsyncGenerator<Message[], Message[], unknown> {
+          strategyCallCount++;
+          const result = messages.slice(-3);
+          yield result;
+          return result;
+        },
+      };
+
+      const manager = new ContextWindowManager({
+        maxTokens: 1000,
+        strategy: trackingStrategy,
+        countTokens,
+      });
+
+      const messages = createMessages(10);
+      await manager.compact(messages);
+      expect(strategyCallCount).toBe(1);
+
+      // Checkpoint and restore
+      const checkpoint = manager.checkpoint();
+      const restoredManager = new ContextWindowManager({
+        maxTokens: 1000,
+        strategy: trackingStrategy,
+        countTokens,
+      });
+      restoredManager.restore(checkpoint);
+
+      // Compacted messages are available without re-running the strategy
+      const restored = restoredManager.getCompactedMessages();
+      expect(restored).not.toBeNull();
+      expect(strategyCallCount).toBe(1); // Strategy was NOT called again
+    });
+
+    it('clears compacted messages after they are consumed', async () => {
+      const strategy = slidingWindowStrategy({ preserveRecentCount: 3 });
+      const manager = new ContextWindowManager({
+        maxTokens: 1000,
+        strategy,
+        countTokens,
+      });
+
+      const messages = createMessages(10, { withSystem: true });
+      await manager.compact(messages);
+
+      const checkpoint = manager.checkpoint();
+      expect(checkpoint.compactedMessages).not.toBeNull();
+
+      // Consume the compacted messages
+      manager.clearCompactedMessages();
+      const afterClear = manager.checkpoint();
+      expect(afterClear.compactedMessages).toBeNull();
+    });
+
+    it('returns null from getCompactedMessages when nothing is checkpointed', () => {
+      const manager = new ContextWindowManager({
+        maxTokens: 1000,
+        countTokens,
+      });
+
+      expect(manager.getCompactedMessages()).toBeNull();
+    });
+  });
+
+  describe('custom strategy integration', () => {
+    it('calls custom strategy when token count exceeds threshold', async () => {
+      let strategyCalled = false;
+      const customStrategy: ContextStrategy = {
+        name: 'custom',
+        async *compact(
+          messages: Message[],
+          _options: CompactOptions,
+        ): AsyncGenerator<Message[], Message[], unknown> {
+          strategyCalled = true;
+          // Keep only the last 2 messages
+          const result = messages.slice(-2);
+          yield result;
+          return result;
+        },
+      };
+
+      const manager = new ContextWindowManager({
+        maxTokens: 100,
+        reservedForOutput: 25,
+        compactAt: 0.5,
+        strategy: customStrategy,
+        countTokens,
+      });
+
+      // inputBudget = 75, 50% of 75 = 37.5 -> need >=38 tokens to trigger
+      // 10 messages with ~3 tokens each = 30, not enough
+      // Use longer messages to exceed the threshold
+      const messages = createMessages(20, { withSystem: true });
+      const tokenCount = await countTokens(messages);
+
+      // Verify we are actually over the threshold
+      expect(manager.shouldCompact(tokenCount)).toBe(true);
+
+      const result = await manager.compact(messages);
+      expect(strategyCalled).toBe(true);
+      expect(result.messages).toHaveLength(2);
+    });
+
+    it('passes correct options to the strategy', async () => {
+      let receivedOptions: CompactOptions | null = null;
+      const customStrategy: ContextStrategy = {
+        name: 'custom',
+        async *compact(
+          messages: Message[],
+          options: CompactOptions,
+        ): AsyncGenerator<Message[], Message[], unknown> {
+          receivedOptions = options;
+          yield messages;
+          return messages;
+        },
+      };
+
+      const manager = new ContextWindowManager({
+        maxTokens: 1000,
+        reservedForOutput: 200,
+        strategy: customStrategy,
+        countTokens,
+      });
+
+      const messages = createMessages(5);
+      await manager.compact(messages);
+
+      expect(receivedOptions).not.toBeNull();
+      expect(receivedOptions!.maxTokens).toBe(1000);
+      expect(receivedOptions!.reservedForOutput).toBe(200);
+      // currentTokenCount should match what countTokens returns
+      const expectedTokenCount = await countTokens(messages);
+      expect(receivedOptions!.currentTokenCount).toBe(expectedTokenCount);
+    });
+
+    it('returns the strategy output as compacted messages', async () => {
+      const summaryMessage = createMessage('system', 'Summary of prior conversation.');
+      const customStrategy: ContextStrategy = {
+        name: 'custom',
+        async *compact(
+          _messages: Message[],
+          _options: CompactOptions,
+        ): AsyncGenerator<Message[], Message[], unknown> {
+          const result = [summaryMessage];
+          yield result;
+          return result;
+        },
+      };
+
+      const manager = new ContextWindowManager({
+        maxTokens: 1000,
+        strategy: customStrategy,
+        countTokens,
+      });
+
+      const messages = createMessages(10);
+      const result = await manager.compact(messages);
+
+      expect(result.messages).toHaveLength(1);
+      expect(result.messages[0]).toEqual(summaryMessage);
+      expect(result.messagesDropped).toBe(9);
+    });
+  });
+
+  describe('AgentContextCompactedEvent integration', () => {
+    it('compact returns fields needed to construct the event', async () => {
+      const strategy = slidingWindowStrategy({ preserveRecentCount: 3 });
+      const manager = new ContextWindowManager({
+        maxTokens: 1000,
+        strategy,
+        countTokens,
+      });
+
+      const messages = createMessages(15, { withSystem: true });
+      const result = await manager.compact(messages);
+
+      // Verify the result has all fields needed for the event
+      expect(result.tokensBefore).toBeGreaterThan(0);
+      expect(result.tokensAfter).toBeGreaterThan(0);
+      expect(result.tokensAfter).toBeLessThan(result.tokensBefore);
+      expect(result.messagesDropped).toBe(12); // 16 - 4 (system + 3 recent)
+
+      // Construct event from compact result
+      const event = new AgentContextCompactedEvent(
+        'wf-test',
+        'agent-test',
+        'sliding-window',
+        result.tokensBefore,
+        result.tokensAfter,
+        result.messagesDropped,
+      );
+
+      expect(event.type).toBe('agent:context:compacted');
+      expect(event.strategy).toBe('sliding-window');
+      expect(event.tokensBefore).toBe(result.tokensBefore);
+      expect(event.tokensAfter).toBe(result.tokensAfter);
+      expect(event.messagesDropped).toBe(12);
+    });
+
+    it('dispatches event via EventTarget when compaction occurs', async () => {
+      const strategy = slidingWindowStrategy({ preserveRecentCount: 3 });
+      const manager = new ContextWindowManager({
+        maxTokens: 1000,
+        strategy,
+        countTokens,
+      });
+
+      const eventTarget = new EventTarget();
+      let receivedEvent: AgentContextCompactedEvent | null = null;
+      eventTarget.addEventListener(AgentContextCompactedEvent.type, ((event: Event) => {
+        receivedEvent = event as AgentContextCompactedEvent;
+      }) as EventListener);
+
+      const messages = createMessages(15, { withSystem: true });
+      const result = await manager.compact(messages);
+
+      // Simulate what the agent loop does: dispatch event after compaction
+      eventTarget.dispatchEvent(
+        new AgentContextCompactedEvent(
+          'wf-dispatch',
+          'agent-dispatch',
+          'sliding-window',
+          result.tokensBefore,
+          result.tokensAfter,
+          result.messagesDropped,
+        ),
+      );
+
+      expect(receivedEvent).not.toBeNull();
+      expect(receivedEvent!.workflowId).toBe('wf-dispatch');
+      expect(receivedEvent!.strategy).toBe('sliding-window');
+      expect(receivedEvent!.tokensBefore).toBe(result.tokensBefore);
+      expect(receivedEvent!.tokensAfter).toBe(result.tokensAfter);
+      expect(receivedEvent!.messagesDropped).toBe(result.messagesDropped);
     });
   });
 });

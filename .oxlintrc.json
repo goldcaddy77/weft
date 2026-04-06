@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicolo-ribaudo/oxc/json-schema/.oxlintrc.json/npm/oxlint/configuration_schema.json",
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
   "plugins": ["typescript", "promise", "unicorn", "import"],
   "categories": {
     "correctness": "error",
@@ -52,7 +52,8 @@
     "unicorn/require-post-message-target-origin": "off",
     "unicorn/prefer-add-event-listener": "off",
 
-    "import/no-unassigned-import": "off"
+    "import/no-unassigned-import": "off",
+    "complexity": "error"
   },
   "ignorePatterns": [
     "dist/**",

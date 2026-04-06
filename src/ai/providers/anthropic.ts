@@ -1,5 +1,8 @@
 import type { ChatOptions, LLMProvider } from './interface';
+import { releaseInnerReader } from './stream-reader';
 import type { ChatResponse, Message, StreamChunk, ToolCall, ToolDefinition } from './types';
+
+import { estimateTokens } from '../token-counting.ts';
 
 export interface AnthropicProviderOptions {
   apiKey: string;
@@ -89,9 +92,10 @@ export class AnthropicProvider implements LLMProvider {
     let inputTokens = 0;
     let outputTokens = 0;
 
+    const reader = rawBody.getReader();
+
     return new ReadableStream<StreamChunk>({
       async start(controller) {
-        const reader = rawBody.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
 
@@ -139,15 +143,48 @@ export class AnthropicProvider implements LLMProvider {
             }
           }
         } finally {
-          controller.close();
+          // Cancel the inner reader and wait for it to settle before
+          // releasing the lock. `cancel()` alone does NOT release the
+          // reader lock in Bun — `releaseLock()` does. Awaiting the cancel
+          // ensures any in-flight read is fully settled so `releaseLock()`
+          // never throws "cannot release a reader with pending reads".
+          await releaseInnerReader(reader);
+          // `controller.close()` throws if the stream is already closed
+          // or errored — which is exactly what happens when the consumer
+          // cancelled the outer stream before we reached this block.
+          try {
+            controller.close();
+          } catch {
+            // Ignore: controller is already in a terminal state.
+          }
         }
+      },
+      async cancel(reason) {
+        // Consumer aborted (e.g. budget exceeded, workflow cancellation).
+        // Propagate the cancel to the inner reader and release its lock so
+        // the fetch response body does not stay locked forever.
+        await releaseInnerReader(reader, reason);
       },
     });
   }
 
   async countTokens(messages: Message[]): Promise<number> {
-    const totalCharacters = messages.reduce((sum, message) => sum + message.content.length, 0);
-    return Math.floor(totalCharacters / 4);
+    return estimateTokens(messages);
+  }
+
+  async warmup(): Promise<void> {
+    const controller = new AbortController();
+    const timeout = setTimeout(controller.abort.bind(controller), 3000);
+    try {
+      await fetch(`${this.#options.baseUrl}/v1/messages`, {
+        method: 'HEAD',
+        signal: controller.signal,
+      });
+    } catch {
+      // Best-effort: silently swallow connection errors and timeouts.
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   #buildRequestBody(messages: Message[], options: ChatOptions): Record<string, unknown> {
@@ -219,11 +256,14 @@ export class AnthropicProvider implements LLMProvider {
     const stopReason = data['stop_reason'] as string;
 
     let textContent = '';
+    let reasoningTrace = '';
     const toolCalls: ToolCall[] = [];
 
     for (const block of contentBlocks) {
       if (block['type'] === 'text') {
         textContent += block['text'] as string;
+      } else if (block['type'] === 'thinking') {
+        reasoningTrace += block['thinking'] as string;
       } else if (block['type'] === 'tool_use') {
         toolCalls.push({
           id: block['id'] as string,
@@ -236,7 +276,7 @@ export class AnthropicProvider implements LLMProvider {
     const inputTokens = usage['input_tokens'] ?? 0;
     const outputTokens = usage['output_tokens'] ?? 0;
 
-    return {
+    const response: ChatResponse = {
       content: textContent,
       toolCalls,
       usage: {
@@ -247,6 +287,12 @@ export class AnthropicProvider implements LLMProvider {
       model,
       stopReason: this.#mapStopReason(stopReason),
     };
+
+    if (reasoningTrace) {
+      response.reasoningTrace = reasoningTrace;
+    }
+
+    return response;
   }
 
   #mapStopReason(stopReason: string): 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' {

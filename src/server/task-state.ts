@@ -13,7 +13,7 @@
  * @module task-state
  */
 
-import { decode, encode } from '../core/codec.ts';
+import { encode } from '../core/codec.ts';
 import type { RetryPolicy } from '../core/types.ts';
 import type { Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -176,24 +176,4 @@ export async function transitionInflightToQueued(
     { type: 'delete', key: KEYS.operationInflight(operationId) },
     { type: 'put', key: KEYS.operationQueued(operationId), value: encode(queuedRecord) },
   ]);
-}
-
-/** Read the inflight record for a task. */
-export async function readInflightRecord(
-  storage: Storage,
-  operationId: string,
-): Promise<InflightRecord | null> {
-  const raw = await storage.get(KEYS.operationInflight(operationId));
-  if (raw === null) return null;
-  return decode(raw) as InflightRecord;
-}
-
-/** Read the queued record for a task. */
-export async function readQueuedRecord(
-  storage: Storage,
-  operationId: string,
-): Promise<QueuedRecord | null> {
-  const raw = await storage.get(KEYS.operationQueued(operationId));
-  if (raw === null) return null;
-  return decode(raw) as QueuedRecord;
 }

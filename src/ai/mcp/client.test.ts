@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { MCPClient, MCPServerUnavailableError, MCPToolTimeoutError } from './client';
 
@@ -88,6 +88,35 @@ describe('MCPClient', () => {
       await client.discoverTools();
 
       expect(capturedHeaders!.get('Authorization')).toBe('Bearer my-secret-token');
+    });
+
+    it('warns when malformed tools are filtered from discovery', async () => {
+      const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        mockFetch(async () => {
+          return new Response(
+            JSON.stringify({
+              tools: [
+                { name: 'search', description: 'Search the web', inputSchema: {}, parameters: {} },
+                { description: 'missing name' },
+                null,
+              ],
+            }),
+            { status: 200 },
+          );
+        });
+
+        const client = new MCPClient({ serverUrl: 'https://mcp.example.com' });
+        const tools = await client.discoverTools();
+
+        expect(tools).toHaveLength(1);
+        expect(warningSpy).toHaveBeenCalledWith(
+          '[MCP] 2 malformed tool(s) filtered: <unknown>, <unknown>',
+        );
+      } finally {
+        warningSpy.mockRestore();
+      }
     });
   });
 

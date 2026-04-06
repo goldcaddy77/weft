@@ -1,12 +1,29 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { LLMProvider } from './providers/interface';
-import type { ChatResponse, Message } from './providers/types';
+import type { ChatResponse, Message, ToolDefinition } from './providers/types';
 
-import type { AgentTool, ToolCallInfo, ToolReturnInfo, TurnInfo, TurnResult } from './agent';
-import { executeAgentLoop } from './agent';
+import type {
+  AgentTool,
+  MCPClientFactory,
+  ToolCallInfo,
+  ToolReturnInfo,
+  TurnInfo,
+  TurnResult,
+} from './agent';
+import { executeAgentLoop, initializeTools } from './agent';
 import { BudgetExceededError, BudgetTracker } from './budget';
-import { AgentTurnCompletedEvent } from './events';
+import {
+  AgentContextCompactedEvent,
+  AgentModelFallbackEvent,
+  AgentTurnCompletedEvent,
+} from './events';
+import { MCPClient } from './mcp/client';
+import { ToolNameConflictError } from './mcp/registry';
+import type { MCPRequest, MCPResponse, MCPTransport } from './mcp/transport';
+import type { ModelRouter, RoutingContext } from './model-router';
+import type { CacheEntry } from './tool-cache';
+import { setToolCacheEntry } from './tool-cache';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -552,6 +569,59 @@ describe('executeAgentLoop', () => {
     expect(sentMessageCount).toBe(1);
   });
 
+  it('dispatches AgentContextCompactedEvent when compaction runs with an event target', async () => {
+    const eventTarget = new EventTarget();
+    const compactedEvents: AgentContextCompactedEvent[] = [];
+    eventTarget.addEventListener(AgentContextCompactedEvent.type, ((event: Event) => {
+      compactedEvents.push(event as AgentContextCompactedEvent);
+    }) as EventListener);
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 5_000;
+      },
+    };
+
+    const contextManager = {
+      strategyName: 'summarize',
+      shouldCompact(): boolean {
+        return true;
+      },
+      async compact(messages: Message[]) {
+        return {
+          messages: messages.slice(-1),
+          tokensBefore: 5_000,
+          tokensAfter: 100,
+          messagesDropped: messages.length - 1,
+        };
+      },
+    } as any;
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        contextManager,
+        eventTarget,
+        workflowId: 'wf-context-compaction',
+        agentId: 'agent-context-compaction',
+      },
+      'Hello',
+    );
+
+    expect(compactedEvents).toHaveLength(1);
+    expect(compactedEvents[0]!.workflowId).toBe('wf-context-compaction');
+    expect(compactedEvents[0]!.agentId).toBe('agent-context-compaction');
+    expect(compactedEvents[0]!.strategy).toBe('summarize');
+  });
+
   it('does not compact when contextManager says not to', async () => {
     let sentMessageCount = 0;
     let firstMessageRole = '';
@@ -1010,6 +1080,100 @@ describe('executeAgentLoop', () => {
     expect(toolMessage!.toolResults![0]!.output).toBe('modified-result');
   });
 
+  it('hooks.afterToolCall with action continue serializes object replacement results', async () => {
+    let capturedToolResultMessages: Message[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(messages): Promise<ChatResponse> {
+        capturedToolResultMessages = [...messages];
+        if (messages.length <= 1) {
+          return createToolCallResponse([{ id: 'call-1', name: 'lookup', input: {} }]);
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => 'original-result',
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        hooks: {
+          afterToolCall: () => {
+            return { action: 'continue', result: { replaced: true } };
+          },
+        },
+      },
+      'Lookup something',
+    );
+
+    const toolMessage = capturedToolResultMessages.find((message) => message.role === 'tool');
+    expect(toolMessage!.toolResults![0]!.output).toBe(JSON.stringify({ replaced: true }));
+  });
+
+  it('hooks.afterToolCall with action continue and no replacement keeps the original result', async () => {
+    let capturedToolResultMessages: Message[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(messages): Promise<ChatResponse> {
+        capturedToolResultMessages = [...messages];
+        if (messages.length <= 1) {
+          return createToolCallResponse([{ id: 'call-1', name: 'lookup', input: {} }]);
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => 'original-result',
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        hooks: {
+          afterToolCall: () => {
+            return { action: 'continue' };
+          },
+        },
+      },
+      'Lookup something',
+    );
+
+    const toolMessage = capturedToolResultMessages.find((message) => message.role === 'tool');
+    expect(toolMessage!.toolResults![0]!.output).toBe('original-result');
+  });
+
   it('hooks.afterToolCall with action reject replaces output with error', async () => {
     let capturedToolResultMessages: Message[] = [];
 
@@ -1069,19 +1233,104 @@ describe('executeAgentLoop', () => {
     expect(toolReturned[0]!.success).toBe(false);
   });
 
-  it('hooks.onBudgetWarning receives callback context', async () => {
-    // This test verifies the hooks interface accepts onBudgetWarning.
-    // The actual budget warning firing is tested in budget.test.ts;
-    // here we just verify the option is accepted without errors.
+  it('hooks.onBudgetWarning fires when budget crosses 80% threshold', async () => {
+    // Budget: maxTokens = 100. Each response uses 30 tokens (10 input + 20 output).
+    // After 3 turns: 90 tokens used = 90% > 80% threshold.
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }]),
+      createToolCallResponse([{ id: 'call-2', name: 'noop', input: {} }]),
+      createChatResponse('Done'),
+    ]);
+
+    const budget = new BudgetTracker({
+      maxTokens: 100,
+      models: { 'test-model': { inputCostPer1K: 0, outputCostPer1K: 0 } },
+    });
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    let warningContext: import('./hooks').BudgetWarningContext | undefined;
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        budget,
+        hooks: {
+          onBudgetWarning: (context) => {
+            warningContext = context;
+          },
+        },
+      },
+      'Hello',
+    );
+
+    expect(result.content).toBe('Done');
+    expect(warningContext).toBeDefined();
+    expect(warningContext!.budgetUsedPercent).toBeGreaterThanOrEqual(80);
+    expect(warningContext!.tokensRemaining).toBeLessThan(100);
+  });
+
+  it('hooks.onBudgetWarning fires only once across multiple turns', async () => {
+    // Budget: maxTokens = 100. Each turn uses 30 tokens.
+    // Turn 1: 30% — no warning. Turn 2: 60% — no warning. Turn 3: 90% — warning.
+    // Turn 4 would also be above threshold, but warning should not fire again.
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }]),
+      createToolCallResponse([{ id: 'call-2', name: 'noop', input: {} }]),
+      createToolCallResponse([{ id: 'call-3', name: 'noop', input: {} }]),
+      createChatResponse('Done'),
+    ]);
+
+    const budget = new BudgetTracker({
+      maxTokens: 100,
+      models: { 'test-model': { inputCostPer1K: 0, outputCostPer1K: 0 } },
+    });
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    let warningCallCount = 0;
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        budget,
+        hooks: {
+          onBudgetWarning: () => {
+            warningCallCount++;
+          },
+        },
+      },
+      'Hello',
+    );
+
+    expect(warningCallCount).toBe(1);
+  });
+
+  it('hooks.onBudgetWarning does not fire when budget is below threshold', async () => {
+    // Budget: maxTokens = 1000. One turn uses 30 tokens = 3% — well below 80%.
     const provider = createMockProvider([createChatResponse('Done')]);
+
+    const budget = new BudgetTracker({
+      maxTokens: 1000,
+      models: { 'test-model': { inputCostPer1K: 0, outputCostPer1K: 0 } },
+    });
 
     let warningCalled = false;
     const result = await executeAgentLoop(
       {
         model: 'test-model',
         provider,
+        budget,
         hooks: {
-          onBudgetWarning: (_context) => {
+          onBudgetWarning: () => {
             warningCalled = true;
           },
         },
@@ -1090,8 +1339,27 @@ describe('executeAgentLoop', () => {
     );
 
     expect(result.content).toBe('Done');
-    // onBudgetWarning is not called by the agent loop itself; it's for
-    // external budget trackers to invoke. Just verify it compiles and runs.
+    expect(warningCalled).toBe(false);
+  });
+
+  it('hooks.onBudgetWarning is not called when no budget tracker is provided', async () => {
+    const provider = createMockProvider([createChatResponse('Done')]);
+
+    let warningCalled = false;
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        hooks: {
+          onBudgetWarning: () => {
+            warningCalled = true;
+          },
+        },
+      },
+      'Hello',
+    );
+
+    expect(result.content).toBe('Done');
     expect(warningCalled).toBe(false);
   });
 
@@ -1265,5 +1533,897 @@ describe('executeAgentLoop', () => {
     const result = await executeAgentLoop({ model: 'test-model', provider }, 'Hello');
 
     expect(result.totalCost).toBe(0);
+  });
+
+  it('does not cache tool results with different input arguments', async () => {
+    let executeCount = 0;
+
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'abc' } }]),
+      createToolCallResponse([{ id: 'call-2', name: 'lookup', input: { key: 'xyz' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async (input: unknown) => {
+        executeCount++;
+        const typedInput = input as { key: string };
+        return { value: typedInput.key };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      { model: 'test-model', provider, tools: [lookupTool] },
+      'Lookup abc then xyz',
+    );
+
+    expect(result.content).toBe('Done');
+    expect(executeCount).toBe(2);
+  });
+
+  it('re-executes tool after cache TTL expires', async () => {
+    let executeCount = 0;
+    const originalDateNow = Date.now;
+
+    let mockTime = 1000;
+    Date.now = () => mockTime;
+
+    try {
+      const provider = createMockProvider([
+        createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'abc' } }]),
+        createToolCallResponse([{ id: 'call-2', name: 'lookup', input: { key: 'abc' } }]),
+        createChatResponse('Done'),
+      ]);
+
+      const lookupTool: AgentTool = {
+        definition: {
+          name: 'lookup',
+          description: 'Lookup a key',
+          inputSchema: { type: 'object' },
+        },
+        execute: async () => {
+          executeCount++;
+          return { value: 42 };
+        },
+      };
+
+      // Use a very short TTL (100ms)
+      // First call: time=1000, cached at time=1000
+      // Advance time past TTL before second call
+      const originalChat = provider.chat.bind(provider);
+      let chatCallCount = 0;
+      provider.chat = async function (messages, options) {
+        chatCallCount++;
+        if (chatCallCount === 2) {
+          // Advance time past TTL before second tool execution
+          mockTime = 2000;
+        }
+        return originalChat(messages, options);
+      };
+
+      const result = await executeAgentLoop(
+        { model: 'test-model', provider, tools: [lookupTool], toolCacheTTL: 100 },
+        'Lookup abc twice',
+      );
+
+      expect(result.content).toBe('Done');
+      // Both calls should execute because TTL expired
+      expect(executeCount).toBe(2);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  it('sweeps expired tool cache entries once the proactive threshold is reached', async () => {
+    let executeCount = 0;
+    const originalDateNow = Date.now;
+
+    let mockTime = 0;
+    Date.now = () => mockTime;
+
+    try {
+      const provider = createMockProvider([
+        ...Array.from({ length: 100 }, (_, index) =>
+          createToolCallResponse([
+            { id: `call-${index}`, name: 'lookup', input: { key: `key-${index}` } },
+          ]),
+        ),
+        createToolCallResponse([{ id: 'call-repeat', name: 'lookup', input: { key: 'key-0' } }]),
+        createChatResponse('Done'),
+      ]);
+
+      const originalChat = provider.chat.bind(provider);
+      let chatCallCount = 0;
+      provider.chat = async function (messages, options) {
+        const response = await originalChat(messages, options);
+        chatCallCount++;
+        mockTime = chatCallCount * 20;
+        return response;
+      };
+
+      const lookupTool: AgentTool = {
+        definition: {
+          name: 'lookup',
+          description: 'Lookup a key',
+          inputSchema: { type: 'object' },
+        },
+        execute: async (input: unknown) => {
+          executeCount++;
+          return { value: (input as { key: string }).key };
+        },
+      };
+
+      const result = await executeAgentLoop(
+        {
+          model: 'test-model',
+          provider,
+          tools: [lookupTool],
+          toolCacheTTL: 100,
+          maxTurns: 150,
+        },
+        'Trigger cache sweeping and then repeat the first lookup',
+      );
+
+      expect(result.content).toBe('Done');
+      expect(executeCount).toBe(101);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  it('evicts the oldest cached tool entries when the cache exceeds the hard cap', async () => {
+    let executeCount = 0;
+
+    const provider = createMockProvider([
+      ...Array.from({ length: 1001 }, (_, index) =>
+        createToolCallResponse([
+          { id: `call-${index}`, name: 'lookup', input: { key: `key-${index}` } },
+        ]),
+      ),
+      createToolCallResponse([{ id: 'call-repeat', name: 'lookup', input: { key: 'key-0' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async (input: unknown) => {
+        executeCount++;
+        return { value: (input as { key: string }).key };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        maxTurns: 1100,
+      },
+      'Overflow the tool cache and repeat the oldest lookup',
+    );
+
+    expect(result.content).toBe('Done');
+    expect(executeCount).toBe(1002);
+  });
+
+  it('does not cache failed tool executions', async () => {
+    let executeCount = 0;
+
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'flaky', input: { key: 'abc' } }]),
+      createToolCallResponse([{ id: 'call-2', name: 'flaky', input: { key: 'abc' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const flakyTool: AgentTool = {
+      definition: {
+        name: 'flaky',
+        description: 'A flaky tool',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => {
+        executeCount++;
+        if (executeCount === 1) {
+          throw new Error('Transient failure');
+        }
+        return { value: 'success' };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      { model: 'test-model', provider, tools: [flakyTool] },
+      'Try flaky tool twice',
+    );
+
+    expect(result.content).toBe('Done');
+    // Both calls should execute because the first one failed and was not cached
+    expect(executeCount).toBe(2);
+  });
+
+  // ---------------------------------------------------------------------------
+  // D1: Per-turn model selection — routing context correctness
+  // ---------------------------------------------------------------------------
+
+  it('passes correct workflowId to model router', async () => {
+    let capturedContext: RoutingContext | undefined;
+
+    const provider = createMockProvider([createChatResponse('Done')]);
+
+    const modelRouter: ModelRouter = {
+      select(context: RoutingContext) {
+        capturedContext = context;
+        return { model: 'routed-model' };
+      },
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'default-model',
+        provider,
+        modelRouter,
+        workflowId: 'wf-test-123',
+      },
+      'Hello',
+    );
+
+    expect(capturedContext).toBeDefined();
+    expect(capturedContext!.workflowId).toBe('wf-test-123');
+  });
+
+  it('tracks previousModels across turns in the routing context', async () => {
+    const capturedContexts: RoutingContext[] = [];
+    let providerCallCount = 0;
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        providerCallCount++;
+        if (providerCallCount < 4) {
+          return createToolCallResponse([
+            { id: `call-${providerCallCount}`, name: 'noop', input: {} },
+          ]);
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const modelRouter: ModelRouter = {
+      select(context: RoutingContext) {
+        capturedContexts.push({ ...context, previousModels: [...context.previousModels] });
+        const models = ['model-a', 'model-b', 'model-c', 'model-d'];
+        return { model: models[context.turnIndex] ?? 'model-d' };
+      },
+    };
+
+    await executeAgentLoop(
+      { model: 'default', provider, tools: [noopTool], modelRouter, maxTurns: 5 },
+      'Hello',
+    );
+
+    expect(capturedContexts[0]!.previousModels).toEqual([]);
+    expect(capturedContexts[1]!.previousModels).toEqual(['model-a']);
+    expect(capturedContexts[2]!.previousModels).toEqual(['model-a', 'model-b']);
+    expect(capturedContexts[3]!.previousModels).toEqual(['model-a', 'model-b', 'model-c']);
+  });
+
+  it('passes conversationLength and turnIndex accurately to router', async () => {
+    const capturedContexts: RoutingContext[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        if (capturedContexts.length < 2) {
+          return createToolCallResponse([
+            { id: `call-${capturedContexts.length}`, name: 'noop', input: {} },
+          ]);
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const modelRouter: ModelRouter = {
+      select(context: RoutingContext) {
+        capturedContexts.push({ ...context });
+        return { model: 'routed-model' };
+      },
+    };
+
+    await executeAgentLoop(
+      { model: 'default', provider, tools: [noopTool], modelRouter, maxTurns: 3 },
+      'Hello',
+    );
+
+    expect(capturedContexts[0]!.turnIndex).toBe(0);
+    expect(capturedContexts[1]!.turnIndex).toBe(1);
+    expect(capturedContexts[1]!.conversationLength).toBeGreaterThan(
+      capturedContexts[0]!.conversationLength,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // D2: Static fallback chain with retry on provider failure
+  // ---------------------------------------------------------------------------
+
+  it('retries with fallback models when the primary model fails', async () => {
+    const capturedModels: string[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        capturedModels.push(options.model);
+        if (options.model === 'model-a') {
+          throw new Error('rate limit exceeded');
+        }
+        return createChatResponse('Done from fallback');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b', 'model-c'] };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      { model: 'default', provider, modelRouter, workflowId: 'wf-fallback' },
+      'Hello',
+    );
+
+    expect(result.content).toBe('Done from fallback');
+    expect(capturedModels).toContain('model-a');
+    expect(capturedModels).toContain('model-b');
+  });
+
+  it('throws when all fallback models fail', async () => {
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        throw new Error('all models fail');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    expect(executeAgentLoop({ model: 'default', provider, modelRouter }, 'Hello')).rejects.toThrow(
+      'all models fail',
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // D5: AgentModelFallbackEvent dispatched on fallback
+  // ---------------------------------------------------------------------------
+
+  it('dispatches AgentModelFallbackEvent when a fallback model is used', async () => {
+    const fallbackEvents: AgentModelFallbackEvent[] = [];
+    const eventTarget = new EventTarget();
+
+    eventTarget.addEventListener(AgentModelFallbackEvent.type, ((
+      event: AgentModelFallbackEvent,
+    ) => {
+      fallbackEvents.push(event);
+    }) as EventListener);
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        if (options.model === 'model-a') {
+          throw new Error('rate limit');
+        }
+        return createChatResponse('Success via fallback');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'default',
+        provider,
+        modelRouter,
+        eventTarget,
+        workflowId: 'wf-fallback-event',
+        agentId: 'agent-1',
+      },
+      'Hello',
+    );
+
+    expect(fallbackEvents).toHaveLength(1);
+    expect(fallbackEvents[0]!.failedModel).toBe('model-a');
+    expect(fallbackEvents[0]!.nextModel).toBe('model-b');
+    expect(fallbackEvents[0]!.turnIndex).toBe(0);
+    expect(fallbackEvents[0]!.workflowId).toBe('wf-fallback-event');
+  });
+
+  it('reports fallbackAttempts > 0 in AgentTurnCompletedEvent after fallback', async () => {
+    const completedEvents: AgentTurnCompletedEvent[] = [];
+    const eventTarget = new EventTarget();
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, ((
+      event: AgentTurnCompletedEvent,
+    ) => {
+      completedEvents.push(event);
+    }) as EventListener);
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        if (options.model === 'model-a') {
+          throw new Error('rate limit');
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'default',
+        provider,
+        modelRouter,
+        eventTarget,
+        workflowId: 'wf-fallback-completed',
+        agentId: 'agent-1',
+      },
+      'Hello',
+    );
+
+    expect(completedEvents).toHaveLength(1);
+    expect(completedEvents[0]!.fallbackAttempts).toBeGreaterThan(0);
+    expect(completedEvents[0]!.selectedModel).toBe('model-b');
+  });
+
+  // ---------------------------------------------------------------------------
+  // D4: Default model router (engine wires it, but the behavior is testable
+  //     at the agent loop level — per-call router should override any default)
+  // ---------------------------------------------------------------------------
+
+  it('uses modelRouter from options when provided', async () => {
+    let routerCalled = false;
+
+    const provider = createMockProvider([createChatResponse('Done')]);
+
+    const modelRouter: ModelRouter = {
+      select() {
+        routerCalled = true;
+        return { model: 'router-model' };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      { model: 'default-model', provider, modelRouter },
+      'Hello',
+    );
+
+    expect(routerCalled).toBe(true);
+    expect(result.content).toBe('Done');
+  });
+
+  it('falls back to default model when no modelRouter is provided', async () => {
+    const capturedModels: string[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        capturedModels.push(options.model);
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    await executeAgentLoop({ model: 'my-default-model', provider }, 'Hello');
+
+    expect(capturedModels).toEqual(['my-default-model']);
+  });
+
+  it('records health tracker failures for failed fallback attempts', async () => {
+    const healthEvents: { type: string; provider: string }[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        if (options.model === 'model-a') {
+          throw new Error('rate limit');
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const healthTracker = {
+      recordSuccess(providerName: string) {
+        healthEvents.push({ type: 'success', provider: providerName });
+      },
+      recordFailure(providerName: string) {
+        healthEvents.push({ type: 'failure', provider: providerName });
+      },
+    } as any;
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    await executeAgentLoop({ model: 'default', provider, modelRouter, healthTracker }, 'Hello');
+
+    expect(healthEvents).toContainEqual({ type: 'failure', provider: 'mock' });
+    expect(healthEvents).toContainEqual({ type: 'success', provider: 'mock' });
+  });
+
+  it('rethrows AbortError during fallback attempts', async () => {
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        throw new DOMException('Aborted', 'AbortError');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    await expect(
+      executeAgentLoop({ model: 'default', provider, modelRouter }, 'Hello'),
+    ).rejects.toBeInstanceOf(DOMException);
+  });
+
+  // ---------------------------------------------------------------------------
+  // E: Reasoning traces and per-turn cost breakdown
+  // ---------------------------------------------------------------------------
+
+  it('captures reasoning trace from provider response in turn-completed event', async () => {
+    const provider = createMockProvider([
+      createChatResponse('Final answer', {
+        reasoningTrace: 'Let me think step by step about this problem.',
+      }),
+    ]);
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        eventTarget,
+        workflowId: 'wf-reasoning',
+        agentId: 'agent-reasoning',
+      },
+      'Think about this',
+    );
+
+    expect(turnEvents).toHaveLength(1);
+    expect(turnEvents[0]!.reasoningTrace).toBe('Let me think step by step about this problem.');
+  });
+
+  it('passes undefined reasoning trace when provider does not return one', async () => {
+    const provider = createMockProvider([createChatResponse('Final answer')]);
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        eventTarget,
+        workflowId: 'wf-no-reasoning',
+        agentId: 'agent-no-reasoning',
+      },
+      'Simple question',
+    );
+
+    expect(turnEvents).toHaveLength(1);
+    expect(turnEvents[0]!.reasoningTrace).toBeUndefined();
+  });
+
+  it('includes reasoning trace in AgentResult', async () => {
+    const provider = createMockProvider([
+      createChatResponse('Answer', {
+        reasoningTrace: 'Thinking deeply...',
+      }),
+    ]);
+
+    const result = await executeAgentLoop({ model: 'test-model', provider }, 'Think');
+
+    expect(result.reasoningTraces).toHaveLength(1);
+    expect(result.reasoningTraces[0]).toBe('Thinking deeply...');
+  });
+
+  it('captures reasoning traces across multiple turns with tool calls', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }], {
+        reasoningTrace: 'I need to use a tool first.',
+      }),
+      createChatResponse('Done', {
+        reasoningTrace: 'Now I have the answer.',
+      }),
+    ]);
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const eventTarget = new EventTarget();
+    const turnEvents: AgentTurnCompletedEvent[] = [];
+
+    eventTarget.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+      turnEvents.push(event as AgentTurnCompletedEvent);
+    });
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        eventTarget,
+        workflowId: 'wf-multi-reasoning',
+        agentId: 'agent-multi-reasoning',
+      },
+      'Use tool then answer',
+    );
+
+    expect(turnEvents).toHaveLength(2);
+    expect(turnEvents[0]!.reasoningTrace).toBe('I need to use a tool first.');
+    expect(turnEvents[1]!.reasoningTrace).toBe('Now I have the answer.');
+    expect(result.reasoningTraces).toHaveLength(2);
+  });
+
+  it('exposes per-turn cost data in turnCosts array', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'noop', input: {} }], {
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      }),
+      createChatResponse('Done', {
+        usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+      }),
+    ]);
+
+    const noopTool: AgentTool = {
+      definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+      execute: async () => 'ok',
+    };
+
+    const budget = new BudgetTracker({
+      maxCost: 10,
+      models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
+    });
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [noopTool],
+        budget,
+      },
+      'Track costs',
+    );
+
+    expect(result.turnCosts).toHaveLength(2);
+    expect(result.turnCosts[0]!.turn).toBe(0);
+    expect(result.turnCosts[0]!.inputTokens).toBe(100);
+    expect(result.turnCosts[0]!.outputTokens).toBe(50);
+    expect(result.turnCosts[0]!.model).toBe('test-model');
+    expect(result.turnCosts[0]!.tools).toEqual(['noop']);
+    expect(result.turnCosts[1]!.turn).toBe(1);
+    expect(result.turnCosts[1]!.inputTokens).toBe(200);
+    expect(result.turnCosts[1]!.outputTokens).toBe(100);
+    expect(result.turnCosts[1]!.tools).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // MCP client disposal on tool name conflict
+  // ---------------------------------------------------------------------------
+
+  it('disposes all MCP clients when tool name validation fails', async () => {
+    // Build a stub transport that reports healthy and returns a single
+    // pre-configured tool definition from discoverTools. `[Symbol.dispose]`
+    // records that it was torn down so the test can assert on it.
+    function createStubTransport(toolName: string): MCPTransport & { disposeCount: number } {
+      const transport = {
+        disposeCount: 0,
+        async send(request: MCPRequest): Promise<MCPResponse> {
+          if (request.method === 'tools/list') {
+            const tool: ToolDefinition = {
+              name: toolName,
+              description: 'stub tool',
+              inputSchema: { type: 'object' },
+            };
+            return { result: { tools: [tool] } };
+          }
+          return { result: null };
+        },
+        async healthCheck(): Promise<boolean> {
+          return true;
+        },
+        [Symbol.dispose](): void {
+          transport.disposeCount++;
+        },
+      };
+      return transport;
+    }
+
+    const transports = [createStubTransport('duplicate'), createStubTransport('duplicate')];
+
+    const factory: MCPClientFactory = (source) => {
+      // Pick the transport matching the source URL so the two sources get
+      // distinct transports, ensuring two distinct MCPClient instances exist.
+      const index = source.mcp === 'http://server-a' ? 0 : 1;
+      const transport = transports[index]!;
+      return new MCPClient({ transport });
+    };
+
+    await expect(
+      initializeTools([{ mcp: 'http://server-a' }, { mcp: 'http://server-b' }], undefined, factory),
+    ).rejects.toBeInstanceOf(ToolNameConflictError);
+
+    // Both clients should have had their underlying transports disposed
+    expect(transports[0]!.disposeCount).toBe(1);
+    expect(transports[1]!.disposeCount).toBe(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tool cache LRU eviction
+  // ---------------------------------------------------------------------------
+
+  it('evicts the oldest tool cache entry when the max size is exceeded', () => {
+    const cache = new Map<string, CacheEntry>();
+    const entry = (output: string): CacheEntry => ({ output, timestamp: 1 });
+
+    setToolCacheEntry(cache, 'a', entry('A'), 3);
+    setToolCacheEntry(cache, 'b', entry('B'), 3);
+    setToolCacheEntry(cache, 'c', entry('C'), 3);
+    expect(cache.size).toBe(3);
+    expect([...cache.keys()]).toEqual(['a', 'b', 'c']);
+
+    // Inserting a fourth key should evict 'a' (the oldest)
+    setToolCacheEntry(cache, 'd', entry('D'), 3);
+    expect(cache.size).toBe(3);
+    expect([...cache.keys()]).toEqual(['b', 'c', 'd']);
+    expect(cache.has('a')).toBe(false);
+
+    // Re-inserting an existing key should move it to the tail without
+    // evicting anything else
+    setToolCacheEntry(cache, 'b', entry('B2'), 3);
+    expect(cache.size).toBe(3);
+    expect([...cache.keys()]).toEqual(['c', 'd', 'b']);
+    expect(cache.get('b')?.output).toBe('B2');
+
+    // Lowering the effective max size via a larger insertion batch should
+    // evict multiple oldest entries in a single call
+    setToolCacheEntry(cache, 'e', entry('E'), 2);
+    expect(cache.size).toBe(2);
+    expect([...cache.keys()]).toEqual(['b', 'e']);
+  });
+
+  it('honors the configured toolCacheMaxSize during an agent loop', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'a' } }]),
+      createToolCallResponse([{ id: 'call-2', name: 'lookup', input: { key: 'b' } }]),
+      createToolCallResponse([{ id: 'call-3', name: 'lookup', input: { key: 'a' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    let executeCount = 0;
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => {
+        executeCount++;
+        return { value: executeCount };
+      },
+    };
+
+    // Max size 1 — after looking up 'b', the 'a' entry must have been
+    // evicted so the third call re-executes instead of hitting the cache.
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        toolCacheMaxSize: 1,
+      },
+      'Lookup a, then b, then a',
+    );
+
+    expect(executeCount).toBe(3);
   });
 });

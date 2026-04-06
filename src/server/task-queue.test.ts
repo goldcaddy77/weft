@@ -13,6 +13,7 @@ function makeTask(overrides: Partial<PendingTask> = {}): PendingTask {
     activityName: overrides.activityName ?? 'charge',
     input: overrides.input ?? { amount: 100 },
     attempt: overrides.attempt,
+    priority: overrides.priority,
   };
 }
 
@@ -537,6 +538,85 @@ describe('TaskQueue', () => {
       // Calling complete on an expired task should return false (no callback)
       const found = queue.complete({ operationId: 'ttl-no-cb', status: 'completed' });
       expect(found).toBe(false);
+    });
+  });
+
+  describe('priority queuing', () => {
+    it('dequeues high-priority tasks before low-priority tasks', async () => {
+      const queue = new TaskQueue();
+
+      const low = makeTask({ operationId: 'low', activityName: 'charge', priority: 0 });
+      const high = makeTask({ operationId: 'high', activityName: 'charge', priority: 10 });
+
+      queue.enqueue('default', low);
+      queue.enqueue('default', high);
+
+      const result1 = await queue.poll('default', ['charge'], 100);
+      const result2 = await queue.poll('default', ['charge'], 100);
+
+      expect(result1?.operationId).toBe('high');
+      expect(result2?.operationId).toBe('low');
+    });
+
+    it('maintains FIFO order for same-priority tasks', async () => {
+      const queue = new TaskQueue();
+
+      const first = makeTask({ operationId: 'first', activityName: 'charge', priority: 10 });
+      const second = makeTask({ operationId: 'second', activityName: 'charge', priority: 10 });
+      const third = makeTask({ operationId: 'third', activityName: 'charge', priority: 10 });
+
+      queue.enqueue('default', first);
+      queue.enqueue('default', second);
+      queue.enqueue('default', third);
+
+      const r1 = await queue.poll('default', ['charge'], 100);
+      const r2 = await queue.poll('default', ['charge'], 100);
+      const r3 = await queue.poll('default', ['charge'], 100);
+
+      expect(r1?.operationId).toBe('first');
+      expect(r2?.operationId).toBe('second');
+      expect(r3?.operationId).toBe('third');
+    });
+
+    it('handles mixed priorities correctly', async () => {
+      const queue = new TaskQueue();
+
+      const p0a = makeTask({ operationId: 'p0a', activityName: 'charge', priority: 0 });
+      const p10a = makeTask({ operationId: 'p10a', activityName: 'charge', priority: 10 });
+      const p0b = makeTask({ operationId: 'p0b', activityName: 'charge', priority: 0 });
+      const p5 = makeTask({ operationId: 'p5', activityName: 'charge', priority: 5 });
+      const p10b = makeTask({ operationId: 'p10b', activityName: 'charge', priority: 10 });
+
+      queue.enqueue('default', p0a);
+      queue.enqueue('default', p10a);
+      queue.enqueue('default', p0b);
+      queue.enqueue('default', p5);
+      queue.enqueue('default', p10b);
+
+      const results: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const task = await queue.poll('default', ['charge'], 100);
+        results.push(task!.operationId);
+      }
+
+      expect(results).toEqual(['p10a', 'p10b', 'p5', 'p0a', 'p0b']);
+    });
+
+    it('defaults to priority 0 when not specified', async () => {
+      const queue = new TaskQueue();
+
+      const noPriority = makeTask({ operationId: 'no-prio', activityName: 'charge' });
+      const highPriority = makeTask({
+        operationId: 'high-prio',
+        activityName: 'charge',
+        priority: 10,
+      });
+
+      queue.enqueue('default', noPriority);
+      queue.enqueue('default', highPriority);
+
+      const result1 = await queue.poll('default', ['charge'], 100);
+      expect(result1?.operationId).toBe('high-prio');
     });
   });
 });

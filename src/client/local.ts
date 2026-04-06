@@ -58,6 +58,14 @@ class LocalHandle implements ClientHandle {
     return this.#client.query(this.id, name);
   }
 
+  async getAttributes(): Promise<Record<string, SearchAttributeValue> | null> {
+    return this.#client.getAttributes(this.id);
+  }
+
+  async setAttributes(attributes: Record<string, SearchAttributeValue>): Promise<void> {
+    return this.#client.setAttributes(this.id, attributes);
+  }
+
   addEventListener(
     type: string,
     listener: EventListenerOrEventListenerObject,
@@ -72,6 +80,11 @@ class LocalHandle implements ClientHandle {
     options?: boolean | EventListenerOptions,
   ): void {
     this.#handle.removeEventListener(type, listener, options);
+  }
+
+  [Symbol.dispose](): void {
+    // LocalHandle has no resources to clean up — events flow through
+    // the engine's EventTarget which is managed by the engine lifecycle.
   }
 }
 

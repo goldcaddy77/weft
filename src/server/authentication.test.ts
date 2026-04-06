@@ -7,6 +7,7 @@ import type { AuthConfig, JWTConfig, JWTPayload } from './authentication.ts';
 import {
   buildTLSOptions,
   createAuthenticator,
+  importJWTKey,
   signJWT,
   validateAuthConfig,
   verifyJWT,
@@ -32,6 +33,69 @@ function createEngine(): Engine {
     return input;
   });
   return engine;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  return Buffer.from(buffer).toString('base64');
+}
+
+function toPem(type: 'PUBLIC KEY', keyBytes: ArrayBuffer): string {
+  const base64 = arrayBufferToBase64(keyBytes);
+  const chunks = base64.match(/.{1,64}/g) ?? [];
+  return `-----BEGIN ${type}-----\n${chunks.join('\n')}\n-----END ${type}-----`;
+}
+
+async function generateSigningKeyPair(
+  algorithm: 'RS256' | 'ES256',
+): Promise<{ publicKeyPem: string; sign: (payload: JWTPayload) => Promise<string> }> {
+  if (algorithm === 'RS256') {
+    const keyPair = await crypto.subtle.generateKey(
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: 'SHA-256',
+      },
+      true,
+      ['sign', 'verify'],
+    );
+
+    return {
+      publicKeyPem: toPem('PUBLIC KEY', await crypto.subtle.exportKey('spki', keyPair.publicKey)),
+      sign: async (payload) => {
+        const header = { alg: 'RS256', typ: 'JWT' };
+        const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+        const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+        const signingInput = `${headerB64}.${payloadB64}`;
+        const signature = await crypto.subtle.sign(
+          'RSASSA-PKCS1-v1_5',
+          keyPair.privateKey,
+          new TextEncoder().encode(signingInput),
+        );
+        return `${signingInput}.${Buffer.from(signature).toString('base64url')}`;
+      },
+    };
+  }
+
+  const keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ]);
+  return {
+    publicKeyPem: toPem('PUBLIC KEY', await crypto.subtle.exportKey('spki', keyPair.publicKey)),
+    sign: async (payload) => {
+      const header = { alg: 'ES256', typ: 'JWT' };
+      const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+      const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+      const signingInput = `${headerB64}.${payloadB64}`;
+      const signature = await crypto.subtle.sign(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        keyPair.privateKey,
+        new TextEncoder().encode(signingInput),
+      );
+      return `${signingInput}.${Buffer.from(signature).toString('base64url')}`;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -84,7 +148,6 @@ describe('validateAuthConfig', () => {
 
 describe('JWT verification', () => {
   async function importTestKey(config: JWTConfig) {
-    const { importJWTKey } = await import('./authentication.ts');
     return importJWTKey(config);
   }
 
@@ -207,6 +270,43 @@ describe('JWT verification', () => {
 
     const decoded = await verifyJWT(token, key, config);
     expect(decoded['sub']).toBe('user-1');
+  });
+
+  it('imports and verifies an RSA public key', async () => {
+    const { publicKeyPem, sign } = await generateSigningKeyPair('RS256');
+    const config: JWTConfig = { publicKey: publicKeyPem, algorithm: 'RS256' };
+
+    const token = await sign({ sub: 'rsa-user' });
+    const key = await importTestKey(config);
+    const decoded = await verifyJWT(token, key, config);
+
+    expect(decoded['sub']).toBe('rsa-user');
+  });
+
+  it('imports and verifies an ECDSA public key', async () => {
+    const { publicKeyPem, sign } = await generateSigningKeyPair('ES256');
+    const config: JWTConfig = { publicKey: publicKeyPem, algorithm: 'ES256' };
+
+    const token = await sign({ sub: 'ecdsa-user' });
+    const key = await importTestKey(config);
+    const decoded = await verifyJWT(token, key, config);
+
+    expect(decoded['sub']).toBe('ecdsa-user');
+  });
+
+  it('rejects importJWTKey when the HMAC secret is missing', async () => {
+    await expect(importTestKey({ algorithm: 'HS512' })).rejects.toThrow(
+      'JWT configuration requires "secret"',
+    );
+  });
+
+  it('rejects importJWTKey when the public key is missing', async () => {
+    await expect(importTestKey({ algorithm: 'RS256' })).rejects.toThrow(
+      'JWT configuration requires "publicKey"',
+    );
+    await expect(importTestKey({ algorithm: 'ES256' })).rejects.toThrow(
+      'JWT configuration requires "publicKey"',
+    );
   });
 });
 
@@ -483,6 +583,69 @@ describe('createAuthenticator — mTLS', () => {
     expect(result.authenticated).toBe(true);
     if (result.authenticated) {
       expect(result.method).toBe('api-key');
+    }
+  });
+
+  it('rejects invalid API key even when mTLS is also configured', async () => {
+    const authenticate = await createAuthenticator({
+      apiKeys: [TEST_API_KEY],
+      mtls: { ca: 'ca-pem', cert: 'cert-pem', key: 'key-pem' },
+    });
+
+    const result = await authenticate(
+      makeRequest('http://localhost/v1/workflows', {
+        Authorization: 'Bearer wrong-key',
+      }),
+    );
+
+    expect(result.authenticated).toBe(false);
+  });
+
+  it('rejects invalid JWT even when mTLS is also configured', async () => {
+    const authenticate = await createAuthenticator({
+      jwt: { secret: TEST_SECRET, clockTolerance: 0 },
+      mtls: { ca: 'ca-pem', cert: 'cert-pem', key: 'key-pem' },
+    });
+
+    const pastExpiry = Math.floor(Date.now() / 1000) - 3600;
+    const token = await signJWT({ sub: 'user-1', exp: pastExpiry }, TEST_SECRET);
+    const result = await authenticate(
+      makeRequest('http://localhost/v1/workflows', {
+        Authorization: `Bearer ${token}`,
+      }),
+    );
+
+    expect(result.authenticated).toBe(false);
+  });
+
+  it('rejects non-JWT Bearer token even when mTLS is also configured', async () => {
+    const authenticate = await createAuthenticator({
+      jwt: { secret: TEST_SECRET },
+      mtls: { ca: 'ca-pem', cert: 'cert-pem', key: 'key-pem' },
+    });
+
+    // A Bearer token without dots is not a JWT — still counts as explicit auth
+    const result = await authenticate(
+      makeRequest('http://localhost/v1/workflows', {
+        Authorization: 'Bearer not-a-jwt-token',
+      }),
+    );
+
+    expect(result.authenticated).toBe(false);
+  });
+
+  it('falls through to mTLS when no credentials are provided', async () => {
+    const authenticate = await createAuthenticator({
+      apiKeys: [TEST_API_KEY],
+      mtls: { ca: 'ca-pem', cert: 'cert-pem', key: 'key-pem' },
+    });
+
+    // No auth headers — should fall through to mTLS
+    const result = await authenticate(makeRequest('http://localhost/v1/workflows'));
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) {
+      expect(result.method).toBe('mtls');
     }
   });
 });

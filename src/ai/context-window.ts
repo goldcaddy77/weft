@@ -1,7 +1,11 @@
 import type { Message } from './providers/types.ts';
 
+import { estimateTokens } from './token-counting.ts';
+
 /** Strategy for compacting conversation history. Returns a generator for durable operations. */
 export interface ContextStrategy {
+  /** Human-readable label identifying this strategy (e.g. 'sliding-window', 'summarize'). */
+  name: string;
   compact(
     messages: Message[],
     options: CompactOptions,
@@ -22,10 +26,16 @@ export interface ContextWindowOptions {
   countTokens?: (messages: Message[]) => Promise<number>;
 }
 
+/** Serializable snapshot of the context window state for crash recovery. */
+export interface ContextWindowCheckpoint {
+  compactedMessages: Message[] | null;
+}
+
 type ResolvedContextWindowOptions = Required<ContextWindowOptions>;
 
 export class ContextWindowManager {
   #options: ResolvedContextWindowOptions;
+  #compactedMessages: Message[] | null = null;
 
   constructor(options: ContextWindowOptions) {
     const maxTokens = options.maxTokens;
@@ -36,8 +46,14 @@ export class ContextWindowManager {
       reservedForOutput,
       compactAt: options.compactAt ?? 0.85,
       strategy: options.strategy ?? noopStrategy(),
-      countTokens: options.countTokens ?? defaultCountTokens,
+      countTokens:
+        options.countTokens ?? ((messages: Message[]) => Promise.resolve(estimateTokens(messages))),
     };
+  }
+
+  /** The name of the active compaction strategy. */
+  get strategyName(): string {
+    return this.#options.strategy.name;
   }
 
   /** Check if compaction is needed based on token count. */
@@ -65,6 +81,8 @@ export class ContextWindowManager {
     const compactedMessages = result.value ?? messages;
     const tokensAfter = await this.#options.countTokens(compactedMessages);
 
+    this.#compactedMessages = compactedMessages;
+
     return {
       messages: compactedMessages,
       tokensBefore,
@@ -77,11 +95,36 @@ export class ContextWindowManager {
   get inputBudget(): number {
     return this.#options.maxTokens - this.#options.reservedForOutput;
   }
+
+  /** Create a serializable snapshot of the current compacted state. */
+  checkpoint(): ContextWindowCheckpoint {
+    return {
+      compactedMessages: this.#compactedMessages ? [...this.#compactedMessages] : null,
+    };
+  }
+
+  /** Restore compacted state from a checkpoint, avoiding re-running the strategy. */
+  restore(checkpoint: ContextWindowCheckpoint): void {
+    this.#compactedMessages = checkpoint.compactedMessages
+      ? [...checkpoint.compactedMessages]
+      : null;
+  }
+
+  /** Return the stored compacted messages, or null if none exist. */
+  getCompactedMessages(): Message[] | null {
+    return this.#compactedMessages;
+  }
+
+  /** Clear the stored compacted messages (e.g., after the agent consumes them). */
+  clearCompactedMessages(): void {
+    this.#compactedMessages = null;
+  }
 }
 
 /** Compose multiple strategies: apply in sequence, checkpoint between each. */
 export function composeStrategies(...strategies: ContextStrategy[]): ContextStrategy {
   return {
+    name: `compose(${strategies.map((s) => s.name).join(', ')})`,
     async *compact(
       messages: Message[],
       options: CompactOptions,
@@ -106,13 +149,10 @@ export function composeStrategies(...strategies: ContextStrategy[]): ContextStra
 /** No-op pass-through strategy (default). */
 export function noopStrategy(): ContextStrategy {
   return {
+    name: 'noop',
     async *compact(messages: Message[]): AsyncGenerator<Message[], Message[], unknown> {
       yield messages;
       return messages;
     },
   };
-}
-
-async function defaultCountTokens(messages: Message[]): Promise<number> {
-  return messages.reduce((sum, message) => sum + Math.ceil(message.content.length / 4), 0);
 }

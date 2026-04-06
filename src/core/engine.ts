@@ -10,11 +10,25 @@
  * @module core/engine
  */
 
+import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
+import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
+import {
+  ReviewCoordinator,
+  ReviewTimeoutError,
+  type HumanReviewOptions,
+  type HumanReviewResult,
+  type ReviewRequest,
+} from '../ai/human-review.ts';
+import type { LLMProvider } from '../ai/providers/interface.ts';
+import { AlertManager } from '../alerting/alert-manager.ts';
+import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../workers/pool.ts';
+import type { ActivityRegistrationOptions } from './activity-registry.ts';
+import { ActivityRegistry } from './activity-registry.ts';
 import {
   advanceCheckpoint,
   createCheckpoint,
@@ -26,8 +40,17 @@ import { decode, encode } from './codec.ts';
 import type { ContextOperationRequest, StreamReference, StreamSink } from './context.ts';
 import { Context } from './context.ts';
 import {
+  cleanupPartialStreamChunks,
+  createAgentInterceptorExecute,
+  createCleanupErrorReporter,
+  createExpiredResponseCleanupTick,
+  createHandleCacheFinalizer,
+  executeRunAllBranches,
+} from './engine-helpers.ts';
+import {
   AttributesChangedEvent,
   CheckpointSizeWarningEvent,
+  CleanupWarningEvent,
   DevelopmentWarningEvent,
   SignalReceivedEvent,
   UpdateCompletedEvent,
@@ -49,8 +72,17 @@ import type {
 } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
 import { Scheduler, parseDuration } from './scheduler.ts';
-import { buildIndexOperations, encodeAttributeValue } from './search-attributes.ts';
-import { compileStepWorkflow, isAsyncGeneratorFunction } from './step-context.ts';
+import {
+  buildIndexOperations,
+  encodeAttributeValue,
+  validateAttributeType,
+  validateEncodedValueSize,
+} from './search-attributes.ts';
+import {
+  compileStepWorkflow,
+  isAsyncGeneratorFunction,
+  isGeneratorResult,
+} from './step-context.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   AttributeFilter,
@@ -60,6 +92,7 @@ import type {
   ListFilter,
   OperationOutcome,
   PaginatedResult,
+  SearchAttributeSchema,
   SearchAttributeValue,
   StartOptions,
   StepWorkflowFunction,
@@ -69,9 +102,15 @@ import type {
   WorkflowFunction,
   WorkflowRegistration,
   WorkflowState,
+  WorkflowStatus,
   WorkflowSummary,
 } from './types.ts';
-import { UpdateCoordinator } from './updates.ts';
+import {
+  UpdateCoordinator,
+  UpdateTimeoutError,
+  WorkflowTerminalError,
+  type UpdateRequest,
+} from './updates.ts';
 import { checkVersionCompatibility, migrateCheckpoint } from './versioning.ts';
 import { WorkerExecutionStrategy } from './worker-execution-strategy.ts';
 
@@ -89,6 +128,17 @@ interface RegistrationEntry {
   handler: WorkflowFunction;
   version: string;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
+  searchAttributes?: SearchAttributeSchema;
+  /** True when this registration originated from an AgentDefinition. */
+  isAgent?: boolean;
+  /** LLM provider for agent-typed registrations (used for connection pre-warming). */
+  provider?: LLMProvider;
+}
+
+/** Options required when registering an AgentDefinition as a workflow. */
+export interface AgentRegistrationOptions {
+  /** The LLM provider to use when running the agent. */
+  provider: LLMProvider;
 }
 
 interface ResolvedOptions {
@@ -105,6 +155,33 @@ interface WorkflowResultResolver {
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
 }
+
+type EngineConstructorOptions = Partial<EngineOptions> & { getNow?: () => number };
+
+type ExecutionStrategyBundle = {
+  strategy: ExecutionStrategy;
+  inlineStrategy: InlineExecutionStrategy | null;
+};
+
+type OperationWithCallerStack = {
+  callerStack?: string;
+};
+
+type ConsumedSignalResult =
+  | { found: false }
+  | {
+      found: true;
+      payload: unknown;
+    };
+
+type WorkflowHandleEventQueue = {
+  events: Event[];
+  resolver: (() => void) | undefined;
+};
+
+type WorkflowHandleIteratorState = {
+  done: boolean;
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -126,7 +203,171 @@ function callMemoFunction(fn: Function): unknown {
 }
 
 function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
-  return decode(bytes) as never;
+  // bytes were written by encode(WorkflowState) — shape is guaranteed by our own storage
+  return decode(bytes) as WorkflowState;
+}
+
+function enqueueWorkflowHandleEvent(queue: WorkflowHandleEventQueue, event: Event): void {
+  queue.events.push(event);
+  queue.resolver?.();
+}
+
+function finishWorkflowHandleIteration(
+  state: WorkflowHandleIteratorState,
+  queue: WorkflowHandleEventQueue,
+  event: Event,
+): void {
+  state.done = true;
+  enqueueWorkflowHandleEvent(queue, event);
+}
+
+function resolveEngineStorage(
+  options?: EngineConstructorOptions,
+  getAgentWorkflowIds?: () => ReadonlySet<string>,
+): WeftStorage {
+  const baseStorage = options?.storage ?? new MemoryStorage();
+  if (!options?.compression) return baseStorage;
+  return new CompressedStorage(baseStorage, {
+    ...options.compression,
+    ...(getAgentWorkflowIds
+      ? {
+          agentWorkflowIds: getAgentWorkflowIds,
+          // Default to brotli for agent checkpoints (conversation data compresses
+          // exceptionally well with brotli). Users may override via compression.agentAlgorithm.
+          agentAlgorithm: options.compression.agentAlgorithm ?? 'brotli',
+          ...(options.compression.agentThreshold !== undefined
+            ? { agentThreshold: options.compression.agentThreshold }
+            : {}),
+        }
+      : {}),
+  });
+}
+
+function resolveEngineOptions(
+  storage: WeftStorage,
+  options: EngineConstructorOptions | undefined,
+  getNow: () => number,
+): ResolvedOptions {
+  return {
+    storage,
+    development: options?.development ?? false,
+    checkpointHistory: options?.checkpointHistory ?? 10,
+    checkpointSizeWarningThreshold: options?.checkpointSizeWarningThreshold ?? 65_536,
+    maxNestingDepth: options?.maxNestingDepth ?? 10,
+    broadcastEvents: options?.broadcastEvents ?? false,
+    getNow,
+  };
+}
+
+function createExecutionStrategyBundle(parameters: {
+  options: EngineConstructorOptions | undefined;
+  getNow: () => number;
+  maxNestingDepth: number;
+  development: boolean;
+  broadcastEvents: boolean;
+  getRegistration: (workflowType: string) => RegistrationEntry | undefined;
+}): ExecutionStrategyBundle {
+  const { options, getNow, maxNestingDepth, development, broadcastEvents, getRegistration } =
+    parameters;
+
+  if (options?.workerExecution) {
+    const pool = new WorkerPool({
+      workerUrl: options.workerExecution.workerUrl,
+      concurrency: options.workerExecution.concurrency ?? 4,
+      smol: options.workerExecution.smol ?? false,
+    });
+
+    return {
+      strategy: new WorkerExecutionStrategy(pool, { broadcastEvents }),
+      inlineStrategy: null,
+    };
+  }
+
+  const inlineStrategy = new InlineExecutionStrategy({
+    getRegistration,
+    getNow,
+    maxNestingDepth,
+    development,
+  });
+
+  return {
+    strategy: inlineStrategy,
+    inlineStrategy,
+  };
+}
+
+function createActivityWorkerDispatcher(
+  activityExecution: EngineConstructorOptions['activityExecution'],
+): ActivityWorkerDispatcher | null {
+  if (!activityExecution) {
+    return null;
+  }
+
+  const activityPool = new WorkerPool({
+    workerUrl: activityExecution.workerUrl,
+    concurrency: activityExecution.poolSize ?? 4,
+    smol: activityExecution.smol ?? false,
+  });
+  return new ActivityWorkerDispatcher(activityPool);
+}
+
+function createAlertManagerForEngine(
+  engine: Engine,
+  alerts: EngineOptions['alerts'] | undefined,
+  getNow: () => number,
+): AlertManager | null {
+  return alerts ? new AlertManager(engine, alerts, getNow) : null;
+}
+
+function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | null {
+  const [firstSet, ...remainingSets] = idSets;
+  if (!firstSet) {
+    return null;
+  }
+
+  const intersected = new Set(firstSet);
+  for (const nextSet of remainingSets) {
+    for (const id of intersected) {
+      if (!nextSet.has(id)) {
+        intersected.delete(id);
+      }
+    }
+  }
+
+  return intersected;
+}
+
+function matchesListFilter(
+  state: WorkflowState,
+  filter: ListFilter | undefined,
+  constrainedIds: Set<string> | null,
+): boolean {
+  if (constrainedIds !== null && !constrainedIds.has(state.id)) {
+    return false;
+  }
+
+  if (filter?.status !== undefined) {
+    const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+    if (!statuses.includes(state.status)) {
+      return false;
+    }
+  }
+
+  return filter?.type === undefined || state.type === filter.type;
+}
+
+function paginateWorkflowSummaries(
+  items: WorkflowSummary[],
+  filter?: ListFilter,
+): PaginatedResult<WorkflowSummary> {
+  const offset = filter?.offset ?? 0;
+  const limit = filter?.limit ?? items.length;
+  return {
+    items: items.slice(offset, offset + limit),
+    total: items.length,
+    offset,
+    limit,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -165,20 +406,19 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
     return this.#engine.query(this.id, name);
   }
 
+  async getAttributes(): Promise<Record<string, SearchAttributeValue> | null> {
+    return this.#engine.getAttributes(this.id);
+  }
+
+  async setAttributes(attributes: Record<string, SearchAttributeValue>): Promise<void> {
+    return this.#engine.setAttributes(this.id, attributes);
+  }
+
   async *[Symbol.asyncIterator](): AsyncIterableIterator<Event> {
-    let resolver: (() => void) | undefined;
-    const events: Event[] = [];
+    const queue: WorkflowHandleEventQueue = { events: [], resolver: undefined };
     const state = { done: false };
-
-    const listener = (event: Event) => {
-      events.push(event);
-      resolver?.();
-    };
-
-    const terminal = (event: Event) => {
-      state.done = true;
-      listener(event);
-    };
+    const listener = enqueueWorkflowHandleEvent.bind(undefined, queue);
+    const terminal = finishWorkflowHandleIteration.bind(undefined, state, queue);
 
     const types = [
       'workflow:completed',
@@ -207,14 +447,14 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
 
     try {
       while (!state.done) {
-        if (events.length === 0) {
+        if (queue.events.length === 0) {
           const { promise, resolve } = Promise.withResolvers<void>();
-          resolver = resolve;
+          queue.resolver = resolve;
           await promise;
-          resolver = undefined;
+          queue.resolver = undefined;
         }
-        while (events.length > 0) {
-          yield events.shift()!;
+        while (queue.events.length > 0) {
+          yield queue.events.shift()!;
         }
       }
     } finally {
@@ -240,7 +480,8 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
         complete?: () => void;
         error?: (error: Error) => void;
       }) => {
-        const listener = (event: Event) => observer.next?.(event);
+        const controller = new AbortController();
+        const listener = observer.next?.bind(observer);
 
         const types = [
           'workflow:completed',
@@ -251,12 +492,18 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
           'activity:completed',
         ];
 
-        for (const type of types) {
-          this.addEventListener(type, listener);
+        if (listener) {
+          for (const type of types) {
+            this.addEventListener(type, listener, { signal: controller.signal });
+          }
         }
 
-        const completeListener = () => observer.complete?.();
-        this.addEventListener('workflow:completed', completeListener);
+        const completeListener = observer.complete?.bind(observer);
+        if (completeListener) {
+          this.addEventListener('workflow:completed', completeListener, {
+            signal: controller.signal,
+          });
+        }
 
         const errorHandler = (event: Event) => {
           if (event instanceof WorkflowFailedEvent) {
@@ -267,18 +514,11 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
             );
           }
         };
-        this.addEventListener('workflow:failed', errorHandler);
-        this.addEventListener('workflow:timed-out', errorHandler);
+        this.addEventListener('workflow:failed', errorHandler, { signal: controller.signal });
+        this.addEventListener('workflow:timed-out', errorHandler, { signal: controller.signal });
 
         return {
-          unsubscribe: () => {
-            for (const type of types) {
-              this.removeEventListener(type, listener);
-            }
-            this.removeEventListener('workflow:completed', completeListener);
-            this.removeEventListener('workflow:failed', errorHandler);
-            this.removeEventListener('workflow:timed-out', errorHandler);
-          },
+          unsubscribe: controller.abort.bind(controller),
         };
       },
     };
@@ -301,10 +541,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #options: ResolvedOptions;
   #strategy: ExecutionStrategy;
   #inlineStrategy: InlineExecutionStrategy | null;
-  #handleCache: Map<string, WeakRef<WorkflowHandle>>;
+  #handleCache: Map<string, { ref: WeakRef<WorkflowHandle>; unregisterToken: object }>;
   #finalizationRegistry: FinalizationRegistry<string>;
   #resultResolvers: Map<string, WorkflowResultResolver>;
-  #signalWaiters: Map<string, (payload: unknown) => void>;
+  #signalWaiters: Map<string, () => void>;
   #updateWaiters: Map<string, (payload: unknown) => void>;
   #sleepResolvers: Map<string, () => void>;
   #sleepResolversByWorkflow: Map<string, Set<string>>;
@@ -313,25 +553,67 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #composedWorkflowInterceptor: ComposedWorkflowInterceptor | null;
   #composedActivityInterceptor: ComposedActivityInterceptor | null;
   #updateCoordinator: UpdateCoordinator;
-  #activityRegistrations: Map<string, (...arguments_: unknown[]) => unknown>;
+  #activityRegistry: ActivityRegistry;
   #activityWorkerDispatcher: ActivityWorkerDispatcher | null;
   #checkpoints: Map<string, Checkpoint>;
   #broadcastChannel: BroadcastChannel | null;
   #pendingNestingDepth: number | undefined;
+  #pendingParentHeaders: Map<string, string> | undefined;
   #workflowNestingDepths: Map<string, number>;
+  #workflowHeaders: Map<string, Map<string, string>>;
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
+  /**
+   * Dedup set for recorded agent operation budget costs. Entries live here
+   * for the lifetime of their parent workflow and are removed in
+   * `#cleanupTerminalWorkflow` so the set does not grow unbounded.
+   *
+   * Removal is O(1) per workflow because `#chargedAgentOperationsByWorkflow`
+   * keeps a reverse index — see `#recordAgentBudgetCost` for the write path.
+   */
   #chargedAgentOperations: Set<string>;
+  /**
+   * Reverse index from `workflowId` to the set of operation ids it charged.
+   * Lets terminal-state cleanup drop the workflow's dedup entries in O(k)
+   * where k is that workflow's agent operation count, rather than scanning
+   * the engine-wide `#chargedAgentOperations` set.
+   */
+  #chargedAgentOperationsByWorkflow: Map<string, Set<string>>;
+  #cleanupInterval: ReturnType<typeof setInterval> | null;
+  #defaultModelRouter: import('../ai/model-router.ts').ModelRouter | undefined;
+  #reviewCoordinator: ReviewCoordinator;
+  #reviewWaiters: Map<string, (decision: HumanReviewResult) => void>;
+  #reviewEscalationHandlers: Map<
+    string,
+    (entry: { id: string; workflowId: string }) => Promise<boolean>
+  >;
+  #workflowReviewIds: Map<string, Set<string>>;
+  /** Timer IDs scheduled for each review (escalation + timeout), keyed by reviewId. */
+  #reviewTimerIds: Map<string, string[]>;
+  #pendingWebhooks: Set<AbortController>;
+  #alertManager: AlertManager | null;
+  /** Tracks workflow IDs that belong to agent-typed workflows for optimization. */
+  #agentWorkflowIds = new Set<string>();
 
-  constructor(options?: Partial<EngineOptions> & { getNow?: () => number }) {
+  constructor(options?: EngineConstructorOptions) {
     super();
 
-    const storage = options?.storage ?? new MemoryStorage();
+    this.#registrations = new Map();
+
+    const storage = resolveEngineStorage(options, this.#getAgentWorkflowIds.bind(this));
     const getNow = options?.getNow ?? Date.now;
+    const resolvedOptions = resolveEngineOptions(storage, options, getNow);
+    const strategyBundle = createExecutionStrategyBundle({
+      options,
+      getNow,
+      maxNestingDepth: resolvedOptions.maxNestingDepth,
+      development: resolvedOptions.development,
+      broadcastEvents: resolvedOptions.broadcastEvents,
+      getRegistration: this.#registrations.get.bind(this.#registrations),
+    });
 
     this.#storage = storage;
-    this.#registrations = new Map();
     this.#abortController = new AbortController();
     this.#handleCache = new Map();
     this.#resultResolvers = new Map();
@@ -344,75 +626,226 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#composedWorkflowInterceptor = null;
     this.#composedActivityInterceptor = null;
     this.#updateCoordinator = new UpdateCoordinator(storage);
-    this.#activityRegistrations = new Map();
+    this.#activityRegistry = new ActivityRegistry();
     this.#activityWorkerDispatcher = null;
     this.#checkpoints = new Map();
     this.#broadcastChannel = null;
     this.#pendingNestingDepth = undefined;
+    this.#pendingParentHeaders = undefined;
     this.#workflowNestingDepths = new Map();
-    this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
-      this.#handleCache.delete(id);
-    });
+    this.#workflowHeaders = new Map();
+    this.#finalizationRegistry = new FinalizationRegistry<string>(
+      createHandleCacheFinalizer(this.#handleCache),
+    );
 
-    this.#options = {
-      storage,
-      development: options?.development ?? false,
-      checkpointHistory: options?.checkpointHistory ?? 10,
-      checkpointSizeWarningThreshold: options?.checkpointSizeWarningThreshold ?? 65_536,
-      maxNestingDepth: options?.maxNestingDepth ?? 10,
-      broadcastEvents: options?.broadcastEvents ?? false,
-      getNow,
-    };
+    this.#options = resolvedOptions;
 
+    this.#defaultModelRouter = options?.defaultModelRouter;
     this.#scheduler = new Scheduler({
       storage,
-      onTimerFired: (entry) => this.#handleTimerFired(entry),
+      onTimerFired: this.#handleTimerFired.bind(this),
       getNow,
     });
-
-    // Create the execution strategy
-    if (options?.workerExecution) {
-      const pool = new WorkerPool({
-        workerUrl: options.workerExecution.workerUrl,
-        concurrency: options.workerExecution.concurrency ?? 4,
-        smol: options.workerExecution.smol ?? false,
-      });
-
-      const workerStrategy = new WorkerExecutionStrategy(pool, {
-        broadcastEvents: this.#options.broadcastEvents,
-      });
-
-      this.#strategy = workerStrategy;
-      this.#inlineStrategy = null;
-    } else {
-      const inlineStrategy = new InlineExecutionStrategy({
-        getRegistration: (workflowType: string) => this.#registrations.get(workflowType),
-        getNow,
-        maxNestingDepth: this.#options.maxNestingDepth,
-        development: this.#options.development,
-      });
-
-      this.#strategy = inlineStrategy;
-      this.#inlineStrategy = inlineStrategy;
-    }
+    this.#strategy = strategyBundle.strategy;
+    this.#inlineStrategy = strategyBundle.inlineStrategy;
 
     this.#budgetPolicyEnforcer = null;
     this.#heartbeatDetails = new Map();
     this.#pendingStarts = new Set();
     this.#chargedAgentOperations = new Set();
+    this.#chargedAgentOperationsByWorkflow = new Map();
+    this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
+    this.#reviewWaiters = new Map();
+    this.#reviewEscalationHandlers = new Map();
+    this.#workflowReviewIds = new Map();
+    this.#reviewTimerIds = new Map();
+    this.#pendingWebhooks = new Set();
+    this.#cleanupInterval = setInterval(
+      createExpiredResponseCleanupTick(
+        this.#updateCoordinator,
+        this.#handleCleanupError.bind(this),
+      ),
+      60_000,
+    );
 
-    // Create the activity worker pool (optional)
-    if (options?.activityExecution) {
-      const activityPool = new WorkerPool({
-        workerUrl: options.activityExecution.workerUrl,
-        concurrency: options.activityExecution.poolSize ?? 4,
-        smol: options.activityExecution.smol ?? false,
-      });
-      this.#activityWorkerDispatcher = new ActivityWorkerDispatcher(activityPool);
-    }
+    this.#activityWorkerDispatcher = createActivityWorkerDispatcher(options?.activityExecution);
 
     // Wire up the strategy message handler
-    this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
+    this.#strategy.onMessage(this.#handleStrategyMessage.bind(this));
+
+    this.#alertManager = createAlertManagerForEngine(this, options?.alerts, getNow);
+  }
+
+  async #swallowPromiseRejection(promise: Promise<unknown> | undefined): Promise<void> {
+    if (!promise) {
+      return;
+    }
+
+    try {
+      await promise;
+    } catch {
+      // Best-effort cleanup and warmup operations intentionally ignore rejections.
+    }
+  }
+
+  #getAgentWorkflowIds(): ReadonlySet<string> {
+    return this.#agentWorkflowIds;
+  }
+
+  async #processPendingUpdatesAfterReplay(workflowId: string): Promise<void> {
+    try {
+      await this.#processPendingUpdatesForHandlers(workflowId);
+    } catch (error: unknown) {
+      this.#handleCleanupError('processPendingUpdates', error, workflowId);
+    }
+  }
+
+  async #persistCoordinatedUpdateResponse(
+    workflowId: string,
+    updateName: string,
+    updateId: string,
+    idempotencyKey: string | undefined,
+    value: unknown,
+  ): Promise<void> {
+    const responseOperations = this.#updateCoordinator.buildResponseOperations(
+      updateId,
+      workflowId,
+      value,
+      undefined,
+      idempotencyKey,
+    );
+
+    try {
+      await this.#storage.batch(responseOperations);
+      this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, updateName, value));
+      this.#broadcast({
+        type: 'update:completed',
+        workflowId,
+        updateId,
+      });
+    } catch (error: unknown) {
+      this.#handleCleanupError('writeCoordinatedUpdateResponse', error, workflowId);
+    }
+  }
+
+  #resolveChainedResult(
+    originalResolve: (value: unknown) => void,
+    chainedResolve: (value: unknown) => void,
+    value: unknown,
+  ): void {
+    originalResolve(value);
+    chainedResolve(value);
+  }
+
+  #rejectChainedResult(
+    originalReject: (reason: unknown) => void,
+    chainedReject: (reason: unknown) => void,
+    reason: unknown,
+  ): void {
+    originalReject(reason);
+    chainedReject(reason);
+  }
+
+  #resolveReviewDecision(
+    resolve: (result: { ok: true; value: HumanReviewResult }) => void,
+    decision: HumanReviewResult,
+  ): void {
+    resolve({ ok: true, value: decision });
+  }
+
+  #captureWorkflowStartHeaders(
+    workflowId: string,
+    interception: { headers: Map<string, string> },
+  ): void {
+    this.#workflowHeaders.set(workflowId, interception.headers);
+  }
+
+  async #handleReviewEscalationTimer(
+    workflowId: string,
+    reviewId: string,
+    waiterKey: string,
+    reviewRequest: import('../ai/human-review.ts').ReviewRequest,
+    options: HumanReviewOptions,
+    resolve: (result: { ok: true; value: HumanReviewResult } | { ok: false; error: Error }) => void,
+    entry: { id: string; workflowId: string },
+  ): Promise<boolean> {
+    if (
+      !entry.id.startsWith(`review-escalation:${reviewId}:`) &&
+      entry.id !== `review-timeout:${reviewId}`
+    ) {
+      return false;
+    }
+
+    if (entry.id === `review-timeout:${reviewId}`) {
+      this.#reviewWaiters.delete(waiterKey);
+      const elapsed = this.#options.getNow() - reviewRequest.createdAt;
+      await this.#storage.delete(KEYS.review(workflowId, reviewId));
+
+      const timeoutError = new ReviewTimeoutError(reviewId, elapsed);
+      await this.#failWorkflow(workflowId, timeoutError);
+      resolve({ ok: false, error: timeoutError });
+      return true;
+    }
+
+    if (!options.escalation) {
+      return false;
+    }
+
+    const action = this.#reviewCoordinator.checkEscalations(
+      reviewRequest,
+      options.escalation,
+      this.#options.getNow(),
+    );
+
+    if (!action) {
+      return false;
+    }
+
+    if (action.type === 'escalate') {
+      options.onEscalation?.(action);
+      return false;
+    }
+
+    this.#reviewWaiters.delete(waiterKey);
+    const autoResult: HumanReviewResult = {
+      reviewId,
+      decision: action.decision,
+      reviewer: 'system',
+      feedback: action.auditReason,
+      timestamp: this.#options.getNow(),
+    };
+
+    await this.#storage.delete(KEYS.review(workflowId, reviewId));
+    resolve({ ok: true, value: autoResult });
+    return true;
+  }
+
+  async #sendReviewWebhook(
+    workflowId: string,
+    reviewRequest: import('../ai/human-review.ts').ReviewRequest,
+    webhookUrl: string,
+    webhookAbort: AbortController,
+  ): Promise<void> {
+    try {
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workflowId,
+          reviewId: reviewRequest.reviewId,
+          reviewType: reviewRequest.reviewType,
+          reviewers: reviewRequest.reviewers,
+          artifact: reviewRequest.artifact,
+        }),
+        signal: webhookAbort.signal,
+      });
+    } catch (error: unknown) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        console.warn(`[weft] Failed to send review webhook for ${reviewRequest.reviewId}`, error);
+      }
+    } finally {
+      this.#pendingWebhooks.delete(webhookAbort);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -421,10 +854,58 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void;
   register(name: string, registration: WorkflowRegistration): void;
+  register(agentDef: AgentDefinition, options: AgentRegistrationOptions): void;
   register(
-    name: string,
-    handlerOrRegistration: WorkflowFunction | StepWorkflowFunction | WorkflowRegistration,
+    nameOrAgent: string | AgentDefinition,
+    handlerOrRegistrationOrOptions?:
+      | WorkflowFunction
+      | StepWorkflowFunction
+      | WorkflowRegistration
+      | AgentRegistrationOptions,
   ): void {
+    // --- AgentDefinition overload ---
+    if (isAgentDefinition(nameOrAgent)) {
+      const agentDef = nameOrAgent;
+      const agentOptions = handlerOrRegistrationOrOptions as AgentRegistrationOptions;
+
+      // Build a workflow function that delegates to ctx.agent(), ensuring the
+      // agent execution flows through the engine's operation handler for budget
+      // policy enforcement, observability, and durable checkpointing.
+      const handler: WorkflowFunction = async function* (ctx, input) {
+        const prompt = typeof input === 'string' ? input : JSON.stringify(input);
+        const agentOpts: import('./context.ts').AgentContextOptions = {
+          model: agentDef.model,
+          prompt,
+          provider: agentOptions.provider,
+        };
+        if (agentDef.systemPrompt) agentOpts.systemPrompt = agentDef.systemPrompt;
+        if (agentDef.tools) agentOpts.tools = agentDef.tools;
+        if (agentDef.maxTurns !== undefined) agentOpts.maxTurns = agentDef.maxTurns;
+        if (agentDef.budget) agentOpts.budget = agentDef.budget;
+        if (agentDef.modelRouter) agentOpts.modelRouter = agentDef.modelRouter;
+        if (agentDef.contextStrategy) agentOpts.contextStrategy = agentDef.contextStrategy;
+        if (agentDef.hooks) agentOpts.hooks = agentDef.hooks;
+
+        const result = yield* (ctx as Context).agent(agentOpts);
+        return result;
+      };
+
+      this.#registrations.set(agentDef.name, {
+        handler,
+        version: '1',
+        isAgent: true,
+        provider: agentOptions.provider,
+      });
+      return;
+    }
+
+    // --- Existing overloads (name + handler/registration) ---
+    const name = nameOrAgent;
+    const handlerOrRegistration = handlerOrRegistrationOrOptions as
+      | WorkflowFunction
+      | StepWorkflowFunction
+      | WorkflowRegistration;
+
     const isRegistration =
       typeof handlerOrRegistration === 'object' &&
       handlerOrRegistration !== null &&
@@ -438,6 +919,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       };
       if (registration.migrate) {
         entry.migrate = registration.migrate;
+      }
+      if (registration.searchAttributes) {
+        entry.searchAttributes = registration.searchAttributes;
       }
       this.#registrations.set(name, entry);
     } else {
@@ -489,9 +973,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * an operation request with `activityName` (not a function reference). The
    * engine uses this registry to look up the function by name and execute it
    * on the main thread.
+   *
+   * If `fn` was created via the `activity()` helper, metadata (retry, timeout,
+   * queue, idempotent) is auto-extracted from its colocated properties.
+   * Explicit `options` take precedence over auto-extracted values.
    */
-  registerActivity(name: string, fn: (...arguments_: unknown[]) => unknown): void {
-    this.#activityRegistrations.set(name, fn);
+  registerActivity(
+    name: string,
+    fn: (...arguments_: unknown[]) => unknown,
+    options?: ActivityRegistrationOptions,
+  ): void {
+    this.#activityRegistry.register(name, fn, options);
   }
 
   // -------------------------------------------------------------------------
@@ -506,107 +998,68 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const workflowId = options?.id ?? crypto.randomUUID();
 
+    // Capture and clear pending parent headers immediately, before any async
+    // work, to prevent a concurrent child-workflow start from overwriting them.
+    const parentHeaders = this.#pendingParentHeaders;
+    this.#pendingParentHeaders = undefined;
+
     // Atomic check-and-reserve: prevent two concurrent start() calls with the
     // same ID from both passing the storage check before either writes state.
     if (this.#pendingStarts.has(workflowId)) {
       throw new Error(`Workflow with id "${workflowId}" already exists`);
     }
     this.#pendingStarts.add(workflowId);
+    let startSucceeded = false;
 
     try {
-      // Check for duplicate in storage
       const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
       if (existingBytes !== null) {
         throw new Error(`Workflow with id "${workflowId}" already exists`);
       }
 
-      const now = this.#options.getNow();
-
-      // Create workflow state
-      const state: WorkflowState = {
-        id: workflowId,
+      const state = this.#createInitialWorkflowState(
+        workflowId,
         type,
-        status: 'running',
         input,
-        version: registration.version,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      if (options?.executionTimeout !== undefined) {
-        state.executionDeadline = now + parseDuration(options.executionTimeout);
-      }
-
-      // Create initial checkpoint
-      const checkpoint = createCheckpoint(workflowId, registration.version, this.#options.getNow());
-
-      // Apply initial search attributes if provided
-      if (options?.searchAttributes) {
-        checkpoint.searchAttributes = { ...options.searchAttributes };
-      }
-
+        registration,
+        options,
+      );
+      const checkpoint = this.#createInitialCheckpoint(workflowId, registration, options);
       this.#checkpoints.set(workflowId, checkpoint);
 
-      // Write state and checkpoint to storage
-      const batchOperations: import('../storage/interface.ts').BatchOperation[] = [
-        { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
-        {
-          type: 'put',
-          key: KEYS.checkpoint(workflowId),
-          value: serializeCheckpoint(checkpoint),
-        },
-      ];
-
-      // Write attribute record and index entries for initial search attributes
-      if (options?.searchAttributes && Object.keys(options.searchAttributes).length > 0) {
-        batchOperations.push({
-          type: 'put',
-          key: KEYS.attribute(workflowId),
-          value: encode(options.searchAttributes),
-        });
-        batchOperations.push(...buildIndexOperations(workflowId, {}, options.searchAttributes));
+      // Agent optimization: register before the initial storage batch so the
+      // first checkpoint write uses agent-specific compression (brotli).
+      if (registration.isAgent) {
+        this.#agentWorkflowIds.add(workflowId);
       }
 
-      await this.#storage.batch(batchOperations);
+      await this.#storage.batch(
+        this.#buildStartBatchOperations(workflowId, state, checkpoint, registration, options),
+      );
+      await this.#scheduleExecutionDeadlineIfNeeded(workflowId, state.executionDeadline);
+      this.#runWorkflowStartInterceptor(workflowId, type, input, parentHeaders);
 
-      // Set up execution deadline if needed
-      if (state.executionDeadline !== undefined) {
-        await this.#scheduler.schedule({
-          id: `deadline:${workflowId}`,
-          workflowId,
-          fireAt: state.executionDeadline,
-          kind: 'execution-deadline',
-        });
+      // Pre-warm LLM connection after the batch write (fire-and-forget).
+      if (registration.isAgent) {
+        try {
+          const warmupResult = registration.provider?.warmup?.();
+          void this.#swallowPromiseRejection(warmupResult);
+        } catch {
+          // Warmup is best-effort; ignore synchronous failures.
+        }
       }
 
-      // Dispatch started event
       this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
 
-      // Create result promise
-      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-      this.#resultResolvers.set(workflowId, { resolve, reject });
-
-      // Create handle
-      const handle = new WorkflowHandle(workflowId, this, promise);
-      this.#handleCache.set(workflowId, new WeakRef(handle));
-      this.#finalizationRegistry.register(handle, workflowId);
-
-      // Begin execution (non-blocking) via the strategy
-      const nestingDepth = this.#pendingNestingDepth ?? 0;
-      this.#pendingNestingDepth = undefined;
-      this.#workflowNestingDepths.set(workflowId, nestingDepth);
-      this.#strategy.startWorkflow({
-        workflowId,
-        workflowType: type,
-        input,
-        checkpoint: serializeCheckpoint(checkpoint),
-        nestingDepth,
-        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
-      });
-
+      const handle = this.#createWorkflowHandle(workflowId);
+      this.#startWorkflowExecution(workflowId, type, input, checkpoint, state.executionDeadline);
+      startSucceeded = true;
       return handle;
     } finally {
       this.#pendingStarts.delete(workflowId);
+      if (!startSucceeded && registration.isAgent) {
+        this.#agentWorkflowIds.delete(workflowId);
+      }
     }
   }
 
@@ -616,9 +1069,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   getHandle(workflowId: string): WorkflowHandle {
     // Check cache
-    const weakRef = this.#handleCache.get(workflowId);
-    if (weakRef) {
-      const existing = weakRef.deref();
+    const entry = this.#handleCache.get(workflowId);
+    if (entry) {
+      const existing = entry.ref.deref();
       if (existing) return existing;
     }
 
@@ -631,14 +1084,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const { promise, resolve, reject } = Promise.withResolvers<unknown>();
       const originalResolve = existingResolver.resolve;
       const originalReject = existingResolver.reject;
-      existingResolver.resolve = (value: unknown) => {
-        originalResolve(value);
-        resolve(value);
-      };
-      existingResolver.reject = (reason: unknown) => {
-        originalReject(reason);
-        reject(reason);
-      };
+      existingResolver.resolve = this.#resolveChainedResult.bind(this, originalResolve, resolve);
+      existingResolver.reject = this.#rejectChainedResult.bind(this, originalReject, reject);
       resultPromise = promise;
     } else {
       // Workflow may already be complete; load from storage
@@ -646,8 +1093,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const handle = new WorkflowHandle(workflowId, this, resultPromise);
-    this.#handleCache.set(workflowId, new WeakRef(handle));
-    this.#finalizationRegistry.register(handle, workflowId);
+    this.#cacheHandle(workflowId, handle);
     return handle;
   }
 
@@ -656,42 +1102,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
-    // If attribute filters are present, query the index first to get matching IDs
-    let constrainedIds: Set<string> | null = null;
-    if (filter?.attributes && filter.attributes.length > 0) {
-      const idSets = await Promise.all(
-        filter.attributes.map((attributeFilter) => this.#queryAttributeIndex(attributeFilter)),
-      );
-      // Intersect all sets
-      constrainedIds = idSets[0]!;
-      for (let i = 1; i < idSets.length; i++) {
-        const nextSet = idSets[i]!;
-        for (const id of constrainedIds) {
-          if (!nextSet.has(id)) constrainedIds.delete(id);
-        }
-      }
-    }
+    const constrainedIds = await this.#resolveConstrainedIds(filter);
 
     const items: WorkflowSummary[] = [];
 
     for await (const [key, value] of this.#storage.scan('wf:')) {
-      // Only process top-level workflow state keys (wf:{id}).
-      // Skip any sub-keys like wf:{id}:ckpt, wf:{id}:ckpt:0000000001, etc.
-      const idPart = key.slice(3); // strip "wf:"
-      if (idPart.includes(':')) continue;
+      if (!this.#isTopLevelWorkflowStateKey(key)) continue;
 
       const state = decodeWorkflowState(value);
-
-      // Constrain to attribute-matched IDs if present
-      if (constrainedIds !== null && !constrainedIds.has(state.id)) continue;
-
-      // Apply filters
-      if (filter?.status !== undefined) {
-        const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
-        if (!statuses.includes(state.status)) continue;
-      }
-
-      if (filter?.type !== undefined && state.type !== filter.type) continue;
+      if (!matchesListFilter(state, filter, constrainedIds)) continue;
 
       items.push({
         id: state.id,
@@ -703,16 +1122,217 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       });
     }
 
-    const offset = filter?.offset ?? 0;
-    const limit = filter?.limit ?? items.length;
-    const paged = items.slice(offset, offset + limit);
+    return paginateWorkflowSummaries(items, filter);
+  }
 
-    return {
-      items: paged,
-      total: items.length,
-      offset,
-      limit,
+  #createInitialWorkflowState(
+    workflowId: string,
+    type: string,
+    input: unknown,
+    registration: RegistrationEntry,
+    options?: StartOptions,
+  ): WorkflowState {
+    const now = this.#options.getNow();
+    const state: WorkflowState = {
+      id: workflowId,
+      type,
+      status: 'running',
+      input,
+      version: registration.version,
+      createdAt: now,
+      updatedAt: now,
     };
+
+    if (options?.executionTimeout !== undefined) {
+      state.executionDeadline = now + parseDuration(options.executionTimeout);
+    }
+
+    return state;
+  }
+
+  #createInitialCheckpoint(
+    workflowId: string,
+    registration: RegistrationEntry,
+    options?: StartOptions,
+  ): Checkpoint {
+    const checkpoint = createCheckpoint(workflowId, registration.version, this.#options.getNow());
+    if (options?.searchAttributes) {
+      checkpoint.searchAttributes = { ...options.searchAttributes };
+    }
+    return checkpoint;
+  }
+
+  #buildStartBatchOperations(
+    workflowId: string,
+    state: WorkflowState,
+    checkpoint: Checkpoint,
+    registration: RegistrationEntry,
+    options?: StartOptions,
+  ): import('../storage/interface.ts').BatchOperation[] {
+    return [
+      { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
+      {
+        type: 'put',
+        key: KEYS.checkpoint(workflowId),
+        value: serializeCheckpoint(checkpoint),
+      },
+      ...this.#buildInitialSearchAttributeOperations(
+        workflowId,
+        registration,
+        options?.searchAttributes,
+      ),
+    ];
+  }
+
+  #buildInitialSearchAttributeOperations(
+    workflowId: string,
+    registration: RegistrationEntry,
+    searchAttributes: StartOptions['searchAttributes'],
+  ): import('../storage/interface.ts').BatchOperation[] {
+    if (!searchAttributes || Object.keys(searchAttributes).length === 0) {
+      return [];
+    }
+
+    this.#validateSearchAttributes(registration, searchAttributes);
+    this.#validateAttributeValueSizes(searchAttributes);
+
+    return [
+      {
+        type: 'put',
+        key: KEYS.attribute(workflowId),
+        value: encode(searchAttributes),
+      },
+      ...buildIndexOperations(workflowId, {}, searchAttributes),
+    ];
+  }
+
+  #validateSearchAttributes(
+    registration: RegistrationEntry,
+    searchAttributes: Record<string, SearchAttributeValue>,
+  ): void {
+    if (!registration.searchAttributes) {
+      return;
+    }
+
+    const schema = registration.searchAttributes;
+    for (const [key, value] of Object.entries(searchAttributes)) {
+      if (!(key in schema)) {
+        throw new Error(
+          `Unknown search attribute "${key}". Registered attributes: ${Object.keys(schema).join(', ')}`,
+        );
+      }
+      validateAttributeType(key, value, schema[key]!);
+    }
+  }
+
+  async #scheduleExecutionDeadlineIfNeeded(
+    workflowId: string,
+    executionDeadline: number | undefined,
+  ): Promise<void> {
+    if (executionDeadline === undefined) {
+      return;
+    }
+
+    await this.#scheduler.schedule({
+      id: `deadline:${workflowId}`,
+      workflowId,
+      fireAt: executionDeadline,
+      kind: 'execution-deadline',
+    });
+  }
+
+  #runWorkflowStartInterceptor(
+    workflowId: string,
+    workflowType: string,
+    input: unknown,
+    parentHeaders: Map<string, string> | undefined,
+  ): void {
+    const composedInterceptor = this.#getComposedWorkflowInterceptor();
+    if (!composedInterceptor) {
+      return;
+    }
+
+    const headers = new Map<string, string>();
+    if (parentHeaders) {
+      for (const [key, value] of parentHeaders) {
+        headers.set(key, value);
+      }
+    }
+
+    composedInterceptor.workflowStart(
+      {
+        workflowId,
+        workflowType,
+        input,
+        headers,
+      },
+      this.#captureWorkflowStartHeaders.bind(this, workflowId),
+    );
+  }
+
+  #createWorkflowHandle(workflowId: string): WorkflowHandle {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    this.#resultResolvers.set(workflowId, { resolve, reject });
+
+    const handle = new WorkflowHandle(workflowId, this, promise);
+    this.#cacheHandle(workflowId, handle);
+    return handle;
+  }
+
+  /**
+   * Store a WorkflowHandle in the cache and register it with the finalization
+   * registry. If an earlier cached entry exists for the same workflowId, its
+   * previous registration is unregistered first so that GC of the old handle
+   * cannot evict the newly-cached entry.
+   */
+  #cacheHandle(workflowId: string, handle: WorkflowHandle): void {
+    const existing = this.#handleCache.get(workflowId);
+    if (existing) {
+      this.#finalizationRegistry.unregister(existing.unregisterToken);
+    }
+    const unregisterToken = {};
+    this.#handleCache.set(workflowId, {
+      ref: new WeakRef(handle),
+      unregisterToken,
+    });
+    this.#finalizationRegistry.register(handle, workflowId, unregisterToken);
+  }
+
+  #startWorkflowExecution(
+    workflowId: string,
+    workflowType: string,
+    input: unknown,
+    checkpoint: Checkpoint,
+    executionDeadline: number | undefined,
+  ): void {
+    const nestingDepth = this.#pendingNestingDepth ?? 0;
+    this.#pendingNestingDepth = undefined;
+    this.#workflowNestingDepths.set(workflowId, nestingDepth);
+    this.#strategy.startWorkflow({
+      workflowId,
+      workflowType,
+      input,
+      checkpoint: serializeCheckpoint(checkpoint),
+      nestingDepth,
+      ...(executionDeadline !== undefined && { deadline: executionDeadline }),
+    });
+  }
+
+  async #resolveConstrainedIds(filter?: ListFilter): Promise<Set<string> | null> {
+    const attributeFilters = filter?.attributes;
+    if (!attributeFilters || attributeFilters.length === 0) {
+      return null;
+    }
+
+    const idSets = await Promise.all(
+      attributeFilters.map((attributeFilter) => this.#queryAttributeIndex(attributeFilter)),
+    );
+    return intersectIdentifierSets(idSets);
+  }
+
+  #isTopLevelWorkflowStateKey(key: string): boolean {
+    const idPart = key.slice(3);
+    return !idPart.includes(':');
   }
 
   // -------------------------------------------------------------------------
@@ -733,16 +1353,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         ids.add(workflowId);
       }
     } else {
-      // Range scan with gte/lte boundaries
+      // Range scan with gte/lte/gt/lt boundaries
       const scanOptions: import('../storage/interface.ts').ScanOptions = {};
       if (filter.gte !== undefined) {
         scanOptions.gte = `idx:${filter.key}:${encodeAttributeValue(filter.gte)}:`;
+      }
+      if (filter.gt !== undefined) {
+        scanOptions.gt = `idx:${filter.key}:${encodeAttributeValue(filter.gt)}:\xff`;
       }
       if (filter.lte !== undefined) {
         // Use a boundary that includes all workflow IDs for the lte value
         const encodedLte = encodeAttributeValue(filter.lte);
         // Append a character after the last ':' to ensure we include all IDs under this value
         scanOptions.lte = `idx:${filter.key}:${encodedLte}:\xff`;
+      }
+      if (filter.lt !== undefined) {
+        scanOptions.lt = `idx:${filter.key}:${encodeAttributeValue(filter.lt)}:`;
       }
 
       for await (const [key] of this.#storage.scan(prefix, scanOptions)) {
@@ -801,8 +1427,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const waiter = this.#signalWaiters.get(waiterKey);
       if (waiter) {
         this.#signalWaiters.delete(waiterKey);
-        await this.#storage.delete(signalKey);
-        waiter(signalPayload);
+        waiter();
       }
     };
 
@@ -855,7 +1480,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     payload?: unknown,
     options?: { timeout?: number },
   ): Promise<unknown> {
-    const timeout = options?.timeout ?? 5000;
+    const timeout = options?.timeout ?? 30_000;
+
+    // Reject updates to workflows in terminal states
+    await this.#guardTerminalWorkflow(workflowId);
 
     // Check if the workflow has an active context with an update handler.
     // Note: in worker mode, #inlineStrategy is null so synchronous update
@@ -869,14 +1497,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
 
         try {
-          const result = handler(payload);
+          const result = await this.#invokeUpdateHandler(name, handler, payload);
           this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
+          this.#broadcast({ type: 'update:completed', workflowId, updateId });
           return result;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           this.dispatchEvent(
             new UpdateCompletedEvent(updateId, workflowId, name, undefined, errorMessage),
           );
+          this.#broadcast({ type: 'update:completed', workflowId, updateId });
           throw error;
         }
       }
@@ -885,18 +1515,60 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Check if workflow is waiting for this update via waitForUpdate
     const waiterKey = `${workflowId}:${name}`;
     const updateWaiter = this.#updateWaiters.get(waiterKey);
-    if (updateWaiter) {
+    const existingPendingUpdate = updateWaiter
+      ? await this.#findPendingUpdateByName(workflowId, name)
+      : undefined;
+    const currentWaiter = updateWaiter ? this.#updateWaiters.get(waiterKey) : undefined;
+    if (updateWaiter && currentWaiter === updateWaiter && !existingPendingUpdate) {
       this.#updateWaiters.delete(waiterKey);
       const updateId = crypto.randomUUID();
       this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
-      updateWaiter(payload);
-      this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, payload));
-      return payload;
+
+      const { promise: respondPromise, resolve: resolveRespond } = Promise.withResolvers<unknown>();
+      let responded = false;
+      const respond = (value: unknown) => {
+        if (responded) return;
+        responded = true;
+        resolveRespond(value);
+      };
+
+      updateWaiter({ payload, respond });
+
+      // Race the respond promise against the timeout, clearing the timer on either outcome
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const result = await Promise.race([
+          respondPromise,
+          new Promise<never>((_resolve, reject) => {
+            timeoutId = setTimeout(
+              () => reject(new UpdateTimeoutError(updateId, timeout)),
+              timeout,
+            );
+          }),
+        ]);
+
+        clearTimeout(timeoutId);
+
+        this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
+        this.#broadcast({ type: 'update:completed', workflowId, updateId });
+        return result;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        throw error;
+      }
     }
 
     // If no active handler, use the UpdateCoordinator with polling
     const updateId = await this.#updateCoordinator.createRequest(workflowId, name, payload);
     this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
+
+    await this.#deliverCoordinatedUpdateToWaiterIfAvailable(workflowId, {
+      updateId,
+      workflowId,
+      name,
+      payload,
+      createdAt: Date.now(),
+    });
 
     const response = await this.#updateCoordinator.waitForResponse(updateId, timeout);
 
@@ -997,6 +1669,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
     }
 
+    // Agent optimization: track resumed agent workflows for storage-layer optimization.
+    if (registration.isAgent) {
+      this.#agentWorkflowIds.add(workflowId);
+    }
+
     // Check version compatibility
     const compatibility = checkVersionCompatibility(
       checkpoint.version,
@@ -1027,8 +1704,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#resultResolvers.set(workflowId, { resolve, reject });
 
     const handle = new WorkflowHandle(workflowId, this, promise);
-    this.#handleCache.set(workflowId, new WeakRef(handle));
-    this.#finalizationRegistry.register(handle, workflowId);
+    this.#cacheHandle(workflowId, handle);
 
     // Dispatch resumed event
     this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
@@ -1049,6 +1725,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         getNow: this.#options.getNow,
         accumulatedResults,
         searchAttributes: resumeCheckpoint.searchAttributes,
+        ...(registration.searchAttributes && {
+          searchAttributeSchema: registration.searchAttributes,
+        }),
         sleepReferenceTime: resumeCheckpoint.createdAt,
         ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
       });
@@ -1062,6 +1741,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       // Drive the generator (non-blocking) via the strategy
       this.#inlineStrategy.continueWorkflow(workflowId, undefined);
+
+      // After replay, process any pending coordinated updates that match
+      // registered inline handlers. Schedule on next microtask so the
+      // generator has a chance to register its onUpdate handlers first.
+      queueMicrotask(this.#processPendingUpdatesAfterReplay.bind(this, workflowId));
     } else {
       // Worker mode: send run message to the worker with the checkpoint
       const serialized = serializeCheckpoint(resumeCheckpoint);
@@ -1110,6 +1794,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#terminateWorkflow(workflowId, 'timed-out');
   }
 
+  /** Returns true if the given workflow ID belongs to an agent-typed workflow. */
+  isAgentWorkflow(workflowId: string): boolean {
+    return this.#agentWorkflowIds.has(workflowId);
+  }
+
+  /** Returns the set of currently tracked agent workflow IDs (for storage layer optimization). */
+  get agentWorkflowIds(): ReadonlySet<string> {
+    return this.#agentWorkflowIds;
+  }
+
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#strategy.cancelWorkflow(workflowId);
 
@@ -1120,7 +1814,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
-    this.#cleanupWaiters(workflowId);
+
+    // Drop in-memory state, release charged operations, and delete durable
+    // workflow-keyed records (reviews, offload, blob, shared, signal).
+    // Cancelled/timed-out workflows have no consumers waiting on output
+    // artifacts, so drop them alongside the internal bookkeeping.
+    await this.#cleanupTerminalWorkflow(workflowId, true);
 
     const event =
       status === 'timed-out'
@@ -1161,6 +1860,26 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     attributes: Record<string, SearchAttributeValue>,
   ): Promise<void> {
+    // Validate against the registration's schema if one exists
+    const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
+    if (stateBytes) {
+      const state = decodeWorkflowState(stateBytes);
+      const registration = this.#registrations.get(state.type);
+      if (registration?.searchAttributes) {
+        const schema = registration.searchAttributes;
+        for (const [key, value] of Object.entries(attributes)) {
+          if (!(key in schema)) {
+            throw new Error(
+              `Unknown search attribute "${key}". Registered attributes: ${Object.keys(schema).join(', ')}`,
+            );
+          }
+          validateAttributeType(key, value, schema[key]!);
+        }
+      }
+    }
+
+    this.#validateAttributeValueSizes(attributes);
+
     const existingBytes = await this.#storage.get(KEYS.attribute(workflowId));
     const existing: Record<string, SearchAttributeValue> = existingBytes
       ? (decode(existingBytes) as Record<string, SearchAttributeValue>)
@@ -1176,6 +1895,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     ];
 
     await this.#storage.batch(operations);
+  }
+
+  /** Validate that all attribute values in a record fit within the storage key size limit. */
+  #validateAttributeValueSizes(attributes: Record<string, SearchAttributeValue>): void {
+    for (const [key, value] of Object.entries(attributes)) {
+      if (Array.isArray(value)) {
+        for (const element of value) {
+          validateEncodedValueSize(encodeAttributeValue(element), key);
+        }
+      } else {
+        validateEncodedValueSize(encodeAttributeValue(value), key);
+      }
+    }
   }
 
   /** Retrieve the event history for a workflow. */
@@ -1206,25 +1938,38 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return reviews;
   }
 
-  /** Submit a decision for a pending review. Stores the decision and removes the pending review. */
+  /** Retrieve a specific review by workflowId and reviewId. */
+  async getReview(workflowId: string, reviewId: string): Promise<ReviewRequest | null> {
+    return this.#reviewCoordinator.getReview(workflowId, reviewId);
+  }
+
+  /**
+   * Submit a decision for a pending review. Stores the decision, removes
+   * the pending review, and wakes the paused workflow if one is waiting.
+   */
   async submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void> {
-    const { decision, reviewer, feedback, workflowId } = options;
+    const { decision, reviewer, feedback, sectionDecisions, workflowId } = options;
 
     // Look up the review by direct key when workflowId is provided (O(1)),
     // otherwise fall back to scanning all review entries (O(n)).
     let reviewKey: string | null = null;
+    let resolvedWorkflowId: string | undefined = workflowId;
+    let reviewData: ReviewRequest | undefined;
 
     if (workflowId !== undefined) {
       const directKey = KEYS.review(workflowId, reviewId);
       const existing = await this.#storage.get(directKey);
       if (existing !== null) {
         reviewKey = directKey;
+        reviewData = decode(existing) as ReviewRequest;
       }
     } else {
       for await (const [key, value] of this.#storage.scan('review:')) {
         const review = decode(value) as Record<string, unknown>;
         if (review['reviewId'] === reviewId) {
           reviewKey = key;
+          reviewData = review as unknown as ReviewRequest;
+          resolvedWorkflowId = review['workflowId'] as string;
           break;
         }
       }
@@ -1234,18 +1979,46 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`Review "${reviewId}" not found`);
     }
 
-    const decisionData = {
+    const now = this.#options.getNow();
+    const decisionResult: HumanReviewResult = {
       reviewId,
       decision,
       reviewer,
-      feedback,
-      timestamp: Date.now(),
+      timestamp: now,
     };
 
+    if (feedback !== undefined) {
+      decisionResult.feedback = feedback;
+    }
+
+    if (sectionDecisions !== undefined) {
+      decisionResult.sectionDecisions = sectionDecisions;
+    }
+
     await this.#storage.batch([
-      { type: 'put', key: `review-decision:${reviewId}`, value: encode(decisionData) },
+      { type: 'put', key: `review-decision:${reviewId}`, value: encode(decisionResult) },
       { type: 'delete', key: reviewKey },
     ]);
+
+    // Dispatch HumanReviewCompletedEvent
+    const duration = reviewData ? now - reviewData.createdAt : 0;
+    this.dispatchEvent(
+      new HumanReviewCompletedEvent(
+        resolvedWorkflowId ?? '',
+        reviewId,
+        decision,
+        reviewer,
+        duration,
+      ),
+    );
+
+    // Wake the waiting workflow by resolving its review waiter
+    const waiterKey = `${resolvedWorkflowId}:${reviewId}`;
+    const waiter = this.#reviewWaiters.get(waiterKey);
+    if (waiter) {
+      this.#reviewWaiters.delete(waiterKey);
+      waiter(decisionResult);
+    }
   }
 
   /** Retrieve the result of a coordinated update by its ID. */
@@ -1266,13 +2039,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const timeout = options?.timeout ?? 30_000;
     const idempotencyKey = options?.idempotencyKey;
 
-    // Check idempotency
+    // Check idempotency first — a retry for an already-processed key should
+    // return the cached result even if the workflow has since completed.
     if (idempotencyKey !== undefined) {
       const existing = await this.#updateCoordinator.checkIdempotency(workflowId, idempotencyKey);
       if (existing !== null) {
         return { updateId: existing.updateId, result: existing.result };
       }
     }
+
+    // Reject updates to workflows in terminal states
+    await this.#guardTerminalWorkflow(workflowId);
 
     const requestOptions: { timeout: number; idempotencyKey?: string } = { timeout };
     if (idempotencyKey !== undefined) {
@@ -1284,6 +2061,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       name,
       payload,
       requestOptions,
+    );
+
+    await this.#deliverCoordinatedUpdateToWaiterIfAvailable(
+      workflowId,
+      {
+        updateId,
+        workflowId,
+        name,
+        payload,
+        createdAt: Date.now(),
+        idempotencyKey,
+      },
+      true,
     );
 
     const response = await this.#updateCoordinator.waitForResponse(updateId, timeout);
@@ -1305,22 +2095,39 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   [Symbol.dispose](): void {
+    this.#alertManager?.[Symbol.dispose]();
+    this.#alertManager = null;
     this.#abortController.abort();
     this.#scheduler[Symbol.dispose]();
     this.#strategy[Symbol.dispose]();
     this.#activityWorkerDispatcher?.[Symbol.dispose]();
     this.#activityWorkerDispatcher = null;
     this.#inlineStrategy = null;
+    if (this.#cleanupInterval !== null) {
+      clearInterval(this.#cleanupInterval);
+      this.#cleanupInterval = null;
+    }
     this.#handleCache.clear();
     this.#resultResolvers.clear();
     this.#signalWaiters.clear();
     this.#updateWaiters.clear();
+    this.#reviewWaiters.clear();
+    this.#reviewEscalationHandlers.clear();
+    this.#workflowReviewIds.clear();
+    this.#reviewTimerIds.clear();
+    for (const controller of this.#pendingWebhooks) {
+      controller.abort();
+    }
+    this.#pendingWebhooks.clear();
     this.#sleepResolvers.clear();
     this.#sleepResolversByWorkflow.clear();
     this.#checkpoints.clear();
     this.#workflowNestingDepths.clear();
+    this.#workflowHeaders.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
+    this.#chargedAgentOperationsByWorkflow.clear();
+    this.#agentWorkflowIds.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
   }
@@ -1339,6 +2146,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   get scheduler(): Scheduler {
     return this.#scheduler;
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: cleanup error handling
+  // -------------------------------------------------------------------------
+
+  /**
+   * Handle errors from fire-and-forget cleanup operations. Dispatches a
+   * {@link CleanupWarningEvent} so callers can observe failures without
+   * affecting the primary workflow result.
+   */
+  #handleCleanupError(source: string, error: unknown, workflowId?: string): void {
+    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    this.dispatchEvent(new CleanupWarningEvent(source, normalizedError, workflowId));
   }
 
   // -------------------------------------------------------------------------
@@ -1384,6 +2205,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       if (hasPendingAttributeChanges) {
+        this.#validateAttributeValueSizes(context.pendingAttributeChanges);
         operations.push({
           type: 'put',
           key: KEYS.attribute(workflowId),
@@ -1514,7 +2336,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Already in ContextOperationRequest shape (inline strategy)
     if ('type' in operation && typeof operation['type'] === 'string') {
-      return operation as unknown as ContextOperationRequest;
+      // Inline execution strategy yields ContextOperationRequest directly
+      return operation as ContextOperationRequest;
     }
 
     // Worker OperationRequest uses `kind` — translate to `type`
@@ -1531,13 +2354,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       const type = kindToType[kind] ?? kind;
 
+      // Worker protocol omits `fn` — it is resolved from the activity registry later
       return {
         ...operation,
         type,
         operationId: (operation['id'] as string) ?? crypto.randomUUID(),
         activityName: (operation['activityName'] as string) ?? '',
         args: operation['input'] !== undefined ? [operation['input']] : [],
-      } as unknown as ContextOperationRequest;
+      } as ContextOperationRequest;
     }
 
     throw new Error('Unsupported operation request shape received from execution strategy');
@@ -1545,562 +2369,1015 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   async #processOperation(workflowId: string, operation: ContextOperationRequest): Promise<void> {
     switch (operation.type) {
-      case 'activity': {
-        try {
-          const result = await this.#executeActivity(workflowId, operation);
-          this.#feedOperationResult(workflowId, { status: 'completed', value: result });
-        } catch (error) {
-          // Enrich error with workflow call site stack
-          if (error instanceof Error && operation.callerStack) {
-            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
-          }
-          const enrichedError = error instanceof Error ? error : new Error(String(error));
-          this.#feedOperationResult(
-            workflowId,
-            { status: 'failed', error: enrichedError.message },
-            enrichedError,
-          );
-        }
-        break;
-      }
-
-      case 'sleep': {
-        // If the timer has already expired (e.g., resumed after crash), resolve immediately
-        if (operation.scheduledFireAt <= this.#options.getNow()) {
-          this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
-          break;
-        }
-
-        const { promise, resolve } = Promise.withResolvers<void>();
-
-        // Schedule via the scheduler's durable timer
-        await this.#scheduler.schedule({
-          id: `sleep:${operation.operationId}`,
-          workflowId,
-          fireAt: operation.scheduledFireAt,
-          kind: 'sleep',
-        });
-
-        // Store the resolution function for when the timer fires.
-        // Key includes workflowId so #cleanupWaiters can remove orphaned
-        // resolvers when a workflow is cancelled or terminated.
-        this.#sleepResolvers.set(`${workflowId}:${operation.operationId}`, resolve);
-
-        let workflowOps = this.#sleepResolversByWorkflow.get(workflowId);
-        if (!workflowOps) {
-          workflowOps = new Set();
-          this.#sleepResolversByWorkflow.set(workflowId, workflowOps);
-        }
-        workflowOps.add(operation.operationId);
-
-        await promise;
-
-        // If the workflow was cancelled/completed/failed while sleeping,
-        // the resolver was invoked by #cleanupWaiters to unblock this await.
-        // Skip feeding a result since the workflow is no longer running.
-        const postSleepState = await this.#loadWorkflowState(workflowId);
-        if (!postSleepState || postSleepState.status !== 'running') break;
-
-        this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
-        break;
-      }
-
-      case 'wait-signal': {
-        // Check if signal already exists in storage
-        const existingPayload = await this.#consumeSignal(workflowId, operation.signalName);
-        if (existingPayload !== undefined) {
-          this.#feedOperationResult(workflowId, { status: 'completed', value: existingPayload });
-          return;
-        }
-
-        // Wait for signal
-        const { promise, resolve } = Promise.withResolvers<unknown>();
-        const waiterKey = `${workflowId}:${operation.signalName}`;
-        this.#signalWaiters.set(waiterKey, resolve);
-
-        const payload = await promise;
-        this.#feedOperationResult(workflowId, { status: 'completed', value: payload });
-        break;
-      }
-
-      case 'wait-update': {
-        // Check for pending update requests
-        const pendingUpdates = await this.#updateCoordinator.getPendingUpdates(workflowId);
-        const matchingUpdate = pendingUpdates.find(
-          (update) => update.name === operation.updateName,
-        );
-
-        if (matchingUpdate) {
-          // Consume the pending update immediately
-          this.dispatchEvent(
-            new UpdateReceivedEvent(
-              matchingUpdate.updateId,
-              workflowId,
-              operation.updateName,
-              matchingUpdate.payload,
-            ),
-          );
-
-          // Build response operations to acknowledge the update
-          const responseOperations = this.#updateCoordinator.buildResponseOperations(
-            matchingUpdate.updateId,
-            workflowId,
-            matchingUpdate.payload,
-            undefined,
-            matchingUpdate.idempotencyKey,
-          );
-          await this.#storage.batch(responseOperations);
-
-          this.dispatchEvent(
-            new UpdateCompletedEvent(
-              matchingUpdate.updateId,
-              workflowId,
-              operation.updateName,
-              matchingUpdate.payload,
-            ),
-          );
-
-          // Feed update payload back as the operation result
-          this.#feedOperationResult(workflowId, {
-            status: 'completed',
-            value: matchingUpdate.payload,
-          });
-        } else {
-          // Wait for update to arrive
-          const { promise, resolve } = Promise.withResolvers<unknown>();
-          const waiterKey = `${workflowId}:${operation.updateName}`;
-          this.#updateWaiters.set(waiterKey, resolve);
-
-          const updatePayload = await promise;
-          this.#feedOperationResult(workflowId, { status: 'completed', value: updatePayload });
-        }
-        break;
-      }
-
-      case 'parallel': {
-        try {
-          const results = await Promise.all(
-            operation.operations.map((subOperation) =>
-              this.#executeSubOperation(workflowId, subOperation),
-            ),
-          );
-          this.#feedOperationResult(workflowId, { status: 'completed', value: results });
-        } catch (error) {
-          const enrichedError = error instanceof Error ? error : new Error(String(error));
-          this.#feedOperationResult(
-            workflowId,
-            { status: 'failed', error: enrichedError.message },
-            enrichedError,
-          );
-        }
-        break;
-      }
-
-      case 'race': {
-        try {
-          const result = await Promise.race(
-            operation.operations.map((subOperation) =>
-              this.#executeSubOperation(workflowId, subOperation),
-            ),
-          );
-          this.#feedOperationResult(workflowId, { status: 'completed', value: result });
-        } catch (error) {
-          const enrichedError = error instanceof Error ? error : new Error(String(error));
-          this.#feedOperationResult(
-            workflowId,
-            { status: 'failed', error: enrichedError.message },
-            enrichedError,
-          );
-        }
-        break;
-      }
-
-      case 'memo': {
-        try {
-          const result = await callMemoFunction(operation.fn);
-          this.#feedOperationResult(workflowId, { status: 'completed', value: result });
-        } catch (error) {
-          const enrichedError = error instanceof Error ? error : new Error(String(error));
-          this.#feedOperationResult(
-            workflowId,
-            { status: 'failed', error: enrichedError.message },
-            enrichedError,
-          );
-        }
-        break;
-      }
-
-      case 'offload': {
-        try {
-          const data = await (operation.fn as () => Promise<unknown>)();
-          const encoded = encode(data);
-          await this.#storage.put(KEYS.offload(workflowId, operation.key), encoded);
-          const reference = {
-            key: operation.key,
-            workflowId,
-            sizeBytes: encoded.byteLength,
-          };
-          this.#feedOperationResult(workflowId, { status: 'completed', value: reference });
-        } catch (error) {
-          if (error instanceof Error && operation.callerStack) {
-            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
-          }
-          const enrichedError = error instanceof Error ? error : new Error(String(error));
-          this.#feedOperationResult(
-            workflowId,
-            { status: 'failed', error: enrichedError.message },
-            enrichedError,
-          );
-        }
-        break;
-      }
-
-      case 'load': {
-        try {
-          const reference = operation.reference;
-          const raw = await this.#storage.get(KEYS.offload(reference.workflowId, reference.key));
-          if (raw === null) {
-            throw new Error(
-              `Offloaded data not found for key "${reference.key}" in workflow "${reference.workflowId}"`,
-            );
-          }
-          const data = decode(raw);
-          this.#feedOperationResult(workflowId, { status: 'completed', value: data });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
-        }
-        break;
-      }
-
-      case 'archive': {
-        try {
-          const encoded = encode(operation.data);
-          await this.#storage.put(KEYS.archive(workflowId, operation.key), encoded);
-          this.#feedOperationResult(workflowId, { status: 'completed', value: undefined });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
-        }
-        break;
-      }
-
-      case 'stream': {
-        const sink: StreamSink = {
-          heartbeat: (details?: unknown) => {
-            this.#heartbeatDetails.set(workflowId, details);
-          },
-        };
-
-        const asyncGenerator = operation.fn(sink);
-        let chunkIndex = 0;
-        let totalSizeBytes = 0;
-        const writtenKeys: string[] = [];
-
-        try {
-          for await (const chunk of asyncGenerator) {
-            const encoded = encode(chunk);
-            const chunkKey = KEYS.streamChunk(workflowId, operation.key, chunkIndex);
-            await this.#storage.put(chunkKey, encoded);
-            writtenKeys.push(chunkKey);
-            totalSizeBytes += encoded.byteLength;
-            chunkIndex++;
-          }
-
-          const reference: StreamReference = {
-            key: operation.key,
-            workflowId,
-            chunkCount: chunkIndex,
-            totalSizeBytes,
-          };
-
-          const metadataKey = KEYS.streamMetadata(workflowId, operation.key);
-          await this.#storage.put(metadataKey, encode(reference));
-
-          this.#feedOperationResult(workflowId, { status: 'completed', value: reference });
-        } catch (error) {
-          // Clean up any partially written chunks (best-effort)
-          if (writtenKeys.length > 0) {
-            const deleteOperations = [
-              ...writtenKeys.map((key) => ({ type: 'delete' as const, key })),
-              { type: 'delete' as const, key: KEYS.streamMetadata(workflowId, operation.key) },
-            ];
-            await this.#storage.batch(deleteOperations).catch(() => {});
-          }
-
-          if (error instanceof Error && operation.callerStack) {
-            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
-          }
-          const enrichedError = error instanceof Error ? error : new Error(String(error));
-          this.#feedOperationResult(
-            workflowId,
-            { status: 'failed', error: enrichedError.message },
-            enrichedError,
-          );
-        }
-        break;
-      }
-
-      case 'run-all': {
-        try {
-          const results: Record<string, unknown> = {};
-          const entries = Object.entries(operation.branches);
-          const promises = entries.map(async ([name, [fn, ...args]]) => {
-            const result = await callActivityFunction(fn, args);
-            results[name] = result;
-          });
-          await Promise.all(promises);
-          this.#feedOperationResult(workflowId, { status: 'completed', value: results });
-        } catch (error) {
-          if (error instanceof Error && operation.callerStack) {
-            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
-          }
-          const enrichedError = error instanceof Error ? error : new Error(String(error));
-          this.#feedOperationResult(
-            workflowId,
-            { status: 'failed', error: enrichedError.message },
-            enrichedError,
-          );
-        }
-        break;
-      }
-
-      case 'agent': {
-        try {
-          const { executeAgentLoop } = await import('../ai/agent.ts');
-          const { BudgetTracker } = await import('../ai/budget.ts');
-          const { AgentBudgetWarningEvent, AgentBudgetExceededEvent } =
-            await import('../ai/events.ts');
-          const {
-            prompt,
-            budget: budgetOptions,
-            budgetNamespace,
-            contextStrategy: _contextStrategy,
-            ...rest
-          } = operation.options;
-
-          // Construct BudgetTracker from options, wiring events to engine
-          let budgetTracker: InstanceType<typeof BudgetTracker> | undefined;
-          if (budgetOptions) {
-            budgetTracker = new BudgetTracker(budgetOptions, {
-              onWarning: (state) => {
-                const threshold = budgetOptions.warningThreshold ?? 0.8;
-                const costFraction =
-                  budgetOptions.maxCost !== undefined && budgetOptions.maxCost > 0
-                    ? state.costUsed / budgetOptions.maxCost
-                    : 0;
-                const tokenFraction =
-                  budgetOptions.maxTokens !== undefined && budgetOptions.maxTokens > 0
-                    ? state.tokensUsed / budgetOptions.maxTokens
-                    : 0;
-                const usedPercent = Math.max(costFraction, tokenFraction);
-                const event = new AgentBudgetWarningEvent(
-                  workflowId,
-                  operation.operationId,
-                  usedPercent,
-                  state.tokensRemaining,
-                  state.costRemaining,
-                  threshold,
-                );
-                this.dispatchEvent(event);
-                this.#forwardEventToHandle(workflowId, event);
-              },
-              onExceeded: (state) => {
-                const event = new AgentBudgetExceededEvent(
-                  workflowId,
-                  operation.operationId,
-                  state.tokensUsed,
-                  state.costUsed,
-                  budgetOptions.maxTokens ?? 0,
-                  budgetOptions.maxCost ?? 0,
-                );
-                this.dispatchEvent(event);
-                this.#forwardEventToHandle(workflowId, event);
-              },
-            });
-          }
-
-          // Resolve the organization budget namespace once for both check
-          // and record. If budgetNamespace is specified, use it. If exactly
-          // one policy exists, use its namespace. Otherwise skip enforcement.
-          const resolvedBudgetNamespace = this.#budgetPolicyEnforcer
-            ? (budgetNamespace ??
-              (this.#budgetPolicyEnforcer.policies.size === 1
-                ? this.#budgetPolicyEnforcer.policies.keys().next().value
-                : undefined))
-            : undefined;
-
-          if (this.#budgetPolicyEnforcer && resolvedBudgetNamespace) {
-            if (!budgetOptions) {
-              // Org budget enforcement requires per-workflow budget options
-              // with model pricing to compute cost. Without it, cost stays 0
-              // and the org counter is never incremented. Dispatch a warning.
-              this.dispatchEvent(
-                new DevelopmentWarningEvent(
-                  workflowId,
-                  'Organization budget policy is active but ctx.agent() was called ' +
-                    'without budget options. Provide budget with model pricing to ' +
-                    'enable cost tracking and org budget enforcement.',
-                  [],
-                ),
-              );
-            }
-            await this.#budgetPolicyEnforcer.checkBudget(resolvedBudgetNamespace);
-          }
-
-          // Expose tokenUsage query accessor that accumulates across
-          // multiple ctx.agent() calls in the same workflow.
-          const context = this.#inlineStrategy?.getContext(workflowId);
-          if (context && budgetTracker) {
-            const previousAccessor = context.exposedAccessors.get('tokenUsage');
-            context.expose({
-              tokenUsage: () => {
-                const current = budgetTracker.budgetRemaining();
-                if (!previousAccessor) return current;
-                const previous = previousAccessor() as typeof current;
-
-                // Merge per-model breakdowns
-                const mergedBreakdown = new Map<
-                  string,
-                  { model: string; inputTokens: number; outputTokens: number; cost: number }
-                >();
-                for (const entry of previous.breakdown) {
-                  mergedBreakdown.set(entry.model, { ...entry });
-                }
-                for (const entry of current.breakdown) {
-                  const existing = mergedBreakdown.get(entry.model);
-                  if (existing) {
-                    existing.inputTokens += entry.inputTokens;
-                    existing.outputTokens += entry.outputTokens;
-                    existing.cost += entry.cost;
-                  } else {
-                    mergedBreakdown.set(entry.model, { ...entry });
-                  }
-                }
-
-                const tokensUsed = current.tokensUsed + previous.tokensUsed;
-                const costUsed = current.costUsed + previous.costUsed;
-
-                return {
-                  tokensUsed,
-                  costUsed,
-                  // Remaining values are only meaningful for the latest call's budget
-                  tokensRemaining: current.tokensRemaining,
-                  costRemaining: current.costRemaining,
-                  breakdown: [...mergedBreakdown.values()],
-                };
-              },
-            });
-          }
-
-          const agentResult = await executeAgentLoop(
-            {
-              ...rest,
-              budget: budgetTracker,
-              eventTarget: this,
-              workflowId,
-              agentId: operation.operationId,
-            },
-            prompt,
-          );
-
-          // Accumulate cost search attribute across multiple agent calls
-          if (context && agentResult.totalCost > 0) {
-            const previousCost = context.getAttribute<number>('weft:tokenCost') ?? 0;
-            context.setAttribute('weft:tokenCost', previousCost + agentResult.totalCost);
-          }
-
-          // Record cost against the resolved organization budget namespace.
-          // Deduplicate using the operation ID to prevent double-charging on
-          // crash recovery: if the process crashes after writing the budget
-          // counter but before the next checkpoint, the replayed operation
-          // finds its marker in storage and skips the duplicate charge.
-          if (this.#budgetPolicyEnforcer && resolvedBudgetNamespace && agentResult.totalCost > 0) {
-            const chargedKey = KEYS.budgetCharged(operation.operationId);
-            const alreadyCharged =
-              this.#chargedAgentOperations.has(operation.operationId) ||
-              (await this.#storage.get(chargedKey)) !== null;
-
-            if (!alreadyCharged) {
-              await this.#storage.put(chargedKey, encode({ cost: agentResult.totalCost }));
-              await this.#budgetPolicyEnforcer.recordCost(
-                resolvedBudgetNamespace,
-                agentResult.totalCost,
-              );
-              this.#chargedAgentOperations.add(operation.operationId);
-            }
-          }
-
-          this.#feedOperationResult(workflowId, {
-            status: 'completed',
-            value: agentResult.content,
-          });
-        } catch (error) {
-          const enrichedError = error instanceof Error ? error : new Error(String(error));
-          this.#feedOperationResult(
-            workflowId,
-            { status: 'failed', error: enrichedError.message },
-            enrichedError,
-          );
-        }
-        break;
-      }
-
-      case 'child-workflow': {
-        // Check nesting depth from inline context first, fall back to the
-        // engine-level tracking (needed for worker mode where there's no inline context).
-        const currentContext = this.#inlineStrategy?.getContext(workflowId);
-        const currentDepth =
-          currentContext?.nestingDepth ?? this.#workflowNestingDepths.get(workflowId) ?? 0;
-
-        if (currentDepth + 1 > this.#options.maxNestingDepth) {
-          const errorMessage =
-            `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
-            `Configure maxNestingDepth in engine options to increase the limit.`;
-          this.#feedOperationResult(workflowId, { status: 'failed', error: errorMessage });
-          break;
-        }
-
-        try {
-          // Set pending nesting depth for the child workflow
-          this.#pendingNestingDepth = currentDepth + 1;
-          const childHandle = await this.start(operation.workflowType, operation.input);
-          const childResult = await childHandle.result();
-          this.#feedOperationResult(workflowId, { status: 'completed', value: childResult });
-        } catch (error) {
-          if (error instanceof Error && operation.callerStack) {
-            error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
-          }
-          const enrichedError = error instanceof Error ? error : new Error(String(error));
-          this.#feedOperationResult(
-            workflowId,
-            { status: 'failed', error: enrichedError.message },
-            enrichedError,
-          );
-        }
-        break;
-      }
-
+      case 'activity':
+        return this.#processActivityOperation(workflowId, operation);
+      case 'sleep':
+        return this.#processSleepOperation(workflowId, operation);
+      case 'wait-signal':
+        return this.#processWaitSignalOperation(workflowId, operation);
+      case 'wait-update':
+        return this.#processWaitUpdateOperation(workflowId, operation);
+      case 'parallel':
+        return this.#processParallelOperation(workflowId, operation);
+      case 'race':
+        return this.#processRaceOperation(workflowId, operation);
+      case 'memo':
+        return this.#processMemoOperation(workflowId, operation);
+      case 'child-workflow':
+        return this.#processChildWorkflowOperation(workflowId, operation);
+      case 'offload':
+        return this.#processOffloadOperation(workflowId, operation);
+      case 'load':
+        return this.#processLoadOperation(workflowId, operation);
+      case 'archive':
+        return this.#processArchiveOperation(workflowId, operation);
+      case 'run-all':
+        return this.#processRunAllOperation(workflowId, operation);
+      case 'agent':
+        return this.#processAgentContextOperation(workflowId, operation);
+      case 'stream':
+        return this.#processStreamOperation(workflowId, operation);
+      case 'wait-review':
+        return this.#processWaitReviewOperation(workflowId, operation);
+      case 'handoff':
+        return this.#processHandoffOperation(workflowId, operation);
+      case 'debate':
+        return this.#processDebateOperation(workflowId, operation);
+      case 'supervise':
+        return this.#processSuperviseOperation(workflowId, operation);
       default:
-        throw new Error(`Unknown operation type: ${(operation as { type: string }).type}`);
+        const unsupportedType = String((operation as Record<string, unknown>)['type']);
+        this.#failOperation(
+          workflowId,
+          operation,
+          new Error(`Unsupported operation type: ${unsupportedType}`),
+        );
+        return;
     }
   }
 
-  async #executeSubOperation(
-    _workflowId: string,
-    operation: ContextOperationRequest,
+  #completeOperation(workflowId: string, value: unknown): void {
+    this.#feedOperationResult(workflowId, { status: 'completed', value });
+  }
+
+  #failOperation(workflowId: string, operation: OperationWithCallerStack, error: unknown): void {
+    if (error instanceof Error && operation.callerStack) {
+      error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+    }
+
+    const enrichedError = error instanceof Error ? error : new Error(String(error));
+    this.#feedOperationResult(
+      workflowId,
+      { status: 'failed', error: enrichedError.message },
+      enrichedError,
+    );
+  }
+
+  async #runOperationWithResult(
+    workflowId: string,
+    operation: OperationWithCallerStack,
+    execute: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      const value = await execute();
+      this.#completeOperation(workflowId, value);
+    } catch (error) {
+      this.#failOperation(workflowId, operation, error);
+    }
+  }
+
+  async #runOperationWithoutResult(
+    workflowId: string,
+    operation: OperationWithCallerStack,
+    execute: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await execute();
+    } catch (error) {
+      this.#failOperation(workflowId, operation, error);
+    }
+  }
+
+  async #processActivityOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'activity' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      this.#executeActivity(workflowId, operation),
+    );
+  }
+
+  async #processSleepOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'sleep' }>,
+  ): Promise<void> {
+    if (operation.scheduledFireAt <= this.#options.getNow()) {
+      this.#completeOperation(workflowId, undefined);
+      return;
+    }
+
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await this.#scheduler.schedule({
+      id: `sleep:${operation.operationId}`,
+      workflowId,
+      fireAt: operation.scheduledFireAt,
+      kind: 'sleep',
+    });
+    this.#registerSleepResolver(workflowId, operation.operationId, resolve);
+    await promise;
+
+    const postSleepState = await this.#loadWorkflowState(workflowId);
+    if (postSleepState?.status === 'running') {
+      this.#completeOperation(workflowId, undefined);
+    }
+  }
+
+  #registerSleepResolver(workflowId: string, operationId: string, resolve: () => void): void {
+    this.#sleepResolvers.set(`${workflowId}:${operationId}`, resolve);
+
+    let workflowOperations = this.#sleepResolversByWorkflow.get(workflowId);
+    if (!workflowOperations) {
+      workflowOperations = new Set();
+      this.#sleepResolversByWorkflow.set(workflowId, workflowOperations);
+    }
+    workflowOperations.add(operationId);
+  }
+
+  async #processWaitSignalOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'wait-signal' }>,
+  ): Promise<void> {
+    const abortSignal = this.#abortController.signal;
+    const waiterKey = `${workflowId}:${operation.signalName}`;
+
+    while (true) {
+      if (abortSignal.aborted) {
+        return;
+      }
+
+      const existingPayload = await this.#consumeSignal(workflowId, operation.signalName);
+      if (existingPayload.found) {
+        this.#completeOperation(workflowId, existingPayload.payload);
+        return;
+      }
+
+      const { promise, resolve } = Promise.withResolvers<void>();
+      this.#signalWaiters.set(waiterKey, resolve);
+
+      if (abortSignal.aborted) {
+        this.#signalWaiters.delete(waiterKey);
+        return;
+      }
+
+      const bufferedPayload = await this.#consumeSignal(workflowId, operation.signalName);
+      if (bufferedPayload.found) {
+        if (this.#signalWaiters.get(waiterKey) === resolve) {
+          this.#signalWaiters.delete(waiterKey);
+        }
+        this.#completeOperation(workflowId, bufferedPayload.payload);
+        return;
+      }
+
+      await promise;
+
+      if (abortSignal.aborted) {
+        return;
+      }
+    }
+  }
+
+  async #processWaitUpdateOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'wait-update' }>,
+  ): Promise<void> {
+    const waiterKey = `${workflowId}:${operation.updateName}`;
+    const matchingUpdate = await this.#findPendingUpdateByName(workflowId, operation.updateName);
+
+    if (matchingUpdate) {
+      this.#dispatchPendingUpdateReceived(workflowId, operation.updateName, matchingUpdate);
+      this.#completeOperation(workflowId, {
+        payload: matchingUpdate.payload,
+        respond: this.#createCoordinatedUpdateResponder(
+          workflowId,
+          operation.updateName,
+          matchingUpdate,
+        ),
+      });
+      return;
+    }
+
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    this.#updateWaiters.set(waiterKey, resolve);
+
+    const pendingUpdateAfterRegistration = await this.#findPendingUpdateByName(
+      workflowId,
+      operation.updateName,
+    );
+    if (pendingUpdateAfterRegistration) {
+      if (this.#updateWaiters.get(waiterKey) === resolve) {
+        this.#updateWaiters.delete(waiterKey);
+      }
+
+      this.#dispatchPendingUpdateReceived(
+        workflowId,
+        operation.updateName,
+        pendingUpdateAfterRegistration,
+      );
+      this.#completeOperation(workflowId, {
+        payload: pendingUpdateAfterRegistration.payload,
+        respond: this.#createCoordinatedUpdateResponder(
+          workflowId,
+          operation.updateName,
+          pendingUpdateAfterRegistration,
+        ),
+      });
+      return;
+    }
+
+    this.#completeOperation(workflowId, await promise);
+  }
+
+  #dispatchPendingUpdateReceived(
+    workflowId: string,
+    updateName: string,
+    update: UpdateRequest,
+  ): void {
+    this.dispatchEvent(
+      new UpdateReceivedEvent(update.updateId, workflowId, updateName, update.payload),
+    );
+  }
+
+  #createCoordinatedUpdateResponder(
+    workflowId: string,
+    updateName: string,
+    update: UpdateRequest,
+  ): (value: unknown) => void {
+    let coordinatedResponded = false;
+
+    return (value: unknown) => {
+      if (coordinatedResponded) return;
+      coordinatedResponded = true;
+
+      void this.#persistCoordinatedUpdateResponse(
+        workflowId,
+        updateName,
+        update.updateId,
+        update.idempotencyKey,
+        value,
+      );
+    };
+  }
+
+  async #deliverCoordinatedUpdateToWaiterIfAvailable(
+    workflowId: string,
+    update: UpdateRequest,
+    dispatchReceivedEvent = false,
+  ): Promise<boolean> {
+    const waiterKey = `${workflowId}:${update.name}`;
+    const waiter = this.#updateWaiters.get(waiterKey);
+    if (!waiter) {
+      return false;
+    }
+
+    const oldestPendingUpdate = await this.#findPendingUpdateByName(workflowId, update.name);
+    if (!oldestPendingUpdate || oldestPendingUpdate.updateId !== update.updateId) {
+      return false;
+    }
+
+    this.#updateWaiters.delete(waiterKey);
+    if (dispatchReceivedEvent) {
+      this.#dispatchPendingUpdateReceived(workflowId, update.name, update);
+    }
+
+    waiter({
+      payload: update.payload,
+      respond: this.#createCoordinatedUpdateResponder(workflowId, update.name, update),
+    });
+    return true;
+  }
+
+  async #findPendingUpdateByName(
+    workflowId: string,
+    name: string,
+  ): Promise<UpdateRequest | undefined> {
+    const pendingUpdates = await this.#updateCoordinator.getPendingUpdates(workflowId);
+    return pendingUpdates.find((update) => update.name === name);
+  }
+
+  async #processParallelOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'parallel' }>,
+  ): Promise<void> {
+    // `ctx.all()` awaits every branch, so there's no "loser" to abort like
+    // there is for `ctx.race()`. Each sub-operation runs to completion or
+    // throws; `Promise.all` short-circuits on the first rejection, but the
+    // surviving branches' budgets are intentionally preserved — callers that
+    // want cancellation on failure should use `ctx.race()` with a guard.
+    return this.#runOperationWithResult(workflowId, operation, async () =>
+      Promise.all(
+        operation.operations.map((subOperation) =>
+          this.#executeSubOperation(workflowId, subOperation),
+        ),
+      ),
+    );
+  }
+
+  async #processRaceOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'race' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      // Abort losing sub-operations once the race settles. Without this,
+      // a losing agent sub-op would continue running its full LLM loop in
+      // the background, consuming budget and emitting events with no
+      // observer.
+      const controller = new AbortController();
+      const subOperations = operation.operations.map((subOperation) =>
+        this.#executeSubOperation(workflowId, subOperation, controller.signal),
+      );
+      // Swallow rejections from losing branches — only the race winner's
+      // result (or error) is surfaced. Losers typically reject with
+      // AbortError after the controller fires in the finally block, and
+      // without a handler those would surface as unhandled promise
+      // rejections.
+      for (const promise of subOperations) {
+        promise.catch(() => {});
+      }
+      try {
+        return await Promise.race(subOperations);
+      } finally {
+        controller.abort();
+      }
+    });
+  }
+
+  async #processMemoOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'memo' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, async () =>
+      callMemoFunction(operation.fn),
+    );
+  }
+
+  async #processOffloadOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'offload' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      const data = await (operation.fn as () => Promise<unknown>)();
+      const encoded = encode(data);
+      await this.#storage.put(KEYS.offload(workflowId, operation.key), encoded);
+      return {
+        key: operation.key,
+        workflowId,
+        sizeBytes: encoded.byteLength,
+      };
+    });
+  }
+
+  async #processLoadOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'load' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      const raw = await this.#storage.get(
+        KEYS.offload(operation.reference.workflowId, operation.reference.key),
+      );
+      if (raw === null) {
+        throw new Error(
+          `Offloaded data not found for key "${operation.reference.key}" in workflow "${operation.reference.workflowId}"`,
+        );
+      }
+      return decode(raw);
+    });
+  }
+
+  async #processArchiveOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'archive' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      await this.#storage.put(KEYS.archive(workflowId, operation.key), encode(operation.data));
+      return undefined;
+    });
+  }
+
+  async #processStreamOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'stream' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      this.#createStreamReference(workflowId, operation),
+    );
+  }
+
+  async #createStreamReference(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'stream' }>,
+  ): Promise<StreamReference> {
+    const sink: StreamSink = {
+      heartbeat: (details?: unknown) => {
+        this.#heartbeatDetails.set(workflowId, details);
+      },
+    };
+
+    const writtenKeys: string[] = [];
+    try {
+      const streamSummary = await this.#writeStreamChunks(
+        workflowId,
+        operation,
+        operation.fn(sink),
+        writtenKeys,
+      );
+      const reference: StreamReference = {
+        key: operation.key,
+        workflowId,
+        chunkCount: streamSummary.chunkCount,
+        totalSizeBytes: streamSummary.totalSizeBytes,
+      };
+      await this.#storage.put(KEYS.streamMetadata(workflowId, operation.key), encode(reference));
+      return reference;
+    } catch (error) {
+      await this.#cleanupStreamChunks(workflowId, operation.key, writtenKeys);
+      throw error;
+    }
+  }
+
+  async #writeStreamChunks(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'stream' }>,
+    asyncGenerator: AsyncGenerator<unknown, void, unknown>,
+    writtenKeys: string[],
+  ): Promise<{ chunkCount: number; totalSizeBytes: number }> {
+    let chunkCount = 0;
+    let totalSizeBytes = 0;
+
+    for await (const chunk of asyncGenerator) {
+      const encoded = encode(chunk);
+      const chunkKey = KEYS.streamChunk(workflowId, operation.key, chunkCount);
+      await this.#storage.put(chunkKey, encoded);
+      writtenKeys.push(chunkKey);
+      totalSizeBytes += encoded.byteLength;
+      chunkCount++;
+    }
+
+    return { chunkCount, totalSizeBytes };
+  }
+
+  async #cleanupStreamChunks(
+    workflowId: string,
+    key: string,
+    writtenKeys: string[],
+  ): Promise<void> {
+    await cleanupPartialStreamChunks(
+      this.#storage,
+      workflowId,
+      key,
+      writtenKeys,
+      createCleanupErrorReporter(this.#handleCleanupError.bind(this), workflowId),
+    );
+  }
+
+  async #processRunAllOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'run-all' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      executeRunAllBranches(
+        // `ctx.runAll()` stores raw Function references on the request by construction.
+        operation.branches as Parameters<typeof executeRunAllBranches>[0],
+        callActivityFunction as Parameters<typeof executeRunAllBranches>[1],
+      ),
+    );
+  }
+
+  async #processAgentContextOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'agent' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      this.#executeAgentContextOperationResult(workflowId, operation),
+    );
+  }
+
+  async #executeAgentContextOperationResult(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'agent' }>,
   ): Promise<unknown> {
+    const { executeAgentLoop } = await import('../ai/agent.ts');
+    const {
+      prompt,
+      budget: budgetOptions,
+      budgetNamespace,
+      contextStrategy: _contextStrategy,
+      ...rest
+    } = operation.options;
+    const budgetTracker = await this.#createAgentBudgetTracker(
+      workflowId,
+      operation,
+      budgetOptions,
+    );
+    const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
+    await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
+
+    const context = this.#inlineStrategy?.getContext(workflowId);
+    this.#exposeTokenUsageAccessor(context, budgetTracker);
+
+    const agentInterception = this.#createAgentInterception(workflowId, rest.model, prompt);
+    const agentInterceptorGenerator = this.#openAgentInterceptor(agentInterception);
+    const agentResult = await executeAgentLoop(
+      {
+        ...rest,
+        modelRouter: rest.modelRouter ?? this.#defaultModelRouter,
+        budget: budgetTracker,
+        eventTarget: this,
+        workflowId,
+        agentId: operation.operationId,
+        onTurnStarted: agentInterception.onTurnStarted,
+        onTurnCompleted: agentInterception.onTurnCompleted,
+        onToolCalled: agentInterception.onToolCalled,
+        onToolReturned: agentInterception.onToolReturned,
+      },
+      prompt,
+    );
+    this.#closeAgentInterceptor(agentInterceptorGenerator, agentResult.content);
+    this.#exposeAgentObservability(context, agentResult, rest.maxTurns ?? 10);
+    this.#recordAgentContextCost(context, agentResult.totalCost);
+    await this.#recordAgentBudgetCost(
+      workflowId,
+      operation.operationId,
+      resolvedBudgetNamespace,
+      agentResult.totalCost,
+    );
+    return agentResult.content;
+  }
+
+  async #createAgentBudgetTracker(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'agent' }>,
+    budgetOptions: Extract<ContextOperationRequest, { type: 'agent' }>['options']['budget'],
+  ): Promise<InstanceType<(typeof import('../ai/budget.ts'))['BudgetTracker']> | undefined> {
+    if (!budgetOptions) {
+      return undefined;
+    }
+
+    const { BudgetTracker } = await import('../ai/budget.ts');
+    const { AgentBudgetWarningEvent, AgentBudgetExceededEvent } = await import('../ai/events.ts');
+
+    return new BudgetTracker(budgetOptions, {
+      onWarning: (state) => {
+        const threshold = budgetOptions.warningThreshold ?? 0.8;
+        const costFraction =
+          budgetOptions.maxCost !== undefined && budgetOptions.maxCost > 0
+            ? state.costUsed / budgetOptions.maxCost
+            : 0;
+        const tokenFraction =
+          budgetOptions.maxTokens !== undefined && budgetOptions.maxTokens > 0
+            ? state.tokensUsed / budgetOptions.maxTokens
+            : 0;
+        const usedPercent = Math.max(costFraction, tokenFraction);
+        const event = new AgentBudgetWarningEvent(
+          workflowId,
+          operation.operationId,
+          usedPercent,
+          state.tokensRemaining,
+          state.costRemaining,
+          threshold,
+        );
+        this.dispatchEvent(event);
+        this.#forwardEventToHandle(workflowId, event);
+      },
+      onExceeded: (state) => {
+        const event = new AgentBudgetExceededEvent(
+          workflowId,
+          operation.operationId,
+          state.tokensUsed,
+          state.costUsed,
+          budgetOptions.maxTokens ?? 0,
+          budgetOptions.maxCost ?? 0,
+        );
+        this.dispatchEvent(event);
+        this.#forwardEventToHandle(workflowId, event);
+      },
+    });
+  }
+
+  #resolveAgentBudgetNamespace(budgetNamespace: string | undefined): string | undefined {
+    if (!this.#budgetPolicyEnforcer) {
+      return undefined;
+    }
+
+    return (
+      budgetNamespace ??
+      (this.#budgetPolicyEnforcer.policies.size === 1
+        ? this.#budgetPolicyEnforcer.policies.keys().next().value
+        : undefined)
+    );
+  }
+
+  async #checkAgentBudgetPolicy(
+    workflowId: string,
+    budgetOptions: Extract<ContextOperationRequest, { type: 'agent' }>['options']['budget'],
+    resolvedBudgetNamespace: string | undefined,
+  ): Promise<void> {
+    if (!this.#budgetPolicyEnforcer || !resolvedBudgetNamespace) {
+      return;
+    }
+
+    if (!budgetOptions) {
+      this.dispatchEvent(
+        new DevelopmentWarningEvent(
+          workflowId,
+          'Organization budget policy is active but ctx.agent() was called without budget options. Provide budget with model pricing to enable cost tracking and org budget enforcement.',
+          [],
+        ),
+      );
+    }
+
+    await this.#budgetPolicyEnforcer.checkBudget(resolvedBudgetNamespace);
+  }
+
+  #exposeTokenUsageAccessor(
+    context: ReturnType<InlineExecutionStrategy['getContext']> | undefined,
+    budgetTracker: InstanceType<(typeof import('../ai/budget.ts'))['BudgetTracker']> | undefined,
+  ): void {
+    if (!context || !budgetTracker) {
+      return;
+    }
+
+    const previousAccessor = context.exposedAccessors.get('tokenUsage');
+    context.expose({
+      tokenUsage: () => {
+        const current = budgetTracker.budgetRemaining();
+        if (!previousAccessor) {
+          return current;
+        }
+
+        const previous = previousAccessor() as typeof current;
+        const mergedBreakdown = new Map<
+          string,
+          { model: string; inputTokens: number; outputTokens: number; cost: number }
+        >();
+        for (const entry of previous.breakdown) {
+          mergedBreakdown.set(entry.model, { ...entry });
+        }
+        for (const entry of current.breakdown) {
+          const existing = mergedBreakdown.get(entry.model);
+          if (existing) {
+            existing.inputTokens += entry.inputTokens;
+            existing.outputTokens += entry.outputTokens;
+            existing.cost += entry.cost;
+            continue;
+          }
+
+          mergedBreakdown.set(entry.model, { ...entry });
+        }
+
+        return {
+          tokensUsed: current.tokensUsed + previous.tokensUsed,
+          costUsed: current.costUsed + previous.costUsed,
+          tokensRemaining: current.tokensRemaining,
+          costRemaining: current.costRemaining,
+          breakdown: [...mergedBreakdown.values()],
+        };
+      },
+    });
+  }
+
+  #createAgentInterception(
+    workflowId: string,
+    model: string,
+    prompt: string,
+  ): import('./interceptor.ts').AgentInterception {
+    return {
+      workflowId,
+      model,
+      prompt,
+      headers: new Map<string, string>(),
+    };
+  }
+
+  #openAgentInterceptor(
+    agentInterception: import('./interceptor.ts').AgentInterception,
+  ): Generator<unknown, unknown, unknown> | undefined {
+    const composedInterceptor = this.#getComposedWorkflowInterceptor();
+    if (!composedInterceptor) {
+      return undefined;
+    }
+
+    const generator = composedInterceptor.agent(
+      agentInterception,
+      createAgentInterceptorExecute(agentInterception),
+    );
+    generator.next();
+    return generator;
+  }
+
+  #closeAgentInterceptor(
+    generator: Generator<unknown, unknown, unknown> | undefined,
+    content: string,
+  ): void {
+    if (generator) {
+      generator.next(content);
+    }
+  }
+
+  #exposeAgentObservability(
+    context: ReturnType<InlineExecutionStrategy['getContext']> | undefined,
+    agentResult: Awaited<ReturnType<(typeof import('../ai/agent.ts'))['executeAgentLoop']>>,
+    agentMaxTurns: number,
+  ): void {
+    if (!context) {
+      return;
+    }
+
+    const previousWaterfallAccessor = context.exposedAccessors.get('agentCostWaterfall');
+    const previousConversationAccessor = context.exposedAccessors.get('agentConversation');
+    const previousProjectionAccessor = context.exposedAccessors.get('agentCostProjection');
+    const currentTurnCosts = agentResult.turnCosts;
+    const currentConversation = agentResult.conversation;
+    const currentTurnCount = agentResult.turnCount;
+    const currentTotalCost = agentResult.totalCost;
+
+    context.expose({
+      agentCostWaterfall: () => {
+        const previous = previousWaterfallAccessor
+          ? (previousWaterfallAccessor() as typeof currentTurnCosts)
+          : [];
+        return [...previous, ...currentTurnCosts];
+      },
+      agentConversation: () => {
+        const previous = previousConversationAccessor
+          ? (previousConversationAccessor() as typeof currentConversation)
+          : [];
+        return [...previous, ...currentConversation];
+      },
+      agentCostProjection: () => {
+        const previousProjection = previousProjectionAccessor
+          ? (previousProjectionAccessor() as {
+              averageCostPerTurn: number;
+              turnsCompleted: number;
+              maxTurns: number;
+              projectedTotalCost: number;
+            })
+          : null;
+
+        const totalTurns = (previousProjection?.turnsCompleted ?? 0) + currentTurnCount;
+        const totalCost =
+          (previousProjection
+            ? previousProjection.averageCostPerTurn * previousProjection.turnsCompleted
+            : 0) + currentTotalCost;
+        const averageCostPerTurn = totalTurns > 0 ? totalCost / totalTurns : 0;
+
+        return {
+          averageCostPerTurn,
+          turnsCompleted: totalTurns,
+          maxTurns: Math.max(previousProjection?.maxTurns ?? 0, agentMaxTurns),
+          projectedTotalCost:
+            averageCostPerTurn * Math.max(previousProjection?.maxTurns ?? 0, agentMaxTurns),
+        };
+      },
+    });
+  }
+
+  #recordAgentContextCost(
+    context: ReturnType<InlineExecutionStrategy['getContext']> | undefined,
+    totalCost: number,
+  ): void {
+    if (!context || totalCost <= 0) {
+      return;
+    }
+
+    const previousCost = context.getAttribute<number>('weft:tokenCost') ?? 0;
+    context.setAttribute('weft:tokenCost', previousCost + totalCost);
+  }
+
+  async #recordAgentBudgetCost(
+    workflowId: string,
+    operationId: string,
+    resolvedBudgetNamespace: string | undefined,
+    totalCost: number,
+  ): Promise<void> {
+    if (!this.#budgetPolicyEnforcer || !resolvedBudgetNamespace || totalCost <= 0) {
+      return;
+    }
+
+    const chargedKey = KEYS.budgetCharged(operationId);
+    const alreadyCharged =
+      this.#chargedAgentOperations.has(operationId) ||
+      (await this.#storage.get(chargedKey)) !== null;
+
+    if (alreadyCharged) {
+      return;
+    }
+
+    await this.#storage.put(chargedKey, encode({ cost: totalCost }));
+    await this.#budgetPolicyEnforcer.recordCost(resolvedBudgetNamespace, totalCost);
+    this.#chargedAgentOperations.add(operationId);
+
+    // Maintain the reverse index so terminal cleanup is O(k) in the
+    // workflow's own agent operations rather than O(N) in the engine-wide
+    // dedup set.
+    let workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
+    if (!workflowOperations) {
+      workflowOperations = new Set();
+      this.#chargedAgentOperationsByWorkflow.set(workflowId, workflowOperations);
+    }
+    workflowOperations.add(operationId);
+  }
+
+  async #processChildWorkflowOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'child-workflow' }>,
+  ): Promise<void> {
+    const currentDepth = this.#getWorkflowNestingDepth(workflowId);
+    if (currentDepth + 1 > this.#options.maxNestingDepth) {
+      this.#feedOperationResult(workflowId, {
+        status: 'failed',
+        error:
+          `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
+          'Configure maxNestingDepth in engine options to increase the limit.',
+      });
+      return;
+    }
+
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      this.#executeChildWorkflow(workflowId, operation, currentDepth),
+    );
+  }
+
+  #getWorkflowNestingDepth(workflowId: string): number {
+    const currentContext = this.#inlineStrategy?.getContext(workflowId);
+    return currentContext?.nestingDepth ?? this.#workflowNestingDepths.get(workflowId) ?? 0;
+  }
+
+  async #executeChildWorkflow(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'child-workflow' }>,
+    currentDepth: number,
+  ): Promise<unknown> {
+    const rawId = operation.options?.['id'];
+    const childWorkflowId = typeof rawId === 'string' ? rawId : crypto.randomUUID();
+    const parentHeaders = this.#workflowHeaders.get(workflowId) ?? new Map<string, string>();
+    const executeChild = async () => {
+      this.#pendingNestingDepth = currentDepth + 1;
+      this.#pendingParentHeaders = this.#workflowHeaders.get(workflowId);
+      const childHandle = await this.start(operation.workflowType, operation.input, {
+        id: childWorkflowId,
+      });
+      return childHandle.result();
+    };
+
+    const composedInterceptor = this.#getComposedWorkflowInterceptor();
+    if (!composedInterceptor) {
+      return executeChild();
+    }
+
+    return composedInterceptor.childWorkflow(
+      {
+        workflowId,
+        childWorkflowId,
+        workflowType: operation.workflowType,
+        input: operation.input,
+        headers: new Map<string, string>(),
+        parentHeaders,
+      },
+      executeChild,
+    );
+  }
+
+  async #processWaitReviewOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'wait-review' }>,
+  ): Promise<void> {
+    return this.#runOperationWithoutResult(workflowId, operation, () =>
+      this.#processReviewOperation(workflowId, operation.reviewOptions),
+    );
+  }
+
+  async #processHandoffOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'handoff' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      const { handoff: executeHandoff, createChildHeaders } = await import('../ai/coordination.ts');
+      return executeHandoff({
+        ...operation.options,
+        headers: createChildHeaders(this.#workflowHeaders.get(workflowId)),
+      });
+    });
+  }
+
+  async #processDebateOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'debate' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      const { debate: executeDebate } = await import('../ai/coordination.ts');
+      return executeDebate(operation.options);
+    });
+  }
+
+  async #processSuperviseOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'supervise' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      const { supervise: executeSupervise } = await import('../ai/coordination.ts');
+      return executeSupervise(operation.options);
+    });
+  }
+
+  async #executeSubOperation(
+    workflowId: string,
+    operation: ContextOperationRequest,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    // Check for abort before starting any sub-operation so that losing race
+    // branches are skipped if the winner has already settled.
+    signal?.throwIfAborted();
+
     switch (operation.type) {
       case 'activity':
+        signal?.throwIfAborted();
         return callActivityFunction(operation.fn, operation.args);
       case 'memo':
+        signal?.throwIfAborted();
         return callMemoFunction(operation.fn);
+      case 'agent': {
+        const { executeAgentLoop } = await import('../ai/agent.ts');
+        const {
+          prompt,
+          budget: budgetOptions,
+          budgetNamespace,
+          contextStrategy: _contextStrategy,
+          ...rest
+        } = operation.options;
+
+        // Use the shared helper so agent sub-operations get the same
+        // warning/exceeded event wiring as standalone `ctx.agent()` calls.
+        const budgetTracker = await this.#createAgentBudgetTracker(
+          workflowId,
+          operation,
+          budgetOptions,
+        );
+
+        // Enforce organization-level budget policy before starting the agent
+        // loop so that agents embedded in ctx.all()/ctx.race() collectively
+        // count against the shared namespace cap, matching the behavior of
+        // #processAgentContextOperation.
+        const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
+        await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
+
+        const agentResult = await executeAgentLoop(
+          {
+            ...rest,
+            budget: budgetTracker,
+            // Thread the abort signal so losing branches of `ctx.race()`
+            // stop consuming budget after the race settles.
+            signal,
+          },
+          prompt,
+        );
+
+        // Record against org budget so multiple agents in ctx.all()/ctx.race()
+        // do not bypass the namespace cap.
+        await this.#recordAgentBudgetCost(
+          workflowId,
+          operation.operationId,
+          resolvedBudgetNamespace,
+          agentResult.totalCost,
+        );
+
+        // Match `#processAgentContextOperation` which unwraps the result to
+        // the content string. Without this, `ctx.all()`/`ctx.race()` with
+        // agent sub-operations would return the full `AgentResult` object
+        // while standalone `ctx.agent()` returns the content — breaking
+        // type expectations for callers.
+        return agentResult.content;
+      }
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);
     }
   }
 
   async #handleTimerFired(entry: { id: string; workflowId: string; kind: string }): Promise<void> {
+    // Check if this timer is for a review escalation/timeout
+    if (entry.id.startsWith('review-escalation:') || entry.id.startsWith('review-timeout:')) {
+      // Extract reviewId from the timer ID
+      const parts = entry.id.split(':');
+      const reviewId = parts[1]!;
+      const handler = this.#reviewEscalationHandlers.get(reviewId);
+      if (handler) {
+        // Guard: skip if the workflow is no longer running (e.g. cancelled/failed concurrently)
+        const state = await this.#loadWorkflowState(entry.workflowId);
+        if (!state || state.status !== 'running') return;
+        await handler(entry);
+      }
+      return;
+    }
+
     if (entry.kind === 'sleep') {
       // Extract the operation ID from the timer ID (format: "sleep:<operationId>")
       const operationId = entry.id.replace('sleep:', '');
@@ -2120,13 +3397,268 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
-  async #consumeSignal(workflowId: string, signalName: string): Promise<unknown> {
+  /** Remove all pending review entries from storage for a given workflow. */
+  async #cleanupReviews(workflowId: string): Promise<void> {
+    const prefix = `review:${workflowId}:`;
+    const deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
+    for await (const [key] of this.#storage.scan(prefix)) {
+      deleteOperations.push({ type: 'delete', key });
+    }
+    if (deleteOperations.length > 0) {
+      await this.#storage.batch(deleteOperations);
+    }
+  }
+
+  /**
+   * Remove durable records keyed by `workflowId` that otherwise leak after a
+   * workflow reaches a terminal state.
+   *
+   * - When `includeOutputArtifacts` is `false` (used by `#completeWorkflow`
+   *   and `#failWorkflow`), only internal bookkeeping is swept: pending
+   *   signals. Output artifacts — offloaded values, blob stream chunks,
+   *   shared state, and event history — are preserved so consumers can
+   *   still read them via `getStreamChunks()`, `getOffload()`,
+   *   `Engine.getEvents()`, etc. after `handle.result()` resolves.
+   * - When `includeOutputArtifacts` is `true` (used by `#terminateWorkflow`),
+   *   the workflow has been cancelled or timed out and no consumer is
+   *   waiting on output artifacts, so everything except `ev:` (preserved
+   *   for the events endpoint) is removed.
+   *
+   * Concurrency note: we assume all writers for a workflow's prefixed keys
+   * originate from that workflow's own execution. By the time this runs, the
+   * workflow is already terminal and cannot schedule new writes —
+   * `#completeWorkflow`, `#failWorkflow`, and `#terminateWorkflow` all await
+   * this method before returning. Any write that races the scan must have
+   * come from a background task that itself holds a handle to the terminal
+   * workflow, and those are caller-level bugs we don't try to paper over here.
+   *
+   * Scale note: deletes are flushed in batches of `CLEANUP_BATCH_SIZE` so
+   * workflows with many blobs/signals do not allocate a single oversized
+   * operation array.
+   */
+  async #cleanupWorkflowStorage(
+    workflowId: string,
+    includeOutputArtifacts: boolean,
+  ): Promise<void> {
+    // Always sweep internal state (signals are workflow-scoped scratch space).
+    const prefixes: string[] = [`sig:${workflowId}:`];
+
+    if (includeOutputArtifacts) {
+      // Terminated workflows have no waiting consumers, so drop the output
+      // artifacts too. Event history is still preserved via the omission of
+      // the `ev:` prefix — callers that want it gone should use a storage
+      // TTL or explicit pruning.
+      prefixes.push(`offload:${workflowId}:`, `blob:${workflowId}:`, `shared:${workflowId}:`);
+    }
+
+    const CLEANUP_BATCH_SIZE = 500;
+    let deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
+    const flush = async (): Promise<void> => {
+      if (deleteOperations.length === 0) return;
+      await this.#storage.batch(deleteOperations);
+      deleteOperations = [];
+    };
+
+    for (const prefix of prefixes) {
+      for await (const [key] of this.#storage.scan(prefix)) {
+        deleteOperations.push({ type: 'delete', key });
+        if (deleteOperations.length >= CLEANUP_BATCH_SIZE) {
+          await flush();
+        }
+      }
+    }
+
+    await flush();
+  }
+
+  /**
+   * Shared cleanup invoked from every terminal-state transition (complete,
+   * fail, cancel, timeout). Drops in-memory state (checkpoints, heartbeat
+   * details, agent workflow membership, waiters) and deletes durable records
+   * under workflow-keyed storage prefixes. Also releases the per-workflow
+   * set of charged agent operation IDs so `#chargedAgentOperations` cannot
+   * grow unbounded across the engine's lifetime.
+   *
+   * `includeOutputArtifacts` controls whether the caller has any consumers
+   * still waiting to read streams/offload/shared state from the terminal
+   * workflow. `#completeWorkflow` and `#failWorkflow` pass `false` so those
+   * artifacts remain queryable after `handle.result()` resolves; only
+   * `#terminateWorkflow` (cancel/timeout) passes `true`.
+   */
+  async #cleanupTerminalWorkflow(
+    workflowId: string,
+    includeOutputArtifacts: boolean,
+  ): Promise<void> {
+    // In-memory state
+    this.#checkpoints.delete(workflowId);
+    this.#heartbeatDetails.delete(workflowId);
+    this.#agentWorkflowIds.delete(workflowId);
+    this.#cleanupWaiters(workflowId);
+
+    // Release the workflow's agent operation dedup entries via the reverse
+    // index. O(k) in this workflow's own agent operations rather than O(N)
+    // in the engine-wide set — important for long-lived engines that run
+    // many agents across many workflows.
+    //
+    // Also queue the per-operation `budget-charged:{operationId}` durable
+    // keys for deletion. These are not workflow-scoped in storage, so we
+    // have to build the batch from the reverse index before dropping it.
+    const workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
+    const budgetChargedDeletes: import('../storage/interface.ts').BatchOperation[] = [];
+    if (workflowOperations) {
+      for (const operationId of workflowOperations) {
+        this.#chargedAgentOperations.delete(operationId);
+        budgetChargedDeletes.push({ type: 'delete', key: KEYS.budgetCharged(operationId) });
+      }
+      this.#chargedAgentOperationsByWorkflow.delete(workflowId);
+    }
+
+    // Durable records
+    await this.#cleanupReviews(workflowId);
+    await this.#cleanupWorkflowStorage(workflowId, includeOutputArtifacts);
+    if (budgetChargedDeletes.length > 0) {
+      await this.#storage.batch(budgetChargedDeletes);
+    }
+  }
+
+  /**
+   * Handle a `wait-review` operation: create a durable review request,
+   * dispatch events, fire webhooks, set up escalation timers, and block
+   * until a decision arrives via `submitReview()`.
+   */
+  async #processReviewOperation(workflowId: string, options: HumanReviewOptions): Promise<void> {
+    const now = this.#options.getNow();
+
+    // Create a review request in storage
+    const reviewOptions: import('../ai/human-review.ts').ReviewOptions = {
+      artifact: options.artifact,
+    };
+    if (options.reviewType !== undefined) reviewOptions.reviewType = options.reviewType;
+    if (options.reviewers !== undefined) reviewOptions.reviewers = options.reviewers;
+    if (options.allowPartial !== undefined) reviewOptions.allowPartial = options.allowPartial;
+    if (options.timeout !== undefined) reviewOptions.timeout = options.timeout;
+    if (options.escalation !== undefined) reviewOptions.escalation = options.escalation;
+    if (options.webhookUrl !== undefined) reviewOptions.webhookUrl = options.webhookUrl;
+
+    const reviewRequest = await this.#reviewCoordinator.createReview(workflowId, reviewOptions);
+
+    const reviewId = reviewRequest.reviewId;
+
+    // Dispatch HumanReviewRequestedEvent
+    this.dispatchEvent(
+      new HumanReviewRequestedEvent(
+        workflowId,
+        reviewId,
+        reviewRequest.reviewType,
+        reviewRequest.reviewers,
+      ),
+    );
+
+    // Fire webhook notification with cancellation support tied to engine lifecycle
+    if (options.webhookUrl) {
+      const webhookAbort = new AbortController();
+      this.#pendingWebhooks.add(webhookAbort);
+      void this.#sendReviewWebhook(workflowId, reviewRequest, options.webhookUrl, webhookAbort);
+    }
+
+    // Set up escalation timers and track their IDs for cleanup
+    const timerIds: string[] = [];
+    if (options.escalation && options.escalation.length > 0) {
+      for (const step of options.escalation) {
+        const fireAt = now + step.after;
+        const timerId = `review-escalation:${reviewId}:${step.after}`;
+        timerIds.push(timerId);
+        await this.#scheduler.schedule({
+          id: timerId,
+          workflowId,
+          fireAt,
+          kind: 'sleep', // Reuse sleep kind — the timer handler checks the id prefix
+        });
+      }
+    }
+
+    // Set up timeout timer
+    if (options.timeout !== undefined) {
+      const timeoutFireAt = now + options.timeout;
+      const timeoutTimerId = `review-timeout:${reviewId}`;
+      timerIds.push(timeoutTimerId);
+      await this.#scheduler.schedule({
+        id: timeoutTimerId,
+        workflowId,
+        fireAt: timeoutFireAt,
+        kind: 'sleep',
+      });
+    }
+
+    // Wait for the review decision (blocks the workflow generator).
+    // We use a result-or-error wrapper instead of rejection to avoid
+    // unhandled rejection timing issues with bun:test.
+    const { promise, resolve } = Promise.withResolvers<
+      { ok: true; value: HumanReviewResult } | { ok: false; error: Error }
+    >();
+    const waiterKey = `${workflowId}:${reviewId}`;
+    this.#reviewWaiters.set(waiterKey, this.#resolveReviewDecision.bind(this, resolve));
+
+    // Register the escalation handler and track the reviewId → workflowId association
+    this.#reviewEscalationHandlers.set(
+      reviewId,
+      this.#handleReviewEscalationTimer.bind(
+        this,
+        workflowId,
+        reviewId,
+        waiterKey,
+        reviewRequest,
+        options,
+        resolve,
+      ),
+    );
+    if (timerIds.length > 0) {
+      this.#reviewTimerIds.set(reviewId, timerIds);
+    }
+    let reviewIdSet = this.#workflowReviewIds.get(workflowId);
+    if (!reviewIdSet) {
+      reviewIdSet = new Set();
+      this.#workflowReviewIds.set(workflowId, reviewIdSet);
+    }
+    reviewIdSet.add(reviewId);
+
+    const outcome = await promise;
+
+    // Clean up escalation handler, timer IDs, and workflow-reviewId tracking
+    this.#reviewEscalationHandlers.delete(reviewId);
+    this.#reviewTimerIds.delete(reviewId);
+    const trackedIds = this.#workflowReviewIds.get(workflowId);
+    if (trackedIds) {
+      trackedIds.delete(reviewId);
+      if (trackedIds.size === 0) this.#workflowReviewIds.delete(workflowId);
+    }
+
+    // Cancel any remaining escalation/timeout timers
+    if (options.escalation) {
+      for (const step of options.escalation) {
+        await this.#scheduler.cancel(`review-escalation:${reviewId}:${step.after}`, workflowId);
+      }
+    }
+    if (options.timeout !== undefined) {
+      await this.#scheduler.cancel(`review-timeout:${reviewId}`, workflowId);
+    }
+
+    if (!outcome.ok) {
+      // The workflow was already failed directly (e.g., by the timeout handler).
+      // Just return without feeding a result.
+      return;
+    }
+
+    this.#feedOperationResult(workflowId, { status: 'completed', value: outcome.value });
+  }
+
+  async #consumeSignal(workflowId: string, signalName: string): Promise<ConsumedSignalResult> {
     const prefix = `sig:${workflowId}:${signalName}:`;
     for await (const [key, value] of this.#storage.scan(prefix, { limit: 1 })) {
       await this.#storage.delete(key);
-      return decode(value);
+      return { found: true, payload: decode(value) };
     }
-    return undefined;
+    return { found: false };
   }
 
   /**
@@ -2142,6 +3674,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     for (const key of this.#updateWaiters.keys()) {
       if (key.startsWith(prefix)) this.#updateWaiters.delete(key);
     }
+    for (const key of this.#reviewWaiters.keys()) {
+      if (key.startsWith(prefix)) this.#reviewWaiters.delete(key);
+    }
     const sleepOps = this.#sleepResolversByWorkflow.get(workflowId);
     if (sleepOps) {
       for (const operationId of sleepOps) {
@@ -2152,7 +3687,24 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
       this.#sleepResolversByWorkflow.delete(workflowId);
     }
+    // Clean up any review escalation handlers and their scheduled timers
+    const reviewIds = this.#workflowReviewIds.get(workflowId);
+    if (reviewIds) {
+      for (const reviewId of reviewIds) {
+        this.#reviewEscalationHandlers.delete(reviewId);
+        const timers = this.#reviewTimerIds.get(reviewId);
+        if (timers) {
+          for (const timerId of timers) {
+            void this.#swallowPromiseRejection(this.#scheduler.cancel(timerId, workflowId));
+          }
+          this.#reviewTimerIds.delete(reviewId);
+        }
+      }
+      this.#workflowReviewIds.delete(workflowId);
+    }
+
     this.#workflowNestingDepths.delete(workflowId);
+    this.#workflowHeaders.delete(workflowId);
   }
 
   // -------------------------------------------------------------------------
@@ -2175,9 +3727,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
-    this.#checkpoints.delete(workflowId);
-    this.#heartbeatDetails.delete(workflowId);
-    this.#cleanupWaiters(workflowId);
+    // Drop in-memory state, release charged operations, and delete durable
+    // workflow-keyed records (reviews, pending signals, per-workflow dedup).
+    // Output artifacts (offload, blob, shared, events) are preserved so
+    // consumers can still read them after `handle.result()` resolves.
+    await this.#cleanupTerminalWorkflow(workflowId, false);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
     this.dispatchEvent(event);
@@ -2206,9 +3760,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
-    this.#checkpoints.delete(workflowId);
-    this.#heartbeatDetails.delete(workflowId);
-    this.#cleanupWaiters(workflowId);
+    // Drop in-memory state, release charged operations, and delete durable
+    // workflow-keyed records (reviews, pending signals, per-workflow dedup).
+    // Output artifacts (offload, blob, shared, events) are preserved so
+    // consumers can still read them after `handle.result()` rejects.
+    await this.#cleanupTerminalWorkflow(workflowId, false);
 
     const event = new WorkflowFailedEvent(workflowId, error);
     this.dispatchEvent(event);
@@ -2263,9 +3819,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   #forwardEventToHandle(workflowId: string, event: Event): void {
-    const weakRef = this.#handleCache.get(workflowId);
-    if (!weakRef) return;
-    const handle = weakRef.deref();
+    const entry = this.#handleCache.get(workflowId);
+    if (!entry) return;
+    const handle = entry.ref.deref();
     if (!handle) return;
     // Re-dispatch the typed event so handle listeners receive the full event
     // with all custom properties (workflowId, timeoutType, error, etc.).
@@ -2284,13 +3840,46 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #resolveActivityFunction(
     operation: Extract<ContextOperationRequest, { type: 'activity' }>,
   ): (...arguments_: unknown[]) => unknown {
-    const registered = this.#activityRegistrations.get(operation.activityName);
+    const registered = this.#activityRegistry.resolve(operation.activityName);
     if (registered) return registered;
     if (operation.fn) return operation.fn as (...arguments_: unknown[]) => unknown;
     throw new Error(
       `No activity registered with name "${operation.activityName}". ` +
         'In worker mode, activities must be registered via engine.registerActivity().',
     );
+  }
+
+  async #invokeWorkerActivity(
+    operationId: string,
+    activityName: string,
+    args: unknown[],
+  ): Promise<unknown> {
+    const dispatcher = this.#activityWorkerDispatcher;
+    if (!dispatcher) {
+      throw new Error(`No activity worker dispatcher available for "${activityName}"`);
+    }
+
+    const result = await dispatcher.execute({
+      operationId,
+      activityName,
+      input: args.length === 1 ? args[0] : args,
+      attempt: 1,
+    });
+    if (result.status === 'failed') {
+      throw new Error(result.error);
+    }
+
+    return result.value;
+  }
+
+  #invokeInlineActivity(
+    operation: Extract<ContextOperationRequest, { type: 'activity' }>,
+    activityContext: import('./types.ts').ActivityContext,
+    _activityName: string,
+    args: unknown[],
+  ): unknown {
+    const activityFunction = this.#resolveActivityFunction(operation);
+    return callActivityFunction(activityFunction, [...args, activityContext]);
   }
 
   /**
@@ -2314,46 +3903,40 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Build the leaf executor: either dispatch to a worker or call inline.
     const invokeActivity = this.#activityWorkerDispatcher
-      ? async (name: string, args: unknown[]) => {
-          const result = await this.#activityWorkerDispatcher!.execute({
-            operationId: operation.operationId,
-            activityName: name,
-            input: args.length === 1 ? args[0] : args,
-            attempt: 1,
-          });
-          if (result.status === 'failed') {
-            throw new Error(result.error);
-          }
-          return result.value;
-        }
-      : (_name: string, args: unknown[]) => {
-          const activityFunction = this.#resolveActivityFunction(operation);
-          return callActivityFunction(activityFunction, [...args, activityContext]);
-        };
+      ? this.#invokeWorkerActivity.bind(this, operation.operationId)
+      : this.#invokeInlineActivity.bind(this, operation, activityContext);
 
     // If there are activity interceptors, use cached composition
     const composedActivity = this.#getComposedActivityInterceptor();
     if (composedActivity) {
-      return composedActivity.execute(
-        {
-          activityName: operation.activityName,
-          input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
-          attempt: 1,
-          headers: new Map(),
-        },
-        async (interception) => {
-          const args = Array.isArray(interception.input)
-            ? interception.input
-            : [interception.input];
-          return invokeActivity(operation.activityName, args);
-        },
-      );
+      const activityInterception = {
+        workflowId,
+        activityName: operation.activityName,
+        input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
+        attempt: 1,
+        headers: new Map<string, string>(),
+      };
+
+      const result = await composedActivity.execute(activityInterception, async (interception) => {
+        const args = Array.isArray(interception.input) ? interception.input : [interception.input];
+        return invokeActivity(operation.activityName, args);
+      });
+
+      // Capture interceptor headers onto the operation for dispatch
+      if (activityInterception.headers.size > 0) {
+        (operation as Record<string, unknown>)['headers'] = [
+          ...activityInterception.headers.entries(),
+        ];
+      }
+
+      return result;
     }
 
     // If there are workflow interceptors with activity hooks, use cached composition
     const composedWorkflow = this.#getComposedWorkflowInterceptor();
     if (composedWorkflow) {
       const interception = {
+        workflowId,
         activityName: operation.activityName,
         input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
         attempt: 1,
@@ -2371,6 +3954,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       while (!current.done) {
         current = generator.next(current.value);
       }
+
+      // Capture interceptor headers onto the operation for dispatch
+      if (interception.headers.size > 0) {
+        (operation as Record<string, unknown>)['headers'] = [...interception.headers.entries()];
+      }
+
       return current.value;
     }
 
@@ -2396,6 +3985,90 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const fieldPaths = result.divergences.map((divergence) => divergence.path);
       const message = `Checkpoint at step ${step} has ${result.divergences.length} non-serializable field(s)`;
       this.dispatchEvent(new DevelopmentWarningEvent(workflowId, message, fieldPaths));
+    }
+  }
+
+  /**
+   * Invoke an update handler, checking that it does not return a generator.
+   * Centralises the runtime generator guard for both the inline-handler path
+   * in `update()` and the pending-drain path on resume.
+   */
+  async #invokeUpdateHandler(
+    name: string,
+    handler: (payload: unknown) => unknown,
+    payload: unknown,
+  ): Promise<unknown> {
+    const result = handler(payload);
+    if (isGeneratorResult(result)) {
+      throw new TypeError(
+        `Update handler "${name}" returned a generator. ` +
+          'Update handlers must return a plain value or a Promise, not a generator.',
+      );
+    }
+    return await result;
+  }
+
+  /**
+   * Process pending coordinated updates that match registered inline handlers.
+   * Called on resume to drain updates that arrived while the workflow was paused.
+   */
+  async #processPendingUpdatesForHandlers(workflowId: string): Promise<void> {
+    const context = this.#inlineStrategy?.getContext(workflowId);
+    if (!context) return;
+
+    const handlers = context.updateHandlers;
+    if (handlers.size === 0) return;
+
+    // getPendingUpdates returns FIFO-sorted results.
+    const pendingUpdates = await this.#updateCoordinator.getPendingUpdates(workflowId);
+    if (pendingUpdates.length === 0) return;
+
+    for (const update of pendingUpdates) {
+      const handler = handlers.get(update.name);
+      if (!handler) continue;
+
+      this.dispatchEvent(
+        new UpdateReceivedEvent(update.updateId, workflowId, update.name, update.payload),
+      );
+
+      let result: unknown;
+      let error: string | undefined;
+      try {
+        result = await this.#invokeUpdateHandler(update.name, handler, update.payload);
+      } catch (handlerError) {
+        error = handlerError instanceof Error ? handlerError.message : String(handlerError);
+      }
+
+      const responseOperations = this.#updateCoordinator.buildResponseOperations(
+        update.updateId,
+        workflowId,
+        result,
+        error,
+        update.idempotencyKey,
+      );
+      await this.#storage.batch(responseOperations);
+
+      this.dispatchEvent(
+        new UpdateCompletedEvent(update.updateId, workflowId, update.name, result, error),
+      );
+      this.#broadcast({ type: 'update:completed', workflowId, updateId: update.updateId });
+    }
+  }
+
+  static readonly #TERMINAL_STATUSES: ReadonlySet<WorkflowStatus> = new Set<WorkflowStatus>([
+    'completed',
+    'failed',
+    'cancelled',
+    'timed-out',
+  ]);
+
+  /** Throw {@link WorkflowTerminalError} if the workflow is in a terminal state. */
+  async #guardTerminalWorkflow(workflowId: string): Promise<void> {
+    const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
+    if (!stateBytes) return; // unknown workflow — let downstream handle it
+    const state = decodeWorkflowState(stateBytes);
+    if (Engine.#TERMINAL_STATUSES.has(state.status)) {
+      throw new WorkflowTerminalError(workflowId, state.status);
     }
   }
 

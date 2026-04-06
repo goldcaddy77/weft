@@ -10,6 +10,7 @@
 import { decode, encode } from '../core/codec.ts';
 import type { BatchOperation, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
+import { HumanReviewRequestedEvent } from './events.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +54,22 @@ export interface ReviewOptions {
   webhookUrl?: string;
 }
 
+/**
+ * Options passed to `ctx.humanReview()` inside a workflow generator.
+ * Extends the base ReviewOptions with context-level callbacks.
+ */
+export interface HumanReviewOptions extends ReviewOptions {
+  /** Enable conversation round-trips between reviewer and workflow. */
+  conversation?: boolean;
+  /** Handler for incoming reviewer messages during conversation. */
+  onMessage?: (message: string) => string;
+  /** Handler called when an escalation step fires. */
+  onEscalation?: (action: EscalationAction) => void;
+}
+
+/** The decision payload returned to the workflow from `ctx.humanReview()`. */
+export type HumanReviewResult = ReviewDecision;
+
 export type EscalationAction =
   | { type: 'escalate'; to: string }
   | { type: 'auto-decide'; decision: 'approved' | 'rejected'; auditReason: string };
@@ -77,11 +94,26 @@ export class ReviewTimeoutError extends Error {
 // Coordinator
 // ---------------------------------------------------------------------------
 
+export interface ReviewCoordinatorOptions {
+  /** When provided, the coordinator dispatches human review events. */
+  eventTarget?: EventTarget;
+  /** Custom time source for testing. Defaults to `Date.now`. */
+  getNow?: () => number;
+}
+
 export class ReviewCoordinator {
   #storage: Storage;
+  #getNow: () => number;
+  #eventTarget: EventTarget | undefined;
 
-  constructor(storage: Storage) {
+  constructor(storage: Storage, optionsOrGetNow?: ReviewCoordinatorOptions | (() => number)) {
     this.#storage = storage;
+    if (typeof optionsOrGetNow === 'function') {
+      this.#getNow = optionsOrGetNow;
+    } else {
+      this.#getNow = optionsOrGetNow?.getNow ?? Date.now;
+      this.#eventTarget = optionsOrGetNow?.eventTarget;
+    }
   }
 
   /** Create a review request and persist it. */
@@ -95,7 +127,7 @@ export class ReviewCoordinator {
       reviewType: options.reviewType ?? 'general',
       reviewers: options.reviewers ?? [],
       allowPartial: options.allowPartial ?? false,
-      createdAt: Date.now(),
+      createdAt: this.#getNow(),
     };
 
     if (options.timeout !== undefined) {
@@ -108,6 +140,12 @@ export class ReviewCoordinator {
 
     const key = KEYS.review(workflowId, reviewId);
     await this.#storage.put(key, encode(request));
+
+    if (this.#eventTarget) {
+      this.#eventTarget.dispatchEvent(
+        new HumanReviewRequestedEvent(workflowId, reviewId, request.reviewType, request.reviewers),
+      );
+    }
 
     return request;
   }

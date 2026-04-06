@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { AgentProviderCircuitOpenEvent } from './events.ts';
 import {
   ProviderHealthTracker,
   type CircuitState,
@@ -436,6 +437,123 @@ describe('ProviderHealthTracker', () => {
     });
   });
 
+  describe('expired entries are dropped from the sliding window', () => {
+    it('ignores pre-window failures when computing the error rate', () => {
+      const { tracker, advance } = createTrackerWithClock({
+        windowDuration: 10_000,
+        minimumRequests: 5,
+        errorThreshold: 0.9,
+      });
+
+      // Record a burst of failures at time 0.
+      for (let i = 0; i < 50; i++) {
+        tracker.recordFailure('openai');
+      }
+      expect(tracker.getErrorRate('openai')).toBe(1);
+
+      // Advance past the window and record one success. The in-window rate
+      // should reflect only the success, not the 50 stale failures.
+      advance(11_000);
+      tracker.recordSuccess('openai');
+      expect(tracker.getErrorRate('openai')).toBe(0);
+    });
+
+    it('does not trip the circuit on stale failures after the window rolls', () => {
+      const { tracker, advance } = createTrackerWithClock({
+        windowDuration: 10_000,
+        minimumRequests: 5,
+        errorThreshold: 0.5,
+      });
+
+      // A burst of failures in a fresh window trips the circuit.
+      for (let i = 0; i < 10; i++) {
+        tracker.recordFailure('openai');
+      }
+      expect(tracker.getState('openai')).toBe('open');
+
+      // Advance past cooldown so a new batch can re-evaluate.
+      advance(31_000); // past 10s window and 30s cooldown
+      expect(tracker.getState('openai')).toBe('half-open');
+
+      // A single success closes the circuit and resets the entries.
+      tracker.recordSuccess('openai');
+      expect(tracker.getState('openai')).toBe('closed');
+
+      // A new batch of successes must not be shadowed by stale failures.
+      for (let i = 0; i < 10; i++) {
+        tracker.recordSuccess('openai');
+      }
+      expect(tracker.getErrorRate('openai')).toBe(0);
+      expect(tracker.getState('openai')).toBe('closed');
+    });
+
+    it('keeps in-window entries while dropping expired ones', () => {
+      const { tracker, advance } = createTrackerWithClock({
+        windowDuration: 10_000,
+        minimumRequests: 5,
+        errorThreshold: 0.9,
+      });
+
+      // Record 5 failures at time 0.
+      for (let i = 0; i < 5; i++) {
+        tracker.recordFailure('openai');
+      }
+
+      // Advance halfway through the window and record 5 successes.
+      advance(5_000);
+      for (let i = 0; i < 5; i++) {
+        tracker.recordSuccess('openai');
+      }
+
+      // Everything is still in-window: 5 failures + 5 successes = 50%.
+      expect(tracker.getErrorRate('openai')).toBe(0.5);
+
+      // Advance past the time-0 failures' expiry. Only the 5 successes
+      // should remain in the window.
+      advance(6_000);
+      expect(tracker.getErrorRate('openai')).toBe(0);
+    });
+
+    // Pruning is a pure memory optimisation — the behaviour-facing methods
+    // (getErrorRate, getState) already filter by timestamp, so the only
+    // observable fingerprint of `#prune` is the backing array length. The
+    // `getEntryCount` accessor exists solely for this regression guard.
+    it('trims the backing array to bound memory growth in the closed state', () => {
+      const { tracker, advance } = createTrackerWithClock({
+        windowDuration: 10_000,
+        minimumRequests: 5,
+        errorThreshold: 0.9, // high enough the circuit stays closed
+      });
+
+      // Write 100 entries in the first window.
+      for (let i = 0; i < 100; i++) {
+        tracker.recordSuccess('openai');
+      }
+      expect(tracker.getEntryCount('openai')).toBe(100);
+
+      // Advance well past the window and write one more. The single new
+      // entry must cause `#prune` to drop all 100 stale entries — without
+      // pruning, the array would grow to 101 entries.
+      advance(11_000);
+      tracker.recordSuccess('openai');
+      expect(tracker.getEntryCount('openai')).toBe(1);
+
+      // Pruning must also fire on recordFailure so failure-heavy traffic
+      // does not leak memory either.
+      advance(11_000);
+      tracker.recordFailure('openai');
+      expect(tracker.getEntryCount('openai')).toBe(1);
+
+      // And the bound holds across many rollovers — without `#prune`, the
+      // backing array would grow by one per iteration.
+      for (let iteration = 0; iteration < 50; iteration++) {
+        advance(11_000);
+        tracker.recordSuccess('openai');
+        expect(tracker.getEntryCount('openai')).toBe(1);
+      }
+    });
+  });
+
   describe('unknown provider defaults to healthy', () => {
     it('treats never-seen providers as healthy and closed', () => {
       const tracker = createTracker();
@@ -465,6 +583,90 @@ describe('ProviderHealthTracker', () => {
 
       expect(tracker.getState('openai')).toBe('open');
       expect(tracker.getState('anthropic')).toBe('closed');
+      expect(tracker.isHealthy('openai')).toBe(false);
+      expect(tracker.isHealthy('anthropic')).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // D6: AgentProviderCircuitOpenEvent dispatched when circuit opens
+  // -------------------------------------------------------------------------
+
+  describe('eventTarget dispatch on circuit open', () => {
+    it('dispatches AgentProviderCircuitOpenEvent when circuit trips', () => {
+      const circuitEvents: AgentProviderCircuitOpenEvent[] = [];
+      const eventTarget = new EventTarget();
+
+      eventTarget.addEventListener(AgentProviderCircuitOpenEvent.type, ((
+        event: AgentProviderCircuitOpenEvent,
+      ) => {
+        circuitEvents.push(event);
+      }) as EventListener);
+
+      const tracker = new ProviderHealthTracker({
+        windowDuration: 60_000,
+        errorThreshold: 0.5,
+        cooldownDuration: 30_000,
+        minimumRequests: 5,
+        getNow: () => 0,
+      });
+
+      tracker.eventTarget = eventTarget;
+
+      // Trip the circuit: 5 failures
+      for (let i = 0; i < 5; i++) {
+        tracker.recordFailure('openai');
+      }
+
+      expect(tracker.getState('openai')).toBe('open');
+      expect(circuitEvents).toHaveLength(1);
+      expect(circuitEvents[0]!.provider).toBe('openai');
+      expect(circuitEvents[0]!.errorRate).toBeGreaterThan(0.5);
+      expect(circuitEvents[0]!.threshold).toBe(0.5);
+    });
+
+    it('does not dispatch event when circuit stays closed', () => {
+      const circuitEvents: AgentProviderCircuitOpenEvent[] = [];
+      const eventTarget = new EventTarget();
+
+      eventTarget.addEventListener(AgentProviderCircuitOpenEvent.type, ((
+        event: AgentProviderCircuitOpenEvent,
+      ) => {
+        circuitEvents.push(event);
+      }) as EventListener);
+
+      const tracker = new ProviderHealthTracker({
+        windowDuration: 60_000,
+        errorThreshold: 0.5,
+        cooldownDuration: 30_000,
+        minimumRequests: 5,
+        getNow: () => 0,
+      });
+
+      tracker.eventTarget = eventTarget;
+
+      // Only successes — no trip
+      for (let i = 0; i < 10; i++) {
+        tracker.recordSuccess('openai');
+      }
+
+      expect(circuitEvents).toHaveLength(0);
+    });
+
+    it('excludes open circuit provider from subsequent isHealthy checks', () => {
+      const tracker = new ProviderHealthTracker({
+        windowDuration: 60_000,
+        errorThreshold: 0.5,
+        cooldownDuration: 30_000,
+        minimumRequests: 3,
+        getNow: () => 0,
+      });
+
+      // Trip the circuit
+      tracker.recordFailure('openai');
+      tracker.recordFailure('openai');
+      tracker.recordFailure('openai');
+
       expect(tracker.isHealthy('openai')).toBe(false);
       expect(tracker.isHealthy('anthropic')).toBe(true);
     });

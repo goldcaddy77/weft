@@ -47,7 +47,7 @@ export class StepContext implements StepWorkflowContext {
         type: 'activity',
         operationId,
         activityName: name,
-        fn: fn as Function,
+        fn: fn as (...args: unknown[]) => unknown,
         args: [],
       },
       resolve,
@@ -142,8 +142,66 @@ export function compileStepWorkflow<TInput = unknown, TOutput = unknown>(
 // Detection helper
 // ---------------------------------------------------------------------------
 
-const AsyncGeneratorFunctionPrototype = Object.getPrototypeOf(async function* () {});
+function* sampleSyncGenerator(): Generator<undefined> {
+  yield undefined;
+}
 
+async function* sampleAsyncGenerator(): AsyncGenerator<undefined> {
+  yield undefined;
+}
+
+function getGeneratorDetectionPrototypes(): {
+  syncGeneratorFunctionPrototype: object;
+  asyncGeneratorFunctionPrototype: object;
+  syncGeneratorPrototype: object;
+  asyncGeneratorPrototype: object;
+} {
+  const syncGeneratorResult = sampleSyncGenerator();
+  syncGeneratorResult.next();
+
+  const asyncGeneratorResult = sampleAsyncGenerator();
+  void asyncGeneratorResult.next();
+
+  return {
+    syncGeneratorFunctionPrototype: Object.getPrototypeOf(sampleSyncGenerator),
+    asyncGeneratorFunctionPrototype: Object.getPrototypeOf(sampleAsyncGenerator),
+    syncGeneratorPrototype: Object.getPrototypeOf(sampleSyncGenerator.prototype),
+    asyncGeneratorPrototype: Object.getPrototypeOf(sampleAsyncGenerator.prototype),
+  };
+}
+
+const {
+  syncGeneratorFunctionPrototype: SYNC_GENERATOR_FUNCTION_PROTOTYPE,
+  asyncGeneratorFunctionPrototype: ASYNC_GENERATOR_FUNCTION_PROTOTYPE,
+  syncGeneratorPrototype: SYNC_GENERATOR_PROTOTYPE,
+  asyncGeneratorPrototype: ASYNC_GENERATOR_PROTOTYPE,
+} = getGeneratorDetectionPrototypes();
+
+/** Returns `true` if `fn` is a sync generator function (`function*`). */
+export function isGeneratorFunction(fn: Function): boolean {
+  return Object.getPrototypeOf(fn) === SYNC_GENERATOR_FUNCTION_PROTOTYPE;
+}
+
+/** Returns `true` if `fn` is an async generator function (`async function*`). */
 export function isAsyncGeneratorFunction(fn: Function): boolean {
-  return Object.getPrototypeOf(fn) === AsyncGeneratorFunctionPrototype;
+  return Object.getPrototypeOf(fn) === ASYNC_GENERATOR_FUNCTION_PROTOTYPE;
+}
+
+/**
+ * Check if a value is a Generator or AsyncGenerator object (not just any iterable).
+ * Arrays, Maps, Sets, etc. are NOT matched — only actual generator instances.
+ *
+ * The prototype chain for a generator instance is:
+ *   gen -> genFn.prototype -> Generator.prototype
+ * We compare the shared parent prototype so lookalike iterators do not match.
+ */
+export function isGeneratorResult(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false;
+  const directPrototype = Object.getPrototypeOf(value);
+  if (directPrototype === null) return false;
+
+  const sharedPrototype = Object.getPrototypeOf(directPrototype);
+  return (
+    sharedPrototype === SYNC_GENERATOR_PROTOTYPE || sharedPrototype === ASYNC_GENERATOR_PROTOTYPE
+  );
 }

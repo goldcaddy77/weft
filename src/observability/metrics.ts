@@ -8,6 +8,9 @@
  * @module metrics
  */
 
+import type { OtelMeter } from './no-op-telemetry';
+import { getOtelApi } from './no-op-telemetry';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -19,6 +22,160 @@ export interface MetricDefinition {
   description: string;
   unit: string;
   type: MetricType;
+}
+
+// ---------------------------------------------------------------------------
+// Metric catalogue
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Metrics collector
+// ---------------------------------------------------------------------------
+
+export type CounterMetric = { type: 'counter'; value: number };
+
+export type HistogramMetric = {
+  type: 'histogram';
+  count: number;
+  sum: number;
+  p50: number;
+  p99: number;
+  min: number;
+  max: number;
+};
+
+export type GaugeMetric = { type: 'gauge'; value: number };
+
+export type MetricsSnapshot = Record<string, CounterMetric | HistogramMetric | GaugeMetric>;
+
+/**
+ * Collects counters, histograms, and gauges for Weft observability.
+ *
+ * Thread-safe within a single Bun isolate. Call {@link snapshot} to read
+ * all collected values and {@link reset} to clear them.
+ */
+export class MetricsCollector {
+  #counters: Map<string, number>;
+  #histograms: Map<string, number[]>;
+  #gauges: Map<string, number>;
+
+  constructor() {
+    this.#counters = new Map();
+    this.#histograms = new Map();
+    this.#gauges = new Map();
+  }
+
+  /** Increment a counter by `value` (default 1). */
+  increment(name: string, value: number = 1): void {
+    this.#counters.set(name, (this.#counters.get(name) ?? 0) + value);
+  }
+
+  /** Record a histogram observation. */
+  record(name: string, value: number): void {
+    const values = this.#histograms.get(name) ?? [];
+    values.push(value);
+    this.#histograms.set(name, values);
+  }
+
+  /** Set an absolute gauge value. */
+  gauge(name: string, value: number): void {
+    this.#gauges.set(name, value);
+  }
+
+  /** Return a point-in-time snapshot of all collected metrics. */
+  snapshot(): MetricsSnapshot {
+    const result: MetricsSnapshot = {};
+
+    for (const [name, count] of this.#counters) {
+      result[name] = { type: 'counter', value: count };
+    }
+
+    for (const [name, values] of this.#histograms) {
+      const sorted = sortNumbersAscending(values);
+      result[name] = {
+        type: 'histogram',
+        count: values.length,
+        sum: sumNumbers(values),
+        p50: sorted[Math.floor(sorted.length * 0.5)] ?? 0,
+        p99: sorted[Math.floor(sorted.length * 0.99)] ?? 0,
+        min: sorted[0] ?? 0,
+        max: sorted[sorted.length - 1] ?? 0,
+      };
+    }
+
+    for (const [name, value] of this.#gauges) {
+      result[name] = { type: 'gauge', value };
+    }
+
+    return result;
+  }
+
+  /** Clear all collected metrics. */
+  reset(): void {
+    this.#counters.clear();
+    this.#histograms.clear();
+    this.#gauges.clear();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OTel metrics bridge
+// ---------------------------------------------------------------------------
+
+/** OTel instrument set for Weft metrics. */
+export type OtelMetrics = {
+  workflowDuration: {
+    record(value: number, attributes?: Record<string, string | number | boolean>): void;
+  };
+  activityDuration: {
+    record(value: number, attributes?: Record<string, string | number | boolean>): void;
+  };
+  activityAttempts: {
+    add(value: number, attributes?: Record<string, string | number | boolean>): void;
+  };
+  activeWorkflows: {
+    add(value: number, attributes?: Record<string, string | number | boolean>): void;
+  };
+};
+
+/**
+ * Create OTel instruments for the standard Weft metrics.
+ *
+ * Accepts an `OtelMeter` instance, a string meter name, or nothing. When
+ * called without arguments it uses `getOtelApi().metrics.getMeter('weft')`,
+ * which returns a no-op meter when `@opentelemetry/api` is not installed.
+ */
+export function createOtelMetrics(meterOrName?: OtelMeter | string): OtelMetrics {
+  let meter: OtelMeter;
+  if (typeof meterOrName === 'string') {
+    meter = getOtelApi().metrics.getMeter(meterOrName);
+  } else if (meterOrName) {
+    meter = meterOrName;
+  } else {
+    meter = getOtelApi().metrics.getMeter('weft');
+  }
+
+  return {
+    workflowDuration: meter.createHistogram('weft.workflow.duration', { unit: 'ms' }),
+    activityDuration: meter.createHistogram('weft.activity.duration', { unit: 'ms' }),
+    activityAttempts: meter.createCounter('weft.activity.attempts'),
+    activeWorkflows: meter.createUpDownCounter('weft.workflow.active'),
+  };
+}
+
+function sortNumbersAscending(values: number[]): number[] {
+  const sorted = [...values];
+  /* c8 ignore next -- the comparator is exercised by histogram tests, but Bun does not attribute it as a separate function hit */
+  sorted.sort((left, right) => left - right);
+  return sorted;
+}
+
+function sumNumbers(values: number[]): number {
+  let total = 0;
+  for (const value of values) {
+    total += value;
+  }
+  return total;
 }
 
 // ---------------------------------------------------------------------------
@@ -41,9 +198,9 @@ export const METRICS = {
   },
   activityAttempts: {
     name: 'weft.activity.attempts',
-    description: 'Number of attempts per activity',
+    description: 'Total activity execution attempts',
     unit: 'attempts',
-    type: 'histogram' as const,
+    type: 'counter' as const,
   },
   workflowActive: {
     name: 'weft.workflow.active',

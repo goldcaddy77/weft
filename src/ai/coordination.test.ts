@@ -1,10 +1,17 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 
+import { BudgetTracker } from './budget';
 import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message } from './providers/types';
 
-import { debate, handoff, summarizeConversation, supervise } from './coordination';
-import type { AgentDefinition } from './declaration';
+import {
+  createChildHeaders,
+  debate,
+  handoff,
+  summarizeConversation,
+  supervise,
+} from './coordination';
+import { defineAgent, type AgentDefinition } from './declaration';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,12 +45,67 @@ function createChatResponse(content: string, overrides?: Partial<ChatResponse>):
 }
 
 function createAgentDefinition(overrides?: Partial<AgentDefinition>): AgentDefinition {
-  return {
+  return defineAgent({
     name: 'test-agent',
     model: 'test-model',
     ...overrides,
-  };
+  });
 }
+
+// ---------------------------------------------------------------------------
+// createChildHeaders
+// ---------------------------------------------------------------------------
+
+describe('createChildHeaders', () => {
+  it('returns empty map when parentHeaders is undefined', () => {
+    const headers = createChildHeaders(undefined);
+    expect(headers.size).toBe(0);
+  });
+
+  it('returns empty map when parentHeaders has no trace headers', () => {
+    const parent = new Map<string, string>([['x-custom', 'value']]);
+    const headers = createChildHeaders(parent);
+    expect(headers.size).toBe(0);
+  });
+
+  it('forwards traceparent header from parent', () => {
+    const parent = new Map<string, string>([
+      ['traceparent', '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01'],
+    ]);
+
+    const headers = createChildHeaders(parent);
+
+    expect(headers.get('traceparent')).toBe(
+      '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01',
+    );
+  });
+
+  it('forwards tracestate header when present', () => {
+    const parent = new Map<string, string>([
+      ['traceparent', '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01'],
+      ['tracestate', 'vendor1=value1,vendor2=value2'],
+    ]);
+
+    const headers = createChildHeaders(parent);
+
+    expect(headers.get('traceparent')).toBeDefined();
+    expect(headers.get('tracestate')).toBe('vendor1=value1,vendor2=value2');
+  });
+
+  it('does not forward non-trace headers', () => {
+    const parent = new Map<string, string>([
+      ['traceparent', '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01'],
+      ['authorization', 'Bearer secret'],
+      ['x-request-id', '12345'],
+    ]);
+
+    const headers = createChildHeaders(parent);
+
+    expect(headers.size).toBe(1);
+    expect(headers.has('authorization')).toBe(false);
+    expect(headers.has('x-request-id')).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // handoff
@@ -509,6 +571,119 @@ describe('supervise', () => {
     // Workers + supervisor
     expect(callCount).toBe(3);
   });
+
+  it('propagates an already-aborted parent signal to worker and supervisor calls', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      supervise({
+        workers: [
+          createAgentDefinition({ name: 'worker-1' }),
+          createAgentDefinition({ name: 'worker-2' }),
+        ],
+        supervisor: createAgentDefinition({ name: 'supervisor' }),
+        input: 'Go',
+        strategy: 'best-of-n',
+        provider: createMockProvider([createChatResponse('done')]),
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('The operation was aborted');
+  });
+
+  it('rejects an unknown supervise strategy and cleans up the parent abort listener', async () => {
+    const controller = new AbortController();
+    const addEventListenerSpy = spyOn(controller.signal, 'addEventListener');
+    const removeEventListenerSpy = spyOn(controller.signal, 'removeEventListener');
+    const provider = createMockProvider([createChatResponse('worker-1')]);
+
+    await expect(
+      supervise({
+        workers: [createAgentDefinition({ name: 'worker-1' })],
+        supervisor: createAgentDefinition({ name: 'supervisor' }),
+        input: 'Go',
+        strategy: 'unsupported' as 'best-of-n',
+        provider,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('Unknown supervise strategy');
+
+    expect(addEventListenerSpy).toHaveBeenCalledTimes(1);
+    expect(removeEventListenerSpy).toHaveBeenCalledTimes(1);
+
+    addEventListenerSpy.mockRestore();
+    removeEventListenerSpy.mockRestore();
+  });
+
+  it('cleans up the parent abort listener after successful completion', async () => {
+    const controller = new AbortController();
+    const addEventListenerSpy = spyOn(controller.signal, 'addEventListener');
+    const removeEventListenerSpy = spyOn(controller.signal, 'removeEventListener');
+    const provider = createMockProvider([
+      createChatResponse('same'),
+      createChatResponse('same'),
+      createChatResponse('same'),
+    ]);
+
+    await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'sup' }),
+      input: 'Go',
+      strategy: 'consensus',
+      provider,
+      signal: controller.signal,
+    });
+
+    expect(addEventListenerSpy).toHaveBeenCalledTimes(1);
+    expect(removeEventListenerSpy).toHaveBeenCalledTimes(1);
+
+    addEventListenerSpy.mockRestore();
+    removeEventListenerSpy.mockRestore();
+  });
+
+  it('aborts in-flight workers when the parent signal fires after supervise starts', async () => {
+    const controller = new AbortController();
+    let capturedSignal: AbortSignal | undefined;
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      chat(_messages, options): Promise<ChatResponse> {
+        capturedSignal = options?.signal;
+
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal?.reason ?? new Error('parent aborted'));
+            },
+            { once: true },
+          );
+        });
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const resultPromise = supervise({
+      workers: [createAgentDefinition({ name: 'worker-1' })],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      provider,
+      signal: controller.signal,
+    });
+
+    await Bun.sleep(0);
+    controller.abort(new Error('parent aborted'));
+
+    await expect(resultPromise).rejects.toThrow('parent aborted');
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal!.aborted).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -535,5 +710,176 @@ describe('summarizeConversation', () => {
   it('returns an empty string for an empty conversation', () => {
     const summary = summarizeConversation([]);
     expect(summary).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Budget propagation
+// ---------------------------------------------------------------------------
+
+const BUDGET_OPTIONS = {
+  maxTokens: 10_000,
+  models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
+};
+
+describe('budget propagation', () => {
+  it('handoff passes budget to child agent and tokens are recorded', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    const provider = createMockProvider([createChatResponse('done')]);
+
+    await handoff({
+      agent: createAgentDefinition(),
+      input: 'Go',
+      provider,
+      budget,
+    });
+
+    const state = budget.budgetRemaining();
+    // The mock returns usage: { inputTokens: 10, outputTokens: 20 }
+    expect(state.tokensUsed).toBe(30);
+  });
+
+  it('debate shares budget across all rounds', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    // 1 round = advocate + critic + judge = 3 calls, each 30 tokens
+    const provider = createMockProvider([
+      createChatResponse('advocate'),
+      createChatResponse('critic'),
+      createChatResponse('verdict'),
+    ]);
+
+    await debate({
+      advocate: createAgentDefinition({ name: 'advocate' }),
+      critic: createAgentDefinition({ name: 'critic' }),
+      judge: createAgentDefinition({ name: 'judge' }),
+      topic: 'Test',
+      rounds: 1,
+      provider,
+      budget,
+    });
+
+    const state = budget.budgetRemaining();
+    // 3 calls × 30 tokens each = 90 tokens
+    expect(state.tokensUsed).toBe(90);
+  });
+
+  it('supervise shares budget across parallel workers', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    // 2 workers + 1 supervisor = 3 calls
+    const provider = createMockProvider([
+      createChatResponse('worker-1'),
+      createChatResponse('worker-2'),
+      createChatResponse('best pick'),
+    ]);
+
+    await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'sup' }),
+      input: 'Go',
+      strategy: 'best-of-n',
+      provider,
+      budget,
+    });
+
+    const state = budget.budgetRemaining();
+    // 3 calls × 30 tokens each = 90 tokens
+    expect(state.tokensUsed).toBe(90);
+  });
+
+  it('handoff with signal completes normally', async () => {
+    const controller = new AbortController();
+    const provider = createMockProvider([createChatResponse('done')]);
+
+    const result = await handoff({
+      agent: createAgentDefinition(),
+      input: 'Go',
+      provider,
+      signal: controller.signal,
+    });
+
+    expect(result.result.content).toBe('done');
+  });
+
+  it('supervise wires budget abort controller and fires signal on exhaustion', async () => {
+    // Budget allows only 50 tokens; each call uses 30 (10 in + 20 out).
+    const budget = new BudgetTracker({
+      maxTokens: 50,
+      models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
+    });
+
+    let callCount = 0;
+    let lastSignal: AbortSignal | undefined;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages: Message[], options?: { signal?: AbortSignal }): Promise<ChatResponse> {
+        callCount++;
+        lastSignal = options?.signal;
+        // Small delay so the budget abort controller can fire between calls
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return createChatResponse(`worker-${callCount}`);
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    // All 3 workers produce distinct output, so consensus fails and the
+    // supervisor is also called. Total usage exceeds the 50-token budget.
+    // We verify the abort wiring is set up (signal exists and fires).
+    try {
+      await supervise({
+        workers: [
+          createAgentDefinition({ name: 'w1' }),
+          createAgentDefinition({ name: 'w2' }),
+          createAgentDefinition({ name: 'w3' }),
+        ],
+        supervisor: createAgentDefinition({ name: 'sup' }),
+        input: 'Go',
+        strategy: 'consensus',
+        provider,
+        budget,
+      });
+    } catch {
+      // Budget exhaustion may surface as an error — that's acceptable.
+    }
+
+    const state = budget.budgetRemaining();
+    expect(state.tokensUsed).toBeGreaterThan(50);
+    expect(state.tokensRemaining).toBeLessThan(0);
+
+    // The signal passed to the provider should have been aborted by
+    // the budget tracker once usage exceeded the limit.
+    expect(lastSignal).toBeDefined();
+    expect(lastSignal!.aborted).toBe(true);
+  });
+
+  it('supervise cleans up budget abort controller after completion', async () => {
+    const budget = new BudgetTracker(BUDGET_OPTIONS);
+    // Wire an external controller to verify supervise doesn't leave it stale
+    const externalController = new AbortController();
+    budget.setAbortController(externalController);
+
+    const provider = createMockProvider([
+      createChatResponse('same'),
+      createChatResponse('same'),
+      createChatResponse('same'),
+    ]);
+
+    await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'sup' }),
+      input: 'Go',
+      strategy: 'consensus',
+      provider,
+      budget,
+    });
+
+    // After supervise returns, the budget's signal should NOT reference
+    // the internal controller — it should be a fresh, non-aborted signal.
+    expect(budget.signal).toBeDefined();
+    expect(budget.signal!.aborted).toBe(false);
   });
 });

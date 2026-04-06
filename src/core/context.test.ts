@@ -154,6 +154,16 @@ describe('Context', () => {
       expect(request.options).toBeUndefined();
     });
 
+    it('does not treat { timeout: 5000 } as options — timeout alone is ambiguous', () => {
+      const context = createContext();
+
+      const generator = context.run(greet, { timeout: 5000 });
+      const request = expectRequest(generator.next(), 'activity');
+
+      expect(request.args).toEqual([{ timeout: 5000 }]);
+      expect(request.options).toBeUndefined();
+    });
+
     it('accepts sticky: true as an ActivityCallOption', () => {
       const context = createContext();
 
@@ -335,6 +345,23 @@ describe('Context', () => {
       const request = expectRequest(generator.next(), 'wait-update');
 
       expect(request.updateName).toBe('updateName');
+    });
+
+    it('recovery path returns a no-op responder that can still be called safely', () => {
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, { payload: 'cached-update' });
+      const context = createContext({ accumulatedResults });
+
+      const generator = context.waitForUpdate<string>('updateName');
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) {
+        throw new Error('Expected waitForUpdate recovery path to return without yielding');
+      }
+
+      expect(result.value.payload).toBe('cached-update');
+      expect(() => result.value.respond('ignored')).not.toThrow();
     });
   });
 
@@ -840,6 +867,247 @@ describe('Context', () => {
       const calls = consoleSpy.mock.calls.flat().join(' ');
       expect(calls).toContain('run');
     });
+
+    it('logs sleep details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.sleep(5000);
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.sleep');
+      expect(calls).toContain('5000ms');
+    });
+
+    it('logs waitForSignal details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.waitForSignal('approval');
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.waitForSignal');
+      expect(calls).toContain('approval');
+    });
+
+    it('logs waitForUpdate details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.waitForUpdate('price-update');
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.waitForUpdate');
+      expect(calls).toContain('price-update');
+    });
+
+    it('does not log sleep when explain mode is disabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+
+      const generator = context.sleep(1000);
+      generator.next();
+
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('logs agent operation details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const mockProvider: LLMProvider = {
+        name: 'mock',
+        chat: async () => ({
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          model: 'test',
+          stopReason: 'end_turn',
+        }),
+        stream: async () => new ReadableStream(),
+        countTokens: async () => 0,
+      };
+
+      const generator = context.agent({
+        model: 'gpt-4',
+        prompt: 'test prompt',
+        provider: mockProvider,
+        tools: [
+          {
+            definition: { name: 'tool_a', description: 'A', inputSchema: { type: 'object' } },
+            execute: async () => 'ok',
+          },
+        ],
+        maxTurns: 5,
+      });
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.agent');
+      expect(calls).toContain('gpt-4');
+      expect(calls).toContain('1 tool(s)');
+      expect(calls).toContain('maxTurns=5');
+    });
+
+    it('logs cached result for agent when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext({
+        accumulatedResults: new Map([[0, 'cached-agent-result']]),
+      });
+      context.explain(true);
+
+      const mockProvider: LLMProvider = {
+        name: 'mock',
+        chat: async () => ({
+          content: '',
+          toolCalls: [],
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          model: 'test',
+          stopReason: 'end_turn',
+        }),
+        stream: async () => new ReadableStream(),
+        countTokens: async () => 0,
+      };
+
+      const generator = context.agent({
+        model: 'gpt-4',
+        prompt: 'test prompt',
+        provider: mockProvider,
+      });
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('cached-agent-result');
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('Returning cached result');
+    });
+
+    it('logs offload details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.offload('report-data', async () => ({ large: 'dataset' }));
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.offload');
+      expect(calls).toContain('report-data');
+    });
+
+    it('logs load details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const ref: OffloadReference = {
+        key: 'report-data',
+        workflowId: 'wf-test',
+        sizeBytes: 1024,
+      };
+      const generator = context.load(ref);
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.load');
+      expect(calls).toContain('report-data');
+    });
+
+    it('logs archive details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.archive('snapshot', { key: 'value' });
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.archive');
+      expect(calls).toContain('snapshot');
+    });
+
+    it('logs runAll details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const branches = {
+        fetch: [taskA] as [Function, ...unknown[]],
+        compute: [taskB] as [Function, ...unknown[]],
+      };
+      const generator = context.runAll(branches);
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.runAll');
+      expect(calls).toContain('fetch');
+      expect(calls).toContain('compute');
+      expect(calls).toContain('2 named branches');
+    });
+
+    it('logs startChild details when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext();
+      context.explain(true);
+
+      const generator = context.startChild('payment-process', { amount: 100 });
+      generator.next();
+
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('ctx.startChild');
+      expect(calls).toContain('payment-process');
+    });
+
+    it('logs cached result for startChild when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext({
+        accumulatedResults: new Map([[0, 'cached-child-result']]),
+      });
+      context.explain(true);
+
+      const generator = context.startChild('payment-process', { amount: 100 });
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('cached-child-result');
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('Returning cached result');
+    });
+
+    it('logs cached result for ctx.run when explain mode is enabled', () => {
+      const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+      const context = createContext({
+        accumulatedResults: new Map([[0, 'cached-run-result']]),
+      });
+      context.explain(true);
+
+      const generator = context.run(greet, 'Alice');
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('cached-run-result');
+      expect(consoleSpy).toHaveBeenCalled();
+      const calls = consoleSpy.mock.calls.flat().join(' ');
+      expect(calls).toContain('Returning cached result');
+    });
   });
 
   describe('callerStack', () => {
@@ -893,6 +1161,77 @@ describe('Context', () => {
 
       expect(request.callerStack).toBeDefined();
       expect(typeof request.callerStack).toBe('string');
+    });
+
+    it('ctx.sleep yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.sleep(5000);
+      const request = expectRequest(generator.next(), 'sleep');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.waitForSignal yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.waitForSignal('my-signal');
+      const request = expectRequest(generator.next(), 'wait-signal');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.waitForUpdate yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.waitForUpdate('my-update');
+      const request = expectRequest(generator.next(), 'wait-update');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.humanReview yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.humanReview({ artifact: { data: 'test' }, reviewType: 'approval' });
+      const request = expectRequest(generator.next(), 'wait-review');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.memo yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.memo('cache-key', () => 42);
+      const request = expectRequest(generator.next(), 'memo');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.load yields a request with callerStack', () => {
+      const context = createContext();
+      const reference: OffloadReference = { key: 'test-key', workflowId: 'wf-1', sizeBytes: 100 };
+      const generator = context.load(reference);
+      const request = expectRequest(generator.next(), 'load');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.archive yields a request with callerStack', () => {
+      const context = createContext();
+      const generator = context.archive('archive-key', { data: 'value' });
+      const request = expectRequest(generator.next(), 'archive');
+
+      expect(request.callerStack).toBeDefined();
+      expect(typeof request.callerStack).toBe('string');
+      expect(request.callerStack!.length).toBeGreaterThan(0);
     });
   });
 

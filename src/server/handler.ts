@@ -9,6 +9,7 @@
  */
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
+import { createSSEStream } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
 import type {
@@ -18,22 +19,48 @@ import type {
   SearchAttributeValue,
   WorkflowStatus,
 } from '../core/types.ts';
-import { UpdateTimeoutError } from '../core/updates.ts';
-import { METRICS } from '../observability/metrics.ts';
+import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
+import { METRICS, type MetricsCollector, type MetricsSnapshot } from '../observability/metrics.ts';
 
 // ---------------------------------------------------------------------------
 // Route matching
 // ---------------------------------------------------------------------------
 
 interface RouteMatch {
-  handler: string;
+  handler: RouteHandlerName;
   params: Record<string, string>;
 }
+
+type RouteHandlerName =
+  | 'healthCheck'
+  | 'startWorkflow'
+  | 'listWorkflows'
+  | 'recoverAll'
+  | 'setBudgetPolicy'
+  | 'getBudgetPolicy'
+  | 'getStreamChunks'
+  | 'queryWorkflow'
+  | 'resumeWorkflow'
+  | 'timeoutWorkflow'
+  | 'getWorkflowResult'
+  | 'signalWorkflow'
+  | 'updateWorkflow'
+  | 'getUpdateResult'
+  | 'getAttributes'
+  | 'setAttributes'
+  | 'getMetrics'
+  | 'getWorkflowEvents'
+  | 'listReviews'
+  | 'submitReviewDecision'
+  | 'getReview'
+  | 'streamSSE'
+  | 'getWorkflow'
+  | 'cancelWorkflow';
 
 const ROUTE_PATTERNS: Array<{
   method: string;
   pattern: RegExp;
-  handler: string;
+  handler: RouteHandlerName;
   paramNames: string[];
 }> = [
   {
@@ -158,6 +185,18 @@ const ROUTE_PATTERNS: Array<{
   },
   {
     method: 'GET',
+    pattern: /^\/v1\/workflows\/([^/]+)\/review\/([^/]+)$/,
+    handler: 'getReview',
+    paramNames: ['id', 'reviewId'],
+  },
+  {
+    method: 'GET',
+    pattern: /^\/v1\/workflows\/([^/]+)\/sse$/,
+    handler: 'streamSSE',
+    paramNames: ['id'],
+  },
+  {
+    method: 'GET',
     pattern: /^\/v1\/workflows\/([^/]+)$/,
     handler: 'getWorkflow',
     paramNames: ['id'],
@@ -220,6 +259,18 @@ function negotiatedResponse(request: Request, body: unknown, status: number = 20
 
 function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
+}
+
+export function getRequiredRouteParameter(
+  params: Record<string, string>,
+  name: string,
+  routeDescription: string,
+): string {
+  const value = params[name];
+  if (value === undefined) {
+    throw new Error(`Missing route parameter "${name}" for ${routeDescription}`);
+  }
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +341,13 @@ function parseAttributeFilters(params: URLSearchParams): AttributeFilter[] {
       const operator = rest.slice(dotIndex + 1);
       const existing = filterMap.get(name) ?? { key: name };
 
-      if (operator === 'gte') {
+      if (operator === 'gt') {
+        existing.gt = inferAttributeValue(value);
+        filterMap.set(name, existing);
+      } else if (operator === 'lt') {
+        existing.lt = inferAttributeValue(value);
+        filterMap.set(name, existing);
+      } else if (operator === 'gte') {
         existing.gte = inferAttributeValue(value);
         filterMap.set(name, existing);
       } else if (operator === 'lte') {
@@ -319,9 +376,11 @@ async function handleListWorkflows(request: Request, engine: Engine): Promise<Re
   const url = new URL(request.url);
   const filter: ListFilter = {};
 
-  const status = url.searchParams.get('status');
-  if (status !== null) {
-    filter.status = status as WorkflowStatus;
+  const statuses = url.searchParams.getAll('status') as WorkflowStatus[];
+  if (statuses.length === 1) {
+    filter.status = statuses[0]!;
+  } else if (statuses.length > 1) {
+    filter.status = statuses;
   }
 
   const type = url.searchParams.get('type');
@@ -498,6 +557,9 @@ async function handleUpdateWorkflow(
 
     return jsonResponse({ updateId: result.updateId, result: result.result });
   } catch (error) {
+    if (error instanceof WorkflowTerminalError) {
+      return errorResponse(error.message, 422);
+    }
     if (error instanceof UpdateTimeoutError) {
       return errorResponse(error.message, 408);
     }
@@ -574,6 +636,18 @@ async function handleListReviews(engine: Engine): Promise<Response> {
   return jsonResponse({ items: reviews });
 }
 
+async function handleGetReview(
+  engine: Engine,
+  workflowId: string,
+  reviewId: string,
+): Promise<Response> {
+  const review = await engine.getReview(workflowId, reviewId);
+  if (review === null) {
+    return errorResponse(`Review "${reviewId}" not found for workflow "${workflowId}"`, 404);
+  }
+  return jsonResponse(review);
+}
+
 const VALID_DECISIONS = ['approved', 'rejected', 'needs-changes'] as const;
 
 async function handleSubmitReviewDecision(
@@ -643,7 +717,7 @@ async function handleQueryWorkflow(
 ): Promise<Response> {
   try {
     const result = await engine.query(workflowId, queryName);
-    return jsonResponse({ result });
+    return jsonResponse({ result: result ?? null });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('not supported')) {
@@ -679,7 +753,11 @@ async function handleResumeWorkflow(engine: Engine, workflowId: string): Promise
 
 async function handleRecoverAll(engine: Engine): Promise<Response> {
   const handles = await engine.recoverAll();
-  return jsonResponse({ recovered: handles.map((h) => h.id) });
+  const recovered: string[] = [];
+  for (const handle of handles) {
+    recovered.push(handle.id);
+  }
+  return jsonResponse({ recovered });
 }
 
 // ---------------------------------------------------------------------------
@@ -764,17 +842,87 @@ async function handleGetStreamChunks(
 }
 
 // ---------------------------------------------------------------------------
+// SSE streaming route
+// ---------------------------------------------------------------------------
+
+async function handleStreamSSE(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+): Promise<Response> {
+  const accept = request.headers.get('Accept') ?? '';
+  if (!accept.includes('text/event-stream')) {
+    return errorResponse('Accept header must include text/event-stream', 406);
+  }
+
+  // Check workflow exists
+  const state = await engine.get(workflowId);
+  if (state === null) {
+    return errorResponse(`Workflow "${workflowId}" not found`, 404);
+  }
+
+  // Get Last-Event-ID for reconnection support
+  const lastEventId = request.headers.get('Last-Event-ID') ?? undefined;
+
+  // Get token stream from engine's stream chunks
+  const chunks = await engine.getStreamChunks(workflowId, 'tokens');
+
+  // Build a ReadableStream<string> from the stored chunks
+  const tokenStream = new ReadableStream<string>({
+    start(controller) {
+      for (const chunk of chunks) {
+        if (typeof chunk === 'string') {
+          controller.enqueue(chunk);
+        } else if (typeof chunk === 'object' && chunk !== null && 'token' in chunk) {
+          const token = (chunk as { token?: string }).token;
+          if (token) controller.enqueue(token);
+        }
+      }
+      controller.close();
+    },
+  });
+
+  const sseStream = createSSEStream(tokenStream, lastEventId);
+
+  return new Response(sseStream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Metrics route
 // ---------------------------------------------------------------------------
 
-function handleGetMetrics(): Response {
+function handleGetMetrics(metricsCollector?: MetricsCollector): Response {
+  const snapshot: MetricsSnapshot = metricsCollector?.snapshot() ?? {};
   const lines: string[] = [];
 
   for (const metric of Object.values(METRICS)) {
     const safeName = metric.name.replace(/\./g, '_');
+    const collected = snapshot[metric.name];
+
     lines.push(`# HELP ${safeName} ${metric.description}`);
-    lines.push(`# TYPE ${safeName} ${metric.type === 'counter' ? 'counter' : 'gauge'}`);
-    lines.push(`${safeName}${metric.type === 'counter' ? '_total' : ''} 0`);
+
+    if (metric.type === 'histogram') {
+      lines.push(`# TYPE ${safeName} histogram`);
+      const count = collected?.type === 'histogram' ? collected.count : 0;
+      const sum = collected?.type === 'histogram' ? collected.sum : 0;
+      lines.push(`${safeName}_count ${count}`);
+      lines.push(`${safeName}_sum ${sum}`);
+    } else if (metric.type === 'counter') {
+      lines.push(`# TYPE ${safeName} counter`);
+      const value = collected?.type === 'counter' ? collected.value : 0;
+      lines.push(`${safeName}_total ${value}`);
+    } else {
+      lines.push(`# TYPE ${safeName} gauge`);
+      const value = collected?.type === 'gauge' ? collected.value : 0;
+      lines.push(`${safeName} ${value}`);
+    }
   }
 
   return new Response(lines.join('\n') + '\n', {
@@ -783,12 +931,65 @@ function handleGetMetrics(): Response {
   });
 }
 
+type RouteParameterGetter = (name: string) => string;
+
+type RouteExecutionContext = {
+  request: Request;
+  engine: Engine;
+  options: HandlerOptions | undefined;
+  param: RouteParameterGetter;
+};
+
+type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
+
+const ROUTE_EXECUTORS: Record<RouteHandlerName, RouteExecutor> = {
+  healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
+  startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
+  listWorkflows: async ({ request, engine }) => handleListWorkflows(request, engine),
+  recoverAll: async ({ engine }) => handleRecoverAll(engine),
+  setBudgetPolicy: async ({ request, engine }) => handleSetBudgetPolicy(request, engine),
+  getBudgetPolicy: async ({ engine, param }) => handleGetBudgetPolicy(engine, param('namespace')),
+  getStreamChunks: async ({ engine, param }) =>
+    handleGetStreamChunks(engine, param('id'), param('key')),
+  queryWorkflow: async ({ engine, param }) =>
+    handleQueryWorkflow(engine, param('id'), param('name')),
+  resumeWorkflow: async ({ engine, param }) => handleResumeWorkflow(engine, param('id')),
+  timeoutWorkflow: async ({ engine, param }) => handleTimeoutWorkflow(engine, param('id')),
+  getWorkflowResult: async ({ engine, param }) => handleGetWorkflowResult(engine, param('id')),
+  signalWorkflow: async ({ request, engine, param }) =>
+    handleSignalWorkflow(request, engine, param('id'), param('name')),
+  updateWorkflow: async ({ request, engine, param }) =>
+    handleUpdateWorkflow(request, engine, param('id'), param('name')),
+  getUpdateResult: async ({ engine, param }) => handleGetUpdateResult(engine, param('updateId')),
+  getAttributes: async ({ engine, param }) => handleGetAttributes(engine, param('id')),
+  setAttributes: async ({ request, engine, param }) =>
+    handleSetAttributes(request, engine, param('id')),
+  getMetrics: async ({ options }) => handleGetMetrics(options?.metricsCollector),
+  getWorkflowEvents: async ({ engine, param }) => handleGetWorkflowEvents(engine, param('id')),
+  listReviews: async ({ engine }) => handleListReviews(engine),
+  submitReviewDecision: async ({ request, engine, param }) =>
+    handleSubmitReviewDecision(request, engine, param('reviewId')),
+  getReview: async ({ engine, param }) => handleGetReview(engine, param('id'), param('reviewId')),
+  streamSSE: async ({ request, engine, param }) => handleStreamSSE(request, engine, param('id')),
+  getWorkflow: async ({ engine, param }) => handleGetWorkflow(engine, param('id')),
+  cancelWorkflow: async ({ engine, param }) => handleCancelWorkflow(engine, param('id')),
+};
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
 
+export interface HandlerOptions {
+  /** Optional metrics collector for the /v1/metrics endpoint. */
+  metricsCollector?: MetricsCollector;
+}
+
 /** Pure HTTP request handler. Maps Request to Response. */
-export async function handleRequest(request: Request, engine: Engine): Promise<Response> {
+export async function handleRequest(
+  request: Request,
+  engine: Engine,
+  options?: HandlerOptions,
+): Promise<Response> {
   const url = new URL(request.url);
   const route = matchRoute(request.method, url.pathname);
 
@@ -796,85 +997,12 @@ export async function handleRequest(request: Request, engine: Engine): Promise<R
     return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
   }
 
-  const param = (name: string): string => {
-    const value = route.params[name];
-    if (value === undefined) {
-      throw new Error(`Missing route parameter: ${name}`);
-    }
-    return value;
-  };
+  const routeDescription = `${request.method} ${url.pathname}`;
+  const param = (name: string): string =>
+    getRequiredRouteParameter(route.params, name, routeDescription);
 
   try {
-    switch (route.handler) {
-      case 'healthCheck':
-        return negotiatedResponse(request, { status: 'ok' });
-
-      case 'startWorkflow':
-        return handleStartWorkflow(request, engine);
-
-      case 'listWorkflows':
-        return handleListWorkflows(request, engine);
-
-      case 'getWorkflow':
-        return handleGetWorkflow(engine, param('id'));
-
-      case 'cancelWorkflow':
-        return handleCancelWorkflow(engine, param('id'));
-
-      case 'signalWorkflow':
-        return handleSignalWorkflow(request, engine, param('id'), param('name'));
-
-      case 'getWorkflowResult':
-        return handleGetWorkflowResult(engine, param('id'));
-
-      case 'updateWorkflow':
-        return handleUpdateWorkflow(request, engine, param('id'), param('name'));
-
-      case 'getUpdateResult':
-        return handleGetUpdateResult(engine, param('updateId'));
-
-      case 'getAttributes':
-        return handleGetAttributes(engine, param('id'));
-
-      case 'setAttributes':
-        return handleSetAttributes(request, engine, param('id'));
-
-      case 'queryWorkflow':
-        return handleQueryWorkflow(engine, param('id'), param('name'));
-
-      case 'resumeWorkflow':
-        return handleResumeWorkflow(engine, param('id'));
-
-      case 'recoverAll':
-        return handleRecoverAll(engine);
-
-      case 'timeoutWorkflow':
-        return handleTimeoutWorkflow(engine, param('id'));
-
-      case 'setBudgetPolicy':
-        return handleSetBudgetPolicy(request, engine);
-
-      case 'getBudgetPolicy':
-        return handleGetBudgetPolicy(engine, param('namespace'));
-
-      case 'getStreamChunks':
-        return handleGetStreamChunks(engine, param('id'), param('key'));
-
-      case 'getMetrics':
-        return handleGetMetrics();
-
-      case 'getWorkflowEvents':
-        return handleGetWorkflowEvents(engine, param('id'));
-
-      case 'listReviews':
-        return handleListReviews(engine);
-
-      case 'submitReviewDecision':
-        return handleSubmitReviewDecision(request, engine, param('reviewId'));
-
-      default:
-        return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
-    }
+    return await ROUTE_EXECUTORS[route.handler]({ request, engine, options, param });
   } catch (error) {
     console.error('Unhandled error in handleRequest', {
       method: request.method,

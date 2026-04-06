@@ -8,6 +8,8 @@
  * @module provider-health
  */
 
+import { AgentProviderCircuitOpenEvent } from './events.ts';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -63,6 +65,9 @@ export class ProviderHealthTracker {
   /** Optional callback fired whenever a provider's circuit state changes. */
   onStateChange?: ((provider: string, from: CircuitState, to: CircuitState) => void) | undefined;
 
+  /** Optional EventTarget for dispatching circuit open events. */
+  eventTarget?: EventTarget | undefined;
+
   constructor(options?: ProviderHealthOptions) {
     this.#providers = new Map();
     this.#options = {
@@ -91,6 +96,7 @@ export class ProviderHealthTracker {
     }
 
     state.entries.push({ timestamp: this.#now(), success: true });
+    this.#prune(state);
   }
 
   /** Record a failed call to a provider. */
@@ -99,13 +105,14 @@ export class ProviderHealthTracker {
 
     // Half-open: a single failure reopens the circuit.
     if (state.circuit === 'half-open') {
-      this.#transition(provider, state, 'open');
       state.openedAt = this.#now();
+      this.#transition(provider, state, 'open');
       state.entries = [];
       return;
     }
 
     state.entries.push({ timestamp: this.#now(), success: false });
+    this.#prune(state);
 
     // Evaluate whether to trip the circuit (only in closed state).
     if (state.circuit === 'closed') {
@@ -135,6 +142,20 @@ export class ProviderHealthTracker {
     }
 
     return state.circuit;
+  }
+
+  /**
+   * Return the backing array size for a provider. This exists solely so
+   * tests can verify that `#prune` actually trims expired entries — pruning
+   * is a memory optimisation with no behavioural fingerprint (`#windowEntries`
+   * already filters at read time), so the backing array length is the only
+   * observable signal for the fix. Do not use in production code.
+   *
+   * @internal
+   */
+  getEntryCount(provider: string): number {
+    const state = this.#providers.get(provider);
+    return state?.entries.length ?? 0;
   }
 
   /** Get the current error rate for a provider within the sliding window. */
@@ -180,6 +201,22 @@ export class ProviderHealthTracker {
     return state.entries.filter((entry) => entry.timestamp > cutoff);
   }
 
+  /**
+   * Drop expired entries from the backing array to prevent unbounded growth.
+   *
+   * `#windowEntries` filters for reads but never mutates the underlying array,
+   * so without this the entries array would grow indefinitely for a provider
+   * that stays in the closed state.
+   */
+  #prune(state: ProviderState): void {
+    const cutoff = this.#now() - this.#options.windowDuration;
+    // Fast path: nothing expired at the head of the array.
+    if (state.entries.length === 0 || state.entries[0]!.timestamp > cutoff) {
+      return;
+    }
+    state.entries = state.entries.filter((entry) => entry.timestamp > cutoff);
+  }
+
   /** Evaluate whether the circuit should trip from closed to open. */
   #evaluate(provider: string, state: ProviderState): void {
     const windowEntries = this.#windowEntries(state);
@@ -191,8 +228,10 @@ export class ProviderHealthTracker {
     const errorRate = failures / windowEntries.length;
 
     if (errorRate > this.#options.errorThreshold) {
-      this.#transition(provider, state, 'open');
+      // Set openedAt before transition so getErrorRate() inside #transition
+      // sees the fresh timestamp and doesn't re-transition to half-open.
       state.openedAt = this.#now();
+      this.#transition(provider, state, 'open');
     }
   }
 
@@ -201,5 +240,18 @@ export class ProviderHealthTracker {
     const from = state.circuit;
     state.circuit = to;
     this.onStateChange?.(provider, from, to);
+
+    // Dispatch circuit-open event when transitioning to open
+    if (to === 'open' && this.eventTarget) {
+      const errorRate = this.getErrorRate(provider);
+      this.eventTarget.dispatchEvent(
+        new AgentProviderCircuitOpenEvent(
+          provider,
+          errorRate,
+          this.#options.errorThreshold,
+          this.#options.windowDuration,
+        ),
+      );
+    }
   }
 }

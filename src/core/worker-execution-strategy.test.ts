@@ -180,6 +180,79 @@ describe('WorkerExecutionStrategy', () => {
     });
   });
 
+  describe('broadcast forwarding', () => {
+    it('forwards signal:received messages from BroadcastChannel to the assigned worker', async () => {
+      const originalBroadcastChannel = globalThis.BroadcastChannel;
+      let broadcastListener: ((event: MessageEvent) => void) | undefined;
+
+      class MockBroadcastChannel {
+        addEventListener(_type: string, listener: (event: MessageEvent) => void): void {
+          broadcastListener = listener;
+        }
+
+        removeEventListener(): void {}
+
+        close(): void {}
+      }
+
+      globalThis.BroadcastChannel = MockBroadcastChannel as unknown as typeof BroadcastChannel;
+
+      try {
+        setup();
+        strategy[Symbol.dispose]();
+        strategy = new WorkerExecutionStrategy(mockPool, { broadcastEvents: true });
+        messages = [];
+        strategy.onMessage((message) => messages.push(message));
+
+        strategy.startWorkflow({
+          workflowId: 'wf-broadcast',
+          workflowType: 'test',
+          input: null,
+          checkpoint: new ArrayBuffer(0),
+        });
+
+        await Bun.sleep(10);
+
+        const worker = firstWorker();
+        const callsBefore = worker.postMessage.mock.calls.length;
+        expect(broadcastListener).toBeDefined();
+
+        broadcastListener!(
+          new MessageEvent('message', {
+            data: { type: 'signal:received', workflowId: 'wf-broadcast', signalName: 'ready' },
+          }),
+        );
+
+        expect(worker.postMessage.mock.calls.length).toBe(callsBefore + 1);
+        expect(worker.postMessage.mock.calls.at(-1)?.[0]).toEqual({
+          type: 'signal:received',
+          workflowId: 'wf-broadcast',
+          signalName: 'ready',
+        });
+      } finally {
+        globalThis.BroadcastChannel = originalBroadcastChannel;
+      }
+    });
+
+    it('ignores missing BroadcastChannel support when broadcastEvents is enabled', () => {
+      const originalBroadcastChannel = globalThis.BroadcastChannel;
+
+      const UnavailableBroadcastChannel = function (): never {
+        throw new Error('BroadcastChannel unavailable');
+      };
+      globalThis.BroadcastChannel =
+        UnavailableBroadcastChannel as unknown as typeof BroadcastChannel;
+
+      try {
+        expect(() => {
+          strategy = new WorkerExecutionStrategy(createMockPool([]), { broadcastEvents: true });
+        }).not.toThrow();
+      } finally {
+        globalThis.BroadcastChannel = originalBroadcastChannel;
+      }
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Worker message forwarding
   // -------------------------------------------------------------------------

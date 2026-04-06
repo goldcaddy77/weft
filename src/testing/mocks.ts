@@ -153,22 +153,23 @@ class MockHandleImplementation<TArgs extends unknown[], TResult> implements Mock
 // ---------------------------------------------------------------------------
 
 export class ActivityMockRegistry {
-  #mocks = new Map<Function, MockedActivity>();
+  #mocks: Map<Function, MockedActivity>;
+
+  constructor() {
+    this.#mocks = new Map();
+  }
 
   mock<TArgs extends unknown[], TResult>(
     activity: (...args: TArgs) => Promise<TResult> | TResult,
     implementation: (...args: TArgs) => TResult | Promise<TResult>,
   ): MockHandle<TArgs, TResult> {
-    const handle = new MockHandleImplementation<TArgs, TResult>(implementation, () => {
-      this.restore(activity);
-    });
-
-    const wrappedImplementation = async (...args: unknown[]): Promise<unknown> => {
-      return handle.execute(...(args as TArgs));
-    };
+    const handle = new MockHandleImplementation<TArgs, TResult>(
+      implementation,
+      this.restore.bind(this, activity),
+    );
 
     const mocked: MockedActivity = {
-      implementation: wrappedImplementation,
+      implementation: handle.execute.bind(handle) as (...args: unknown[]) => unknown,
       handle: handle as unknown as MockHandle<unknown[], unknown>,
     };
 

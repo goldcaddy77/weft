@@ -1,9 +1,15 @@
 import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
-import type { SearchAttributeValue } from './types.ts';
+import type { SearchAttributeDefinition, SearchAttributeValue } from './types.ts';
 
 const SIGN_BIT = 1n << 63n;
 const ALL_BITS = (1n << 64n) - 1n;
+
+/**
+ * Maximum size in bytes for an encoded attribute value. Values exceeding this
+ * limit produce storage keys that may blow past backend size constraints.
+ */
+export const MAX_ENCODED_VALUE_BYTES = 1024;
 
 /**
  * Encode an IEEE 754 float64 to a sortable hex string.
@@ -53,25 +59,41 @@ function sortableHexToFloat(hex: string): number {
 
 /** Encode a search attribute value to a sortable string for index keys. */
 export function encodeAttributeValue(value: SearchAttributeValue): string {
+  let encoded: string;
+
   if (typeof value === 'string') {
-    return `s:${value}`;
+    encoded = `s:${value}`;
+  } else if (typeof value === 'number') {
+    encoded = `n:${floatToSortableHex(value)}`;
+  } else if (typeof value === 'boolean') {
+    encoded = `b:${value ? '1' : '0'}`;
+  } else if (value instanceof Date) {
+    encoded = `d:${value.toISOString()}`;
+  } else {
+    // string[] — should not be called directly for keyword lists in index ops,
+    // but provided for completeness. Each element is encoded separately.
+    throw new Error(
+      'Cannot encode a keyword list as a single value; encode elements individually.',
+    );
   }
 
-  if (typeof value === 'number') {
-    return `n:${floatToSortableHex(value)}`;
-  }
+  return encoded;
+}
 
-  if (typeof value === 'boolean') {
-    return `b:${value ? '1' : '0'}`;
+/**
+ * Validate that an encoded attribute value does not exceed the storage key size limit.
+ * Call this in the attribute-setting path, NOT in the general-purpose encoder — the encoder
+ * is also used to reconstruct old keys for deletion, and throwing there would prevent
+ * cleanup of pre-existing oversized values.
+ */
+export function validateEncodedValueSize(encoded: string, attributeName: string): void {
+  const byteLength = new TextEncoder().encode(encoded).byteLength;
+  if (byteLength > MAX_ENCODED_VALUE_BYTES) {
+    throw new Error(
+      `Encoded search attribute "${attributeName}" exceeds the ${MAX_ENCODED_VALUE_BYTES}-byte limit ` +
+        `(got ${byteLength} bytes). Reduce the value size before setting the attribute.`,
+    );
   }
-
-  if (value instanceof Date) {
-    return `d:${value.toISOString()}`;
-  }
-
-  // string[] — should not be called directly for keyword lists in index ops,
-  // but provided for completeness. Each element is encoded separately.
-  throw new Error('Cannot encode a keyword list as a single value; encode elements individually.');
 }
 
 /** Decode an encoded attribute value back to its original type. */
@@ -93,15 +115,68 @@ export function decodeAttributeValue(encoded: string, type: string): SearchAttri
   }
 }
 
+/**
+ * Validate that a value's runtime type matches the declared schema type.
+ * Throws a descriptive error on mismatch.
+ */
+export function validateAttributeType(
+  attributeName: string,
+  value: SearchAttributeValue,
+  definition: SearchAttributeDefinition,
+): void {
+  const { type: declaredType } = definition;
+
+  switch (declaredType) {
+    case 'string':
+      if (typeof value !== 'string') {
+        throw new Error(
+          `Search attribute "${attributeName}" is declared as "string" but received ${typeof value}.`,
+        );
+      }
+      break;
+    case 'number':
+      if (typeof value !== 'number') {
+        throw new Error(
+          `Search attribute "${attributeName}" is declared as "number" but received ${typeof value}.`,
+        );
+      }
+      break;
+    case 'boolean':
+      if (typeof value !== 'boolean') {
+        throw new Error(
+          `Search attribute "${attributeName}" is declared as "boolean" but received ${typeof value}.`,
+        );
+      }
+      break;
+    case 'datetime':
+      if (!(value instanceof Date)) {
+        throw new Error(
+          `Search attribute "${attributeName}" is declared as "datetime" but received ${typeof value}.`,
+        );
+      }
+      break;
+    case 'keyword_list':
+      if (!Array.isArray(value)) {
+        throw new Error(
+          `Search attribute "${attributeName}" is declared as "keyword_list" but received ${typeof value}.`,
+        );
+      }
+      if (!value.every((element) => typeof element === 'string')) {
+        throw new Error(
+          `Search attribute "${attributeName}" is declared as "keyword_list" but array contains non-string elements.`,
+        );
+      }
+      break;
+    default: {
+      const _exhaustive: never = declaredType;
+      throw new Error(`Unknown search attribute type declaration: ${String(_exhaustive)}`);
+    }
+  }
+}
+
 function valuesEqual(a: SearchAttributeValue, b: SearchAttributeValue): boolean {
   if (a instanceof Date && b instanceof Date) {
     return a.getTime() === b.getTime();
-  }
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false;
-    const sortedA = [...a].toSorted();
-    const sortedB = [...b].toSorted();
-    return sortedA.every((element, index) => element === sortedB[index]);
   }
   return a === b;
 }

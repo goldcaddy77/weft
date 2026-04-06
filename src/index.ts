@@ -42,16 +42,31 @@ export type {
   WorkflowSummary,
 } from './core/types';
 
+// Alerting
+export { AlertManager } from './alerting/index';
+export type {
+  AlertAction,
+  AlertMetric,
+  AlertRule,
+  AlertState,
+  AlertStatus,
+  AlertingOptions,
+  WebhookTarget,
+} from './alerting/types';
+
 // Events
 export {
   ActivityCompletedEvent,
   ActivityFailedEvent,
   ActivityStartedEvent,
+  AlertFiredEvent,
+  AlertResolvedEvent,
   AttributesChangedEvent,
   CheckpointSizeWarningEvent,
   DevelopmentWarningEvent,
   SignalDeliveredEvent,
   SignalReceivedEvent,
+  StorageSizeReportedEvent,
   TokenEvent,
   UpdateCompletedEvent,
   UpdateReceivedEvent,
@@ -63,6 +78,11 @@ export {
   WorkflowTimedOutEvent,
 } from './core/events';
 export type { TypedEventTarget, WeftEventMap } from './core/events';
+
+// Compression
+export { createBunCompressor } from './core/compression';
+export type { CompressionAlgorithm, CompressionOptions, Compressor } from './core/compression';
+export { CompressedStorage } from './storage/compressed-storage';
 
 // Storage
 export { BunSQLiteStorage } from './storage/bun-sql';
@@ -90,6 +110,8 @@ export { Scheduler, calculateBackoff, parseDuration } from './core/scheduler';
 
 // Activity
 export { activity } from './core/activity';
+export { ActivityRegistry } from './core/activity-registry';
+export type { ActivityMetadata, ActivityRegistrationOptions } from './core/activity-registry';
 
 // Context
 export { Context } from './core/context';
@@ -112,6 +134,7 @@ export type {
   ActivityInterception,
   ActivityInterceptor,
   AgentInterception,
+  ChildWorkflowInterception,
   ComposedActivityInterceptor,
   ComposedWorkflowInterceptor,
   QueryInterception,
@@ -130,14 +153,17 @@ export {
 } from './core/search-attributes';
 
 // Updates
-export { UpdateCoordinator, UpdateTimeoutError } from './core/updates';
+export { UpdateCoordinator, UpdateTimeoutError, WorkflowTerminalError } from './core/updates';
 
 // Versioning
 export {
   VersionMismatchError,
   checkVersionCompatibility,
+  diffCheckpointShapes,
+  inferShape,
   migrateCheckpoint,
 } from './core/versioning';
+export type { FieldDiff, ShapeDescriptor, ShapeDiffOptions } from './core/versioning';
 
 // Timeouts
 export {
@@ -176,7 +202,13 @@ export { TimeControl } from './testing/time-control';
 
 // AI / Agent
 export { executeAgentLoop } from './ai/agent';
-export type { AgentOptions, AgentResult, AgentTool } from './ai/agent';
+export type {
+  AgentOptions,
+  AgentResult,
+  AgentTool,
+  MCPToolSource,
+  TurnCostEntry,
+} from './ai/agent';
 export { BudgetExceededError, BudgetTracker } from './ai/budget';
 export type { BudgetOptions, BudgetState, ModelPricing } from './ai/budget';
 export { BudgetPolicyEnforcer, OrganizationBudgetExceededError } from './ai/budget-policy';
@@ -184,11 +216,12 @@ export type { BudgetPolicyOptions } from './ai/budget-policy';
 export { slidingWindowStrategy } from './ai/context-strategies/sliding-window';
 export { ContextWindowManager, composeStrategies, noopStrategy } from './ai/context-window';
 export type { ContextStrategy } from './ai/context-window';
-export { debate, handoff, supervise } from './ai/coordination';
-export { defineAgent } from './ai/declaration';
+export { createChildHeaders, debate, handoff, supervise } from './ai/coordination';
+export { defineAgent, isAgentDefinition } from './ai/declaration';
 export type { AgentDefinition } from './ai/declaration';
 export type { AgentHooks } from './ai/hooks';
 export { ReviewCoordinator, ReviewTimeoutError } from './ai/human-review';
+export type { ReviewCoordinatorOptions } from './ai/human-review';
 export {
   abTestRouter,
   costTierRouter,
@@ -198,6 +231,7 @@ export {
 export type { ModelRouter, ModelSelection, RoutingContext } from './ai/model-router';
 export { ProviderHealthTracker } from './ai/provider-health';
 export { ReconnectionBuffer, StreamMultiplexer, TokenBridge } from './ai/streaming';
+export type { AgentRegistrationOptions } from './core/engine';
 
 // AI Events
 export {
@@ -228,14 +262,34 @@ export type {
 
 // MCP
 export { buildAuthHeaders } from './ai/mcp/authentication';
-export type { MCPAuthConfig } from './ai/mcp/authentication';
+export type { MCPAuthConfig, SyncMCPAuthConfig } from './ai/mcp/authentication';
 export { MCPClient, MCPServerUnavailableError, MCPToolTimeoutError } from './ai/mcp/client';
+export type {
+  MCPClientOptions,
+  MCPClientTransportOptions,
+  MCPClientUrlOptions,
+} from './ai/mcp/client';
+export { OAuth2TokenError, createOAuth2TokenManager } from './ai/mcp/oauth2-token-manager';
+export type { OAuth2Config, OAuth2TokenManager } from './ai/mcp/oauth2-token-manager';
 export { ToolNameConflictError, ToolRegistry } from './ai/mcp/registry';
+export type { RegistryTool } from './ai/mcp/registry';
 export { ToolSchemaValidationError, validateSchema } from './ai/mcp/schema-validator';
+export { MCPTransportError, inferTransportKind, parseStdioUrl } from './ai/mcp/transport';
+export type { MCPRequest, MCPResponse, MCPTransport, TransportKind } from './ai/mcp/transport';
+export { HttpTransport } from './ai/mcp/transport-http';
+export type { HeaderSource, HttpTransportOptions } from './ai/mcp/transport-http';
+export { HttpSseTransport } from './ai/mcp/transport-http-sse';
+export type { HttpSseTransportOptions } from './ai/mcp/transport-http-sse';
+export { StdioTransport } from './ai/mcp/transport-stdio';
+export type { StdioTransportOptions } from './ai/mcp/transport-stdio';
 
 // Observability
 export { createObservabilityInterceptors } from './observability/index';
-export { METRICS } from './observability/metrics';
+export type { InterceptionContext, ObservabilityOptions } from './observability/index';
+export { METRICS, createOtelMetrics } from './observability/metrics';
+export type { OtelMetrics } from './observability/metrics';
+export { getOtelApi } from './observability/no-op-telemetry';
+export type { OtelApi, OtelMeter, OtelSpan, OtelTracer } from './observability/no-op-telemetry';
 export {
   formatTraceParent,
   generateSpanId,

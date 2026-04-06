@@ -33,6 +33,9 @@ async function* streamingWorkflow(ctx: WorkflowContext, _input: unknown) {
     yield { row: 2, data: 'bravo' };
     yield { row: 3, data: 'charlie' };
   });
+  // Block until a caller signals us: stream chunks are cleaned up on terminal
+  // state, so tests need the workflow to stay in `running` while they read.
+  yield* c.waitForSignal('finish-streaming');
   return reference;
 }
 
@@ -125,16 +128,21 @@ function agentFeatureTests(getClient: () => WeftClient, getEngine: () => Engine,
       const client = getClient();
 
       const handle = await client.start('streaming', null);
-      const result = (await handle.result()) as StreamReference;
-
-      expect(result.key).toBe('report');
-      expect(result.chunkCount).toBe(3);
+      // Workflow pauses on a signal after streaming so chunks are still in
+      // storage (cleanup runs on terminal state).
+      await Bun.sleep(20);
 
       const chunks = await client.getStreamChunks(handle.id, 'report');
       expect(chunks).toHaveLength(3);
       expect(chunks[0]).toEqual({ row: 1, data: 'alpha' });
       expect(chunks[1]).toEqual({ row: 2, data: 'bravo' });
       expect(chunks[2]).toEqual({ row: 3, data: 'charlie' });
+
+      // Unblock the workflow so its resources get released.
+      await client.signal(handle.id, 'finish-streaming');
+      const result = (await handle.result()) as StreamReference;
+      expect(result.key).toBe('report');
+      expect(result.chunkCount).toBe(3);
     });
 
     it('getStreamChunks returns empty array for unknown key', async () => {

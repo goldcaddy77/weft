@@ -364,31 +364,47 @@ export async function createAuthenticator(config: AuthConfig): Promise<Authentic
       return { authenticated: true, method: 'public' };
     }
 
+    // Track whether the request explicitly provided credentials.
+    // If credentials were provided but invalid, do not fall through to mTLS.
+    let explicitAuthAttempted = false;
+
     // Try API key via X-API-Key header or Bearer token
     if (apiKeySet) {
       const key = extractApiKey(request);
-      if (key && apiKeySet.has(key)) {
-        return { authenticated: true, method: 'api-key' };
+      if (key) {
+        explicitAuthAttempted = true;
+        if (apiKeySet.has(key)) {
+          return { authenticated: true, method: 'api-key' };
+        }
       }
     }
 
-    // Try JWT verification on Bearer tokens that look like JWTs (contain dots)
+    // Try JWT verification on Bearer tokens that look like JWTs (contain dots).
+    // Any Bearer token counts as an explicit auth attempt — even non-JWT tokens —
+    // to prevent falling through to mTLS with invalid credentials.
     if (jwtKey && config.jwt) {
       const token = extractBearerToken(request);
-      if (token && token.includes('.')) {
-        try {
-          const claims = await verifyJWT(token, jwtKey, config.jwt);
-          return { authenticated: true, method: 'jwt', claims };
-        } catch (error) {
-          console.warn('JWT verification failed:', error instanceof Error ? error.message : error);
-          // Fall through to next authentication method
+      if (token) {
+        explicitAuthAttempted = true;
+        if (token.includes('.')) {
+          try {
+            const claims = await verifyJWT(token, jwtKey, config.jwt);
+            return { authenticated: true, method: 'jwt', claims };
+          } catch (error) {
+            console.warn(
+              'JWT verification failed:',
+              error instanceof Error ? error.message : error,
+            );
+            // JWT verification failed — fall through to next method
+          }
         }
       }
     }
 
     // mTLS: if configured, the TLS layer already verified the client certificate.
-    // Any request that reaches this handler has passed transport-level authentication.
-    if (config.mtls) {
+    // Only use mTLS as fallback if no explicit credentials were provided.
+    // A request with invalid API key or JWT should fail, not silently succeed via mTLS.
+    if (config.mtls && !explicitAuthAttempted) {
       return { authenticated: true, method: 'mtls' };
     }
 

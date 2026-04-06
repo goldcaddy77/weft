@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 export interface ActivityInterception {
+  workflowId: string;
   activityName: string;
   input: unknown;
   attempt: number;
@@ -21,11 +22,13 @@ export interface ActivityInterception {
 }
 
 export interface SleepInterception {
+  workflowId: string;
   duration: number;
   headers: Map<string, string>;
 }
 
 export interface SignalInterception {
+  workflowId: string;
   signalName: string;
   payload: unknown;
   headers: Map<string, string>;
@@ -43,12 +46,66 @@ export interface ActivityExecutionInterception {
   input: unknown;
   attempt: number;
   headers: Map<string, string>;
+  /** Operation identifier, available when executing on a remote worker. */
+  operationId?: string;
+  /** Abort signal for cancellation, available when executing on a remote worker. */
+  signal?: AbortSignal;
+}
+
+/** Callback info passed to agent turn-lifecycle hooks. */
+export interface AgentTurnInfo {
+  turnIndex: number;
+  model: string;
+}
+
+/** Callback info passed after an agent turn completes. */
+export interface AgentTurnResultInfo {
+  turnIndex: number;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  duration: number;
+  toolCallCount: number;
+}
+
+/** Callback info passed when a tool is called during an agent turn. */
+export interface AgentToolCallInfo {
+  turnIndex: number;
+  toolName: string;
+}
+
+/** Callback info passed when a tool call returns during an agent turn. */
+export interface AgentToolReturnInfo {
+  turnIndex: number;
+  toolName: string;
+  duration: number;
+  success: boolean;
+}
+
+export interface ChildWorkflowInterception {
+  workflowId: string;
+  childWorkflowId: string;
+  workflowType: string;
+  input: unknown;
+  headers: Map<string, string>;
+  /** Headers from the parent workflow, used for span link creation. */
+  parentHeaders: Map<string, string>;
 }
 
 export interface AgentInterception {
+  workflowId: string;
   model: string;
   prompt: string;
   headers: Map<string, string>;
+  /** Optional callback invoked when each agent turn starts. */
+  onTurnStarted?: (info: AgentTurnInfo) => void;
+  /** Optional callback invoked when each agent turn completes. */
+  onTurnCompleted?: (info: AgentTurnResultInfo) => void;
+  /** Optional callback invoked when a tool is called. */
+  onToolCalled?: (info: AgentToolCallInfo) => void;
+  /** Optional callback invoked when a tool call returns. */
+  onToolReturned?: (info: AgentToolReturnInfo) => void;
 }
 
 export interface QueryInterception {
@@ -87,6 +144,11 @@ export interface WorkflowInterceptor {
     interception: WorkflowStartInterception,
     next: (interception: WorkflowStartInterception) => void,
   ): void;
+
+  childWorkflow?(
+    interception: ChildWorkflowInterception,
+    next: (interception: ChildWorkflowInterception) => Promise<unknown>,
+  ): Promise<unknown>;
 
   agent?(
     interception: AgentInterception,
@@ -135,6 +197,11 @@ export interface ComposedWorkflowInterceptor {
     interception: WorkflowStartInterception,
     execute: (interception: WorkflowStartInterception) => void,
   ): void;
+
+  childWorkflow(
+    interception: ChildWorkflowInterception,
+    execute: (interception: ChildWorkflowInterception) => Promise<unknown>,
+  ): Promise<unknown>;
 
   agent(
     interception: AgentInterception,
@@ -288,6 +355,37 @@ function composeWorkflowStartHook(
 }
 
 /**
+ * Compose the `childWorkflow` hooks of all workflow interceptors into a single
+ * async chain.
+ */
+function composeChildWorkflowHook(
+  interceptors: WorkflowInterceptor[],
+): ComposedWorkflowInterceptor['childWorkflow'] {
+  return async function composedChildWorkflow(
+    interception: ChildWorkflowInterception,
+    execute: (interception: ChildWorkflowInterception) => Promise<unknown>,
+  ): Promise<unknown> {
+    type Next = (ctx: ChildWorkflowInterception) => Promise<unknown>;
+
+    let chain: Next = execute;
+
+    for (let i = interceptors.length - 1; i >= 0; i--) {
+      const interceptor = interceptors[i]!;
+
+      if (interceptor.childWorkflow) {
+        const innerNext = chain;
+        const bound = interceptor.childWorkflow.bind(interceptor);
+        chain = (ctx: ChildWorkflowInterception): Promise<unknown> => {
+          return bound(ctx, innerNext);
+        };
+      }
+    }
+
+    return chain(interception);
+  };
+}
+
+/**
  * Compose the `agent` hooks of all workflow interceptors into a single
  * generator chain.
  */
@@ -389,6 +487,7 @@ export function composeWorkflowInterceptors(
     sleep: composeSleepHook(interceptors),
     waitForSignal: composeWaitForSignalHook(interceptors),
     workflowStart: composeWorkflowStartHook(interceptors),
+    childWorkflow: composeChildWorkflowHook(interceptors),
     agent: composeAgentHook(interceptors),
     query: composeQueryHook(interceptors),
     signalReceived: composeSignalReceivedHook(interceptors),

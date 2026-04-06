@@ -1,7 +1,49 @@
 import type { BatchOperation, ScanOptions, Storage } from './interface';
 
 export class MemoryStorage implements Storage {
-  #data: Map<string, Uint8Array> = new Map();
+  #data: Map<string, Uint8Array>;
+
+  constructor() {
+    this.#data = new Map();
+  }
+
+  #matchesPrefix(key: string, prefix: string, prefixEnd: string): boolean {
+    return key >= prefix && key < prefixEnd;
+  }
+
+  #resolvePrefixEnd(prefix: string): string {
+    return prefix.length > 0
+      ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
+      : '\xff';
+  }
+
+  #collectSortedKeys(prefix: string, prefixEnd: string): string[] {
+    const keys: string[] = [];
+    for (const key of this.#data.keys()) {
+      if (this.#matchesPrefix(key, prefix, prefixEnd)) {
+        keys.push(key);
+      }
+    }
+    return keys.toSorted();
+  }
+
+  #applyBound(
+    keys: string[],
+    bound: string | undefined,
+    predicate: (key: string, boundary: string) => boolean,
+  ): string[] {
+    if (bound === undefined) {
+      return keys;
+    }
+
+    const filtered: string[] = [];
+    for (const key of keys) {
+      if (predicate(key, bound)) {
+        filtered.push(key);
+      }
+    }
+    return filtered;
+  }
 
   async get(key: string): Promise<Uint8Array | null> {
     return this.#data.get(key) ?? null;
@@ -18,29 +60,12 @@ export class MemoryStorage implements Storage {
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     const { limit, reverse, gt, lt, gte, lte } = options;
 
-    // Compute the exclusive upper bound for the prefix range.
-    // When prefix is empty, use '\xff' to match all keys since all valid string keys sort before it.
-    const prefixEnd =
-      prefix.length > 0
-        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
-        : '\xff';
-
-    // Sort all keys lexicographically and filter to the prefix range.
-    let keys = [...this.#data.keys()].filter((key) => key >= prefix && key < prefixEnd).toSorted();
-
-    // Apply bound filters.
-    if (gt !== undefined) {
-      keys = keys.filter((key) => key > gt);
-    }
-    if (gte !== undefined) {
-      keys = keys.filter((key) => key >= gte);
-    }
-    if (lt !== undefined) {
-      keys = keys.filter((key) => key < lt);
-    }
-    if (lte !== undefined) {
-      keys = keys.filter((key) => key <= lte);
-    }
+    const prefixEnd = this.#resolvePrefixEnd(prefix);
+    let keys = this.#collectSortedKeys(prefix, prefixEnd);
+    keys = this.#applyBound(keys, gt, (key, boundary) => key > boundary);
+    keys = this.#applyBound(keys, gte, (key, boundary) => key >= boundary);
+    keys = this.#applyBound(keys, lt, (key, boundary) => key < boundary);
+    keys = this.#applyBound(keys, lte, (key, boundary) => key <= boundary);
 
     if (reverse) {
       keys.reverse();
