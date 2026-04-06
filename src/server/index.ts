@@ -459,6 +459,14 @@ function wireEventBroadcasting(
    * terminal state. Waits for any in-flight persistence on the workflow's
    * serialization chain to settle before removing the entries — otherwise a
    * racing handler could reinsert them via `persistAndPublishEvent`.
+   *
+   * Concurrency: between capturing `pendingChain` and the `finally` running
+   * `drop`, another event for the same workflow could arrive and extend the
+   * chain. We drop the entries only once we observe that the chain has not
+   * advanced during the await, and otherwise recurse to wait for the new
+   * tail. Without this loop, `drop` could fire while a subsequent
+   * `persistAndPublishEvent` was still using the counter, producing a
+   * "counter accessed before initialization" error on the next event.
    */
   function cleanupWorkflow(workflowId: string): void {
     const pendingChain = sequenceChains.get(workflowId);
@@ -467,11 +475,19 @@ function wireEventBroadcasting(
       sequenceInitPromises.delete(workflowId);
       sequenceChains.delete(workflowId);
     };
-    if (pendingChain) {
-      void pendingChain.finally(drop);
+    if (!pendingChain) {
+      drop();
       return;
     }
-    drop();
+    void pendingChain.finally(() => {
+      // If another event extended the chain while we were awaiting the
+      // previous tail, recurse to wait on the new tail.
+      if (sequenceChains.get(workflowId) !== pendingChain) {
+        cleanupWorkflow(workflowId);
+        return;
+      }
+      drop();
+    });
   }
 
   return {
