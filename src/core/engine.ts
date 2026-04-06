@@ -1485,7 +1485,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const existingPendingUpdate = updateWaiter
       ? await this.#findPendingUpdateByName(workflowId, name)
       : undefined;
-    if (updateWaiter && !existingPendingUpdate) {
+    const currentWaiter = updateWaiter ? this.#updateWaiters.get(waiterKey) : undefined;
+    if (updateWaiter && currentWaiter === updateWaiter && !existingPendingUpdate) {
       this.#updateWaiters.delete(waiterKey);
       const updateId = crypto.randomUUID();
       this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));

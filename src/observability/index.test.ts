@@ -6,6 +6,12 @@ import {
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
 } from '../ai/events';
+import {
+  WorkflowCancelledEvent,
+  WorkflowCompletedEvent,
+  WorkflowFailedEvent,
+  WorkflowTimedOutEvent,
+} from '../core/events.ts';
 import type {
   ActivityInterception,
   AgentInterception,
@@ -198,6 +204,137 @@ describe('createObservabilityInterceptors', () => {
       expect(spans[0]!.status).toEqual({ code: 1 });
       expect(spans[0]!.ended).toBe(true);
       expect(spans[1]!.ended).toBe(false);
+    });
+
+    it('evicts TTL-expired workflow spans on the next workflow start', () => {
+      const originalDateNow = Date.now;
+      let mockTime = 0;
+      Date.now = () => mockTime;
+
+      try {
+        const { tracer, spans } = createRecordingTracer();
+        const { workflow } = createObservabilityInterceptors({
+          otelApi: createMockOtelApi(tracer),
+        });
+
+        workflow.workflowStart!(
+          {
+            workflowId: 'wf-expired',
+            workflowType: 'TestWorkflow',
+            input: undefined,
+            headers: new Map<string, string>(),
+          },
+          () => {},
+        );
+
+        mockTime = 60 * 60 * 1000 + 1;
+
+        workflow.workflowStart!(
+          {
+            workflowId: 'wf-fresh',
+            workflowType: 'TestWorkflow',
+            input: undefined,
+            headers: new Map<string, string>(),
+          },
+          () => {},
+        );
+
+        expect(spans[0]!.ended).toBe(true);
+        expect(spans[1]!.ended).toBe(false);
+      } finally {
+        Date.now = originalDateNow;
+      }
+    });
+
+    it('evicts the oldest workflow spans when the span cache exceeds the hard cap', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      for (let index = 0; index <= 10_001; index++) {
+        workflow.workflowStart!(
+          {
+            workflowId: `wf-${index}`,
+            workflowType: 'TestWorkflow',
+            input: undefined,
+            headers: new Map<string, string>(),
+          },
+          () => {},
+        );
+      }
+
+      expect(spans).toHaveLength(10_002);
+      expect(spans[0]!.ended).toBe(true);
+      expect(spans.at(-1)!.ended).toBe(false);
+    });
+
+    it('ends workflow spans from terminal events and ignores unrelated events', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const eventTarget = new EventTarget();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+        eventTarget,
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-terminal-events',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      eventTarget.dispatchEvent(new Event(WorkflowCompletedEvent.type));
+      expect(spans[0]!.ended).toBe(false);
+
+      eventTarget.dispatchEvent(
+        new WorkflowFailedEvent('wf-terminal-events', new Error('workflow failed')),
+      );
+
+      expect(spans[0]!.status).toEqual({ code: 2, message: 'workflow failed' });
+      expect(spans[0]!.ended).toBe(true);
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-terminal-completed',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+      eventTarget.dispatchEvent(new WorkflowCompletedEvent('wf-terminal-completed', 'ok', 1));
+      expect(spans[1]!.status).toEqual({ code: 1 });
+      expect(spans[1]!.ended).toBe(true);
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-terminal-cancelled',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+      eventTarget.dispatchEvent(new WorkflowCancelledEvent('wf-terminal-cancelled'));
+      expect(spans[2]!.status).toEqual({ code: 1 });
+      expect(spans[2]!.ended).toBe(true);
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-terminal-timeout',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+      eventTarget.dispatchEvent(new WorkflowTimedOutEvent('wf-terminal-timeout', 'execution', 5));
+      expect(spans[3]!.status).toEqual({ code: 2 });
+      expect(spans[3]!.ended).toBe(true);
     });
 
     it('injects traceparent header on activity', () => {

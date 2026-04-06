@@ -1607,6 +1607,102 @@ describe('executeAgentLoop', () => {
     }
   });
 
+  it('sweeps expired tool cache entries once the proactive threshold is reached', async () => {
+    let executeCount = 0;
+    const originalDateNow = Date.now;
+
+    let mockTime = 0;
+    Date.now = () => mockTime;
+
+    try {
+      const provider = createMockProvider([
+        ...Array.from({ length: 100 }, (_, index) =>
+          createToolCallResponse([
+            { id: `call-${index}`, name: 'lookup', input: { key: `key-${index}` } },
+          ]),
+        ),
+        createToolCallResponse([{ id: 'call-repeat', name: 'lookup', input: { key: 'key-0' } }]),
+        createChatResponse('Done'),
+      ]);
+
+      const originalChat = provider.chat.bind(provider);
+      let chatCallCount = 0;
+      provider.chat = async function (messages, options) {
+        const response = await originalChat(messages, options);
+        chatCallCount++;
+        mockTime = chatCallCount * 20;
+        return response;
+      };
+
+      const lookupTool: AgentTool = {
+        definition: {
+          name: 'lookup',
+          description: 'Lookup a key',
+          inputSchema: { type: 'object' },
+        },
+        execute: async (input: unknown) => {
+          executeCount++;
+          return { value: (input as { key: string }).key };
+        },
+      };
+
+      const result = await executeAgentLoop(
+        {
+          model: 'test-model',
+          provider,
+          tools: [lookupTool],
+          toolCacheTTL: 100,
+          maxTurns: 150,
+        },
+        'Trigger cache sweeping and then repeat the first lookup',
+      );
+
+      expect(result.content).toBe('Done');
+      expect(executeCount).toBe(101);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  it('evicts the oldest cached tool entries when the cache exceeds the hard cap', async () => {
+    let executeCount = 0;
+
+    const provider = createMockProvider([
+      ...Array.from({ length: 1001 }, (_, index) =>
+        createToolCallResponse([
+          { id: `call-${index}`, name: 'lookup', input: { key: `key-${index}` } },
+        ]),
+      ),
+      createToolCallResponse([{ id: 'call-repeat', name: 'lookup', input: { key: 'key-0' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async (input: unknown) => {
+        executeCount++;
+        return { value: (input as { key: string }).key };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        maxTurns: 1100,
+      },
+      'Overflow the tool cache and repeat the oldest lookup',
+    );
+
+    expect(result.content).toBe('Done');
+    expect(executeCount).toBe(1002);
+  });
+
   it('does not cache failed tool executions', async () => {
     let executeCount = 0;
 

@@ -3215,6 +3215,76 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     await Bun.sleep(50);
   });
 
+  it('keeps an in-flight task when the expiry scan encounters a stale heap entry', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+
+    const operationId = 'stale-expiry-scan-op';
+    const futureDeadline = Date.now() + 5_000;
+    const inflightRecord = {
+      operationId,
+      workerId: 'restored-worker',
+      deadline: futureDeadline,
+      activityName: 'charge',
+      queue: 'default',
+      input: null,
+      attempt: 1,
+      visibilityTimeout: 30_000,
+    };
+    await storage.put(KEYS.operationInflight(operationId), encode(inflightRecord));
+
+    const originalAdd = DeadlineTracker.prototype.add;
+    const originalDrainExpired = DeadlineTracker.prototype.drainExpired;
+    let addCountForOperation = 0;
+    let injectedStaleEntry = false;
+
+    const restoreAdd = overrideProperty(
+      DeadlineTracker.prototype,
+      'add',
+      function (
+        this: DeadlineTracker,
+        entry: Parameters<DeadlineTracker['add']>[0],
+      ): ReturnType<DeadlineTracker['add']> {
+        if (entry.operationId === operationId) {
+          addCountForOperation++;
+        }
+        return originalAdd.call(this, entry);
+      },
+    );
+
+    const restoreDrainExpired = overrideProperty(
+      DeadlineTracker.prototype,
+      'drainExpired',
+      function (
+        this: DeadlineTracker,
+        now: Parameters<DeadlineTracker['drainExpired']>[0],
+      ): ReturnType<DeadlineTracker['drainExpired']> {
+        const expired = originalDrainExpired.call(this, now);
+        if (!injectedStaleEntry) {
+          injectedStaleEntry = true;
+          return [...expired, { operationId, deadline: now - 1 }];
+        }
+        return expired;
+      },
+    );
+
+    try {
+      server = serve({ engine, port: 0, visibilityPollIntervalMs: 25 });
+      await Bun.sleep(200);
+
+      expect(injectedStaleEntry).toBe(true);
+      expect(addCountForOperation).toBeGreaterThanOrEqual(2);
+      expect(server.registry.isAssigned(operationId)).toBe(true);
+
+      const persisted = decode((await storage.get(KEYS.operationInflight(operationId)))!) as {
+        deadline: number;
+      };
+      expect(persisted.deadline).toBe(futureDeadline);
+    } finally {
+      restoreDrainExpired();
+      restoreAdd();
+    }
+  });
+
   it('logs corrupt inflight records when the visibility scanner encounters invalid storage', async () => {
     ({ engine, storage } = createEngineWithStorage());
     const errorSpy = spyOn(console, 'error').mockImplementation(() => {});

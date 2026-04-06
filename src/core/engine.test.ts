@@ -361,6 +361,55 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('ctx.race swallows loser rejections after aborting agent sub-operations', async () => {
+    const engine = new Engine();
+    let agentAborted = false;
+    const agentStarted = Promise.withResolvers<void>();
+
+    const abortableProvider: LLMProvider = {
+      name: 'abortable',
+      async chat(_messages, options): Promise<ChatResponse> {
+        return await new Promise<ChatResponse>((_resolve, reject) => {
+          agentStarted.resolve();
+          options.signal?.addEventListener(
+            'abort',
+            () => {
+              agentAborted = true;
+              reject(options.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+            },
+            { once: true },
+          );
+        });
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 1;
+      },
+    };
+
+    engine.register('race-agent-abort-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).race([
+        (ctx as Context).agent({
+          model: 'test-model',
+          prompt: 'wait until aborted',
+          provider: abortableProvider,
+        }),
+        (ctx as Context).run(async () => {
+          await agentStarted.promise;
+          return 'fast';
+        }),
+      ]);
+    });
+
+    const handle = await engine.start('race-agent-abort-workflow', null);
+    await expect(handle.result()).resolves.toBe('fast');
+    await flush();
+    expect(agentAborted).toBe(true);
+    engine[Symbol.dispose]();
+  });
+
   it('ctx.memo caches the value', async () => {
     const engine = new Engine();
     let callCount = 0;
