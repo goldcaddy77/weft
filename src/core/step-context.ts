@@ -142,23 +142,49 @@ export function compileStepWorkflow<TInput = unknown, TOutput = unknown>(
 // Detection helper
 // ---------------------------------------------------------------------------
 
-const GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {});
-const AsyncGeneratorFunctionPrototype = Object.getPrototypeOf(async function* () {});
+function* sampleSyncGenerator(): Generator<undefined> {
+  yield undefined;
+}
 
-/** Prototype of generator instance objects (the values returned by generator functions). */
-const GeneratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf((function* () {})()));
-const AsyncGeneratorPrototype = Object.getPrototypeOf(
-  Object.getPrototypeOf((async function* () {})()),
-);
+async function* sampleAsyncGenerator(): AsyncGenerator<undefined> {
+  yield undefined;
+}
+
+function getGeneratorDetectionPrototypes(): {
+  syncGeneratorFunctionPrototype: object;
+  asyncGeneratorFunctionPrototype: object;
+  syncGeneratorPrototype: object;
+  asyncGeneratorPrototype: object;
+} {
+  const syncGeneratorResult = sampleSyncGenerator();
+  syncGeneratorResult.next();
+
+  const asyncGeneratorResult = sampleAsyncGenerator();
+  void asyncGeneratorResult.next();
+
+  return {
+    syncGeneratorFunctionPrototype: Object.getPrototypeOf(sampleSyncGenerator),
+    asyncGeneratorFunctionPrototype: Object.getPrototypeOf(sampleAsyncGenerator),
+    syncGeneratorPrototype: Object.getPrototypeOf(sampleSyncGenerator.prototype),
+    asyncGeneratorPrototype: Object.getPrototypeOf(sampleAsyncGenerator.prototype),
+  };
+}
+
+const {
+  syncGeneratorFunctionPrototype: SYNC_GENERATOR_FUNCTION_PROTOTYPE,
+  asyncGeneratorFunctionPrototype: ASYNC_GENERATOR_FUNCTION_PROTOTYPE,
+  syncGeneratorPrototype: SYNC_GENERATOR_PROTOTYPE,
+  asyncGeneratorPrototype: ASYNC_GENERATOR_PROTOTYPE,
+} = getGeneratorDetectionPrototypes();
 
 /** Returns `true` if `fn` is a sync generator function (`function*`). */
 export function isGeneratorFunction(fn: Function): boolean {
-  return Object.getPrototypeOf(fn) === GeneratorFunctionPrototype;
+  return Object.getPrototypeOf(fn) === SYNC_GENERATOR_FUNCTION_PROTOTYPE;
 }
 
 /** Returns `true` if `fn` is an async generator function (`async function*`). */
 export function isAsyncGeneratorFunction(fn: Function): boolean {
-  return Object.getPrototypeOf(fn) === AsyncGeneratorFunctionPrototype;
+  return Object.getPrototypeOf(fn) === ASYNC_GENERATOR_FUNCTION_PROTOTYPE;
 }
 
 /**
@@ -167,10 +193,15 @@ export function isAsyncGeneratorFunction(fn: Function): boolean {
  *
  * The prototype chain for a generator instance is:
  *   gen -> genFn.prototype -> Generator.prototype
- * We check two levels up to match Generator.prototype.
+ * We compare the shared parent prototype so lookalike iterators do not match.
  */
 export function isGeneratorResult(value: unknown): boolean {
   if (value === null || typeof value !== 'object') return false;
-  const proto = Object.getPrototypeOf(Object.getPrototypeOf(value));
-  return proto === GeneratorPrototype || proto === AsyncGeneratorPrototype;
+  const directPrototype = Object.getPrototypeOf(value);
+  if (directPrototype === null) return false;
+
+  const sharedPrototype = Object.getPrototypeOf(directPrototype);
+  return (
+    sharedPrototype === SYNC_GENERATOR_PROTOTYPE || sharedPrototype === ASYNC_GENERATOR_PROTOTYPE
+  );
 }

@@ -122,6 +122,17 @@ const NO_OP_SPAN: OtelSpan = {
   },
 };
 
+/** Shared no-op span methods for lightweight span adapters that only need a custom spanContext. */
+export const NO_OP_SPAN_METHODS = {
+  setAttribute: (...arguments_: Parameters<OtelSpan['setAttribute']>) =>
+    NO_OP_SPAN.setAttribute(...arguments_),
+  setStatus: (...arguments_: Parameters<OtelSpan['setStatus']>) =>
+    NO_OP_SPAN.setStatus(...arguments_),
+  recordException: (...arguments_: Parameters<OtelSpan['recordException']>) =>
+    NO_OP_SPAN.recordException(...arguments_),
+  end: (...arguments_: Parameters<OtelSpan['end']>) => NO_OP_SPAN.end(...arguments_),
+} as const;
+
 const noOpTracer: OtelTracer = {
   startSpan() {
     return NO_OP_SPAN;
@@ -180,6 +191,44 @@ const noOpApi: OtelApi = {
 
 let cached: OtelApi | undefined;
 
+/** Reset the cached API between tests so specific loader branches can be exercised deterministically. */
+export function resetCachedOtelApiForTesting(): void {
+  cached = undefined;
+}
+
+function resolveDefaultOtelLoader(): (moduleName: string) => unknown {
+  const globalRequire = (globalThis as Record<PropertyKey, unknown>)['require'];
+  if (typeof globalRequire === 'function') {
+    return (moduleName: string) => globalRequire(moduleName);
+  }
+
+  return () => undefined;
+}
+
+/** Check whether a loaded module exposes the subset of the OpenTelemetry API Weft requires. */
+export function isSupportedOtelApi(value: Partial<OtelApi> | undefined): value is OtelApi {
+  return value?.trace?.getTracer != null && value.SpanStatusCode != null;
+}
+
+/**
+ * Resolve the installed OpenTelemetry API using an injectable loader.
+ * Returns `undefined` when the module is unavailable or exposes the wrong shape.
+ */
+export function resolveInstalledOtelApi(
+  loader: (moduleName: string) => unknown = resolveDefaultOtelLoader(),
+): OtelApi | undefined {
+  try {
+    const real = loader('@opentelemetry/api') as Partial<OtelApi>;
+    if (isSupportedOtelApi(real)) {
+      return real;
+    }
+  } catch {
+    // Package not installed — fall through to no-op.
+  }
+
+  return undefined;
+}
+
 /**
  * Returns the `@opentelemetry/api` module if installed, otherwise returns
  * no-op implementations. The result is cached after the first call.
@@ -188,20 +237,13 @@ let cached: OtelApi | undefined;
  * When no SDK is configured the no-op implementations ensure zero overhead
  * because every method is an empty function the JIT can inline away.
  */
-export function getOtelApi(): OtelApi {
+export function getOtelApi(loader?: (moduleName: string) => unknown): OtelApi {
   if (cached) return cached;
 
-  try {
-    const moduleName = '@opentelemetry/api';
-    const real = require(moduleName) as OtelApi;
-
-    // Sanity-check: the real module must expose the shape we need.
-    if (real.trace?.getTracer != null && real.SpanStatusCode != null) {
-      cached = real;
-      return cached;
-    }
-  } catch {
-    // Package not installed — fall through to no-op.
+  const installed = resolveInstalledOtelApi(loader);
+  if (installed) {
+    cached = installed;
+    return cached;
   }
 
   cached = noOpApi;

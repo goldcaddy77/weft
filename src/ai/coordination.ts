@@ -148,9 +148,11 @@ export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
 
   switch (forwardContext) {
     case 'full': {
-      const transcript = parentConversation
-        .map((message) => `${message.role}: ${message.content}`)
-        .join('\n');
+      const transcriptLines: string[] = [];
+      for (const message of parentConversation) {
+        transcriptLines.push(`${message.role}: ${message.content}`);
+      }
+      const transcript = transcriptLines.join('\n');
       effectiveInput = `Context from previous conversation:\n${transcript}\n\nCurrent task: ${input}`;
       break;
     }
@@ -280,10 +282,14 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
   // branch abort all other in-flight branches — something a passthrough signal
   // can't do because the budget tracker needs its own controller to fire abort.
   const controller = new AbortController();
-
-  // Forward parent abort to the local controller. Named handler so we can
-  // remove it in finally — prevents leaking listeners on long-lived signals.
   const onParentAbort = parentSignal ? () => controller.abort(parentSignal.reason) : undefined;
+
+  // Wire budget enforcement: exceeding the budget aborts all parallel branches.
+  // Scoped to this call — cleared in finally so a shared BudgetTracker isn't
+  // left referencing a stale controller after supervise() returns.
+  if (budget) {
+    budget.setAbortController(controller);
+  }
 
   if (parentSignal) {
     if (parentSignal.aborted) {
@@ -293,19 +299,13 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
     }
   }
 
-  // Wire budget enforcement: exceeding the budget aborts all parallel branches.
-  // Scoped to this call — cleared in finally so a shared BudgetTracker isn't
-  // left referencing a stale controller after supervise() returns.
-  if (budget) {
-    budget.setAbortController(controller);
-  }
-
   const signal = controller.signal;
 
   try {
     // Run all workers in parallel
-    const workerResults = await Promise.all(
-      workers.map((worker) =>
+    const workerPromises: Promise<AgentResult>[] = [];
+    for (const worker of workers) {
+      workerPromises.push(
         executeAgentLoop(
           {
             model: worker.model,
@@ -318,8 +318,10 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
           },
           input,
         ),
-      ),
-    );
+      );
+    }
+
+    const workerResults = await Promise.all(workerPromises);
 
     // If the budget was exhausted during the worker phase, the signal is
     // already aborted. Throw now rather than silently running the supervisor
@@ -331,16 +333,27 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
     switch (strategy) {
       case 'consensus': {
         // Check if all workers produced the same response
-        const allResponses = workerResults.map((result) => result.content);
-        const allAgree = allResponses.every((response) => response === allResponses[0]);
+        const allResponses: string[] = [];
+        for (const result of workerResults) {
+          allResponses.push(result.content);
+        }
+        let allAgree = true;
+        for (const response of allResponses) {
+          if (response !== allResponses[0]) {
+            allAgree = false;
+            break;
+          }
+        }
 
         if (allAgree) {
           finalResult = allResponses[0]!;
         } else {
           // Workers disagree; ask supervisor to resolve
-          const workerSummary = allResponses
-            .map((response, index) => `Worker ${index + 1}: ${response}`)
-            .join('\n\n');
+          const workerSummaryLines: string[] = [];
+          for (const [index, response] of allResponses.entries()) {
+            workerSummaryLines.push(`Worker ${index + 1}: ${response}`);
+          }
+          const workerSummary = workerSummaryLines.join('\n\n');
 
           const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nThe workers disagree. Please determine the correct answer.`;
 
@@ -363,9 +376,11 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       }
 
       case 'best-of-n': {
-        const workerSummary = workerResults
-          .map((result, index) => `Worker ${index + 1}: ${result.content}`)
-          .join('\n\n');
+        const workerSummaryLines: string[] = [];
+        for (const [index, result] of workerResults.entries()) {
+          workerSummaryLines.push(`Worker ${index + 1}: ${result.content}`);
+        }
+        const workerSummary = workerSummaryLines.join('\n\n');
 
         const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nPick the best response and explain why.`;
 
@@ -387,9 +402,11 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       }
 
       case 'merge': {
-        const workerSummary = workerResults
-          .map((result, index) => `Worker ${index + 1}: ${result.content}`)
-          .join('\n\n');
+        const workerSummaryLines: string[] = [];
+        for (const [index, result] of workerResults.entries()) {
+          workerSummaryLines.push(`Worker ${index + 1}: ${result.content}`);
+        }
+        const workerSummary = workerSummaryLines.join('\n\n');
 
         const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nMerge these responses into a single comprehensive answer.`;
 
@@ -420,13 +437,12 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       strategy,
     };
   } finally {
+    if (parentSignal && onParentAbort) {
+      parentSignal.removeEventListener('abort', onParentAbort);
+    }
     // Detach so a shared BudgetTracker isn't left with a stale controller.
     if (budget) {
       budget.setAbortController(new AbortController());
-    }
-    // Remove the parent signal listener to prevent leaking on long-lived signals.
-    if (parentSignal && onParentAbort) {
-      parentSignal.removeEventListener('abort', onParentAbort);
     }
   }
 }

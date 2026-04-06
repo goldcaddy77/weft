@@ -22,17 +22,12 @@ import {
 } from './events';
 import type { AgentHooks } from './hooks';
 import type { MCPAuthConfig } from './mcp/authentication';
-import { buildAuthHeaders } from './mcp/authentication';
 import { MCPClient, MCPServerUnavailableError } from './mcp/client';
-import { createOAuth2TokenManager } from './mcp/oauth2-token-manager';
 import type { RegistryTool } from './mcp/registry';
 import { ToolRegistry } from './mcp/registry';
 import { ToolSchemaValidationError, validateSchema } from './mcp/schema-validator';
 import type { TransportKind } from './mcp/transport';
-import { inferTransportKind, parseStdioUrl } from './mcp/transport';
-import { HttpTransport } from './mcp/transport-http';
-import { HttpSseTransport } from './mcp/transport-http-sse';
-import { StdioTransport } from './mcp/transport-stdio';
+import { createTransportForSource } from './mcp/transport-factory';
 import type { ModelRouter, RoutingContext } from './model-router';
 import type { ProviderHealthTracker } from './provider-health';
 import type { LLMProvider } from './providers/interface';
@@ -255,63 +250,6 @@ function buildCacheKey(toolName: string, input: unknown): string {
  */
 function estimateConversationSizeBytes(conversation: Message[]): number {
   return new TextEncoder().encode(JSON.stringify(conversation)).byteLength;
-}
-
-// ---------------------------------------------------------------------------
-// Tool initialization
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Transport creation
-// ---------------------------------------------------------------------------
-
-/** Build the appropriate transport for an MCP tool source based on URL scheme and options. */
-function createTransportForSource(source: MCPToolSource): import('./mcp/transport').MCPTransport {
-  const kind = inferTransportKind(source.mcp, source.transport);
-
-  // Stdio transport communicates via stdin/stdout — HTTP auth headers don't apply
-  if (kind === 'stdio') {
-    if (source.auth && source.auth.type !== 'none') {
-      console.warn(
-        `[MCP] Auth config ignored for stdio transport: ${source.mcp}. Stdio uses process-level credentials, not HTTP headers.`,
-      );
-    }
-    const target = parseStdioUrl(source.mcp);
-    return new StdioTransport({
-      command: target.command,
-      args: target.args,
-      timeout: source.timeout,
-    });
-  }
-
-  // Build header source — OAuth2 uses an async factory so tokens refresh automatically
-  let headers: import('./mcp/transport-http').HeaderSource = {};
-  if (source.auth) {
-    if (source.auth.type === 'oauth2') {
-      const tokenManager = createOAuth2TokenManager(source.auth);
-      headers = async () => {
-        const token = await tokenManager.getAccessToken();
-        return { Authorization: `Bearer ${token}` };
-      };
-    } else {
-      headers = buildAuthHeaders(source.auth);
-    }
-  }
-
-  switch (kind) {
-    case 'sse':
-      return new HttpSseTransport({
-        serverUrl: source.mcp,
-        headers,
-        timeout: source.timeout,
-      });
-    case 'http':
-      return new HttpTransport({
-        serverUrl: source.mcp,
-        headers,
-        timeout: source.timeout,
-      });
-  }
 }
 
 // ---------------------------------------------------------------------------

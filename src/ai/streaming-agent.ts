@@ -60,6 +60,14 @@ type StreamingChatState = {
   pendingToolCalls: Map<string, PendingStreamingToolCall>;
 };
 
+export type StreamingTokenEnqueueState = {
+  streamClosed: boolean;
+  streamController: ReadableStreamDefaultController<string> | undefined;
+  eventTarget?: EventTarget | undefined;
+  workflowId?: string | undefined;
+  model: string;
+};
+
 function createStreamingChatState(): StreamingChatState {
   return {
     content: '',
@@ -138,6 +146,41 @@ function handleStreamingChunk(
       }
       return;
   }
+}
+
+/** Enqueue a streamed token, applying backpressure and optional TokenEvent dispatching. */
+export function enqueueStreamingToken(
+  token: string,
+  state: StreamingTokenEnqueueState,
+): StreamingTokenEnqueueState {
+  if (state.streamClosed || !state.streamController) {
+    return state;
+  }
+
+  // Backpressure: use the Web Streams API's built-in queue tracking.
+  // When desiredSize drops to zero or below, the consumer is falling behind
+  // and the internal queue has exceeded the highWaterMark we configured.
+  if (state.streamController.desiredSize !== null && state.streamController.desiredSize <= 0) {
+    try {
+      state.streamController.error(new Error('Stream buffer exceeded maximum size'));
+    } catch {
+      // Controller may already be closed
+    }
+    return { ...state, streamClosed: true };
+  }
+
+  let nextState = state;
+  try {
+    state.streamController.enqueue(token);
+  } catch {
+    nextState = { ...state, streamClosed: true };
+  }
+
+  if (state.eventTarget && state.workflowId) {
+    state.eventTarget.dispatchEvent(new TokenEvent(state.workflowId, token, state.model));
+  }
+
+  return nextState;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,31 +282,15 @@ export function executeStreamingAgent(
 
   // Token callback — enqueue tokens into the stream and optionally dispatch events
   const onToken = (token: string): void => {
-    if (streamClosed || !streamController) return;
-
-    // Backpressure: use the Web Streams API's built-in queue tracking.
-    // When desiredSize drops to zero or below, the consumer is falling behind
-    // and the internal queue has exceeded the highWaterMark we configured.
-    if (streamController.desiredSize !== null && streamController.desiredSize <= 0) {
-      try {
-        streamController.error(new Error('Stream buffer exceeded maximum size'));
-      } catch {
-        // Controller may already be closed
-      }
-      streamClosed = true;
-      return;
-    }
-
-    try {
-      streamController.enqueue(token);
-    } catch {
-      streamClosed = true;
-    }
-
-    // Dispatch TokenEvent if eventTarget is provided
-    if (eventTarget && workflowId) {
-      eventTarget.dispatchEvent(new TokenEvent(workflowId, token, options.model));
-    }
+    const nextState = enqueueStreamingToken(token, {
+      streamClosed,
+      streamController,
+      eventTarget,
+      workflowId,
+      model: options.model,
+    });
+    streamClosed = nextState.streamClosed;
+    streamController = nextState.streamController;
   };
 
   // Create a streaming provider wrapper

@@ -16,6 +16,13 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
  */
 
 const TARGET_RECOVERY_MS = process.env['CI'] ? 10 : 5;
+const RECOVERY_SAMPLE_SIZE = 5;
+
+function median(values: number[]): number {
+  const sorted = values.toSorted((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted[middle]!;
+}
 
 describe('Workflow recovery', () => {
   it(`recovers a single workflow in <${TARGET_RECOVERY_MS}ms`, async () => {
@@ -85,7 +92,11 @@ describe('Workflow recovery', () => {
       return 'done';
     });
 
-    await engine1.start('waiter', 'shallow', { id: 'shallow-history' });
+    for (let index = 0; index < RECOVERY_SAMPLE_SIZE; index++) {
+      await engine1.start('waiter', `shallow-${index}`, {
+        id: `shallow-history-${index}`,
+      });
+    }
     await Bun.sleep(5);
     engine1[Symbol.dispose]();
 
@@ -96,9 +107,13 @@ describe('Workflow recovery', () => {
       return 'done';
     });
 
-    const shallowStart = performance.now();
-    await engine2.resume('shallow-history');
-    const shallowTime = performance.now() - shallowStart;
+    const shallowTimes: number[] = [];
+    for (let index = 0; index < RECOVERY_SAMPLE_SIZE; index++) {
+      const shallowStart = performance.now();
+      await engine2.resume(`shallow-history-${index}`);
+      shallowTimes.push(performance.now() - shallowStart);
+    }
+    const shallowMedian = median(shallowTimes);
     engine2[Symbol.dispose]();
 
     // Phase 2: create a workflow with deeper history (more checkpoint data
@@ -120,7 +135,11 @@ describe('Workflow recovery', () => {
     }
 
     // Start a new 'waiter' workflow that will be recovered.
-    await engine3.start('waiter', 'deep', { id: 'deep-history' });
+    for (let index = 0; index < RECOVERY_SAMPLE_SIZE; index++) {
+      await engine3.start('waiter', `deep-${index}`, {
+        id: `deep-history-${index}`,
+      });
+    }
     await Bun.sleep(5);
     engine3[Symbol.dispose]();
 
@@ -131,24 +150,30 @@ describe('Workflow recovery', () => {
       return 'done';
     });
 
-    const deepStart = performance.now();
-    await engine4.resume('deep-history');
-    const deepTime = performance.now() - deepStart;
+    const deepTimes: number[] = [];
+    for (let index = 0; index < RECOVERY_SAMPLE_SIZE; index++) {
+      const deepStart = performance.now();
+      await engine4.resume(`deep-history-${index}`);
+      deepTimes.push(performance.now() - deepStart);
+    }
+    const deepMedian = median(deepTimes);
     engine4[Symbol.dispose]();
     storage[Symbol.dispose]();
 
     console.log(
       [
         `\n  Recovery O(1) verification:`,
-        `    Shallow (no extra data): ${shallowTime.toFixed(3)}ms`,
-        `    Deep (500+ workflows):   ${deepTime.toFixed(3)}ms`,
-        `    Ratio:                   ${(deepTime / shallowTime).toFixed(2)}x\n`,
+        `    Shallow median:          ${shallowMedian.toFixed(3)}ms`,
+        `    Deep median:             ${deepMedian.toFixed(3)}ms`,
+        `    Ratio:                   ${(deepMedian / shallowMedian).toFixed(2)}x`,
+        `    Shallow samples:         ${shallowTimes.map((time) => time.toFixed(3)).join(', ')}`,
+        `    Deep samples:            ${deepTimes.map((time) => time.toFixed(3)).join(', ')}\n`,
       ].join('\n'),
     );
 
     // Deep recovery should be at most 5x the shallow time. In a true O(1)
     // system they'd be nearly identical; the generous factor accounts for
     // cache effects and GC jitter.
-    expect(deepTime).toBeLessThan(shallowTime * 5 + 2);
+    expect(deepMedian).toBeLessThan(shallowMedian * 5 + 2);
   }, 60_000);
 });

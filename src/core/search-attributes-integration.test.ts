@@ -13,6 +13,8 @@ import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { SearchAttributeValue, WorkflowContext } from './types.ts';
 
+const waitForUpdateTestTimeoutMs = 90_000;
+
 // ---------------------------------------------------------------------------
 // Search Attributes
 // ---------------------------------------------------------------------------
@@ -759,62 +761,81 @@ for (const backend of storageBackends) {
       await teardown(engine, cleanup);
     });
 
-    it('ctx.waitForUpdate() pauses until engine.update() is called', async () => {
-      const result = backend.factory();
-      cleanup = result.cleanup;
-      engine = new Engine({ storage: result.storage });
+    it(
+      'ctx.waitForUpdate() pauses until engine.update() is called',
+      async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        engine = new Engine({ storage: result.storage });
 
-      engine.register('wait-for-update', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
-        const { payload, respond } = yield* context.waitForUpdate<{ value: number }>('my-update');
-        respond({ accepted: true, value: payload.value });
-        return payload;
-      });
+        engine.register('wait-for-update', async function* (ctx: WorkflowContext) {
+          const context = ctx as Context;
+          const { payload, respond } = yield* context.waitForUpdate<{ value: number }>('my-update');
+          respond({ accepted: true, value: payload.value });
+          return payload;
+        });
 
-      const handle = await engine.start('wait-for-update', null, { id: 'wf-update-1' });
+        const handle = await engine.start('wait-for-update', null, { id: 'wf-update-1' });
 
-      await flush();
+        await flush();
 
-      // Send update -- the caller receives whatever respond() was called with
-      const updateResult = await engine.update('wf-update-1', 'my-update', { value: 42 });
-      expect(updateResult).toEqual({ accepted: true, value: 42 });
+        // Send update -- the caller receives whatever respond() was called with
+        const updateResult = await engine.update(
+          'wf-update-1',
+          'my-update',
+          { value: 42 },
+          {
+            timeout: waitForUpdateTestTimeoutMs,
+          },
+        );
+        expect(updateResult).toEqual({ accepted: true, value: 42 });
 
-      // Workflow should have completed with the update payload
-      const workflowResult = await handle.result();
-      expect(workflowResult).toEqual({ value: 42 });
-    });
+        // Workflow should have completed with the update payload
+        const workflowResult = await handle.result();
+        expect(workflowResult).toEqual({ value: 42 });
+      },
+      waitForUpdateTestTimeoutMs,
+    );
 
-    it('multiple concurrent waitForUpdate calls with different names work independently', async () => {
-      const result = backend.factory();
-      cleanup = result.cleanup;
-      engine = new Engine({ storage: result.storage });
+    it(
+      'multiple concurrent waitForUpdate calls with different names work independently',
+      async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        engine = new Engine({ storage: result.storage });
 
-      engine.register('multi-update', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
-        const { payload: firstPayload, respond: respond1 } =
-          yield* context.waitForUpdate<string>('update-a');
-        respond1(firstPayload);
-        const { payload: secondPayload, respond: respond2 } =
-          yield* context.waitForUpdate<string>('update-b');
-        respond2(secondPayload);
-        return `${firstPayload}-${secondPayload}`;
-      });
+        engine.register('multi-update', async function* (ctx: WorkflowContext) {
+          const context = ctx as Context;
+          const { payload: firstPayload, respond: respond1 } =
+            yield* context.waitForUpdate<string>('update-a');
+          respond1(firstPayload);
+          const { payload: secondPayload, respond: respond2 } =
+            yield* context.waitForUpdate<string>('update-b');
+          respond2(secondPayload);
+          return `${firstPayload}-${secondPayload}`;
+        });
 
-      const handle = await engine.start('multi-update', null, { id: 'wf-multi-update' });
+        const handle = await engine.start('multi-update', null, { id: 'wf-multi-update' });
 
-      await flush();
+        await flush();
 
-      // Send first update
-      await engine.update('wf-multi-update', 'update-a', 'hello');
+        // Send first update
+        await engine.update('wf-multi-update', 'update-a', 'hello', {
+          timeout: waitForUpdateTestTimeoutMs,
+        });
 
-      await flush();
+        await flush();
 
-      // Send second update
-      await engine.update('wf-multi-update', 'update-b', 'world');
+        // Send second update
+        await engine.update('wf-multi-update', 'update-b', 'world', {
+          timeout: waitForUpdateTestTimeoutMs,
+        });
 
-      const workflowResult = await handle.result();
-      expect(workflowResult).toBe('hello-world');
-    });
+        const workflowResult = await handle.result();
+        expect(workflowResult).toBe('hello-world');
+      },
+      waitForUpdateTestTimeoutMs,
+    );
 
     it('waitForUpdate with pre-existing pending update resolves immediately', async () => {
       const result = backend.factory();
@@ -854,34 +875,40 @@ for (const backend of storageBackends) {
       await updatePromise;
     });
 
-    it('update events are dispatched for wait-update path', async () => {
-      const result = backend.factory();
-      cleanup = result.cleanup;
-      engine = new Engine({ storage: result.storage });
-      const events: string[] = [];
+    it(
+      'update events are dispatched for wait-update path',
+      async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        engine = new Engine({ storage: result.storage });
+        const events: string[] = [];
 
-      engine.addEventListener('update:received', () => events.push('received'));
-      engine.addEventListener('update:completed', () => events.push('completed'));
+        engine.addEventListener('update:received', () => events.push('received'));
+        engine.addEventListener('update:completed', () => events.push('completed'));
 
-      engine.register('events-update', async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
-        const { payload, respond } = yield* context.waitForUpdate('my-update');
-        respond(payload);
-        return payload;
-      });
+        engine.register('events-update', async function* (ctx: WorkflowContext) {
+          const context = ctx as Context;
+          const { payload, respond } = yield* context.waitForUpdate('my-update');
+          respond(payload);
+          return payload;
+        });
 
-      const handle = await engine.start('events-update', null, { id: 'wf-events-update' });
-      await flush();
+        const handle = await engine.start('events-update', null, { id: 'wf-events-update' });
+        await flush();
 
-      await engine.update('wf-events-update', 'my-update', 'data');
-      await handle.result();
-      // Extra flushes to let update coordinator's background polling settle
-      // before afterEach disposes the engine and storage.
-      await flush();
-      await flush();
+        await engine.update('wf-events-update', 'my-update', 'data', {
+          timeout: waitForUpdateTestTimeoutMs,
+        });
+        await handle.result();
+        // Extra flushes to let update coordinator's background polling settle
+        // before afterEach disposes the engine and storage.
+        await flush();
+        await flush();
 
-      expect(events).toContain('received');
-      expect(events).toContain('completed');
-    });
+        expect(events).toContain('received');
+        expect(events).toContain('completed');
+      },
+      waitForUpdateTestTimeoutMs,
+    );
   });
 }

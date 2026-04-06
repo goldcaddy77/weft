@@ -449,5 +449,12 @@ describe('InlineExecutionStrategy', () => {
       expect(strategy.hasGenerator('wf-1')).toBe(false);
       expect(strategy.getContext('wf-1')).toBeUndefined();
     });
+
+    it('supports explicit async disposal', async () => {
+      setup();
+
+      await expect(strategy[Symbol.asyncDispose]()).resolves.toBeUndefined();
+      expect(() => strategy[Symbol.dispose]()).not.toThrow();
+    });
   });
 });

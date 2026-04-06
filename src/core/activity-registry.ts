@@ -72,21 +72,18 @@ function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOpti
 
 export class ActivityRegistry {
   /** Metadata keyed to the activity function object. */
-  #metadata = new WeakMap<object, ActivityMetadata>();
+  #metadata: WeakMap<object, ActivityMetadata>;
 
   /**
    * Name → function lookup. Holds strong references to registered functions,
    * keeping them (and their WeakMap metadata) alive until explicitly
    * unregistered.
    */
-  #nameIndex = new Map<string, object>();
+  #nameIndex: Map<string, object>;
 
-  /** Check whether `fn` is still referenced by any name other than `excludeName`. */
-  #isReferencedByOtherName(fn: object, excludeName: string): boolean {
-    for (const [name, ref] of this.#nameIndex) {
-      if (name !== excludeName && ref === fn) return true;
-    }
-    return false;
+  constructor() {
+    this.#metadata = new WeakMap();
+    this.#nameIndex = new Map();
   }
 
   /**
@@ -107,8 +104,18 @@ export class ActivityRegistry {
     // the old function in #metadata. Only delete metadata if no other name
     // still references the same function.
     const existingFn = this.#nameIndex.get(name);
-    if (existingFn && existingFn !== fn && !this.#isReferencedByOtherName(existingFn, name)) {
-      this.#metadata.delete(existingFn);
+    if (existingFn && existingFn !== fn) {
+      let stillReferenced = false;
+      for (const [registeredName, registeredFn] of this.#nameIndex) {
+        if (registeredName !== name && registeredFn === existingFn) {
+          stillReferenced = true;
+          break;
+        }
+      }
+
+      if (!stillReferenced) {
+        this.#metadata.delete(existingFn);
+      }
     }
 
     const extracted = extractDefinitionMetadata(fn);
@@ -160,8 +167,19 @@ export class ActivityRegistry {
   unregister(name: string): void {
     const fn = this.#nameIndex.get(name);
     this.#nameIndex.delete(name);
-    if (fn && !this.#isReferencedByOtherName(fn, name)) {
-      this.#metadata.delete(fn);
+
+    if (fn) {
+      let stillReferenced = false;
+      for (const registeredFn of this.#nameIndex.values()) {
+        if (registeredFn === fn) {
+          stillReferenced = true;
+          break;
+        }
+      }
+
+      if (!stillReferenced) {
+        this.#metadata.delete(fn);
+      }
     }
   }
 

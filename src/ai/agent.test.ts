@@ -13,7 +13,11 @@ import type {
 } from './agent';
 import { executeAgentLoop, initializeTools } from './agent';
 import { BudgetExceededError, BudgetTracker } from './budget';
-import { AgentModelFallbackEvent, AgentTurnCompletedEvent } from './events';
+import {
+  AgentContextCompactedEvent,
+  AgentModelFallbackEvent,
+  AgentTurnCompletedEvent,
+} from './events';
 import { MCPClient } from './mcp/client';
 import { ToolNameConflictError } from './mcp/registry';
 import type { MCPRequest, MCPResponse, MCPTransport } from './mcp/transport';
@@ -565,6 +569,59 @@ describe('executeAgentLoop', () => {
     expect(sentMessageCount).toBe(1);
   });
 
+  it('dispatches AgentContextCompactedEvent when compaction runs with an event target', async () => {
+    const eventTarget = new EventTarget();
+    const compactedEvents: AgentContextCompactedEvent[] = [];
+    eventTarget.addEventListener(AgentContextCompactedEvent.type, ((event: Event) => {
+      compactedEvents.push(event as AgentContextCompactedEvent);
+    }) as EventListener);
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 5_000;
+      },
+    };
+
+    const contextManager = {
+      strategyName: 'summarize',
+      shouldCompact(): boolean {
+        return true;
+      },
+      async compact(messages: Message[]) {
+        return {
+          messages: messages.slice(-1),
+          tokensBefore: 5_000,
+          tokensAfter: 100,
+          messagesDropped: messages.length - 1,
+        };
+      },
+    } as any;
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        contextManager,
+        eventTarget,
+        workflowId: 'wf-context-compaction',
+        agentId: 'agent-context-compaction',
+      },
+      'Hello',
+    );
+
+    expect(compactedEvents).toHaveLength(1);
+    expect(compactedEvents[0]!.workflowId).toBe('wf-context-compaction');
+    expect(compactedEvents[0]!.agentId).toBe('agent-context-compaction');
+    expect(compactedEvents[0]!.strategy).toBe('summarize');
+  });
+
   it('does not compact when contextManager says not to', async () => {
     let sentMessageCount = 0;
     let firstMessageRole = '';
@@ -1023,6 +1080,100 @@ describe('executeAgentLoop', () => {
     expect(toolMessage!.toolResults![0]!.output).toBe('modified-result');
   });
 
+  it('hooks.afterToolCall with action continue serializes object replacement results', async () => {
+    let capturedToolResultMessages: Message[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(messages): Promise<ChatResponse> {
+        capturedToolResultMessages = [...messages];
+        if (messages.length <= 1) {
+          return createToolCallResponse([{ id: 'call-1', name: 'lookup', input: {} }]);
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => 'original-result',
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        hooks: {
+          afterToolCall: () => {
+            return { action: 'continue', result: { replaced: true } };
+          },
+        },
+      },
+      'Lookup something',
+    );
+
+    const toolMessage = capturedToolResultMessages.find((message) => message.role === 'tool');
+    expect(toolMessage!.toolResults![0]!.output).toBe(JSON.stringify({ replaced: true }));
+  });
+
+  it('hooks.afterToolCall with action continue and no replacement keeps the original result', async () => {
+    let capturedToolResultMessages: Message[] = [];
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(messages): Promise<ChatResponse> {
+        capturedToolResultMessages = [...messages];
+        if (messages.length <= 1) {
+          return createToolCallResponse([{ id: 'call-1', name: 'lookup', input: {} }]);
+        }
+        return createChatResponse('Done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => 'original-result',
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        hooks: {
+          afterToolCall: () => {
+            return { action: 'continue' };
+          },
+        },
+      },
+      'Lookup something',
+    );
+
+    const toolMessage = capturedToolResultMessages.find((message) => message.role === 'tool');
+    expect(toolMessage!.toolResults![0]!.output).toBe('original-result');
+  });
+
   it('hooks.afterToolCall with action reject replaces output with error', async () => {
     let capturedToolResultMessages: Message[] = [];
 
@@ -1468,6 +1619,102 @@ describe('executeAgentLoop', () => {
     }
   });
 
+  it('sweeps expired tool cache entries once the proactive threshold is reached', async () => {
+    let executeCount = 0;
+    const originalDateNow = Date.now;
+
+    let mockTime = 0;
+    Date.now = () => mockTime;
+
+    try {
+      const provider = createMockProvider([
+        ...Array.from({ length: 100 }, (_, index) =>
+          createToolCallResponse([
+            { id: `call-${index}`, name: 'lookup', input: { key: `key-${index}` } },
+          ]),
+        ),
+        createToolCallResponse([{ id: 'call-repeat', name: 'lookup', input: { key: 'key-0' } }]),
+        createChatResponse('Done'),
+      ]);
+
+      const originalChat = provider.chat.bind(provider);
+      let chatCallCount = 0;
+      provider.chat = async function (messages, options) {
+        const response = await originalChat(messages, options);
+        chatCallCount++;
+        mockTime = chatCallCount * 20;
+        return response;
+      };
+
+      const lookupTool: AgentTool = {
+        definition: {
+          name: 'lookup',
+          description: 'Lookup a key',
+          inputSchema: { type: 'object' },
+        },
+        execute: async (input: unknown) => {
+          executeCount++;
+          return { value: (input as { key: string }).key };
+        },
+      };
+
+      const result = await executeAgentLoop(
+        {
+          model: 'test-model',
+          provider,
+          tools: [lookupTool],
+          toolCacheTTL: 100,
+          maxTurns: 150,
+        },
+        'Trigger cache sweeping and then repeat the first lookup',
+      );
+
+      expect(result.content).toBe('Done');
+      expect(executeCount).toBe(101);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  it('evicts the oldest cached tool entries when the cache exceeds the hard cap', async () => {
+    let executeCount = 0;
+
+    const provider = createMockProvider([
+      ...Array.from({ length: 1001 }, (_, index) =>
+        createToolCallResponse([
+          { id: `call-${index}`, name: 'lookup', input: { key: `key-${index}` } },
+        ]),
+      ),
+      createToolCallResponse([{ id: 'call-repeat', name: 'lookup', input: { key: 'key-0' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async (input: unknown) => {
+        executeCount++;
+        return { value: (input as { key: string }).key };
+      },
+    };
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        maxTurns: 1100,
+      },
+      'Overflow the tool cache and repeat the oldest lookup',
+    );
+
+    expect(result.content).toBe('Done');
+    expect(executeCount).toBe(1002);
+  });
+
   it('does not cache failed tool executions', async () => {
     let executeCount = 0;
 
@@ -1879,6 +2126,31 @@ describe('executeAgentLoop', () => {
 
     expect(healthEvents).toContainEqual({ type: 'failure', provider: 'mock' });
     expect(healthEvents).toContainEqual({ type: 'success', provider: 'mock' });
+  });
+
+  it('rethrows AbortError during fallback attempts', async () => {
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        throw new DOMException('Aborted', 'AbortError');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    await expect(
+      executeAgentLoop({ model: 'default', provider, modelRouter }, 'Hello'),
+    ).rejects.toBeInstanceOf(DOMException);
   });
 
   // ---------------------------------------------------------------------------

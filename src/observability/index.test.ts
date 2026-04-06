@@ -188,6 +188,162 @@ describe('createObservabilityInterceptors', () => {
       expect(spans[0]!.attributes['weft.workflow.type']).toBe('TestWorkflow');
     });
 
+    it('ends and replaces an existing workflow span on re-execution', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      const interception = {
+        workflowId: 'wf-retry',
+        workflowType: 'TestWorkflow',
+        input: undefined,
+        headers: new Map<string, string>(),
+      };
+
+      workflow.workflowStart!(interception, () => {});
+      workflow.workflowStart!(interception, () => {});
+
+      expect(spans).toHaveLength(2);
+      expect(spans[0]!.status).toEqual({ code: 1 });
+      expect(spans[0]!.ended).toBe(true);
+      expect(spans[1]!.ended).toBe(false);
+    });
+
+    it('evicts TTL-expired workflow spans on the next workflow start', () => {
+      const originalDateNow = Date.now;
+      let mockTime = 0;
+      Date.now = () => mockTime;
+
+      try {
+        const { tracer, spans } = createRecordingTracer();
+        const { workflow } = createObservabilityInterceptors({
+          otelApi: createMockOtelApi(tracer),
+        });
+
+        workflow.workflowStart!(
+          {
+            workflowId: 'wf-expired',
+            workflowType: 'TestWorkflow',
+            input: undefined,
+            headers: new Map<string, string>(),
+          },
+          () => {},
+        );
+
+        mockTime = 60 * 60 * 1000 + 1;
+
+        workflow.workflowStart!(
+          {
+            workflowId: 'wf-fresh',
+            workflowType: 'TestWorkflow',
+            input: undefined,
+            headers: new Map<string, string>(),
+          },
+          () => {},
+        );
+
+        expect(spans[0]!.ended).toBe(true);
+        expect(spans[1]!.ended).toBe(false);
+      } finally {
+        Date.now = originalDateNow;
+      }
+    });
+
+    it('evicts the oldest workflow spans when the span cache exceeds the hard cap', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      for (let index = 0; index <= 10_001; index++) {
+        workflow.workflowStart!(
+          {
+            workflowId: `wf-${index}`,
+            workflowType: 'TestWorkflow',
+            input: undefined,
+            headers: new Map<string, string>(),
+          },
+          () => {},
+        );
+      }
+
+      expect(spans).toHaveLength(10_002);
+      expect(spans[0]!.ended).toBe(true);
+      expect(spans.at(-1)!.ended).toBe(false);
+    });
+
+    it('ends workflow spans from terminal events and ignores unrelated events', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const eventTarget = new EventTarget();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+        eventTarget,
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-terminal-events',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      eventTarget.dispatchEvent(new Event(WorkflowCompletedEvent.type));
+      expect(spans[0]!.ended).toBe(false);
+
+      eventTarget.dispatchEvent(
+        new WorkflowFailedEvent('wf-terminal-events', new Error('workflow failed')),
+      );
+
+      expect(spans[0]!.status).toEqual({ code: 2, message: 'workflow failed' });
+      expect(spans[0]!.ended).toBe(true);
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-terminal-completed',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+      eventTarget.dispatchEvent(new WorkflowCompletedEvent('wf-terminal-completed', 'ok', 1));
+      expect(spans[1]!.status).toEqual({ code: 1 });
+      expect(spans[1]!.ended).toBe(true);
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-terminal-cancelled',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+      eventTarget.dispatchEvent(new WorkflowCancelledEvent('wf-terminal-cancelled'));
+      expect(spans[2]!.status).toEqual({ code: 2, message: 'Workflow cancelled' });
+      expect(spans[2]!.ended).toBe(true);
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-terminal-timeout',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+      eventTarget.dispatchEvent(new WorkflowTimedOutEvent('wf-terminal-timeout', 'execution', 5));
+      expect(spans[3]!.status).toEqual({
+        code: 2,
+        message: 'Workflow timed out (execution) after 5ms',
+      });
+      expect(spans[3]!.ended).toBe(true);
+    });
+
     it('injects traceparent header on activity', () => {
       const { tracer } = createRecordingTracer();
       const { workflow } = createObservabilityInterceptors({
@@ -357,6 +513,45 @@ describe('createObservabilityInterceptors', () => {
       expect(sleepSpan).toBeDefined();
       expect(sleepSpan!.attributes['weft.sleep.duration']).toBe(5000);
       expect(sleepSpan!.status?.code).toBe(1); // OK
+      expect(sleepSpan!.ended).toBe(true);
+    });
+
+    it('records error span when sleep throws', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-sleep-error',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      const next = function* (_ctx: SleepInterception) {
+        throw new Error('sleep failed');
+      };
+
+      const generator = workflow.sleep!(
+        { workflowId: 'wf-sleep-error', duration: 100, headers: new Map() },
+        next,
+      );
+
+      expect(() => {
+        let step = generator.next();
+        while (!step.done) {
+          step = generator.next(step.value);
+        }
+      }).toThrow('sleep failed');
+
+      const sleepSpan = spans.find((span) => span.name === 'sleep');
+      expect(sleepSpan).toBeDefined();
+      expect(sleepSpan!.status).toEqual({ code: 2, message: 'sleep failed' });
+      expect(sleepSpan!.exceptions).toHaveLength(1);
       expect(sleepSpan!.ended).toBe(true);
     });
 
@@ -581,6 +776,41 @@ describe('createObservabilityInterceptors', () => {
       expect(signalSpan!.status?.code).toBe(2); // ERROR
       expect(signalSpan!.ended).toBe(true);
     });
+
+    it('ends workflow spans explicitly with success and error states', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-end-ok',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+      endWorkflowSpan('wf-end-ok', 'ok');
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-end-error',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+      endWorkflowSpan('wf-end-error', 'error', 'workflow failed');
+      endWorkflowSpan('wf-missing', 'ok');
+
+      expect(spans[0]!.status).toEqual({ code: 1 });
+      expect(spans[0]!.ended).toBe(true);
+      expect(spans[1]!.status).toEqual({ code: 2, message: 'workflow failed' });
+      expect(spans[1]!.ended).toBe(true);
+    });
   });
 
   describe('activity interceptor', () => {
@@ -604,6 +834,29 @@ describe('createObservabilityInterceptors', () => {
       expect(spans[0]!.name).toBe('activity:execute:doSomething');
       expect(spans[0]!.status?.code).toBe(1); // OK
       expect(spans[0]!.ended).toBe(true);
+    });
+
+    it('materializes the remote parent span context when a traceparent header is provided', async () => {
+      const { tracer } = createRecordingTracer();
+      let extractedRemoteSpanId: string | undefined;
+
+      const otelApi = createMockOtelApi(tracer);
+      otelApi.trace.setSpan = (_context, span) => {
+        extractedRemoteSpanId = span.spanContext().spanId;
+        return _context;
+      };
+
+      const { activity } = createObservabilityInterceptors({ otelApi });
+      const headers = new Map<string, string>([
+        ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
+      ]);
+
+      await activity.execute!(
+        { activityName: 'doSomething', input: 'hello', attempt: 1, headers },
+        async () => 'result',
+      );
+
+      expect(extractedRemoteSpanId).toBe('00f067aa0ba902b7');
     });
 
     it('handles errors in activity execution', async () => {

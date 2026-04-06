@@ -126,10 +126,10 @@ export function analyzeStability(
 
   // Normalize timestamps to seconds from the first analyzed sample
   const baseTime = analyzed[0]!.timestamp;
-  const points: [number, number][] = analyzed.map((sample) => [
-    (sample.timestamp - baseTime) / 1000,
-    sample.rss,
-  ]);
+  const points: [number, number][] = [];
+  for (const sample of analyzed) {
+    points.push([(sample.timestamp - baseTime) / 1000, sample.rss]);
+  }
 
   const { slope } = linearRegression(points);
 
@@ -151,8 +151,17 @@ export function analyzeStability(
  * the collected samples and summary statistics.
  */
 export class MemoryProfiler {
-  #samples: MemorySample[] = [];
-  #timer: ReturnType<typeof setInterval> | null = null;
+  #samples: MemorySample[];
+  #timer: ReturnType<typeof setInterval> | null;
+
+  constructor() {
+    this.#samples = [];
+    this.#timer = null;
+  }
+
+  #recordSnapshot(): void {
+    this.#samples.push(this.snapshot());
+  }
 
   /** Take a single snapshot of current process memory. */
   snapshot(): MemorySample {
@@ -170,10 +179,8 @@ export class MemoryProfiler {
   /** Begin sampling memory at the given interval (milliseconds). */
   start(intervalMilliseconds: number): void {
     this.stop();
-    this.#samples.push(this.snapshot());
-    this.#timer = setInterval(() => {
-      this.#samples.push(this.snapshot());
-    }, intervalMilliseconds);
+    this.#recordSnapshot();
+    this.#timer = setInterval(this.#recordSnapshot.bind(this), intervalMilliseconds);
   }
 
   /** Stop interval sampling. Idempotent. */

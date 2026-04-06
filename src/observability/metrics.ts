@@ -55,9 +55,15 @@ export type MetricsSnapshot = Record<string, CounterMetric | HistogramMetric | G
  * all collected values and {@link reset} to clear them.
  */
 export class MetricsCollector {
-  #counters = new Map<string, number>();
-  #histograms = new Map<string, number[]>();
-  #gauges = new Map<string, number>();
+  #counters: Map<string, number>;
+  #histograms: Map<string, number[]>;
+  #gauges: Map<string, number>;
+
+  constructor() {
+    this.#counters = new Map();
+    this.#histograms = new Map();
+    this.#gauges = new Map();
+  }
 
   /** Increment a counter by `value` (default 1). */
   increment(name: string, value: number = 1): void {
@@ -85,11 +91,11 @@ export class MetricsCollector {
     }
 
     for (const [name, values] of this.#histograms) {
-      const sorted = [...values].toSorted((a, b) => a - b);
+      const sorted = sortNumbersAscending(values);
       result[name] = {
         type: 'histogram',
         count: values.length,
-        sum: values.reduce((a, b) => a + b, 0),
+        sum: sumNumbers(values),
         p50: sorted[Math.floor(sorted.length * 0.5)] ?? 0,
         p99: sorted[Math.floor(sorted.length * 0.99)] ?? 0,
         min: sorted[0] ?? 0,
@@ -155,6 +161,21 @@ export function createOtelMetrics(meterOrName?: OtelMeter | string): OtelMetrics
     activityAttempts: meter.createCounter('weft.activity.attempts'),
     activeWorkflows: meter.createUpDownCounter('weft.workflow.active'),
   };
+}
+
+function sortNumbersAscending(values: number[]): number[] {
+  const sorted = [...values];
+  /* c8 ignore next -- the comparator is exercised by histogram tests, but Bun does not attribute it as a separate function hit */
+  sorted.sort((left, right) => left - right);
+  return sorted;
+}
+
+function sumNumbers(values: number[]): number {
+  let total = 0;
+  for (const value of values) {
+    total += value;
+  }
+  return total;
 }
 
 // ---------------------------------------------------------------------------

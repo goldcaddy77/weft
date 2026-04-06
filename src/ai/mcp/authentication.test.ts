@@ -24,4 +24,14 @@ describe('buildAuthHeaders', () => {
 
     expect(headers).toEqual({});
   });
+
+  it('rejects reserved header names for API key authentication', () => {
+    expect(() =>
+      buildAuthHeaders({
+        type: 'api-key',
+        headerName: 'Authorization',
+        apiKey: 'key-123',
+      }),
+    ).toThrow('Cannot use reserved header name "Authorization"');
+  });
 });

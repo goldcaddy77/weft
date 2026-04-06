@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import type { ScanOptions, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { flush, storageBackends, teardown } from '../testing/storage-backends.ts';
 import { decode, encode } from './codec.ts';
 import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
-import { UpdateCoordinator, WorkflowTerminalError } from './updates.ts';
+import { UpdateCoordinator, UpdateTimeoutError, WorkflowTerminalError } from './updates.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -15,6 +16,46 @@ import { UpdateCoordinator, WorkflowTerminalError } from './updates.ts';
 /** Suppress unhandled rejection from a handle's result promise. */
 function suppressResult(handle: { result(): Promise<unknown> }): void {
   handle.result().catch(() => {});
+}
+
+function wrapStorageWithUpdateScanHook(
+  storage: Storage,
+  onUpdateScan: (prefix: string, options?: ScanOptions) => Promise<void> | void,
+): Storage {
+  const wrapped: Storage = {
+    get(key) {
+      return storage.get(key);
+    },
+    put(key, value) {
+      return storage.put(key, value);
+    },
+    delete(key) {
+      return storage.delete(key);
+    },
+    scan(prefix, options) {
+      return (async function* () {
+        if (prefix.startsWith('upd:')) {
+          await onUpdateScan(prefix, options);
+        }
+
+        for await (const entry of storage.scan(prefix, options)) {
+          yield entry;
+        }
+      })();
+    },
+    batch(operations) {
+      return storage.batch(operations);
+    },
+    [Symbol.dispose]() {
+      storage[Symbol.dispose]();
+    },
+  };
+
+  if (storage.query) {
+    wrapped.query = storage.query.bind(storage);
+  }
+
+  return wrapped;
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +655,25 @@ for (const backend of storageBackends) {
         expect(handleResult).toBe('processed: my-data');
       });
 
+      it('times out when waitForUpdate does not call respond()', async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        engine = new Engine({ storage: result.storage });
+
+        engine.register('missing-respond', async function* (ctx: WorkflowContext) {
+          const { payload } = yield* (ctx as Context).waitForUpdate<string>('review');
+          return `processed without respond: ${payload}`;
+        });
+
+        const handle = await engine.start('missing-respond', undefined);
+        await flush();
+
+        await expect(
+          engine.update(handle.id, 'review', 'my-data', { timeout: 25 }),
+        ).rejects.toBeInstanceOf(UpdateTimeoutError);
+        await expect(handle.result()).resolves.toBe('processed without respond: my-data');
+      });
+
       it('calling respond() multiple times is idempotent', async () => {
         const result = backend.factory();
         cleanup = result.cleanup;
@@ -672,6 +732,118 @@ for (const backend of storageBackends) {
         expect(responseBytes).not.toBeNull();
         const response = decode(responseBytes!) as { result: unknown };
         expect(response.result).toEqual({ approved: true, amount: 100 });
+      });
+
+      it('falls back to coordinated delivery when a stale waiter is consumed during the async gap', async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+
+        let delayNextUpdateScan = false;
+        let updateScanCount = 0;
+        let secondWaiterReadyThreshold = Number.POSITIVE_INFINITY;
+        const delayedScanStarted = Promise.withResolvers<void>();
+        const releaseDelayedScan = Promise.withResolvers<void>();
+        const secondWaiterReady = Promise.withResolvers<void>();
+        const storage = wrapStorageWithUpdateScanHook(result.storage, async () => {
+          updateScanCount++;
+          if (updateScanCount >= secondWaiterReadyThreshold) {
+            secondWaiterReady.resolve();
+          }
+
+          if (!delayNextUpdateScan) {
+            return;
+          }
+
+          delayNextUpdateScan = false;
+          delayedScanStarted.resolve();
+          await releaseDelayedScan.promise;
+        });
+
+        engine = new Engine({ storage });
+
+        engine.register('stale-waiter-race', async function* (ctx: WorkflowContext) {
+          const first = yield* (ctx as Context).waitForUpdate<string>('data');
+          first.respond(`first:${first.payload}`);
+
+          const second = yield* (ctx as Context).waitForUpdate<string>('data');
+          second.respond(`second:${second.payload}`);
+
+          return [first.payload, second.payload];
+        });
+
+        const handle = await engine.start('stale-waiter-race', undefined);
+        await flush();
+
+        secondWaiterReadyThreshold = updateScanCount + 4;
+        delayNextUpdateScan = true;
+        const delayedUpdate = engine.update(handle.id, 'data', 'first-payload', { timeout: 250 });
+        delayedUpdate.catch(() => {});
+        await delayedScanStarted.promise;
+
+        const immediateUpdateResult = await engine.update(handle.id, 'data', 'second-payload', {
+          timeout: 250,
+        });
+        expect(immediateUpdateResult).toBe('first:second-payload');
+
+        await secondWaiterReady.promise;
+        releaseDelayedScan.resolve();
+
+        await expect(delayedUpdate).resolves.toBe('second:first-payload');
+        await expect(handle.result()).resolves.toEqual(['second-payload', 'first-payload']);
+      });
+
+      it('re-checks pending updates after waiter registration to catch arrivals during registration', async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+
+        let updateScanCount = 0;
+        const secondScanStarted = Promise.withResolvers<void>();
+        const releaseSecondScan = Promise.withResolvers<void>();
+        const storage = wrapStorageWithUpdateScanHook(result.storage, async () => {
+          updateScanCount++;
+          if (updateScanCount !== 2) {
+            return;
+          }
+
+          secondScanStarted.resolve();
+          await releaseSecondScan.promise;
+        });
+
+        engine = new Engine({ storage });
+        const workflowId = `wait-update-registration-race-${backend.name}`;
+
+        engine.register('wait-update-registration-race', async function* (ctx: WorkflowContext) {
+          const { payload, respond } = yield* (ctx as Context).waitForUpdate<string>('data');
+          respond(`processed:${payload}`);
+          return payload;
+        });
+
+        const handle = await engine.start('wait-update-registration-race', undefined, {
+          id: workflowId,
+        });
+
+        await secondScanStarted.promise;
+
+        const pendingUpdate = {
+          updateId: 'registration-race-update',
+          workflowId,
+          name: 'data',
+          payload: 'arrived-during-registration',
+          createdAt: Date.now(),
+        };
+        await result.storage.put(
+          KEYS.update(workflowId, pendingUpdate.updateId),
+          encode(pendingUpdate),
+        );
+        releaseSecondScan.resolve();
+
+        await expect(handle.result()).resolves.toBe('arrived-during-registration');
+        await flush();
+
+        const responseBytes = await result.storage.get(KEYS.updateResponse(pendingUpdate.updateId));
+        expect(responseBytes).not.toBeNull();
+        const response = decode(responseBytes!) as { result: unknown };
+        expect(response.result).toBe('processed:arrived-during-registration');
       });
 
       it('recovery path provides no-op respond function', async () => {

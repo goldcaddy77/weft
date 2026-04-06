@@ -334,6 +334,21 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
     expect(() => deserializeCheckpoint(bytes)).toThrow('pendingSignals');
   });
 
+  it('throws when accumulatedResults is not an array', () => {
+    const { encode } = require('./codec.ts');
+    const bytes = encode({
+      workflowId: 'wf-1',
+      step: 0,
+      locals: {},
+      accumulatedResults: 'not-an-array',
+      pendingSignals: [],
+      searchAttributes: {},
+      version: '1.0.0',
+      createdAt: Date.now(),
+    });
+    expect(() => deserializeCheckpoint(bytes)).toThrow('accumulatedResults');
+  });
+
   it('throws when searchAttributes is missing or null', () => {
     const { encode } = require('./codec.ts');
     const bytes = encode({

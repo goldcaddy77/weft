@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 
-import { getOtelApi } from './no-op-telemetry';
+import {
+  NO_OP_SPAN_METHODS,
+  getOtelApi,
+  isSupportedOtelApi,
+  resetCachedOtelApiForTesting,
+  resolveInstalledOtelApi,
+} from './no-op-telemetry';
 
 describe('getOtelApi', () => {
   it('returns an object with trace, metrics, context, and SpanStatusCode', () => {
@@ -16,6 +22,13 @@ describe('getOtelApi', () => {
     expect(SpanStatusCode.OK).toBe(1);
     expect(SpanStatusCode.ERROR).toBe(2);
     expect(SpanStatusCode.UNSET).toBe(0);
+  });
+
+  it('exports reusable no-op span methods that do not throw', () => {
+    expect(() => NO_OP_SPAN_METHODS.setAttribute('key', 'value')).not.toThrow();
+    expect(() => NO_OP_SPAN_METHODS.setStatus({ code: 1 })).not.toThrow();
+    expect(() => NO_OP_SPAN_METHODS.recordException(new Error('test'))).not.toThrow();
+    expect(() => NO_OP_SPAN_METHODS.end()).not.toThrow();
   });
 
   describe('no-op tracer', () => {
@@ -114,5 +127,248 @@ describe('getOtelApi', () => {
     const api1 = getOtelApi();
     const api2 = getOtelApi();
     expect(api1).toBe(api2);
+  });
+
+  it('isSupportedOtelApi accepts the subset of the OTel API Weft requires', () => {
+    expect(
+      isSupportedOtelApi({
+        trace: {
+          getTracer() {
+            return {
+              startSpan() {
+                return {
+                  setAttribute() {},
+                  setStatus() {},
+                  recordException() {},
+                  end() {},
+                  spanContext() {
+                    return { traceId: '0', spanId: '0', traceFlags: 0 };
+                  },
+                };
+              },
+            };
+          },
+          setSpan(context: unknown) {
+            return context;
+          },
+        },
+        metrics: {
+          getMeter() {
+            return {
+              createHistogram() {
+                return { record() {} };
+              },
+              createCounter() {
+                return { add() {} };
+              },
+              createUpDownCounter() {
+                return { add() {} };
+              },
+            };
+          },
+        },
+        context: {
+          ROOT_CONTEXT: {},
+          with<T>(_ctx: unknown, fn: () => T): T {
+            return fn();
+          },
+        },
+        SpanStatusCode: { OK: 1, ERROR: 2, UNSET: 0 },
+      }),
+    ).toBe(true);
+  });
+
+  it('isSupportedOtelApi rejects incomplete module shapes', () => {
+    expect(isSupportedOtelApi(undefined)).toBe(false);
+    expect(isSupportedOtelApi({ trace: {} } as never)).toBe(false);
+  });
+
+  it('resolveInstalledOtelApi returns the installed module when the loader exposes the required shape', () => {
+    const loadedApi = resolveInstalledOtelApi(() => ({
+      trace: {
+        getTracer() {
+          return {
+            startSpan() {
+              return {
+                setAttribute() {},
+                setStatus() {},
+                recordException() {},
+                end() {},
+                spanContext() {
+                  return { traceId: '0', spanId: '0', traceFlags: 0 };
+                },
+              };
+            },
+          };
+        },
+        setSpan(context: unknown) {
+          return context;
+        },
+      },
+      metrics: {
+        getMeter() {
+          return {
+            createHistogram() {
+              return { record() {} };
+            },
+            createCounter() {
+              return { add() {} };
+            },
+            createUpDownCounter() {
+              return { add() {} };
+            },
+          };
+        },
+      },
+      context: {
+        ROOT_CONTEXT: {},
+        with<T>(_ctx: unknown, fn: () => T): T {
+          return fn();
+        },
+      },
+      SpanStatusCode: { OK: 1, ERROR: 2, UNSET: 0 },
+    }));
+
+    expect(loadedApi).toBeDefined();
+    expect(loadedApi!.SpanStatusCode.OK).toBe(1);
+  });
+
+  it('resolveInstalledOtelApi falls back to undefined when the loader throws', () => {
+    expect(
+      resolveInstalledOtelApi(() => {
+        throw new Error('module not found');
+      }),
+    ).toBeUndefined();
+  });
+
+  it('resolveInstalledOtelApi uses the global require loader when it is available', () => {
+    const globalObject = globalThis as Record<PropertyKey, unknown>;
+    const originalRequire = globalObject['require'];
+    const requestedModules: string[] = [];
+    const installedApi = {
+      trace: {
+        getTracer() {
+          return {
+            startSpan() {
+              return {
+                setAttribute() {},
+                setStatus() {},
+                recordException() {},
+                end() {},
+                spanContext() {
+                  return { traceId: '0', spanId: '0', traceFlags: 0 };
+                },
+              };
+            },
+          };
+        },
+        setSpan(context: unknown) {
+          return context;
+        },
+      },
+      metrics: {
+        getMeter() {
+          return {
+            createHistogram() {
+              return { record() {} };
+            },
+            createCounter() {
+              return { add() {} };
+            },
+            createUpDownCounter() {
+              return { add() {} };
+            },
+          };
+        },
+      },
+      context: {
+        ROOT_CONTEXT: {},
+        with<T>(_ctx: unknown, fn: () => T): T {
+          return fn();
+        },
+      },
+      SpanStatusCode: { OK: 1, ERROR: 2, UNSET: 0 },
+    };
+
+    globalObject['require'] = (moduleName: string) => {
+      requestedModules.push(moduleName);
+      return installedApi;
+    };
+
+    try {
+      expect(resolveInstalledOtelApi()).toBe(installedApi);
+      expect(requestedModules).toEqual(['@opentelemetry/api']);
+    } finally {
+      globalObject['require'] = originalRequire;
+    }
+  });
+
+  it('resolveInstalledOtelApi safely falls back when require is unavailable', () => {
+    const globalObject = globalThis as Record<PropertyKey, unknown>;
+    const originalRequire = globalObject['require'];
+    globalObject['require'] = undefined;
+
+    try {
+      expect(resolveInstalledOtelApi()).toBeUndefined();
+      resetCachedOtelApiForTesting();
+      expect(getOtelApi().SpanStatusCode.OK).toBe(1);
+    } finally {
+      globalObject['require'] = originalRequire;
+      resetCachedOtelApiForTesting();
+    }
+  });
+
+  it('getOtelApi caches the installed module when a loader is provided', () => {
+    resetCachedOtelApiForTesting();
+
+    const installedApi = {
+      trace: {
+        getTracer() {
+          return {
+            startSpan() {
+              return {
+                setAttribute() {},
+                setStatus() {},
+                recordException() {},
+                end() {},
+                spanContext() {
+                  return { traceId: '0', spanId: '0', traceFlags: 0 };
+                },
+              };
+            },
+          };
+        },
+        setSpan(context: unknown) {
+          return context;
+        },
+      },
+      metrics: {
+        getMeter() {
+          return {
+            createHistogram() {
+              return { record() {} };
+            },
+            createCounter() {
+              return { add() {} };
+            },
+            createUpDownCounter() {
+              return { add() {} };
+            },
+          };
+        },
+      },
+      context: {
+        ROOT_CONTEXT: {},
+        with<T>(_ctx: unknown, fn: () => T): T {
+          return fn();
+        },
+      },
+      SpanStatusCode: { OK: 1, ERROR: 2, UNSET: 0 },
+    };
+
+    const api = getOtelApi(() => installedApi);
+
+    expect(api).toBe(installedApi);
+    expect(getOtelApi()).toBe(installedApi);
   });
 });

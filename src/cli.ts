@@ -11,8 +11,6 @@
 
 import { parseArgs } from 'node:util';
 
-import { Engine } from './core/engine.ts';
-import { serve } from './server/index.ts';
 import type { Storage } from './storage/interface.ts';
 
 // ---------------------------------------------------------------------------
@@ -123,10 +121,9 @@ function parseServeArguments(args: string[]): CliCommand {
   const storageValue = values.storage ?? 'sqlite';
 
   if (!isValidStorageBackend(storageValue)) {
-    console.error(
-      `Error: Invalid storage backend '${storageValue}'. Must be one of: sqlite, lmdb, memory`,
+    throw new Error(
+      `Invalid storage backend '${storageValue}'. Must be one of: sqlite, lmdb, memory`,
     );
-    process.exit(1);
   }
 
   return {
@@ -297,6 +294,11 @@ export async function executeVersionCheck(options: {
  * actually requested — this avoids errors in compiled binaries where the
  * native binding may not be bundled.
  */
+async function createMemoryStorage(): Promise<Storage> {
+  const { MemoryStorage } = await import('./storage/memory.ts');
+  return new MemoryStorage();
+}
+
 export async function createStorage(backend: StorageBackend, database: string): Promise<Storage> {
   switch (backend) {
     case 'sqlite': {
@@ -307,99 +309,7 @@ export async function createStorage(backend: StorageBackend, database: string): 
       const { LMDBStorage } = await import('./storage/lmdb.ts');
       return new LMDBStorage(database);
     }
-    case 'memory': {
-      const { MemoryStorage } = await import('./storage/memory.ts');
-      return new MemoryStorage();
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Main (only runs when executed directly, not when imported for tests)
-// ---------------------------------------------------------------------------
-
-const isDirectExecution = typeof Bun !== 'undefined' && Bun.main === import.meta.path;
-
-if (isDirectExecution) {
-  const parsed = parseCliArguments(Bun.argv.slice(2));
-
-  if (parsed.command === 'serve') {
-    if (parsed.help) {
-      console.log(HELP_TEXT);
-      process.exit(0);
-    }
-
-    const storage = await createStorage(parsed.storage, parsed.database);
-    const engine = new Engine({ storage });
-
-    // Load the dashboard HTML if available and enabled
-    let dashboard: unknown = null;
-    if (parsed.ui) {
-      try {
-        const dashboardModule = await import('./dashboard/index.html' as string);
-        dashboard = dashboardModule.default;
-      } catch {
-        // Dashboard not built — serve without it
-      }
-    }
-
-    const server = serve({
-      engine,
-      port: Number(parsed.port),
-      dashboard,
-    });
-
-    console.log(`Weft running on ${server.url}`);
-    if (dashboard !== null) {
-      console.log(`Dashboard: ${server.url}/ui`);
-    }
-    console.log(`Storage: ${parsed.storage}`);
-    console.log(`Database: ${parsed.database}`);
-
-    process.on('SIGINT', () => {
-      console.log('\nShutting down...');
-      void server
-        .stop()
-        .then(() => {
-          storage[Symbol.dispose]();
-          process.exit(0);
-        })
-        .catch((error) => {
-          console.error('[weft] Shutdown error:', error);
-          process.exit(1);
-        });
-    });
-
-    process.on('SIGTERM', () => {
-      void server
-        .stop()
-        .then(() => {
-          storage[Symbol.dispose]();
-          process.exit(0);
-        })
-        .catch((error) => {
-          console.error('[weft] Shutdown error:', error);
-          process.exit(1);
-        });
-    });
-  } else if (parsed.command === 'doctor') {
-    if (parsed.help) {
-      console.log(DOCTOR_HELP_TEXT);
-      process.exit(0);
-    }
-
-    const result = await executeDoctor(parsed);
-    console.log(result.stdout);
-    process.exit(result.exitCode);
-  } else if (parsed.command === 'version:check') {
-    if (parsed.help) {
-      console.log(VERSION_CHECK_HELP_TEXT);
-      process.exit(0);
-    }
-
-    const result = await executeVersionCheck(parsed);
-    if (result.stderr) console.error(result.stderr);
-    if (result.stdout) console.log(result.stdout);
-    process.exit(result.exitCode);
+    case 'memory':
+      return createMemoryStorage();
   }
 }

@@ -261,6 +261,18 @@ function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
+export function getRequiredRouteParameter(
+  params: Record<string, string>,
+  name: string,
+  routeDescription: string,
+): string {
+  const value = params[name];
+  if (value === undefined) {
+    throw new Error(`Missing route parameter "${name}" for ${routeDescription}`);
+  }
+  return value;
+}
+
 // ---------------------------------------------------------------------------
 // Route handlers — each delegates to an Engine method
 // ---------------------------------------------------------------------------
@@ -741,7 +753,11 @@ async function handleResumeWorkflow(engine: Engine, workflowId: string): Promise
 
 async function handleRecoverAll(engine: Engine): Promise<Response> {
   const handles = await engine.recoverAll();
-  return jsonResponse({ recovered: handles.map((h) => h.id) });
+  const recovered: string[] = [];
+  for (const handle of handles) {
+    recovered.push(handle.id);
+  }
+  return jsonResponse({ recovered });
 }
 
 // ---------------------------------------------------------------------------
@@ -981,13 +997,9 @@ export async function handleRequest(
     return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
   }
 
-  const param = (name: string): string => {
-    const value = route.params[name];
-    if (value === undefined) {
-      throw new Error(`Missing route parameter: ${name}`);
-    }
-    return value;
-  };
+  const routeDescription = `${request.method} ${url.pathname}`;
+  const param = (name: string): string =>
+    getRequiredRouteParameter(route.params, name, routeDescription);
 
   try {
     return await ROUTE_EXECUTORS[route.handler]({ request, engine, options, param });

@@ -475,6 +475,9 @@ describe('RemoteWorker', () => {
 
   it('sends heartbeat messages periodically', async () => {
     const messages: any[] = [];
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    let nextIntervalHandle = 0;
 
     server = createTestServer({
       onMessage(_ws, message) {
@@ -482,23 +485,37 @@ describe('RemoteWorker', () => {
       },
     });
 
-    // Use a very short heartbeat by creating a worker with the default,
-    // but we can verify the heartbeat was started by checking the register
-    // message was sent (heartbeat manager is started on connect)
-    const worker = new RemoteWorker({
-      serverUrl: `ws://localhost:${server.port}`,
-      workerId: 'heartbeat-test',
-      activities: {},
-    });
+    globalThis.setInterval = ((callback: TimerHandler) => {
+      const handle = ++nextIntervalHandle;
+      queueMicrotask(() => {
+        if (typeof callback === 'function') {
+          callback();
+        }
+      });
+      return handle as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof setInterval;
+    globalThis.clearInterval = ((
+      _handle: ReturnType<typeof setInterval>,
+    ) => {}) as typeof clearInterval;
 
-    await worker.connect();
-    await Bun.sleep(50);
+    try {
+      const worker = new RemoteWorker({
+        serverUrl: `ws://localhost:${server.port}`,
+        workerId: 'heartbeat-test',
+        activities: {},
+      });
 
-    // At minimum, the register message should have been sent
-    expect(messages.length).toBeGreaterThanOrEqual(1);
-    expect(messages[0].type).toBe('register');
+      await worker.connect();
+      await Bun.sleep(50);
 
-    await worker.disconnect();
+      expect(messages.some((message) => message.type === 'register')).toBe(true);
+      expect(messages.some((message) => message.type === 'heartbeat')).toBe(true);
+
+      await worker.disconnect();
+    } finally {
+      globalThis.setInterval = originalSetInterval;
+      globalThis.clearInterval = originalClearInterval;
+    }
   });
 
   it('shuttingDown is false initially', () => {

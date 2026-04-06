@@ -81,12 +81,14 @@ export function createBunCompressor(algorithm: CompressionAlgorithm): Compressor
       };
 
     case 'none':
+      /* c8 ignore start -- compressPayload short-circuits for algorithm === 'none' */
       return {
         algorithm: 'none',
         compress(data: Uint8Array): Uint8Array {
           return data;
         },
       };
+    /* c8 ignore stop */
   }
 }
 

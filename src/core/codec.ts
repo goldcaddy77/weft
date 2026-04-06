@@ -9,6 +9,13 @@
 
 import { ExtensionCodec, decode as msgpackDecode, encode as msgpackEncode } from '@msgpack/msgpack';
 
+import {
+  coerceCodecArray,
+  coerceCodecRecord,
+  decodeCodecDate,
+  encodeCodecDate,
+} from './codec-helpers.ts';
+
 // ---------------------------------------------------------------------------
 // Extension type identifiers
 // ---------------------------------------------------------------------------
@@ -24,39 +31,13 @@ const EXTENSION_TYPE_ERROR = 6;
 // Helpers for safe type narrowing from msgpack decode results
 // ---------------------------------------------------------------------------
 
-function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return {};
-}
-
-function asArray(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value;
-  return [];
-}
-
-// ---------------------------------------------------------------------------
-// Extension codec setup
-// ---------------------------------------------------------------------------
-
 const extensionCodec = new ExtensionCodec();
 
 // Date (ext type 1): float64 milliseconds since epoch
 extensionCodec.register({
   type: EXTENSION_TYPE_DATE,
-  encode(value: unknown): Uint8Array | null {
-    if (value instanceof Date) {
-      const buffer = new ArrayBuffer(8);
-      new DataView(buffer).setFloat64(0, value.getTime());
-      return new Uint8Array(buffer);
-    }
-    return null;
-  },
-  decode(data: Uint8Array): Date {
-    const milliseconds = new DataView(data.buffer, data.byteOffset, data.byteLength).getFloat64(0);
-    return new Date(milliseconds);
-  },
+  encode: encodeCodecDate,
+  decode: decodeCodecDate,
 });
 
 // RegExp (ext type 2): encoded as { source, flags } object
@@ -69,7 +50,7 @@ extensionCodec.register({
     return null;
   },
   decode(data: Uint8Array): RegExp {
-    const decoded = asRecord(msgpackDecode(data));
+    const decoded = coerceCodecRecord(msgpackDecode(data));
     const source = typeof decoded['source'] === 'string' ? decoded['source'] : '';
     const flags = typeof decoded['flags'] === 'string' ? decoded['flags'] : '';
     return new RegExp(source, flags);
@@ -87,9 +68,9 @@ extensionCodec.register({
     return null;
   },
   decode(data: Uint8Array): Map<unknown, unknown> {
-    const decoded = asArray(msgpackDecode(data, { extensionCodec }));
+    const decoded = coerceCodecArray(msgpackDecode(data, { extensionCodec }));
     const entries = decoded.map((entry) => {
-      const pair = asArray(entry);
+      const pair = coerceCodecArray(entry);
       return [pair[0], pair[1]] as const;
     });
     return new Map(entries);
@@ -107,7 +88,7 @@ extensionCodec.register({
     return null;
   },
   decode(data: Uint8Array): Set<unknown> {
-    const elements = asArray(msgpackDecode(data, { extensionCodec }));
+    const elements = coerceCodecArray(msgpackDecode(data, { extensionCodec }));
     return new Set(elements);
   },
 });
@@ -169,7 +150,7 @@ extensionCodec.register({
     return null;
   },
   decode(data: Uint8Array): Error {
-    const decoded = asRecord(msgpackDecode(data));
+    const decoded = coerceCodecRecord(msgpackDecode(data));
     const name = typeof decoded['name'] === 'string' ? decoded['name'] : 'Error';
     const message = typeof decoded['message'] === 'string' ? decoded['message'] : '';
     const stack = typeof decoded['stack'] === 'string' ? decoded['stack'] : undefined;

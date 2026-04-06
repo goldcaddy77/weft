@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   BUILD_BINARY_HELP,
   buildForTarget,
+  outputNameForTarget,
   parseBuildBinaryArguments,
   resolveTargets,
 } from './build-binary.ts';
@@ -94,6 +95,34 @@ describe('resolveTargets', () => {
     ).toThrow('Unknown target');
   });
 
+  it('throws for an unsupported CPU architecture', () => {
+    expect(() =>
+      resolveTargets(
+        {
+          target: undefined,
+          all: false,
+          outdir: 'dist',
+          help: false,
+        },
+        { platform: 'linux', arch: 'riscv64' },
+      ),
+    ).toThrow("Unsupported CPU architecture 'riscv64'");
+  });
+
+  it('throws when the platform cannot be mapped to a Bun target', () => {
+    expect(() =>
+      resolveTargets(
+        {
+          target: undefined,
+          all: false,
+          outdir: 'dist',
+          help: false,
+        },
+        { platform: 'freebsd', arch: 'x64' },
+      ),
+    ).toThrow('Cannot detect current platform target. Got: freebsd-x64');
+  });
+
   it('detects current platform when no target is given', () => {
     const targets = resolveTargets({
       target: undefined,
@@ -113,6 +142,11 @@ describe('resolveTargets', () => {
 // ---------------------------------------------------------------------------
 
 describe('BUILD_BINARY_HELP', () => {
+  it('references the build-binary main entrypoint', () => {
+    expect(BUILD_BINARY_HELP).toContain('scripts/build-binary-main.ts');
+    expect(BUILD_BINARY_HELP).not.toContain('scripts/build-binary.ts');
+  });
+
   it('documents --target flag', () => {
     expect(BUILD_BINARY_HELP).toContain('--target');
   });
@@ -127,6 +161,12 @@ describe('BUILD_BINARY_HELP', () => {
     expect(BUILD_BINARY_HELP).toContain('linux-x64');
     expect(BUILD_BINARY_HELP).toContain('linux-arm64');
     expect(BUILD_BINARY_HELP).toContain('windows-x64');
+  });
+});
+
+describe('outputNameForTarget', () => {
+  it('appends .exe for Windows targets', () => {
+    expect(outputNameForTarget('bun-windows-x64')).toBe('weft-windows-x64.exe');
   });
 });
 
@@ -187,6 +227,40 @@ describe('buildForTarget (current platform)', () => {
     expect(stdout).toContain('--database');
     expect(stdout).toContain('--storage');
   }, 30_000);
+
+  it('returns a failed result when bun build exits non-zero', async () => {
+    const result = await buildForTarget(
+      'bun-linux-x64',
+      outdir,
+      () =>
+        ({
+          exited: Promise.resolve(1),
+          stdout: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          }),
+          stderr: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('compile failed'));
+              controller.close();
+            },
+          }),
+        }) as ReturnType<typeof Bun.spawn>,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('compile failed');
+  });
+
+  it('returns a failed result when spawn throws', async () => {
+    const result = await buildForTarget('bun-linux-x64', outdir, () => {
+      throw new Error('spawn unavailable');
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('spawn unavailable');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -219,7 +293,7 @@ describe('multi-platform compilation', () => {
   });
 
   it('builds the script via bun run without errors', async () => {
-    const proc = Bun.spawn(['bun', 'run', 'scripts/build-binary.ts', '--help'], {
+    const proc = Bun.spawn(['bun', 'run', 'scripts/build-binary-main.ts', '--help'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -228,6 +302,7 @@ describe('multi-platform compilation', () => {
     const stdout = await new Response(proc.stdout).text();
 
     expect(exitCode).toBe(0);
+    expect(stdout).toContain('scripts/build-binary-main.ts');
     expect(stdout).toContain('--target');
     expect(stdout).toContain('--all');
   });

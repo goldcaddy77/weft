@@ -1,0 +1,102 @@
+#!/usr/bin/env bun
+
+import {
+  createStorage,
+  DOCTOR_HELP_TEXT,
+  executeDoctor,
+  executeVersionCheck,
+  HELP_TEXT,
+  parseCliArguments,
+  VERSION_CHECK_HELP_TEXT,
+} from './cli.ts';
+import { Engine } from './core/engine.ts';
+import { serve } from './server/index.ts';
+
+const parsedArguments = (() => {
+  try {
+    return parseCliArguments(Bun.argv.slice(2));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
+    process.exit(1);
+  }
+})();
+
+if (parsedArguments.command === 'serve') {
+  if (parsedArguments.help) {
+    console.log(HELP_TEXT);
+    process.exit(0);
+  }
+
+  const storage = await createStorage(parsedArguments.storage, parsedArguments.database);
+  const engine = new Engine({ storage });
+
+  let dashboard: unknown = null;
+  if (parsedArguments.ui) {
+    try {
+      const dashboardModule = await import('./dashboard/index.html' as string);
+      dashboard = dashboardModule.default;
+    } catch {
+      // Dashboard not built — serve without it.
+    }
+  }
+
+  const server = serve({
+    engine,
+    port: Number(parsedArguments.port),
+    dashboard,
+  });
+
+  console.log(`Weft running on ${server.url}`);
+  if (dashboard !== null) {
+    console.log(`Dashboard: ${server.url}/ui`);
+  }
+  console.log(`Storage: ${parsedArguments.storage}`);
+  console.log(`Database: ${parsedArguments.database}`);
+
+  process.on('SIGINT', () => {
+    console.log('\nShutting down...');
+    void server
+      .stop()
+      .then(() => {
+        storage[Symbol.dispose]();
+        process.exit(0);
+      })
+      .catch((error) => {
+        console.error('[weft] Shutdown error:', error);
+        process.exit(1);
+      });
+  });
+
+  process.on('SIGTERM', () => {
+    void server
+      .stop()
+      .then(() => {
+        storage[Symbol.dispose]();
+        process.exit(0);
+      })
+      .catch((error) => {
+        console.error('[weft] Shutdown error:', error);
+        process.exit(1);
+      });
+  });
+} else if (parsedArguments.command === 'doctor') {
+  if (parsedArguments.help) {
+    console.log(DOCTOR_HELP_TEXT);
+    process.exit(0);
+  }
+
+  const result = await executeDoctor(parsedArguments);
+  console.log(result.stdout);
+  process.exit(result.exitCode);
+} else if (parsedArguments.command === 'version:check') {
+  if (parsedArguments.help) {
+    console.log(VERSION_CHECK_HELP_TEXT);
+    process.exit(0);
+  }
+
+  const result = await executeVersionCheck(parsedArguments);
+  if (result.stderr) console.error(result.stderr);
+  if (result.stdout) console.log(result.stdout);
+  process.exit(result.exitCode);
+}
