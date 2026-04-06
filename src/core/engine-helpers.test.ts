@@ -135,12 +135,18 @@ describe('engine helpers', () => {
       ['wf-1', 'handle-1'],
       ['wf-2', 'handle-2'],
     ]);
+    const finalizationTokens = new Map<string, object>([
+      ['wf-1', {}],
+      ['wf-2', {}],
+    ]);
 
-    const finalize = createHandleCacheFinalizer(handleCache);
+    const finalize = createHandleCacheFinalizer(handleCache, finalizationTokens);
     finalize('wf-1');
 
     expect(handleCache.has('wf-1')).toBe(false);
     expect(handleCache.get('wf-2')).toBe('handle-2');
+    expect(finalizationTokens.has('wf-1')).toBe(false);
+    expect(finalizationTokens.has('wf-2')).toBe(true);
   });
 
   it('createExpiredResponseCleanupTick runs the cleanup cycle', async () => {

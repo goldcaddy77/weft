@@ -365,6 +365,14 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     }
   }
 
+  /** Event types that indicate a workflow has reached a terminal state. */
+  const terminalBroadcastEventTypes = new Set<string>([
+    WorkflowCompletedEvent.type,
+    WorkflowFailedEvent.type,
+    WorkflowCancelledEvent.type,
+    WorkflowTimedOutEvent.type,
+  ]);
+
   const eventTypes = [
     WorkflowStartedEvent.type,
     WorkflowCompletedEvent.type,
@@ -412,6 +420,21 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
         const previousChain = sequenceChains.get(workflowId) ?? Promise.resolve();
         const nextChain = previousChain
           .then(() => persistAndPublishEvent(workflowId, eventType, message))
+          .then(() => {
+            // When a workflow reaches a terminal state, clean up per-workflow
+            // sequence tracking Maps to prevent unbounded growth. Only delete
+            // if the stored chain is still ours — a new event may have already
+            // replaced it with a fresh chain between our sync set and this
+            // async callback.
+            if (terminalBroadcastEventTypes.has(eventType)) {
+              sequenceCounters.delete(workflowId);
+              sequenceInitPromises.delete(workflowId);
+              if (sequenceChains.get(workflowId) === nextChain) {
+                sequenceChains.delete(workflowId);
+              }
+            }
+            return undefined;
+          })
           /* c8 ignore next 6 -- requires forced event persistence failure */
           .catch((error) => {
             console.error(
@@ -1143,7 +1166,12 @@ export function serve(options: ServeOptions): WeftServer {
   const visibilityPollMs = options.visibilityPollIntervalMs ?? 5_000;
   let scanRunning = false;
 
-  /** Prevents both scanners from processing the same operationId concurrently. */
+  /**
+   * Operations currently being processed by either the visibility scanner or
+   * the reconciliation scanner. Both paths call `reassignOrExpireTask` which
+   * can dispatch `ActivityFailedEvent` and re-queue tasks — processing the
+   * same operationId concurrently would produce duplicate side-effects.
+   */
   const processingOperationIds = new Set<string>();
 
   /**
@@ -1159,7 +1187,11 @@ export function serve(options: ServeOptions): WeftServer {
       const expired = deadlineTracker.drainExpired(now);
 
       for (const { operationId, deadline } of expired) {
-        if (processingOperationIds.has(operationId)) continue;
+        if (processingOperationIds.has(operationId)) {
+          // Re-add to the heap so it isn't permanently lost after being drained.
+          deadlineTracker.add({ operationId, deadline });
+          continue;
+        }
         processingOperationIds.add(operationId);
         try {
           const inflightKey = KEYS.operationInflight(operationId);
@@ -1240,6 +1272,7 @@ export function serve(options: ServeOptions): WeftServer {
             continue;
           }
 
+          // Skip if the visibility scanner is already processing this operation.
           if (processingOperationIds.has(decoded.operationId)) continue;
           processingOperationIds.add(decoded.operationId);
           try {

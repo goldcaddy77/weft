@@ -26,9 +26,11 @@ export function createCleanupErrorReporter(
 /** Create a finalizer callback that removes stale workflow handles from a cache map. */
 export function createHandleCacheFinalizer<TValue>(
   handleCache: Map<string, TValue>,
+  finalizationTokens: Map<string, object>,
 ): (workflowId: string) => void {
   return (workflowId: string) => {
     handleCache.delete(workflowId);
+    finalizationTokens.delete(workflowId);
   };
 }
 

@@ -161,6 +161,13 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   metrics: MetricsCollectorClass;
   /** End the workflow root span. Call from the engine when a workflow reaches terminal state. */
   endWorkflowSpan: (workflowId: string, status: 'ok' | 'error', errorMessage?: string) => void;
+  /**
+   * Evict workflow spans that have been open longer than `maxAgeMs` (default: 1 hour).
+   * Call periodically to prevent unbounded growth from orphaned or long-running workflows.
+   */
+  evictStaleSpans: (maxAgeMs?: number) => number;
+  /** Dispose all tracked workflow spans and clear the internal map. */
+  dispose: () => void;
 } {
   const api = options?.otelApi ?? getOtelApi();
   const { trace, SpanStatusCode } = api;
@@ -727,5 +734,34 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     workflowSpans.delete(workflowId);
   }
 
-  return { workflow, activity, metrics, endWorkflowSpan };
+  const DEFAULT_STALE_SPAN_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+
+  /**
+   * Evict workflow spans older than `maxAgeMs`. Returns the number of
+   * evicted entries. Orphaned or long-running workflows that never reach
+   * a terminal state will accumulate spans indefinitely without this.
+   */
+  function evictStaleSpans(maxAgeMs: number = DEFAULT_STALE_SPAN_MAX_AGE_MS): number {
+    const cutoff = Date.now() - maxAgeMs;
+    let evicted = 0;
+    for (const [workflowId, entry] of workflowSpans) {
+      if (entry.createdAt <= cutoff) {
+        entry.span.setStatus({ code: SpanStatusCode.ERROR, message: 'span evicted (stale)' });
+        entry.span.end();
+        workflowSpans.delete(workflowId);
+        evicted++;
+      }
+    }
+    return evicted;
+  }
+
+  /** End all tracked workflow spans and clear the map. */
+  function dispose(): void {
+    for (const [, entry] of workflowSpans) {
+      entry.span.end();
+    }
+    workflowSpans.clear();
+  }
+
+  return { workflow, activity, metrics, endWorkflowSpan, evictStaleSpans, dispose };
 }

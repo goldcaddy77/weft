@@ -125,6 +125,7 @@ export class StreamMultiplexer {
     } catch {
       // Source stream errored or was cancelled
       this.#finished = true;
+      this.#buffer = [];
       for (const controller of this.#consumers) {
         try {
           controller.close();
@@ -168,25 +169,45 @@ export class TokenBridge {
   }
 }
 
+/** Default byte budget: 10 MB. */
+const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+
 export interface ReconnectionBufferOptions {
   maxTurns?: number;
+  /** Maximum cumulative byte size of buffered turns. Defaults to 10 MB. */
+  maxBytes?: number;
 }
 
 /** Accumulates completed turn text for reconnecting clients. */
 export class ReconnectionBuffer {
   #turns: string[];
   #maxTurns: number;
+  #maxBytes: number;
+  #currentBytes: number;
 
   constructor(options?: ReconnectionBufferOptions) {
     this.#turns = [];
     this.#maxTurns = options?.maxTurns ?? 10;
+    this.#maxBytes = options?.maxBytes ?? DEFAULT_MAX_BYTES;
+    this.#currentBytes = 0;
   }
 
   /** Record a completed turn's text. */
   addTurn(text: string): void {
+    const turnBytes = estimateTurnBytes(text);
     this.#turns.push(text);
-    if (this.#turns.length > this.#maxTurns) {
-      this.#turns.shift();
+    this.#currentBytes += turnBytes;
+
+    // Enforce turn count limit
+    while (this.#turns.length > this.#maxTurns) {
+      const evicted = this.#turns.shift()!;
+      this.#currentBytes -= estimateTurnBytes(evicted);
+    }
+
+    // Enforce byte budget by evicting oldest turns
+    while (this.#currentBytes > this.#maxBytes && this.#turns.length > 1) {
+      const evicted = this.#turns.shift()!;
+      this.#currentBytes -= estimateTurnBytes(evicted);
     }
   }
 
@@ -200,8 +221,19 @@ export class ReconnectionBuffer {
     return this.#turns.length;
   }
 
+  /** Get the estimated byte size of all buffered turns. */
+  get currentBytes(): number {
+    return this.#currentBytes;
+  }
+
   /** Clear the buffer. */
   clear(): void {
     this.#turns = [];
+    this.#currentBytes = 0;
   }
+}
+
+/** Estimate the byte size of a turn string. Uses 2 bytes per char as a rough UTF-16 approximation. */
+function estimateTurnBytes(text: string): number {
+  return text.length * 2;
 }
