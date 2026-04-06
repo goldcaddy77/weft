@@ -421,13 +421,6 @@ function wireEventBroadcasting(
     UpdateCompletedEvent.type,
   ] as const;
 
-  const terminalEventTypes: Set<string> = new Set([
-    WorkflowCompletedEvent.type,
-    WorkflowFailedEvent.type,
-    WorkflowCancelledEvent.type,
-    WorkflowTimedOutEvent.type,
-  ]);
-
   for (const eventType of eventTypes) {
     engine.addEventListener(
       eventType,
@@ -456,14 +449,11 @@ function wireEventBroadcasting(
             );
           });
         sequenceChains.set(workflowId, nextChain);
-
-        if (terminalEventTypes.has(eventType)) {
-          void nextChain.finally(() => {
-            sequenceCounters.delete(workflowId);
-            sequenceInitPromises.delete(workflowId);
-            sequenceChains.delete(workflowId);
-          });
-        }
+        // Cleanup for terminal events lives in a dedicated listener that
+        // calls `cleanupWorkflow(workflowId)` — see the consumer of the
+        // returned handle in `serve()`. That path handles chain extension
+        // (new events arriving after the terminal event) correctly; doing
+        // the cleanup inline here would race with it.
       },
       { signal },
     );
