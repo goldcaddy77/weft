@@ -236,8 +236,48 @@ interface CacheEntry {
   timestamp: number;
 }
 
-/** Maximum tool cache entries before triggering proactive eviction of expired items. */
-const TOOL_CACHE_EVICTION_THRESHOLD = 1000;
+/**
+ * Maximum number of entries the tool cache can hold. When the cache exceeds
+ * this size during an eviction sweep, oldest entries are dropped until the
+ * cache is within budget.
+ */
+const TOOL_CACHE_MAX_ENTRIES = 1000;
+
+/**
+ * Number of entries that triggers a proactive eviction sweep when checking
+ * an individual cache entry's TTL. Below this threshold the per-access
+ * overhead of a full sweep is skipped.
+ */
+const TOOL_CACHE_SWEEP_THRESHOLD = 100;
+
+/**
+ * Remove all expired entries from the cache and enforce a hard size cap.
+ * Called proactively during cache reads once the map exceeds
+ * {@link TOOL_CACHE_SWEEP_THRESHOLD} entries.
+ */
+function sweepExpiredCacheEntries(cache: Map<string, CacheEntry>, ttl: number): void {
+  const now = Date.now();
+
+  // First pass: remove expired entries.
+  // Deleting the current key during Map iteration is safe per the ECMAScript
+  // specification — visited entries are not revisited after deletion.
+  for (const [key, entry] of cache) {
+    if (now - entry.timestamp >= ttl) {
+      cache.delete(key);
+    }
+  }
+
+  // If still over the hard cap, evict oldest entries first
+  if (cache.size <= TOOL_CACHE_MAX_ENTRIES) {
+    return;
+  }
+
+  const sorted = [...cache.entries()].toSorted((a, b) => a[1].timestamp - b[1].timestamp);
+  const toEvict = sorted.slice(0, cache.size - TOOL_CACHE_MAX_ENTRIES);
+  for (const [key] of toEvict) {
+    cache.delete(key);
+  }
+}
 
 function buildCacheKey(toolName: string, input: unknown): string {
   return `${toolName}:${JSON.stringify(input)}`;
@@ -371,7 +411,9 @@ async function initializeTools(
       }
     }
 
-    // Validate for name conflicts before the agent loop starts
+    // Validate for name conflicts before the agent loop starts.
+    // Must stay inside the try block so that a ToolNameConflictError
+    // triggers the catch-block disposal of already-created MCP clients.
     registry.validate();
   } catch (error) {
     // Dispose all clients on any initialization failure
@@ -840,6 +882,12 @@ async function resolveToolExecution(
   tool: RegistryTool | undefined,
 ): Promise<ToolExecutionOutcome> {
   const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
+
+  // Proactively evict expired entries when the cache grows large
+  if (runtime.state.toolCache.size >= TOOL_CACHE_SWEEP_THRESHOLD) {
+    sweepExpiredCacheEntries(runtime.state.toolCache, runtime.options.toolCacheTTL);
+  }
+
   const cached = runtime.state.toolCache.get(cacheKey);
   const now = Date.now();
 
@@ -854,10 +902,7 @@ async function resolveToolExecution(
     try {
       const rawOutput = await tool.execute(toolCall.input);
       output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
-      // Only cache if under the cap — prevents unbounded growth without an O(n) scan
-      if (runtime.state.toolCache.size < TOOL_CACHE_EVICTION_THRESHOLD) {
-        runtime.state.toolCache.set(cacheKey, { output, timestamp: Date.now() });
-      }
+      runtime.state.toolCache.set(cacheKey, { output, timestamp: Date.now() });
     } catch (error: unknown) {
       output = JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
       success = false;

@@ -2989,16 +2989,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return callMemoFunction(operation.fn);
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
-        const { BudgetTracker } = await import('../ai/budget.ts');
-        const { prompt, budget, budgetNamespace, ...rest } = operation.options;
-
+        const { prompt, budget: budgetOptions, budgetNamespace, ...rest } = operation.options;
+        const budgetTracker = await this.#createAgentBudgetTracker(
+          workflowId,
+          operation,
+          budgetOptions,
+        );
         const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
-        await this.#checkAgentBudgetPolicy(workflowId, budget, resolvedBudgetNamespace);
+        await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
 
         const agentResult = await executeAgentLoop(
           {
             ...rest,
-            budget: budget ? new BudgetTracker(budget) : undefined,
+            budget: budgetTracker,
             signal,
           },
           prompt,
@@ -3010,7 +3013,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           agentResult.totalCost,
         );
 
-        return agentResult;
+        return agentResult.content;
       }
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);
