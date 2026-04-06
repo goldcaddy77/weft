@@ -173,7 +173,7 @@ export function validatePullRequestTitle(title: string): TitleValidationResult {
   const baseTitleWithoutTrailingPunctuation = removeTrailingPunctuation(plainBaseTitle);
   if (firstSentence !== baseTitleWithoutTrailingPunctuation) {
     issues.push('PR title must be a single concise sentence fragment, not a multi-sentence dump.');
-  } else if (baseTitleWithoutTrailingPunctuation !== baseTitle) {
+  } else if (baseTitleWithoutTrailingPunctuation !== plainBaseTitle) {
     issues.push('PR title must not end with trailing punctuation.');
   }
 

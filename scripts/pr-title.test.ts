@@ -115,4 +115,12 @@ describe('validatePullRequestTitle', () => {
       'PR title must be a single concise sentence fragment, not a multi-sentence dump.',
     );
   });
+
+  it('does not report trailing punctuation for markdown-only cleanup', () => {
+    const result = validatePullRequestTitle('Fix **the** bug');
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('PR title must not contain Markdown emphasis or inline code.');
+    expect(result.issues).not.toContain('PR title must not end with trailing punctuation.');
+  });
 });
