@@ -2384,12 +2384,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, async () => {
       const controller = new AbortController();
+      const subOperations = operation.operations.map((subOperation) =>
+        this.#executeSubOperation(workflowId, subOperation, controller.signal),
+      );
+      // Swallow rejections from losing branches — only the race winner's
+      // result (or error) is surfaced. Losers are expected to throw
+      // AbortError after controller.abort() in finally, and without a
+      // handler those become unhandled promise rejections.
+      for (const promise of subOperations) {
+        promise.catch(() => {});
+      }
       try {
-        return await Promise.race(
-          operation.operations.map((subOperation) =>
-            this.#executeSubOperation(workflowId, subOperation, controller.signal),
-          ),
-        );
+        return await Promise.race(subOperations);
       } finally {
         controller.abort();
       }
