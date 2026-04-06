@@ -225,6 +225,123 @@ describe('StdioTransport', () => {
     await expect(transport.send({ method: 'test' })).rejects.toThrow(MCPTransportError);
   });
 
+  it('swallows stdout reader cancellation failures during read-loop cleanup', async () => {
+    let responseSent = false;
+    const spawnSpy = spyOn(Bun, 'spawn').mockImplementation(() => {
+      return {
+        stdin: {
+          async write() {
+            return 1;
+          },
+        },
+        stdout: {
+          getReader() {
+            return {
+              async read() {
+                if (!responseSent) {
+                  responseSent = true;
+                  const payload = JSON.stringify({ jsonrpc: '2.0', id: 1, result: 'ok' }) + '\n';
+                  return {
+                    done: false,
+                    value: new TextEncoder().encode(payload),
+                  };
+                }
+
+                return { done: true, value: undefined };
+              },
+              cancel() {
+                return Promise.reject(new Error('stdout cancel failed'));
+              },
+            };
+          },
+        },
+        stderr: null,
+        exited: new Promise<number>(() => {}),
+        kill() {},
+      } as unknown as ReturnType<typeof Bun.spawn>;
+    });
+
+    try {
+      const transport = track(new StdioTransport({ command: 'bun' }));
+      await expect(transport.send({ method: 'test' })).resolves.toEqual({ result: 'ok' });
+
+      // Allow the read loop finally-block to run after stdout reports `done: true`.
+      await Bun.sleep(0);
+    } finally {
+      spawnSpy.mockRestore();
+    }
+  });
+
+  it('swallows stderr reader cancellation failures during stderr-loop cleanup', async () => {
+    let responseSent = false;
+    let stderrSent = false;
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    const spawnSpy = spyOn(Bun, 'spawn').mockImplementation(() => {
+      return {
+        stdin: {
+          async write() {
+            return 1;
+          },
+        },
+        stdout: {
+          getReader() {
+            return {
+              async read() {
+                if (!responseSent) {
+                  responseSent = true;
+                  const payload = JSON.stringify({ jsonrpc: '2.0', id: 1, result: 'ok' }) + '\n';
+                  return {
+                    done: false,
+                    value: new TextEncoder().encode(payload),
+                  };
+                }
+
+                return { done: true, value: undefined };
+              },
+              cancel() {
+                return Promise.resolve();
+              },
+            };
+          },
+        },
+        stderr: {
+          getReader() {
+            return {
+              async read() {
+                if (!stderrSent) {
+                  stderrSent = true;
+                  return {
+                    done: false,
+                    value: new TextEncoder().encode('stderr line\n'),
+                  };
+                }
+
+                return { done: true, value: undefined };
+              },
+              cancel() {
+                return Promise.reject(new Error('stderr cancel failed'));
+              },
+            };
+          },
+        },
+        exited: new Promise<number>(() => {}),
+        kill() {},
+      } as unknown as ReturnType<typeof Bun.spawn>;
+    });
+
+    try {
+      const transport = track(new StdioTransport({ command: 'bun' }));
+      await expect(transport.send({ method: 'test' })).resolves.toEqual({ result: 'ok' });
+
+      // Allow the stderr loop to finish reading and run its cleanup path.
+      await Bun.sleep(0);
+      expect(warnSpy).toHaveBeenCalledWith('[weft:mcp:stdio:stderr] stderr line');
+    } finally {
+      spawnSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
   describe('healthCheck', () => {
     it('returns true when server responds to ping', async () => {
       const script = await createMockServer('health');

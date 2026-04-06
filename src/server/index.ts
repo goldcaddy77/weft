@@ -277,7 +277,7 @@ function serializeEvent(event: Event): string | null {
  *   workflow id. Should be invoked when a workflow reaches a terminal state
  *   so the bookkeeping maps do not grow unbounded over the server's lifetime.
  */
-interface EventBroadcastingHandle {
+export interface EventBroadcastingHandle {
   dispose: () => void;
   cleanupWorkflow: (workflowId: string) => void;
 }
@@ -301,7 +301,7 @@ function getWorkflowIdFromEvent(event: Event): string | undefined {
  * and persist each event to storage so GET /v1/workflows/:id/events returns data.
  * Returns a handle exposing a cleanup function and a per-workflow eviction hook.
  */
-function wireEventBroadcasting(
+export function wireEventBroadcasting(
   engine: Engine,
   server: ReturnType<typeof Bun.serve>,
 ): EventBroadcastingHandle {
@@ -395,14 +395,6 @@ function wireEventBroadcasting(
     }
   }
 
-  /** Event types that indicate a workflow has reached a terminal state. */
-  const terminalBroadcastEventTypes = new Set<string>([
-    WorkflowCompletedEvent.type,
-    WorkflowFailedEvent.type,
-    WorkflowCancelledEvent.type,
-    WorkflowTimedOutEvent.type,
-  ]);
-
   const eventTypes = [
     WorkflowStartedEvent.type,
     WorkflowCompletedEvent.type,
@@ -441,21 +433,6 @@ function wireEventBroadcasting(
         const previousChain = sequenceChains.get(workflowId) ?? Promise.resolve();
         const nextChain = previousChain
           .then(() => persistAndPublishEvent(workflowId, eventType, message))
-          .then(() => {
-            // When a workflow reaches a terminal state, clean up per-workflow
-            // sequence tracking Maps to prevent unbounded growth. Only delete
-            // if the stored chain is still ours — a new event may have already
-            // replaced it with a fresh chain between our sync set and this
-            // async callback.
-            if (terminalBroadcastEventTypes.has(eventType)) {
-              sequenceCounters.delete(workflowId);
-              sequenceInitPromises.delete(workflowId);
-              if (sequenceChains.get(workflowId) === nextChain) {
-                sequenceChains.delete(workflowId);
-              }
-            }
-            return undefined;
-          })
           /* c8 ignore next 6 -- requires forced event persistence failure */
           .catch((error) => {
             console.error(

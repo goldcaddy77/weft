@@ -14,7 +14,7 @@ import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
 import type { WeftServer } from './index.ts';
-import { serve } from './index.ts';
+import { serve, wireEventBroadcasting } from './index.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -437,6 +437,62 @@ describe('serve', () => {
       const count = await countKeys(engine, `ev:bulk-wf-${i}:`);
       expect(count).toBe(2);
     }
+  });
+
+  it('cleanupWorkflow tolerates workflows that never started an event chain', () => {
+    engine = createEngine();
+    const broadcaster = wireEventBroadcasting(engine, {
+      publish() {
+        return 0;
+      },
+    } as unknown as ReturnType<typeof Bun.serve>);
+
+    expect(() => broadcaster.cleanupWorkflow('never-broadcast')).not.toThrow();
+
+    broadcaster.dispose();
+  });
+
+  it('waits for an extended post-terminal chain before dropping sequence bookkeeping', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const workflowId = 'terminal-recursion-wf';
+
+    engine.dispatchEvent(new TokenEvent(workflowId, 'before-terminal', 'gpt-4'));
+    await waitFor(async () => (await countKeys(engine, `ev:${workflowId}:`)) === 1, {
+      label: 'pre-terminal event persisted',
+    });
+
+    // Dispatch the terminal event and immediately extend the same workflow's
+    // event chain before the terminal cleanup can drain. This exercises the
+    // recursive cleanup path inside `cleanupWorkflow`.
+    engine.dispatchEvent(new WorkflowCompletedEvent(workflowId, 'ok', 1));
+    engine.dispatchEvent(new TokenEvent(workflowId, 'during-terminal-cleanup', 'gpt-4'));
+
+    await waitFor(async () => (await countKeys(engine, `ev:${workflowId}:`)) === 3, {
+      label: 'terminal and immediate follow-up events persisted',
+    });
+
+    // Once the recursive cleanup has drained the extended chain, a later event
+    // should rehydrate from storage and continue the sequence without
+    // collisions or gaps.
+    engine.dispatchEvent(new TokenEvent(workflowId, 'after-recursive-cleanup', 'gpt-4'));
+    await waitFor(async () => (await countKeys(engine, `ev:${workflowId}:`)) === 4, {
+      label: 'post-recursion event persisted after cleanup',
+    });
+
+    const keys: string[] = [];
+    for await (const [key] of engine.storage.scan(`ev:${workflowId}:`)) {
+      keys.push(key);
+    }
+
+    expect(keys.length).toBe(4);
+    const sequences = keys.map((key) => {
+      const parts = key.split(':');
+      return parseInt(parts[parts.length - 1] ?? '', 10);
+    });
+    sequences.sort((a, b) => a - b);
+    expect(sequences).toEqual([0, 1, 2, 3]);
   });
 });
 
