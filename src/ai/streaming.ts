@@ -164,14 +164,22 @@ export class TokenBridge {
         }
       }
     } finally {
-      // Release the reader so the source stream isn't left locked on early return or error.
-      // Cancel first to signal loss of interest (and propagate errors), then release the
-      // lock so the underlying stream can be inspected or re-read by another consumer.
-      reader.cancel().catch(() => {});
+      // Release the reader so the source stream isn't left locked on early
+      // return or error. Cancel first to signal loss of interest (and
+      // propagate errors), then release the lock. Awaiting `cancel()`
+      // ensures any in-flight read is fully settled before `releaseLock()` —
+      // per the Streams spec, `releaseLock()` throws a TypeError if a read
+      // is pending, which would silently leave the stream locked forever.
+      // Matches the contract documented in `providers/stream-reader.ts`.
+      try {
+        await reader.cancel();
+      } catch {
+        // Reader already in a terminal state — ignore.
+      }
       try {
         reader.releaseLock();
       } catch {
-        // releaseLock throws if there's still a pending read — safe to ignore here.
+        // Lock already released or reader in a terminal state — ignore.
       }
     }
 
