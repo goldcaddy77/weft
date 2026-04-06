@@ -15,6 +15,12 @@ import {
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
 } from '../ai/events';
+import {
+  WorkflowCancelledEvent,
+  WorkflowCompletedEvent,
+  WorkflowFailedEvent,
+  WorkflowTimedOutEvent,
+} from '../core/events.ts';
 import type {
   ActivityExecutionInterception,
   ActivityInterception,
@@ -212,6 +218,35 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     if (entry) {
       entry.span.end();
       workflowSpans.delete(workflowId);
+    }
+  }
+
+  // Automatically clean up workflow spans when workflows reach terminal states.
+  if (eventTarget) {
+    const terminalHandler = (event: Event) => {
+      if (
+        !(event instanceof WorkflowCompletedEvent) &&
+        !(event instanceof WorkflowFailedEvent) &&
+        !(event instanceof WorkflowCancelledEvent) &&
+        !(event instanceof WorkflowTimedOutEvent)
+      ) {
+        return;
+      }
+
+      const isError =
+        event instanceof WorkflowFailedEvent || event instanceof WorkflowTimedOutEvent;
+      const errorMsg = event instanceof WorkflowFailedEvent ? event.error.message : undefined;
+
+      endWorkflowSpan(event.workflowId, isError ? 'error' : 'ok', errorMsg);
+    };
+
+    for (const type of [
+      WorkflowCompletedEvent.type,
+      WorkflowFailedEvent.type,
+      WorkflowCancelledEvent.type,
+      WorkflowTimedOutEvent.type,
+    ]) {
+      eventTarget.addEventListener(type, terminalHandler);
     }
   }
 

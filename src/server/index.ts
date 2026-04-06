@@ -391,6 +391,13 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     UpdateCompletedEvent.type,
   ] as const;
 
+  const terminalEventTypes: Set<string> = new Set([
+    WorkflowCompletedEvent.type,
+    WorkflowFailedEvent.type,
+    WorkflowCancelledEvent.type,
+    WorkflowTimedOutEvent.type,
+  ]);
+
   for (const eventType of eventTypes) {
     engine.addEventListener(
       eventType,
@@ -421,6 +428,14 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
             );
           });
         sequenceChains.set(workflowId, nextChain);
+
+        if (terminalEventTypes.has(eventType)) {
+          void nextChain.finally(() => {
+            sequenceCounters.delete(workflowId);
+            sequenceInitPromises.delete(workflowId);
+            sequenceChains.delete(workflowId);
+          });
+        }
       },
       { signal },
     );
