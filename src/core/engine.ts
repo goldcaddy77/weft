@@ -550,13 +550,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
   /**
-   * Dedup set for recorded agent operation budget costs. Entries are composite
-   * keys joined by a NUL byte (`\x00`) so terminal-state cleanup can drop all
-   * entries for a workflow with a prefix scan without the risk of a colon in a
-   * user-supplied `workflowId` colliding with a neighbouring workflow's keys.
-   * Keeps a single source of truth rather than a parallel Map.
+   * Dedup set for recorded agent operation budget costs. Entries live here
+   * for the lifetime of their parent workflow and are removed in
+   * `#cleanupTerminalWorkflow` so the set does not grow unbounded.
+   *
+   * Removal is O(1) per workflow because `#chargedAgentOperationsByWorkflow`
+   * keeps a reverse index — see `#recordAgentBudgetCost` for the write path.
    */
   #chargedAgentOperations: Set<string>;
+  /**
+   * Reverse index from `workflowId` to the set of operation ids it charged.
+   * Lets terminal-state cleanup drop the workflow's dedup entries in O(k)
+   * where k is that workflow's agent operation count, rather than scanning
+   * the engine-wide `#chargedAgentOperations` set.
+   */
+  #chargedAgentOperationsByWorkflow: Map<string, Set<string>>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
   #defaultModelRouter: import('../ai/model-router.ts').ModelRouter | undefined;
   #reviewCoordinator: ReviewCoordinator;
@@ -659,6 +667,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#heartbeatDetails = new Map();
     this.#pendingStarts = new Set();
     this.#chargedAgentOperations = new Set();
+    this.#chargedAgentOperationsByWorkflow = new Map();
     this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
     this.#reviewWaiters = new Map();
     this.#reviewEscalationHandlers = new Map();
@@ -1942,6 +1951,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowHeaders.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
+    this.#chargedAgentOperationsByWorkflow.clear();
     this.#agentWorkflowIds.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
@@ -2899,12 +2909,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const chargedKey = KEYS.budgetCharged(operationId);
-    // NUL byte delimiter: user-supplied workflowIds can contain colons, so a
-    // colon-joined composite key would produce false positives on cleanup
-    // (see `#cleanupTerminalWorkflow`). NUL cannot appear in valid ids.
-    const dedupKey = `${workflowId}\x00${operationId}`;
     const alreadyCharged =
-      this.#chargedAgentOperations.has(dedupKey) || (await this.#storage.get(chargedKey)) !== null;
+      this.#chargedAgentOperations.has(operationId) ||
+      (await this.#storage.get(chargedKey)) !== null;
 
     if (alreadyCharged) {
       return;
@@ -2912,7 +2919,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     await this.#storage.put(chargedKey, encode({ cost: totalCost }));
     await this.#budgetPolicyEnforcer.recordCost(resolvedBudgetNamespace, totalCost);
-    this.#chargedAgentOperations.add(dedupKey);
+    this.#chargedAgentOperations.add(operationId);
+
+    // Maintain the reverse index so terminal cleanup is O(k) in the
+    // workflow's own agent operations rather than O(N) in the engine-wide
+    // dedup set.
+    let workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
+    if (!workflowOperations) {
+      workflowOperations = new Set();
+      this.#chargedAgentOperationsByWorkflow.set(workflowId, workflowOperations);
+    }
+    workflowOperations.add(operationId);
   }
 
   async #processChildWorkflowOperation(
@@ -3057,7 +3074,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           agentResult.totalCost,
         );
 
-        return agentResult;
+        // Match `#processAgentContextOperation` which unwraps the result to
+        // the content string. Without this, `ctx.all()`/`ctx.race()` with
+        // agent sub-operations would return the full `AgentResult` object
+        // while standalone `ctx.agent()` returns the content — breaking
+        // type expectations for callers.
+        return agentResult.content;
       }
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);
@@ -3114,7 +3136,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   /**
    * Remove durable records keyed by `workflowId` that otherwise leak after a
    * workflow reaches a terminal state. Covers offloaded values, blob stream
-   * chunks, shared state entries, signal queue entries, and event history.
+   * chunks, shared state entries, and pending signals.
+   *
+   * Event history (`ev:${workflowId}:`) is deliberately preserved so that
+   * `Engine.getEvents(workflowId)` and `GET /v1/workflows/:id/events` keep
+   * returning the full history after the workflow reaches a terminal state.
+   * Retention of the event log is the caller's responsibility — use a TTL
+   * at the storage layer or a periodic sweep if event history retention
+   * becomes a leak in its own right.
    *
    * Concurrency note: we assume all writers for a workflow's prefixed keys
    * originate from that workflow's own execution. By the time this runs, the
@@ -3123,6 +3152,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * returning. Any write that races the scan must have come from a background
    * task that itself holds a handle to the terminal workflow, and those are
    * caller-level bugs we don't try to paper over here.
+   *
+   * Scale note: deletes are flushed in batches of `CLEANUP_BATCH_SIZE` so
+   * workflows with many blobs/signals do not allocate a single oversized
+   * operation array.
    */
   async #cleanupWorkflowStorage(workflowId: string): Promise<void> {
     const prefixes = [
@@ -3130,19 +3163,26 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       `blob:${workflowId}:`,
       `shared:${workflowId}:`,
       `sig:${workflowId}:`,
-      `ev:${workflowId}:`,
     ];
 
-    const deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
+    const CLEANUP_BATCH_SIZE = 500;
+    let deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
+    const flush = async (): Promise<void> => {
+      if (deleteOperations.length === 0) return;
+      await this.#storage.batch(deleteOperations);
+      deleteOperations = [];
+    };
+
     for (const prefix of prefixes) {
       for await (const [key] of this.#storage.scan(prefix)) {
         deleteOperations.push({ type: 'delete', key });
+        if (deleteOperations.length >= CLEANUP_BATCH_SIZE) {
+          await flush();
+        }
       }
     }
 
-    if (deleteOperations.length > 0) {
-      await this.#storage.batch(deleteOperations);
-    }
+    await flush();
   }
 
   /**
@@ -3160,16 +3200,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#agentWorkflowIds.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
-    // Release charged agent operation dedup keys that belong to this workflow
-    // so the engine-wide Set does not grow unbounded over time. Keys are
-    // composite `${workflowId}\x00${operationId}` strings — NUL delimiter
-    // guarantees the prefix match is collision-free even for user-supplied
-    // workflowIds that contain colons.
-    const chargedKeyPrefix = `${workflowId}\x00`;
-    for (const key of this.#chargedAgentOperations) {
-      if (key.startsWith(chargedKeyPrefix)) {
-        this.#chargedAgentOperations.delete(key);
+    // Release the workflow's agent operation dedup entries via the reverse
+    // index. O(k) in this workflow's own agent operations rather than O(N)
+    // in the engine-wide set — important for long-lived engines that run
+    // many agents across many workflows.
+    const workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
+    if (workflowOperations) {
+      for (const operationId of workflowOperations) {
+        this.#chargedAgentOperations.delete(operationId);
       }
+      this.#chargedAgentOperationsByWorkflow.delete(workflowId);
     }
 
     // Durable records

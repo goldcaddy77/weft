@@ -1,4 +1,5 @@
 import type { ChatOptions, LLMProvider } from './interface';
+import { releaseInnerReader } from './stream-reader';
 import type { ChatResponse, Message, StreamChunk, ToolCall, ToolDefinition } from './types';
 
 import { estimateTokens } from '../token-counting.ts';
@@ -139,10 +140,12 @@ export class OpenAIProvider implements LLMProvider {
             }
           }
         } finally {
-          // Release the lock on the underlying response body so it can be
-          // garbage-collected. Errors are ignored because the reader may
-          // already be in a terminal state when we get here.
-          reader.cancel().catch(() => {});
+          // Cancel the inner reader so the fetch body stops buffering, and
+          // then explicitly release the lock so the response body is no
+          // longer pinned. `cancel()` alone does NOT release the reader lock
+          // in Bun — `releaseLock()` does. Both ignore errors because the
+          // reader may already be in a terminal state when we get here.
+          releaseInnerReader(reader);
           // `controller.close()` throws if the stream is already closed
           // or errored — which is exactly what happens when the consumer
           // cancelled the outer stream before we reached this block.
@@ -155,9 +158,9 @@ export class OpenAIProvider implements LLMProvider {
       },
       cancel(reason) {
         // Consumer aborted (e.g. budget exceeded, workflow cancellation).
-        // Propagate the cancel to the inner reader so the fetch response
-        // body is released instead of staying locked forever.
-        reader.cancel(reason).catch(() => {});
+        // Propagate the cancel to the inner reader and release its lock so
+        // the fetch response body does not stay locked forever.
+        releaseInnerReader(reader, reason);
       },
     });
   }

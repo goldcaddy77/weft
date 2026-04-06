@@ -29,10 +29,15 @@ export function setToolCacheEntry(
   }
   cache.set(key, entry);
 
-  while (cache.size > maxSize) {
+  // Clamp to a non-negative bound. A negative `maxSize` would otherwise spin
+  // forever: once the cache is empty, `cache.size > maxSize` stays true and
+  // the inner key-iteration loop has nothing to delete.
+  const effectiveMax = Math.max(0, Math.floor(maxSize));
+
+  while (cache.size > effectiveMax) {
     // `Map.keys()` iterates in insertion order; the first key is the oldest.
-    // The loop guard (`cache.size > maxSize`) guarantees at least one entry,
-    // so the iterator's first value is always defined.
+    // The loop guard (`cache.size > effectiveMax`) guarantees at least one
+    // entry, so the iterator's first value is always defined.
     for (const oldestKey of cache.keys()) {
       cache.delete(oldestKey);
       break;

@@ -2565,7 +2565,7 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
-    it('completing a workflow removes offload/blob/shared/signal/event keys', async () => {
+    it('completing a workflow removes offload/blob/shared/signal keys but preserves event history', async () => {
       const storage = new MemoryStorage();
       const engine = new Engine({ storage });
 
@@ -2586,26 +2586,38 @@ describe('Engine', () => {
       // Pre-seed records that the workflow itself would never create, to
       // confirm the cleanup helper sweeps all target prefixes.
       await storage.put(`sig:${handle.id}:pre:entry`, encode({ ignored: true }));
-      await storage.put(`ev:${handle.id}:0000000000`, encode({ kind: 'synthetic' }));
       await storage.put(`shared:${handle.id}:counter`, encode({ value: 1 }));
+      // Event history is persisted by the server (not the engine itself),
+      // so seed a synthetic `ev:` key to verify the cleanup helper leaves
+      // it alone — otherwise `Engine.getEvents()` would return empty for
+      // every completed workflow.
+      await storage.put(`ev:${handle.id}:0000000000`, encode({ kind: 'synthetic' }));
 
       await handle.result();
       await flush();
 
-      const prefixes = [
+      // Offload/blob/shared/signal entries should be gone.
+      for (const prefix of [
         `offload:${handle.id}:`,
         `blob:${handle.id}:`,
         `shared:${handle.id}:`,
         `sig:${handle.id}:`,
-        `ev:${handle.id}:`,
-      ];
-      for (const prefix of prefixes) {
+      ]) {
         const remaining: string[] = [];
         for await (const [key] of storage.scan(prefix)) {
           remaining.push(key);
         }
         expect(remaining).toEqual([]);
       }
+
+      // Event history (`ev:*`) must be preserved so `Engine.getEvents()` and
+      // the `GET /v1/workflows/:id/events` endpoint keep working after the
+      // workflow reaches a terminal state.
+      const remainingEvents: string[] = [];
+      for await (const [key] of storage.scan(`ev:${handle.id}:`)) {
+        remainingEvents.push(key);
+      }
+      expect(remainingEvents).toContain(`ev:${handle.id}:0000000000`);
 
       engine[Symbol.dispose]();
     });
