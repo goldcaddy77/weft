@@ -261,6 +261,18 @@ function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
+export function getRequiredRouteParameter(
+  params: Record<string, string>,
+  name: string,
+  routeDescription: string,
+): string {
+  const value = params[name];
+  if (value === undefined) {
+    throw new Error(`Missing route parameter "${name}" for ${routeDescription}`);
+  }
+  return value;
+}
+
 // ---------------------------------------------------------------------------
 // Route handlers — each delegates to an Engine method
 // ---------------------------------------------------------------------------
@@ -985,9 +997,9 @@ export async function handleRequest(
     return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
   }
 
-  // Matched routes and executors are defined together, so required parameters
-  // are present by construction once `matchRoute()` succeeds.
-  const param = (name: string): string => route.params[name]!;
+  const routeDescription = `${request.method} ${url.pathname}`;
+  const param = (name: string): string =>
+    getRequiredRouteParameter(route.params, name, routeDescription);
 
   try {
     return await ROUTE_EXECUTORS[route.handler]({ request, engine, options, param });

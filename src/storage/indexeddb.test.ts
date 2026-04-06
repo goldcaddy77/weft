@@ -27,28 +27,30 @@ describe('IndexedDBStorage', () => {
     const originalOpen = indexedDB.open.bind(indexedDB);
     const openError = new Error('open failed');
 
-    indexedDB.open = (() => {
-      const request = {
-        result: undefined,
-        error: openError,
-        onsuccess: null,
-        onerror: null,
-        onupgradeneeded: null,
-        readyState: 'pending',
-      } as unknown as IDBOpenDBRequest;
+    try {
+      indexedDB.open = (() => {
+        const request = {
+          result: undefined,
+          error: openError,
+          onsuccess: null,
+          onerror: null,
+          onupgradeneeded: null,
+          readyState: 'pending',
+        } as unknown as IDBOpenDBRequest;
 
-      queueMicrotask(() => {
-        request.onerror?.(new Event('error'));
-      });
+        queueMicrotask(() => {
+          request.onerror?.(new Event('error'));
+        });
 
-      return request;
-    }) as typeof indexedDB.open;
+        return request;
+      }) as typeof indexedDB.open;
 
-    const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+      const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
 
-    await expect(storage.get('key')).rejects.toBe(openError);
-
-    indexedDB.open = originalOpen;
+      await expect(storage.get('key')).rejects.toBe(openError);
+    } finally {
+      indexedDB.open = originalOpen;
+    }
   });
 
   it('get on empty storage returns null', async () => {
@@ -189,58 +191,60 @@ describe('IndexedDBStorage', () => {
     const originalOpen = indexedDB.open.bind(indexedDB);
     const transactionError = new Error('transaction failed');
 
-    indexedDB.open = (() => {
-      const transaction = {
-        error: transactionError,
-        oncomplete: null,
-        onerror: null,
-        objectStore() {
-          return {
-            put() {},
-            delete() {},
-          };
-        },
-      } as unknown as IDBTransaction;
-
-      const database = {
-        objectStoreNames: {
-          contains() {
-            return true;
+    try {
+      indexedDB.open = (() => {
+        const transaction = {
+          error: transactionError,
+          oncomplete: null,
+          onerror: null,
+          objectStore() {
+            return {
+              put() {},
+              delete() {},
+            };
           },
-        },
-        createObjectStore() {},
-        transaction() {
-          queueMicrotask(() => {
-            transaction.onerror?.(new Event('error'));
-          });
-          return transaction;
-        },
-        close() {},
-      } as unknown as IDBDatabase;
+        } as unknown as IDBTransaction;
 
-      const request = {
-        result: database,
-        error: null,
-        onsuccess: null,
-        onerror: null,
-        onupgradeneeded: null,
-        readyState: 'pending',
-      } as unknown as IDBOpenDBRequest;
+        const database = {
+          objectStoreNames: {
+            contains() {
+              return true;
+            },
+          },
+          createObjectStore() {},
+          transaction() {
+            queueMicrotask(() => {
+              transaction.onerror?.(new Event('error'));
+            });
+            return transaction;
+          },
+          close() {},
+        } as unknown as IDBDatabase;
 
-      queueMicrotask(() => {
-        request.onsuccess?.(new Event('success'));
-      });
+        const request = {
+          result: database,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          onupgradeneeded: null,
+          readyState: 'pending',
+        } as unknown as IDBOpenDBRequest;
 
-      return request;
-    }) as typeof indexedDB.open;
+        queueMicrotask(() => {
+          request.onsuccess?.(new Event('success'));
+        });
 
-    const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+        return request;
+      }) as typeof indexedDB.open;
 
-    await expect(storage.batch([{ type: 'put', key: 'key', value: encode('value') }])).rejects.toBe(
-      transactionError,
-    );
+      const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
 
-    indexedDB.open = originalOpen;
+      await expect(
+        storage.batch([{ type: 'put', key: 'key', value: encode('value') }]),
+      ).rejects.toBe(transactionError);
+    } finally {
+      indexedDB.open = originalOpen;
+    }
   });
 
   it('[Symbol.dispose] closes database', async () => {

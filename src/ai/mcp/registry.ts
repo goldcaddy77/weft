@@ -9,6 +9,7 @@ export interface RegistryTool {
 
 class RegistryToolEntry implements RegistryTool {
   readonly definition: ToolDefinition;
+  readonly execute: (input: unknown) => Promise<unknown>;
   readonly source: 'local' | 'mcp';
   readonly serverUrl?: string;
   readonly #localExecute: ((input: unknown) => Promise<unknown>) | undefined;
@@ -28,14 +29,13 @@ class RegistryToolEntry implements RegistryTool {
     }
     this.#localExecute = options.localExecute;
     this.#mcpExecute = options.mcpExecute;
-  }
+    this.execute = (input: unknown): Promise<unknown> => {
+      if (this.#localExecute) {
+        return this.#localExecute(input);
+      }
 
-  execute(input: unknown): Promise<unknown> {
-    if (this.#localExecute) {
-      return this.#localExecute(input);
-    }
-
-    return this.#mcpExecute!(this.definition.name, input);
+      return this.#mcpExecute!(this.definition.name, input);
+    };
   }
 }
 

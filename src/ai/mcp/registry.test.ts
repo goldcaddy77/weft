@@ -27,6 +27,15 @@ describe('ToolRegistry', () => {
     expect(tool!.definition).toBe(definition);
   });
 
+  it('keeps local execute detached from the registry entry instance', async () => {
+    const registry = new ToolRegistry();
+
+    registry.registerLocal(createToolDefinition('calculator'), async (input) => input);
+
+    const { execute } = registry.get('calculator')!;
+    expect(await execute({ value: 42 })).toEqual({ value: 42 });
+  });
+
   it('registers MCP tools', () => {
     const registry = new ToolRegistry();
     const tools = [createToolDefinition('search'), createToolDefinition('fetch')];
@@ -54,8 +63,8 @@ describe('ToolRegistry', () => {
       },
     );
 
-    const tool = registry.get('search');
-    expect(await tool!.execute({ query: 'weather' })).toEqual({ ok: true });
+    const { execute } = registry.get('search')!;
+    expect(await execute({ query: 'weather' })).toEqual({ ok: true });
     expect(calls).toEqual([{ toolName: 'search', input: { query: 'weather' } }]);
   });
 

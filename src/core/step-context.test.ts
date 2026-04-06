@@ -184,6 +184,21 @@ describe('step-context', () => {
     expect(isGeneratorFunction(plainFunction)).toBe(false);
   });
 
+  it('does not trust spoofed constructor names when identifying generator functions', () => {
+    const plainFunction = () => 42;
+    const plainAsyncFunction = async () => 42;
+
+    Object.defineProperty(plainFunction, 'constructor', {
+      value: { name: 'GeneratorFunction' },
+    });
+    Object.defineProperty(plainAsyncFunction, 'constructor', {
+      value: { name: 'AsyncGeneratorFunction' },
+    });
+
+    expect(isGeneratorFunction(plainFunction)).toBe(false);
+    expect(isAsyncGeneratorFunction(plainAsyncFunction)).toBe(false);
+  });
+
   it('isGeneratorResult correctly identifies generator and async generator objects', async () => {
     const syncGeneratorResult = (function* () {
       yield 1;
@@ -197,5 +212,24 @@ describe('step-context', () => {
     expect(isGeneratorResult([])).toBe(false);
 
     await asyncGeneratorResult.return(undefined);
+  });
+
+  it('does not treat iterator-shaped objects as generator results', () => {
+    const iteratorLike = {
+      next() {
+        return { done: true, value: undefined };
+      },
+      throw() {
+        return { done: true, value: undefined };
+      },
+      return() {
+        return { done: true, value: undefined };
+      },
+      [Symbol.iterator]() {
+        return this;
+      },
+    };
+
+    expect(isGeneratorResult(iteratorLike)).toBe(false);
   });
 });

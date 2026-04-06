@@ -6,7 +6,7 @@ import type { WorkflowContext } from '../core/types.ts';
 import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { handleRequest } from './handler.ts';
+import { getRequiredRouteParameter, handleRequest } from './handler.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -194,6 +194,12 @@ describe('handleRequest', () => {
     expect(response.status).toBe(404);
     const body = (await json(response)) as { error: string };
     expect(body.error).toBeDefined();
+  });
+
+  it('getRequiredRouteParameter throws a descriptive error when a parameter is missing', () => {
+    expect(() => getRequiredRouteParameter({}, 'id', 'GET /v1/workflows/broken-id')).toThrow(
+      'Missing route parameter "id" for GET /v1/workflows/broken-id',
+    );
   });
 
   // 11. Start workflow with custom id
