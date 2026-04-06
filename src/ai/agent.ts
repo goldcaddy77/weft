@@ -865,9 +865,16 @@ async function resolveToolExecution(
 ): Promise<ToolExecutionOutcome> {
   const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
 
-  // Proactively evict expired entries when the cache grows large
+  // Proactively evict expired entries when the cache grows large. The
+  // sweep uses the caller's configured `toolCacheMaxSize` so the proactive
+  // read-time eviction agrees with the write-time eviction in
+  // `setToolCacheEntry`.
   if (runtime.state.toolCache.size >= TOOL_CACHE_SWEEP_THRESHOLD) {
-    sweepExpiredCacheEntries(runtime.state.toolCache, runtime.options.toolCacheTTL);
+    sweepExpiredCacheEntries(
+      runtime.state.toolCache,
+      runtime.options.toolCacheTTL,
+      runtime.options.toolCacheMaxSize,
+    );
   }
 
   const cached = runtime.state.toolCache.get(cacheKey);

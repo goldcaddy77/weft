@@ -9,13 +9,6 @@ export interface CacheEntry {
 }
 
 /**
- * Maximum number of entries the tool cache can hold. When the cache exceeds
- * this size during an eviction sweep, oldest entries are dropped until the
- * cache is within budget.
- */
-export const TOOL_CACHE_MAX_ENTRIES = 1000;
-
-/**
  * Number of entries that triggers a proactive eviction sweep when checking
  * an individual cache entry's TTL. Below this threshold the per-access
  * overhead of a full sweep is skipped.
@@ -23,13 +16,21 @@ export const TOOL_CACHE_MAX_ENTRIES = 1000;
 export const TOOL_CACHE_SWEEP_THRESHOLD = 100;
 
 /**
- * Remove all expired entries from the cache and enforce a hard size cap.
- * Called proactively during cache reads once the map exceeds
+ * Remove all expired entries from the cache and enforce the caller-provided
+ * hard size cap. Called proactively during cache reads once the map exceeds
  * {@link TOOL_CACHE_SWEEP_THRESHOLD} entries.
+ *
+ * The cap is a runtime parameter so it stays in lockstep with the caller's
+ * configured `toolCacheMaxSize`. A hardcoded constant here would silently
+ * evict entries that the configured max explicitly permits.
  *
  * @internal
  */
-export function sweepExpiredCacheEntries(cache: Map<string, CacheEntry>, ttl: number): void {
+export function sweepExpiredCacheEntries(
+  cache: Map<string, CacheEntry>,
+  ttl: number,
+  maxSize: number,
+): void {
   const now = Date.now();
 
   // First pass: remove expired entries.
@@ -41,13 +42,18 @@ export function sweepExpiredCacheEntries(cache: Map<string, CacheEntry>, ttl: nu
     }
   }
 
+  // Clamp to a non-negative bound for the same reason `setToolCacheEntry`
+  // does: a negative or non-integer value would spin forever if the cache
+  // could never shrink below it.
+  const effectiveMax = Math.max(0, Math.floor(maxSize));
+
   // If still over the hard cap, evict oldest entries first.
-  if (cache.size <= TOOL_CACHE_MAX_ENTRIES) {
+  if (cache.size <= effectiveMax) {
     return;
   }
 
   const sorted = [...cache.entries()].toSorted((a, b) => a[1].timestamp - b[1].timestamp);
-  const toEvict = sorted.slice(0, cache.size - TOOL_CACHE_MAX_ENTRIES);
+  const toEvict = sorted.slice(0, cache.size - effectiveMax);
   for (const [key] of toEvict) {
     cache.delete(key);
   }
