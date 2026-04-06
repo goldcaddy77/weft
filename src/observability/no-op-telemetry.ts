@@ -196,6 +196,15 @@ export function resetCachedOtelApiForTesting(): void {
   cached = undefined;
 }
 
+function resolveDefaultOtelLoader(): (moduleName: string) => unknown {
+  const globalRequire = (globalThis as Record<PropertyKey, unknown>)['require'];
+  if (typeof globalRequire === 'function') {
+    return (moduleName: string) => globalRequire(moduleName);
+  }
+
+  return () => undefined;
+}
+
 /** Check whether a loaded module exposes the subset of the OpenTelemetry API Weft requires. */
 export function isSupportedOtelApi(value: Partial<OtelApi> | undefined): value is OtelApi {
   return value?.trace?.getTracer != null && value.SpanStatusCode != null;
@@ -206,7 +215,7 @@ export function isSupportedOtelApi(value: Partial<OtelApi> | undefined): value i
  * Returns `undefined` when the module is unavailable or exposes the wrong shape.
  */
 export function resolveInstalledOtelApi(
-  loader: (moduleName: string) => unknown = require,
+  loader: (moduleName: string) => unknown = resolveDefaultOtelLoader(),
 ): OtelApi | undefined {
   try {
     const real = loader('@opentelemetry/api') as Partial<OtelApi>;

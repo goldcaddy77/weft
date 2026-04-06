@@ -2371,6 +2371,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return this.#processDebateOperation(workflowId, operation);
       case 'supervise':
         return this.#processSuperviseOperation(workflowId, operation);
+      default:
+        const unsupportedType = String((operation as Record<string, unknown>)['type']);
+        this.#failOperation(
+          workflowId,
+          operation,
+          new Error(`Unsupported operation type: ${unsupportedType}`),
+        );
+        return;
     }
   }
 

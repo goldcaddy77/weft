@@ -439,6 +439,24 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('fails malformed operation requests with an explicit unsupported-type error', async () => {
+    const engine = new Engine();
+
+    engine.register('malformed-operation-workflow', async function* () {
+      yield {
+        type: 'unsupported-operation-type',
+        operationId: 'unsupported-operation-id',
+      } as never;
+      return 'unreachable';
+    });
+
+    const handle = await engine.start('malformed-operation-workflow', null);
+    await expect(handle.result()).rejects.toThrow(
+      'Unsupported operation type: unsupported-operation-type',
+    );
+    engine[Symbol.dispose]();
+  });
+
   it('custom workflow ID via options.id', async () => {
     const engine = new Engine();
     engine.register('identified', async function* () {

@@ -241,6 +241,83 @@ describe('getOtelApi', () => {
     ).toBeUndefined();
   });
 
+  it('resolveInstalledOtelApi uses the global require loader when it is available', () => {
+    const globalObject = globalThis as Record<PropertyKey, unknown>;
+    const originalRequire = globalObject['require'];
+    const requestedModules: string[] = [];
+    const installedApi = {
+      trace: {
+        getTracer() {
+          return {
+            startSpan() {
+              return {
+                setAttribute() {},
+                setStatus() {},
+                recordException() {},
+                end() {},
+                spanContext() {
+                  return { traceId: '0', spanId: '0', traceFlags: 0 };
+                },
+              };
+            },
+          };
+        },
+        setSpan(context: unknown) {
+          return context;
+        },
+      },
+      metrics: {
+        getMeter() {
+          return {
+            createHistogram() {
+              return { record() {} };
+            },
+            createCounter() {
+              return { add() {} };
+            },
+            createUpDownCounter() {
+              return { add() {} };
+            },
+          };
+        },
+      },
+      context: {
+        ROOT_CONTEXT: {},
+        with<T>(_ctx: unknown, fn: () => T): T {
+          return fn();
+        },
+      },
+      SpanStatusCode: { OK: 1, ERROR: 2, UNSET: 0 },
+    };
+
+    globalObject['require'] = (moduleName: string) => {
+      requestedModules.push(moduleName);
+      return installedApi;
+    };
+
+    try {
+      expect(resolveInstalledOtelApi()).toBe(installedApi);
+      expect(requestedModules).toEqual(['@opentelemetry/api']);
+    } finally {
+      globalObject['require'] = originalRequire;
+    }
+  });
+
+  it('resolveInstalledOtelApi safely falls back when require is unavailable', () => {
+    const globalObject = globalThis as Record<PropertyKey, unknown>;
+    const originalRequire = globalObject['require'];
+    globalObject['require'] = undefined;
+
+    try {
+      expect(resolveInstalledOtelApi()).toBeUndefined();
+      resetCachedOtelApiForTesting();
+      expect(getOtelApi().SpanStatusCode.OK).toBe(1);
+    } finally {
+      globalObject['require'] = originalRequire;
+      resetCachedOtelApiForTesting();
+    }
+  });
+
   it('getOtelApi caches the installed module when a loader is provided', () => {
     resetCachedOtelApiForTesting();
 
