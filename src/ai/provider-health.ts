@@ -96,6 +96,7 @@ export class ProviderHealthTracker {
     }
 
     state.entries.push({ timestamp: this.#now(), success: true });
+    this.#pruneExpiredEntries(state);
   }
 
   /** Record a failed call to a provider. */
@@ -111,6 +112,7 @@ export class ProviderHealthTracker {
     }
 
     state.entries.push({ timestamp: this.#now(), success: false });
+    this.#pruneExpiredEntries(state);
 
     // Evaluate whether to trip the circuit (only in closed state).
     if (state.circuit === 'closed') {
@@ -183,6 +185,12 @@ export class ProviderHealthTracker {
   #windowEntries(state: ProviderState): RequestEntry[] {
     const cutoff = this.#now() - this.#options.windowDuration;
     return state.entries.filter((entry) => entry.timestamp > cutoff);
+  }
+
+  /** Remove entries that have fallen outside the sliding window to prevent unbounded growth. */
+  #pruneExpiredEntries(state: ProviderState): void {
+    const cutoff = this.#now() - this.#options.windowDuration;
+    state.entries = state.entries.filter((entry) => entry.timestamp > cutoff);
   }
 
   /** Evaluate whether the circuit should trip from closed to open. */

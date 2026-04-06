@@ -524,6 +524,9 @@ export function createSSEStream(
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
+            // Release the reader lock before closing the controller
+            reader.releaseLock();
+
             // Send a final "done" event
             const doneEvent = formatSSE({
               id: String(eventId),
@@ -545,6 +548,7 @@ export function createSSEStream(
           eventId++;
         }
       } catch (error) {
+        reader.releaseLock();
         try {
           controller.error(error);
         } catch {

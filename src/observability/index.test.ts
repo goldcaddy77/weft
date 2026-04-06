@@ -1876,4 +1876,140 @@ describe('createObservabilityInterceptors', () => {
       ).toBe(1);
     });
   });
+
+  describe('endWorkflowSpan', () => {
+    it('ends the span with OK status', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-end-ok',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map(),
+        },
+        () => {},
+      );
+
+      endWorkflowSpan('wf-end-ok', 'ok');
+
+      const span = spans.find((s) => s.name === 'workflow:TestWorkflow');
+      expect(span?.ended).toBe(true);
+      expect(span?.status?.code).toBe(1); // OK
+    });
+
+    it('ends the span with ERROR status and message', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-end-err',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map(),
+        },
+        () => {},
+      );
+
+      endWorkflowSpan('wf-end-err', 'error', 'something broke');
+
+      const span = spans.find((s) => s.name === 'workflow:TestWorkflow');
+      expect(span?.ended).toBe(true);
+      expect(span?.status?.code).toBe(2); // ERROR
+      expect(span?.status?.message).toBe('something broke');
+    });
+
+    it('is a no-op for unknown workflow IDs', () => {
+      const { endWorkflowSpan } = createObservabilityInterceptors();
+      // Should not throw
+      endWorkflowSpan('non-existent', 'ok');
+    });
+  });
+
+  describe('evictStaleSpans', () => {
+    it('evicts spans older than maxAgeMs and returns the count', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow, evictStaleSpans } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-stale',
+          workflowType: 'StaleWorkflow',
+          input: undefined,
+          headers: new Map(),
+        },
+        () => {},
+      );
+
+      // Evict with maxAgeMs = 0 — all spans are considered stale
+      const evicted = evictStaleSpans(0);
+
+      expect(evicted).toBe(1);
+      const staleSpan = spans.find((s) => s.name === 'workflow:StaleWorkflow');
+      expect(staleSpan?.ended).toBe(true);
+      expect(staleSpan?.status?.code).toBe(2); // ERROR
+      expect(staleSpan?.status?.message).toBe('span evicted (stale)');
+    });
+
+    it('does not evict spans younger than maxAgeMs', () => {
+      const { tracer } = createRecordingTracer();
+      const { workflow, evictStaleSpans } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-fresh',
+          workflowType: 'FreshWorkflow',
+          input: undefined,
+          headers: new Map(),
+        },
+        () => {},
+      );
+
+      // 1-hour window — span was just created, so it's fresh
+      const evicted = evictStaleSpans(60 * 60 * 1000);
+      expect(evicted).toBe(0);
+    });
+
+    it('returns 0 when no spans exist', () => {
+      const { evictStaleSpans } = createObservabilityInterceptors();
+      expect(evictStaleSpans(0)).toBe(0);
+    });
+  });
+
+  describe('dispose', () => {
+    it('ends all tracked spans and clears the map', () => {
+      const { tracer, spans } = createRecordingTracer();
+      const { workflow, dispose, evictStaleSpans } = createObservabilityInterceptors({
+        otelApi: createMockOtelApi(tracer),
+      });
+
+      workflow.workflowStart!(
+        { workflowId: 'wf-dispose-1', workflowType: 'T1', input: undefined, headers: new Map() },
+        () => {},
+      );
+      workflow.workflowStart!(
+        { workflowId: 'wf-dispose-2', workflowType: 'T2', input: undefined, headers: new Map() },
+        () => {},
+      );
+
+      dispose();
+
+      // Both spans should be ended
+      const workflowSpans = spans.filter((s) => s.name.startsWith('workflow:'));
+      expect(workflowSpans.every((s) => s.ended)).toBe(true);
+
+      // The map should be empty — eviction with 0 ms should find nothing
+      expect(evictStaleSpans(0)).toBe(0);
+    });
+  });
 });
