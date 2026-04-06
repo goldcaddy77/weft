@@ -187,18 +187,20 @@ export function normalizePullRequestTitle(title: string): TitleNormalizationResu
   const trimmedTitle = title.trim();
   const { prefix, baseTitle } = splitLinearPrefix(trimmedTitle);
   const normalizedBaseTitle = normalizeBaseTitle(baseTitle);
-  const normalizedTitle = normalizedBaseTitle.length > 0 ? `${prefix}${normalizedBaseTitle}` : null;
-  const validation = normalizedTitle ? validatePullRequestTitle(normalizedTitle) : null;
+  const candidateNormalizedTitle =
+    normalizedBaseTitle.length > 0 ? `${prefix}${normalizedBaseTitle}` : null;
+  const validation = candidateNormalizedTitle
+    ? validatePullRequestTitle(candidateNormalizedTitle)
+    : null;
+  const normalizedTitle = validation?.valid === true ? candidateNormalizedTitle : null;
 
   return {
     originalTitle,
-    normalizedTitle: validation?.valid ? normalizedTitle : null,
+    normalizedTitle,
     changed: normalizedTitle !== null && normalizedTitle !== trimmedTitle,
-    safeToAutofix: normalizedTitle !== null && validation?.valid === true,
+    safeToAutofix: normalizedTitle !== null,
     issues:
-      validation?.valid === true
-        ? []
-        : (validation?.issues ?? ['Unable to derive a safe PR title.']),
+      normalizedTitle !== null ? [] : (validation?.issues ?? ['Unable to derive a safe PR title.']),
   };
 }
 

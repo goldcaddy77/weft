@@ -52,7 +52,19 @@ describe('normalizePullRequestTitle', () => {
     const result = normalizePullRequestTitle('ralph-feature-branch:');
 
     expect(result.normalizedTitle).toBeNull();
+    expect(result.changed).toBe(false);
     expect(result.safeToAutofix).toBe(false);
+  });
+
+  it('keeps changed aligned with the returned normalized title', () => {
+    const result = normalizePullRequestTitle('feat: 1.2.3');
+
+    expect(result.normalizedTitle).toBeNull();
+    expect(result.changed).toBe(false);
+    expect(result.safeToAutofix).toBe(false);
+    expect(result.issues).toContain(
+      'PR title must start with an uppercase letter after any optional Linear ticket prefix.',
+    );
   });
 });
 

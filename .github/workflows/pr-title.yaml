@@ -34,6 +34,22 @@ jobs:
         id: analyze
         shell: bash
         run: |
+          write_multiline_output() {
+            local name="$1"
+            local value="$2"
+            local delimiter="WEFT_OUTPUT_${name}_$(date +%s%N)_$RANDOM"
+
+            while printf '%s\n' "$value" | grep -Fqx "$delimiter"; do
+              delimiter="WEFT_OUTPUT_${name}_$(date +%s%N)_$RANDOM"
+            done
+
+            {
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
+            } >> "$GITHUB_OUTPUT"
+          }
+
           current_title=$(jq -r '.pull_request.title' "$GITHUB_EVENT_PATH")
           bun run scripts/pr-title.ts normalize --title "$current_title" > pr-title-report.json
           cat pr-title-report.json
@@ -42,15 +58,11 @@ jobs:
           safe_to_autofix=$(jq -r '.safeToAutofix' pr-title-report.json)
           changed=$(jq -r '.changed' pr-title-report.json)
 
+          write_multiline_output "current_title" "$current_title"
+          write_multiline_output "normalized_title" "$normalized_title"
           {
-            echo "current_title<<EOF"
-            printf '%s\n' "$current_title"
-            echo "EOF"
-            echo "normalized_title<<EOF"
-            printf '%s\n' "$normalized_title"
-            echo "EOF"
-            echo "safe_to_autofix=$safe_to_autofix"
-            echo "changed=$changed"
+            printf 'safe_to_autofix=%s\n' "$safe_to_autofix"
+            printf 'changed=%s\n' "$changed"
           } >> "$GITHUB_OUTPUT"
 
       - name: Auto-fix malformed PR title
@@ -89,17 +101,29 @@ jobs:
           SAFE_TO_AUTOFIX: ${{ steps.analyze.outputs.safe_to_autofix }}
         shell: bash
         run: |
+          write_multiline_output() {
+            local name="$1"
+            local value="$2"
+            local delimiter="WEFT_OUTPUT_${name}_$(date +%s%N)_$RANDOM"
+
+            while printf '%s\n' "$value" | grep -Fqx "$delimiter"; do
+              delimiter="WEFT_OUTPUT_${name}_$(date +%s%N)_$RANDOM"
+            done
+
+            {
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
+            } >> "$GITHUB_OUTPUT"
+          }
+
           final_title="$CURRENT_TITLE"
 
           if [[ "$SAFE_TO_AUTOFIX" == "true" && "$CHANGED" == "true" ]]; then
             final_title="$NORMALIZED_TITLE"
           fi
 
-          {
-            echo "title<<EOF"
-            printf '%s\n' "$final_title"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          write_multiline_output "title" "$final_title"
 
       - name: Validate final PR title
         env:
