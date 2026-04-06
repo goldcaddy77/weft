@@ -32,6 +32,23 @@ export interface TaskResult {
 
 type CompletionCallback = (result: TaskResult) => void;
 
+/**
+ * Strategy used by {@link TaskQueue.enqueue} to place an incoming task in the
+ * per-queue pending list. In all strategies, {@link TaskQueue.poll} dequeues
+ * the first task whose activity matches the waiter — so the ordering imposed
+ * at enqueue time is what actually gets observed.
+ *
+ * - `'priority'` (default) inserts by descending `task.priority`. Tasks at the
+ *   same priority keep FIFO order. This is the historical behavior.
+ * - `'fifo'` ignores priority and appends to the end of the list. Oldest tasks
+ *   are dequeued first. Use this when fairness across producers matters more
+ *   than urgency.
+ * - `'lifo'` prepends to the start of the list. Newest tasks are dequeued
+ *   first. Use this for time-sensitive, short-lived work where fresh requests
+ *   are more valuable than stale ones (e.g. interactive UI refreshes).
+ */
+export type SchedulingPolicy = 'priority' | 'fifo' | 'lifo';
+
 /** Configuration options for {@link TaskQueue}. */
 export type TaskQueueOptions = {
   /**
@@ -43,6 +60,12 @@ export type TaskQueueOptions = {
    * @default 300_000 (5 minutes)
    */
   pendingTaskTimeToLive?: number;
+  /**
+   * How tasks are ordered within a queue at enqueue time.
+   *
+   * @default 'priority'
+   */
+  schedulingPolicy?: SchedulingPolicy;
 };
 
 const DEFAULT_PENDING_TASK_TTL = 5 * 60 * 1000; // 5 minutes
@@ -71,10 +94,17 @@ export class TaskQueue {
   /** Expiration timers for pending tasks, keyed by operationId. */
   #expirationTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #pendingTaskTimeToLive: number;
+  #schedulingPolicy: SchedulingPolicy;
 
   constructor(options?: TaskQueueOptions) {
     const ttl = options?.pendingTaskTimeToLive ?? DEFAULT_PENDING_TASK_TTL;
     this.#pendingTaskTimeToLive = ttl;
+    this.#schedulingPolicy = options?.schedulingPolicy ?? 'priority';
+  }
+
+  /** The scheduling policy this queue was configured with. */
+  get schedulingPolicy(): SchedulingPolicy {
+    return this.#schedulingPolicy;
   }
 
   /**
@@ -109,18 +139,7 @@ export class TaskQueue {
     }
 
     const tasks = this.#pending.get(queue) ?? [];
-    const taskPriority = task.priority ?? 0;
-    if (tasks.length > 0) {
-      // Priority-sorted insertion: find the first task with lower priority.
-      const insertAt = tasks.findIndex((t) => (t.priority ?? 0) < taskPriority);
-      if (insertAt === -1) {
-        tasks.push(task);
-      } else {
-        tasks.splice(insertAt, 0, task);
-      }
-    } else {
-      tasks.push(task);
-    }
+    insertByPolicy(tasks, task, this.#schedulingPolicy);
     this.#pending.set(queue, tasks);
 
     this.#scheduleExpiration(queue, task.operationId);
@@ -278,6 +297,11 @@ export class TaskQueue {
     }
   }
 
+  /** Peek the ordered pending tasks for a queue without dequeuing. Test helper. */
+  peekPending(queue: string): PendingTask[] {
+    return [...(this.#pending.get(queue) ?? [])];
+  }
+
   /** Remove and return pending tasks older than `maxAge` milliseconds. */
   removeStale(maxAge: number): PendingTask[] {
     if (!Number.isFinite(maxAge) || maxAge < 0) {
@@ -317,5 +341,37 @@ export class TaskQueue {
     }
 
     return stale;
+  }
+}
+
+/**
+ * Place `task` into `tasks` at the position prescribed by `policy`.
+ *
+ * Every policy keeps the property that {@link TaskQueue.poll} can simply
+ * dequeue the first matching entry — the ordering logic lives here.
+ */
+function insertByPolicy(tasks: PendingTask[], task: PendingTask, policy: SchedulingPolicy): void {
+  if (tasks.length === 0) {
+    tasks.push(task);
+    return;
+  }
+
+  switch (policy) {
+    case 'fifo':
+      tasks.push(task);
+      return;
+    case 'lifo':
+      tasks.unshift(task);
+      return;
+    case 'priority': {
+      const taskPriority = task.priority ?? 0;
+      const insertAt = tasks.findIndex((existing) => (existing.priority ?? 0) < taskPriority);
+      if (insertAt === -1) {
+        tasks.push(task);
+      } else {
+        tasks.splice(insertAt, 0, task);
+      }
+      return;
+    }
   }
 }

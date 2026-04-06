@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Server-side worker tracking and least-loaded routing
+// Server-side worker tracking and pluggable routing policies
 // ---------------------------------------------------------------------------
 
 export interface WorkerInfo {
@@ -12,9 +12,30 @@ export interface WorkerInfo {
   lastHeartbeat: number;
 }
 
+/**
+ * Strategy used by {@link WorkerRegistry.findWorker} to pick among eligible workers.
+ *
+ * - `'least-loaded'` (default) picks the worker with the lowest `inFlight` count.
+ *   Best general-purpose policy when tasks are roughly uniform.
+ * - `'round-robin'` rotates through workers in registration order, giving each
+ *   equal opportunity regardless of load. Useful when tasks are uniform and you
+ *   want deterministic distribution for debugging or fairness across workers.
+ * - `'fair-share'` picks the worker whose in-flight count for the current
+ *   `fairShareKey` (e.g. tenant id) is lowest, preventing any single tenant from
+ *   monopolizing capacity when tasks are heterogeneous.
+ */
+export type RoutingPolicy = 'least-loaded' | 'round-robin' | 'fair-share';
+
 export interface RoutingOptions {
-  sticky?: string; // preferred worker ID for cache locality
+  /** Preferred worker ID for cache locality (wins when it still has capacity). */
+  sticky?: string;
   queue?: string;
+  /**
+   * Partition key for `'fair-share'` routing. Typically a tenant or customer id.
+   * Ignored by other policies. When omitted under `'fair-share'` the policy
+   * degrades gracefully to `'least-loaded'`.
+   */
+  fairShareKey?: string;
 }
 
 export interface InFlightTask {
@@ -22,15 +43,39 @@ export interface InFlightTask {
   workerId: string;
   deadline: number; // absolute timestamp
   visibilityTimeout: number; // original timeout duration in ms
+  /** Optional fair-share partition key the task was assigned under. */
+  fairShareKey?: string;
+}
+
+export interface WorkerRegistryOptions {
+  /** Routing policy used by {@link WorkerRegistry.findWorker}. Default: `'least-loaded'`. */
+  policy?: RoutingPolicy;
 }
 
 export class WorkerRegistry {
   #workers: Map<string, WorkerInfo>;
   #inFlightTasks: Map<string, InFlightTask>;
+  #policy: RoutingPolicy;
+  /** Rotating cursor for round-robin routing, keyed by queue name. */
+  #roundRobinCursor: Map<string, number>;
+  /**
+   * Inflight counts per worker per fair-share key. Keyed by `${workerId}::${key}`.
+   * Incremented on assignment and decremented on completion so fair-share can pick
+   * the worker that carries the fewest in-flight tasks for the requesting key.
+   */
+  #fairShareCounts: Map<string, number>;
 
-  constructor() {
+  constructor(options?: WorkerRegistryOptions) {
     this.#workers = new Map();
     this.#inFlightTasks = new Map();
+    this.#policy = options?.policy ?? 'least-loaded';
+    this.#roundRobinCursor = new Map();
+    this.#fairShareCounts = new Map();
+  }
+
+  /** The routing policy this registry was configured with. */
+  get policy(): RoutingPolicy {
+    return this.#policy;
   }
 
   /** Register a worker. */
@@ -79,18 +124,21 @@ export class WorkerRegistry {
   }
 
   /**
-   * Find the best worker for a task using least-loaded routing.
+   * Find the best worker for a task using the configured {@link RoutingPolicy}.
    *
-   * Default strategy: pick the worker with the lowest `inFlight` count
-   * among those that support the requested activity and have spare capacity
-   * (`inFlight < concurrency`). When a sticky preference is provided and
-   * that worker qualifies, it wins regardless of load.
+   * Common preconditions for every policy:
+   * 1. If `options.queue` is set, only workers on that queue are considered.
+   * 2. Only workers that advertise `activityName` in their `activities` list are
+   *    considered.
+   * 3. Workers at `inFlight >= concurrency` are excluded.
+   * 4. A `sticky` worker that also satisfies the above wins regardless of policy.
    */
   findWorker(activityName: string, options?: RoutingOptions): WorkerInfo | undefined {
     const queue = options?.queue;
     const stickyId = options?.sticky;
+    const fairShareKey = options?.fairShareKey;
 
-    let best: WorkerInfo | undefined;
+    const eligible: WorkerInfo[] = [];
     let stickyCandidate: WorkerInfo | undefined;
 
     for (const worker of this.#workers.values()) {
@@ -98,30 +146,107 @@ export class WorkerRegistry {
       if (!worker.activities.includes(activityName)) continue;
       if (worker.inFlight >= worker.concurrency) continue;
 
-      // Track sticky candidate separately so we can prefer it when available.
       if (stickyId !== undefined && worker.id === stickyId) {
         stickyCandidate = worker;
       }
 
-      // Least-loaded: keep the worker with the lowest inFlight count.
-      if (best === undefined || worker.inFlight < best.inFlight) {
-        best = worker;
-      }
+      eligible.push(worker);
     }
 
-    return stickyCandidate ?? best;
+    if (stickyCandidate !== undefined) return stickyCandidate;
+    if (eligible.length === 0) return undefined;
+
+    switch (this.#policy) {
+      case 'round-robin':
+        return this.#pickRoundRobin(eligible, queue);
+      case 'fair-share':
+        if (fairShareKey !== undefined) {
+          return this.#pickFairShare(eligible, queue, fairShareKey);
+        }
+        // Missing key — fall through to least-loaded to stay deterministic.
+        return pickLeastLoaded(eligible);
+      case 'least-loaded':
+      default:
+        return pickLeastLoaded(eligible);
+    }
+  }
+
+  /**
+   * Round-robin over eligible workers in stable registration order. Cursor state
+   * is kept per queue so two queues don't contend for the same cursor position.
+   */
+  #pickRoundRobin(eligible: WorkerInfo[], queue: string | undefined): WorkerInfo {
+    // Stable order by connectedAt, then id, so the cursor is meaningful even if
+    // `Map` iteration drifts across ticks.
+    const ordered = eligible.toSorted((a, b) => {
+      if (a.connectedAt !== b.connectedAt) return a.connectedAt - b.connectedAt;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    const key = queue ?? '__default__';
+    const cursor = this.#roundRobinCursor.get(key) ?? 0;
+    const pick = ordered[cursor % ordered.length]!;
+    this.#roundRobinCursor.set(key, cursor + 1);
+    return pick;
+  }
+
+  /**
+   * Fair-share: pick the worker that currently carries the fewest in-flight
+   * tasks *for this fairShareKey*. This spreads one tenant's tasks across
+   * workers so no worker becomes the "tenant X worker". Ties are broken by
+   * overall inFlight count, then by stable worker id order.
+   */
+  #pickFairShare(
+    eligible: WorkerInfo[],
+    _queue: string | undefined,
+    fairShareKey: string,
+  ): WorkerInfo {
+    let best = eligible[0]!;
+    let bestKeyLoad = this.#fairShareCounts.get(`${best.id}::${fairShareKey}`) ?? 0;
+
+    for (let index = 1; index < eligible.length; index += 1) {
+      const candidate = eligible[index]!;
+      const candidateKeyLoad = this.#fairShareCounts.get(`${candidate.id}::${fairShareKey}`) ?? 0;
+
+      if (candidateKeyLoad < bestKeyLoad) {
+        best = candidate;
+        bestKeyLoad = candidateKeyLoad;
+        continue;
+      }
+      if (candidateKeyLoad > bestKeyLoad) continue;
+
+      // Tiebreak on overall load, then stable id.
+      if (
+        candidate.inFlight < best.inFlight ||
+        (candidate.inFlight === best.inFlight && candidate.id < best.id)
+      ) {
+        best = candidate;
+        bestKeyLoad = candidateKeyLoad;
+      }
+    }
+    return best;
   }
 
   /** Track a task assignment with a visibility timeout deadline. */
-  assignTask(workerId: string, operationId: string, visibilityTimeout: number): void {
+  assignTask(
+    workerId: string,
+    operationId: string,
+    visibilityTimeout: number,
+    fairShareKey?: string,
+  ): void {
     const deadline = Date.now() + visibilityTimeout;
 
-    this.#inFlightTasks.set(operationId, {
+    const task: InFlightTask = {
       operationId,
       workerId,
       deadline,
       visibilityTimeout,
-    });
+    };
+    if (fairShareKey !== undefined) {
+      task.fairShareKey = fairShareKey;
+      const countKey = `${workerId}::${fairShareKey}`;
+      this.#fairShareCounts.set(countKey, (this.#fairShareCounts.get(countKey) ?? 0) + 1);
+    }
+    this.#inFlightTasks.set(operationId, task);
 
     this.taskAssigned(workerId);
   }
@@ -138,6 +263,7 @@ export class WorkerRegistry {
 
     for (const task of expired) {
       this.#inFlightTasks.delete(task.operationId);
+      this.#releaseFairShare(task);
     }
 
     return expired;
@@ -184,6 +310,7 @@ export class WorkerRegistry {
 
     this.#inFlightTasks.delete(operationId);
     this.taskCompleted(task.workerId);
+    this.#releaseFairShare(task);
     return task;
   }
 
@@ -201,4 +328,35 @@ export class WorkerRegistry {
   get size(): number {
     return this.#workers.size;
   }
+
+  /** Decrement the fair-share count for a completed or expired task. */
+  #releaseFairShare(task: InFlightTask): void {
+    if (task.fairShareKey === undefined) return;
+    const countKey = `${task.workerId}::${task.fairShareKey}`;
+    const current = this.#fairShareCounts.get(countKey) ?? 0;
+    const next = Math.max(0, current - 1);
+    if (next === 0) {
+      this.#fairShareCounts.delete(countKey);
+    } else {
+      this.#fairShareCounts.set(countKey, next);
+    }
+  }
+}
+
+/**
+ * Pick the worker with the lowest in-flight count. Ties broken by stable
+ * worker id ordering so the choice is deterministic across runs.
+ */
+function pickLeastLoaded(eligible: WorkerInfo[]): WorkerInfo {
+  let best = eligible[0]!;
+  for (let index = 1; index < eligible.length; index += 1) {
+    const candidate = eligible[index]!;
+    if (
+      candidate.inFlight < best.inFlight ||
+      (candidate.inFlight === best.inFlight && candidate.id < best.id)
+    ) {
+      best = candidate;
+    }
+  }
+  return best;
 }

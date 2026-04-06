@@ -38,6 +38,13 @@ export interface WorkflowState {
   createdAt: number;
   updatedAt: number;
   executionDeadline?: number;
+  /**
+   * Optional {@link TenantContext} resolved at start time by the engine's
+   * `tenantResolver`. Persisted here so it survives workflow recovery — the
+   * field is only present on workflows started while a resolver was
+   * configured and the resolver returned a value.
+   */
+  tenant?: import('./tenant.ts').TenantContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +195,14 @@ export interface EngineOptions {
 
   /** Built-in alerting configuration. */
   alerts?: AlertingOptions;
+
+  /**
+   * Optional {@link TenantResolver} that populates `ctx.tenant` for every new
+   * workflow. When set, the engine calls `resolver.resolve(workflowId, input)`
+   * once at `start()` time and persists the returned context on the workflow
+   * state so it survives recovery. Leave unset for single-tenant deployments.
+   */
+  tenantResolver?: import('./tenant.ts').TenantResolver;
 }
 
 // ---------------------------------------------------------------------------

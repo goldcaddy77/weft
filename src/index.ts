@@ -1,5 +1,44 @@
 /**
  * Weft — A Bun-native durable execution engine.
+ *
+ * Weft runs async workflows to completion across crashes, retries, and days
+ * of wall-clock time. Each workflow is a generator function that yields to a
+ * {@link Context}; the engine persists a checkpoint at every yield and
+ * resumes from the last checkpoint on recovery.
+ *
+ * @example Hello world
+ * ```ts
+ * import { Engine, activity } from 'weft';
+ *
+ * const sendEmail = activity('sendEmail', async ({ to }: { to: string }) => {
+ *   await Bun.sleep(100);
+ *   return { messageId: crypto.randomUUID(), to };
+ * });
+ *
+ * const engine = new Engine();
+ * engine.register('greet', async function* (ctx, input: { email: string }) {
+ *   const result = yield* ctx.run(sendEmail, { to: input.email });
+ *   return result.messageId;
+ * });
+ *
+ * const handle = await engine.start('greet', { email: 'you@example.com' });
+ * const messageId = await handle.result();
+ * ```
+ *
+ * @example Multi-tenant engine
+ * ```ts
+ * import { Engine, tenantFromInputField } from 'weft';
+ *
+ * const engine = new Engine({
+ *   tenantResolver: tenantFromInputField('customerId'),
+ * });
+ *
+ * engine.register('per-tenant', async function* (ctx, input) {
+ *   // ctx.tenant is { id: "acme" } when input = { customerId: "acme", ... }
+ *   return ctx.tenant?.id ?? 'anonymous';
+ * });
+ * ```
+ *
  * @module weft
  */
 
@@ -123,6 +162,14 @@ export type {
   StreamSink,
 } from './core/context';
 
+// Multi-tenant primitives
+export { isTenantContext, tenantFromInputField } from './core/tenant';
+export type { TenantContext, TenantResolver } from './core/tenant';
+
+// Suspension primitives
+export { generateResumeToken, isResumeRequestBody } from './core/suspend';
+export type { ResumeRequestBody, SuspendUntilOptions } from './core/suspend';
+
 // Step Context
 export { StepContext, compileStepWorkflow, isAsyncGeneratorFunction } from './core/step-context';
 export type { StepWorkflowContext, StepWorkflowFunction } from './core/types';
@@ -177,9 +224,12 @@ export {
 export { SharedState, SharedStateConflictError } from './core/shared-state';
 
 // Server
+export type { PrometheusExporter } from './observability/metrics';
 export { handleRequest } from './server/handler';
 export { serve } from './server/index';
 export type { ServeOptions, WeftServer } from './server/index';
+export type { SchedulingPolicy } from './server/task-queue';
+export type { RoutingPolicy } from './worker/registry';
 
 // Server Authentication
 export { createAuthenticator, validateAuthConfig } from './server/authentication';
@@ -286,7 +336,12 @@ export type { StdioTransportOptions } from './ai/mcp/transport-stdio';
 // Observability
 export { createObservabilityInterceptors } from './observability/index';
 export type { InterceptionContext, ObservabilityOptions } from './observability/index';
-export { METRICS, createOtelMetrics } from './observability/metrics';
+export {
+  METRICS,
+  createMetricsCollectorExporter,
+  createOtelMetrics,
+  serializeMetricsSnapshotForPrometheus,
+} from './observability/metrics';
 export type { OtelMetrics } from './observability/metrics';
 export { getOtelApi } from './observability/no-op-telemetry';
 export type { OtelApi, OtelMeter, OtelSpan, OtelTracer } from './observability/no-op-telemetry';

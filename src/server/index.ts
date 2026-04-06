@@ -26,7 +26,9 @@ import {
 } from '../core/events.ts';
 import { calculateBackoff } from '../core/scheduler.ts';
 import type { RetryPolicy } from '../core/types.ts';
+import type { MetricsCollector, PrometheusExporter } from '../observability/metrics.ts';
 import { KEYS } from '../storage/interface.ts';
+import type { RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
@@ -37,7 +39,7 @@ import {
   evictOldestAffinityEntries,
   restoreExtendedDeadlineIfStillActive,
 } from './runtime-helpers.ts';
-import { TaskQueue, type PendingTask } from './task-queue.ts';
+import { TaskQueue, type PendingTask, type SchedulingPolicy } from './task-queue.ts';
 import type { InflightRecord, QueuedRecord } from './task-state.ts';
 import {
   markQueued,
@@ -81,6 +83,29 @@ export interface ServeOptions {
   auth?: AuthConfig;
   /** How often (in ms) the server scans `op:inflight:*` for expired visibility deadlines. Defaults to 5 000. */
   visibilityPollIntervalMs?: number;
+  /**
+   * Routing policy used by the {@link WorkerRegistry} when dispatching tasks.
+   * Defaults to `'least-loaded'`. Set to `'round-robin'` or `'fair-share'` for
+   * multi-tenant fairness.
+   */
+  routingPolicy?: RoutingPolicy;
+  /**
+   * Scheduling policy used by the {@link TaskQueue} when ordering pending tasks
+   * within a queue. Defaults to `'priority'`.
+   */
+  schedulingPolicy?: SchedulingPolicy;
+  /**
+   * Optional {@link PrometheusExporter} that produces the body of `/v1/metrics`.
+   * Recommended for projects that source metrics from the OpenTelemetry SDK —
+   * e.g. wrap `@opentelemetry/exporter-prometheus` to satisfy the interface.
+   * When set, it takes precedence over {@link ServeOptions.metricsCollector}.
+   */
+  prometheusExporter?: PrometheusExporter;
+  /**
+   * Optional {@link MetricsCollector} used as the default metrics source for
+   * `/v1/metrics` when no `prometheusExporter` is supplied.
+   */
+  metricsCollector?: MetricsCollector;
 }
 
 export interface TaskDispatch {
@@ -521,8 +546,14 @@ export function serve(options: ServeOptions): WeftServer {
   // with HMR in dev mode and cached assets in production mode.
   const dashboard = options.dashboard ?? null;
 
-  const registry = new WorkerRegistry();
-  const taskQueue = new TaskQueue();
+  const registry = new WorkerRegistry(
+    options.routingPolicy !== undefined ? { policy: options.routingPolicy } : undefined,
+  );
+  const taskQueue = new TaskQueue(
+    options.schedulingPolicy !== undefined
+      ? { schedulingPolicy: options.schedulingPolicy }
+      : undefined,
+  );
   const workerSockets = new Map<string, ServerWebSocket<WebSocketData>>();
   /** Tracks per-workflow worker affinity for sticky routing. Maps workflowId → workerId. */
   const workerAffinity = new Map<string, string>();
@@ -836,7 +867,14 @@ export function serve(options: ServeOptions): WeftServer {
       }
 
       // API routes via existing platform-agnostic handler
-      return handleRequest(request, options.engine);
+      return handleRequest(request, options.engine, {
+        ...(options.prometheusExporter !== undefined
+          ? { prometheusExporter: options.prometheusExporter }
+          : {}),
+        ...(options.metricsCollector !== undefined
+          ? { metricsCollector: options.metricsCollector }
+          : {}),
+      });
     },
     websocket: {
       open(ws) {

@@ -9,6 +9,7 @@
  * @module core/execution-strategy
  */
 
+import type { TenantContext } from './tenant.ts';
 import type { OperationOutcome, WorkerOutboundMessage } from './types.ts';
 
 export interface ExecutionStrategy extends Disposable, AsyncDisposable {
@@ -23,6 +24,13 @@ export interface ExecutionStrategy extends Disposable, AsyncDisposable {
     nestingDepth?: number;
     deadline?: number;
     headers?: [string, string][];
+    /**
+     * The tenant context resolved by the engine's `tenantResolver` for this
+     * workflow, if any. The strategy is expected to make it available to the
+     * workflow via `ctx.tenant` (inline strategy wires it through the
+     * `Context` constructor; worker strategies will serialize it later).
+     */
+    tenant?: TenantContext;
   }): void;
 
   /**

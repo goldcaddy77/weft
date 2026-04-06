@@ -267,6 +267,12 @@ export interface ContextOptions {
   getNow?: () => number;
   nestingDepth?: number;
   /**
+   * The {@link TenantContext} resolved for this workflow, if any. Made
+   * available to workflow code via `ctx.tenant`. Undefined when the engine
+   * has no tenant resolver or the resolver returned `undefined`.
+   */
+  tenant?: import('./tenant.ts').TenantContext;
+  /**
    * Reference timestamp used to compute `scheduledFireAt` for sleep operations.
    * When resuming from a checkpoint, this should be the checkpoint's `createdAt`
    * so that expired sleeps resolve immediately via the engine's fast path.
@@ -298,6 +304,7 @@ export class Context implements WorkflowContext {
   #explainMode: boolean;
   #budgetTracker: BudgetTracker | undefined;
   #nestingDepth: number;
+  #tenant: import('./tenant.ts').TenantContext | undefined;
 
   #captureCallerStack(): string {
     const error = new Error();
@@ -324,6 +331,17 @@ export class Context implements WorkflowContext {
     this.#explainMode = false;
     this.#budgetTracker = undefined;
     this.#nestingDepth = options.nestingDepth ?? 0;
+    this.#tenant = options.tenant;
+  }
+
+  /**
+   * The {@link TenantContext} this workflow is running on behalf of, if any.
+   * Populated from the engine's `tenantResolver` at start time and restored
+   * from the workflow state on recovery. `undefined` when the engine has no
+   * resolver configured or the resolver returned `undefined`.
+   */
+  get tenant(): import('./tenant.ts').TenantContext | undefined {
+    return this.#tenant;
   }
 
   // -------------------------------------------------------------------------
@@ -445,6 +463,34 @@ export class Context implements WorkflowContext {
     };
 
     this.#accumulatedResults.set(step, undefined);
+  }
+
+  /**
+   * Pause the workflow until an external caller invokes the resume endpoint
+   * with the matching token. Semantically identical to `waitForSignal`
+   * where the signal name is the `resumeToken`, but surfaces the LLM/webhook
+   * "suspend-and-resume" intent more clearly.
+   *
+   * The caller generates the token and hands it to the external world
+   * before yielding, so there is exactly one resume path per suspension.
+   * The engine persists a checkpoint and releases the workflow; when
+   * `POST /v1/workflows/:id/resume { token, result }` arrives, the
+   * generator resumes with `result` as its return value.
+   *
+   * @example
+   * ```ts
+   * engine.register('await-webhook', async function* (ctx, input: { callbackUrl: string }) {
+   *   const token = crypto.randomUUID();
+   *   yield* ctx.run(registerCallback, { url: input.callbackUrl, token });
+   *   const payload = yield* ctx.suspendUntil<{ status: string }>({ resumeToken: token });
+   *   return payload.status;
+   * });
+   * ```
+   */
+  *suspendUntil<T = unknown>(
+    options: import('./suspend.ts').SuspendUntilOptions,
+  ): Generator<ContextOperationRequest, T, unknown> {
+    return yield* this.waitForSignal<T>(options.resumeToken);
   }
 
   *waitForSignal<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown> {
