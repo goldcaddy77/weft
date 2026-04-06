@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { SearchAttributeSchema, WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
@@ -49,9 +50,12 @@ describe('Search attribute index scan', () => {
 
     // Register a long-sleeping workflow so starts don't race against engine
     // completion / cleanup paths — we only care about attribute indexing here.
+    // Park via durable `ctx.sleep` rather than `Bun.sleep` so workflows
+    // checkpoint at the yield boundary instead of holding tens of thousands
+    // of live in-process timers.
     engine.register('stay-running', {
-      handler: async function* (_ctx: WorkflowContext) {
-        await Bun.sleep(999_999);
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).sleep(999_999);
         return 'done';
       },
       version: '1',

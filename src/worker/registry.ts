@@ -59,11 +59,14 @@ export class WorkerRegistry {
   /** Rotating cursor for round-robin routing, keyed by queue name. */
   #roundRobinCursor: Map<string, number>;
   /**
-   * Inflight counts per worker per fair-share key. Keyed by `${workerId}::${key}`.
-   * Incremented on assignment and decremented on completion so fair-share can pick
-   * the worker that carries the fewest in-flight tasks for the requesting key.
+   * Inflight counts per worker per fair-share key. Outer key is `workerId`,
+   * inner key is the fair-share key. Nested maps avoid the collision risk of
+   * a flat `${workerId}::${key}` key when either segment can contain the
+   * separator. Incremented on assignment and decremented on completion so
+   * fair-share can pick the worker that carries the fewest in-flight tasks
+   * for the requesting key.
    */
-  #fairShareCounts: Map<string, number>;
+  #fairShareCounts: Map<string, Map<string, number>>;
 
   constructor(options?: WorkerRegistryOptions) {
     this.#workers = new Map();
@@ -176,15 +179,12 @@ export class WorkerRegistry {
    * is kept per queue so two queues don't contend for the same cursor position.
    */
   #pickRoundRobin(eligible: WorkerInfo[], queue: string | undefined): WorkerInfo {
-    // Stable order by connectedAt, then id, so the cursor is meaningful even if
-    // `Map` iteration drifts across ticks.
-    const ordered = eligible.toSorted((a, b) => {
-      if (a.connectedAt !== b.connectedAt) return a.connectedAt - b.connectedAt;
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-    });
+    // `eligible` preserves the registration order from `this.#workers.values()`
+    // because `Map` iteration order is insertion order. No per-call sort
+    // needed — the cursor is stable as long as the worker set is stable.
     const key = queue ?? '__default__';
     const cursor = this.#roundRobinCursor.get(key) ?? 0;
-    const pick = ordered[cursor % ordered.length]!;
+    const pick = eligible[cursor % eligible.length]!;
     this.#roundRobinCursor.set(key, cursor + 1);
     return pick;
   }
@@ -201,11 +201,11 @@ export class WorkerRegistry {
     fairShareKey: string,
   ): WorkerInfo {
     let best = eligible[0]!;
-    let bestKeyLoad = this.#fairShareCounts.get(`${best.id}::${fairShareKey}`) ?? 0;
+    let bestKeyLoad = this.#fairShareCounts.get(best.id)?.get(fairShareKey) ?? 0;
 
     for (let index = 1; index < eligible.length; index += 1) {
       const candidate = eligible[index]!;
-      const candidateKeyLoad = this.#fairShareCounts.get(`${candidate.id}::${fairShareKey}`) ?? 0;
+      const candidateKeyLoad = this.#fairShareCounts.get(candidate.id)?.get(fairShareKey) ?? 0;
 
       if (candidateKeyLoad < bestKeyLoad) {
         best = candidate;
@@ -243,8 +243,12 @@ export class WorkerRegistry {
     };
     if (fairShareKey !== undefined) {
       task.fairShareKey = fairShareKey;
-      const countKey = `${workerId}::${fairShareKey}`;
-      this.#fairShareCounts.set(countKey, (this.#fairShareCounts.get(countKey) ?? 0) + 1);
+      let workerCounts = this.#fairShareCounts.get(workerId);
+      if (workerCounts === undefined) {
+        workerCounts = new Map();
+        this.#fairShareCounts.set(workerId, workerCounts);
+      }
+      workerCounts.set(fairShareKey, (workerCounts.get(fairShareKey) ?? 0) + 1);
     }
     this.#inFlightTasks.set(operationId, task);
 
@@ -332,13 +336,17 @@ export class WorkerRegistry {
   /** Decrement the fair-share count for a completed or expired task. */
   #releaseFairShare(task: InFlightTask): void {
     if (task.fairShareKey === undefined) return;
-    const countKey = `${task.workerId}::${task.fairShareKey}`;
-    const current = this.#fairShareCounts.get(countKey) ?? 0;
+    const workerCounts = this.#fairShareCounts.get(task.workerId);
+    if (workerCounts === undefined) return;
+    const current = workerCounts.get(task.fairShareKey) ?? 0;
     const next = Math.max(0, current - 1);
     if (next === 0) {
-      this.#fairShareCounts.delete(countKey);
+      workerCounts.delete(task.fairShareKey);
+      if (workerCounts.size === 0) {
+        this.#fairShareCounts.delete(task.workerId);
+      }
     } else {
-      this.#fairShareCounts.set(countKey, next);
+      workerCounts.set(task.fairShareKey, next);
     }
   }
 }

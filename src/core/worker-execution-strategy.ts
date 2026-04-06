@@ -67,6 +67,14 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     nestingDepth?: number;
     deadline?: number;
     headers?: [string, string][];
+    /**
+     * Worker mode currently drops the resolved tenant context — the
+     * `WorkerInboundMessage` protocol does not carry it across the
+     * `postMessage` boundary, and the worker-side runner does not
+     * instantiate a Context with engine-side fields anyway. Documented as
+     * a known limitation. Inline mode does honor this field.
+     */
+    tenant?: import('./tenant.ts').TenantContext;
   }): void {
     const message: WorkerInboundMessage & { type: 'run' } = {
       type: 'run',
@@ -81,6 +89,8 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     if (parameters.headers) {
       message.headers = parameters.headers;
     }
+    // Intentionally drop `parameters.tenant` here — worker protocol cannot
+    // carry it yet. See JSDoc above and `reference/IMPORTANT.md`.
     void this.#acquireAndSend(parameters.workflowId, message);
   }
 
