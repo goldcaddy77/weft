@@ -1656,7 +1656,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     // Drop in-memory state, release charged operations, and delete durable
-    // workflow-keyed records (reviews, offload, blob, shared, signal, event).
+    // workflow-keyed records (reviews, offload, blob, shared, signal).
     await this.#cleanupTerminalWorkflow(workflowId);
 
     const event =
@@ -2431,12 +2431,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // the background, consuming budget and emitting events with no
       // observer.
       const controller = new AbortController();
+      const subOperations = operation.operations.map((subOperation) =>
+        this.#executeSubOperation(workflowId, subOperation, controller.signal),
+      );
+      // Swallow rejections from losing branches — only the race winner's
+      // result (or error) is surfaced. Losers typically reject with
+      // AbortError after the controller fires in the finally block, and
+      // without a handler those would surface as unhandled promise
+      // rejections.
+      for (const promise of subOperations) {
+        promise.catch(() => {});
+      }
       try {
-        return await Promise.race(
-          operation.operations.map((subOperation) =>
-            this.#executeSubOperation(workflowId, subOperation, controller.signal),
-          ),
-        );
+        return await Promise.race(subOperations);
       } finally {
         controller.abort();
       }
@@ -3041,8 +3048,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   ): Promise<unknown> {
     switch (operation.type) {
       case 'activity':
+        signal?.throwIfAborted();
         return callActivityFunction(operation.fn, operation.args);
       case 'memo':
+        signal?.throwIfAborted();
         return callMemoFunction(operation.fn);
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
