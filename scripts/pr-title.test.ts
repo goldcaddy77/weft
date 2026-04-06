@@ -105,4 +105,14 @@ describe('validatePullRequestTitle', () => {
       'PR title must start with an uppercase letter after any optional Linear ticket prefix.',
     );
   });
+
+  it('reports trailing punctuation distinctly from multi-sentence titles', () => {
+    const result = validatePullRequestTitle('Fix the bug.');
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContain('PR title must not end with trailing punctuation.');
+    expect(result.issues).not.toContain(
+      'PR title must be a single concise sentence fragment, not a multi-sentence dump.',
+    );
+  });
 });

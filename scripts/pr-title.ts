@@ -168,9 +168,13 @@ export function validatePullRequestTitle(title: string): TitleValidationResult {
     issues.push('PR title must not contain HTML or HTML comments.');
   }
 
-  const sentenceCandidate = removeTrailingPunctuation(extractFirstSentence(baseTitle));
-  if (sentenceCandidate !== baseTitle) {
+  const plainBaseTitle = stripFormatting(baseTitle);
+  const firstSentence = extractFirstSentence(plainBaseTitle);
+  const baseTitleWithoutTrailingPunctuation = removeTrailingPunctuation(plainBaseTitle);
+  if (firstSentence !== baseTitleWithoutTrailingPunctuation) {
     issues.push('PR title must be a single concise sentence fragment, not a multi-sentence dump.');
+  } else if (baseTitleWithoutTrailingPunctuation !== baseTitle) {
+    issues.push('PR title must not end with trailing punctuation.');
   }
 
   if (!/^[A-Z]/u.test(baseTitle)) {
@@ -213,15 +217,15 @@ function getCommand(value: string | undefined): Command | null {
 }
 
 function getFlagValue(name: string): string | undefined {
+  const args = process.argv.slice(3);
   const prefix = `${name}=`;
 
-  for (const argument of process.argv.slice(3)) {
+  for (const argument of args) {
     if (argument.startsWith(prefix)) {
       return argument.slice(prefix.length);
     }
   }
 
-  const args = process.argv.slice(3);
   const flagIndex = args.findIndex((argument) => argument === name);
   if (flagIndex === -1) return undefined;
   return args[flagIndex + 1];
