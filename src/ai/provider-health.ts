@@ -144,6 +144,20 @@ export class ProviderHealthTracker {
     return state.circuit;
   }
 
+  /**
+   * Return the backing array size for a provider. This exists solely so
+   * tests can verify that `#prune` actually trims expired entries — pruning
+   * is a memory optimisation with no behavioural fingerprint (`#windowEntries`
+   * already filters at read time), so the backing array length is the only
+   * observable signal for the fix. Do not use in production code.
+   *
+   * @internal
+   */
+  getEntryCount(provider: string): number {
+    const state = this.#providers.get(provider);
+    return state?.entries.length ?? 0;
+  }
+
   /** Get the current error rate for a provider within the sliding window. */
   getErrorRate(provider: string): number {
     const state = this.#providers.get(provider);

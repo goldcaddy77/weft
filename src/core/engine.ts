@@ -551,9 +551,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #pendingStarts: Set<string>;
   /**
    * Dedup set for recorded agent operation budget costs. Entries are composite
-   * keys of the form `${workflowId}:${operationId}` so terminal-state cleanup
-   * can drop all entries for a workflow with a prefix scan, keeping a single
-   * source of truth rather than a parallel Map.
+   * keys joined by a NUL byte (`\x00`) so terminal-state cleanup can drop all
+   * entries for a workflow with a prefix scan without the risk of a colon in a
+   * user-supplied `workflowId` colliding with a neighbouring workflow's keys.
+   * Keeps a single source of truth rather than a parallel Map.
    */
   #chargedAgentOperations: Set<string>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
@@ -2898,7 +2899,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const chargedKey = KEYS.budgetCharged(operationId);
-    const dedupKey = `${workflowId}:${operationId}`;
+    // NUL byte delimiter: user-supplied workflowIds can contain colons, so a
+    // colon-joined composite key would produce false positives on cleanup
+    // (see `#cleanupTerminalWorkflow`). NUL cannot appear in valid ids.
+    const dedupKey = `${workflowId}\x00${operationId}`;
     const alreadyCharged =
       this.#chargedAgentOperations.has(dedupKey) || (await this.#storage.get(chargedKey)) !== null;
 
@@ -3158,9 +3162,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Release charged agent operation dedup keys that belong to this workflow
     // so the engine-wide Set does not grow unbounded over time. Keys are
-    // composite `${workflowId}:${operationId}` strings, so a prefix match is
-    // sufficient.
-    const chargedKeyPrefix = `${workflowId}:`;
+    // composite `${workflowId}\x00${operationId}` strings — NUL delimiter
+    // guarantees the prefix match is collision-free even for user-supplied
+    // workflowIds that contain colons.
+    const chargedKeyPrefix = `${workflowId}\x00`;
     for (const key of this.#chargedAgentOperations) {
       if (key.startsWith(chargedKeyPrefix)) {
         this.#chargedAgentOperations.delete(key);

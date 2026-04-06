@@ -513,6 +513,45 @@ describe('ProviderHealthTracker', () => {
       advance(6_000);
       expect(tracker.getErrorRate('openai')).toBe(0);
     });
+
+    // Pruning is a pure memory optimisation — the behaviour-facing methods
+    // (getErrorRate, getState) already filter by timestamp, so the only
+    // observable fingerprint of `#prune` is the backing array length. The
+    // `getEntryCount` accessor exists solely for this regression guard.
+    it('trims the backing array to bound memory growth in the closed state', () => {
+      const { tracker, advance } = createTrackerWithClock({
+        windowDuration: 10_000,
+        minimumRequests: 5,
+        errorThreshold: 0.9, // high enough the circuit stays closed
+      });
+
+      // Write 100 entries in the first window.
+      for (let i = 0; i < 100; i++) {
+        tracker.recordSuccess('openai');
+      }
+      expect(tracker.getEntryCount('openai')).toBe(100);
+
+      // Advance well past the window and write one more. The single new
+      // entry must cause `#prune` to drop all 100 stale entries — without
+      // pruning, the array would grow to 101 entries.
+      advance(11_000);
+      tracker.recordSuccess('openai');
+      expect(tracker.getEntryCount('openai')).toBe(1);
+
+      // Pruning must also fire on recordFailure so failure-heavy traffic
+      // does not leak memory either.
+      advance(11_000);
+      tracker.recordFailure('openai');
+      expect(tracker.getEntryCount('openai')).toBe(1);
+
+      // And the bound holds across many rollovers — without `#prune`, the
+      // backing array would grow by one per iteration.
+      for (let iteration = 0; iteration < 50; iteration++) {
+        advance(11_000);
+        tracker.recordSuccess('openai');
+        expect(tracker.getEntryCount('openai')).toBe(1);
+      }
+    });
   });
 
   describe('unknown provider defaults to healthy', () => {
