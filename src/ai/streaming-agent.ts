@@ -519,12 +519,15 @@ export function createSSEStream(
 
   const releaseReader = (): void => {
     if (readerReleased) return;
-    readerReleased = true;
     try {
       reader.releaseLock();
+      readerReleased = true;
     } catch {
-      // Lock may already be released or the reader may be in a terminal
-      // state — either way we're done with it.
+      // releaseLock() throws when there are still pending reads — for
+      // example, when `cancel()` fires while `start()` is awaiting
+      // `reader.read()`. Leave `readerReleased` false so the subsequent
+      // call from `start()`'s finally (after the pending read settles)
+      // gets another chance to release the lock.
     }
   };
 
