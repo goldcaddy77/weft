@@ -169,17 +169,18 @@ export function enqueueStreamingToken(
     return { ...state, streamClosed: true };
   }
 
+  let nextState = state;
   try {
     state.streamController.enqueue(token);
   } catch {
-    return { ...state, streamClosed: true };
+    nextState = { ...state, streamClosed: true };
   }
 
   if (state.eventTarget && state.workflowId) {
     state.eventTarget.dispatchEvent(new TokenEvent(state.workflowId, token, state.model));
   }
 
-  return state;
+  return nextState;
 }
 
 // ---------------------------------------------------------------------------

@@ -707,6 +707,33 @@ describe('H5: Backpressure and client reconnection', () => {
     expect(state.streamClosed).toBe(true);
   });
 
+  it('enqueueStreamingToken still dispatches TokenEvent when enqueue throws', () => {
+    const eventTarget = new EventTarget();
+    const receivedTokens: string[] = [];
+
+    eventTarget.addEventListener(TokenEvent.type, ((event: TokenEvent) => {
+      receivedTokens.push(event.token);
+    }) as EventListener);
+
+    const state = enqueueStreamingToken('token', {
+      streamClosed: false,
+      streamController: {
+        desiredSize: 1,
+        close() {},
+        enqueue() {
+          throw new Error('enqueue failed');
+        },
+        error() {},
+      } as ReadableStreamDefaultController<string>,
+      eventTarget,
+      workflowId: 'wf-enqueue-failure',
+      model: 'test-model',
+    });
+
+    expect(state.streamClosed).toBe(true);
+    expect(receivedTokens).toEqual(['token']);
+  });
+
   it('disconnects slow consumer when buffer exceeds max size', async () => {
     // Directly test the onToken/stream machinery by constructing the stream
     // and controller manually, mirroring what executeStreamingAgent does
