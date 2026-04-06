@@ -1657,7 +1657,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Drop in-memory state, release charged operations, and delete durable
     // workflow-keyed records (reviews, offload, blob, shared, signal).
-    await this.#cleanupTerminalWorkflow(workflowId);
+    // Cancelled/timed-out workflows have no consumers waiting on output
+    // artifacts, so drop them alongside the internal bookkeeping.
+    await this.#cleanupTerminalWorkflow(workflowId, true);
 
     const event =
       status === 'timed-out'
@@ -3163,35 +3165,45 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   /**
    * Remove durable records keyed by `workflowId` that otherwise leak after a
-   * workflow reaches a terminal state. Covers offloaded values, blob stream
-   * chunks, shared state entries, and pending signals.
+   * workflow reaches a terminal state.
    *
-   * Event history (`ev:${workflowId}:`) is deliberately preserved so that
-   * `Engine.getEvents(workflowId)` and `GET /v1/workflows/:id/events` keep
-   * returning the full history after the workflow reaches a terminal state.
-   * Retention of the event log is the caller's responsibility — use a TTL
-   * at the storage layer or a periodic sweep if event history retention
-   * becomes a leak in its own right.
+   * - When `includeOutputArtifacts` is `false` (used by `#completeWorkflow`
+   *   and `#failWorkflow`), only internal bookkeeping is swept: pending
+   *   signals. Output artifacts — offloaded values, blob stream chunks,
+   *   shared state, and event history — are preserved so consumers can
+   *   still read them via `getStreamChunks()`, `getOffload()`,
+   *   `Engine.getEvents()`, etc. after `handle.result()` resolves.
+   * - When `includeOutputArtifacts` is `true` (used by `#terminateWorkflow`),
+   *   the workflow has been cancelled or timed out and no consumer is
+   *   waiting on output artifacts, so everything except `ev:` (preserved
+   *   for the events endpoint) is removed.
    *
    * Concurrency note: we assume all writers for a workflow's prefixed keys
    * originate from that workflow's own execution. By the time this runs, the
-   * workflow is already terminal and cannot schedule new writes — `#completeWorkflow`,
-   * `#failWorkflow`, and `#terminateWorkflow` all await this method before
-   * returning. Any write that races the scan must have come from a background
-   * task that itself holds a handle to the terminal workflow, and those are
-   * caller-level bugs we don't try to paper over here.
+   * workflow is already terminal and cannot schedule new writes —
+   * `#completeWorkflow`, `#failWorkflow`, and `#terminateWorkflow` all await
+   * this method before returning. Any write that races the scan must have
+   * come from a background task that itself holds a handle to the terminal
+   * workflow, and those are caller-level bugs we don't try to paper over here.
    *
    * Scale note: deletes are flushed in batches of `CLEANUP_BATCH_SIZE` so
    * workflows with many blobs/signals do not allocate a single oversized
    * operation array.
    */
-  async #cleanupWorkflowStorage(workflowId: string): Promise<void> {
-    const prefixes = [
-      `offload:${workflowId}:`,
-      `blob:${workflowId}:`,
-      `shared:${workflowId}:`,
-      `sig:${workflowId}:`,
-    ];
+  async #cleanupWorkflowStorage(
+    workflowId: string,
+    includeOutputArtifacts: boolean,
+  ): Promise<void> {
+    // Always sweep internal state (signals are workflow-scoped scratch space).
+    const prefixes: string[] = [`sig:${workflowId}:`];
+
+    if (includeOutputArtifacts) {
+      // Terminated workflows have no waiting consumers, so drop the output
+      // artifacts too. Event history is still preserved via the omission of
+      // the `ev:` prefix — callers that want it gone should use a storage
+      // TTL or explicit pruning.
+      prefixes.push(`offload:${workflowId}:`, `blob:${workflowId}:`, `shared:${workflowId}:`);
+    }
 
     const CLEANUP_BATCH_SIZE = 500;
     let deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
@@ -3220,8 +3232,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * under workflow-keyed storage prefixes. Also releases the per-workflow
    * set of charged agent operation IDs so `#chargedAgentOperations` cannot
    * grow unbounded across the engine's lifetime.
+   *
+   * `includeOutputArtifacts` controls whether the caller has any consumers
+   * still waiting to read streams/offload/shared state from the terminal
+   * workflow. `#completeWorkflow` and `#failWorkflow` pass `false` so those
+   * artifacts remain queryable after `handle.result()` resolves; only
+   * `#terminateWorkflow` (cancel/timeout) passes `true`.
    */
-  async #cleanupTerminalWorkflow(workflowId: string): Promise<void> {
+  async #cleanupTerminalWorkflow(
+    workflowId: string,
+    includeOutputArtifacts: boolean,
+  ): Promise<void> {
     // In-memory state
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);
@@ -3248,7 +3269,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Durable records
     await this.#cleanupReviews(workflowId);
-    await this.#cleanupWorkflowStorage(workflowId);
+    await this.#cleanupWorkflowStorage(workflowId, includeOutputArtifacts);
     if (budgetChargedDeletes.length > 0) {
       await this.#storage.batch(budgetChargedDeletes);
     }
@@ -3538,10 +3559,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     // Drop in-memory state, release charged operations, and delete durable
-    // workflow-keyed records (reviews, offload, blob, shared, signal).
-    // Event history (`ev:`) is preserved so `Engine.getEvents()` and
-    // `GET /v1/workflows/:id/events` keep working after terminal state.
-    await this.#cleanupTerminalWorkflow(workflowId);
+    // workflow-keyed records (reviews, pending signals, per-workflow dedup).
+    // Output artifacts (offload, blob, shared, events) are preserved so
+    // consumers can still read them after `handle.result()` resolves.
+    await this.#cleanupTerminalWorkflow(workflowId, false);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
     this.dispatchEvent(event);
@@ -3571,10 +3592,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     // Drop in-memory state, release charged operations, and delete durable
-    // workflow-keyed records (reviews, offload, blob, shared, signal).
-    // Event history (`ev:`) is preserved so `Engine.getEvents()` and
-    // `GET /v1/workflows/:id/events` keep working after terminal state.
-    await this.#cleanupTerminalWorkflow(workflowId);
+    // workflow-keyed records (reviews, pending signals, per-workflow dedup).
+    // Output artifacts (offload, blob, shared, events) are preserved so
+    // consumers can still read them after `handle.result()` rejects.
+    await this.#cleanupTerminalWorkflow(workflowId, false);
 
     const event = new WorkflowFailedEvent(workflowId, error);
     this.dispatchEvent(event);

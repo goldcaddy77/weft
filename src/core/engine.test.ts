@@ -2566,38 +2566,80 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
-    it('completing a workflow removes offload/blob/shared/signal keys but preserves event history', async () => {
+    it('completing a workflow drops signals but preserves output artifacts', async () => {
       const storage = new MemoryStorage();
       const engine = new Engine({ storage });
 
       engine.register('cleanup-emitter', async function* (ctx: WorkflowContext) {
         const c = ctx as Context;
-        // Write a durable stream (blob:*)
         yield* c.stream('chunks', async function* () {
           yield { index: 0 };
           yield { index: 1 };
         });
-        // Write an offload record (offload:*)
         yield* c.offload('export', async () => ({ rows: [1, 2, 3] }));
         return 'done';
       });
 
       const handle = await engine.start('cleanup-emitter', null);
 
-      // Pre-seed records that the workflow itself would never create, to
-      // confirm the cleanup helper sweeps all target prefixes.
+      // Pre-seed: a pending signal (internal state) and a shared-state entry
+      // (output artifact), plus a synthetic event-history key to verify
+      // retention.
       await storage.put(`sig:${handle.id}:pre:entry`, encode({ ignored: true }));
       await storage.put(`shared:${handle.id}:counter`, encode({ value: 1 }));
-      // Event history is persisted by the server (not the engine itself),
-      // so seed a synthetic `ev:` key to verify the cleanup helper leaves
-      // it alone — otherwise `Engine.getEvents()` would return empty for
-      // every completed workflow.
       await storage.put(`ev:${handle.id}:0000000000`, encode({ kind: 'synthetic' }));
 
       await handle.result();
       await flush();
 
-      // Offload/blob/shared/signal entries should be gone.
+      // Signals (internal) are dropped on completion.
+      const remainingSignals: string[] = [];
+      for await (const [key] of storage.scan(`sig:${handle.id}:`)) {
+        remainingSignals.push(key);
+      }
+      expect(remainingSignals).toEqual([]);
+
+      // Output artifacts are preserved so consumers can still read them
+      // after `handle.result()` resolves.
+      for (const prefix of [
+        `offload:${handle.id}:`,
+        `blob:${handle.id}:`,
+        `shared:${handle.id}:`,
+        `ev:${handle.id}:`,
+      ]) {
+        let count = 0;
+        for await (const _ of storage.scan(prefix)) count++;
+        expect(count).toBeGreaterThan(0);
+      }
+
+      engine[Symbol.dispose]();
+    });
+
+    it('cancelling a workflow drops output artifacts but preserves event history', async () => {
+      const storage = new MemoryStorage();
+      const engine = new Engine({ storage });
+
+      engine.register('waiter', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('never');
+        return 'unreached';
+      });
+
+      const handle = await engine.start('waiter', null);
+      await flush();
+
+      // Pre-seed all four workflow-keyed prefixes.
+      await storage.put(`offload:${handle.id}:data`, encode({ rows: [1] }));
+      await storage.put(`blob:${handle.id}:stream:meta`, encode({ chunks: 1 }));
+      await storage.put(`shared:${handle.id}:counter`, encode({ value: 1 }));
+      await storage.put(`sig:${handle.id}:pre:entry`, encode({ ignored: true }));
+      await storage.put(`ev:${handle.id}:0000000000`, encode({ kind: 'synthetic' }));
+
+      const resultPromise = handle.result().catch(() => undefined);
+      await engine.cancel(handle.id);
+      await resultPromise;
+      await flush();
+
+      // Output artifacts AND signals are dropped on cancel (no consumer waiting).
       for (const prefix of [
         `offload:${handle.id}:`,
         `blob:${handle.id}:`,
@@ -2611,9 +2653,8 @@ describe('Engine', () => {
         expect(remaining).toEqual([]);
       }
 
-      // Event history (`ev:*`) must be preserved so `Engine.getEvents()` and
-      // the `GET /v1/workflows/:id/events` endpoint keep working after the
-      // workflow reaches a terminal state.
+      // Event history is still preserved so the `/events` endpoint keeps
+      // working after cancel/timeout.
       const remainingEvents: string[] = [];
       for await (const [key] of storage.scan(`ev:${handle.id}:`)) {
         remainingEvents.push(key);

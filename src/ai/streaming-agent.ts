@@ -515,6 +515,18 @@ export function createSSEStream(
   let eventId = Number.isNaN(parsed) ? 0 : parsed + 1;
 
   let reader: ReadableStreamDefaultReader<string>;
+  let readerReleased = false;
+
+  const releaseReader = (): void => {
+    if (readerReleased) return;
+    readerReleased = true;
+    try {
+      reader.releaseLock();
+    } catch {
+      // Lock may already be released or the reader may be in a terminal
+      // state — either way we're done with it.
+    }
+  };
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -524,12 +536,6 @@ export function createSSEStream(
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            // Release the reader lock before closing the controller so the
-            // caller can still inspect or reuse the underlying token stream
-            // (e.g., for a second consumer).
-            reader.releaseLock();
-
-            // Send a final "done" event
             const doneEvent = formatSSE({
               id: String(eventId),
               event: 'done',
@@ -550,22 +556,22 @@ export function createSSEStream(
           eventId++;
         }
       } catch (error) {
-        // Release the lock on error so the token stream isn't left in a
-        // locked state with no active reader.
-        try {
-          reader.releaseLock();
-        } catch {
-          // releaseLock throws if there are pending reads — ignore.
-        }
         try {
           controller.error(error);
         } catch {
-          // Controller may already be closed
+          // Controller may already be closed.
         }
+      } finally {
+        // Single release path: the reader must be unlocked exactly once so
+        // the caller can inspect or reuse the underlying token stream after
+        // this outer stream settles. Guarded by `readerReleased` so neither
+        // the normal nor the error path can double-release.
+        releaseReader();
       }
     },
     cancel() {
       reader?.cancel().catch(() => {});
+      releaseReader();
     },
   });
 }
