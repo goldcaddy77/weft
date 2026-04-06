@@ -122,6 +122,7 @@ export class StreamMultiplexer {
     } catch {
       // Source stream errored or was cancelled
       this.#finished = true;
+      this.#buffer = [];
       for (const controller of this.#consumers) {
         try {
           controller.close();

@@ -404,6 +404,14 @@ function wireEventBroadcasting(
     }
   }
 
+  /** Event types that indicate a workflow has reached a terminal state. */
+  const terminalBroadcastEventTypes = new Set<string>([
+    WorkflowCompletedEvent.type,
+    WorkflowFailedEvent.type,
+    WorkflowCancelledEvent.type,
+    WorkflowTimedOutEvent.type,
+  ]);
+
   const eventTypes = [
     WorkflowStartedEvent.type,
     WorkflowCompletedEvent.type,
@@ -442,6 +450,21 @@ function wireEventBroadcasting(
         const previousChain = sequenceChains.get(workflowId) ?? Promise.resolve();
         const nextChain = previousChain
           .then(() => persistAndPublishEvent(workflowId, eventType, message))
+          .then(() => {
+            // When a workflow reaches a terminal state, clean up per-workflow
+            // sequence tracking Maps to prevent unbounded growth. Only delete
+            // if the stored chain is still ours — a new event may have already
+            // replaced it with a fresh chain between our sync set and this
+            // async callback.
+            if (terminalBroadcastEventTypes.has(eventType)) {
+              sequenceCounters.delete(workflowId);
+              sequenceInitPromises.delete(workflowId);
+              if (sequenceChains.get(workflowId) === nextChain) {
+                sequenceChains.delete(workflowId);
+              }
+            }
+            return undefined;
+          })
           .catch((error) => {
             console.error(
               `[weft] Failed to persist event "${eventType}" for workflow "${workflowId}":`,

@@ -175,6 +175,11 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
    */
   endWorkflowSpan: (workflowId: string, status: 'ok' | 'error', errorMessage?: string) => void;
   /**
+   * Evict workflow spans that have been open longer than `maxAgeMs` (default: 1 hour).
+   * Call periodically to prevent unbounded growth from orphaned or long-running workflows.
+   */
+  evictStaleSpans: (maxAgeMs?: number) => number;
+  /**
    * Unsubscribe any workflow lifecycle listeners registered on the `eventTarget`
    * and end any still-open workflow spans. Call this when tearing down the
    * engine so the interceptor doesn't leak listeners or spans.
@@ -747,6 +752,29 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     eventTarget.addEventListener(WorkflowTimedOutEvent.type, onWorkflowTimedOut);
   }
 
+  const DEFAULT_STALE_SPAN_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+
+  /**
+   * Evict workflow spans older than `maxAgeMs`. Returns the number of
+   * evicted entries. Orphaned or long-running workflows that never reach
+   * a terminal state will accumulate spans indefinitely without this —
+   * the terminal-event subscription only covers workflows that actually
+   * complete.
+   */
+  function evictStaleSpans(maxAgeMs: number = DEFAULT_STALE_SPAN_MAX_AGE_MS): number {
+    const cutoff = Date.now() - maxAgeMs;
+    let evicted = 0;
+    for (const [workflowId, entry] of workflowSpans) {
+      if (entry.createdAt <= cutoff) {
+        entry.span.setStatus({ code: SpanStatusCode.ERROR, message: 'span evicted (stale)' });
+        entry.span.end();
+        workflowSpans.delete(workflowId);
+        evicted++;
+      }
+    }
+    return evicted;
+  }
+
   function dispose(): void {
     if (eventTarget) {
       eventTarget.removeEventListener(WorkflowCompletedEvent.type, onWorkflowCompleted);
@@ -763,5 +791,5 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     workflowSpans.clear();
   }
 
-  return { workflow, activity, metrics, endWorkflowSpan, dispose };
+  return { workflow, activity, metrics, endWorkflowSpan, evictStaleSpans, dispose };
 }

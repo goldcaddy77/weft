@@ -528,6 +528,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #inlineStrategy: InlineExecutionStrategy | null;
   #handleCache: Map<string, { ref: WeakRef<WorkflowHandle>; unregisterToken: object }>;
   #finalizationRegistry: FinalizationRegistry<string>;
+  /** Tokens used to unregister stale FinalizationRegistry entries when a handle is replaced. */
+  #finalizationTokens: Map<string, object>;
   #resultResolvers: Map<string, WorkflowResultResolver>;
   #signalWaiters: Map<string, () => void>;
   #updateWaiters: Map<string, (payload: unknown) => void>;
@@ -624,6 +626,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#registrations = new Map();
     this.#abortController = new AbortController();
     this.#handleCache = new Map();
+    this.#finalizationTokens = new Map();
     this.#resultResolvers = new Map();
     this.#signalWaiters = new Map();
     this.#updateWaiters = new Map();
@@ -650,6 +653,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const entry = this.#handleCache.get(id);
       if (!entry || entry.ref.deref() !== undefined) return;
       this.#handleCache.delete(id);
+      this.#finalizationTokens.delete(id);
     });
 
     this.#options = resolvedOptions;
@@ -3046,6 +3050,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     operation: ContextOperationRequest,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    // Check for abort before starting any sub-operation so that losing race
+    // branches are skipped if the winner has already settled.
+    signal?.throwIfAborted();
+
     switch (operation.type) {
       case 'activity':
         signal?.throwIfAborted();
@@ -3055,7 +3063,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return callMemoFunction(operation.fn);
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
-        const { prompt, budget: budgetOptions, budgetNamespace, ...rest } = operation.options;
+        const {
+          prompt,
+          budget: budgetOptions,
+          budgetNamespace,
+          contextStrategy: _contextStrategy,
+          ...rest
+        } = operation.options;
 
         // Use the shared helper so agent sub-operations get the same
         // warning/exceeded event wiring as standalone `ctx.agent()` calls.
@@ -3528,7 +3542,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     // Drop in-memory state, release charged operations, and delete durable
-    // workflow-keyed records (reviews, offload, blob, shared, signal, event).
+    // workflow-keyed records (reviews, offload, blob, shared, signal).
+    // Event history (`ev:`) is preserved so `Engine.getEvents()` and
+    // `GET /v1/workflows/:id/events` keep working after terminal state.
     await this.#cleanupTerminalWorkflow(workflowId);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
@@ -3559,7 +3575,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
 
     // Drop in-memory state, release charged operations, and delete durable
-    // workflow-keyed records (reviews, offload, blob, shared, signal, event).
+    // workflow-keyed records (reviews, offload, blob, shared, signal).
+    // Event history (`ev:`) is preserved so `Engine.getEvents()` and
+    // `GET /v1/workflows/:id/events` keep working after terminal state.
     await this.#cleanupTerminalWorkflow(workflowId);
 
     const event = new WorkflowFailedEvent(workflowId, error);
