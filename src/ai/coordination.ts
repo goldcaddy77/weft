@@ -282,6 +282,7 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
   // branch abort all other in-flight branches — something a passthrough signal
   // can't do because the budget tracker needs its own controller to fire abort.
   const controller = new AbortController();
+  const onParentAbort = parentSignal ? () => controller.abort(parentSignal.reason) : undefined;
 
   // Wire budget enforcement: exceeding the budget aborts all parallel branches.
   // Scoped to this call — cleared in finally so a shared BudgetTracker isn't
@@ -290,9 +291,15 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
     budget.setAbortController(controller);
   }
 
-  const signal = parentSignal
-    ? AbortSignal.any([controller.signal, parentSignal])
-    : controller.signal;
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      controller.abort(parentSignal.reason);
+    } else {
+      parentSignal.addEventListener('abort', onParentAbort!, { once: true });
+    }
+  }
+
+  const signal = controller.signal;
 
   try {
     // Run all workers in parallel
@@ -430,6 +437,9 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       strategy,
     };
   } finally {
+    if (parentSignal && onParentAbort) {
+      parentSignal.removeEventListener('abort', onParentAbort);
+    }
     // Detach so a shared BudgetTracker isn't left with a stale controller.
     if (budget) {
       budget.setAbortController(new AbortController());

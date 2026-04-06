@@ -591,7 +591,7 @@ describe('supervise', () => {
     ).rejects.toThrow('The operation was aborted');
   });
 
-  it('rejects an unknown supervise strategy without wiring manual parent abort listeners', async () => {
+  it('rejects an unknown supervise strategy and cleans up the parent abort listener', async () => {
     const controller = new AbortController();
     const addEventListenerSpy = spyOn(controller.signal, 'addEventListener');
     const removeEventListenerSpy = spyOn(controller.signal, 'removeEventListener');
@@ -608,11 +608,81 @@ describe('supervise', () => {
       }),
     ).rejects.toThrow('Unknown supervise strategy');
 
-    expect(addEventListenerSpy).not.toHaveBeenCalled();
-    expect(removeEventListenerSpy).not.toHaveBeenCalled();
+    expect(addEventListenerSpy).toHaveBeenCalledTimes(1);
+    expect(removeEventListenerSpy).toHaveBeenCalledTimes(1);
 
     addEventListenerSpy.mockRestore();
     removeEventListenerSpy.mockRestore();
+  });
+
+  it('cleans up the parent abort listener after successful completion', async () => {
+    const controller = new AbortController();
+    const addEventListenerSpy = spyOn(controller.signal, 'addEventListener');
+    const removeEventListenerSpy = spyOn(controller.signal, 'removeEventListener');
+    const provider = createMockProvider([
+      createChatResponse('same'),
+      createChatResponse('same'),
+      createChatResponse('same'),
+    ]);
+
+    await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'sup' }),
+      input: 'Go',
+      strategy: 'consensus',
+      provider,
+      signal: controller.signal,
+    });
+
+    expect(addEventListenerSpy).toHaveBeenCalledTimes(1);
+    expect(removeEventListenerSpy).toHaveBeenCalledTimes(1);
+
+    addEventListenerSpy.mockRestore();
+    removeEventListenerSpy.mockRestore();
+  });
+
+  it('aborts in-flight workers when the parent signal fires after supervise starts', async () => {
+    const controller = new AbortController();
+    let capturedSignal: AbortSignal | undefined;
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      chat(_messages, options): Promise<ChatResponse> {
+        capturedSignal = options?.signal;
+
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal?.reason ?? new Error('parent aborted'));
+            },
+            { once: true },
+          );
+        });
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const resultPromise = supervise({
+      workers: [createAgentDefinition({ name: 'worker-1' })],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      provider,
+      signal: controller.signal,
+    });
+
+    await Bun.sleep(0);
+    controller.abort(new Error('parent aborted'));
+
+    await expect(resultPromise).rejects.toThrow('parent aborted');
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal!.aborted).toBe(true);
   });
 });
 

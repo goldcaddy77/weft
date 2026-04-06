@@ -170,8 +170,8 @@ export class ActivityRegistry {
 
     if (fn) {
       let stillReferenced = false;
-      for (const [registeredName, registeredFn] of this.#nameIndex) {
-        if (registeredName !== name && registeredFn === fn) {
+      for (const registeredFn of this.#nameIndex.values()) {
+        if (registeredFn === fn) {
           stillReferenced = true;
           break;
         }
