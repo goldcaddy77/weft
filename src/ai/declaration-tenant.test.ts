@@ -130,6 +130,32 @@ describe('defineAgent with per-tenant customization', () => {
     expect(provider.seenTools[0]).toEqual(['basic-search']);
   });
 
+  it('toolsForTenant receives undefined when no resolver is configured', async () => {
+    const freeTool = makeTool('basic-search');
+    const proTool = makeTool('advanced-search');
+
+    const provider = createToolCapturingProvider([createChatResponse('result')]);
+
+    const agent = defineAgent({
+      name: 'no-resolver-agent',
+      model: 'test-model',
+      toolsForTenant(tenant) {
+        // This is the most common deployment path — no resolver wired on the
+        // engine, so tenant is undefined and the fallback branch runs.
+        return tenant?.attributes?.['tier'] === 'pro' ? [freeTool, proTool] : [freeTool];
+      },
+    });
+
+    const engine = new Engine(); // no tenantResolver
+    engine.register(agent, { provider });
+
+    const handle = await engine.start('no-resolver-agent', {});
+    await flush();
+    await handle.result();
+
+    expect(provider.seenTools[0]).toEqual(['basic-search']);
+  });
+
   it('validateInput runs before the agent loop and can fail the workflow', async () => {
     const provider = createToolCapturingProvider([createChatResponse('unreachable')]);
 
@@ -209,9 +235,8 @@ describe('ctx.tenant inside an imperative workflow', () => {
     });
 
     engine.register('branch', async function* (ctx: WorkflowContext) {
-      const asContext = ctx as unknown as { tenant?: TenantContext };
-      captured.push(asContext.tenant?.id);
-      return asContext.tenant?.id ?? 'anonymous';
+      captured.push(ctx.tenant?.id);
+      return ctx.tenant?.id ?? 'anonymous';
     });
 
     const anonHandle = await engine.start('branch', {});

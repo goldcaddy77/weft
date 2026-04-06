@@ -466,31 +466,33 @@ export class Context implements WorkflowContext {
   }
 
   /**
-   * Pause the workflow until an external caller invokes the resume endpoint
-   * with the matching token. Semantically identical to `waitForSignal`
-   * where the signal name is the `resumeToken`, but surfaces the LLM/webhook
-   * "suspend-and-resume" intent more clearly.
+   * Pause the workflow until an external caller delivers a signal with the
+   * matching `resumeToken` as its name. Semantically identical to
+   * `waitForSignal(resumeToken)` — the caller generates the token, hands it
+   * to the external world, then yields. The engine persists a checkpoint and
+   * releases control; when `POST /v1/workflows/:id/signal/:resumeToken`
+   * arrives, the generator resumes with the signal payload.
    *
-   * The caller generates the token and hands it to the external world
-   * before yielding, so there is exactly one resume path per suspension.
-   * The engine persists a checkpoint and releases the workflow; when
-   * `POST /v1/workflows/:id/resume { token, result }` arrives, the
-   * generator resumes with `result` as its return value.
+   * This primitive closes the "serverless suspension" gap vs Inngest's
+   * `step.ai.infer()` and Restate's journal-based suspension — the worker is
+   * free to pick up other work while the workflow is parked in its checkpoint.
+   *
+   * **Token collision caveat:** resume tokens share the signal namespace with
+   * `waitForSignal`. Pick tokens that can't collide with named signals the
+   * workflow also listens for (a UUID is safest).
    *
    * @example
    * ```ts
    * engine.register('await-webhook', async function* (ctx, input: { callbackUrl: string }) {
    *   const token = crypto.randomUUID();
-   *   yield* ctx.run(registerCallback, { url: input.callbackUrl, token });
-   *   const payload = yield* ctx.suspendUntil<{ status: string }>({ resumeToken: token });
+   *   yield* (ctx as Context).run(registerCallback, { url: input.callbackUrl, token });
+   *   const payload = yield* (ctx as Context).suspendUntil<{ status: string }>(token);
    *   return payload.status;
    * });
    * ```
    */
-  *suspendUntil<T = unknown>(
-    options: import('./suspend.ts').SuspendUntilOptions,
-  ): Generator<ContextOperationRequest, T, unknown> {
-    return yield* this.waitForSignal<T>(options.resumeToken);
+  *suspendUntil<T = unknown>(resumeToken: string): Generator<ContextOperationRequest, T, unknown> {
+    return yield* this.waitForSignal<T>(resumeToken);
   }
 
   *waitForSignal<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown> {

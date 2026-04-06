@@ -6,7 +6,6 @@ import {
   MetricsCollector,
   createMetricsCollectorExporter,
   createOtelMetrics,
-  serializeMetricsSnapshotForPrometheus,
 } from './metrics';
 import type { OtelMeter } from './no-op-telemetry';
 
@@ -336,12 +335,5 @@ describe('Prometheus exporter', () => {
       },
     };
     expect(custom.serialize()).toContain('custom 1');
-  });
-
-  it('serializeMetricsSnapshotForPrometheus is usable directly', () => {
-    const text = serializeMetricsSnapshotForPrometheus({
-      'weft.workflow.started': { type: 'counter', value: 7 },
-    });
-    expect(text).toContain('weft_workflow_started_total 7');
   });
 });

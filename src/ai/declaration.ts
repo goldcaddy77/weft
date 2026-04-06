@@ -34,10 +34,11 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
    * schemas without adding custom logic inside the agent handler.
    *
    * The stored signature accepts `unknown` instead of the declaration-time
-   * `TInput` because `AgentDefinition<{...}, {...}>` must remain assignable
-   * to `AgentDefinition<unknown, unknown>` at the `engine.register()`
-   * boundary. Call sites that want the typed shape should use the
-   * {@link AgentDefinitionOptions} form, where `TInput` is preserved.
+   * `TInput` so that `AgentDefinition<{...}>` remains assignable *into* the
+   * erased `AgentDefinition<unknown, unknown>` form used by
+   * `engine.register()`. Call sites that want to author the validator with
+   * the typed shape should use the {@link AgentDefinitionOptions} form,
+   * where `TInput` is preserved and `defineAgent()` bridges the variance.
    */
   validateInput?: (input: unknown, tenant: TenantContext | undefined) => void;
   /** @internal Phantom field to carry the input type parameter. */

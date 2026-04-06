@@ -54,23 +54,6 @@ export interface TenantResolver {
 }
 
 /**
- * Type guard for plain-object tenant contexts. Used by the engine when
- * deserializing persisted workflow state so a malformed blob cannot corrupt
- * `ctx.tenant`.
- */
-export function isTenantContext(value: unknown): value is TenantContext {
-  if (value === null || typeof value !== 'object') return false;
-  const candidate = value as Record<string, unknown>;
-  if (typeof candidate['id'] !== 'string') return false;
-  if (candidate['attributes'] !== undefined) {
-    if (typeof candidate['attributes'] !== 'object' || candidate['attributes'] === null) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
  * Build a resolver that reads the tenant id from a specific field on the
  * workflow input. Convenience helper for the common case where every
  * workflow input carries a `tenantId` (or similar) property.

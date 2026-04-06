@@ -328,6 +328,19 @@ export interface WorkflowContext {
   readonly signal: AbortSignal;
   readonly executionTimeRemaining: number;
   readonly startedAt: number;
+  /**
+   * The {@link import('./tenant.ts').TenantContext} this workflow is running
+   * on behalf of, populated from the engine's `tenantResolver` at start time
+   * and restored from persisted state on recovery. `undefined` when the
+   * engine has no resolver configured or the resolver returned `undefined`.
+   *
+   * Declared as `T | undefined` rather than `tenant?: T` so the field is
+   * always present on the type — the `Context` class implementation has a
+   * getter that returns `undefined` when absent, and under
+   * `exactOptionalPropertyTypes` the optional-key form would be a stricter
+   * contract that the getter can't satisfy.
+   */
+  readonly tenant: import('./tenant.ts').TenantContext | undefined;
 }
 
 // ---------------------------------------------------------------------------

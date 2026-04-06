@@ -85,8 +85,17 @@ export interface ServeOptions {
   visibilityPollIntervalMs?: number;
   /**
    * Routing policy used by the {@link WorkerRegistry} when dispatching tasks.
-   * Defaults to `'least-loaded'`. Set to `'round-robin'` or `'fair-share'` for
-   * multi-tenant fairness.
+   * Defaults to `'least-loaded'`. Set to `'round-robin'` for deterministic
+   * rotation across workers.
+   *
+   * **Note on `'fair-share'`:** fair-share requires a `fairShareKey` to be
+   * passed at dispatch time (per-call, via `TaskDispatch`), which `serve()`
+   * does not currently derive from `ctx.tenant` automatically. Setting
+   * `routingPolicy: 'fair-share'` here without wiring `fairShareKey` on
+   * each `dispatchTask()` call makes the policy silently fall back to
+   * least-loaded. Use the {@link WorkerRegistry} directly, or pass
+   * `fairShareKey` explicitly on every dispatch, until an end-to-end hook
+   * is added.
    */
   routingPolicy?: RoutingPolicy;
   /**
@@ -104,6 +113,11 @@ export interface ServeOptions {
   /**
    * Optional {@link MetricsCollector} used as the default metrics source for
    * `/v1/metrics` when no `prometheusExporter` is supplied.
+   *
+   * @deprecated Prefer `prometheusExporter` — wrap your metrics source (OTel
+   * or otherwise) in a {@link PrometheusExporter} and pass it there. This
+   * field remains for projects still using the legacy `MetricsCollector`
+   * path and has lower precedence if both are set.
    */
   metricsCollector?: MetricsCollector;
 }
@@ -866,7 +880,10 @@ export function serve(options: ServeOptions): WeftServer {
         return taskResultResponse;
       }
 
-      // API routes via existing platform-agnostic handler
+      // API routes via existing platform-agnostic handler. Under
+      // `exactOptionalPropertyTypes` we can't spread `undefined` values into
+      // an options object whose fields are `T?: U` (not `T?: U | undefined`),
+      // so each optional field is attached only when present.
       return handleRequest(request, options.engine, {
         ...(options.prometheusExporter !== undefined
           ? { prometheusExporter: options.prometheusExporter }

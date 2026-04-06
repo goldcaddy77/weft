@@ -912,7 +912,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // agent execution flows through the engine's operation handler for budget
       // policy enforcement, observability, and durable checkpointing.
       const handler: WorkflowFunction = async function* (ctx, input) {
-        const tenant = (ctx as Context).tenant;
+        const tenant = ctx.tenant;
 
         // Per-tenant input validation runs before any tool resolution so a
         // malformed payload fails fast without burning budget.

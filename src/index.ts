@@ -163,12 +163,8 @@ export type {
 } from './core/context';
 
 // Multi-tenant primitives
-export { isTenantContext, tenantFromInputField } from './core/tenant';
+export { tenantFromInputField } from './core/tenant';
 export type { TenantContext, TenantResolver } from './core/tenant';
-
-// Suspension primitives
-export { generateResumeToken, isResumeRequestBody } from './core/suspend';
-export type { ResumeRequestBody, SuspendUntilOptions } from './core/suspend';
 
 // Step Context
 export { StepContext, compileStepWorkflow, isAsyncGeneratorFunction } from './core/step-context';
@@ -340,7 +336,6 @@ export {
   METRICS,
   createMetricsCollectorExporter,
   createOtelMetrics,
-  serializeMetricsSnapshotForPrometheus,
 } from './observability/metrics';
 export type { OtelMetrics } from './observability/metrics';
 export { getOtelApi } from './observability/no-op-telemetry';

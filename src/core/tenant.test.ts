@@ -1,44 +1,14 @@
 import { describe, expect, it } from 'bun:test';
 
+import { BunSQLiteStorage } from '../storage/bun-sql.ts';
+import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
-import {
-  isTenantContext,
-  tenantFromInputField,
-  type TenantContext,
-  type TenantResolver,
-} from './tenant.ts';
+import { tenantFromInputField, type TenantContext, type TenantResolver } from './tenant.ts';
 import type { WorkflowContext } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Unit: helpers
 // ---------------------------------------------------------------------------
-
-describe('isTenantContext', () => {
-  it('accepts a minimal tenant', () => {
-    expect(isTenantContext({ id: 'acme' })).toBe(true);
-  });
-
-  it('accepts a tenant with attributes', () => {
-    expect(isTenantContext({ id: 'acme', attributes: { tier: 'pro' } })).toBe(true);
-  });
-
-  it('rejects non-objects', () => {
-    expect(isTenantContext(null)).toBe(false);
-    expect(isTenantContext(undefined)).toBe(false);
-    expect(isTenantContext('acme')).toBe(false);
-    expect(isTenantContext(42)).toBe(false);
-  });
-
-  it('rejects objects missing a string id', () => {
-    expect(isTenantContext({})).toBe(false);
-    expect(isTenantContext({ id: 123 })).toBe(false);
-  });
-
-  it('rejects objects with non-object attributes', () => {
-    expect(isTenantContext({ id: 'acme', attributes: 'pro' })).toBe(false);
-    expect(isTenantContext({ id: 'acme', attributes: null })).toBe(false);
-  });
-});
 
 describe('tenantFromInputField', () => {
   it('reads the tenant id from the configured field', () => {
@@ -83,7 +53,7 @@ describe('Engine with tenantResolver', () => {
     });
 
     engine.register('capture-tenant', async function* (ctx: WorkflowContext) {
-      captured.push((ctx as unknown as { tenant?: TenantContext }).tenant);
+      captured.push(ctx.tenant);
       return 'done';
     });
 
@@ -103,7 +73,7 @@ describe('Engine with tenantResolver', () => {
     });
 
     engine.register('capture-tenant', async function* (ctx: WorkflowContext) {
-      captured.push((ctx as unknown as { tenant?: TenantContext }).tenant);
+      captured.push(ctx.tenant);
       return 'done';
     });
 
@@ -125,7 +95,7 @@ describe('Engine with tenantResolver', () => {
     const engine = new Engine({ tenantResolver: resolver });
     const captured: Array<TenantContext | undefined> = [];
     engine.register('capture-tenant', async function* (ctx: WorkflowContext) {
-      captured.push((ctx as unknown as { tenant?: TenantContext }).tenant);
+      captured.push(ctx.tenant);
       return 'done';
     });
 
@@ -139,12 +109,87 @@ describe('Engine with tenantResolver', () => {
     const engine = new Engine();
 
     engine.register('capture-tenant', async function* (ctx: WorkflowContext) {
-      captured.push((ctx as unknown as { tenant?: TenantContext }).tenant);
+      captured.push(ctx.tenant);
       return 'done';
     });
 
     const handle = await engine.start('capture-tenant', { tenantId: 'acme' });
     await handle.result();
     expect(captured[0]).toBeUndefined();
+  });
+
+  it('surfaces a resolver that throws as a rejection from engine.start()', async () => {
+    const engine = new Engine({
+      tenantResolver: {
+        resolve() {
+          throw new Error('tenant service unavailable');
+        },
+      },
+    });
+    engine.register('noop', async function* () {
+      return 'done';
+    });
+
+    await expect(engine.start('noop', { tenantId: 'acme' })).rejects.toThrow(
+      'tenant service unavailable',
+    );
+
+    // No partial workflow state should have been persisted.
+    const listed = await engine.list();
+    expect(listed.items.length).toBe(0);
+  });
+
+  it('ctx.tenant survives recovery across engine restart', async () => {
+    // Use a shared on-disk path so a second engine can reopen the same storage.
+    const path = `/tmp/weft-tenant-recovery-${crypto.randomUUID()}.sqlite`;
+    const workflowId = `wf-${crypto.randomUUID()}`;
+
+    const resolver: TenantResolver = {
+      resolve: () => ({ id: 'acme', attributes: { tier: 'pro' } }),
+    };
+
+    // First engine: start the workflow and let it park on a signal.
+    const firstStorage = new BunSQLiteStorage(path);
+    const firstEngine = new Engine({ storage: firstStorage, tenantResolver: resolver });
+
+    firstEngine.register('park-and-capture', async function* (ctx: WorkflowContext) {
+      const payload = yield* (ctx as Context).waitForSignal<{ ok: true }>('go');
+      return { tenant: ctx.tenant, payload };
+    });
+
+    await firstEngine.start('park-and-capture', { note: 'initial' }, { id: workflowId });
+    await Bun.sleep(10);
+
+    // Tear the first engine down without completing the workflow.
+    firstEngine[Symbol.dispose]();
+    firstStorage[Symbol.dispose]();
+
+    // Second engine: reopen the same storage. Intentionally do NOT configure a
+    // resolver — the tenant must come back from persisted state.
+    const secondStorage = new BunSQLiteStorage(path);
+    const secondEngine = new Engine({ storage: secondStorage });
+
+    secondEngine.register('park-and-capture', async function* (ctx: WorkflowContext) {
+      const payload = yield* (ctx as Context).waitForSignal<{ ok: true }>('go');
+      return { tenant: ctx.tenant, payload };
+    });
+
+    await secondEngine.recoverAll();
+    const handle = secondEngine.getHandle(workflowId);
+    const resultPromise = handle.result();
+
+    await Bun.sleep(10);
+    await secondEngine.signal(workflowId, 'go', { ok: true });
+
+    const result = (await resultPromise) as {
+      tenant: TenantContext | undefined;
+      payload: { ok: true };
+    };
+
+    expect(result.tenant).toEqual({ id: 'acme', attributes: { tier: 'pro' } });
+    expect(result.payload).toEqual({ ok: true });
+
+    secondEngine[Symbol.dispose]();
+    secondStorage[Symbol.dispose]();
   });
 });

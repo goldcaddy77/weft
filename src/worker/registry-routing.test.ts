@@ -197,4 +197,35 @@ describe('WorkerRegistry routing policies', () => {
     expect(new WorkerRegistry({ policy: 'round-robin' }).policy).toBe('round-robin');
     expect(new WorkerRegistry({ policy: 'fair-share' }).policy).toBe('fair-share');
   });
+
+  describe('zero eligible workers', () => {
+    const policies: Array<ConstructorParameters<typeof WorkerRegistry>[0]> = [
+      { policy: 'least-loaded' },
+      { policy: 'round-robin' },
+      { policy: 'fair-share' },
+    ];
+
+    for (const options of policies) {
+      const label = options?.policy ?? 'least-loaded';
+
+      it(`${label} returns undefined when every worker is saturated`, () => {
+        const { registry, workerIds } = makeRegistryWithWorkers(2, 'sendEmail', options);
+        for (let index = 0; index < 10; index += 1) {
+          registry.taskAssigned(workerIds[0]!);
+          registry.taskAssigned(workerIds[1]!);
+        }
+        expect(registry.findWorker('sendEmail', { fairShareKey: 'tenant-x' })).toBeUndefined();
+      });
+
+      it(`${label} returns undefined when no worker advertises the activity`, () => {
+        const { registry } = makeRegistryWithWorkers(2, 'sendEmail', options);
+        expect(registry.findWorker('nonexistent', { fairShareKey: 'tenant-x' })).toBeUndefined();
+      });
+
+      it(`${label} returns undefined when the registry is empty`, () => {
+        const registry = new WorkerRegistry(options);
+        expect(registry.findWorker('sendEmail', { fairShareKey: 'tenant-x' })).toBeUndefined();
+      });
+    }
+  });
 });
