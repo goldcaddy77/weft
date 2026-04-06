@@ -7,9 +7,9 @@
  * and the Weft server into a single file.
  *
  * Usage:
- *   bun run scripts/build-binary.ts                        # current platform
- *   bun run scripts/build-binary.ts --target darwin-arm64   # specific platform
- *   bun run scripts/build-binary.ts --all                   # all 5 platforms
+ *   bun run scripts/build-binary-main.ts                   # current platform
+ *   bun run scripts/build-binary-main.ts --target darwin-arm64   # specific platform
+ *   bun run scripts/build-binary-main.ts --all             # all 5 platforms
  *
  * @module build-binary
  */
@@ -87,9 +87,9 @@ export function parseBuildBinaryArguments(args: string[]): BuildBinaryArgs {
 // ---------------------------------------------------------------------------
 
 export const BUILD_BINARY_HELP = `
-scripts/build-binary.ts - Compile Weft into a standalone binary
+scripts/build-binary-main.ts - Compile Weft into a standalone binary
 
-Usage: bun run scripts/build-binary.ts [options]
+Usage: bun run scripts/build-binary-main.ts [options]
 
 Options:
   -t, --target <platform>   Target platform (e.g., darwin-arm64, linux-x64)

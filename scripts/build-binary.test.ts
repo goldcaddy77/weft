@@ -142,6 +142,11 @@ describe('resolveTargets', () => {
 // ---------------------------------------------------------------------------
 
 describe('BUILD_BINARY_HELP', () => {
+  it('references the build-binary main entrypoint', () => {
+    expect(BUILD_BINARY_HELP).toContain('scripts/build-binary-main.ts');
+    expect(BUILD_BINARY_HELP).not.toContain('scripts/build-binary.ts');
+  });
+
   it('documents --target flag', () => {
     expect(BUILD_BINARY_HELP).toContain('--target');
   });
@@ -297,6 +302,7 @@ describe('multi-platform compilation', () => {
     const stdout = await new Response(proc.stdout).text();
 
     expect(exitCode).toBe(0);
+    expect(stdout).toContain('scripts/build-binary-main.ts');
     expect(stdout).toContain('--target');
     expect(stdout).toContain('--all');
   });
