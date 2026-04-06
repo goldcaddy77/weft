@@ -1781,6 +1781,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
     await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+    await this.#cleanupReviews(workflowId);
+    this.#checkpoints.delete(workflowId);
     this.#cleanupWaiters(workflowId);
     this.#heartbeatDetails.delete(workflowId);
     this.#agentWorkflowIds.delete(workflowId);
@@ -2636,13 +2638,24 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'race' }>,
   ): Promise<void> {
-    return this.#runOperationWithResult(workflowId, operation, async () =>
-      Promise.race(
-        operation.operations.map((subOperation) =>
-          this.#executeSubOperation(workflowId, subOperation),
-        ),
-      ),
-    );
+    return this.#runOperationWithResult(workflowId, operation, async () => {
+      const controller = new AbortController();
+      const subOperations = operation.operations.map((subOperation) =>
+        this.#executeSubOperation(workflowId, subOperation, controller.signal),
+      );
+      // Swallow rejections from losing branches — only the race winner's
+      // result (or error) is surfaced. Losers are expected to throw
+      // AbortError after controller.abort() in finally, and without a
+      // handler those become unhandled promise rejections.
+      for (const promise of subOperations) {
+        promise.catch(() => {});
+      }
+      try {
+        return await Promise.race(subOperations);
+      } finally {
+        controller.abort();
+      }
+    });
   }
 
   async #processMemoOperation(
@@ -3212,26 +3225,44 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #executeSubOperation(
-    _workflowId: string,
+    workflowId: string,
     operation: ContextOperationRequest,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     switch (operation.type) {
       case 'activity':
+        signal?.throwIfAborted();
         return callActivityFunction(operation.fn, operation.args);
       case 'memo':
+        signal?.throwIfAborted();
         return callMemoFunction(operation.fn);
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
-        const { BudgetTracker } = await import('../ai/budget.ts');
-        const { prompt, budget, ...rest } = operation.options;
+        const { prompt, budget: budgetOptions, budgetNamespace, ...rest } = operation.options;
+        const budgetTracker = await this.#createAgentBudgetTracker(
+          workflowId,
+          operation,
+          budgetOptions,
+        );
+        const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
+        await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
+
         const agentResult = await executeAgentLoop(
           {
             ...rest,
-            budget: budget ? new BudgetTracker(budget) : undefined,
+            budget: budgetTracker,
+            signal,
           },
           prompt,
         );
-        return agentResult;
+
+        await this.#recordAgentBudgetCost(
+          operation.operationId,
+          resolvedBudgetNamespace,
+          agentResult.totalCost,
+        );
+
+        return agentResult.content;
       }
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);

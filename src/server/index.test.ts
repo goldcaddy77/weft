@@ -3420,6 +3420,187 @@ describe('visibility timeout expiry triggers task reassignment', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Concurrent scanner deduplication (regression: processingOperationIds)
+// ---------------------------------------------------------------------------
+
+describe('concurrent scanner deduplication', () => {
+  let engine: Engine;
+  let server: WeftServer;
+  let storage: MemoryStorage;
+
+  afterEach(async () => {
+    await server?.stop();
+    engine?.[Symbol.dispose]();
+  });
+
+  function createEngineWithStorage(): { engine: Engine; storage: MemoryStorage } {
+    const s = new MemoryStorage();
+    const e = new Engine({ storage: s });
+    e.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    return { engine: e, storage: s };
+  }
+
+  async function connectWorker(wsServer: WeftServer): Promise<WebSocket> {
+    const wsUrl = wsServer.url.replace('http://', 'ws://');
+    const ws = new WebSocket(`${wsUrl}/v1/tasks/default/stream`);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('WebSocket connection failed')));
+    });
+    return ws;
+  }
+
+  async function registerWorker(
+    ws: WebSocket,
+    options: { workerId: string; activities: string[]; concurrency?: number },
+  ): Promise<void> {
+    ws.send(
+      JSON.stringify({
+        type: 'register',
+        workerId: options.workerId,
+        activities: options.activities,
+        concurrency: options.concurrency ?? 10,
+      }),
+    );
+    await Bun.sleep(50);
+  }
+
+  it('does not double-process an operationId when scanExpiredTasks and reconcileOrphanedRecords overlap', async () => {
+    // Regression test: before the processingOperationIds guard was added, both
+    // scanExpiredTasks (fast heap-based path) and reconcileOrphanedRecords
+    // (full storage scan) could call registry.completeTask() and
+    // reassignOrExpireTask() for the same operationId concurrently, producing
+    // duplicate re-dispatches and corrupt attempt counts.
+    //
+    // With visibilityPollIntervalMs: 50, the reconciliation scanner fires after
+    // 50 * 12 = 600ms. By running both scanners for at least one full
+    // reconciliation cycle, we verify that the same operationId is processed
+    // exactly once per expiry event — not twice.
+    ({ engine, storage } = createEngineWithStorage());
+    server = serve({ engine, port: 0, visibilityPollIntervalMs: 50 });
+
+    const ws = await connectWorker(server);
+    const received: Array<{ type: string; operationId?: string; attempt?: number }> = [];
+
+    ws.addEventListener('message', (event) => {
+      const msg = JSON.parse(String(event.data)) as {
+        type: string;
+        operationId?: string;
+        attempt?: number;
+      };
+      received.push(msg);
+      // Complete immediately on attempt 2 so the task does not keep cycling.
+      if (msg.type === 'task' && (msg.attempt ?? 1) >= 2) {
+        ws.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: msg.operationId,
+            status: 'completed',
+            value: null,
+          }),
+        );
+      }
+    });
+
+    await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
+
+    // A short visibility timeout ensures the task expires before the first
+    // reconciliation cycle, so both scanners see it as expired on their first
+    // pass over the same operationId.
+    await server.dispatchTask({
+      operationId: 'dedup-scan-op',
+      activityName: 'charge',
+      input: null,
+      visibilityTimeout: 60, // expires in 60ms, well before the 600ms reconciliation
+    });
+    await Bun.sleep(50);
+    expect(server.registry.isAssigned('dedup-scan-op')).toBe(true);
+
+    // Wait for at least one full reconciliation cycle (600ms) plus some slack
+    // so both scanners have had multiple chances to process the expired record.
+    await Bun.sleep(800);
+
+    // The task must be re-dispatched exactly once (attempt 2). If the guard
+    // were absent, the worker would receive attempt 2 more than once.
+    const taskMessages = received.filter(
+      (m) => m.type === 'task' && m.operationId === 'dedup-scan-op',
+    );
+    const attempt2Messages = taskMessages.filter((m) => m.attempt === 2);
+    expect(attempt2Messages.length).toBe(1);
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('does not double-process an orphaned operationId visible only to reconcileOrphanedRecords', async () => {
+    // Insert an expired inflight record directly into storage without
+    // dispatching through the server. This means the record is NOT in the
+    // deadline heap, so only reconcileOrphanedRecords will find it — and it
+    // will only find it once even if multiple reconciliation cycles run.
+    ({ engine, storage } = createEngineWithStorage());
+    server = serve({ engine, port: 0, visibilityPollIntervalMs: 50 });
+
+    const ws = await connectWorker(server);
+    const received: Array<{ type: string; operationId?: string; attempt?: number }> = [];
+
+    ws.addEventListener('message', (event) => {
+      const msg = JSON.parse(String(event.data)) as {
+        type: string;
+        operationId?: string;
+        attempt?: number;
+      };
+      received.push(msg);
+      // Complete on first re-dispatch attempt to prevent further cycling.
+      if (msg.type === 'task') {
+        ws.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: msg.operationId,
+            status: 'completed',
+            value: null,
+          }),
+        );
+      }
+    });
+
+    await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
+
+    // Wait for the server's startup restore scan to finish before inserting
+    // the orphan so it is not accidentally restored as a valid in-flight task.
+    await Bun.sleep(100);
+
+    const orphanRecord = {
+      operationId: 'dedup-orphan-op',
+      workerId: 'ghost-worker',
+      deadline: Date.now() - 5_000, // already expired
+      activityName: 'charge',
+      queue: 'default',
+      input: null,
+      attempt: 1,
+      visibilityTimeout: 30_000,
+    };
+    await storage.put(KEYS.operationInflight('dedup-orphan-op'), encode(orphanRecord));
+
+    // Wait for two full reconciliation cycles (2 * 600ms = 1200ms) plus slack.
+    // Without the deduplication guard a second concurrent reconciliation cycle
+    // would re-dispatch the same record a second time.
+    await Bun.sleep(1400);
+
+    // The orphaned task must be re-dispatched exactly once.
+    const taskMessages = received.filter(
+      (m) => m.type === 'task' && m.operationId === 'dedup-orphan-op',
+    );
+    expect(taskMessages.length).toBe(1);
+    expect(taskMessages[0]?.attempt).toBe(2);
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Retry policy respected on reassignment
 // ---------------------------------------------------------------------------
 
