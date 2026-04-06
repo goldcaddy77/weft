@@ -437,101 +437,81 @@ describe('ProviderHealthTracker', () => {
     });
   });
 
-  describe('entries array is pruned to stay bounded', () => {
-    it('drops expired entries from the backing array during recordSuccess', () => {
-      const { tracker, advance } = createTrackerWithClock({
-        windowDuration: 10_000,
-        minimumRequests: 5,
-        errorThreshold: 0.9, // High enough that the circuit will not trip.
-      });
-
-      // Record 100 successes at time 0.
-      for (let i = 0; i < 100; i++) {
-        tracker.recordSuccess('openai');
-      }
-      expect(tracker.getEntryCount('openai')).toBe(100);
-
-      // Advance well past the window, then record one more success.
-      advance(11_000);
-      tracker.recordSuccess('openai');
-
-      // All 100 prior entries should have been pruned; only the fresh one
-      // remains in the backing array.
-      expect(tracker.getEntryCount('openai')).toBe(1);
-    });
-
-    it('drops expired entries from the backing array during recordFailure', () => {
+  describe('expired entries are dropped from the sliding window', () => {
+    it('ignores pre-window failures when computing the error rate', () => {
       const { tracker, advance } = createTrackerWithClock({
         windowDuration: 10_000,
         minimumRequests: 5,
         errorThreshold: 0.9,
       });
 
+      // Record a burst of failures at time 0.
       for (let i = 0; i < 50; i++) {
         tracker.recordFailure('openai');
       }
-      expect(tracker.getEntryCount('openai')).toBe(50);
+      expect(tracker.getErrorRate('openai')).toBe(1);
 
+      // Advance past the window and record one success. The in-window rate
+      // should reflect only the success, not the 50 stale failures.
       advance(11_000);
-      tracker.recordFailure('openai');
-
-      expect(tracker.getEntryCount('openai')).toBe(1);
-    });
-
-    it('keeps the entries array bounded across many recordings over time', () => {
-      const { tracker, advance } = createTrackerWithClock({
-        windowDuration: 10_000,
-        minimumRequests: 5,
-        errorThreshold: 0.9,
-      });
-
-      // Simulate a provider that stays healthy for a long time. Without
-      // pruning, `entries` would grow to 10 000 items.
-      const batches = 10;
-      const perBatch = 1000;
-      for (let batch = 0; batch < batches; batch++) {
-        for (let i = 0; i < perBatch; i++) {
-          tracker.recordSuccess('openai');
-        }
-        // Advance just past the window so the next batch prunes the previous.
-        advance(11_000);
-      }
-
-      // After the last advance, the final batch was never pruned (no writes
-      // happened post-advance), so the bound is `perBatch`. One more write
-      // should trigger pruning and collapse the array to a single entry.
-      expect(tracker.getEntryCount('openai')).toBeLessThanOrEqual(perBatch);
-
       tracker.recordSuccess('openai');
-      expect(tracker.getEntryCount('openai')).toBe(1);
+      expect(tracker.getErrorRate('openai')).toBe(0);
     });
 
-    it('keeps in-window entries during pruning', () => {
+    it('does not trip the circuit on stale failures after the window rolls', () => {
       const { tracker, advance } = createTrackerWithClock({
         windowDuration: 10_000,
         minimumRequests: 5,
-        errorThreshold: 0.9,
+        errorThreshold: 0.5,
       });
 
-      // Record 5 entries at time 0.
-      for (let i = 0; i < 5; i++) {
+      // A burst of failures in a fresh window trips the circuit.
+      for (let i = 0; i < 10; i++) {
+        tracker.recordFailure('openai');
+      }
+      expect(tracker.getState('openai')).toBe('open');
+
+      // Advance past cooldown so a new batch can re-evaluate.
+      advance(31_000); // past 10s window and 30s cooldown
+      expect(tracker.getState('openai')).toBe('half-open');
+
+      // A single success closes the circuit and resets the entries.
+      tracker.recordSuccess('openai');
+      expect(tracker.getState('openai')).toBe('closed');
+
+      // A new batch of successes must not be shadowed by stale failures.
+      for (let i = 0; i < 10; i++) {
         tracker.recordSuccess('openai');
       }
+      expect(tracker.getErrorRate('openai')).toBe(0);
+      expect(tracker.getState('openai')).toBe('closed');
+    });
 
-      // Advance only halfway through the window and record 5 more.
+    it('keeps in-window entries while dropping expired ones', () => {
+      const { tracker, advance } = createTrackerWithClock({
+        windowDuration: 10_000,
+        minimumRequests: 5,
+        errorThreshold: 0.9,
+      });
+
+      // Record 5 failures at time 0.
+      for (let i = 0; i < 5; i++) {
+        tracker.recordFailure('openai');
+      }
+
+      // Advance halfway through the window and record 5 successes.
       advance(5_000);
       for (let i = 0; i < 5; i++) {
         tracker.recordSuccess('openai');
       }
 
-      // All 10 entries should still be present — none are expired.
-      expect(tracker.getEntryCount('openai')).toBe(10);
+      // Everything is still in-window: 5 failures + 5 successes = 50%.
+      expect(tracker.getErrorRate('openai')).toBe(0.5);
 
-      // Advance past the time-0 entries' expiry, then record one more.
-      // The first 5 should prune, leaving 5 + 1 = 6.
+      // Advance past the time-0 failures' expiry. Only the 5 successes
+      // should remain in the window.
       advance(6_000);
-      tracker.recordSuccess('openai');
-      expect(tracker.getEntryCount('openai')).toBe(6);
+      expect(tracker.getErrorRate('openai')).toBe(0);
     });
   });
 

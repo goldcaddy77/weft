@@ -44,6 +44,8 @@ import type {
   ToolDefinition,
   ToolResult,
 } from './providers/types';
+import type { CacheEntry } from './tool-cache';
+import { setToolCacheEntry } from './tool-cache';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -238,44 +240,8 @@ interface ToolExecutionOutcome {
 // Tool result cache
 // ---------------------------------------------------------------------------
 
-/** @internal Exported for tests only. */
-export interface CacheEntry {
-  output: string;
-  timestamp: number;
-}
-
 function buildCacheKey(toolName: string, input: unknown): string {
   return `${toolName}:${JSON.stringify(input)}`;
-}
-
-/**
- * Insert a tool result cache entry, enforcing the configured max size.
- *
- * `Map` preserves insertion order, so deleting the first key evicts the
- * oldest entry. If the key already exists, we delete it first so the
- * updated entry is re-inserted at the tail, keeping insertion order
- * consistent with recency.
- *
- * @internal Exported for tests only.
- */
-export function _setToolCacheEntry(
-  cache: Map<string, CacheEntry>,
-  key: string,
-  entry: CacheEntry,
-  maxSize: number,
-): void {
-  if (cache.has(key)) {
-    cache.delete(key);
-  }
-  cache.set(key, entry);
-
-  while (cache.size > maxSize) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey === undefined) {
-      break;
-    }
-    cache.delete(oldestKey);
-  }
 }
 
 /**
@@ -374,9 +340,9 @@ const defaultMCPClientFactory: MCPClientFactory = (source) => {
  * For each local tool: register in the registry.
  * Finally, validate for name conflicts and return the populated registry.
  *
- * @internal Exported for tests only.
+ * @internal
  */
-export async function _initializeTools(
+export async function initializeTools(
   tools: (AgentTool | MCPToolSource)[],
   signal?: AbortSignal,
   createClient: MCPClientFactory = defaultMCPClientFactory,
@@ -493,7 +459,7 @@ function createInitialConversation(systemPrompt: string | undefined, input: stri
 
 async function createAgentRuntime(options: AgentOptions, input: string): Promise<AgentRuntime> {
   const resolvedOptions = resolveAgentOptions(options);
-  const { registry, dispose } = await _initializeTools(options.tools ?? [], resolvedOptions.signal);
+  const { registry, dispose } = await initializeTools(options.tools ?? [], resolvedOptions.signal);
   const { toolMap, toolDefinitions } = createToolLookups(registry.getAll());
 
   return {
@@ -907,7 +873,7 @@ async function resolveToolExecution(
     try {
       const rawOutput = await tool.execute(toolCall.input);
       output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
-      _setToolCacheEntry(
+      setToolCacheEntry(
         runtime.state.toolCache,
         cacheKey,
         { output, timestamp: Date.now() },

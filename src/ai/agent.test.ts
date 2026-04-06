@@ -5,20 +5,21 @@ import type { ChatResponse, Message, ToolDefinition } from './providers/types';
 
 import type {
   AgentTool,
-  CacheEntry,
   MCPClientFactory,
   ToolCallInfo,
   ToolReturnInfo,
   TurnInfo,
   TurnResult,
 } from './agent';
-import { _initializeTools, _setToolCacheEntry, executeAgentLoop } from './agent';
+import { executeAgentLoop, initializeTools } from './agent';
 import { BudgetExceededError, BudgetTracker } from './budget';
 import { AgentModelFallbackEvent, AgentTurnCompletedEvent } from './events';
 import { MCPClient } from './mcp/client';
 import { ToolNameConflictError } from './mcp/registry';
 import type { MCPRequest, MCPResponse, MCPTransport } from './mcp/transport';
 import type { ModelRouter, RoutingContext } from './model-router';
+import type { CacheEntry } from './tool-cache';
+import { setToolCacheEntry } from './tool-cache';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2076,11 +2077,7 @@ describe('executeAgentLoop', () => {
     };
 
     await expect(
-      _initializeTools(
-        [{ mcp: 'http://server-a' }, { mcp: 'http://server-b' }],
-        undefined,
-        factory,
-      ),
+      initializeTools([{ mcp: 'http://server-a' }, { mcp: 'http://server-b' }], undefined, factory),
     ).rejects.toBeInstanceOf(ToolNameConflictError);
 
     // Both clients should have had their underlying transports disposed
@@ -2096,28 +2093,28 @@ describe('executeAgentLoop', () => {
     const cache = new Map<string, CacheEntry>();
     const entry = (output: string): CacheEntry => ({ output, timestamp: 1 });
 
-    _setToolCacheEntry(cache, 'a', entry('A'), 3);
-    _setToolCacheEntry(cache, 'b', entry('B'), 3);
-    _setToolCacheEntry(cache, 'c', entry('C'), 3);
+    setToolCacheEntry(cache, 'a', entry('A'), 3);
+    setToolCacheEntry(cache, 'b', entry('B'), 3);
+    setToolCacheEntry(cache, 'c', entry('C'), 3);
     expect(cache.size).toBe(3);
     expect([...cache.keys()]).toEqual(['a', 'b', 'c']);
 
     // Inserting a fourth key should evict 'a' (the oldest)
-    _setToolCacheEntry(cache, 'd', entry('D'), 3);
+    setToolCacheEntry(cache, 'd', entry('D'), 3);
     expect(cache.size).toBe(3);
     expect([...cache.keys()]).toEqual(['b', 'c', 'd']);
     expect(cache.has('a')).toBe(false);
 
     // Re-inserting an existing key should move it to the tail without
     // evicting anything else
-    _setToolCacheEntry(cache, 'b', entry('B2'), 3);
+    setToolCacheEntry(cache, 'b', entry('B2'), 3);
     expect(cache.size).toBe(3);
     expect([...cache.keys()]).toEqual(['c', 'd', 'b']);
     expect(cache.get('b')?.output).toBe('B2');
 
     // Lowering the effective max size via a larger insertion batch should
     // evict multiple oldest entries in a single call
-    _setToolCacheEntry(cache, 'e', entry('E'), 2);
+    setToolCacheEntry(cache, 'e', entry('E'), 2);
     expect(cache.size).toBe(2);
     expect([...cache.keys()]).toEqual(['b', 'e']);
   });

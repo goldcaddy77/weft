@@ -11,16 +11,23 @@ export type SleepFunction = (milliseconds: number) => Promise<void>;
 export interface SharedStateOptions {
   /** Maximum number of CAS attempts before giving up. Defaults to 10. */
   maxRetries?: number;
-  /** Base delay in milliseconds for exponential backoff between retries. Defaults to 5. */
-  baseDelayMs?: number;
-  /** Maximum delay in milliseconds for exponential backoff between retries. Defaults to 100. */
-  maxDelayMs?: number;
   /**
    * Sleep function used between retry attempts. Defaults to `Bun.sleep`.
-   * Exposed primarily for testing.
+   * Injection point for tests that need to observe backoff without paying
+   * real time costs.
    */
   sleep?: SleepFunction;
 }
+
+/**
+ * Base delay for the CAS retry backoff, in milliseconds. The actual delay
+ * is `random * min(BASE * 2^attempt, MAX)` — exponential with jitter, capped
+ * by `SHARED_STATE_MAX_DELAY_MS`.
+ */
+const SHARED_STATE_BASE_DELAY_MS = 5;
+
+/** Upper bound for each CAS retry backoff delay, in milliseconds. */
+const SHARED_STATE_MAX_DELAY_MS = 100;
 
 export class SharedStateConflictError extends Error {
   readonly stateKey: string;
@@ -41,8 +48,6 @@ export class SharedState<T> {
   #workflowId: string;
   #stateKey: string;
   #maxRetries: number;
-  #baseDelayMs: number;
-  #maxDelayMs: number;
   #sleep: SleepFunction;
 
   constructor(
@@ -55,9 +60,7 @@ export class SharedState<T> {
     this.#workflowId = workflowId;
     this.#stateKey = stateKey;
     this.#maxRetries = options?.maxRetries ?? 10;
-    this.#baseDelayMs = options?.baseDelayMs ?? 5;
-    this.#maxDelayMs = options?.maxDelayMs ?? 100;
-    this.#sleep = options?.sleep ?? ((milliseconds) => Bun.sleep(milliseconds));
+    this.#sleep = options?.sleep ?? Bun.sleep;
   }
 
   /** Read the current value. Returns initial value if no state written yet. */
@@ -119,7 +122,10 @@ export class SharedState<T> {
       // before the next attempt, but skip the delay after the final failed
       // attempt since we're about to throw.
       if (attempt < this.#maxRetries - 1) {
-        const exponential = Math.min(this.#maxDelayMs, this.#baseDelayMs * Math.pow(2, attempt));
+        const exponential = Math.min(
+          SHARED_STATE_MAX_DELAY_MS,
+          SHARED_STATE_BASE_DELAY_MS * 2 ** attempt,
+        );
         const jittered = Math.floor(Math.random() * exponential);
         await this.#sleep(jittered);
       }

@@ -18,6 +18,44 @@ async function flush(): Promise<void> {
   await Bun.sleep(10);
 }
 
+/**
+ * Poll an async condition until it returns true, or throw after `timeoutMs`.
+ * Prefer this over raw `Bun.sleep` when waiting for a specific observable
+ * state — it adapts to the actual time needed rather than guessing.
+ */
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  {
+    timeoutMs = 2000,
+    intervalMs = 5,
+    label = 'condition',
+  }: { timeoutMs?: number; intervalMs?: number; label?: string } = {},
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      if (await predicate()) return;
+    } catch (error) {
+      lastError = error;
+    }
+    await Bun.sleep(intervalMs);
+  }
+  const message = `Timed out after ${timeoutMs}ms waiting for ${label}`;
+  throw lastError instanceof Error
+    ? new Error(`${message}: ${lastError.message}`)
+    : new Error(message);
+}
+
+/** Count keys under a prefix by draining an async iterator. */
+async function countKeys(engine: Engine, prefix: string): Promise<number> {
+  let count = 0;
+  for await (const _entry of engine.storage.scan(prefix)) {
+    count++;
+  }
+  return count;
+}
+
 function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
@@ -256,28 +294,30 @@ describe('serve', () => {
     engine.dispatchEvent(new TokenEvent(workflowId, 'second', 'gpt-4'));
     engine.dispatchEvent(new TokenEvent(workflowId, 'third', 'gpt-4'));
 
-    // Give the serialization chain a chance to persist all three.
-    await Bun.sleep(50);
-
-    // Verify persistence succeeded for the pre-terminal events.
-    let preCount = 0;
-    for await (const [_key] of engine.storage.scan(`ev:${workflowId}:`)) {
-      preCount++;
-    }
-    expect(preCount).toBe(3);
+    // Wait until the serialization chain has persisted all three. Polling on
+    // the observable count is deterministic across CI load — a raw
+    // `Bun.sleep(50)` was flaky on slower runners.
+    await waitFor(async () => (await countKeys(engine, `ev:${workflowId}:`)) === 3, {
+      label: '3 pre-terminal events persisted',
+    });
 
     // Mark the workflow terminal — this should trigger the sequence-map cleanup.
     engine.dispatchEvent(new WorkflowCompletedEvent(workflowId, 'ok', 1));
-    // WorkflowCompletedEvent is also persisted, and cleanup waits for the
-    // current serialization chain to drain before evicting the maps.
-    await Bun.sleep(100);
+    // Wait until the terminal event is persisted (now 4 total). Cleanup
+    // evicts the sequence maps once the current serialization chain drains;
+    // by the time the 4th key is observable, cleanup has completed.
+    await waitFor(async () => (await countKeys(engine, `ev:${workflowId}:`)) === 4, {
+      label: 'terminal event persisted and cleanup complete',
+    });
 
     // Emit another event for the same workflowId *after* cleanup. With the
     // sequence state evicted, `ensureSequenceInitialized` must re-read from
     // storage and resume after the highest existing sequence number — not
     // restart at 0 and overwrite the previously persisted events.
     engine.dispatchEvent(new TokenEvent(workflowId, 'post-terminal', 'gpt-4'));
-    await Bun.sleep(50);
+    await waitFor(async () => (await countKeys(engine, `ev:${workflowId}:`)) === 5, {
+      label: 'post-terminal event persisted without collision',
+    });
 
     const keys: string[] = [];
     for await (const [key] of engine.storage.scan(`ev:${workflowId}:`)) {
@@ -319,16 +359,23 @@ describe('serve', () => {
       engine.dispatchEvent(new WorkflowCompletedEvent(workflowId, i, 1));
     }
 
-    // Let all serialization chains drain.
-    await Bun.sleep(200);
+    // Poll until every workflow has persisted its 2 events rather than
+    // guessing a drain interval. This adapts to CI load and isolates failure
+    // to the specific workflow that lagged rather than a blanket timeout.
+    await waitFor(
+      async () => {
+        for (let i = 0; i < workflowCount; i++) {
+          const count = await countKeys(engine, `ev:bulk-wf-${i}:`);
+          if (count !== 2) return false;
+        }
+        return true;
+      },
+      { label: 'all 25 bulk workflows persisted their events' },
+    );
 
     // Each workflow should have exactly 2 stored events (the token + terminal).
     for (let i = 0; i < workflowCount; i++) {
-      const workflowId = `bulk-wf-${i}`;
-      let count = 0;
-      for await (const [_key] of engine.storage.scan(`ev:${workflowId}:`)) {
-        count++;
-      }
+      const count = await countKeys(engine, `ev:bulk-wf-${i}:`);
       expect(count).toBe(2);
     }
   });

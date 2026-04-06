@@ -144,19 +144,6 @@ export class ProviderHealthTracker {
     return state.circuit;
   }
 
-  /**
-   * Get the number of entries currently stored for a provider. This reflects
-   * the size of the backing array after pruning, which may exceed the number
-   * of entries inside the current sliding window (pruning is best-effort) but
-   * is guaranteed to be bounded by the recording rate and window duration.
-   *
-   * Primarily useful for metrics and for verifying memory behavior in tests.
-   */
-  getEntryCount(provider: string): number {
-    const state = this.#providers.get(provider);
-    return state?.entries.length ?? 0;
-  }
-
   /** Get the current error rate for a provider within the sliding window. */
   getErrorRate(provider: string): number {
     const state = this.#providers.get(provider);

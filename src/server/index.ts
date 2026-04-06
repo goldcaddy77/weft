@@ -276,6 +276,20 @@ interface EventBroadcastingHandle {
 }
 
 /**
+ * Extract a `workflowId` from a DOM `Event` when the concrete event carries
+ * one. All workflow, activity, token, signal, attribute, and update events
+ * in `core/events.ts` expose a `workflowId: string` field, but the `Event`
+ * base type does not know about it — so a runtime structural check narrows
+ * the value before we use it to key bookkeeping maps. Returns `undefined`
+ * for events without a string `workflowId` property.
+ */
+function getWorkflowIdFromEvent(event: Event): string | undefined {
+  if (!('workflowId' in event)) return undefined;
+  const candidate = (event as { workflowId: unknown }).workflowId;
+  return typeof candidate === 'string' ? candidate : undefined;
+}
+
+/**
  * Attach event listeners to the engine that broadcast events via WebSocket
  * and persist each event to storage so GET /v1/workflows/:id/events returns data.
  * Returns a handle exposing a cleanup function and a per-workflow eviction hook.
@@ -411,9 +425,7 @@ function wireEventBroadcasting(
     engine.addEventListener(
       eventType,
       (event) => {
-        const raw =
-          'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
-        const workflowId = typeof raw === 'string' ? raw : undefined;
+        const workflowId = getWorkflowIdFromEvent(event);
         if (workflowId === undefined) return;
 
         const message = serializeEvent(event);
@@ -1072,9 +1084,7 @@ export function serve(options: ServeOptions): WeftServer {
     options.engine.addEventListener(
       eventType,
       (event) => {
-        const raw =
-          'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
-        const workflowId = typeof raw === 'string' ? raw : undefined;
+        const workflowId = getWorkflowIdFromEvent(event);
         if (workflowId) {
           workerAffinity.delete(workflowId);
           broadcastingHandle.cleanupWorkflow(workflowId);
@@ -1090,9 +1100,7 @@ export function serve(options: ServeOptions): WeftServer {
   options.engine.addEventListener(
     WorkflowCancelledEvent.type,
     (event) => {
-      const raw =
-        'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
-      const workflowId = typeof raw === 'string' ? raw : undefined;
+      const workflowId = getWorkflowIdFromEvent(event);
       if (!workflowId) return;
 
       const operationIds = workflowOperations.get(workflowId);

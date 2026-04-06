@@ -549,8 +549,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
+  /**
+   * Dedup set for recorded agent operation budget costs. Entries are composite
+   * keys of the form `${workflowId}:${operationId}` so terminal-state cleanup
+   * can drop all entries for a workflow with a prefix scan, keeping a single
+   * source of truth rather than a parallel Map.
+   */
   #chargedAgentOperations: Set<string>;
-  #chargedAgentOperationsByWorkflow: Map<string, Set<string>>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
   #defaultModelRouter: import('../ai/model-router.ts').ModelRouter | undefined;
   #reviewCoordinator: ReviewCoordinator;
@@ -653,7 +658,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#heartbeatDetails = new Map();
     this.#pendingStarts = new Set();
     this.#chargedAgentOperations = new Set();
-    this.#chargedAgentOperationsByWorkflow = new Map();
     this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
     this.#reviewWaiters = new Map();
     this.#reviewEscalationHandlers = new Map();
@@ -1937,7 +1941,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowHeaders.clear();
     this.#pendingStarts.clear();
     this.#chargedAgentOperations.clear();
-    this.#chargedAgentOperationsByWorkflow.clear();
     this.#agentWorkflowIds.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
@@ -2393,6 +2396,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'parallel' }>,
   ): Promise<void> {
+    // `ctx.all()` awaits every branch, so there's no "loser" to abort like
+    // there is for `ctx.race()`. Each sub-operation runs to completion or
+    // throws; `Promise.all` short-circuits on the first rejection, but the
+    // surviving branches' budgets are intentionally preserved — callers that
+    // want cancellation on failure should use `ctx.race()` with a guard.
     return this.#runOperationWithResult(workflowId, operation, async () =>
       Promise.all(
         operation.operations.map((subOperation) =>
@@ -2890,9 +2898,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const chargedKey = KEYS.budgetCharged(operationId);
+    const dedupKey = `${workflowId}:${operationId}`;
     const alreadyCharged =
-      this.#chargedAgentOperations.has(operationId) ||
-      (await this.#storage.get(chargedKey)) !== null;
+      this.#chargedAgentOperations.has(dedupKey) || (await this.#storage.get(chargedKey)) !== null;
 
     if (alreadyCharged) {
       return;
@@ -2900,16 +2908,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     await this.#storage.put(chargedKey, encode({ cost: totalCost }));
     await this.#budgetPolicyEnforcer.recordCost(resolvedBudgetNamespace, totalCost);
-    this.#chargedAgentOperations.add(operationId);
-
-    // Track per-workflow so terminal-state cleanup can release these IDs
-    // instead of leaking them for the engine's lifetime.
-    let workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
-    if (!workflowOperations) {
-      workflowOperations = new Set();
-      this.#chargedAgentOperationsByWorkflow.set(workflowId, workflowOperations);
-    }
-    workflowOperations.add(operationId);
+    this.#chargedAgentOperations.add(dedupKey);
   }
 
   async #processChildWorkflowOperation(
@@ -3112,6 +3111,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * Remove durable records keyed by `workflowId` that otherwise leak after a
    * workflow reaches a terminal state. Covers offloaded values, blob stream
    * chunks, shared state entries, signal queue entries, and event history.
+   *
+   * Concurrency note: we assume all writers for a workflow's prefixed keys
+   * originate from that workflow's own execution. By the time this runs, the
+   * workflow is already terminal and cannot schedule new writes — `#completeWorkflow`,
+   * `#failWorkflow`, and `#terminateWorkflow` all await this method before
+   * returning. Any write that races the scan must have come from a background
+   * task that itself holds a handle to the terminal workflow, and those are
+   * caller-level bugs we don't try to paper over here.
    */
   async #cleanupWorkflowStorage(workflowId: string): Promise<void> {
     const prefixes = [
@@ -3149,14 +3156,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#agentWorkflowIds.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
-    // Release per-workflow charged agent operation IDs so the engine-wide
-    // dedup set does not retain them forever.
-    const chargedOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
-    if (chargedOperations) {
-      for (const operationId of chargedOperations) {
-        this.#chargedAgentOperations.delete(operationId);
+    // Release charged agent operation dedup keys that belong to this workflow
+    // so the engine-wide Set does not grow unbounded over time. Keys are
+    // composite `${workflowId}:${operationId}` strings, so a prefix match is
+    // sufficient.
+    const chargedKeyPrefix = `${workflowId}:`;
+    for (const key of this.#chargedAgentOperations) {
+      if (key.startsWith(chargedKeyPrefix)) {
+        this.#chargedAgentOperations.delete(key);
       }
-      this.#chargedAgentOperationsByWorkflow.delete(workflowId);
     }
 
     // Durable records

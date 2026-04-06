@@ -217,8 +217,6 @@ describe('SharedState', () => {
 
       const state = new SharedState<number>(storage, 'wf-1', 'counter', {
         maxRetries: 3,
-        baseDelayMs: 10,
-        maxDelayMs: 100,
         sleep,
       });
 
@@ -232,7 +230,7 @@ describe('SharedState', () => {
       expect(sleepCalls).toHaveLength(2);
     });
 
-    it('uses exponential backoff bounded by maxDelayMs', async () => {
+    it('uses exponential backoff bounded by the production max delay', async () => {
       const storage = createConflictingStorage();
       const sleepCalls: number[] = [];
       const sleep = (milliseconds: number): Promise<void> => {
@@ -241,9 +239,7 @@ describe('SharedState', () => {
       };
 
       const state = new SharedState<number>(storage, 'wf-1', 'counter', {
-        maxRetries: 6,
-        baseDelayMs: 10,
-        maxDelayMs: 50,
+        maxRetries: 8,
         sleep,
       });
 
@@ -251,13 +247,14 @@ describe('SharedState', () => {
         SharedStateConflictError,
       );
 
-      // 6 attempts -> 5 sleeps between them.
-      expect(sleepCalls).toHaveLength(5);
+      // 8 attempts -> 7 sleeps between them.
+      expect(sleepCalls).toHaveLength(7);
 
       // Jittered delay is floor(random * exponential) where exponential =
-      // min(maxDelayMs, baseDelayMs * 2^attempt). Each sleep duration
-      // must fall within [0, exponential).
-      const exponentials = [10, 20, 40, 50, 50];
+      // min(MAX_DELAY, BASE_DELAY * 2^attempt). Production constants are
+      // BASE=5ms, MAX=100ms, so the exponentials per attempt are:
+      //   attempt 0: 5,   1: 10,  2: 20,  3: 40,  4: 80,  5..6: 100
+      const exponentials = [5, 10, 20, 40, 80, 100, 100];
       sleepCalls.forEach((duration, index) => {
         expect(duration).toBeGreaterThanOrEqual(0);
         expect(duration).toBeLessThan(exponentials[index]!);

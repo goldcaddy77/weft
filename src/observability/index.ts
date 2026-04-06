@@ -718,11 +718,11 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     }
 
     // End any still-open workflow spans so the map cannot leak past dispose.
-    for (const [workflowId, span] of workflowSpans) {
+    for (const span of workflowSpans.values()) {
       span.setStatus({ code: SpanStatusCode.ERROR, message: 'Observability disposed' });
       span.end();
-      workflowSpans.delete(workflowId);
     }
+    workflowSpans.clear();
   }
 
   return { workflow, activity, metrics, endWorkflowSpan, dispose };
