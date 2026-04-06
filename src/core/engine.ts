@@ -12,7 +12,6 @@
 
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
-import type { LLMProvider } from '../ai/providers/interface.ts';
 import {
   ReviewCoordinator,
   ReviewTimeoutError,
@@ -20,6 +19,7 @@ import {
   type HumanReviewResult,
   type ReviewRequest,
 } from '../ai/human-review.ts';
+import type { LLMProvider } from '../ai/providers/interface.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
@@ -1324,7 +1324,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Check if workflow is waiting for this update via waitForUpdate
     const waiterKey = `${workflowId}:${name}`;
     const updateWaiter = this.#updateWaiters.get(waiterKey);
-    if (updateWaiter) {
+    const existingPendingUpdate = updateWaiter
+      ? await this.#findPendingUpdateByName(workflowId, name)
+      : undefined;
+    if (updateWaiter && !existingPendingUpdate) {
       this.#updateWaiters.delete(waiterKey);
       const updateId = crypto.randomUUID();
       this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
@@ -1366,6 +1369,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // If no active handler, use the UpdateCoordinator with polling
     const updateId = await this.#updateCoordinator.createRequest(workflowId, name, payload);
     this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
+
+    await this.#deliverCoordinatedUpdateToWaiterIfAvailable(workflowId, {
+      updateId,
+      workflowId,
+      name,
+      payload,
+      createdAt: Date.now(),
+    });
 
     const response = await this.#updateCoordinator.waitForResponse(updateId, timeout);
 
@@ -1862,6 +1873,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       requestOptions,
     );
 
+    await this.#deliverCoordinatedUpdateToWaiterIfAvailable(
+      workflowId,
+      {
+        updateId,
+        workflowId,
+        name,
+        payload,
+        createdAt: Date.now(),
+        idempotencyKey,
+      },
+      true,
+    );
+
     const response = await this.#updateCoordinator.waitForResponse(updateId, timeout);
 
     const result: CoordinatedUpdateResult = {
@@ -2298,20 +2322,50 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'wait-update' }>,
   ): Promise<void> {
-    const pendingUpdates = await this.#updateCoordinator.getPendingUpdates(workflowId);
-    const matchingUpdate = pendingUpdates.find((update) => update.name === operation.updateName);
+    const waiterKey = `${workflowId}:${operation.updateName}`;
+    const matchingUpdate = await this.#findPendingUpdateByName(workflowId, operation.updateName);
 
     if (matchingUpdate) {
       this.#dispatchPendingUpdateReceived(workflowId, operation.updateName, matchingUpdate);
       this.#completeOperation(workflowId, {
         payload: matchingUpdate.payload,
-        respond: this.#createCoordinatedUpdateResponder(workflowId, operation, matchingUpdate),
+        respond: this.#createCoordinatedUpdateResponder(
+          workflowId,
+          operation.updateName,
+          matchingUpdate,
+        ),
       });
       return;
     }
 
     const { promise, resolve } = Promise.withResolvers<unknown>();
-    this.#updateWaiters.set(`${workflowId}:${operation.updateName}`, resolve);
+    this.#updateWaiters.set(waiterKey, resolve);
+
+    const pendingUpdateAfterRegistration = await this.#findPendingUpdateByName(
+      workflowId,
+      operation.updateName,
+    );
+    if (pendingUpdateAfterRegistration) {
+      if (this.#updateWaiters.get(waiterKey) === resolve) {
+        this.#updateWaiters.delete(waiterKey);
+      }
+
+      this.#dispatchPendingUpdateReceived(
+        workflowId,
+        operation.updateName,
+        pendingUpdateAfterRegistration,
+      );
+      this.#completeOperation(workflowId, {
+        payload: pendingUpdateAfterRegistration.payload,
+        respond: this.#createCoordinatedUpdateResponder(
+          workflowId,
+          operation.updateName,
+          pendingUpdateAfterRegistration,
+        ),
+      });
+      return;
+    }
+
     this.#completeOperation(workflowId, await promise);
   }
 
@@ -2327,7 +2381,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   #createCoordinatedUpdateResponder(
     workflowId: string,
-    operation: Extract<ContextOperationRequest, { type: 'wait-update' }>,
+    updateName: string,
     update: UpdateRequest,
   ): (value: unknown) => void {
     let coordinatedResponded = false;
@@ -2348,7 +2402,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         .batch(responseOperations)
         .then(() => {
           this.dispatchEvent(
-            new UpdateCompletedEvent(update.updateId, workflowId, operation.updateName, value),
+            new UpdateCompletedEvent(update.updateId, workflowId, updateName, value),
           );
           this.#broadcast({
             type: 'update:completed',
@@ -2361,6 +2415,42 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           this.#handleCleanupError('writeCoordinatedUpdateResponse', error, workflowId);
         });
     };
+  }
+
+  async #deliverCoordinatedUpdateToWaiterIfAvailable(
+    workflowId: string,
+    update: UpdateRequest,
+    dispatchReceivedEvent = false,
+  ): Promise<boolean> {
+    const waiterKey = `${workflowId}:${update.name}`;
+    const waiter = this.#updateWaiters.get(waiterKey);
+    if (!waiter) {
+      return false;
+    }
+
+    const oldestPendingUpdate = await this.#findPendingUpdateByName(workflowId, update.name);
+    if (!oldestPendingUpdate || oldestPendingUpdate.updateId !== update.updateId) {
+      return false;
+    }
+
+    this.#updateWaiters.delete(waiterKey);
+    if (dispatchReceivedEvent) {
+      this.#dispatchPendingUpdateReceived(workflowId, update.name, update);
+    }
+
+    waiter({
+      payload: update.payload,
+      respond: this.#createCoordinatedUpdateResponder(workflowId, update.name, update),
+    });
+    return true;
+  }
+
+  async #findPendingUpdateByName(
+    workflowId: string,
+    name: string,
+  ): Promise<UpdateRequest | undefined> {
+    const pendingUpdates = await this.#updateCoordinator.getPendingUpdates(workflowId);
+    return pendingUpdates.find((update) => update.name === name);
   }
 
   async #processParallelOperation(
