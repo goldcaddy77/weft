@@ -143,7 +143,14 @@ export class OpenAIProvider implements LLMProvider {
           // garbage-collected. Errors are ignored because the reader may
           // already be in a terminal state when we get here.
           reader.cancel().catch(() => {});
-          controller.close();
+          // `controller.close()` throws if the stream is already closed
+          // or errored — which is exactly what happens when the consumer
+          // cancelled the outer stream before we reached this block.
+          try {
+            controller.close();
+          } catch {
+            // Ignore: controller is already in a terminal state.
+          }
         }
       },
       cancel(reason) {
