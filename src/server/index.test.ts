@@ -4,6 +4,7 @@ import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import { TokenEvent, WorkflowCancelledEvent } from '../core/events.ts';
 import type { RetryPolicy, WorkflowContext } from '../core/types.ts';
+import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
@@ -3667,6 +3668,128 @@ describe('concurrent scanner deduplication', () => {
 
     ws.close();
     await Bun.sleep(50);
+  });
+
+  it('re-adds a drained heap entry when reconciliation is already processing the same operation', async () => {
+    const operationId = 'dedup-readd-op';
+    const innerStorage = new MemoryStorage();
+
+    let releaseBlockedBatch: () => void = () => {};
+    const blockedBatch = new Promise<void>((resolve) => {
+      releaseBlockedBatch = resolve;
+    });
+    let notifyReconciliationBlocked: () => void = () => {};
+    const reconciliationBlocked = new Promise<void>((resolve) => {
+      notifyReconciliationBlocked = resolve;
+    });
+
+    let shouldInjectExpiredEntry = false;
+    let blockedOperationBatch = false;
+
+    const delayedStorage: WeftStorage = {
+      get: innerStorage.get.bind(innerStorage),
+      put: innerStorage.put.bind(innerStorage),
+      delete: innerStorage.delete.bind(innerStorage),
+      scan: innerStorage.scan.bind(innerStorage),
+      batch: async (operations) => {
+        const touchesTrackedOperation = operations.some(
+          (operation) =>
+            operation.key === KEYS.operationInflight(operationId) ||
+            operation.key === KEYS.operationQueued(operationId),
+        );
+
+        if (!blockedOperationBatch && touchesTrackedOperation) {
+          blockedOperationBatch = true;
+          shouldInjectExpiredEntry = true;
+          notifyReconciliationBlocked();
+          await blockedBatch;
+        }
+
+        await innerStorage.batch(operations);
+      },
+      [Symbol.dispose]() {
+        innerStorage[Symbol.dispose]();
+      },
+    };
+
+    engine = new Engine({ storage: delayedStorage });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    const originalAdd = DeadlineTracker.prototype.add;
+    const originalDrainExpired = DeadlineTracker.prototype.drainExpired;
+    let readdedEntries = 0;
+
+    const restoreAdd = overrideProperty(
+      DeadlineTracker.prototype,
+      'add',
+      function (
+        this: DeadlineTracker,
+        entry: Parameters<DeadlineTracker['add']>[0],
+      ): ReturnType<DeadlineTracker['add']> {
+        if (entry.operationId === operationId) {
+          readdedEntries++;
+        }
+        return originalAdd.call(this, entry);
+      },
+    );
+
+    const restoreDrainExpired = overrideProperty(
+      DeadlineTracker.prototype,
+      'drainExpired',
+      function (
+        this: DeadlineTracker,
+        now: Parameters<DeadlineTracker['drainExpired']>[0],
+      ): ReturnType<DeadlineTracker['drainExpired']> {
+        const expired = originalDrainExpired.call(this, now);
+        if (shouldInjectExpiredEntry) {
+          shouldInjectExpiredEntry = false;
+          return [...expired, { operationId, deadline: now - 1 }];
+        }
+        return expired;
+      },
+    );
+
+    try {
+      server = serve({ engine, port: 0, visibilityPollIntervalMs: 25 });
+      await Bun.sleep(100);
+
+      await innerStorage.put(
+        KEYS.operationInflight(operationId),
+        encode({
+          operationId,
+          workerId: 'ghost-worker',
+          deadline: Date.now() - 5_000,
+          activityName: 'charge',
+          queue: 'default',
+          input: null,
+          attempt: 1,
+          visibilityTimeout: 30_000,
+        }),
+      );
+
+      await reconciliationBlocked;
+
+      let observedReadd = false;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await Bun.sleep(25);
+        observedReadd = readdedEntries > 0;
+        if (observedReadd) break;
+      }
+
+      expect(observedReadd).toBe(true);
+      expect(readdedEntries).toBe(1);
+
+      releaseBlockedBatch();
+      await Bun.sleep(100);
+
+      expect(await innerStorage.get(KEYS.operationQueued(operationId))).not.toBeNull();
+    } finally {
+      releaseBlockedBatch();
+      restoreDrainExpired();
+      restoreAdd();
+    }
   });
 });
 
