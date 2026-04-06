@@ -1,5 +1,7 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 
+import { defineAgent } from '../ai/declaration.ts';
+import { AgentBudgetExceededEvent, AgentBudgetWarningEvent } from '../ai/events.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
@@ -1184,7 +1186,7 @@ describe('Engine', () => {
   // Development mode DevelopmentWarningEvent
   // ---------------------------------------------------------------------------
 
-  it('development mode dispatches DevelopmentWarningEvent for non-cloneable values', async () => {
+  it('development mode dispatches DevelopmentWarningEvent for checkpoint divergences', async () => {
     const engine = new Engine({ development: true });
     const warnings: DevelopmentWarningEvent[] = [];
 
@@ -1192,20 +1194,29 @@ describe('Engine', () => {
       warnings.push(event as DevelopmentWarningEvent);
     });
 
-    // A workflow that stores a function in checkpoint locals (non-cloneable)
     engine.register('dev-warning-workflow', async function* (ctx: WorkflowContext) {
-      // Use a memo that returns a plain value (should be fine)
-      const result = yield* (ctx as Context).run(async () => 42);
+      const context = ctx as Context;
+      const result = yield* context.run(async () => {
+        return new Map([[{ key: 'alpha' }, 42]]);
+      });
+      yield* context.waitForSignal('release');
       return result;
     });
 
     const handle = await engine.start('dev-warning-workflow', null);
-    await handle.result();
     await flush();
 
-    // The workflow itself completes fine; we just check the engine doesn't crash in dev mode
-    // A more targeted test would check for actual non-cloneable locals
-    expect(engine).toBeInstanceOf(Engine);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.workflowId).toBe(handle.id);
+    expect(warnings[0]!.fieldPaths).toEqual([
+      'accumulatedResults[0][1].Map([object Object])',
+      'accumulatedResults[0][1].Map([object Object])',
+    ]);
+    expect(warnings[0]!.message).toContain('non-serializable field');
+
+    await engine.signal(handle.id, 'release');
+    const result = (await handle.result()) as Map<unknown, unknown>;
+    expect(result.size).toBe(1);
     engine[Symbol.dispose]();
   });
 
@@ -1239,6 +1250,57 @@ describe('Engine', () => {
       });
       return `Result: ${agentResult as string}`;
     });
+    engine[Symbol.dispose]();
+  });
+
+  it('runs workflow agent interceptors around ctx.agent()', async () => {
+    const engine = new Engine();
+    const seenPrompts: string[] = [];
+    let interceptorResumed = false;
+
+    const interceptor: WorkflowInterceptor = {
+      *agent(interception, next) {
+        seenPrompts.push(interception.prompt);
+        const result = yield* next(interception);
+        interceptorResumed = true;
+        return result;
+      },
+    };
+    engine.addInterceptor(interceptor);
+
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        return {
+          content: 'Agent intercepted result',
+          toolCalls: [],
+          usage: { inputTokens: 5, outputTokens: 7, totalTokens: 12 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 12;
+      },
+    };
+
+    engine.register('agent-interceptor-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).agent({
+        model: 'test-model',
+        prompt: 'Intercept me',
+        provider,
+      });
+    });
+
+    const handle = await engine.start('agent-interceptor-workflow', null);
+    const result = await handle.result();
+
+    expect(result).toBe('Agent intercepted result');
+    expect(seenPrompts).toEqual(['Intercept me']);
+    expect(interceptorResumed).toBe(true);
     engine[Symbol.dispose]();
   });
 
@@ -1286,6 +1348,51 @@ describe('Engine', () => {
 
     subscription.unsubscribe();
     // Cancel the workflow to clean up
+    const resultPromise = handle.result().catch(() => {});
+    await engine.cancel(handle.id);
+    await resultPromise;
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable calls observer.error on WorkflowTimedOutEvent', async () => {
+    const engine = new Engine();
+
+    engine.register('observable-for-timeout', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('observable-for-timeout', null);
+    await flush();
+
+    const receivedErrors: Error[] = [];
+    const receivedEvents: string[] = [];
+
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedEvents.push(event.type);
+      },
+      error: (error: Error) => {
+        receivedErrors.push(error);
+        resolve();
+      },
+    });
+
+    handle.dispatchEvent(new WorkflowTimedOutEvent(handle.id, 'execution', 5000));
+
+    await promise;
+
+    expect(receivedErrors).toHaveLength(1);
+    expect(receivedErrors[0]).toBeInstanceOf(WorkflowTimeoutError);
+    expect((receivedErrors[0] as WorkflowTimeoutError).workflowId).toBe(handle.id);
+    expect((receivedErrors[0] as WorkflowTimeoutError).timeoutType).toBe('execution');
+    expect((receivedErrors[0] as WorkflowTimeoutError).elapsed).toBe(5000);
+    expect(receivedEvents).toContain('workflow:timed-out');
+
+    subscription.unsubscribe();
     const resultPromise = handle.result().catch(() => {});
     await engine.cancel(handle.id);
     await resultPromise;
@@ -1482,6 +1589,33 @@ describe('Engine', () => {
 
     expect(result.chunkCount).toBe(0);
     expect(result.totalSizeBytes).toBe(0);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('ctx.stream() heartbeats are queryable via handle.query("activityProgress") while streaming', async () => {
+    const engine = new Engine();
+    const { promise: releasePromise, resolve: releaseStream } = Promise.withResolvers<void>();
+
+    engine.register('stream-progress', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      return yield* context.stream('report', async function* (sink) {
+        sink.heartbeat({ processed: 1 });
+        await releasePromise;
+        yield { row: 1, data: 'done' };
+      });
+    });
+
+    const handle = await engine.start('stream-progress', null);
+    await flush();
+
+    expect(await handle.query('activityProgress')).toEqual({ processed: 1 });
+
+    releaseStream();
+
+    const result = (await handle.result()) as StreamReference;
+    expect(result.key).toBe('report');
+    expect(result.chunkCount).toBe(1);
 
     engine[Symbol.dispose]();
   });
@@ -2364,22 +2498,30 @@ describe('Engine', () => {
       const handle = await engine.start('waterfall-workflow', null);
       await flush();
 
-      const waterfall = (await handle.query('agentCostWaterfall')) as Array<{
-        turn: number;
-        inputTokens: number;
-        outputTokens: number;
-        cost: number;
-        model: string;
-        tools: string[];
-      }>;
+      let waterfall = (await handle.query('agentCostWaterfall')) as
+        | Array<{
+            turn: number;
+            inputTokens: number;
+            outputTokens: number;
+            cost: number;
+            model: string;
+            tools: string[];
+          }>
+        | undefined;
+      for (let attempt = 0; waterfall === undefined && attempt < 10; attempt++) {
+        await Bun.sleep(10);
+        waterfall = (await handle.query('agentCostWaterfall')) as typeof waterfall;
+      }
 
-      expect(waterfall).toHaveLength(3);
-      expect(waterfall[0]!.turn).toBe(0);
-      expect(waterfall[0]!.model).toBe('test-model');
-      expect(waterfall[0]!.tools).toEqual(['noop']);
-      expect(waterfall[1]!.turn).toBe(1);
-      expect(waterfall[2]!.turn).toBe(2);
-      expect(waterfall[2]!.tools).toEqual([]);
+      expect(waterfall).toBeDefined();
+      const resolvedWaterfall = waterfall!;
+      expect(resolvedWaterfall).toHaveLength(3);
+      expect(resolvedWaterfall[0]!.turn).toBe(0);
+      expect(resolvedWaterfall[0]!.model).toBe('test-model');
+      expect(resolvedWaterfall[0]!.tools).toEqual(['noop']);
+      expect(resolvedWaterfall[1]!.turn).toBe(1);
+      expect(resolvedWaterfall[2]!.turn).toBe(2);
+      expect(resolvedWaterfall[2]!.tools).toEqual([]);
 
       await engine.signal(handle.id, 'release');
       await handle.result();
@@ -2424,6 +2566,7 @@ describe('Engine', () => {
       await flush();
 
       const conversation = (await handle.query('agentConversation')) as Array<{
+        turn: number;
         role: string;
         content: string;
       }>;
@@ -2487,6 +2630,200 @@ describe('Engine', () => {
 
       await engine.signal(handle.id, 'release');
       await handle.result();
+      engine[Symbol.dispose]();
+    });
+
+    it('exposes merged tokenUsage across multiple agent steps', async () => {
+      const engine = new Engine();
+      const provider: LLMProvider = {
+        name: 'mock',
+        async chat(): Promise<ChatResponse> {
+          return {
+            content: 'ok',
+            toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      };
+
+      engine.register('token-usage-workflow', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        const budget = {
+          maxTokens: 1_000,
+          models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
+        };
+
+        yield* context.agent({ model: 'test-model', prompt: 'first', provider, budget });
+        yield* context.agent({ model: 'test-model', prompt: 'second', provider, budget });
+        yield* context.waitForSignal('release');
+        return 'done';
+      });
+
+      const handle = await engine.start('token-usage-workflow', null);
+      await flush();
+
+      const usage = (await handle.query('tokenUsage')) as {
+        tokensUsed: number;
+        costUsed: number;
+        breakdown: Array<{
+          model: string;
+          inputTokens: number;
+          outputTokens: number;
+          cost: number;
+        }>;
+      };
+
+      expect(usage.tokensUsed).toBe(60);
+      expect(usage.breakdown).toHaveLength(1);
+      expect(usage.breakdown[0]!.model).toBe('test-model');
+      expect(usage.breakdown[0]!.inputTokens).toBe(20);
+      expect(usage.breakdown[0]!.outputTokens).toBe(40);
+      expect(usage.costUsed).toBeGreaterThan(0);
+
+      await engine.signal(handle.id, 'release');
+      await handle.result();
+      engine[Symbol.dispose]();
+    });
+  });
+
+  describe('agent budget events', () => {
+    it('dispatches warning and exceeded events for embedded agent steps', async () => {
+      const engine = new Engine();
+      const provider: LLMProvider = {
+        name: 'mock',
+        async chat(): Promise<ChatResponse> {
+          return {
+            content: 'budget result',
+            toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      };
+
+      const warnings: AgentBudgetWarningEvent[] = [];
+      const exceeded: AgentBudgetExceededEvent[] = [];
+      engine.addEventListener(AgentBudgetWarningEvent.type, (event) => {
+        warnings.push(event as AgentBudgetWarningEvent);
+      });
+      engine.addEventListener(AgentBudgetExceededEvent.type, (event) => {
+        exceeded.push(event as AgentBudgetExceededEvent);
+      });
+
+      engine.register('budget-events-workflow', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        return yield* context.agent({
+          model: 'test-model',
+          prompt: 'Spend the budget',
+          provider,
+          budget: {
+            maxTokens: 25,
+            warningThreshold: 0.5,
+            models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 1 } },
+          },
+        });
+      });
+
+      const handle = await engine.start('budget-events-workflow', null);
+      await handle.result();
+
+      expect(warnings).toHaveLength(1);
+      expect(exceeded).toHaveLength(1);
+      expect(warnings[0]!.budgetUsedPercent).toBeGreaterThanOrEqual(1);
+      expect(exceeded[0]!.tokensUsed).toBe(30);
+
+      engine[Symbol.dispose]();
+    });
+
+    it('exposes the tracked agent workflow id set while a workflow is running', async () => {
+      const engine = new Engine();
+      let releaseProvider: (() => void) | undefined;
+      const provider: LLMProvider = {
+        name: 'mock',
+        async chat(): Promise<ChatResponse> {
+          await new Promise<void>((resolve) => {
+            releaseProvider = resolve;
+          });
+          return {
+            content: 'tracked',
+            toolCalls: [],
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 1;
+        },
+      };
+
+      const agent = defineAgent({ name: 'tracked-agent-workflow', model: 'test-model' });
+      engine.register(agent, { provider });
+
+      const handle = await engine.start('tracked-agent-workflow', null);
+      await flush();
+
+      expect(engine.isAgentWorkflow(handle.id)).toBe(true);
+      expect(engine.agentWorkflowIds.has(handle.id)).toBe(true);
+
+      releaseProvider?.();
+      await handle.result();
+
+      expect(engine.agentWorkflowIds.has(handle.id)).toBe(false);
+      engine[Symbol.dispose]();
+    });
+
+    it('runs agent workflows with compression-enabled engine storage', async () => {
+      const engine = new Engine({
+        storage: new MemoryStorage(),
+        compression: { threshold: 1 },
+      });
+      const provider: LLMProvider = {
+        name: 'compressed-agent-provider',
+        async chat(): Promise<ChatResponse> {
+          return {
+            content: 'compressed',
+            toolCalls: [],
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 1;
+        },
+      };
+
+      const agent = defineAgent({ name: 'compressed-agent-workflow', model: 'test-model' });
+      engine.register(agent, { provider });
+
+      const handle = await engine.start('compressed-agent-workflow', null);
+      await flush();
+
+      expect(await handle.result()).toBe('compressed');
+      expect(engine.agentWorkflowIds.has(handle.id)).toBe(false);
+
       engine[Symbol.dispose]();
     });
   });

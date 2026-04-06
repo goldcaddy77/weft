@@ -54,7 +54,7 @@ export class HttpTransport implements MCPTransport {
 
     if (!signal) {
       const timeoutController = new AbortController();
-      timer = setTimeout(() => timeoutController.abort(), this.#timeout);
+      timer = setTimeout(timeoutController.abort.bind(timeoutController), this.#timeout);
       effectiveSignal = timeoutController.signal;
     }
 
@@ -99,7 +99,7 @@ export class HttpTransport implements MCPTransport {
 
   async healthCheck(): Promise<boolean> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.#timeout);
+    const timer = setTimeout(controller.abort.bind(controller), this.#timeout);
     try {
       const headers =
         typeof this.#headerSource === 'function' ? await this.#headerSource() : this.#headerSource;

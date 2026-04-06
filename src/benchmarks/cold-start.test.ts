@@ -111,17 +111,17 @@ async function measureColdStart(
 }
 
 // ---------------------------------------------------------------------------
-// Source-mode cold start (bun src/cli.ts)
+// Source-mode cold start (bun src/cli-main.ts)
 // ---------------------------------------------------------------------------
 
 describe('Server cold start benchmark', () => {
-  describe('source mode (bun src/cli.ts)', () => {
+  describe('source mode (bun src/cli-main.ts)', () => {
     it('starts and responds to health check within 5 seconds', async () => {
       const port = 18000 + Math.floor(Math.random() * 1000);
       const { elapsedMs, process: proc } = await measureColdStart(
         [
           'bun',
-          'src/cli.ts',
+          'src/cli-main.ts',
           '--port',
           String(port),
           '--database',
@@ -168,7 +168,7 @@ describe('Server cold start benchmark', () => {
           '--outfile',
           binaryPath,
           '--minify',
-          'src/cli.ts',
+          'src/cli-main.ts',
         ],
         { stdout: 'pipe', stderr: 'pipe' },
       );

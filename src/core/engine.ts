@@ -40,6 +40,14 @@ import { decode, encode } from './codec.ts';
 import type { ContextOperationRequest, StreamReference, StreamSink } from './context.ts';
 import { Context } from './context.ts';
 import {
+  cleanupPartialStreamChunks,
+  createAgentInterceptorExecute,
+  createCleanupErrorReporter,
+  createExpiredResponseCleanupTick,
+  createHandleCacheFinalizer,
+  executeRunAllBranches,
+} from './engine-helpers.ts';
+import {
   AttributesChangedEvent,
   CheckpointSizeWarningEvent,
   CleanupWarningEvent,
@@ -159,19 +167,21 @@ type OperationWithCallerStack = {
   callerStack?: string;
 };
 
-type OperationHandlerMap = {
-  [Type in ContextOperationRequest['type']]: (
-    workflowId: string,
-    operation: Extract<ContextOperationRequest, { type: Type }>,
-  ) => Promise<void>;
-};
-
 type ConsumedSignalResult =
   | { found: false }
   | {
       found: true;
       payload: unknown;
     };
+
+type WorkflowHandleEventQueue = {
+  events: Event[];
+  resolver: (() => void) | undefined;
+};
+
+type WorkflowHandleIteratorState = {
+  done: boolean;
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -195,6 +205,20 @@ function callMemoFunction(fn: Function): unknown {
 function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
   // bytes were written by encode(WorkflowState) — shape is guaranteed by our own storage
   return decode(bytes) as WorkflowState;
+}
+
+function enqueueWorkflowHandleEvent(queue: WorkflowHandleEventQueue, event: Event): void {
+  queue.events.push(event);
+  queue.resolver?.();
+}
+
+function finishWorkflowHandleIteration(
+  state: WorkflowHandleIteratorState,
+  queue: WorkflowHandleEventQueue,
+  event: Event,
+): void {
+  state.done = true;
+  enqueueWorkflowHandleEvent(queue, event);
 }
 
 function resolveEngineStorage(
@@ -391,19 +415,10 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
   }
 
   async *[Symbol.asyncIterator](): AsyncIterableIterator<Event> {
-    let resolver: (() => void) | undefined;
-    const events: Event[] = [];
+    const queue: WorkflowHandleEventQueue = { events: [], resolver: undefined };
     const state = { done: false };
-
-    const listener = (event: Event) => {
-      events.push(event);
-      resolver?.();
-    };
-
-    const terminal = (event: Event) => {
-      state.done = true;
-      listener(event);
-    };
+    const listener = enqueueWorkflowHandleEvent.bind(undefined, queue);
+    const terminal = finishWorkflowHandleIteration.bind(undefined, state, queue);
 
     const types = [
       'workflow:completed',
@@ -432,14 +447,14 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
 
     try {
       while (!state.done) {
-        if (events.length === 0) {
+        if (queue.events.length === 0) {
           const { promise, resolve } = Promise.withResolvers<void>();
-          resolver = resolve;
+          queue.resolver = resolve;
           await promise;
-          resolver = undefined;
+          queue.resolver = undefined;
         }
-        while (events.length > 0) {
-          yield events.shift()!;
+        while (queue.events.length > 0) {
+          yield queue.events.shift()!;
         }
       }
     } finally {
@@ -465,7 +480,8 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
         complete?: () => void;
         error?: (error: Error) => void;
       }) => {
-        const listener = (event: Event) => observer.next?.(event);
+        const controller = new AbortController();
+        const listener = observer.next?.bind(observer);
 
         const types = [
           'workflow:completed',
@@ -476,12 +492,18 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
           'activity:completed',
         ];
 
-        for (const type of types) {
-          this.addEventListener(type, listener);
+        if (listener) {
+          for (const type of types) {
+            this.addEventListener(type, listener, { signal: controller.signal });
+          }
         }
 
-        const completeListener = () => observer.complete?.();
-        this.addEventListener('workflow:completed', completeListener);
+        const completeListener = observer.complete?.bind(observer);
+        if (completeListener) {
+          this.addEventListener('workflow:completed', completeListener, {
+            signal: controller.signal,
+          });
+        }
 
         const errorHandler = (event: Event) => {
           if (event instanceof WorkflowFailedEvent) {
@@ -492,18 +514,11 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
             );
           }
         };
-        this.addEventListener('workflow:failed', errorHandler);
-        this.addEventListener('workflow:timed-out', errorHandler);
+        this.addEventListener('workflow:failed', errorHandler, { signal: controller.signal });
+        this.addEventListener('workflow:timed-out', errorHandler, { signal: controller.signal });
 
         return {
-          unsubscribe: () => {
-            for (const type of types) {
-              this.removeEventListener(type, listener);
-            }
-            this.removeEventListener('workflow:completed', completeListener);
-            this.removeEventListener('workflow:failed', errorHandler);
-            this.removeEventListener('workflow:timed-out', errorHandler);
-          },
+          unsubscribe: controller.abort.bind(controller),
         };
       },
     };
@@ -565,35 +580,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #alertManager: AlertManager | null;
   /** Tracks workflow IDs that belong to agent-typed workflows for optimization. */
   #agentWorkflowIds = new Set<string>();
-  #operationHandlers: OperationHandlerMap = {
-    activity: (workflowId, operation) => this.#processActivityOperation(workflowId, operation),
-    sleep: (workflowId, operation) => this.#processSleepOperation(workflowId, operation),
-    'wait-signal': (workflowId, operation) =>
-      this.#processWaitSignalOperation(workflowId, operation),
-    'wait-update': (workflowId, operation) =>
-      this.#processWaitUpdateOperation(workflowId, operation),
-    parallel: (workflowId, operation) => this.#processParallelOperation(workflowId, operation),
-    race: (workflowId, operation) => this.#processRaceOperation(workflowId, operation),
-    memo: (workflowId, operation) => this.#processMemoOperation(workflowId, operation),
-    'child-workflow': (workflowId, operation) =>
-      this.#processChildWorkflowOperation(workflowId, operation),
-    offload: (workflowId, operation) => this.#processOffloadOperation(workflowId, operation),
-    load: (workflowId, operation) => this.#processLoadOperation(workflowId, operation),
-    archive: (workflowId, operation) => this.#processArchiveOperation(workflowId, operation),
-    'run-all': (workflowId, operation) => this.#processRunAllOperation(workflowId, operation),
-    agent: (workflowId, operation) => this.#processAgentContextOperation(workflowId, operation),
-    stream: (workflowId, operation) => this.#processStreamOperation(workflowId, operation),
-    'wait-review': (workflowId, operation) =>
-      this.#processWaitReviewOperation(workflowId, operation),
-    handoff: (workflowId, operation) => this.#processHandoffOperation(workflowId, operation),
-    debate: (workflowId, operation) => this.#processDebateOperation(workflowId, operation),
-    supervise: (workflowId, operation) => this.#processSuperviseOperation(workflowId, operation),
-  };
 
   constructor(options?: EngineConstructorOptions) {
     super();
 
-    const storage = resolveEngineStorage(options, () => this.#agentWorkflowIds);
+    this.#registrations = new Map();
+
+    const storage = resolveEngineStorage(options, this.#getAgentWorkflowIds.bind(this));
     const getNow = options?.getNow ?? Date.now;
     const resolvedOptions = resolveEngineOptions(storage, options, getNow);
     const strategyBundle = createExecutionStrategyBundle({
@@ -602,11 +595,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       maxNestingDepth: resolvedOptions.maxNestingDepth,
       development: resolvedOptions.development,
       broadcastEvents: resolvedOptions.broadcastEvents,
-      getRegistration: (workflowType) => this.#registrations.get(workflowType),
+      getRegistration: this.#registrations.get.bind(this.#registrations),
     });
 
     this.#storage = storage;
-    this.#registrations = new Map();
     this.#abortController = new AbortController();
     this.#handleCache = new Map();
     this.#resultResolvers = new Map();
@@ -627,16 +619,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#pendingParentHeaders = undefined;
     this.#workflowNestingDepths = new Map();
     this.#workflowHeaders = new Map();
-    this.#finalizationRegistry = new FinalizationRegistry<string>((id) => {
-      this.#handleCache.delete(id);
-    });
+    this.#finalizationRegistry = new FinalizationRegistry<string>(
+      createHandleCacheFinalizer(this.#handleCache),
+    );
 
     this.#options = resolvedOptions;
 
     this.#defaultModelRouter = options?.defaultModelRouter;
     this.#scheduler = new Scheduler({
       storage,
-      onTimerFired: (entry) => this.#handleTimerFired(entry),
+      onTimerFired: this.#handleTimerFired.bind(this),
       getNow,
     });
     this.#strategy = strategyBundle.strategy;
@@ -652,18 +644,192 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowReviewIds = new Map();
     this.#reviewTimerIds = new Map();
     this.#pendingWebhooks = new Set();
-    this.#cleanupInterval = setInterval(() => {
-      this.#updateCoordinator.cleanupExpiredResponses().catch((error: unknown) => {
-        this.#handleCleanupError('cleanupExpiredResponses', error);
-      });
-    }, 60_000);
+    this.#cleanupInterval = setInterval(
+      createExpiredResponseCleanupTick(
+        this.#updateCoordinator,
+        this.#handleCleanupError.bind(this),
+      ),
+      60_000,
+    );
 
     this.#activityWorkerDispatcher = createActivityWorkerDispatcher(options?.activityExecution);
 
     // Wire up the strategy message handler
-    this.#strategy.onMessage((message) => this.#handleStrategyMessage(message));
+    this.#strategy.onMessage(this.#handleStrategyMessage.bind(this));
 
     this.#alertManager = createAlertManagerForEngine(this, options?.alerts, getNow);
+  }
+
+  async #swallowPromiseRejection(promise: Promise<unknown> | undefined): Promise<void> {
+    if (!promise) {
+      return;
+    }
+
+    try {
+      await promise;
+    } catch {
+      // Best-effort cleanup and warmup operations intentionally ignore rejections.
+    }
+  }
+
+  #getAgentWorkflowIds(): ReadonlySet<string> {
+    return this.#agentWorkflowIds;
+  }
+
+  async #processPendingUpdatesAfterReplay(workflowId: string): Promise<void> {
+    try {
+      await this.#processPendingUpdatesForHandlers(workflowId);
+    } catch (error: unknown) {
+      this.#handleCleanupError('processPendingUpdates', error, workflowId);
+    }
+  }
+
+  async #persistCoordinatedUpdateResponse(
+    workflowId: string,
+    updateName: string,
+    updateId: string,
+    idempotencyKey: string | undefined,
+    value: unknown,
+  ): Promise<void> {
+    const responseOperations = this.#updateCoordinator.buildResponseOperations(
+      updateId,
+      workflowId,
+      value,
+      undefined,
+      idempotencyKey,
+    );
+
+    try {
+      await this.#storage.batch(responseOperations);
+      this.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, updateName, value));
+      this.#broadcast({
+        type: 'update:completed',
+        workflowId,
+        updateId,
+      });
+    } catch (error: unknown) {
+      this.#handleCleanupError('writeCoordinatedUpdateResponse', error, workflowId);
+    }
+  }
+
+  #resolveChainedResult(
+    originalResolve: (value: unknown) => void,
+    chainedResolve: (value: unknown) => void,
+    value: unknown,
+  ): void {
+    originalResolve(value);
+    chainedResolve(value);
+  }
+
+  #rejectChainedResult(
+    originalReject: (reason: unknown) => void,
+    chainedReject: (reason: unknown) => void,
+    reason: unknown,
+  ): void {
+    originalReject(reason);
+    chainedReject(reason);
+  }
+
+  #resolveReviewDecision(
+    resolve: (result: { ok: true; value: HumanReviewResult }) => void,
+    decision: HumanReviewResult,
+  ): void {
+    resolve({ ok: true, value: decision });
+  }
+
+  #captureWorkflowStartHeaders(
+    workflowId: string,
+    interception: { headers: Map<string, string> },
+  ): void {
+    this.#workflowHeaders.set(workflowId, interception.headers);
+  }
+
+  async #handleReviewEscalationTimer(
+    workflowId: string,
+    reviewId: string,
+    waiterKey: string,
+    reviewRequest: import('../ai/human-review.ts').ReviewRequest,
+    options: HumanReviewOptions,
+    resolve: (result: { ok: true; value: HumanReviewResult } | { ok: false; error: Error }) => void,
+    entry: { id: string; workflowId: string },
+  ): Promise<boolean> {
+    if (
+      !entry.id.startsWith(`review-escalation:${reviewId}:`) &&
+      entry.id !== `review-timeout:${reviewId}`
+    ) {
+      return false;
+    }
+
+    if (entry.id === `review-timeout:${reviewId}`) {
+      this.#reviewWaiters.delete(waiterKey);
+      const elapsed = this.#options.getNow() - reviewRequest.createdAt;
+      await this.#storage.delete(KEYS.review(workflowId, reviewId));
+
+      const timeoutError = new ReviewTimeoutError(reviewId, elapsed);
+      await this.#failWorkflow(workflowId, timeoutError);
+      resolve({ ok: false, error: timeoutError });
+      return true;
+    }
+
+    if (!options.escalation) {
+      return false;
+    }
+
+    const action = this.#reviewCoordinator.checkEscalations(
+      reviewRequest,
+      options.escalation,
+      this.#options.getNow(),
+    );
+
+    if (!action) {
+      return false;
+    }
+
+    if (action.type === 'escalate') {
+      options.onEscalation?.(action);
+      return false;
+    }
+
+    this.#reviewWaiters.delete(waiterKey);
+    const autoResult: HumanReviewResult = {
+      reviewId,
+      decision: action.decision,
+      reviewer: 'system',
+      feedback: action.auditReason,
+      timestamp: this.#options.getNow(),
+    };
+
+    await this.#storage.delete(KEYS.review(workflowId, reviewId));
+    resolve({ ok: true, value: autoResult });
+    return true;
+  }
+
+  async #sendReviewWebhook(
+    workflowId: string,
+    reviewRequest: import('../ai/human-review.ts').ReviewRequest,
+    webhookUrl: string,
+    webhookAbort: AbortController,
+  ): Promise<void> {
+    try {
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workflowId,
+          reviewId: reviewRequest.reviewId,
+          reviewType: reviewRequest.reviewType,
+          reviewers: reviewRequest.reviewers,
+          artifact: reviewRequest.artifact,
+        }),
+        signal: webhookAbort.signal,
+      });
+    } catch (error: unknown) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        console.warn(`[weft] Failed to send review webhook for ${reviewRequest.reviewId}`, error);
+      }
+    } finally {
+      this.#pendingWebhooks.delete(webhookAbort);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -861,7 +1027,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (registration.isAgent) {
         try {
           const warmupResult = registration.provider?.warmup?.();
-          warmupResult?.catch(() => {});
+          void this.#swallowPromiseRejection(warmupResult);
         } catch {
           // Warmup is best-effort; ignore synchronous failures.
         }
@@ -902,14 +1068,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const { promise, resolve, reject } = Promise.withResolvers<unknown>();
       const originalResolve = existingResolver.resolve;
       const originalReject = existingResolver.reject;
-      existingResolver.resolve = (value: unknown) => {
-        originalResolve(value);
-        resolve(value);
-      };
-      existingResolver.reject = (reason: unknown) => {
-        originalReject(reason);
-        reject(reason);
-      };
+      existingResolver.resolve = this.#resolveChainedResult.bind(this, originalResolve, resolve);
+      existingResolver.reject = this.#rejectChainedResult.bind(this, originalReject, reject);
       resultPromise = promise;
     } else {
       // Workflow may already be complete; load from storage
@@ -1091,9 +1251,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         input,
         headers,
       },
-      (interception) => {
-        this.#workflowHeaders.set(workflowId, interception.headers);
-      },
+      this.#captureWorkflowStartHeaders.bind(this, workflowId),
     );
   }
 
@@ -1554,11 +1712,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // After replay, process any pending coordinated updates that match
       // registered inline handlers. Schedule on next microtask so the
       // generator has a chance to register its onUpdate handlers first.
-      queueMicrotask(() => {
-        this.#processPendingUpdatesForHandlers(workflowId).catch((error: unknown) => {
-          this.#handleCleanupError('processPendingUpdates', error, workflowId);
-        });
-      });
+      queueMicrotask(this.#processPendingUpdatesAfterReplay.bind(this, workflowId));
     } else {
       // Worker mode: send run message to the worker with the checkpoint
       const serialized = serializeCheckpoint(resumeCheckpoint);
@@ -2177,15 +2331,44 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #processOperation(workflowId: string, operation: ContextOperationRequest): Promise<void> {
-    const handler = this.#operationHandlers[operation.type] as
-      | ((workflowId: string, operation: ContextOperationRequest) => Promise<void>)
-      | undefined;
-
-    if (!handler) {
-      throw new Error(`Unknown operation type: ${String(operation.type)}`);
+    switch (operation.type) {
+      case 'activity':
+        return this.#processActivityOperation(workflowId, operation);
+      case 'sleep':
+        return this.#processSleepOperation(workflowId, operation);
+      case 'wait-signal':
+        return this.#processWaitSignalOperation(workflowId, operation);
+      case 'wait-update':
+        return this.#processWaitUpdateOperation(workflowId, operation);
+      case 'parallel':
+        return this.#processParallelOperation(workflowId, operation);
+      case 'race':
+        return this.#processRaceOperation(workflowId, operation);
+      case 'memo':
+        return this.#processMemoOperation(workflowId, operation);
+      case 'child-workflow':
+        return this.#processChildWorkflowOperation(workflowId, operation);
+      case 'offload':
+        return this.#processOffloadOperation(workflowId, operation);
+      case 'load':
+        return this.#processLoadOperation(workflowId, operation);
+      case 'archive':
+        return this.#processArchiveOperation(workflowId, operation);
+      case 'run-all':
+        return this.#processRunAllOperation(workflowId, operation);
+      case 'agent':
+        return this.#processAgentContextOperation(workflowId, operation);
+      case 'stream':
+        return this.#processStreamOperation(workflowId, operation);
+      case 'wait-review':
+        return this.#processWaitReviewOperation(workflowId, operation);
+      case 'handoff':
+        return this.#processHandoffOperation(workflowId, operation);
+      case 'debate':
+        return this.#processDebateOperation(workflowId, operation);
+      case 'supervise':
+        return this.#processSuperviseOperation(workflowId, operation);
     }
-
-    return handler(workflowId, operation);
   }
 
   #completeOperation(workflowId: string, value: unknown): void {
@@ -2390,30 +2573,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (coordinatedResponded) return;
       coordinatedResponded = true;
 
-      const responseOperations = this.#updateCoordinator.buildResponseOperations(
-        update.updateId,
+      void this.#persistCoordinatedUpdateResponse(
         workflowId,
-        value,
-        undefined,
+        updateName,
+        update.updateId,
         update.idempotencyKey,
+        value,
       );
-
-      void this.#storage
-        .batch(responseOperations)
-        .then(() => {
-          this.dispatchEvent(
-            new UpdateCompletedEvent(update.updateId, workflowId, updateName, value),
-          );
-          this.#broadcast({
-            type: 'update:completed',
-            workflowId,
-            updateId: update.updateId,
-          });
-          return undefined;
-        })
-        .catch((error: unknown) => {
-          this.#handleCleanupError('writeCoordinatedUpdateResponse', error, workflowId);
-        });
     };
   }
 
@@ -2598,33 +2764,26 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     key: string,
     writtenKeys: string[],
   ): Promise<void> {
-    if (writtenKeys.length === 0) {
-      return;
-    }
-
-    const deleteOperations = [
-      ...writtenKeys.map((writtenKey) => ({ type: 'delete' as const, key: writtenKey })),
-      { type: 'delete' as const, key: KEYS.streamMetadata(workflowId, key) },
-    ];
-    await this.#storage.batch(deleteOperations).catch((deleteError: unknown) => {
-      this.#handleCleanupError('cleanupPartialStreamChunks', deleteError, workflowId);
-    });
+    await cleanupPartialStreamChunks(
+      this.#storage,
+      workflowId,
+      key,
+      writtenKeys,
+      createCleanupErrorReporter(this.#handleCleanupError.bind(this), workflowId),
+    );
   }
 
   async #processRunAllOperation(
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'run-all' }>,
   ): Promise<void> {
-    return this.#runOperationWithResult(workflowId, operation, async () => {
-      const results: Record<string, unknown> = {};
-      const entries = Object.entries(operation.branches);
-      await Promise.all(
-        entries.map(async ([name, [fn, ...args]]) => {
-          results[name] = await callActivityFunction(fn, args);
-        }),
-      );
-      return results;
-    });
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      executeRunAllBranches(
+        // `ctx.runAll()` stores raw Function references on the request by construction.
+        operation.branches as Parameters<typeof executeRunAllBranches>[0],
+        callActivityFunction as Parameters<typeof executeRunAllBranches>[1],
+      ),
+    );
   }
 
   async #processAgentContextOperation(
@@ -2840,16 +2999,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return undefined;
     }
 
-    const execute = function* (ctx: import('./interceptor.ts').AgentInterception) {
-      if (ctx.onTurnStarted) agentInterception.onTurnStarted = ctx.onTurnStarted;
-      if (ctx.onTurnCompleted) agentInterception.onTurnCompleted = ctx.onTurnCompleted;
-      if (ctx.onToolCalled) agentInterception.onToolCalled = ctx.onToolCalled;
-      if (ctx.onToolReturned) agentInterception.onToolReturned = ctx.onToolReturned;
-      yield;
-      return undefined;
-    };
-
-    const generator = composedInterceptor.agent(agentInterception, execute);
+    const generator = composedInterceptor.agent(
+      agentInterception,
+      createAgentInterceptorExecute(agentInterception),
+    );
     generator.next();
     return generator;
   }
@@ -3012,7 +3165,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         headers: new Map<string, string>(),
         parentHeaders,
       },
-      async () => executeChild(),
+      executeChild,
     );
   }
 
@@ -3169,29 +3322,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (options.webhookUrl) {
       const webhookAbort = new AbortController();
       this.#pendingWebhooks.add(webhookAbort);
-      fetch(options.webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workflowId,
-          reviewId,
-          reviewType: reviewRequest.reviewType,
-          reviewers: reviewRequest.reviewers,
-          artifact: reviewRequest.artifact,
-        }),
-        signal: webhookAbort.signal,
-      })
-        .catch((error: unknown) => {
-          if (error instanceof DOMException && error.name === 'AbortError') return;
-          console.warn(`[weft] Failed to send review webhook for ${reviewId}`, error);
-        })
-        .then(() => {
-          this.#pendingWebhooks.delete(webhookAbort);
-          return undefined;
-        })
-        .catch(() => {
-          // Guard: swallow errors from cleanup callback
-        });
+      void this.#sendReviewWebhook(workflowId, reviewRequest, options.webhookUrl, webhookAbort);
     }
 
     // Set up escalation timers and track their IDs for cleanup
@@ -3230,76 +3361,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       { ok: true; value: HumanReviewResult } | { ok: false; error: Error }
     >();
     const waiterKey = `${workflowId}:${reviewId}`;
-    this.#reviewWaiters.set(waiterKey, (decision) => resolve({ ok: true, value: decision }));
-
-    // Set up a listener for escalation/timeout timer fires
-    const escalationListener = async (entry: {
-      id: string;
-      workflowId: string;
-    }): Promise<boolean> => {
-      if (
-        !entry.id.startsWith(`review-escalation:${reviewId}:`) &&
-        entry.id !== `review-timeout:${reviewId}`
-      ) {
-        return false; // Not our timer
-      }
-
-      if (entry.id === `review-timeout:${reviewId}`) {
-        // Timeout: directly fail the workflow instead of going through
-        // the promise chain, to avoid fire-and-forget unhandled rejections.
-        this.#reviewWaiters.delete(waiterKey);
-        const elapsed = this.#options.getNow() - reviewRequest.createdAt;
-
-        // Clean up the review from storage
-        await this.#storage.delete(KEYS.review(workflowId, reviewId));
-
-        // Directly fail the workflow
-        const timeoutError = new ReviewTimeoutError(reviewId, elapsed);
-        await this.#failWorkflow(workflowId, timeoutError);
-
-        // Resolve the promise so the awaiting code can clean up without
-        // hanging, but the workflow is already failed so the result is moot.
-        resolve({ ok: false, error: timeoutError });
-        return true;
-      }
-
-      // Escalation: check what action to take
-      if (options.escalation) {
-        const action = this.#reviewCoordinator.checkEscalations(
-          reviewRequest,
-          options.escalation,
-          this.#options.getNow(),
-        );
-
-        if (action) {
-          if (action.type === 'escalate') {
-            // Notify escalation callback if provided
-            options.onEscalation?.(action);
-          } else if (action.type === 'auto-decide') {
-            // Auto-decide: resolve the review waiter
-            this.#reviewWaiters.delete(waiterKey);
-            const autoResult: HumanReviewResult = {
-              reviewId,
-              decision: action.decision,
-              reviewer: 'system',
-              feedback: action.auditReason,
-              timestamp: this.#options.getNow(),
-            };
-
-            // Clean up the review from storage
-            await this.#storage.delete(KEYS.review(workflowId, reviewId));
-
-            resolve({ ok: true, value: autoResult });
-            return true;
-          }
-        }
-      }
-
-      return false;
-    };
+    this.#reviewWaiters.set(waiterKey, this.#resolveReviewDecision.bind(this, resolve));
 
     // Register the escalation handler and track the reviewId → workflowId association
-    this.#reviewEscalationHandlers.set(reviewId, escalationListener);
+    this.#reviewEscalationHandlers.set(
+      reviewId,
+      this.#handleReviewEscalationTimer.bind(
+        this,
+        workflowId,
+        reviewId,
+        waiterKey,
+        reviewRequest,
+        options,
+        resolve,
+      ),
+    );
     if (timerIds.length > 0) {
       this.#reviewTimerIds.set(reviewId, timerIds);
     }
@@ -3383,7 +3459,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         const timers = this.#reviewTimerIds.get(reviewId);
         if (timers) {
           for (const timerId of timers) {
-            this.#scheduler.cancel(timerId, workflowId).catch(() => {});
+            void this.#swallowPromiseRejection(this.#scheduler.cancel(timerId, workflowId));
           }
           this.#reviewTimerIds.delete(reviewId);
         }
@@ -3541,6 +3617,39 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
   }
 
+  async #invokeWorkerActivity(
+    operationId: string,
+    activityName: string,
+    args: unknown[],
+  ): Promise<unknown> {
+    const dispatcher = this.#activityWorkerDispatcher;
+    if (!dispatcher) {
+      throw new Error(`No activity worker dispatcher available for "${activityName}"`);
+    }
+
+    const result = await dispatcher.execute({
+      operationId,
+      activityName,
+      input: args.length === 1 ? args[0] : args,
+      attempt: 1,
+    });
+    if (result.status === 'failed') {
+      throw new Error(result.error);
+    }
+
+    return result.value;
+  }
+
+  #invokeInlineActivity(
+    operation: Extract<ContextOperationRequest, { type: 'activity' }>,
+    activityContext: import('./types.ts').ActivityContext,
+    _activityName: string,
+    args: unknown[],
+  ): unknown {
+    const activityFunction = this.#resolveActivityFunction(operation);
+    return callActivityFunction(activityFunction, [...args, activityContext]);
+  }
+
   /**
    * Execute an activity function, dispatching to a Web Worker pool when
    * `activityExecution` is configured, or running inline on the main thread.
@@ -3562,22 +3671,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Build the leaf executor: either dispatch to a worker or call inline.
     const invokeActivity = this.#activityWorkerDispatcher
-      ? async (name: string, args: unknown[]) => {
-          const result = await this.#activityWorkerDispatcher!.execute({
-            operationId: operation.operationId,
-            activityName: name,
-            input: args.length === 1 ? args[0] : args,
-            attempt: 1,
-          });
-          if (result.status === 'failed') {
-            throw new Error(result.error);
-          }
-          return result.value;
-        }
-      : (_name: string, args: unknown[]) => {
-          const activityFunction = this.#resolveActivityFunction(operation);
-          return callActivityFunction(activityFunction, [...args, activityContext]);
-        };
+      ? this.#invokeWorkerActivity.bind(this, operation.operationId)
+      : this.#invokeInlineActivity.bind(this, operation, activityContext);
 
     // If there are activity interceptors, use cached composition
     const composedActivity = this.#getComposedActivityInterceptor();

@@ -153,7 +153,7 @@ export class AnthropicProvider implements LLMProvider {
 
   async warmup(): Promise<void> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const timeout = setTimeout(controller.abort.bind(controller), 3000);
     try {
       await fetch(`${this.#options.baseUrl}/v1/messages`, {
         method: 'HEAD',

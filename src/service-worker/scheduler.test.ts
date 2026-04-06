@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
 import type { TimerEntry } from '../core/types';
+import type { Storage } from '../storage/interface';
 import { MemoryStorage } from '../storage/memory';
 import { ServiceWorkerScheduler } from './scheduler';
 
@@ -472,5 +473,73 @@ describe('ServiceWorkerScheduler', () => {
 
     expect(asyncFired).toHaveLength(1);
     expect(asyncFired[0]!.id).toBe('timer-1');
+  });
+
+  it('logs polling errors when the scheduled tick throws', async () => {
+    const errorSpy = mock((_message?: unknown, ..._args: unknown[]) => {});
+    const originalError = console.error;
+    console.error = errorSpy as typeof console.error;
+
+    scheduler[Symbol.dispose]();
+    scheduler = new ServiceWorkerScheduler({
+      storage,
+      onTimerFired: () => {
+        throw new Error('tick failed');
+      },
+      fallbackIntervalMilliseconds: 20,
+      getNow: () => currentTime,
+    });
+
+    try {
+      await scheduler.schedule(makeTimer({ fireAt: currentTime - 1000 }));
+      scheduler.start();
+      await Bun.sleep(80);
+
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      console.error = originalError;
+      scheduler.stop();
+    }
+  });
+
+  it('logs polling errors when storage scanning rejects during the timer loop', async () => {
+    const realStorage = new MemoryStorage();
+    const errorSpy = mock((_message?: unknown, ..._args: unknown[]) => {});
+    const originalError = console.error;
+    console.error = errorSpy as typeof console.error;
+
+    const failingStorage: Storage = {
+      get: realStorage.get.bind(realStorage),
+      put: realStorage.put.bind(realStorage),
+      delete: realStorage.delete.bind(realStorage),
+      batch: realStorage.batch.bind(realStorage),
+      async *scan() {
+        throw new Error('scan failed');
+      },
+      [Symbol.dispose]() {
+        realStorage[Symbol.dispose]();
+      },
+    };
+
+    scheduler[Symbol.dispose]();
+    scheduler = new ServiceWorkerScheduler({
+      storage: failingStorage,
+      onTimerFired: () => undefined,
+      fallbackIntervalMilliseconds: 20,
+      getNow: () => currentTime,
+    });
+
+    try {
+      scheduler.start();
+      await Bun.sleep(80);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] ServiceWorkerScheduler tick failed:',
+        expect.any(Error),
+      );
+    } finally {
+      console.error = originalError;
+      scheduler.stop();
+    }
   });
 });

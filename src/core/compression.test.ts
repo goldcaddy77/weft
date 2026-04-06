@@ -86,6 +86,11 @@ describe('brotli round-trip', () => {
 describe('none round-trip', () => {
   const compressor = createBunCompressor('none');
 
+  it('returns the original payload from the none compressor', async () => {
+    const original = new Uint8Array([1, 2, 3]);
+    expect(await compressor.compress(original)).toBe(original);
+  });
+
   it('round-trips data with magic + uncompressed header regardless of size', async () => {
     const original = new Uint8Array(8192).fill(55);
     const compressed = await compressPayload(original, compressor, 4096);
@@ -158,6 +163,24 @@ describe('cross-algorithm reads', () => {
 
     const decompressed = await decompressPayload(compressed);
     expect(decompressed).toEqual(original);
+  });
+});
+
+describe('compression fallbacks', () => {
+  it('falls back to uncompressed framing when compression expands the payload', async () => {
+    const original = new Uint8Array([1, 2, 3, 4]);
+    const expandingCompressor = {
+      algorithm: 'gzip' as const,
+      async compress(): Promise<Uint8Array> {
+        return new Uint8Array([9, 9, 9, 9, 9, 9]);
+      },
+    };
+
+    const compressed = await compressPayload(original, expandingCompressor, 0);
+
+    expect(compressed[0]).toBe(0xc1);
+    expect(compressed[1]).toBe(0x00);
+    expect(await decompressPayload(compressed)).toEqual(original);
   });
 });
 

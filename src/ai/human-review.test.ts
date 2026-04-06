@@ -579,10 +579,12 @@ describe('G5: Partial approval', () => {
 describe('G6: Webhook notification', () => {
   let engine: TestEngine;
   const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
 
   afterEach(() => {
     engine[Symbol.dispose]();
     globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
   });
 
   it('sends webhook POST when review wait begins', async () => {
@@ -629,6 +631,35 @@ describe('G6: Webhook notification', () => {
       workflowId: handle.id,
     });
     await flush();
+  });
+
+  it('ignores AbortError when a pending webhook request is cancelled during shutdown', async () => {
+    engine = new TestEngine();
+
+    const mockFetch = mock((_input: RequestInfo | URL, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        });
+      });
+    });
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+    engine.register('webhook-abort-workflow', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      yield* context.humanReview({
+        artifact: 'draft report',
+        reviewers: ['alice'],
+        webhookUrl: 'https://example.com/hook',
+      });
+      return 'done';
+    });
+
+    await engine.start('webhook-abort-workflow', null);
+    await flush();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    engine[Symbol.dispose]();
   });
 });
 

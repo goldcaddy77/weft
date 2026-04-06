@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 
 import { BudgetTracker } from './budget';
 import type { LLMProvider } from './providers/interface';
@@ -570,6 +570,49 @@ describe('supervise', () => {
     expect(result.strategy).toBe('merge');
     // Workers + supervisor
     expect(callCount).toBe(3);
+  });
+
+  it('propagates an already-aborted parent signal to worker and supervisor calls', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      supervise({
+        workers: [
+          createAgentDefinition({ name: 'worker-1' }),
+          createAgentDefinition({ name: 'worker-2' }),
+        ],
+        supervisor: createAgentDefinition({ name: 'supervisor' }),
+        input: 'Go',
+        strategy: 'best-of-n',
+        provider: createMockProvider([createChatResponse('done')]),
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('The operation was aborted');
+  });
+
+  it('rejects an unknown supervise strategy without wiring manual parent abort listeners', async () => {
+    const controller = new AbortController();
+    const addEventListenerSpy = spyOn(controller.signal, 'addEventListener');
+    const removeEventListenerSpy = spyOn(controller.signal, 'removeEventListener');
+    const provider = createMockProvider([createChatResponse('worker-1')]);
+
+    await expect(
+      supervise({
+        workers: [createAgentDefinition({ name: 'worker-1' })],
+        supervisor: createAgentDefinition({ name: 'supervisor' }),
+        input: 'Go',
+        strategy: 'unsupported' as 'best-of-n',
+        provider,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('Unknown supervise strategy');
+
+    expect(addEventListenerSpy).not.toHaveBeenCalled();
+    expect(removeEventListenerSpy).not.toHaveBeenCalled();
+
+    addEventListenerSpy.mockRestore();
+    removeEventListenerSpy.mockRestore();
   });
 });
 

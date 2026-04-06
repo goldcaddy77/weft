@@ -346,6 +346,23 @@ describe('Context', () => {
 
       expect(request.updateName).toBe('updateName');
     });
+
+    it('recovery path returns a no-op responder that can still be called safely', () => {
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, { payload: 'cached-update' });
+      const context = createContext({ accumulatedResults });
+
+      const generator = context.waitForUpdate<string>('updateName');
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) {
+        throw new Error('Expected waitForUpdate recovery path to return without yielding');
+      }
+
+      expect(result.value.payload).toBe('cached-update');
+      expect(() => result.value.respond('ignored')).not.toThrow();
+    });
   });
 
   describe('setAttribute / getAttribute', () => {

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
-import { UpdateCoordinator } from '../core/updates.ts';
+import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { handleRequest } from './handler.ts';
@@ -387,6 +387,36 @@ describe('handleRequest', () => {
     expect(emptyBody.items.length).toBe(0);
   });
 
+  it('GET /v1/workflows parses multiple statuses and typed attribute filters', async () => {
+    engine = createEngine();
+    let capturedFilter: Record<string, unknown> | undefined;
+    const originalList = engine.list.bind(engine);
+    engine.list = async (filter) => {
+      capturedFilter = filter as Record<string, unknown>;
+      return originalList(filter);
+    };
+
+    const response = await handleRequest(
+      request(
+        'GET',
+        '/v1/workflows?status=running&status=failed&attr.priority=high&attr.score.gt=1&attr.score.lt=9&attr.score.gte=2&attr.score.lte=8&attr.active=true&attr.disabled=false&attr.ignored.bad=123',
+      ),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(capturedFilter).toMatchObject({
+      status: ['running', 'failed'],
+      attributes: [
+        { key: 'priority', value: 'high' },
+        { key: 'score', gt: 1, lt: 9, gte: 2, lte: 8 },
+        { key: 'active', value: true },
+        { key: 'disabled', value: false },
+      ],
+    });
+    expect(JSON.stringify(capturedFilter)).not.toContain('ignored');
+  });
+
   it('POST /v1/workflows with unregistered type returns 400', async () => {
     engine = createEngine();
 
@@ -543,6 +573,22 @@ describe('handleRequest', () => {
     expect(response.status).toBe(500);
     const body = (await json(response)) as { error: string };
     expect(body.error).toContain('cancel failed internally');
+
+    engine.cancel = originalCancel;
+  });
+
+  it('DELETE /v1/workflows/:id returns 404 when cancel reports not found', async () => {
+    engine = createEngine();
+
+    const originalCancel = engine.cancel.bind(engine);
+    engine.cancel = async () => {
+      throw new Error('workflow not found');
+    };
+
+    const response = await handleRequest(request('DELETE', '/v1/workflows/missing-id'), engine);
+
+    expect(response.status).toBe(404);
+    expect(await json(response)).toMatchObject({ error: 'workflow not found' });
 
     engine.cancel = originalCancel;
   });
@@ -825,6 +871,30 @@ describe('handleRequest', () => {
       expect(response.status).toBe(408);
       const body = (await json(response)) as { error: string };
       expect(body.error).toContain('timed out');
+    });
+
+    it('returns 422 when the workflow is already terminal', async () => {
+      engine = createEngine();
+
+      const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
+      engine.submitCoordinatedUpdate = async () => {
+        throw new WorkflowTerminalError('wf-terminal', 'completed');
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/wf-terminal/update/setName', {
+          payload: { name: 'Alice' },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(422);
+      expect(await json(response)).toMatchObject({
+        error:
+          'Cannot send update to workflow "wf-terminal": workflow is in terminal state "completed"',
+      });
+
+      engine.submitCoordinatedUpdate = originalSubmit;
     });
   });
 
@@ -1406,6 +1476,28 @@ describe('handleRequest', () => {
       expect(response.status).toBe(404);
     });
 
+    it('returns 500 for unexpected review submission errors', async () => {
+      engine = createEngine();
+
+      const originalSubmitReview = engine.submitReview.bind(engine);
+      engine.submitReview = async () => {
+        throw new Error('review submission failed');
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-1/decision', {
+          decision: 'approved',
+          reviewer: 'alice',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(500);
+      expect(await json(response)).toMatchObject({ error: 'review submission failed' });
+
+      engine.submitReview = originalSubmitReview;
+    });
+
     it('resolves an existing review via direct key lookup when workflowId is provided', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage });
@@ -1602,6 +1694,46 @@ describe('handleRequest', () => {
       const body = (await json(response)) as { result: unknown };
       expect(body.result).toBeNull();
     });
+
+    it('returns 501 when the workflow does not support queries', async () => {
+      engine = createEngine();
+
+      const originalQuery = engine.query.bind(engine);
+      engine.query = async () => {
+        throw new Error('query not supported for this workflow');
+      };
+
+      const response = await handleRequest(
+        request('GET', '/v1/workflows/wf-query/query/status'),
+        engine,
+      );
+
+      expect(response.status).toBe(501);
+      expect(await json(response)).toMatchObject({
+        error: 'query not supported for this workflow',
+      });
+
+      engine.query = originalQuery;
+    });
+
+    it('returns 500 for unexpected query errors', async () => {
+      engine = createEngine();
+
+      const originalQuery = engine.query.bind(engine);
+      engine.query = async () => {
+        throw new Error('query exploded');
+      };
+
+      const response = await handleRequest(
+        request('GET', '/v1/workflows/wf-query/query/status'),
+        engine,
+      );
+
+      expect(response.status).toBe(500);
+      expect(await json(response)).toMatchObject({ error: 'query exploded' });
+
+      engine.query = originalQuery;
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -1637,6 +1769,25 @@ describe('handleRequest', () => {
       const body = (await json(response)) as { error: string };
       expect(body.error).toContain('status');
     });
+
+    it('returns 500 for unexpected resume errors', async () => {
+      engine = createEngine();
+
+      const originalResume = engine.resume.bind(engine);
+      engine.resume = async () => {
+        throw new Error('resume exploded');
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/wf-resume/resume'),
+        engine,
+      );
+
+      expect(response.status).toBe(500);
+      expect(await json(response)).toMatchObject({ error: 'resume exploded' });
+
+      engine.resume = originalResume;
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -1652,6 +1803,20 @@ describe('handleRequest', () => {
       expect(response.status).toBe(200);
       const body = (await json(response)) as { recovered: string[] };
       expect(body.recovered).toEqual([]);
+    });
+
+    it('returns recovered workflow ids when recoverAll returns handles', async () => {
+      engine = createEngine();
+      engine.recoverAll = async () =>
+        [{ id: 'wf-recovered-1' }, { id: 'wf-recovered-2' }] as Awaited<
+          ReturnType<Engine['recoverAll']>
+        >;
+
+      const response = await handleRequest(request('POST', '/v1/recover'), engine);
+
+      expect(response.status).toBe(200);
+      const body = (await json(response)) as { recovered: string[] };
+      expect(body.recovered).toEqual(['wf-recovered-1', 'wf-recovered-2']);
     });
   });
 
@@ -1709,6 +1874,44 @@ describe('handleRequest', () => {
       // timeout() is idempotent — terminateWorkflow returns silently if state not found
       expect(response.status).toBe(204);
     });
+
+    it('returns 404 when timeout reports not found', async () => {
+      engine = createEngine();
+
+      const originalTimeout = engine.timeout.bind(engine);
+      engine.timeout = async () => {
+        throw new Error('workflow not found');
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/wf-timeout/timeout'),
+        engine,
+      );
+
+      expect(response.status).toBe(404);
+      expect(await json(response)).toMatchObject({ error: 'workflow not found' });
+
+      engine.timeout = originalTimeout;
+    });
+
+    it('returns 500 for unexpected timeout errors', async () => {
+      engine = createEngine();
+
+      const originalTimeout = engine.timeout.bind(engine);
+      engine.timeout = async () => {
+        throw new Error('timeout exploded');
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/wf-timeout/timeout'),
+        engine,
+      );
+
+      expect(response.status).toBe(500);
+      expect(await json(response)).toMatchObject({ error: 'timeout exploded' });
+
+      engine.timeout = originalTimeout;
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -1761,6 +1964,69 @@ describe('handleRequest', () => {
       );
 
       expect(response.status).toBe(400);
+    });
+
+    it('returns 400 when the body is null', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        new Request('http://localhost/v1/budget-policy', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(null),
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await json(response)).toMatchObject({
+        error: 'Request body must be a JSON object',
+      });
+    });
+
+    it('returns 500 when setting the budget policy fails', async () => {
+      engine = createEngine();
+
+      const originalSetBudgetPolicy = engine.setBudgetPolicy.bind(engine);
+      engine.setBudgetPolicy = async () => {
+        throw new Error('budget policy write failed');
+      };
+
+      const response = await handleRequest(
+        request('PUT', '/v1/budget-policy', { namespace: 'org-1' }),
+        engine,
+      );
+
+      expect(response.status).toBe(500);
+      expect(await json(response)).toMatchObject({ error: 'budget policy write failed' });
+
+      engine.setBudgetPolicy = originalSetBudgetPolicy;
+    });
+  });
+
+  describe('GET /v1/budget-policy/:namespace', () => {
+    it('returns an existing budget policy', async () => {
+      engine = createEngine();
+      await engine.setBudgetPolicy({ namespace: 'org-1', daily: { maxCost: 50 } });
+
+      const response = await handleRequest(request('GET', '/v1/budget-policy/org-1'), engine);
+
+      expect(response.status).toBe(200);
+      expect(await json(response)).toMatchObject({
+        namespace: 'org-1',
+        daily: { maxCost: 50 },
+      });
+    });
+
+    it('returns 404 for an unknown namespace', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(request('GET', '/v1/budget-policy/missing'), engine);
+
+      expect(response.status).toBe(404);
+      expect(await json(response)).toMatchObject({
+        error: 'Budget policy for namespace "missing" not found',
+      });
     });
   });
 
@@ -1847,5 +2113,56 @@ describe('handleRequest', () => {
       expect(body).toContain('event: done');
       expect(body).toContain('data: ');
     });
+
+    it('streams string and token-object chunks while skipping unsupported shapes', async () => {
+      engine = createEngine();
+
+      const startResponse = await handleRequest(
+        request('POST', '/v1/workflows', { type: 'echo', input: 'stream' }),
+        engine,
+      );
+      const { id } = (await json(startResponse)) as { id: string };
+      await flush();
+
+      const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
+      engine.getStreamChunks = async () => [
+        'alpha',
+        { token: 'beta' },
+        { token: '' },
+        { nope: 'ignored' },
+        42,
+      ];
+
+      const response = await handleRequest(
+        new Request(`http://localhost/v1/workflows/${id}/sse`, {
+          method: 'GET',
+          headers: { Accept: 'text/event-stream', 'Last-Event-ID': '2' },
+        }),
+        engine,
+      );
+
+      const body = await response.text();
+      expect(body).toContain('alpha');
+      expect(body).toContain('beta');
+      expect(body).not.toContain('ignored');
+
+      engine.getStreamChunks = originalGetStreamChunks;
+    });
+  });
+
+  it('returns 500 from the top-level handler when a route throws unexpectedly', async () => {
+    engine = createEngine();
+
+    const originalList = engine.list.bind(engine);
+    engine.list = async () => {
+      throw new Error('list exploded');
+    };
+
+    const response = await handleRequest(request('GET', '/v1/workflows'), engine);
+
+    expect(response.status).toBe(500);
+    expect(await json(response)).toEqual({ error: 'Internal server error' });
+
+    engine.list = originalList;
   });
 });

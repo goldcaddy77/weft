@@ -30,12 +30,19 @@ type HeapEntry = DeadlineEntry & { generation: number };
  * - `drainExpired`: O(k log n) where k is the number of expired entries
  */
 export class DeadlineTracker {
-  readonly #heap: HeapEntry[] = [];
+  readonly #heap: HeapEntry[];
   /** Current live generation per operation ID. `0` means removed/absent. */
-  readonly #liveGeneration = new Map<string, number>();
+  readonly #liveGeneration: Map<string, number>;
   /** Monotonic counter used to stamp new entries. */
-  #nextGeneration = 1;
-  #liveCount = 0;
+  #nextGeneration: number;
+  #liveCount: number;
+
+  constructor() {
+    this.#heap = [];
+    this.#liveGeneration = new Map();
+    this.#nextGeneration = 1;
+    this.#liveCount = 0;
+  }
 
   /** Number of tracked deadlines (excludes stale entries). */
   get size(): number {

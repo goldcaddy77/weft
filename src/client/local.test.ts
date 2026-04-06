@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import { WorkflowCompletedEvent, WorkflowFailedEvent } from '../core/events.ts';
 import type { WorkflowContext } from '../core/types.ts';
@@ -289,5 +289,135 @@ describe('LocalClient', () => {
       expect(results).toContain('listener-b');
       expect(results).toHaveLength(2);
     });
+  });
+});
+
+describe('LocalClient delegation surface', () => {
+  it('forwards every method to the underlying engine and wraps handles', async () => {
+    const workflowHandle = new EventTarget() as EventTarget & {
+      id: string;
+      result: () => Promise<unknown>;
+    };
+    workflowHandle.id = 'delegated-workflow';
+    workflowHandle.result = async () => 'workflow-result';
+
+    const resumedHandle = new EventTarget() as EventTarget & {
+      id: string;
+      result: () => Promise<unknown>;
+    };
+    resumedHandle.id = 'resumed-workflow';
+    resumedHandle.result = async () => 'resumed-result';
+
+    const registeredListener = mock(() => {});
+    const removedListener = mock(() => {});
+    workflowHandle.addEventListener =
+      registeredListener as unknown as typeof workflowHandle.addEventListener;
+    workflowHandle.removeEventListener =
+      removedListener as unknown as typeof workflowHandle.removeEventListener;
+
+    const engine = {
+      start: mock(async () => workflowHandle),
+      get: mock(async () => ({ id: 'delegated-workflow', status: 'running' })),
+      list: mock(async () => ({ items: [{ id: 'delegated-workflow' }], total: 1 })),
+      cancel: mock(async () => undefined),
+      signal: mock(async () => undefined),
+      query: mock(async () => 'query-result'),
+      update: mock(async () => 'update-result'),
+      resume: mock(async () => resumedHandle),
+      recoverAll: mock(async () => [workflowHandle, resumedHandle]),
+      timeout: mock(async () => undefined),
+      getAttributes: mock(async () => ({ priority: 'high' })),
+      setAttributes: mock(async () => undefined),
+      getEvents: mock(async () => [{ type: 'workflow:started' }]),
+      listReviews: mock(async () => [{ reviewId: 'review-1' }]),
+      submitReview: mock(async () => undefined),
+      setBudgetPolicy: mock(async () => undefined),
+      getBudgetPolicy: mock(async () => ({ namespace: 'agents', daily: { maxCost: 12 } })),
+      getStreamChunks: mock(async () => ['chunk-a', 'chunk-b']),
+      submitCoordinatedUpdate: mock(async () => ({ updateId: 'update-1', result: 'ok' })),
+      getUpdateResult: mock(async () => ({ updateId: 'update-1', result: 'done', error: 'none' })),
+    } as unknown as Engine;
+
+    const client = new LocalClient(engine);
+
+    const handle = await client.start('echo', 'hello', { id: 'start-id' });
+    expect(await handle.result()).toBe('workflow-result');
+    await handle.cancel();
+    await handle.signal('status', { ok: true });
+    expect(await handle.update('rename', { value: 1 }, { timeout: 50 })).toBe('update-result');
+    expect(await handle.query('status')).toBe('query-result');
+    expect(await handle.getAttributes()).toEqual({ priority: 'high' });
+    await handle.setAttributes({ priority: 'critical' });
+    handle.addEventListener('workflow:completed', (() => {}) as EventListener);
+    handle.removeEventListener('workflow:completed', (() => {}) as EventListener);
+    handle[Symbol.dispose]();
+
+    expect(await client.get('delegated-workflow')).toMatchObject({
+      id: 'delegated-workflow',
+      status: 'running',
+    });
+    expect(await client.list({ status: 'running' })).toMatchObject({
+      items: [{ id: 'delegated-workflow' }],
+      total: 1,
+    });
+    await client.cancel('delegated-workflow');
+    await client.signal('delegated-workflow', 'status', { ok: true });
+    expect(await client.query('delegated-workflow', 'status')).toBe('query-result');
+    expect(await client.update('delegated-workflow', 'rename', { value: 1 }, { timeout: 50 })).toBe(
+      'update-result',
+    );
+
+    const resumeHandle = await client.resume('delegated-workflow');
+    expect(await resumeHandle.result()).toBe('resumed-result');
+    const recoveredHandles = await client.recoverAll();
+    expect(recoveredHandles).toHaveLength(2);
+    expect(await recoveredHandles[1]?.result()).toBe('resumed-result');
+
+    await client.timeout('delegated-workflow');
+    expect(await client.getAttributes('delegated-workflow')).toEqual({ priority: 'high' });
+    await client.setAttributes('delegated-workflow', { priority: 'critical' });
+    expect(await client.getEvents('delegated-workflow')).toMatchObject([
+      { type: 'workflow:started' },
+    ]);
+    expect(await client.listReviews()).toEqual([{ reviewId: 'review-1' }]);
+    await client.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
+    await client.setBudgetPolicy({ namespace: 'agents', daily: { maxCost: 10 } });
+    expect(await client.getBudgetPolicy('agents')).toEqual({
+      namespace: 'agents',
+      daily: { maxCost: 12 },
+    });
+    expect(await client.getStreamChunks('delegated-workflow', 'stream-key')).toEqual([
+      'chunk-a',
+      'chunk-b',
+    ]);
+    expect(
+      await client.submitCoordinatedUpdate(
+        'delegated-workflow',
+        'rename',
+        { value: 1 },
+        {
+          timeout: 50,
+          idempotencyKey: 'idempotent-1',
+        },
+      ),
+    ).toEqual({ updateId: 'update-1', result: 'ok' });
+    expect(await client.getUpdateResult('update-1')).toEqual({
+      updateId: 'update-1',
+      result: 'done',
+      error: 'none',
+    });
+
+    expect(registeredListener).toHaveBeenCalled();
+    expect(removedListener).toHaveBeenCalled();
+  });
+
+  it('returns null when the engine has no update result', async () => {
+    const engine = {
+      getUpdateResult: mock(async () => null),
+    } as unknown as Engine;
+
+    const client = new LocalClient(engine);
+
+    expect(await client.getUpdateResult('missing-update')).toBeNull();
   });
 });

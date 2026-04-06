@@ -142,23 +142,14 @@ export function compileStepWorkflow<TInput = unknown, TOutput = unknown>(
 // Detection helper
 // ---------------------------------------------------------------------------
 
-const GeneratorFunctionPrototype = Object.getPrototypeOf(function* () {});
-const AsyncGeneratorFunctionPrototype = Object.getPrototypeOf(async function* () {});
-
-/** Prototype of generator instance objects (the values returned by generator functions). */
-const GeneratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf((function* () {})()));
-const AsyncGeneratorPrototype = Object.getPrototypeOf(
-  Object.getPrototypeOf((async function* () {})()),
-);
-
 /** Returns `true` if `fn` is a sync generator function (`function*`). */
 export function isGeneratorFunction(fn: Function): boolean {
-  return Object.getPrototypeOf(fn) === GeneratorFunctionPrototype;
+  return fn.constructor.name === 'GeneratorFunction';
 }
 
 /** Returns `true` if `fn` is an async generator function (`async function*`). */
 export function isAsyncGeneratorFunction(fn: Function): boolean {
-  return Object.getPrototypeOf(fn) === AsyncGeneratorFunctionPrototype;
+  return fn.constructor.name === 'AsyncGeneratorFunction';
 }
 
 /**
@@ -171,6 +162,19 @@ export function isAsyncGeneratorFunction(fn: Function): boolean {
  */
 export function isGeneratorResult(value: unknown): boolean {
   if (value === null || typeof value !== 'object') return false;
-  const proto = Object.getPrototypeOf(Object.getPrototypeOf(value));
-  return proto === GeneratorPrototype || proto === AsyncGeneratorPrototype;
+  const candidate = value as {
+    next?: unknown;
+    throw?: unknown;
+    return?: unknown;
+    [Symbol.iterator]?: unknown;
+    [Symbol.asyncIterator]?: unknown;
+  };
+
+  return (
+    typeof candidate.next === 'function' &&
+    typeof candidate.throw === 'function' &&
+    typeof candidate.return === 'function' &&
+    (typeof candidate[Symbol.iterator] === 'function' ||
+      typeof candidate[Symbol.asyncIterator] === 'function')
+  );
 }

@@ -162,6 +162,35 @@ describe('AlertManager', () => {
 
       manager[Symbol.dispose]();
     });
+
+    it('re-evaluates rules on the periodic interval tick', () => {
+      const originalSetInterval = globalThis.setInterval;
+      globalThis.setInterval = ((handler: TimerHandler) => {
+        if (typeof handler === 'function') {
+          handler();
+        }
+        return 1 as unknown as ReturnType<typeof setInterval>;
+      }) as unknown as typeof setInterval;
+
+      try {
+        const options: AlertingOptions = {
+          rules: [
+            {
+              metric: 'workflow.failure_rate',
+              threshold: 0.5,
+              window: '5m',
+              action: 'log',
+            },
+          ],
+        };
+
+        const manager = new AlertManager(target, options, getNow);
+        expect(manager.states[0]!.status).toBe('idle');
+        manager[Symbol.dispose]();
+      } finally {
+        globalThis.setInterval = originalSetInterval;
+      }
+    });
   });
 
   describe('activity.p99_duration', () => {
@@ -405,6 +434,39 @@ describe('AlertManager', () => {
 
       // Should not have been called because webhook only listens for resolved
       expect(fetchMock).not.toHaveBeenCalled();
+
+      manager[Symbol.dispose]();
+    });
+
+    it('swallows webhook delivery failures and cleans up pending state', async () => {
+      const fetchMock = mock(() => Promise.reject(new Error('network failed')));
+      globalThis.fetch = fetchMock as any;
+
+      const options: AlertingOptions = {
+        rules: [
+          {
+            metric: 'workflow.failure_rate',
+            threshold: 0.5,
+            window: '5m',
+            action: 'webhook',
+          },
+        ],
+        webhooks: [
+          {
+            url: 'https://hooks.example.com/alert',
+            events: ['alert:fired'],
+          },
+        ],
+      };
+
+      const manager = new AlertManager(target, options, getNow);
+
+      expect(() => {
+        target.dispatchEvent(new WorkflowFailedEvent('wf-1', new Error('fail')));
+      }).not.toThrow();
+
+      await Promise.resolve();
+      await Promise.resolve();
 
       manager[Symbol.dispose]();
     });

@@ -39,11 +39,14 @@ export class AlertManager implements Disposable {
     this.#listeners = [];
 
     // Initialize states for each rule (all start idle)
-    this.#states = options.rules.map((rule) => ({
-      rule,
-      status: 'idle' as const,
-      currentValue: 0,
-    }));
+    this.#states = [];
+    for (const rule of options.rules) {
+      this.#states.push({
+        rule,
+        status: 'idle' as const,
+        currentValue: 0,
+      });
+    }
 
     // Create windows for rules that specify one
     this.#windows = new Map();
@@ -63,11 +66,13 @@ export class AlertManager implements Disposable {
 
     // Periodic tick to re-evaluate rules even when no events arrive,
     // so alerts in 'firing' state can auto-resolve once the window expires.
-    this.#tickInterval = setInterval(() => {
-      for (let i = 0; i < this.#options.rules.length; i++) {
-        this.#evaluate(i);
-      }
-    }, TICK_INTERVAL_MS);
+    this.#tickInterval = setInterval(this.#evaluateAll.bind(this), TICK_INTERVAL_MS);
+  }
+
+  #evaluateAll(): void {
+    for (let i = 0; i < this.#options.rules.length; i++) {
+      this.#evaluate(i);
+    }
   }
 
   #subscribeToEvents(): void {
@@ -207,14 +212,14 @@ export class AlertManager implements Disposable {
           timestamp: this.#getNow(),
         },
       };
-      fetch(target.url, {
+      void fetch(target.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
       })
-        .then(() => this.#pendingWebhooks.delete(controller))
-        .catch(() => this.#pendingWebhooks.delete(controller));
+        .catch(() => {})
+        .finally(this.#pendingWebhooks.delete.bind(this.#pendingWebhooks, controller));
     }
   }
 

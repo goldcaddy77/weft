@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { activity } from './activity.ts';
 import type { ActivityDefinition } from './types.ts';
+import { activity as createConfiguredActivity } from './types.ts';
 
 describe('activity()', () => {
   it('returns the definition unchanged', () => {
@@ -48,5 +49,18 @@ describe('activity()', () => {
 
     const result = activity(definition);
     expect(result.execute('hello')).toBe('HELLO');
+  });
+
+  it('types.activity returns a callable function with colocated configuration', async () => {
+    const sendEmail = createConfiguredActivity({
+      name: 'send-email',
+      queue: 'priority',
+      execute: async (input: string) => `sent:${input}`,
+    });
+
+    expect(await sendEmail('welcome')).toBe('sent:welcome');
+    expect(sendEmail.name).toBe('send-email');
+    expect(sendEmail.queue).toBe('priority');
+    expect(sendEmail.execute).toBeDefined();
   });
 });

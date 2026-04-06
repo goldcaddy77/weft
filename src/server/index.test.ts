@@ -1,11 +1,12 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 
 import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
-import { TokenEvent } from '../core/events.ts';
+import { TokenEvent, WorkflowCancelledEvent } from '../core/events.ts';
 import type { RetryPolicy, WorkflowContext } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import { DeadlineTracker } from './deadline-tracker.ts';
 import type { WeftServer } from './index.ts';
 import { serve } from './index.ts';
 
@@ -27,6 +28,18 @@ function createEngine(): Engine {
   });
 
   return engine;
+}
+
+function overrideProperty<T extends object, K extends keyof T>(
+  target: T,
+  property: K,
+  replacement: T[K],
+): () => void {
+  const original = target[property];
+  (target as Record<PropertyKey, unknown>)[property as PropertyKey] = replacement as unknown;
+  return () => {
+    (target as Record<PropertyKey, unknown>)[property as PropertyKey] = original as unknown;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +71,25 @@ describe('serve', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { status: string };
     expect(body.status).toBe('ok');
+  });
+
+  it('serves dashboard routes when a dashboard asset is configured', async () => {
+    engine = createEngine();
+    server = serve({
+      engine,
+      port: 0,
+      dashboard: new Response('<html><body>dashboard</body></html>', {
+        headers: { 'Content-Type': 'text/html' },
+      }),
+    });
+
+    const rootResponse = await fetch(`${server.url}/ui`);
+    const nestedResponse = await fetch(`${server.url}/ui/assets/app.js`);
+
+    expect(rootResponse.status).toBe(200);
+    expect(await rootResponse.text()).toContain('dashboard');
+    expect(nestedResponse.status).toBe(200);
+    expect(await nestedResponse.text()).toContain('dashboard');
   });
 
   it('handles workflow API routes (POST /v1/workflows)', async () => {
@@ -139,6 +171,27 @@ describe('serve', () => {
     server = serve({ engine, port: 0 });
 
     expect(server.url).toBe(`http://${server.hostname}:${server.port}`);
+  });
+
+  it('disposes the listening server when event broadcasting setup throws', async () => {
+    engine = createEngine();
+    const originalAddEventListener = engine.addEventListener.bind(engine);
+    const restoreAddEventListener = overrideProperty(engine, 'addEventListener', ((
+      ...args: Parameters<EventTarget['addEventListener']>
+    ) => {
+      const [type] = args;
+      if (type === TokenEvent.type) {
+        throw new Error('broadcast setup failed');
+      }
+      return originalAddEventListener(...args);
+    }) as Engine['addEventListener']);
+
+    try {
+      expect(() => serve({ engine, port: 0 })).toThrow('broadcast setup failed');
+      await Bun.sleep(50);
+    } finally {
+      restoreAddEventListener();
+    }
   });
 
   it('defaults to port 7233', () => {
@@ -372,6 +425,111 @@ describe('worker WebSocket protocol', () => {
 
     ws.close();
     await Bun.sleep(50);
+  });
+
+  it('extends persisted task visibility deadlines on heartbeat', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, { workerId: 'w-heartbeat-extend', activities: ['charge'] });
+
+    await server.dispatchTask({
+      operationId: 'heartbeat-op',
+      activityName: 'charge',
+      input: null,
+      visibilityTimeout: 200,
+    });
+
+    const before = decode((await engine.storage.get(KEYS.operationInflight('heartbeat-op')))!) as {
+      deadline: number;
+    };
+
+    await Bun.sleep(25);
+    ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-extend' }));
+    await Bun.sleep(75);
+
+    const after = decode((await engine.storage.get(KEYS.operationInflight('heartbeat-op')))!) as {
+      deadline: number;
+    };
+
+    expect(after.deadline).toBeGreaterThan(before.deadline);
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('logs corrupt inflight records during heartbeat visibility extension', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    server = serve({ engine, port: 0 });
+
+    try {
+      const ws = await connectWorker(server);
+      await registerWorker(ws, { workerId: 'w-heartbeat-corrupt', activities: ['charge'] });
+
+      await server.dispatchTask({
+        operationId: 'heartbeat-corrupt-op',
+        activityName: 'charge',
+        input: null,
+        visibilityTimeout: 200,
+      });
+      await storage.put(KEYS.operationInflight('heartbeat-corrupt-op'), encode({ broken: true }));
+
+      ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-corrupt' }));
+      await Bun.sleep(100);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Corrupt inflight record for task "heartbeat-corrupt-op" during heartbeat — skipping visibility extension',
+      );
+
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('logs heartbeat visibility persistence failures', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalPut = storage.put.bind(storage);
+    server = serve({ engine, port: 0 });
+
+    const restorePut = overrideProperty(storage, 'put', (async (key: string, value: Uint8Array) => {
+      if (key === KEYS.operationInflight('heartbeat-write-fail-op')) {
+        throw new Error('heartbeat write failed');
+      }
+      await originalPut(key, value);
+    }) as MemoryStorage['put']);
+
+    try {
+      const ws = await connectWorker(server);
+      await registerWorker(ws, { workerId: 'w-heartbeat-write-fail', activities: ['charge'] });
+
+      await server.dispatchTask({
+        operationId: 'heartbeat-write-fail-op',
+        activityName: 'charge',
+        input: null,
+        visibilityTimeout: 200,
+      });
+
+      ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-write-fail' }));
+      await Bun.sleep(250);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Failed to extend visibility for task "heartbeat-write-fail-op":',
+        expect.any(Error),
+      );
+
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      restorePut();
+      errorSpy.mockRestore();
+    }
   });
 
   it('dispatches a task to the best available worker', async () => {
@@ -1175,6 +1333,91 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     await Bun.sleep(50);
   });
 
+  it('continues event persistence from the highest stored sequence number', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    await storage.put(
+      KEYS.event('wf-sequence', 4),
+      encode({
+        type: TokenEvent.type,
+        timestamp: Date.now(),
+        data: { workflowId: 'wf-sequence', token: 'old', model: 'gpt-4' },
+      }),
+    );
+    server = serve({ engine, port: 0 });
+
+    engine.dispatchEvent(new TokenEvent('wf-sequence', 'new', 'gpt-4'));
+    await Bun.sleep(200);
+
+    expect(await storage.get(KEYS.event('wf-sequence', 4))).not.toBeNull();
+    expect(await storage.get(KEYS.event('wf-sequence', 5))).not.toBeNull();
+  });
+
+  it('retries event sequence initialization after a failed scan', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalScan = storage.scan.bind(storage);
+    let failFirstEventScan = true;
+    const restoreScan = overrideProperty(storage, 'scan', async function* (
+      prefix: string,
+      options?: Parameters<MemoryStorage['scan']>[1],
+    ) {
+      if (prefix === 'ev:wf-sequence-retry:' && failFirstEventScan) {
+        failFirstEventScan = false;
+        throw new Error('event scan failed');
+      }
+      yield* originalScan(prefix, options);
+    } as MemoryStorage['scan']);
+    server = serve({ engine, port: 0 });
+
+    try {
+      engine.dispatchEvent(new TokenEvent('wf-sequence-retry', 'first', 'gpt-4'));
+      await Bun.sleep(200);
+      engine.dispatchEvent(new TokenEvent('wf-sequence-retry', 'second', 'gpt-4'));
+      await Bun.sleep(200);
+
+      expect(await storage.get(KEYS.event('wf-sequence-retry', 0))).not.toBeNull();
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      restoreScan();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('logs replay failures when stored token scanning throws', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalScan = storage.scan.bind(storage);
+    const restoreScan = overrideProperty(storage, 'scan', async function* (
+      prefix: string,
+      options?: Parameters<MemoryStorage['scan']>[1],
+    ) {
+      if (prefix === 'ev:wf-replay-failure:') {
+        throw new Error('replay scan failed');
+      }
+      yield* originalScan(prefix, options);
+    } as MemoryStorage['scan']);
+    server = serve({ engine, port: 0 });
+
+    try {
+      const ws = await connectStream(server, 'wf-replay-failure');
+      await Bun.sleep(100);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Failed to replay token events for workflow "wf-replay-failure":',
+        expect.any(Error),
+      );
+
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      restoreScan();
+      errorSpy.mockRestore();
+    }
+  });
+
   it('does not process worker protocol messages on stream connections', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
@@ -1244,6 +1487,22 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     const response = await fetch(`${server.url}/v1/tasks/default?activity=charge&timeout=50`);
 
     expect(response.status).toBe(204);
+  });
+
+  it('rejects task results with invalid status values', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const response = await fetch(`${server.url}/v1/tasks/default/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operationId: 'bad-status-op', status: 'cancelled' }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'status must be "completed" or "failed"',
+    });
   });
 
   it('returns 400 when no activity query parameter is provided', async () => {
@@ -1334,6 +1593,45 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
+  });
+
+  it('logs long-poll task result persistence failures without failing the HTTP response', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalBatch = storage.batch.bind(storage);
+    const restoreBatch = overrideProperty(storage, 'batch', (async (
+      operations: Parameters<MemoryStorage['batch']>[0],
+    ) => {
+      if (
+        operations.some((operation) => operation.key === KEYS.operationResolved('op-complete-fail'))
+      ) {
+        throw new Error('long-poll resolution failed');
+      }
+      await originalBatch(operations);
+    }) as MemoryStorage['batch']);
+    server = serve({ engine, port: 0 });
+
+    try {
+      const response = await fetch(`${server.url}/v1/tasks/default/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operationId: 'op-complete-fail',
+          status: 'completed',
+          value: { result: 42 },
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Failed to transition task "op-complete-fail" to resolved — inflight record may leak:',
+        expect.any(Error),
+      );
+    } finally {
+      restoreBatch();
+      errorSpy.mockRestore();
+    }
   });
 
   it('returns 400 for invalid completion body', async () => {
@@ -1618,6 +1916,192 @@ describe('task assignment deduplication', () => {
     await Bun.sleep(50);
   });
 
+  it('treats unexpected worker taskResult statuses as failed', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const ws = await connectWorker(server);
+      ws.addEventListener('message', (event) => {
+        const msg = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+        if (msg.type === 'task') {
+          ws.send(
+            JSON.stringify({
+              type: 'taskResult',
+              operationId: msg.operationId,
+              status: 'mystery-status',
+            }),
+          );
+        }
+      });
+
+      await registerWorker(ws, { workerId: 'w-unexpected-status', activities: ['charge'] });
+      await server.dispatchTask({
+        operationId: 'unexpected-status-op',
+        activityName: 'charge',
+        input: null,
+      });
+
+      await Bun.sleep(100);
+
+      expect(server.registry.isAssigned('unexpected-status-op')).toBe(false);
+      expect(warningSpy).toHaveBeenCalled();
+
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it('treats cancelled worker taskResult statuses as failed resolutions', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    ws.addEventListener('message', (event) => {
+      const msg = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (msg.type === 'task') {
+        ws.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: msg.operationId,
+            status: 'cancelled',
+          }),
+        );
+      }
+    });
+
+    await registerWorker(ws, { workerId: 'w-cancelled-status', activities: ['charge'] });
+    await server.dispatchTask({
+      operationId: 'cancelled-status-op',
+      activityName: 'charge',
+      input: null,
+    });
+
+    await Bun.sleep(100);
+
+    expect(await engine.storage.get(KEYS.operationInflight('cancelled-status-op'))).toBeNull();
+    expect(await engine.storage.get(KEYS.operationResolved('cancelled-status-op'))).not.toBeNull();
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('logs task result persistence failures when inflight resolution cannot be stored', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalBatch = storage.batch.bind(storage);
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    ws.addEventListener('message', (event) => {
+      const msg = JSON.parse(String(event.data)) as { type: string; operationId?: string };
+      if (msg.type === 'task') {
+        ws.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: msg.operationId,
+            status: 'completed',
+          }),
+        );
+      }
+    });
+
+    const restoreBatch = overrideProperty(storage, 'batch', (async (
+      operations: Parameters<MemoryStorage['batch']>[0],
+    ) => {
+      if (
+        operations.some((operation) => operation.key === KEYS.operationResolved('task-result-fail'))
+      ) {
+        throw new Error('resolved batch failed');
+      }
+      await originalBatch(operations);
+    }) as MemoryStorage['batch']);
+
+    try {
+      await registerWorker(ws, { workerId: 'w-task-result-fail', activities: ['charge'] });
+      await server.dispatchTask({
+        operationId: 'task-result-fail',
+        activityName: 'charge',
+        input: null,
+      });
+
+      await Bun.sleep(150);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Failed to transition task "task-result-fail" to resolved — inflight record may leak:',
+        expect.any(Error),
+      );
+
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      restoreBatch();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('decrements the worker in-flight count when taskResult omits operationId', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const ws = await connectWorker(server);
+      ws.addEventListener('message', (event) => {
+        const msg = JSON.parse(String(event.data)) as { type: string };
+        if (msg.type === 'task') {
+          ws.send(JSON.stringify({ type: 'taskResult', status: 'completed' }));
+        }
+      });
+
+      await registerWorker(ws, { workerId: 'w-missing-op-id', activities: ['charge'] });
+      await server.dispatchTask({
+        operationId: 'missing-op-id-op',
+        activityName: 'charge',
+        input: null,
+      });
+
+      await Bun.sleep(100);
+
+      expect(server.registry.getWorker('w-missing-op-id')?.inFlight).toBe(0);
+      expect(warningSpy).toHaveBeenCalled();
+
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it('ignores stale socket close events after a worker reconnects', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const ws1 = await connectWorker(server);
+      await registerWorker(ws1, { workerId: 'reconnecting-worker', activities: ['charge'] });
+
+      const ws2 = await connectWorker(server);
+      await registerWorker(ws2, { workerId: 'reconnecting-worker', activities: ['charge'] });
+
+      ws1.close();
+      await Bun.sleep(100);
+
+      expect(server.registry.getWorker('reconnecting-worker')).toBeDefined();
+      expect(warningSpy).toHaveBeenCalled();
+
+      ws2.close();
+      await Bun.sleep(50);
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
   it('allows re-dispatch of an operationId after completion', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
@@ -1851,6 +2335,99 @@ describe('visibility timeout persistence', () => {
 
     // The registry should now track the restored task
     expect(server.registry.isAssigned('restored-op')).toBe(true);
+  });
+
+  it('rebuilds workflow cancellation tracking for restored in-flight tasks', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+
+    const inflightRecord = {
+      operationId: 'restored-cancel-op',
+      workerId: 'restored-cancel-worker',
+      workflowId: 'wf-restored-cancel',
+      deadline: Date.now() + 60_000,
+      activityName: 'charge',
+      queue: 'default',
+      input: null,
+      attempt: 1,
+      visibilityTimeout: 60_000,
+    };
+    await storage.put(KEYS.operationInflight('restored-cancel-op'), encode(inflightRecord));
+
+    server = serve({ engine, port: 0 });
+    await Bun.sleep(100);
+
+    const ws = await connectWorker(server);
+    const received: Array<{ type: string; operationId?: string }> = [];
+    ws.addEventListener('message', (event) => {
+      received.push(JSON.parse(String(event.data)));
+    });
+    await registerWorker(ws, {
+      workerId: 'restored-cancel-worker',
+      activities: ['charge'],
+      concurrency: 1,
+    });
+
+    engine.dispatchEvent(new WorkflowCancelledEvent('wf-restored-cancel'));
+    await Bun.sleep(100);
+
+    expect(
+      received.some((message) => {
+        return message.type === 'cancel' && message.operationId === 'restored-cancel-op';
+      }),
+    ).toBe(true);
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('logs corrupt persisted inflight records during restore', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    await storage.put(KEYS.operationInflight('restore-corrupt-op'), encode({ invalid: true }));
+
+    try {
+      server = serve({ engine, port: 0 });
+      await Bun.sleep(100);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Corrupt inflight record at "op:inflight:restore-corrupt-op" during restore — skipping',
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('retries restore scans and logs when recovery still fails', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalScan = storage.scan.bind(storage);
+    let inflightScanAttempts = 0;
+    const restoreScan = overrideProperty(storage, 'scan', async function* (
+      prefix: string,
+      options?: Parameters<MemoryStorage['scan']>[1],
+    ) {
+      if (prefix === 'op:inflight:') {
+        inflightScanAttempts++;
+        throw new Error(`restore scan failed ${inflightScanAttempts}`);
+      }
+      yield* originalScan(prefix, options);
+    } as MemoryStorage['scan']);
+
+    try {
+      server = serve({ engine, port: 0 });
+      await Bun.sleep(250);
+
+      expect(warningSpy).toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Failed to restore in-flight tasks from storage:',
+        expect.any(Error),
+      );
+    } finally {
+      restoreScan();
+      warningSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it('cleans up expired in-flight records from storage on restart', async () => {
@@ -2103,6 +2680,140 @@ describe('worker disconnection triggers task reassignment', () => {
 
     ws2.close();
     await Bun.sleep(50);
+  });
+
+  it('logs corrupt inflight records when a disconnected worker task cannot be decoded', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    server = serve({ engine, port: 0 });
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const ws = await connectWorker(server);
+      await registerWorker(ws, { workerId: 'w-corrupt-disconnect', activities: ['charge'] });
+
+      await server.dispatchTask({
+        operationId: 'disconnect-corrupt-op',
+        activityName: 'charge',
+        input: null,
+      });
+      await Bun.sleep(50);
+      await storage.put(KEYS.operationInflight('disconnect-corrupt-op'), encode({ bad: true }));
+
+      ws.close();
+      await Bun.sleep(150);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Corrupt inflight record for task "disconnect-corrupt-op" — skipping reassignment',
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('warns and clears missing inflight records when a worker disconnects before storage commit', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    server = serve({ engine, port: 0 });
+    const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const ws = await connectWorker(server);
+      await registerWorker(ws, { workerId: 'w-missing-disconnect', activities: ['charge'] });
+
+      await server.dispatchTask({
+        operationId: 'disconnect-missing-op',
+        activityName: 'charge',
+        input: null,
+      });
+      await Bun.sleep(50);
+      await storage.delete(KEYS.operationInflight('disconnect-missing-op'));
+
+      ws.close();
+      await Bun.sleep(150);
+
+      expect(warningSpy).toHaveBeenCalledWith(
+        '[weft] No inflight record found in storage for task "disconnect-missing-op" — skipping reassignment',
+      );
+      expect(await storage.get(KEYS.operationInflight('disconnect-missing-op'))).toBeNull();
+    } finally {
+      warningSpy.mockRestore();
+    }
+  });
+
+  it('logs disconnect reassignment failures when storage access throws', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalGet = storage.get.bind(storage);
+    server = serve({ engine, port: 0 });
+
+    const restoreGet = overrideProperty(storage, 'get', (async (key: string) => {
+      if (key === KEYS.operationInflight('disconnect-get-fail-op')) {
+        throw new Error('disconnect get failed');
+      }
+      return originalGet(key);
+    }) as MemoryStorage['get']);
+
+    try {
+      const ws = await connectWorker(server);
+      await registerWorker(ws, { workerId: 'w-disconnect-get-fail', activities: ['charge'] });
+
+      await server.dispatchTask({
+        operationId: 'disconnect-get-fail-op',
+        activityName: 'charge',
+        input: null,
+      });
+      await Bun.sleep(50);
+
+      ws.close();
+      await Bun.sleep(150);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Failed to reassign task "disconnect-get-fail-op" from worker "w-disconnect-get-fail":',
+        expect.any(Error),
+      );
+    } finally {
+      restoreGet();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('logs immediate redispatch failures when a non-retry-policy task cannot be requeued', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalPut = storage.put.bind(storage);
+    server = serve({ engine, port: 0 });
+
+    const restorePut = overrideProperty(storage, 'put', (async (key: string, value: Uint8Array) => {
+      if (key === KEYS.operationQueued('disconnect-redispatch-fail-op')) {
+        throw new Error('immediate redispatch failed');
+      }
+      await originalPut(key, value);
+    }) as MemoryStorage['put']);
+
+    try {
+      const ws = await connectWorker(server);
+      await registerWorker(ws, {
+        workerId: 'w-disconnect-redispatch-fail',
+        activities: ['charge'],
+      });
+
+      await server.dispatchTask({
+        operationId: 'disconnect-redispatch-fail-op',
+        activityName: 'charge',
+        input: null,
+      });
+      await Bun.sleep(50);
+
+      ws.close();
+      await Bun.sleep(150);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Redispatch failed for "disconnect-redispatch-fail-op":',
+        expect.any(Error),
+      );
+    } finally {
+      restorePut();
+      errorSpy.mockRestore();
+    }
   });
 
   it('does nothing when a worker with no in-flight tasks disconnects', async () => {
@@ -2449,6 +3160,263 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     ws.close();
     await Bun.sleep(50);
   });
+
+  it('does not reassign a task when a heartbeat extended its deadline past a stale heap entry', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    server = serve({ engine, port: 0, visibilityPollIntervalMs: 50 });
+
+    const ws = await connectWorker(server);
+    const received: Array<{ type: string; operationId?: string }> = [];
+    ws.addEventListener('message', (event) => {
+      received.push(JSON.parse(String(event.data)));
+    });
+    await registerWorker(ws, { workerId: 'w-heartbeat-stale-heap', activities: ['charge'] });
+
+    await server.dispatchTask({
+      operationId: 'heartbeat-stale-heap-op',
+      activityName: 'charge',
+      input: null,
+      visibilityTimeout: 120,
+    });
+
+    const initialRecord = decode(
+      (await storage.get(KEYS.operationInflight('heartbeat-stale-heap-op')))!,
+    ) as { deadline: number };
+
+    await Bun.sleep(40);
+    ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-stale-heap' }));
+
+    let extendedDeadline = initialRecord.deadline;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const persisted = decode(
+        (await storage.get(KEYS.operationInflight('heartbeat-stale-heap-op')))!,
+      ) as { deadline: number };
+      extendedDeadline = persisted.deadline;
+      if (extendedDeadline > initialRecord.deadline) break;
+      await Bun.sleep(10);
+    }
+
+    expect(extendedDeadline).toBeGreaterThan(initialRecord.deadline);
+
+    const beforeScanTaskCount = received.filter((message) => message.type === 'task').length;
+    const staleDeadlineDelay = Math.max(0, initialRecord.deadline - Date.now()) + 40;
+    await Bun.sleep(staleDeadlineDelay);
+    const afterScanTaskCount = received.filter((message) => message.type === 'task').length;
+
+    expect(afterScanTaskCount).toBe(beforeScanTaskCount);
+    expect(server.registry.isAssigned('heartbeat-stale-heap-op')).toBe(true);
+
+    const persisted = decode(
+      (await storage.get(KEYS.operationInflight('heartbeat-stale-heap-op')))!,
+    ) as { deadline: number };
+    expect(persisted.deadline).toBe(extendedDeadline);
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('logs corrupt inflight records when the visibility scanner encounters invalid storage', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    server = serve({ engine, port: 0, visibilityPollIntervalMs: 50 });
+
+    try {
+      const ws = await connectWorker(server);
+      await registerWorker(ws, { workerId: 'w-visibility-corrupt', activities: ['charge'] });
+
+      await server.dispatchTask({
+        operationId: 'visibility-corrupt-op',
+        activityName: 'charge',
+        input: null,
+        visibilityTimeout: 100,
+      });
+      await Bun.sleep(50);
+      await storage.put(KEYS.operationInflight('visibility-corrupt-op'), encode({ invalid: true }));
+
+      await Bun.sleep(200);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Corrupt inflight record for task "visibility-corrupt-op" — skipping',
+      );
+
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('logs and retries expired-task processing failures in the visibility scanner', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalGet = storage.get.bind(storage);
+    server = serve({ engine, port: 0, visibilityPollIntervalMs: 50 });
+
+    const restoreGet = overrideProperty(storage, 'get', (async (key: string) => {
+      if (key === KEYS.operationInflight('visibility-retry-op')) {
+        throw new Error('visibility get failed');
+      }
+      return originalGet(key);
+    }) as MemoryStorage['get']);
+
+    try {
+      const ws = await connectWorker(server);
+      await registerWorker(ws, { workerId: 'w-visibility-retry', activities: ['charge'] });
+
+      await server.dispatchTask({
+        operationId: 'visibility-retry-op',
+        activityName: 'charge',
+        input: null,
+        visibilityTimeout: 100,
+      });
+      await Bun.sleep(200);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Failed to process expired task "visibility-retry-op" — will retry:',
+        expect.any(Error),
+      );
+
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      restoreGet();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('logs top-level visibility scanner failures', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalDrainExpired = DeadlineTracker.prototype.drainExpired;
+    server = serve({ engine, port: 0, visibilityPollIntervalMs: 20 });
+
+    try {
+      DeadlineTracker.prototype.drainExpired = function drainExpiredFailure() {
+        throw new Error('drain expired failed');
+      };
+
+      await Bun.sleep(80);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Visibility timeout scanner error:',
+        expect.any(Error),
+      );
+    } finally {
+      DeadlineTracker.prototype.drainExpired = originalDrainExpired;
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('reconciliation tracks non-expired orphaned records so the fast scanner can expire them later', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    server = serve({ engine, port: 0, visibilityPollIntervalMs: 20 });
+
+    const ws = await connectWorker(server);
+    const received: Array<{ type: string; operationId?: string; attempt?: number }> = [];
+    ws.addEventListener('message', (event) => {
+      const message = JSON.parse(String(event.data)) as {
+        type: string;
+        operationId?: string;
+        attempt?: number;
+      };
+      received.push(message);
+      if (message.type === 'task' && message.operationId === 'orphan-track-op') {
+        ws.send(
+          JSON.stringify({
+            type: 'taskResult',
+            operationId: message.operationId,
+            status: 'completed',
+          }),
+        );
+      }
+    });
+    await registerWorker(ws, { workerId: 'w-reconcile-track', activities: ['charge'] });
+
+    await Bun.sleep(50);
+    await storage.put(
+      KEYS.operationInflight('orphan-track-op'),
+      encode({
+        operationId: 'orphan-track-op',
+        workerId: 'ghost-worker',
+        deadline: Date.now() + 500,
+        activityName: 'charge',
+        queue: 'default',
+        input: null,
+        attempt: 1,
+        visibilityTimeout: 500,
+      }),
+    );
+
+    await Bun.sleep(300);
+
+    const earlyTaskMessages = received.filter((message) => {
+      return message.type === 'task' && message.operationId === 'orphan-track-op';
+    });
+    expect(earlyTaskMessages).toHaveLength(0);
+
+    await Bun.sleep(500);
+
+    const taskMessages = received.filter((message) => {
+      return message.type === 'task' && message.operationId === 'orphan-track-op';
+    });
+    expect(taskMessages.length).toBeGreaterThanOrEqual(1);
+    expect(taskMessages[0]?.attempt).toBe(2);
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('logs per-record reconciliation failures and skips the bad entry', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    server = serve({ engine, port: 0, visibilityPollIntervalMs: 20 });
+
+    try {
+      await Bun.sleep(50);
+      await storage.put(KEYS.operationInflight('reconcile-bad-op'), new Uint8Array([1, 2, 3]));
+
+      await Bun.sleep(300);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Failed to reconcile inflight record — skipping:',
+        expect.any(Error),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('logs reconciliation scan failures', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalScan = storage.scan.bind(storage);
+    let inflightScanCalls = 0;
+    const restoreScan = overrideProperty(storage, 'scan', async function* (
+      prefix: string,
+      options?: Parameters<MemoryStorage['scan']>[1],
+    ) {
+      if (prefix === 'op:inflight:') {
+        inflightScanCalls++;
+        if (inflightScanCalls >= 2) {
+          throw new Error('reconciliation scan failed');
+        }
+      }
+      yield* originalScan(prefix, options);
+    } as MemoryStorage['scan']);
+    server = serve({ engine, port: 0, visibilityPollIntervalMs: 20 });
+
+    try {
+      await Bun.sleep(320);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Reconciliation scanner error:',
+        expect.any(Error),
+      );
+    } finally {
+      restoreScan();
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2746,6 +3714,44 @@ describe('retry policy respected on reassignment', () => {
     await Bun.sleep(50);
   });
 
+  it('logs delayed redispatch failures when backoff requeue dispatch throws', async () => {
+    ({ engine, storage } = createEngineWithStorage());
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalPut = storage.put.bind(storage);
+    server = serve({ engine, port: 0 });
+
+    const restorePut = overrideProperty(storage, 'put', (async (key: string, value: Uint8Array) => {
+      if (key === KEYS.operationQueued('delayed-redispatch-fail-op')) {
+        throw new Error('delayed redispatch failed');
+      }
+      await originalPut(key, value);
+    }) as MemoryStorage['put']);
+
+    try {
+      const ws = await connectWorker(server);
+      await registerWorker(ws, { workerId: 'w-delayed-redispatch', activities: ['charge'] });
+
+      await server.dispatchTask({
+        operationId: 'delayed-redispatch-fail-op',
+        activityName: 'charge',
+        input: null,
+        retryPolicy: { ...testRetryPolicy, maxAttempts: 3, initialBackoff: 50, maxBackoff: 50 },
+      });
+      await Bun.sleep(50);
+
+      ws.close();
+      await Bun.sleep(250);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] Delayed redispatch failed for "delayed-redispatch-fail-op":',
+        expect.any(Error),
+      );
+    } finally {
+      restorePut();
+      errorSpy.mockRestore();
+    }
+  });
+
   it('stores retryPolicy in the inflight record for use during reassignment', async () => {
     ({ engine, storage } = createEngineWithStorage());
     server = serve({ engine, port: 0 });
@@ -2893,6 +3899,22 @@ describe('worker shutdown and cancel propagation', () => {
     expect(server.registry.getWorker('shutdown-w1')).toBeUndefined();
   });
 
+  it('shutdownWorker returns after the timeout when the worker stays connected', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectWorker(server);
+    await registerWorker(ws, { workerId: 'shutdown-timeout-w1', activities: ['charge'] });
+
+    const result = await server.shutdownWorker('shutdown-timeout-w1', { timeoutMs: 50 });
+
+    expect(result).toBe(true);
+    expect(server.registry.getWorker('shutdown-timeout-w1')).toBeDefined();
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
   it('shutdownWorker returns false for unknown worker', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
@@ -2927,6 +3949,27 @@ describe('worker shutdown and cancel propagation', () => {
 
     await Bun.sleep(50);
     expect(server.registry.size).toBe(0);
+  });
+
+  it('falls back to the long-poll queue when a registry worker has no live socket', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    server.registry.register({
+      id: 'ghost-worker',
+      queue: 'default',
+      activities: ['charge'],
+      concurrency: 1,
+    });
+
+    const dispatched = await server.dispatchTask({
+      operationId: 'ghost-worker-op',
+      activityName: 'charge',
+      input: null,
+    });
+
+    expect(dispatched).toBe(true);
+    expect(server.taskQueue.pendingCount('default')).toBe(1);
   });
 
   it('cancelTask sends cancel to the correct worker', async () => {

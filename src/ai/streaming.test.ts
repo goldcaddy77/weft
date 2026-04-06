@@ -109,6 +109,27 @@ describe('StreamMultiplexer', () => {
     expect(multiplexer.consumerCount).toBe(0);
   });
 
+  it('swallows source cancellation rejections when cancelling the multiplexer', async () => {
+    const source = new ReadableStream<StreamChunk>({
+      start(controller) {
+        controller.enqueue({ type: 'token', token: 'first' });
+      },
+      cancel() {
+        throw new Error('source cancel failed');
+      },
+    });
+
+    const multiplexer = new StreamMultiplexer(source);
+    const reader = multiplexer.createConsumer().getReader();
+
+    await reader.read();
+
+    multiplexer.cancel();
+    await Bun.sleep(0);
+
+    expect(multiplexer.consumerCount).toBe(0);
+  });
+
   it('buffer respects maxBufferSize', async () => {
     const chunks: StreamChunk[] = Array.from({ length: 5 }, (_, index) => ({
       type: 'token' as const,

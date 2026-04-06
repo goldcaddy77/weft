@@ -24,6 +24,8 @@ export type HttpSseTransportOptions = {
 
 const DEFAULT_TIMEOUT = 30_000;
 
+function ignoreTransportPromiseRejection(_error: unknown): void {}
+
 // ---------------------------------------------------------------------------
 // Transport
 // ---------------------------------------------------------------------------
@@ -60,7 +62,7 @@ export class HttpSseTransport implements MCPTransport {
 
     // Suppress unhandled rejection — the promise may be rejected by the timeout/abort
     // handler while we're awaiting the fetch, but we handle the error in catch.
-    promise.catch(() => {});
+    promise.catch(ignoreTransportPromiseRejection);
 
     // Only apply transport-level timeout when no external signal is provided.
     // When an external signal exists (e.g., from MCPClient), trust it to handle
@@ -70,7 +72,7 @@ export class HttpSseTransport implements MCPTransport {
 
     if (!signal) {
       timeoutController = new AbortController();
-      timeoutId = setTimeout(() => timeoutController!.abort(), this.#timeout);
+      timeoutId = setTimeout(timeoutController.abort.bind(timeoutController), this.#timeout);
     }
 
     // Effective signal: external signal, transport timeout signal, or none
@@ -131,7 +133,7 @@ export class HttpSseTransport implements MCPTransport {
 
   async healthCheck(): Promise<boolean> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.#timeout);
+    const timer = setTimeout(controller.abort.bind(controller), this.#timeout);
     try {
       const response = await fetch(`${this.#serverUrl}/health`, {
         method: 'GET',
@@ -197,7 +199,7 @@ export class HttpSseTransport implements MCPTransport {
 
   async #connect(): Promise<void> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.#timeout);
+    const timer = setTimeout(controller.abort.bind(controller), this.#timeout);
 
     let response: Response;
     try {

@@ -77,6 +77,20 @@ describe('ContextWindowManager', () => {
     });
   });
 
+  describe('constructor defaults', () => {
+    it('uses the noop strategy and default token counter when not provided', async () => {
+      const manager = new ContextWindowManager({ maxTokens: 100 });
+      const messages = [createMessage('user', 'hello there')];
+
+      expect(manager.strategyName).toBe('noop');
+
+      const compacted = await manager.compact(messages);
+      expect(compacted.tokensBefore).toBeGreaterThan(0);
+      expect(compacted.tokensAfter).toBe(compacted.tokensBefore);
+      expect(compacted.messages).toEqual(messages);
+    });
+  });
+
   describe('noopStrategy returns messages unchanged', () => {
     it('yields the same messages back', async () => {
       const strategy = noopStrategy();

@@ -217,6 +217,19 @@ describe('ActivityRegistry', () => {
       // Should not throw
       registry.unregister('nonexistent');
     });
+
+    it('keeps metadata when the same function remains registered under another name', () => {
+      const registry = new ActivityRegistry();
+      const fn = makeFunction();
+
+      registry.register('primary', fn);
+      registry.register('alias', fn);
+
+      registry.unregister('primary');
+
+      expect(registry.resolve('alias')).toBe(fn);
+      expect(registry.getMetadata(fn)?.name).toBe('alias');
+    });
   });
 
   describe('names()', () => {

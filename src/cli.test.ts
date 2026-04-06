@@ -14,6 +14,8 @@ import {
   executeVersionCheck,
   parseCliArguments,
 } from './cli.ts';
+import { encode } from './core/codec.ts';
+import { KEYS } from './storage/interface.ts';
 
 type ServeCommand = Extract<CliCommand, { command: 'serve' }>;
 type DoctorCommand = Extract<CliCommand, { command: 'doctor' }>;
@@ -114,6 +116,12 @@ describe('CLI argument parsing', () => {
       const result = parseCliArguments(['--storage', 'memory']) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.storage).toBe('memory');
+    });
+
+    it('throws for an invalid storage backend', () => {
+      expect(() => parseCliArguments(['--storage', 'postgres'])).toThrow(
+        "Invalid storage backend 'postgres'",
+      );
     });
 
     it('parses -s short flag for storage', () => {
@@ -432,11 +440,77 @@ describe('executeVersionCheck', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('--workflows');
   });
+
+  it('returns a JSON report for a valid workflows module', async () => {
+    const database = join(tmpdir(), `weft-version-check-${crypto.randomUUID()}.db`);
+    const workflows = join(tmpdir(), `weft-workflows-${crypto.randomUUID()}.ts`);
+    const storage = await createStorage('sqlite', database);
+
+    try {
+      await storage.put(
+        KEYS.workflow('wf-version-check'),
+        encode({
+          id: 'wf-version-check',
+          type: 'order',
+          status: 'running',
+          input: null,
+          version: '1.0.0',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }),
+      );
+
+      await Bun.write(
+        workflows,
+        [
+          'export default {',
+          '  order: {',
+          '    version: "1.0.0",',
+          '    handler: async function* () {',
+          '      return null;',
+          '    },',
+          '  },',
+          '};',
+        ].join('\n'),
+      );
+
+      const workflowModule = await import(workflows);
+      const registrations = workflowModule.default as Record<
+        string,
+        { handler: () => AsyncGenerator<unknown, unknown, unknown> }
+      >;
+      const generator = registrations['order']!.handler();
+      await generator.next();
+
+      const result = await executeVersionCheck({
+        database,
+        workflows,
+        json: true,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBeUndefined();
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        overallVerdict: 'safe',
+        workflowTypes: [
+          {
+            type: 'order',
+            storedVersion: '1.0.0',
+            registeredVersion: '1.0.0',
+          },
+        ],
+      });
+    } finally {
+      storage[Symbol.dispose]();
+      rmSync(workflows, { force: true });
+      rmSync(database, { force: true });
+    }
+  });
 });
 
 describe('CLI direct execution', () => {
   it('runs the CLI binary with --help and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', '--help'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '--help'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -454,7 +528,7 @@ describe('CLI direct execution', () => {
   });
 
   it('runs the CLI binary with -h short flag and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', '-h'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '-h'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -467,7 +541,7 @@ describe('CLI direct execution', () => {
   });
 
   it('runs doctor --help and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', 'doctor', '--help'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'doctor', '--help'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -482,7 +556,7 @@ describe('CLI direct execution', () => {
   });
 
   it('runs version:check --help and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', 'version:check', '--help'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'version:check', '--help'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -498,7 +572,7 @@ describe('CLI direct execution', () => {
   });
 
   it('runs doctor against an in-memory database and exits 0', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', 'doctor', '--database', ':memory:'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'doctor', '--database', ':memory:'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -515,7 +589,7 @@ describe('CLI direct execution', () => {
 
   it('runs doctor with --json flag and outputs valid JSON', async () => {
     const process = Bun.spawn(
-      ['bun', './src/cli.ts', 'doctor', '--database', ':memory:', '--json'],
+      ['bun', './src/cli-main.ts', 'doctor', '--database', ':memory:', '--json'],
       {
         stdout: 'pipe',
         stderr: 'pipe',
@@ -533,11 +607,27 @@ describe('CLI direct execution', () => {
     expect(report).toHaveProperty('recommendations');
   });
 
-  it('exits with error when version:check is missing --workflows flag', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', 'version:check', '--database', ':memory:'], {
+  it('exits with an error for an invalid storage backend', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '--storage', 'postgres'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
+
+    const exitCode = await process.exited;
+    const stderr = await new Response(process.stderr).text();
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Invalid storage backend 'postgres'");
+  });
+
+  it('exits with error when version:check is missing --workflows flag', async () => {
+    const process = Bun.spawn(
+      ['bun', './src/cli-main.ts', 'version:check', '--database', ':memory:'],
+      {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      },
+    );
 
     const exitCode = await process.exited;
     const stderr = await new Response(process.stderr).text();
@@ -549,7 +639,7 @@ describe('CLI direct execution', () => {
   it('starts the server and responds to health check', async () => {
     const port = 17233 + Math.floor(Math.random() * 1000);
     const process = Bun.spawn(
-      ['bun', './src/cli.ts', '--port', String(port), '--database', ':memory:'],
+      ['bun', './src/cli-main.ts', '--port', String(port), '--database', ':memory:'],
       {
         stdout: 'pipe',
         stderr: 'pipe',
@@ -580,7 +670,7 @@ describe('CLI direct execution', () => {
   });
 
   it('accepts --storage flag via the CLI binary', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', '--help', '--storage', 'memory'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '--help', '--storage', 'memory'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });
@@ -590,7 +680,7 @@ describe('CLI direct execution', () => {
   });
 
   it('accepts --no-ui flag via the CLI binary', async () => {
-    const process = Bun.spawn(['bun', './src/cli.ts', '--help', '--no-ui'], {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', '--help', '--no-ui'], {
       stdout: 'pipe',
       stderr: 'pipe',
     });

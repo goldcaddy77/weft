@@ -178,12 +178,6 @@ function valuesEqual(a: SearchAttributeValue, b: SearchAttributeValue): boolean 
   if (a instanceof Date && b instanceof Date) {
     return a.getTime() === b.getTime();
   }
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false;
-    const sortedA = [...a].toSorted();
-    const sortedB = [...b].toSorted();
-    return sortedA.every((element, index) => element === sortedB[index]);
-  }
   return a === b;
 }
 

@@ -1,9 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { HttpClient } from './index.ts';
+import { HttpClient, HttpClientError } from './index.ts';
 import type { WeftClient } from './interface.ts';
 
 // ---------------------------------------------------------------------------
@@ -12,6 +12,18 @@ import type { WeftClient } from './interface.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
+}
+
+function requestInputToUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') {
+    return input;
+  }
+
+  if (input instanceof URL) {
+    return input.toString();
+  }
+
+  return input.url;
 }
 
 let engine: Engine;
@@ -216,5 +228,329 @@ describe('HttpClient', () => {
 
       await localEngine[Symbol.asyncDispose]();
     });
+  });
+});
+
+describe('HttpClient request surface', () => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  });
+
+  function jsonResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  it('serializes the full client surface into the expected HTTP requests', async () => {
+    const fetchCalls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const responses = [
+      jsonResponse({ id: 'wf-1' }),
+      jsonResponse({ result: 'hello' }),
+      new Response(null, { status: 204 }),
+      new Response(null, { status: 204 }),
+      jsonResponse({ result: 'handle-update' }),
+      jsonResponse({ result: 'handle-query' }),
+      jsonResponse({ priority: 'high' }),
+      new Response(null, { status: 204 }),
+      jsonResponse({ id: 'wf-1', status: 'running' }),
+      jsonResponse({ items: [], total: 0 }),
+      new Response(null, { status: 204 }),
+      new Response(null, { status: 204 }),
+      jsonResponse({ result: 'client-query' }),
+      jsonResponse({ result: 'client-update' }),
+      jsonResponse({ id: 'wf-2' }),
+      jsonResponse({ recovered: ['wf-3', 'wf-4'] }),
+      new Response(null, { status: 204 }),
+      jsonResponse({ priority: 'high' }),
+      new Response(null, { status: 204 }),
+      jsonResponse({ events: [{ type: 'workflow:started' }] }),
+      jsonResponse({ items: [{ reviewId: 'review-1' }] }),
+      new Response(null, { status: 204 }),
+      new Response(null, { status: 204 }),
+      jsonResponse({ namespace: 'agents', daily: { maxCost: 10 } }),
+      jsonResponse({ chunks: ['chunk-a', 'chunk-b'] }),
+      jsonResponse({ updateId: 'update-1', result: 'accepted' }),
+      jsonResponse({ status: 'completed', result: 'done', error: 'warn' }),
+    ];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestInputToUrl(input);
+      fetchCalls.push({ url, init });
+      const response = responses.shift();
+      if (!response) {
+        throw new Error(`Unexpected fetch: ${url}`);
+      }
+      return response;
+    }) as unknown as typeof fetch;
+
+    const httpClient = new HttpClient({
+      baseUrl: 'http://example.test///',
+      headers: { Authorization: 'Bearer token' },
+    });
+
+    const handle = await httpClient.start('echo', 'hello', { id: 'wf/1', executionTimeout: '5m' });
+    expect(handle.id).toBe('wf-1');
+    expect(await handle.result()).toBe('hello');
+    await handle.cancel();
+    await handle.signal('status', { ok: true });
+    expect(await handle.update('rename', { value: 1 }, { timeout: 50 })).toBe('handle-update');
+    expect(await handle.query('status')).toBe('handle-query');
+    expect(await handle.getAttributes()).toEqual({ priority: 'high' });
+    await handle.setAttributes({ priority: 'critical' });
+
+    expect(await httpClient.get('wf/1')).toMatchObject({ id: 'wf-1', status: 'running' });
+    await httpClient.list({
+      status: ['running', 'completed'],
+      type: 'echo',
+      limit: 5,
+      offset: 2,
+      attributes: [{ key: 'priority', value: 'high', gt: 1, lt: 9, gte: 2, lte: 8 }],
+    });
+    await httpClient.cancel('wf/1');
+    await httpClient.signal('wf/1', 'status', { ok: true });
+    expect(await httpClient.query('wf/1', 'status')).toBe('client-query');
+    expect(await httpClient.update('wf/1', 'rename', { value: 2 }, { timeout: 10 })).toBe(
+      'client-update',
+    );
+
+    const resumed = await httpClient.resume('wf/1');
+    expect(resumed.id).toBe('wf-2');
+    const recovered = await httpClient.recoverAll();
+    expect(recovered.map((recoveredHandle) => recoveredHandle.id)).toEqual(['wf-3', 'wf-4']);
+    await httpClient.timeout('wf/1');
+    expect(await httpClient.getAttributes('wf/1')).toEqual({ priority: 'high' });
+    await httpClient.setAttributes('wf/1', { priority: 'critical' });
+    expect(await httpClient.getEvents('wf/1')).toMatchObject([{ type: 'workflow:started' }]);
+    expect(await httpClient.listReviews()).toEqual([{ reviewId: 'review-1' }]);
+    await httpClient.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
+    await httpClient.setBudgetPolicy({ namespace: 'agents', daily: { maxCost: 10 } });
+    expect(await httpClient.getBudgetPolicy('agents')).toEqual({
+      namespace: 'agents',
+      daily: { maxCost: 10 },
+    });
+    expect(await httpClient.getStreamChunks('wf/1', 'stream/key')).toEqual(['chunk-a', 'chunk-b']);
+    expect(
+      await httpClient.submitCoordinatedUpdate(
+        'wf/1',
+        'rename',
+        { value: 3 },
+        {
+          timeout: 20,
+          idempotencyKey: 'idempotent-1',
+        },
+      ),
+    ).toEqual({ updateId: 'update-1', result: 'accepted' });
+    expect(await httpClient.getUpdateResult('update-1')).toEqual({
+      updateId: 'update-1',
+      result: 'done',
+      error: 'warn',
+    });
+
+    const startCall = fetchCalls[0]!;
+    expect(startCall.url).toBe('http://example.test/v1/workflows');
+    expect(startCall.init?.method).toBe('POST');
+    expect(new Headers(startCall.init?.headers).get('Authorization')).toBe('Bearer token');
+    expect(new Headers(startCall.init?.headers).get('Content-Type')).toBe('application/json');
+    const startBody = startCall.init?.body;
+    expect(typeof startBody).toBe('string');
+    if (typeof startBody !== 'string') {
+      throw new Error('Expected start request body to be a string');
+    }
+    expect(JSON.parse(startBody)).toEqual({
+      type: 'echo',
+      input: 'hello',
+      id: 'wf/1',
+      executionTimeout: '5m',
+    });
+
+    const listCall = fetchCalls[9]!;
+    const listUrl = new URL(listCall.url);
+    expect(listUrl.searchParams.getAll('status')).toEqual(['running', 'completed']);
+    expect(listUrl.searchParams.get('type')).toBe('echo');
+    expect(listUrl.searchParams.get('limit')).toBe('5');
+    expect(listUrl.searchParams.get('offset')).toBe('2');
+    expect(listUrl.searchParams.get('attr.priority')).toBe('high');
+    expect(listUrl.searchParams.get('attr.priority.gt')).toBe('1');
+    expect(listUrl.searchParams.get('attr.priority.lt')).toBe('9');
+    expect(listUrl.searchParams.get('attr.priority.gte')).toBe('2');
+    expect(listUrl.searchParams.get('attr.priority.lte')).toBe('8');
+
+    expect(fetchCalls[10]?.init?.method).toBe('DELETE');
+    expect(fetchCalls[11]?.url).toContain('/signal/status');
+    expect(fetchCalls[13]?.url).toContain('/update/rename');
+    expect(fetchCalls[14]?.url).toContain('/resume');
+    expect(fetchCalls[15]?.url).toBe('http://example.test/v1/recover');
+    expect(fetchCalls[24]?.url).toContain('/streams/stream%2Fkey');
+  });
+
+  it('returns null or empty collections for missing GET resources', async () => {
+    const responses = [
+      new Response(JSON.stringify({ error: 'missing' }), { status: 404 }),
+      new Response(JSON.stringify({ error: 'missing' }), { status: 404 }),
+      new Response(JSON.stringify({ error: 'missing' }), { status: 404 }),
+    ];
+
+    globalThis.fetch = (async () =>
+      responses.shift() ?? new Response(null, { status: 500 })) as unknown as typeof fetch;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+
+    expect(await httpClient.get('missing')).toBeNull();
+    expect(await httpClient.getEvents('missing')).toEqual([]);
+    expect(await httpClient.getUpdateResult('missing')).toBeNull();
+  });
+
+  it('converts coordinated update business errors and propagates transport errors', async () => {
+    const responses = [
+      new Response(JSON.stringify({ error: 'business rejection' }), { status: 422 }),
+      new Response('unauthorized', { status: 401, statusText: 'Unauthorized' }),
+    ];
+
+    globalThis.fetch = (async () =>
+      responses.shift() ?? new Response(null, { status: 500 })) as unknown as typeof fetch;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+
+    expect(await httpClient.submitCoordinatedUpdate('wf-1', 'rename')).toEqual({
+      updateId: '',
+      error: 'business rejection',
+    });
+    await expect(httpClient.submitCoordinatedUpdate('wf-1', 'rename')).rejects.toMatchObject({
+      status: 401,
+      message: 'Unauthorized',
+    });
+  });
+
+  it('throws a 404 client error when handle.result() points at a missing workflow', async () => {
+    const responses = [
+      jsonResponse({ id: 'wf-1' }),
+      new Response(JSON.stringify({ error: 'missing' }), { status: 404 }),
+    ];
+
+    globalThis.fetch = (async () =>
+      responses.shift() ?? new Response(null, { status: 500 })) as unknown as typeof fetch;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+    const handle = await httpClient.start('echo', 'hello');
+
+    await expect(handle.result()).rejects.toBeInstanceOf(HttpClientError);
+  });
+
+  it('polls handle events, closes on terminal events, and warns when polling fails', async () => {
+    let intervalCallback: (() => void) | undefined;
+    let clearedIntervals = 0;
+    const warnings: unknown[][] = [];
+    const responses = [
+      jsonResponse({ id: 'wf-terminal' }),
+      jsonResponse({
+        events: [{ type: 'workflow:completed', data: { result: 'done' } }],
+      }),
+      jsonResponse({ id: 'wf-warning' }),
+    ];
+
+    globalThis.fetch = (async () => {
+      const response = responses.shift();
+      if (response) {
+        return response;
+      }
+      throw new Error('poll failed');
+    }) as unknown as typeof fetch;
+    console.warn = (...arguments_) => {
+      warnings.push(arguments_);
+    };
+    globalThis.setInterval = ((callback: TimerHandler) => {
+      intervalCallback = callback as () => void;
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof setInterval;
+    globalThis.clearInterval = (() => {
+      clearedIntervals++;
+    }) as typeof clearInterval;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+
+    const handle = await httpClient.start('echo', 'hello');
+    const terminalEvent = await new Promise<Event>((resolve) => {
+      handle.addEventListener('workflow:completed', resolve as EventListener);
+    });
+
+    expect(terminalEvent).toBeInstanceOf(CustomEvent);
+    expect((terminalEvent as CustomEvent).detail).toEqual({ result: 'done' });
+    expect(clearedIntervals).toBe(1);
+
+    const warningHandle = await httpClient.start('echo', 'warn');
+    warningHandle.addEventListener('workflow:started', (() => {}) as EventListener);
+    await intervalCallback?.();
+    await Bun.sleep(0);
+
+    expect(warnings[0]?.[0]).toBe('[weft] Event poll error:');
+  });
+
+  it('closes a handle when the workflow disappears after previously-emitted events', async () => {
+    let intervalCallback: (() => void) | undefined;
+    let clearedIntervals = 0;
+    const responses = [
+      jsonResponse({ id: 'wf-disappear' }),
+      jsonResponse({
+        events: [{ type: 'workflow:started', data: { phase: 'first' } }],
+      }),
+      new Response(JSON.stringify({ error: 'missing' }), { status: 404 }),
+      new Response(JSON.stringify({ error: 'missing' }), { status: 404 }),
+    ];
+
+    globalThis.fetch = (async () =>
+      responses.shift() ?? new Response(null, { status: 500 })) as unknown as typeof fetch;
+    globalThis.setInterval = ((callback: TimerHandler) => {
+      intervalCallback = callback as () => void;
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof setInterval;
+    globalThis.clearInterval = (() => {
+      clearedIntervals++;
+    }) as typeof clearInterval;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+    const handle = await httpClient.start('echo', 'hello');
+
+    await new Promise<void>((resolve) => {
+      handle.addEventListener('workflow:started', () => resolve());
+    });
+    await intervalCallback?.();
+    await Bun.sleep(0);
+
+    expect(clearedIntervals).toBe(1);
+  });
+
+  it('removes listeners and disposes a handle without extra network requests', async () => {
+    let intervalIdentifier: ReturnType<typeof setInterval> | undefined;
+    let clearedIntervals = 0;
+
+    globalThis.fetch = (async () => jsonResponse({ id: 'wf-dispose' })) as unknown as typeof fetch;
+    globalThis.setInterval = (() => {
+      intervalIdentifier = 99 as unknown as ReturnType<typeof setInterval>;
+      return intervalIdentifier;
+    }) as unknown as typeof setInterval;
+    globalThis.clearInterval = ((timer: Timer) => {
+      expect(timer).toBe(intervalIdentifier!);
+      clearedIntervals++;
+    }) as unknown as typeof clearInterval;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+    const handle = await httpClient.start('echo', 'hello');
+    const listener = (() => {}) as EventListener;
+
+    handle.addEventListener('workflow:started', listener);
+    handle.removeEventListener('workflow:started', listener);
+    handle[Symbol.dispose]();
+
+    expect(clearedIntervals).toBe(1);
   });
 });

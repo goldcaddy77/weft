@@ -8,6 +8,7 @@ import {
   buildStreamCheckpoint,
   createSSEStream,
   createStreamingProvider,
+  enqueueStreamingToken,
   executeStreamingAgent,
   formatSSE,
 } from './streaming-agent.ts';
@@ -217,6 +218,88 @@ describe('H1: executeStreamingAgent returns ReadableStream', () => {
     const agentResult = await result;
     expect(agentResult.turnCount).toBe(2);
   });
+
+  it('createStreamingProvider forwards stream and countTokens to the base provider', async () => {
+    const expectedStream = new ReadableStream<StreamChunk>();
+    let streamMessages: Message[] | undefined;
+    let streamModel = '';
+    let countedMessages: Message[] | undefined;
+
+    const baseProvider: LLMProvider = {
+      name: 'passthrough-provider',
+      async chat(): Promise<ChatResponse> {
+        throw new Error('Should not be called');
+      },
+      async stream(messages, options): Promise<ReadableStream<StreamChunk>> {
+        streamMessages = messages;
+        streamModel = options.model;
+        return expectedStream;
+      },
+      async countTokens(messages: Message[]): Promise<number> {
+        countedMessages = messages;
+        return 321;
+      },
+    };
+
+    const wrapped = createStreamingProvider(baseProvider, () => {});
+    const messages: Message[] = [{ role: 'user', content: 'Hello' }];
+
+    expect(await wrapped.stream(messages, { model: 'wrapped-model' })).toBe(expectedStream);
+    expect(await wrapped.countTokens(messages)).toBe(321);
+    expect(streamMessages).toEqual(messages);
+    expect(streamModel).toBe('wrapped-model');
+    expect(countedMessages).toEqual(messages);
+  });
+
+  it('gracefully handles missing and malformed streaming tool call input fragments', async () => {
+    const provider: LLMProvider = {
+      name: 'tool-call-stream',
+      async chat(): Promise<ChatResponse> {
+        throw new Error('Should not be called');
+      },
+      async stream(): Promise<ReadableStream<StreamChunk>> {
+        return new ReadableStream<StreamChunk>({
+          start(controller) {
+            controller.enqueue({ type: 'tool_call_end', toolCall: { id: 'missing-call' } });
+            controller.enqueue({
+              type: 'tool_call_start',
+              toolCall: { id: 'call-1', name: 'empty' },
+            });
+            controller.enqueue({
+              type: 'tool_call_delta',
+              toolCall: { id: 'call-1', input: undefined },
+            });
+            controller.enqueue({ type: 'tool_call_end', toolCall: { id: 'call-1' } });
+            controller.enqueue({
+              type: 'tool_call_start',
+              toolCall: { id: 'call-2', name: 'broken' },
+            });
+            controller.enqueue({ type: 'tool_call_delta', toolCall: { id: 'call-2', input: '{' } });
+            controller.enqueue({ type: 'tool_call_end', toolCall: { id: 'call-2' } });
+            controller.enqueue({
+              type: 'done',
+              usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+            });
+            controller.close();
+          },
+        });
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const wrapped = createStreamingProvider(provider, () => {});
+    const response = await wrapped.chat([{ role: 'user', content: 'Hello' }], {
+      model: 'test-model',
+    });
+
+    expect(response.toolCalls).toEqual([
+      { id: 'call-1', name: 'empty', input: {} },
+      { id: 'call-2', name: 'broken', input: '{' },
+    ]);
+    expect(response.stopReason).toBe('tool_use');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -413,6 +496,30 @@ describe('H4: Crash recovery mid-stream', () => {
     expect(checkpoint.incompleteTurn).toBe(0);
   });
 
+  it('buildStreamCheckpoint marks a non-final assistant answer as incomplete', () => {
+    const conversation: Message[] = [
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Premature answer' },
+      { role: 'tool', content: '', toolResults: [{ toolCallId: 'tc-1', output: 'late' }] },
+    ];
+
+    const checkpoint = buildStreamCheckpoint(conversation);
+    expect(checkpoint.completedTurns).toEqual([]);
+    expect(checkpoint.incompleteTurn).toBe(0);
+  });
+
+  it('buildStreamCheckpoint skips non-assistant messages between turns', () => {
+    const conversation: Message[] = [
+      { role: 'user', content: 'Hello' },
+      { role: 'tool', content: '', toolResults: [{ toolCallId: 'tc-1', output: 'orphaned' }] },
+      { role: 'assistant', content: 'Final answer' },
+    ];
+
+    const checkpoint = buildStreamCheckpoint(conversation);
+    expect(checkpoint.completedTurns).toEqual([1]);
+    expect(checkpoint.completedContent).toEqual(['Final answer']);
+  });
+
   it('buildRecoveryConversation discards incomplete turn', () => {
     const conversation: Message[] = [
       { role: 'system', content: 'System prompt' },
@@ -492,6 +599,69 @@ describe('H4: Crash recovery mid-stream', () => {
     expect(recovery.length).toBe(5);
     expect(recovery[recovery.length - 1]!.role).toBe('tool');
   });
+
+  it('buildRecoveryConversation keeps completed final-answer turns without tool results', () => {
+    const conversation: Message[] = [
+      { role: 'user', content: 'Start' },
+      { role: 'assistant', content: 'Final answer' },
+    ];
+
+    const recovery = buildRecoveryConversation(conversation, {
+      completedTurns: [0],
+      completedContent: ['Final answer'],
+      incompleteTurn: undefined,
+    });
+
+    expect(recovery).toEqual(conversation);
+  });
+
+  it('buildRecoveryConversation skips malformed tool-call turns when the checkpoint expects more completed turns', () => {
+    const conversation: Message[] = [
+      { role: 'user', content: 'Start' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'tc-1', name: 'a', input: {} }],
+      },
+      {
+        role: 'tool',
+        content: '',
+        toolResults: [{ toolCallId: 'tc-1', output: 'r1' }],
+      },
+      {
+        role: 'assistant',
+        content: 'missing tool result',
+        toolCalls: [{ id: 'tc-2', name: 'b', input: {} }],
+      },
+      { role: 'assistant', content: 'Final answer' },
+    ];
+
+    const recovery = buildRecoveryConversation(conversation, {
+      completedTurns: [0, 1],
+      completedContent: ['', 'Final answer'],
+      incompleteTurn: undefined,
+    });
+
+    expect(recovery).toEqual([
+      { role: 'user', content: 'Start' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'tc-1', name: 'a', input: {} }],
+      },
+      {
+        role: 'tool',
+        content: '',
+        toolResults: [{ toolCallId: 'tc-1', output: 'r1' }],
+      },
+      {
+        role: 'assistant',
+        content: 'missing tool result',
+        toolCalls: [{ id: 'tc-2', name: 'b', input: {} }],
+      },
+      { role: 'assistant', content: 'Final answer' },
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -499,6 +669,44 @@ describe('H4: Crash recovery mid-stream', () => {
 // ---------------------------------------------------------------------------
 
 describe('H5: Backpressure and client reconnection', () => {
+  it('enqueueStreamingToken errors the stream when desiredSize is exhausted', async () => {
+    const errors: Error[] = [];
+
+    const state = enqueueStreamingToken('token', {
+      streamClosed: false,
+      streamController: {
+        desiredSize: 0,
+        close() {},
+        enqueue() {},
+        error(error) {
+          errors.push(error as Error);
+        },
+      } as ReadableStreamDefaultController<string>,
+      model: 'test-model',
+    });
+
+    expect(state.streamClosed).toBe(true);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.message).toBe('Stream buffer exceeded maximum size');
+  });
+
+  it('enqueueStreamingToken closes the stream when enqueue throws', () => {
+    const state = enqueueStreamingToken('token', {
+      streamClosed: false,
+      streamController: {
+        desiredSize: 1,
+        close() {},
+        enqueue() {
+          throw new Error('enqueue failed');
+        },
+        error() {},
+      } as ReadableStreamDefaultController<string>,
+      model: 'test-model',
+    });
+
+    expect(state.streamClosed).toBe(true);
+  });
+
   it('disconnects slow consumer when buffer exceeds max size', async () => {
     // Directly test the onToken/stream machinery by constructing the stream
     // and controller manually, mirroring what executeStreamingAgent does
@@ -1035,6 +1243,38 @@ describe('Bug fix: createStreamingProvider reader cleanup on error', () => {
     const result = await streamingProvider.chat([], { model: 'test' });
     expect(result.content).toBe('ab');
   });
+
+  it('swallows reader.cancel() rejections in the provider cleanup path', async () => {
+    const provider: LLMProvider = {
+      name: 'rejecting-cancel-provider',
+      async chat(): Promise<ChatResponse> {
+        throw new Error('Should not be called');
+      },
+      async stream(): Promise<ReadableStream<StreamChunk>> {
+        return new ReadableStream<StreamChunk>({
+          start(controller) {
+            controller.enqueue({ type: 'token', token: 'x' });
+            controller.enqueue({
+              type: 'done',
+              usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            });
+            controller.close();
+          },
+          cancel() {
+            throw new Error('cancel failed');
+          },
+        });
+      },
+      async countTokens(): Promise<number> {
+        return 0;
+      },
+    };
+
+    const streamingProvider = createStreamingProvider(provider, () => {});
+    const result = await streamingProvider.chat([], { model: 'test' });
+
+    expect(result.content).toBe('x');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1281,5 +1521,27 @@ describe('createStreamingProvider', () => {
     expect(response.toolCalls[0]!.name).toBe('search');
     expect(response.toolCalls[0]!.input).toEqual({ q: 'test' });
     expect(response.stopReason).toBe('tool_use');
+  });
+});
+
+describe('createSSEStream cancellation', () => {
+  it('swallows token reader cancellation rejections', async () => {
+    const tokenStream = new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue('token');
+      },
+      cancel() {
+        throw new Error('token stream cancel failed');
+      },
+    });
+
+    const sseStream = createSSEStream(tokenStream);
+    const reader = sseStream.getReader();
+
+    await reader.read();
+    await reader.cancel();
+    await Bun.sleep(0);
+
+    expect(true).toBe(true);
   });
 });

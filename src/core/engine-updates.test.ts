@@ -6,7 +6,7 @@ import { decode, encode } from './codec.ts';
 import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
-import { UpdateCoordinator, WorkflowTerminalError } from './updates.ts';
+import { UpdateCoordinator, UpdateTimeoutError, WorkflowTerminalError } from './updates.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -612,6 +612,25 @@ for (const backend of storageBackends) {
         // Workflow should complete with its own return value
         const handleResult = await handle.result();
         expect(handleResult).toBe('processed: my-data');
+      });
+
+      it('times out when waitForUpdate does not call respond()', async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        engine = new Engine({ storage: result.storage });
+
+        engine.register('missing-respond', async function* (ctx: WorkflowContext) {
+          const { payload } = yield* (ctx as Context).waitForUpdate<string>('review');
+          return `processed without respond: ${payload}`;
+        });
+
+        const handle = await engine.start('missing-respond', undefined);
+        await flush();
+
+        await expect(
+          engine.update(handle.id, 'review', 'my-data', { timeout: 25 }),
+        ).rejects.toBeInstanceOf(UpdateTimeoutError);
+        await expect(handle.result()).resolves.toBe('processed without respond: my-data');
       });
 
       it('calling respond() multiple times is idempotent', async () => {

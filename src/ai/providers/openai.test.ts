@@ -31,6 +31,42 @@ describe('OpenAIProvider', () => {
       });
       expect(provider.name).toBe('openai');
     });
+
+    it('counts tokens using the shared estimator', async () => {
+      const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
+
+      expect(await provider.countTokens([{ role: 'user', content: 'Count these tokens' }])).toBe(8);
+    });
+
+    it('warms up the provider with a HEAD request', async () => {
+      let capturedUrl = '';
+      let capturedMethod = '';
+
+      mockFetch(async (input, init) => {
+        capturedUrl =
+          input instanceof URL ? input.href : input instanceof Request ? input.url : input;
+        capturedMethod = init?.method ?? 'GET';
+        return new Response(null, { status: 204 });
+      });
+
+      const provider = new OpenAIProvider({
+        apiKey: 'sk-test-key',
+        baseUrl: 'https://example.openai.test/v1',
+      });
+      await provider.warmup();
+
+      expect(capturedUrl).toBe('https://example.openai.test/v1/chat/completions');
+      expect(capturedMethod).toBe('HEAD');
+    });
+
+    it('swallows warmup failures', async () => {
+      mockFetch(async () => {
+        throw new Error('connection refused');
+      });
+
+      const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
+      await expect(provider.warmup()).resolves.toBeUndefined();
+    });
   });
 
   describe('chat', () => {

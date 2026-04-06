@@ -14,7 +14,6 @@
  * @module build-binary
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -31,7 +30,7 @@ const TARGETS = [
   'bun-windows-x64',
 ] as const;
 
-type BunTarget = (typeof TARGETS)[number];
+export type BunTarget = (typeof TARGETS)[number];
 
 /** Map from user-facing target names to Bun's internal target identifiers. */
 const TARGET_MAP: Record<string, BunTarget> = {
@@ -43,7 +42,7 @@ const TARGET_MAP: Record<string, BunTarget> = {
 };
 
 /** Derive the output filename for a given target. */
-function outputNameForTarget(target: BunTarget): string {
+export function outputNameForTarget(target: BunTarget): string {
   const suffix = target.replace('bun-', 'weft-');
   if (target.includes('windows')) {
     return `${suffix}.exe`;
@@ -123,12 +122,27 @@ export interface BuildResult {
  * The `--compile` flag is only available via the CLI, not the JS `Bun.build()` API,
  * so we shell out to the `bun` process.
  */
-export async function buildForTarget(bunTarget: BunTarget, outdir: string): Promise<BuildResult> {
+type BuildProcess = {
+  exited: Promise<number>;
+  stdout: ReadableStream<Uint8Array> | null;
+  stderr: ReadableStream<Uint8Array> | null;
+};
+
+type BuildProcessSpawner = (
+  command: string[],
+  options: { stdout: 'pipe'; stderr: 'pipe' },
+) => BuildProcess;
+
+export async function buildForTarget(
+  bunTarget: BunTarget,
+  outdir: string,
+  spawnBuildProcess: BuildProcessSpawner = (command, options) => Bun.spawn(command, options),
+): Promise<BuildResult> {
   const outputName = outputNameForTarget(bunTarget);
   const outputPath = join(outdir, outputName);
 
   try {
-    const proc = Bun.spawn(
+    const proc = spawnBuildProcess(
       [
         'bun',
         'build',
@@ -139,7 +153,7 @@ export async function buildForTarget(bunTarget: BunTarget, outdir: string): Prom
         outputPath,
         '--sourcemap=external',
         '--minify',
-        './src/cli.ts',
+        './src/cli-main.ts',
       ],
       {
         stdout: 'pipe',
@@ -166,7 +180,10 @@ export async function buildForTarget(bunTarget: BunTarget, outdir: string): Prom
 }
 
 /** Resolve which targets to build based on CLI args. */
-export function resolveTargets(args: BuildBinaryArgs): BunTarget[] {
+export function resolveTargets(
+  args: BuildBinaryArgs,
+  environment: { platform?: NodeJS.Platform; arch?: string } = {},
+): BunTarget[] {
   if (args.all) {
     return [...TARGETS];
   }
@@ -181,13 +198,15 @@ export function resolveTargets(args: BuildBinaryArgs): BunTarget[] {
   }
 
   // Default: current platform
-  const platform = process.platform === 'win32' ? 'windows' : process.platform;
+  const platformValue = environment.platform ?? process.platform;
+  const archValue = environment.arch ?? process.arch;
+  const platform = platformValue === 'win32' ? 'windows' : platformValue;
   const supportedArches: Record<string, string> = { arm64: 'arm64', x64: 'x64', x86_64: 'x64' };
-  const arch = supportedArches[process.arch];
+  const arch = supportedArches[archValue];
 
   if (!arch) {
     throw new Error(
-      `Unsupported CPU architecture '${process.arch}'. Supported: ${Object.keys(supportedArches).join(', ')}`,
+      `Unsupported CPU architecture '${archValue}'. Supported: ${Object.keys(supportedArches).join(', ')}`,
     );
   }
 
@@ -199,48 +218,4 @@ export function resolveTargets(args: BuildBinaryArgs): BunTarget[] {
   }
 
   return [mapped];
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-const isDirectExecution = typeof Bun !== 'undefined' && Bun.main === import.meta.path;
-
-if (isDirectExecution) {
-  const args = parseBuildBinaryArguments(Bun.argv.slice(2));
-
-  if (args.help) {
-    console.log(BUILD_BINARY_HELP);
-    process.exit(0);
-  }
-
-  if (!existsSync(args.outdir)) {
-    mkdirSync(args.outdir, { recursive: true });
-  }
-
-  const targets = resolveTargets(args);
-  console.log(`Building Weft binary for: ${targets.map((t) => t.replace('bun-', '')).join(', ')}`);
-
-  const results: BuildResult[] = [];
-
-  for (const target of targets) {
-    console.log(`  Compiling ${target.replace('bun-', '')}...`);
-    const result = await buildForTarget(target, args.outdir);
-    results.push(result);
-
-    if (result.success) {
-      console.log(`  ✓ ${result.outputPath}`);
-    } else {
-      console.error(`  ✗ ${target}: ${result.error}`);
-    }
-  }
-
-  const failures = results.filter((r) => !r.success);
-  if (failures.length > 0) {
-    console.error(`\n${failures.length} target(s) failed.`);
-    process.exit(1);
-  }
-
-  console.log('\nBinary build complete!');
 }

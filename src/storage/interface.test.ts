@@ -43,6 +43,8 @@ describe('KEYS', () => {
       KEYS.checkpointHistory('id', 1),
       KEYS.operation('queue', 100, 'id'),
       KEYS.operationInflight('id'),
+      KEYS.operationQueued('id'),
+      KEYS.operationResolved('id'),
       KEYS.event('wf', 1),
       KEYS.signal('wf', 'name', 'id'),
       KEYS.deadline(100, 'wf'),
@@ -54,10 +56,12 @@ describe('KEYS', () => {
       KEYS.budget('ns', 'period', 'date'),
       KEYS.review('wf', 'rev'),
       KEYS.archive('wf', 'key'),
+      KEYS.offload('wf', 'key'),
       KEYS.sharedState('wf', 'state'),
       KEYS.sharedStateVersion('wf', 'state'),
       KEYS.streamChunk('wf', 'key', 0),
       KEYS.streamMetadata('wf', 'key'),
+      KEYS.budgetCharged('id'),
     ];
 
     for (const result of results) {

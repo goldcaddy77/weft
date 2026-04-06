@@ -235,10 +235,19 @@ function isActivityCallOptions(value: unknown): value is ActivityCallOptions {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const keys = Object.keys(value as Record<string, unknown>);
   if (keys.length === 0) return false;
-  if (!keys.every((key) => ACTIVITY_CALL_OPTION_KEYS.has(key))) return false;
+  for (const key of keys) {
+    if (!ACTIVITY_CALL_OPTION_KEYS.has(key)) {
+      return false;
+    }
+  }
   // Require at least one discriminator key to avoid misidentifying plain data
   // objects (e.g., `{ timeout: 5000 }`) as options.
-  return keys.some((key) => DISCRIMINATOR_KEYS.has(key));
+  for (const key of keys) {
+    if (DISCRIMINATOR_KEYS.has(key)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------

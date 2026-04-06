@@ -322,5 +322,17 @@ describe('search-attributes', () => {
         'declared as "keyword_list" but received string',
       );
     });
+
+    it('rejects keyword_list arrays that contain non-string elements', () => {
+      expect(() =>
+        validateAttributeType('tags', ['ok', 42] as never, { type: 'keyword_list' }),
+      ).toThrow('array contains non-string elements');
+    });
+
+    it('rejects unknown attribute declarations', () => {
+      expect(() => validateAttributeType('mystery', 'value', { type: 'mystery' } as never)).toThrow(
+        'Unknown search attribute type declaration',
+      );
+    });
   });
 });

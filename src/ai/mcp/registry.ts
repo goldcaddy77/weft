@@ -7,12 +7,52 @@ export interface RegistryTool {
   serverUrl?: string;
 }
 
+class RegistryToolEntry implements RegistryTool {
+  readonly definition: ToolDefinition;
+  readonly source: 'local' | 'mcp';
+  readonly serverUrl?: string;
+  readonly #localExecute: ((input: unknown) => Promise<unknown>) | undefined;
+  readonly #mcpExecute: ((toolName: string, input: unknown) => Promise<unknown>) | undefined;
+
+  constructor(options: {
+    definition: ToolDefinition;
+    source: 'local' | 'mcp';
+    serverUrl?: string;
+    localExecute?: (input: unknown) => Promise<unknown>;
+    mcpExecute?: (toolName: string, input: unknown) => Promise<unknown>;
+  }) {
+    this.definition = options.definition;
+    this.source = options.source;
+    if (options.serverUrl !== undefined) {
+      this.serverUrl = options.serverUrl;
+    }
+    this.#localExecute = options.localExecute;
+    this.#mcpExecute = options.mcpExecute;
+  }
+
+  execute(input: unknown): Promise<unknown> {
+    if (this.#localExecute) {
+      return this.#localExecute(input);
+    }
+
+    return this.#mcpExecute!(this.definition.name, input);
+  }
+}
+
 export class ToolRegistry {
-  #tools: Map<string, RegistryTool[]> = new Map();
+  #tools: Map<string, RegistryTool[]>;
+
+  constructor() {
+    this.#tools = new Map();
+  }
 
   /** Register a local function as a tool. */
   registerLocal(definition: ToolDefinition, execute: (input: unknown) => Promise<unknown>): void {
-    const entry: RegistryTool = { definition, execute, source: 'local' };
+    const entry: RegistryTool = new RegistryToolEntry({
+      definition,
+      source: 'local',
+      localExecute: execute,
+    });
     const existing = this.#tools.get(definition.name);
 
     if (existing) {
@@ -29,12 +69,12 @@ export class ToolRegistry {
     execute: (toolName: string, input: unknown) => Promise<unknown>,
   ): void {
     for (const definition of tools) {
-      const entry: RegistryTool = {
+      const entry: RegistryTool = new RegistryToolEntry({
         definition,
-        execute: (input: unknown) => execute(definition.name, input),
         source: 'mcp',
         serverUrl,
-      };
+        mcpExecute: execute,
+      });
 
       const existing = this.#tools.get(definition.name);
 
@@ -54,7 +94,11 @@ export class ToolRegistry {
 
   /** Get all tool definitions. */
   getDefinitions(): ToolDefinition[] {
-    return this.getAll().map((tool) => tool.definition);
+    const definitions: ToolDefinition[] = [];
+    for (const tool of this.getAll()) {
+      definitions.push(tool.definition);
+    }
+    return definitions;
   }
 
   /** Get all registered tools. */

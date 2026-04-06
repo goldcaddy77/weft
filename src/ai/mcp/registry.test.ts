@@ -41,6 +41,24 @@ describe('ToolRegistry', () => {
     expect(searchTool!.serverUrl).toBe('https://mcp.example.com');
   });
 
+  it('invokes wrapped MCP execute handlers with the tool name and input', async () => {
+    const registry = new ToolRegistry();
+    const calls: Array<{ toolName: string; input: unknown }> = [];
+
+    registry.registerMCP(
+      [createToolDefinition('search')],
+      'https://mcp.example.com',
+      async (toolName, input) => {
+        calls.push({ toolName, input });
+        return { ok: true };
+      },
+    );
+
+    const tool = registry.get('search');
+    expect(await tool!.execute({ query: 'weather' })).toEqual({ ok: true });
+    expect(calls).toEqual([{ toolName: 'search', input: { query: 'weather' } }]);
+  });
+
   it('returns undefined for unknown tool names', () => {
     const registry = new ToolRegistry();
 

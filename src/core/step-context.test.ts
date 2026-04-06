@@ -3,7 +3,12 @@ import { describe, expect, it } from 'bun:test';
 import { MemoryStorage } from '../storage/memory';
 import type { Context } from './context';
 import { Engine } from './engine';
-import { compileStepWorkflow, isAsyncGeneratorFunction } from './step-context';
+import {
+  compileStepWorkflow,
+  isAsyncGeneratorFunction,
+  isGeneratorFunction,
+  isGeneratorResult,
+} from './step-context';
 import type { StepWorkflowContext, WorkflowContext } from './types';
 
 describe('step-context', () => {
@@ -167,5 +172,30 @@ describe('step-context', () => {
     expect(isAsyncGeneratorFunction(plainAsync)).toBe(false);
     expect(isAsyncGeneratorFunction(syncFunction)).toBe(false);
     expect(isAsyncGeneratorFunction(syncGenerator)).toBe(false);
+  });
+
+  it('isGeneratorFunction correctly identifies sync generator functions', () => {
+    const syncGenerator = function* () {
+      yield 1;
+    };
+    const plainFunction = () => 42;
+
+    expect(isGeneratorFunction(syncGenerator)).toBe(true);
+    expect(isGeneratorFunction(plainFunction)).toBe(false);
+  });
+
+  it('isGeneratorResult correctly identifies generator and async generator objects', async () => {
+    const syncGeneratorResult = (function* () {
+      yield 1;
+    })();
+    const asyncGeneratorResult = (async function* () {
+      yield 1;
+    })();
+
+    expect(isGeneratorResult(syncGeneratorResult)).toBe(true);
+    expect(isGeneratorResult(asyncGeneratorResult)).toBe(true);
+    expect(isGeneratorResult([])).toBe(false);
+
+    await asyncGeneratorResult.return(undefined);
   });
 });

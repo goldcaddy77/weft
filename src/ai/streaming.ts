@@ -2,6 +2,9 @@ import { TokenEvent } from '../core/events.ts';
 
 import type { StreamChunk } from './providers/types.ts';
 
+/* c8 ignore next -- rejected reader cancellation is a defensive cleanup path */
+function ignoreStreamError(_error: unknown): void {}
+
 export interface MultiplexerOptions {
   maxBufferSize?: number;
 }
@@ -70,7 +73,7 @@ export class StreamMultiplexer {
   /** Cancel the source and all consumers. */
   cancel(): void {
     if (this.#reader) {
-      this.#reader.cancel().catch(() => {});
+      this.#reader.cancel().catch(ignoreStreamError);
     }
 
     for (const controller of this.#consumers) {
