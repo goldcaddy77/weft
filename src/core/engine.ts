@@ -3222,10 +3222,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // index. O(k) in this workflow's own agent operations rather than O(N)
     // in the engine-wide set — important for long-lived engines that run
     // many agents across many workflows.
+    //
+    // Also queue the per-operation `budget-charged:{operationId}` durable
+    // keys for deletion. These are not workflow-scoped in storage, so we
+    // have to build the batch from the reverse index before dropping it.
     const workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
+    const budgetChargedDeletes: import('../storage/interface.ts').BatchOperation[] = [];
     if (workflowOperations) {
       for (const operationId of workflowOperations) {
         this.#chargedAgentOperations.delete(operationId);
+        budgetChargedDeletes.push({ type: 'delete', key: KEYS.budgetCharged(operationId) });
       }
       this.#chargedAgentOperationsByWorkflow.delete(workflowId);
     }
@@ -3233,6 +3239,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Durable records
     await this.#cleanupReviews(workflowId);
     await this.#cleanupWorkflowStorage(workflowId);
+    if (budgetChargedDeletes.length > 0) {
+      await this.#storage.batch(budgetChargedDeletes);
+    }
   }
 
   /**
