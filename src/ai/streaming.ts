@@ -120,7 +120,9 @@ export class StreamMultiplexer {
         }
       }
     } catch {
-      // Source stream errored or was cancelled
+      // Source stream errored or was cancelled. Drop buffered chunks so
+      // future consumers attaching after the error cannot replay stale
+      // data from the broken source.
       this.#finished = true;
       this.#buffer = [];
       for (const controller of this.#consumers) {
@@ -131,8 +133,6 @@ export class StreamMultiplexer {
         }
       }
       this.#consumers.clear();
-      // Drop buffered chunks — no future consumers can replay from a broken source
-      this.#buffer = [];
     }
   }
 }

@@ -524,7 +524,9 @@ export function createSSEStream(
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            // Release the reader lock before closing the controller
+            // Release the reader lock before closing the controller so the
+            // caller can still inspect or reuse the underlying token stream
+            // (e.g., for a second consumer).
             reader.releaseLock();
 
             // Send a final "done" event
@@ -535,9 +537,6 @@ export function createSSEStream(
             });
             controller.enqueue(encoder.encode(doneEvent));
             controller.close();
-            // Release the lock so the caller can still inspect or reuse
-            // the underlying token stream (e.g., for a second consumer).
-            reader.releaseLock();
             return;
           }
 
@@ -551,18 +550,17 @@ export function createSSEStream(
           eventId++;
         }
       } catch (error) {
-        reader.releaseLock();
-        try {
-          controller.error(error);
-        } catch {
-          // Controller may already be closed
-        }
-        // Release the lock on error too so the token stream isn't left
-        // in a locked state with no active reader.
+        // Release the lock on error so the token stream isn't left in a
+        // locked state with no active reader.
         try {
           reader.releaseLock();
         } catch {
           // releaseLock throws if there are pending reads — ignore.
+        }
+        try {
+          controller.error(error);
+        } catch {
+          // Controller may already be closed
         }
       }
     },

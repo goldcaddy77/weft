@@ -528,8 +528,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #inlineStrategy: InlineExecutionStrategy | null;
   #handleCache: Map<string, { ref: WeakRef<WorkflowHandle>; unregisterToken: object }>;
   #finalizationRegistry: FinalizationRegistry<string>;
-  /** Tokens used to unregister stale FinalizationRegistry entries when a handle is replaced. */
-  #finalizationTokens: Map<string, object>;
   #resultResolvers: Map<string, WorkflowResultResolver>;
   #signalWaiters: Map<string, () => void>;
   #updateWaiters: Map<string, (payload: unknown) => void>;
@@ -626,7 +624,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#registrations = new Map();
     this.#abortController = new AbortController();
     this.#handleCache = new Map();
-    this.#finalizationTokens = new Map();
     this.#resultResolvers = new Map();
     this.#signalWaiters = new Map();
     this.#updateWaiters = new Map();
@@ -653,7 +650,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const entry = this.#handleCache.get(id);
       if (!entry || entry.ref.deref() !== undefined) return;
       this.#handleCache.delete(id);
-      this.#finalizationTokens.delete(id);
     });
 
     this.#options = resolvedOptions;
