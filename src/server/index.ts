@@ -399,6 +399,13 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     UpdateCompletedEvent.type,
   ] as const;
 
+  const terminalEventTypes: Set<string> = new Set([
+    WorkflowCompletedEvent.type,
+    WorkflowFailedEvent.type,
+    WorkflowCancelledEvent.type,
+    WorkflowTimedOutEvent.type,
+  ]);
+
   for (const eventType of eventTypes) {
     engine.addEventListener(
       eventType,
@@ -444,6 +451,14 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
             );
           });
         sequenceChains.set(workflowId, nextChain);
+
+        if (terminalEventTypes.has(eventType)) {
+          void nextChain.finally(() => {
+            sequenceCounters.delete(workflowId);
+            sequenceInitPromises.delete(workflowId);
+            sequenceChains.delete(workflowId);
+          });
+        }
       },
       { signal },
     );
@@ -1150,7 +1165,7 @@ export function serve(options: ServeOptions): WeftServer {
    * can dispatch `ActivityFailedEvent` and re-queue tasks — processing the
    * same operationId concurrently would produce duplicate side-effects.
    */
-  const processingOperations = new Set<string>();
+  const processingOperationIds = new Set<string>();
 
   /**
    * Drain expired entries from the in-memory deadline heap and reassign
@@ -1165,12 +1180,12 @@ export function serve(options: ServeOptions): WeftServer {
       const expired = deadlineTracker.drainExpired(now);
 
       for (const { operationId, deadline } of expired) {
-        if (processingOperations.has(operationId)) {
+        if (processingOperationIds.has(operationId)) {
           // Re-add to the heap so it isn't permanently lost after being drained.
           deadlineTracker.add({ operationId, deadline });
           continue;
         }
-        processingOperations.add(operationId);
+        processingOperationIds.add(operationId);
         try {
           const inflightKey = KEYS.operationInflight(operationId);
           const existing = await options.engine.storage.get(inflightKey);
@@ -1203,7 +1218,7 @@ export function serve(options: ServeOptions): WeftServer {
             error,
           );
         } finally {
-          processingOperations.delete(operationId);
+          processingOperationIds.delete(operationId);
         }
       }
     } catch (error) {
@@ -1242,8 +1257,8 @@ export function serve(options: ServeOptions): WeftServer {
           }
 
           // Skip if the visibility scanner is already processing this operation.
-          if (processingOperations.has(decoded.operationId)) continue;
-          processingOperations.add(decoded.operationId);
+          if (processingOperationIds.has(decoded.operationId)) continue;
+          processingOperationIds.add(decoded.operationId);
           try {
             // Expired orphan — remove from heap, registry, and workflow index, then reassign.
             deadlineTracker.remove(decoded.operationId);
@@ -1251,7 +1266,7 @@ export function serve(options: ServeOptions): WeftServer {
             cleanupWorkflowIndex(decoded.operationId);
             await reassignOrExpireTask(decoded.operationId, decoded);
           } finally {
-            processingOperations.delete(decoded.operationId);
+            processingOperationIds.delete(decoded.operationId);
           }
         } catch (error) {
           console.error('[weft] Failed to reconcile inflight record — skipping:', error);

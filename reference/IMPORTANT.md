@@ -1,10 +1,9 @@
 # Code Review Findings
 
-Last reviewed: 2026-04-05
+Last reviewed: 2026-04-06
 
 ## Not Yet Implemented (Notable Gaps)
 
-- [x] **Agent-shaped workflow optimizations**: Priority tool call queuing, LLM connection pre-warming, and checkpoint compression for agent-typed workflows implemented in engine.
 - [ ] **Multi-agent fan-out budget enforcement verification**: Budget tracking and `AbortController` wiring exist in `supervise()`, but enforcement during parallel multi-agent execution (via `ctx.all()`) is not fully verified end-to-end. Total cost across parallel branches should count against `ctx.setBudget()`.
 - [ ] **Performance benchmarks not meeting architecture targets**: Benchmark tests exist with relaxed thresholds (e.g., 3K-5K workflows/sec vs. spec'd >50K; 10-16KB/workflow vs. spec'd <=2KB; cold start 200ms vs. spec'd <100ms). Tests pass at relaxed thresholds but the architecture doc's aspirational targets are unverified.
 - [ ] **IndexedDB not covered in multi-backend tests**: `search-attributes-multibackend.test.ts` and `updates-multibackend.test.ts` cover MemoryStorage, BunSQLiteStorage, LMDBStorage, and TursoStorage but not IndexedDB.
@@ -15,4 +14,7 @@ Last reviewed: 2026-04-05
 
 ## Code Review Issues
 
-No outstanding issues.
+- [ ] **LLM provider streams never cancel inner readers on consumer abort** (`src/ai/providers/openai.ts:84-144`, `src/ai/providers/anthropic.ts:94-147`): Both providers wrap the fetch response body in a new `ReadableStream` whose `start()` calls `rawBody.getReader()`. Neither provides a `cancel()` callback on the outer stream, and the `finally` block only calls `controller.close()` — it never calls `reader.cancel()` or `reader.releaseLock()`. When an agent turn is cancelled via `AbortController` (budget exceeded, workflow cancellation, `Promise.race` loser), the outer stream is abandoned but the inner reader keeps the response body locked, preventing GC of the fetch response and any buffered network chunks. Fix: add `cancel(reason) { reader.cancel(reason).catch(() => {}); }` to the outer stream source and call `reader.cancel().catch(() => {})` inside the `finally` block in both providers.
+- [ ] **MCP `StdioTransport` stdout/stderr readers not cancelled on process exit or disposal** (`src/ai/mcp/transport-stdio.ts:180-257`): Both `#startStderrLoop` (line 183) and `#startReadLoop` (line 210) call `getReader()` on `proc.stdout`/`proc.stderr` but never call `reader.cancel()`/`releaseLock()` in their `finally` blocks. When the child process exits or the transport is disposed, the readers remain locked, pinning the underlying streams and any buffered output. The same pattern makes `#ensureProcess`'s `exited` handler unable to trigger native close of the streams. Fix: wrap both read loops in `try {...} finally { reader.cancel().catch(() => {}); }` and null out `#readLoopActive` in the finally as it already does.
+- [ ] **`#chargedAgentOperations` Set grows unbounded for engine lifetime** (`src/core/engine.ts:552,648,2846-2867`): `#recordAgentBudgetCost` adds each operationId to `this.#chargedAgentOperations` to deduplicate cost recording across retries/recoveries, but entries are only removed via `clear()` on engine disposal (line 1914). Every agent sub-operation across every workflow leaves a permanent entry. After a long-running engine processes millions of agent turns, the Set holds millions of UUIDs — several MB of irreversible memory growth with no TTL or eviction. Fix: delete the operationId from the Set when the parent workflow reaches a terminal state (hook into `#completeWorkflow`/`#failWorkflow`/`#terminateWorkflow`), or tie entries to a bounded LRU keyed by workflow.
+- [ ] **`TokenBridge.pipe()` does not release its reader on exit or error** (`src/ai/streaming.ts:150-165`): The reader acquired at line 151 is never released via `reader.cancel()` or `reader.releaseLock()` — there is no `try/finally`. If `reader.read()` throws, the exception propagates while the reader still holds a lock on the source stream, preventing other code from consuming it and blocking GC. Fix: wrap the while loop in `try { ... } finally { reader.cancel().catch(() => {}); }`.

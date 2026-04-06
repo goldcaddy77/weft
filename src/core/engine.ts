@@ -1638,7 +1638,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#cleanupWorkflowStorage(workflowId, true);
 
     this.#checkpoints.delete(workflowId);
-
     this.#cleanupWaiters(workflowId);
     this.#heartbeatDetails.delete(workflowId);
     this.#agentWorkflowIds.delete(workflowId);
@@ -2404,26 +2403,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     operation: Extract<ContextOperationRequest, { type: 'race' }>,
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, async () => {
-      const raceAbortController = new AbortController();
-      // Capture individual promises so we can suppress expected abort rejections
-      // from losing branches after Promise.race settles.
-      const branchPromises = operation.operations.map((subOperation) =>
-        this.#executeSubOperation(workflowId, subOperation, raceAbortController.signal),
+      const controller = new AbortController();
+      const subOperations = operation.operations.map((subOperation) =>
+        this.#executeSubOperation(workflowId, subOperation, controller.signal),
       );
-
-      // Attach no-op catch handlers to prevent unhandled rejection from losing
-      // branches. After raceAbortController.abort(), losers reject with AbortError;
-      // genuine failures from losers are also swallowed here because the winner's
-      // result (or error) already propagated through Promise.race above.
-      for (const p of branchPromises) {
-        p.catch(() => {});
+      // Swallow rejections from losing branches — only the race winner's
+      // result (or error) is surfaced. Losers are expected to throw
+      // AbortError after controller.abort() in finally, and without a
+      // handler those become unhandled promise rejections.
+      for (const promise of subOperations) {
+        promise.catch(() => {});
       }
-
       try {
-        return await Promise.race(branchPromises);
+        return await Promise.race(subOperations);
       } finally {
-        // Cancel all losing branches so agent sub-operations stop making LLM calls
-        raceAbortController.abort();
+        controller.abort();
       }
     });
   }
@@ -3018,12 +3012,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     switch (operation.type) {
       case 'activity':
+        signal?.throwIfAborted();
         return callActivityFunction(operation.fn, operation.args);
       case 'memo':
+        signal?.throwIfAborted();
         return callMemoFunction(operation.fn);
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
-        const { BudgetTracker } = await import('../ai/budget.ts');
         const {
           prompt,
           budget: budgetOptions,
@@ -3031,28 +3026,30 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           contextStrategy: _contextStrategy,
           ...rest
         } = operation.options;
+        const budgetTracker = await this.#createAgentBudgetTracker(
+          workflowId,
+          operation,
+          budgetOptions,
+        );
         const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
-
-        // Enforce org-level budget policy before execution (mirrors #processAgentContextOperation)
         await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
 
         const agentResult = await executeAgentLoop(
           {
             ...rest,
-            budget: budgetOptions ? new BudgetTracker(budgetOptions) : undefined,
+            budget: budgetTracker,
             signal,
           },
           prompt,
         );
 
-        // Record org-level budget cost after execution
         await this.#recordAgentBudgetCost(
           operation.operationId,
           resolvedBudgetNamespace,
           agentResult.totalCost,
         );
 
-        return agentResult;
+        return agentResult.content;
       }
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);

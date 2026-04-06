@@ -15,6 +15,12 @@ import {
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
 } from '../ai/events';
+import {
+  WorkflowCancelledEvent,
+  WorkflowCompletedEvent,
+  WorkflowFailedEvent,
+  WorkflowTimedOutEvent,
+} from '../core/events.ts';
 import type {
   ActivityExecutionInterception,
   ActivityInterception,
@@ -174,10 +180,44 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
 
   const metrics = options?.metrics ?? new MetricsCollectorClass();
 
-  // Root spans keyed by workflow ID, paired with creation timestamps for
-  // stale-entry eviction. Supports concurrent workflows sharing a single
-  // interceptor instance without span mis-parenting.
-  const workflowSpans = new Map<string, { span: OtelSpan; createdAt: number }>();
+  // Root spans keyed by workflow ID. Supports concurrent workflows sharing
+  // a single interceptor instance without span mis-parenting. Each entry
+  // stores a creation timestamp so stale spans from orphaned workflows can
+  // be evicted before the map grows unbounded.
+  const WORKFLOW_SPAN_TTL_MS = 60 * 60 * 1000; // 1 hour
+  const WORKFLOW_SPAN_MAX_SIZE = 10_000;
+
+  type WorkflowSpanEntry = { span: OtelSpan; createdAt: number };
+  const workflowSpans = new Map<string, WorkflowSpanEntry>();
+
+  /**
+   * Evict workflow span entries that exceed the TTL or, if the map still
+   * exceeds the size cap after TTL eviction, drop the oldest entries until
+   * the cap is satisfied.
+   */
+  function evictStaleWorkflowSpans(): void {
+    const now = Date.now();
+
+    // Phase 1: TTL-based eviction
+    for (const [id, entry] of workflowSpans) {
+      if (now - entry.createdAt > WORKFLOW_SPAN_TTL_MS) {
+        entry.span.end();
+        workflowSpans.delete(id);
+      }
+    }
+
+    // Phase 2: cap-based eviction (oldest-first — Map iterates in insertion order)
+    if (workflowSpans.size > WORKFLOW_SPAN_MAX_SIZE) {
+      const excess = workflowSpans.size - WORKFLOW_SPAN_MAX_SIZE;
+      let removed = 0;
+      for (const [id, entry] of workflowSpans) {
+        if (removed >= excess) break;
+        entry.span.end();
+        workflowSpans.delete(id);
+        removed++;
+      }
+    }
+  }
 
   /** End and remove the span for a given workflow ID. */
   function endAndRemoveWorkflowSpan(workflowId: string): void {
@@ -185,6 +225,35 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     if (entry) {
       entry.span.end();
       workflowSpans.delete(workflowId);
+    }
+  }
+
+  // Automatically clean up workflow spans when workflows reach terminal states.
+  if (eventTarget) {
+    const terminalHandler = (event: Event) => {
+      if (
+        !(event instanceof WorkflowCompletedEvent) &&
+        !(event instanceof WorkflowFailedEvent) &&
+        !(event instanceof WorkflowCancelledEvent) &&
+        !(event instanceof WorkflowTimedOutEvent)
+      ) {
+        return;
+      }
+
+      const isError =
+        event instanceof WorkflowFailedEvent || event instanceof WorkflowTimedOutEvent;
+      const errorMsg = event instanceof WorkflowFailedEvent ? event.error.message : undefined;
+
+      endWorkflowSpan(event.workflowId, isError ? 'error' : 'ok', errorMsg);
+    };
+
+    for (const type of [
+      WorkflowCompletedEvent.type,
+      WorkflowFailedEvent.type,
+      WorkflowCancelledEvent.type,
+      WorkflowTimedOutEvent.type,
+    ]) {
+      eventTarget.addEventListener(type, terminalHandler);
     }
   }
 
@@ -206,10 +275,13 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: WorkflowStartInterception,
       next: (interception: WorkflowStartInterception) => void,
     ): void {
+      // Evict stale spans before adding a new one to bound memory usage.
+      evictStaleWorkflowSpans();
+
       // End any existing span for the same workflow ID (e.g., re-execution)
-      const existing = workflowSpans.get(interception.workflowId);
-      if (existing) {
-        existing.span.setStatus({ code: SpanStatusCode.OK });
+      const existingEntry = workflowSpans.get(interception.workflowId);
+      if (existingEntry) {
+        existingEntry.span.setStatus({ code: SpanStatusCode.OK });
         endAndRemoveWorkflowSpan(interception.workflowId);
       }
 
