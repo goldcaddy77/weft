@@ -509,6 +509,95 @@ describe('OpenAIProvider', () => {
       const doneChunk = chunks.find((c) => c.type === 'done');
       expect(doneChunk).toBeDefined();
     });
+
+    it('cancels the inner response body reader when the outer stream is cancelled', async () => {
+      let innerCancelled = false;
+      let pullController: ReadableStreamDefaultController<Uint8Array> | undefined;
+
+      const innerBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          pullController = controller;
+          // Enqueue one chunk so the consumer has something to read before cancelling.
+          const encoder = new TextEncoder();
+          controller.enqueue(
+            encoder.encode(
+              'data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}\n\n',
+            ),
+          );
+        },
+        cancel() {
+          innerCancelled = true;
+          // Close the controller so any pending reads resolve.
+          try {
+            pullController?.close();
+          } catch {
+            // Already closed.
+          }
+        },
+      });
+
+      mockFetch(async () => {
+        return new Response(innerBody, {
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      });
+
+      const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
+      const stream = await provider.stream([{ role: 'user', content: 'Hi' }], {
+        model: 'gpt-4o',
+      });
+
+      const reader = stream.getReader();
+      // Read the first chunk so we know the inner reader is actively locked.
+      await reader.read();
+
+      // Simulate the consumer aborting (e.g. budget exceeded / workflow cancelled).
+      await reader.cancel('aborted by consumer');
+
+      expect(innerCancelled).toBe(true);
+    });
+
+    it('releases the inner reader when parsing throws inside start()', async () => {
+      let innerCancelled = false;
+
+      const innerBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const encoder = new TextEncoder();
+          // Malformed JSON payload — JSON.parse will throw inside start().
+          // Intentionally do NOT close the inner body here — we want to
+          // verify that the provider's finally block cancels the inner
+          // reader, which should trigger this stream's cancel callback.
+          controller.enqueue(encoder.encode('data: {not valid json}\n\n'));
+        },
+        cancel() {
+          innerCancelled = true;
+        },
+      });
+
+      mockFetch(async () => {
+        return new Response(innerBody, {
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      });
+
+      const provider = new OpenAIProvider({ apiKey: 'sk-test-key' });
+      const stream = await provider.stream([{ role: 'user', content: 'Hi' }], {
+        model: 'gpt-4o',
+      });
+
+      const reader = stream.getReader();
+      // Drain until the stream closes (the parse error is swallowed by the
+      // finally block, which closes the controller, so the outer stream
+      // ends cleanly even though start() rejected).
+      for (;;) {
+        const result = await reader.read();
+        if (result.done) break;
+      }
+
+      // The finally block should have cancelled the inner reader on the
+      // error path, releasing the underlying response body.
+      expect(innerCancelled).toBe(true);
+    });
   });
 
   describe('countTokens', () => {

@@ -270,11 +270,41 @@ function serializeEvent(event: Event): string | null {
 }
 
 /**
+ * Result of wiring up engine-to-WebSocket event broadcasting.
+ *
+ * - `dispose`: removes all listeners (abort signal). Called on server shutdown.
+ * - `cleanupWorkflow`: drops the per-workflow sequence state for the given
+ *   workflow id. Should be invoked when a workflow reaches a terminal state
+ *   so the bookkeeping maps do not grow unbounded over the server's lifetime.
+ */
+interface EventBroadcastingHandle {
+  dispose: () => void;
+  cleanupWorkflow: (workflowId: string) => void;
+}
+
+/**
+ * Extract a `workflowId` from a DOM `Event` when the concrete event carries
+ * one. All workflow, activity, token, signal, attribute, and update events
+ * in `core/events.ts` expose a `workflowId: string` field, but the `Event`
+ * base type does not know about it — so a runtime structural check narrows
+ * the value before we use it to key bookkeeping maps. Returns `undefined`
+ * for events without a string `workflowId` property.
+ */
+function getWorkflowIdFromEvent(event: Event): string | undefined {
+  if (!('workflowId' in event)) return undefined;
+  const candidate = (event as { workflowId: unknown }).workflowId;
+  return typeof candidate === 'string' ? candidate : undefined;
+}
+
+/**
  * Attach event listeners to the engine that broadcast events via WebSocket
  * and persist each event to storage so GET /v1/workflows/:id/events returns data.
- * Returns a cleanup function that removes all listeners.
+ * Returns a handle exposing a cleanup function and a per-workflow eviction hook.
  */
-function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.serve>): () => void {
+function wireEventBroadcasting(
+  engine: Engine,
+  server: ReturnType<typeof Bun.serve>,
+): EventBroadcastingHandle {
   const controller = new AbortController();
   const { signal } = controller;
 
@@ -390,20 +420,11 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     UpdateCompletedEvent.type,
   ] as const;
 
-  const terminalEventTypes: Set<string> = new Set([
-    WorkflowCompletedEvent.type,
-    WorkflowFailedEvent.type,
-    WorkflowCancelledEvent.type,
-    WorkflowTimedOutEvent.type,
-  ]);
-
   for (const eventType of eventTypes) {
     engine.addEventListener(
       eventType,
       (event) => {
-        const raw =
-          'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
-        const workflowId = typeof raw === 'string' ? raw : undefined;
+        const workflowId = getWorkflowIdFromEvent(event);
         if (workflowId === undefined) return;
 
         const message = serializeEvent(event);
@@ -443,20 +464,56 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
             );
           });
         sequenceChains.set(workflowId, nextChain);
-
-        if (terminalEventTypes.has(eventType)) {
-          void nextChain.finally(() => {
-            sequenceCounters.delete(workflowId);
-            sequenceInitPromises.delete(workflowId);
-            sequenceChains.delete(workflowId);
-          });
-        }
+        // Cleanup for terminal events lives in a dedicated listener that
+        // calls `cleanupWorkflow(workflowId)` — see the consumer of the
+        // returned handle in `serve()`. That path handles chain extension
+        // (new events arriving after the terminal event) correctly; doing
+        // the cleanup inline here would race with it.
       },
       { signal },
     );
   }
 
-  return () => controller.abort();
+  /**
+   * Drop the per-workflow bookkeeping for a workflow that has reached a
+   * terminal state. Waits for any in-flight persistence on the workflow's
+   * serialization chain to settle before removing the entries — otherwise a
+   * racing handler could reinsert them via `persistAndPublishEvent`.
+   *
+   * Concurrency: between capturing `pendingChain` and the `finally` running
+   * `drop`, another event for the same workflow could arrive and extend the
+   * chain. We drop the entries only once we observe that the chain has not
+   * advanced during the await, and otherwise recurse to wait for the new
+   * tail. Without this loop, `drop` could fire while a subsequent
+   * `persistAndPublishEvent` was still using the counter, producing a
+   * "counter accessed before initialization" error on the next event.
+   */
+  function cleanupWorkflow(workflowId: string): void {
+    const pendingChain = sequenceChains.get(workflowId);
+    const drop = (): void => {
+      sequenceCounters.delete(workflowId);
+      sequenceInitPromises.delete(workflowId);
+      sequenceChains.delete(workflowId);
+    };
+    if (!pendingChain) {
+      drop();
+      return;
+    }
+    void pendingChain.finally(() => {
+      // If another event extended the chain while we were awaiting the
+      // previous tail, recurse to wait on the new tail.
+      if (sequenceChains.get(workflowId) !== pendingChain) {
+        cleanupWorkflow(workflowId);
+        return;
+      }
+      drop();
+    });
+  }
+
+  return {
+    dispose: () => controller.abort(),
+    cleanupWorkflow,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1047,9 +1104,9 @@ export function serve(options: ServeOptions): WeftServer {
   // Wire up engine events → WebSocket broadcasting.
   // If wiring throws after the server is already listening, dispose the
   // stack (which stops the server) before propagating the error.
-  let cleanupBroadcasting: () => void;
+  let broadcastingHandle: EventBroadcastingHandle;
   try {
-    cleanupBroadcasting = wireEventBroadcasting(options.engine, server);
+    broadcastingHandle = wireEventBroadcasting(options.engine, server);
     /* c8 ignore start -- initialization failure requires injected broadcaster setup faults */
   } catch (error) {
     void stack[Symbol.asyncDispose]();
@@ -1058,9 +1115,12 @@ export function serve(options: ServeOptions): WeftServer {
   /* c8 ignore stop */
 
   // Registered second — disposed second-to-last.
-  stack.defer(cleanupBroadcasting);
+  stack.defer(broadcastingHandle.dispose);
 
-  // Clean up worker affinity entries when workflows reach a terminal state.
+  // Clean up per-workflow state when workflows reach a terminal state:
+  // both the sticky-routing affinity map and the event-broadcasting sequence
+  // maps retain entries keyed by workflow id, and neither is bounded by
+  // anything other than "workflows observed for the lifetime of the process".
   const affinityController = new AbortController();
   const terminalEventTypes = [
     WorkflowCompletedEvent.type,
@@ -1073,11 +1133,10 @@ export function serve(options: ServeOptions): WeftServer {
     options.engine.addEventListener(
       eventType,
       (event) => {
-        const raw =
-          'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
-        const workflowId = typeof raw === 'string' ? raw : undefined;
+        const workflowId = getWorkflowIdFromEvent(event);
         if (workflowId) {
           workerAffinity.delete(workflowId);
+          broadcastingHandle.cleanupWorkflow(workflowId);
         }
       },
       { signal: affinityController.signal },
@@ -1090,9 +1149,7 @@ export function serve(options: ServeOptions): WeftServer {
   options.engine.addEventListener(
     WorkflowCancelledEvent.type,
     (event) => {
-      const raw =
-        'workflowId' in event ? (event as Record<string, unknown>)['workflowId'] : undefined;
-      const workflowId = typeof raw === 'string' ? raw : undefined;
+      const workflowId = getWorkflowIdFromEvent(event);
       if (!workflowId) return;
 
       const operationIds = workflowOperations.get(workflowId);
@@ -1167,12 +1224,15 @@ export function serve(options: ServeOptions): WeftServer {
   let scanRunning = false;
 
   /**
-   * Operations currently being processed by either the visibility scanner or
-   * the reconciliation scanner. Both paths call `reassignOrExpireTask` which
-   * can dispatch `ActivityFailedEvent` and re-queue tasks — processing the
-   * same operationId concurrently would produce duplicate side-effects.
+   * Fine-grained mutex over in-flight operation ids shared by both expiry
+   * paths. `scanExpiredTasks` (fast path, deadline heap) and
+   * `reconcileOrphanedRecords` (slow path, full storage scan) can observe the
+   * same expired record and concurrently call `registry.completeTask`,
+   * `reassignOrExpireTask`, and dispatch `ActivityFailedEvent`. Both scanners
+   * claim the operationId here before processing and release it afterwards so
+   * only one path ever acts on a given task at a time.
    */
-  const processingOperationIds = new Set<string>();
+  const processingOperations = new Set<string>();
 
   /**
    * Drain expired entries from the in-memory deadline heap and reassign
@@ -1187,12 +1247,15 @@ export function serve(options: ServeOptions): WeftServer {
       const expired = deadlineTracker.drainExpired(now);
 
       for (const { operationId, deadline } of expired) {
-        if (processingOperationIds.has(operationId)) {
-          // Re-add to the heap so it isn't permanently lost after being drained.
+        // Skip if the reconciliation scanner (or a previous iteration) is
+        // already acting on this operation — re-queue the heap entry so the
+        // fast path will revisit it on the next tick once the other worker
+        // has released the claim.
+        if (processingOperations.has(operationId)) {
           deadlineTracker.add({ operationId, deadline });
           continue;
         }
-        processingOperationIds.add(operationId);
+        processingOperations.add(operationId);
         try {
           const inflightKey = KEYS.operationInflight(operationId);
           const existing = await options.engine.storage.get(inflightKey);
@@ -1233,7 +1296,7 @@ export function serve(options: ServeOptions): WeftServer {
             error,
           );
         } finally {
-          processingOperationIds.delete(operationId);
+          processingOperations.delete(operationId);
         }
       }
       /* c8 ignore next 2 -- scanner failure requires injected storage scan faults */
@@ -1266,15 +1329,21 @@ export function serve(options: ServeOptions): WeftServer {
 
           if (decoded.deadline > now) {
             // Still valid — ensure it is tracked in the heap so the fast path
-            // can handle it when it expires.
+            // can handle it when it expires. Skip the heap rewrite if another
+            // path is currently mid-process on this id — its `finally` block
+            // will leave the heap in a consistent state.
+            if (processingOperations.has(decoded.operationId)) continue;
             deadlineTracker.remove(decoded.operationId);
             deadlineTracker.add({ operationId: decoded.operationId, deadline: decoded.deadline });
             continue;
           }
 
-          // Skip if the visibility scanner is already processing this operation.
-          if (processingOperationIds.has(decoded.operationId)) continue;
-          processingOperationIds.add(decoded.operationId);
+          // Expired orphan — claim the id so `scanExpiredTasks` cannot race
+          // us on `completeTask`/`reassignOrExpireTask`. If the fast path is
+          // already processing it, skip and let the next reconciliation tick
+          // revisit any remaining orphans.
+          if (processingOperations.has(decoded.operationId)) continue;
+          processingOperations.add(decoded.operationId);
           try {
             // Expired orphan — remove from heap, registry, and workflow index, then reassign.
             deadlineTracker.remove(decoded.operationId);
@@ -1283,7 +1352,7 @@ export function serve(options: ServeOptions): WeftServer {
             await reassignOrExpireTask(decoded.operationId, decoded);
             /* c8 ignore next 2 -- reconciliation failure handling is defensive */
           } finally {
-            processingOperationIds.delete(decoded.operationId);
+            processingOperations.delete(decoded.operationId);
           }
         } catch (error) {
           console.error('[weft] Failed to reconcile inflight record — skipping:', error);

@@ -1,17 +1,29 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { LLMProvider } from './providers/interface';
-import type { ChatResponse, Message } from './providers/types';
+import type { ChatResponse, Message, ToolDefinition } from './providers/types';
 
-import type { AgentTool, ToolCallInfo, ToolReturnInfo, TurnInfo, TurnResult } from './agent';
-import { executeAgentLoop } from './agent';
+import type {
+  AgentTool,
+  MCPClientFactory,
+  ToolCallInfo,
+  ToolReturnInfo,
+  TurnInfo,
+  TurnResult,
+} from './agent';
+import { executeAgentLoop, initializeTools } from './agent';
 import { BudgetExceededError, BudgetTracker } from './budget';
 import {
   AgentContextCompactedEvent,
   AgentModelFallbackEvent,
   AgentTurnCompletedEvent,
 } from './events';
+import { MCPClient } from './mcp/client';
+import { ToolNameConflictError } from './mcp/registry';
+import type { MCPRequest, MCPResponse, MCPTransport } from './mcp/transport';
 import type { ModelRouter, RoutingContext } from './model-router';
+import type { CacheEntry } from './tool-cache';
+import { setToolCacheEntry } from './tool-cache';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2292,5 +2304,126 @@ describe('executeAgentLoop', () => {
     expect(result.turnCosts[1]!.inputTokens).toBe(200);
     expect(result.turnCosts[1]!.outputTokens).toBe(100);
     expect(result.turnCosts[1]!.tools).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // MCP client disposal on tool name conflict
+  // ---------------------------------------------------------------------------
+
+  it('disposes all MCP clients when tool name validation fails', async () => {
+    // Build a stub transport that reports healthy and returns a single
+    // pre-configured tool definition from discoverTools. `[Symbol.dispose]`
+    // records that it was torn down so the test can assert on it.
+    function createStubTransport(toolName: string): MCPTransport & { disposeCount: number } {
+      const transport = {
+        disposeCount: 0,
+        async send(request: MCPRequest): Promise<MCPResponse> {
+          if (request.method === 'tools/list') {
+            const tool: ToolDefinition = {
+              name: toolName,
+              description: 'stub tool',
+              inputSchema: { type: 'object' },
+            };
+            return { result: { tools: [tool] } };
+          }
+          return { result: null };
+        },
+        async healthCheck(): Promise<boolean> {
+          return true;
+        },
+        [Symbol.dispose](): void {
+          transport.disposeCount++;
+        },
+      };
+      return transport;
+    }
+
+    const transports = [createStubTransport('duplicate'), createStubTransport('duplicate')];
+
+    const factory: MCPClientFactory = (source) => {
+      // Pick the transport matching the source URL so the two sources get
+      // distinct transports, ensuring two distinct MCPClient instances exist.
+      const index = source.mcp === 'http://server-a' ? 0 : 1;
+      const transport = transports[index]!;
+      return new MCPClient({ transport });
+    };
+
+    await expect(
+      initializeTools([{ mcp: 'http://server-a' }, { mcp: 'http://server-b' }], undefined, factory),
+    ).rejects.toBeInstanceOf(ToolNameConflictError);
+
+    // Both clients should have had their underlying transports disposed
+    expect(transports[0]!.disposeCount).toBe(1);
+    expect(transports[1]!.disposeCount).toBe(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tool cache LRU eviction
+  // ---------------------------------------------------------------------------
+
+  it('evicts the oldest tool cache entry when the max size is exceeded', () => {
+    const cache = new Map<string, CacheEntry>();
+    const entry = (output: string): CacheEntry => ({ output, timestamp: 1 });
+
+    setToolCacheEntry(cache, 'a', entry('A'), 3);
+    setToolCacheEntry(cache, 'b', entry('B'), 3);
+    setToolCacheEntry(cache, 'c', entry('C'), 3);
+    expect(cache.size).toBe(3);
+    expect([...cache.keys()]).toEqual(['a', 'b', 'c']);
+
+    // Inserting a fourth key should evict 'a' (the oldest)
+    setToolCacheEntry(cache, 'd', entry('D'), 3);
+    expect(cache.size).toBe(3);
+    expect([...cache.keys()]).toEqual(['b', 'c', 'd']);
+    expect(cache.has('a')).toBe(false);
+
+    // Re-inserting an existing key should move it to the tail without
+    // evicting anything else
+    setToolCacheEntry(cache, 'b', entry('B2'), 3);
+    expect(cache.size).toBe(3);
+    expect([...cache.keys()]).toEqual(['c', 'd', 'b']);
+    expect(cache.get('b')?.output).toBe('B2');
+
+    // Lowering the effective max size via a larger insertion batch should
+    // evict multiple oldest entries in a single call
+    setToolCacheEntry(cache, 'e', entry('E'), 2);
+    expect(cache.size).toBe(2);
+    expect([...cache.keys()]).toEqual(['b', 'e']);
+  });
+
+  it('honors the configured toolCacheMaxSize during an agent loop', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'a' } }]),
+      createToolCallResponse([{ id: 'call-2', name: 'lookup', input: { key: 'b' } }]),
+      createToolCallResponse([{ id: 'call-3', name: 'lookup', input: { key: 'a' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    let executeCount = 0;
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => {
+        executeCount++;
+        return { value: executeCount };
+      },
+    };
+
+    // Max size 1 — after looking up 'b', the 'a' entry must have been
+    // evicted so the third call re-executes instead of hitting the cache.
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        toolCacheMaxSize: 1,
+      },
+      'Lookup a, then b, then a',
+    );
+
+    expect(executeCount).toBe(3);
   });
 });

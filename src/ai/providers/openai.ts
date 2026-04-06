@@ -1,4 +1,5 @@
 import type { ChatOptions, LLMProvider } from './interface';
+import { releaseInnerReader } from './stream-reader';
 import type { ChatResponse, Message, StreamChunk, ToolCall, ToolDefinition } from './types';
 
 import { estimateTokens } from '../token-counting.ts';
@@ -81,9 +82,10 @@ export class OpenAIProvider implements LLMProvider {
       throw new Error('OpenAI API returned no response body for stream');
     }
 
+    const reader = rawBody.getReader();
+
     return new ReadableStream<StreamChunk>({
       async start(controller) {
-        const reader = rawBody.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
         let lastUsage:
@@ -138,8 +140,27 @@ export class OpenAIProvider implements LLMProvider {
             }
           }
         } finally {
-          controller.close();
+          // Cancel the inner reader and wait for it to settle before
+          // releasing the lock. `cancel()` alone does NOT release the
+          // reader lock in Bun — `releaseLock()` does. Awaiting the cancel
+          // ensures any in-flight read is fully settled so `releaseLock()`
+          // never throws "cannot release a reader with pending reads".
+          await releaseInnerReader(reader);
+          // `controller.close()` throws if the stream is already closed
+          // or errored — which is exactly what happens when the consumer
+          // cancelled the outer stream before we reached this block.
+          try {
+            controller.close();
+          } catch {
+            // Ignore: controller is already in a terminal state.
+          }
         }
+      },
+      async cancel(reason) {
+        // Consumer aborted (e.g. budget exceeded, workflow cancellation).
+        // Propagate the cancel to the inner reader and release its lock so
+        // the fetch response body does not stay locked forever.
+        await releaseInnerReader(reader, reason);
       },
     });
   }

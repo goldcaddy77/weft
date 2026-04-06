@@ -96,7 +96,7 @@ export class ProviderHealthTracker {
     }
 
     state.entries.push({ timestamp: this.#now(), success: true });
-    this.#pruneExpiredEntries(state);
+    this.#prune(state);
   }
 
   /** Record a failed call to a provider. */
@@ -112,7 +112,7 @@ export class ProviderHealthTracker {
     }
 
     state.entries.push({ timestamp: this.#now(), success: false });
-    this.#pruneExpiredEntries(state);
+    this.#prune(state);
 
     // Evaluate whether to trip the circuit (only in closed state).
     if (state.circuit === 'closed') {
@@ -142,6 +142,20 @@ export class ProviderHealthTracker {
     }
 
     return state.circuit;
+  }
+
+  /**
+   * Return the backing array size for a provider. This exists solely so
+   * tests can verify that `#prune` actually trims expired entries — pruning
+   * is a memory optimisation with no behavioural fingerprint (`#windowEntries`
+   * already filters at read time), so the backing array length is the only
+   * observable signal for the fix. Do not use in production code.
+   *
+   * @internal
+   */
+  getEntryCount(provider: string): number {
+    const state = this.#providers.get(provider);
+    return state?.entries.length ?? 0;
   }
 
   /** Get the current error rate for a provider within the sliding window. */
@@ -187,9 +201,19 @@ export class ProviderHealthTracker {
     return state.entries.filter((entry) => entry.timestamp > cutoff);
   }
 
-  /** Remove entries that have fallen outside the sliding window to prevent unbounded growth. */
-  #pruneExpiredEntries(state: ProviderState): void {
+  /**
+   * Drop expired entries from the backing array to prevent unbounded growth.
+   *
+   * `#windowEntries` filters for reads but never mutates the underlying array,
+   * so without this the entries array would grow indefinitely for a provider
+   * that stays in the closed state.
+   */
+  #prune(state: ProviderState): void {
     const cutoff = this.#now() - this.#options.windowDuration;
+    // Fast path: nothing expired at the head of the array.
+    if (state.entries.length === 0 || state.entries[0]!.timestamp > cutoff) {
+      return;
+    }
     state.entries = state.entries.filter((entry) => entry.timestamp > cutoff);
   }
 

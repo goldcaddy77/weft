@@ -497,6 +497,92 @@ describe('AnthropicProvider', () => {
       expect(doneChunk).toBeDefined();
       expect(doneChunk!.usage).toBeDefined();
     });
+
+    it('cancels the inner response body reader when the outer stream is cancelled', async () => {
+      let innerCancelled = false;
+      let pullController: ReadableStreamDefaultController<Uint8Array> | undefined;
+
+      const innerBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          pullController = controller;
+          // Enqueue one chunk so the consumer has something to read before cancelling.
+          const encoder = new TextEncoder();
+          controller.enqueue(
+            encoder.encode(
+              'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}\n\n',
+            ),
+          );
+        },
+        cancel() {
+          innerCancelled = true;
+          try {
+            pullController?.close();
+          } catch {
+            // Already closed.
+          }
+        },
+      });
+
+      mockFetch(async () => {
+        return new Response(innerBody, {
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      });
+
+      const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
+      const stream = await provider.stream([{ role: 'user', content: 'Hi' }], {
+        model: 'claude-sonnet-4-20250514',
+      });
+
+      const reader = stream.getReader();
+      await reader.read();
+
+      await reader.cancel('aborted by consumer');
+
+      expect(innerCancelled).toBe(true);
+    });
+
+    it('releases the inner reader when parsing throws inside start()', async () => {
+      let innerCancelled = false;
+
+      const innerBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const encoder = new TextEncoder();
+          // Malformed JSON payload — JSON.parse will throw inside start().
+          // Intentionally do NOT close the inner body here — we want to
+          // verify that the provider's finally block cancels the inner
+          // reader, which should trigger this stream's cancel callback.
+          controller.enqueue(encoder.encode('data: {not valid json}\n\n'));
+        },
+        cancel() {
+          innerCancelled = true;
+        },
+      });
+
+      mockFetch(async () => {
+        return new Response(innerBody, {
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      });
+
+      const provider = new AnthropicProvider({ apiKey: 'sk-test-key' });
+      const stream = await provider.stream([{ role: 'user', content: 'Hi' }], {
+        model: 'claude-sonnet-4-20250514',
+      });
+
+      const reader = stream.getReader();
+      // Drain until the stream closes (the parse error is swallowed by the
+      // finally block, which closes the controller, so the outer stream
+      // ends cleanly even though start() rejected).
+      for (;;) {
+        const result = await reader.read();
+        if (result.done) break;
+      }
+
+      // The finally block should have cancelled the inner reader on the
+      // error path, releasing the underlying response body.
+      expect(innerCancelled).toBe(true);
+    });
   });
 
   describe('countTokens', () => {

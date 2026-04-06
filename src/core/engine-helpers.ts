@@ -23,14 +23,19 @@ export function createCleanupErrorReporter(
   };
 }
 
-/** Create a finalizer callback that removes stale workflow handles from a cache map. */
-export function createHandleCacheFinalizer<TValue>(
-  handleCache: Map<string, TValue>,
-  finalizationTokens: Map<string, object>,
+/** Create a finalizer callback that evicts only the stale handle entry that was actually finalized. */
+export function createHandleCacheFinalizer<TValue extends object>(
+  handleCache: Map<
+    string,
+    {
+      ref: Pick<WeakRef<TValue>, 'deref'>;
+    }
+  >,
 ): (workflowId: string) => void {
   return (workflowId: string) => {
+    const entry = handleCache.get(workflowId);
+    if (!entry || entry.ref.deref() !== undefined) return;
     handleCache.delete(workflowId);
-    finalizationTokens.delete(workflowId);
   };
 }
 

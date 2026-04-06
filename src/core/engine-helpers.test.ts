@@ -130,23 +130,28 @@ describe('engine helpers', () => {
     expect(failures[0]!.workflowId).toBe('wf-123');
   });
 
-  it('createHandleCacheFinalizer removes the finalized workflow identifier from the cache', () => {
-    const handleCache = new Map<string, string>([
-      ['wf-1', 'handle-1'],
-      ['wf-2', 'handle-2'],
-    ]);
-    const finalizationTokens = new Map<string, object>([
-      ['wf-1', {}],
-      ['wf-2', {}],
+  it('createHandleCacheFinalizer removes only stale workflow handles from the cache', () => {
+    const liveHandle = { id: 'live-handle' };
+    const staleEntry = { ref: { deref: () => undefined } };
+    const liveEntry = { ref: { deref: () => liveHandle } };
+    const handleCache = new Map<
+      string,
+      {
+        ref: {
+          deref: () => { id: string } | undefined;
+        };
+      }
+    >([
+      ['wf-1', staleEntry],
+      ['wf-2', liveEntry],
     ]);
 
-    const finalize = createHandleCacheFinalizer(handleCache, finalizationTokens);
+    const finalize = createHandleCacheFinalizer(handleCache);
     finalize('wf-1');
+    finalize('wf-2');
 
     expect(handleCache.has('wf-1')).toBe(false);
-    expect(handleCache.get('wf-2')).toBe('handle-2');
-    expect(finalizationTokens.has('wf-1')).toBe(false);
-    expect(finalizationTokens.has('wf-2')).toBe(true);
+    expect(handleCache.get('wf-2')).toBe(liveEntry);
   });
 
   it('createExpiredResponseCleanupTick runs the cleanup cycle', async () => {
