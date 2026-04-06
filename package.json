@@ -58,6 +58,7 @@
     "lint": "oxlint --type-aware --tsconfig ./tsconfig.json",
     "lint:fix": "oxlint --fix --type-aware --tsconfig ./tsconfig.json",
     "prepack": "bun run build",
+    "pr:title": "bun run scripts/pr-title.ts",
     "prepare": "husky",
     "prepublishOnly": "bun run validate && bun run build",
     "start": "bun run src/index.ts",
