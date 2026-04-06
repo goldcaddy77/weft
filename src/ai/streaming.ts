@@ -130,6 +130,8 @@ export class StreamMultiplexer {
         }
       }
       this.#consumers.clear();
+      // Drop buffered chunks — no future consumers can replay from a broken source
+      this.#buffer = [];
     }
   }
 }
@@ -151,13 +153,25 @@ export class TokenBridge {
     const reader = stream.getReader();
     let accumulated = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      if (value.type === 'token' && value.token !== undefined) {
-        accumulated += value.token;
-        this.#target.dispatchEvent(new TokenEvent(this.#workflowId, value.token, this.#model));
+        if (value.type === 'token' && value.token !== undefined) {
+          accumulated += value.token;
+          this.#target.dispatchEvent(new TokenEvent(this.#workflowId, value.token, this.#model));
+        }
+      }
+    } finally {
+      // Release the reader so the source stream isn't left locked on early return or error.
+      // Cancel first to signal loss of interest (and propagate errors), then release the
+      // lock so the underlying stream can be inspected or re-read by another consumer.
+      reader.cancel().catch(() => {});
+      try {
+        reader.releaseLock();
+      } catch {
+        // releaseLock throws if there's still a pending read — safe to ignore here.
       }
     }
 
@@ -167,23 +181,53 @@ export class TokenBridge {
 
 export interface ReconnectionBufferOptions {
   maxTurns?: number;
+  /**
+   * Approximate maximum byte budget across all buffered turns.
+   * Defaults to 10 MB, which is a pragmatic ceiling for in-memory
+   * replay buffers: large enough to cover long generated responses,
+   * small enough to prevent a single runaway workflow from exhausting
+   * process memory. When exceeded, the oldest turns are evicted first.
+   */
+  maxBytes?: number;
 }
+
+const DEFAULT_RECONNECTION_MAX_BYTES = 10 * 1024 * 1024;
 
 /** Accumulates completed turn text for reconnecting clients. */
 export class ReconnectionBuffer {
   #turns: string[];
+  #turnSizes: number[];
   #maxTurns: number;
+  #maxBytes: number;
+  #totalBytes: number;
 
   constructor(options?: ReconnectionBufferOptions) {
     this.#turns = [];
+    this.#turnSizes = [];
     this.#maxTurns = options?.maxTurns ?? 10;
+    this.#maxBytes = options?.maxBytes ?? DEFAULT_RECONNECTION_MAX_BYTES;
+    this.#totalBytes = 0;
   }
 
   /** Record a completed turn's text. */
   addTurn(text: string): void {
+    // Approximate byte size: matches the original finding's suggestion
+    // of JSON.stringify length. For plain strings this is roughly the
+    // character count plus quoting overhead, which is fine as a heuristic.
+    const size = JSON.stringify(text).length;
     this.#turns.push(text);
-    if (this.#turns.length > this.#maxTurns) {
-      this.#turns.shift();
+    this.#turnSizes.push(size);
+    this.#totalBytes += size;
+
+    // Evict by count first
+    while (this.#turns.length > this.#maxTurns) {
+      this.#evictOldest();
+    }
+
+    // Then evict by byte budget, but always keep at least one turn
+    // so a single oversized turn doesn't wipe the buffer entirely.
+    while (this.#totalBytes > this.#maxBytes && this.#turns.length > 1) {
+      this.#evictOldest();
     }
   }
 
@@ -197,8 +241,21 @@ export class ReconnectionBuffer {
     return this.#turns.length;
   }
 
+  /** Approximate total byte size of buffered turns. */
+  get byteSize(): number {
+    return this.#totalBytes;
+  }
+
   /** Clear the buffer. */
   clear(): void {
     this.#turns = [];
+    this.#turnSizes = [];
+    this.#totalBytes = 0;
+  }
+
+  #evictOldest(): void {
+    this.#turns.shift();
+    const removed = this.#turnSizes.shift() ?? 0;
+    this.#totalBytes -= removed;
   }
 }

@@ -91,9 +91,10 @@ export class AnthropicProvider implements LLMProvider {
     let inputTokens = 0;
     let outputTokens = 0;
 
+    const reader = rawBody.getReader();
+
     return new ReadableStream<StreamChunk>({
       async start(controller) {
-        const reader = rawBody.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
 
@@ -141,8 +142,18 @@ export class AnthropicProvider implements LLMProvider {
             }
           }
         } finally {
+          // Release the lock on the underlying response body so it can be
+          // garbage-collected. Errors are ignored because the reader may
+          // already be in a terminal state when we get here.
+          reader.cancel().catch(() => {});
           controller.close();
         }
+      },
+      cancel(reason) {
+        // Consumer aborted (e.g. budget exceeded, workflow cancellation).
+        // Propagate the cancel to the inner reader so the fetch response
+        // body is released instead of staying locked forever.
+        reader.cancel(reason).catch(() => {});
       },
     });
   }

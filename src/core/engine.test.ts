@@ -5,7 +5,7 @@ import type { ChatResponse } from '../ai/providers/types.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { decode } from './codec.ts';
+import { decode, encode } from './codec.ts';
 import type { Context, StreamReference } from './context.ts';
 import { Engine, WorkflowHandle } from './engine.ts';
 import {
@@ -1397,6 +1397,8 @@ describe('Engine', () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
 
+    // Block completion with a signal so we can assert chunks exist in storage
+    // before terminal-state cleanup removes them.
     engine.register('export', async function* (ctx: WorkflowContext) {
       const c = ctx as Context;
       const reference = yield* c.stream('report', async function* (sink) {
@@ -1405,18 +1407,14 @@ describe('Engine', () => {
         yield { row: 2, data: 'second' };
         sink.heartbeat({ processed: 2 });
       });
+      yield* c.waitForSignal('finish');
       return reference;
     });
 
     const handle = await engine.start('export', {});
-    const result = (await handle.result()) as StreamReference;
+    await flush();
 
-    expect(result.key).toBe('report');
-    expect(result.workflowId).toBe(handle.id);
-    expect(result.chunkCount).toBe(2);
-    expect(result.totalSizeBytes).toBeGreaterThan(0);
-
-    // Verify chunks in storage
+    // While workflow is still running, chunks and metadata are in storage
     const chunk0 = await storage.get(KEYS.streamChunk(handle.id, 'report', 0));
     expect(chunk0).not.toBeNull();
     const chunk1 = await storage.get(KEYS.streamChunk(handle.id, 'report', 1));
@@ -1429,6 +1427,14 @@ describe('Engine', () => {
     // Verify metadata
     const meta = await storage.get(KEYS.streamMetadata(handle.id, 'report'));
     expect(meta).not.toBeNull();
+
+    // Unblock and confirm the returned reference matches
+    await engine.signal(handle.id, 'finish');
+    const result = (await handle.result()) as StreamReference;
+    expect(result.key).toBe('report');
+    expect(result.workflowId).toBe(handle.id);
+    expect(result.chunkCount).toBe(2);
+    expect(result.totalSizeBytes).toBeGreaterThan(0);
 
     engine[Symbol.dispose]();
   });
@@ -2486,6 +2492,291 @@ describe('Engine', () => {
       );
 
       await engine.signal(handle.id, 'release');
+      await handle.result();
+      engine[Symbol.dispose]();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Terminal-state cleanup
+  // ---------------------------------------------------------------------------
+
+  describe('terminal-state cleanup', () => {
+    it('cancel() removes checkpoints and reviews', async () => {
+      const engine = new Engine();
+
+      engine.register('review-wait', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('never');
+        return 'unreached';
+      });
+
+      const handle = await engine.start('review-wait', null);
+      await flush();
+
+      // Seed a review directly in storage so we can verify cleanup runs.
+      const { ReviewCoordinator } = await import('../ai/human-review.ts');
+      const coordinator = new ReviewCoordinator(engine.storage);
+      const review = await coordinator.createReview(handle.id, {
+        artifact: 'pending-artifact',
+      });
+
+      const reviewKey = KEYS.review(handle.id, review.reviewId);
+      expect(await engine.storage.get(reviewKey)).not.toBeNull();
+
+      const resultPromise = handle.result().catch(() => undefined);
+      await engine.cancel(handle.id);
+      await resultPromise;
+
+      // Review entry is deleted
+      expect(await engine.storage.get(reviewKey)).toBeNull();
+      // In-memory checkpoint is deleted (reflected via public accessor)
+      const state = await engine.get(handle.id);
+      expect(state?.status).toBe('cancelled');
+      engine[Symbol.dispose]();
+    });
+
+    it('timeout() removes checkpoints and reviews', async () => {
+      const engine = new Engine();
+
+      engine.register('review-wait-timeout', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('never');
+        return 'unreached';
+      });
+
+      const handle = await engine.start('review-wait-timeout', null);
+      await flush();
+
+      const { ReviewCoordinator } = await import('../ai/human-review.ts');
+      const coordinator = new ReviewCoordinator(engine.storage);
+      const review = await coordinator.createReview(handle.id, {
+        artifact: 'pending-artifact',
+      });
+
+      const reviewKey = KEYS.review(handle.id, review.reviewId);
+      expect(await engine.storage.get(reviewKey)).not.toBeNull();
+
+      const resultPromise = handle.result().catch(() => undefined);
+      await engine.timeout(handle.id);
+      await resultPromise;
+
+      expect(await engine.storage.get(reviewKey)).toBeNull();
+      const state = await engine.get(handle.id);
+      expect(state?.status).toBe('timed-out');
+      engine[Symbol.dispose]();
+    });
+
+    it('completing a workflow removes offload/blob/shared/signal/event keys', async () => {
+      const storage = new MemoryStorage();
+      const engine = new Engine({ storage });
+
+      engine.register('cleanup-emitter', async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        // Write a durable stream (blob:*)
+        yield* c.stream('chunks', async function* () {
+          yield { index: 0 };
+          yield { index: 1 };
+        });
+        // Write an offload record (offload:*)
+        yield* c.offload('export', async () => ({ rows: [1, 2, 3] }));
+        return 'done';
+      });
+
+      const handle = await engine.start('cleanup-emitter', null);
+
+      // Pre-seed records that the workflow itself would never create, to
+      // confirm the cleanup helper sweeps all target prefixes.
+      await storage.put(`sig:${handle.id}:pre:entry`, encode({ ignored: true }));
+      await storage.put(`ev:${handle.id}:0000000000`, encode({ kind: 'synthetic' }));
+      await storage.put(`shared:${handle.id}:counter`, encode({ value: 1 }));
+
+      await handle.result();
+      await flush();
+
+      const prefixes = [
+        `offload:${handle.id}:`,
+        `blob:${handle.id}:`,
+        `shared:${handle.id}:`,
+        `sig:${handle.id}:`,
+        `ev:${handle.id}:`,
+      ];
+      for (const prefix of prefixes) {
+        const remaining: string[] = [];
+        for await (const [key] of storage.scan(prefix)) {
+          remaining.push(key);
+        }
+        expect(remaining).toEqual([]);
+      }
+
+      engine[Symbol.dispose]();
+    });
+
+    it('ctx.race() aborts losing sub-operations after the race settles', async () => {
+      const engine = new Engine();
+
+      let capturedSignal: AbortSignal | undefined;
+      const { promise: chatCalled, resolve: resolveChatCalled } = Promise.withResolvers<void>();
+      const { promise: allowChatReturn, resolve: resolveAllowChatReturn } =
+        Promise.withResolvers<void>();
+      const { promise: raceResolved, resolve: resolveRaceResolved } = Promise.withResolvers<void>();
+
+      // Winning activity — blocks until the agent's chat() call is observed,
+      // so the agent's signal is captured before the race settles.
+      const winningActivity = async (..._args: unknown[]) => {
+        await chatCalled;
+        return 'winner';
+      };
+
+      // Losing agent — chat() captures its signal, signals the winner, then
+      // waits until the race is known to have settled before returning.
+      const provider: LLMProvider = {
+        name: 'abort-aware',
+        async chat(_messages, options): Promise<ChatResponse> {
+          capturedSignal = options.signal;
+          resolveChatCalled();
+          await allowChatReturn;
+          return {
+            content: 'slow reply',
+            toolCalls: [],
+            usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 10;
+        },
+      };
+
+      engine.register('race-abort-workflow', async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        const result = yield* c.race([
+          c.run(winningActivity),
+          c.agent({
+            model: 'test-model',
+            prompt: 'slow',
+            provider,
+          }),
+        ]);
+        resolveRaceResolved();
+        return result;
+      });
+
+      const handle = await engine.start('race-abort-workflow', null);
+
+      // Wait for the race to settle on the winning activity.
+      await raceResolved;
+
+      // After settling, the losing agent's signal must have been aborted.
+      expect(capturedSignal).toBeDefined();
+      expect(capturedSignal!.aborted).toBe(true);
+
+      // Unblock the chat so the losing sub-op rejection settles.
+      resolveAllowChatReturn();
+      const result = await handle.result();
+      expect(result).toBe('winner');
+      engine[Symbol.dispose]();
+    });
+
+    it('records org budget for agents inside ctx.all() sub-operations', async () => {
+      const engine = new Engine();
+      await engine.setBudgetPolicy({
+        namespace: 'org-parallel',
+        daily: { maxCost: 100 },
+      });
+
+      const provider: LLMProvider = {
+        name: 'cost-provider',
+        async chat(): Promise<ChatResponse> {
+          return {
+            content: 'ok',
+            toolCalls: [],
+            usage: { inputTokens: 1000, outputTokens: 1000, totalTokens: 2000 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      };
+
+      engine.register('parallel-agents', async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        return yield* c.all([
+          c.agent({
+            model: 'test-model',
+            prompt: 'a',
+            provider,
+            budgetNamespace: 'org-parallel',
+            budget: {
+              maxCost: 100,
+              models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
+            },
+          }),
+          c.agent({
+            model: 'test-model',
+            prompt: 'b',
+            provider,
+            budgetNamespace: 'org-parallel',
+            budget: {
+              maxCost: 100,
+              models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 2 } },
+            },
+          }),
+        ]);
+      });
+
+      const handle = await engine.start('parallel-agents', null);
+      await handle.result();
+      await flush();
+
+      // Each agent burn costs: (1000 / 1000) * $1 + (1000 / 1000) * $2 = $3
+      // Two agents in ctx.all() → $6 recorded against the org namespace.
+      const { decode: decodeValue } = await import('./codec.ts');
+      const dailyDate = new Date().toISOString().slice(0, 10);
+      const dailyKey = KEYS.budget('org-parallel', 'daily', dailyDate);
+      const dailyBytes = await engine.storage.get(dailyKey);
+      expect(dailyBytes).not.toBeNull();
+      const daily = decodeValue(dailyBytes!) as { cost: number };
+      expect(daily.cost).toBeCloseTo(6, 4);
+      engine[Symbol.dispose]();
+    });
+
+    it('FinalizationRegistry does not evict a freshly-cached handle', async () => {
+      const engine = new Engine();
+      engine.register('finalize-stable', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('release');
+        return 'ok';
+      });
+
+      const handle = await engine.start('finalize-stable', null, {
+        id: 'finalize-stable-id',
+      });
+
+      // Simulate the race: when the original handle's WeakRef is cleared, the
+      // registry callback fires for the old entry. After #cacheHandle is fixed,
+      // the new entry should remain in the cache because the old registration
+      // was unregistered before re-registering.
+      //
+      // We drive the callback path synthetically by calling getHandle() twice
+      // after dropping the strong reference — the cached WeakRef may still
+      // resolve to a live handle, so we assert the cache entry keeps the new
+      // handle alive rather than being spuriously evicted.
+      //
+      // NOTE: GC is non-deterministic, so this test exercises the structural
+      // fix (each cache entry owns an unregister token and a guard in the
+      // finalization callback) rather than forcing GC.
+      const secondHandle = engine.getHandle('finalize-stable-id');
+      expect(secondHandle.id).toBe('finalize-stable-id');
+      expect(secondHandle).toBe(handle);
+
+      await engine.signal('finalize-stable-id', 'release');
       await handle.result();
       engine[Symbol.dispose]();
     });

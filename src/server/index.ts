@@ -263,11 +263,27 @@ function serializeEvent(event: Event): string | null {
 }
 
 /**
+ * Result of wiring up engine-to-WebSocket event broadcasting.
+ *
+ * - `dispose`: removes all listeners (abort signal). Called on server shutdown.
+ * - `cleanupWorkflow`: drops the per-workflow sequence state for the given
+ *   workflow id. Should be invoked when a workflow reaches a terminal state
+ *   so the bookkeeping maps do not grow unbounded over the server's lifetime.
+ */
+interface EventBroadcastingHandle {
+  dispose: () => void;
+  cleanupWorkflow: (workflowId: string) => void;
+}
+
+/**
  * Attach event listeners to the engine that broadcast events via WebSocket
  * and persist each event to storage so GET /v1/workflows/:id/events returns data.
- * Returns a cleanup function that removes all listeners.
+ * Returns a handle exposing a cleanup function and a per-workflow eviction hook.
  */
-function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.serve>): () => void {
+function wireEventBroadcasting(
+  engine: Engine,
+  server: ReturnType<typeof Bun.serve>,
+): EventBroadcastingHandle {
   const controller = new AbortController();
   const { signal } = controller;
 
@@ -426,7 +442,30 @@ function wireEventBroadcasting(engine: Engine, server: ReturnType<typeof Bun.ser
     );
   }
 
-  return () => controller.abort();
+  /**
+   * Drop the per-workflow bookkeeping for a workflow that has reached a
+   * terminal state. Waits for any in-flight persistence on the workflow's
+   * serialization chain to settle before removing the entries — otherwise a
+   * racing handler could reinsert them via `persistAndPublishEvent`.
+   */
+  function cleanupWorkflow(workflowId: string): void {
+    const pendingChain = sequenceChains.get(workflowId);
+    const drop = (): void => {
+      sequenceCounters.delete(workflowId);
+      sequenceInitPromises.delete(workflowId);
+      sequenceChains.delete(workflowId);
+    };
+    if (pendingChain) {
+      void pendingChain.finally(drop);
+      return;
+    }
+    drop();
+  }
+
+  return {
+    dispose: () => controller.abort(),
+    cleanupWorkflow,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1006,18 +1045,21 @@ export function serve(options: ServeOptions): WeftServer {
   // Wire up engine events → WebSocket broadcasting.
   // If wiring throws after the server is already listening, dispose the
   // stack (which stops the server) before propagating the error.
-  let cleanupBroadcasting: () => void;
+  let broadcastingHandle: EventBroadcastingHandle;
   try {
-    cleanupBroadcasting = wireEventBroadcasting(options.engine, server);
+    broadcastingHandle = wireEventBroadcasting(options.engine, server);
   } catch (error) {
     void stack[Symbol.asyncDispose]();
     throw error;
   }
 
   // Registered second — disposed second-to-last.
-  stack.defer(cleanupBroadcasting);
+  stack.defer(broadcastingHandle.dispose);
 
-  // Clean up worker affinity entries when workflows reach a terminal state.
+  // Clean up per-workflow state when workflows reach a terminal state:
+  // both the sticky-routing affinity map and the event-broadcasting sequence
+  // maps retain entries keyed by workflow id, and neither is bounded by
+  // anything other than "workflows observed for the lifetime of the process".
   const affinityController = new AbortController();
   const terminalEventTypes = [
     WorkflowCompletedEvent.type,
@@ -1035,6 +1077,7 @@ export function serve(options: ServeOptions): WeftServer {
         const workflowId = typeof raw === 'string' ? raw : undefined;
         if (workflowId) {
           workerAffinity.delete(workflowId);
+          broadcastingHandle.cleanupWorkflow(workflowId);
         }
       },
       { signal: affinityController.signal },
@@ -1122,6 +1165,17 @@ export function serve(options: ServeOptions): WeftServer {
   let scanRunning = false;
 
   /**
+   * Fine-grained mutex over in-flight operation ids shared by both expiry
+   * paths. `scanExpiredTasks` (fast path, deadline heap) and
+   * `reconcileOrphanedRecords` (slow path, full storage scan) can observe the
+   * same expired record and concurrently call `registry.completeTask`,
+   * `reassignOrExpireTask`, and dispatch `ActivityFailedEvent`. Both scanners
+   * claim the operationId here before processing and release it afterwards so
+   * only one path ever acts on a given task at a time.
+   */
+  const processingOperations = new Set<string>();
+
+  /**
    * Drain expired entries from the in-memory deadline heap and reassign
    * their tasks. Only touches storage for the specific operations whose
    * deadlines have actually passed — no full `op:inflight:*` scan.
@@ -1134,6 +1188,15 @@ export function serve(options: ServeOptions): WeftServer {
       const expired = deadlineTracker.drainExpired(now);
 
       for (const { operationId, deadline } of expired) {
+        // Skip if the reconciliation scanner (or a previous iteration) is
+        // already acting on this operation — re-queue the heap entry so the
+        // fast path will revisit it on the next tick once the other worker
+        // has released the claim.
+        if (processingOperations.has(operationId)) {
+          deadlineTracker.add({ operationId, deadline });
+          continue;
+        }
+        processingOperations.add(operationId);
         try {
           const inflightKey = KEYS.operationInflight(operationId);
           const existing = await options.engine.storage.get(inflightKey);
@@ -1165,6 +1228,8 @@ export function serve(options: ServeOptions): WeftServer {
             `[weft] Failed to process expired task "${operationId}" — will retry:`,
             error,
           );
+        } finally {
+          processingOperations.delete(operationId);
         }
       }
     } catch (error) {
@@ -1196,17 +1261,29 @@ export function serve(options: ServeOptions): WeftServer {
 
           if (decoded.deadline > now) {
             // Still valid — ensure it is tracked in the heap so the fast path
-            // can handle it when it expires.
+            // can handle it when it expires. Skip the heap rewrite if another
+            // path is currently mid-process on this id — its `finally` block
+            // will leave the heap in a consistent state.
+            if (processingOperations.has(decoded.operationId)) continue;
             deadlineTracker.remove(decoded.operationId);
             deadlineTracker.add({ operationId: decoded.operationId, deadline: decoded.deadline });
             continue;
           }
 
-          // Expired orphan — remove from heap, registry, and workflow index, then reassign.
-          deadlineTracker.remove(decoded.operationId);
-          registry.completeTask(decoded.operationId);
-          cleanupWorkflowIndex(decoded.operationId);
-          await reassignOrExpireTask(decoded.operationId, decoded);
+          // Expired orphan — claim the id so `scanExpiredTasks` cannot race
+          // us on `completeTask`/`reassignOrExpireTask`. If the fast path is
+          // already processing it, skip and let the next reconciliation tick
+          // revisit any remaining orphans.
+          if (processingOperations.has(decoded.operationId)) continue;
+          processingOperations.add(decoded.operationId);
+          try {
+            deadlineTracker.remove(decoded.operationId);
+            registry.completeTask(decoded.operationId);
+            cleanupWorkflowIndex(decoded.operationId);
+            await reassignOrExpireTask(decoded.operationId, decoded);
+          } finally {
+            processingOperations.delete(decoded.operationId);
+          }
         } catch (error) {
           console.error('[weft] Failed to reconcile inflight record — skipping:', error);
         }

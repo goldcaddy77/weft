@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
-import { TokenEvent } from '../core/events.ts';
+import { ActivityFailedEvent, TokenEvent, WorkflowCompletedEvent } from '../core/events.ts';
 import type { RetryPolicy, WorkflowContext } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -232,6 +232,105 @@ describe('serve', () => {
     await new Promise<void>((resolve) => {
       ws.addEventListener('close', () => resolve());
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Regression: the per-workflow sequence bookkeeping maps inside
+  // `wireEventBroadcasting` (`sequenceCounters`, `sequenceInitPromises`,
+  // `sequenceChains`) used to live for the lifetime of the server process.
+  // They are now dropped when a workflow reaches a terminal state, alongside
+  // the existing worker-affinity cleanup. This test verifies:
+  //   1. Events emitted after the terminal cleanup still persist correctly
+  //      (the cleanup must not corrupt sequence tracking for the next run).
+  //   2. Sequence numbers resume from storage on the post-terminal rehydration
+  //      instead of restarting at 0 and overwriting the pre-terminal events.
+  // -------------------------------------------------------------------------
+  it('cleans up sequence bookkeeping on workflow termination without losing events', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const workflowId = 'terminal-cleanup-wf';
+
+    // Emit a sequence of events before the terminal state.
+    engine.dispatchEvent(new TokenEvent(workflowId, 'first', 'gpt-4'));
+    engine.dispatchEvent(new TokenEvent(workflowId, 'second', 'gpt-4'));
+    engine.dispatchEvent(new TokenEvent(workflowId, 'third', 'gpt-4'));
+
+    // Give the serialization chain a chance to persist all three.
+    await Bun.sleep(50);
+
+    // Verify persistence succeeded for the pre-terminal events.
+    let preCount = 0;
+    for await (const [_key] of engine.storage.scan(`ev:${workflowId}:`)) {
+      preCount++;
+    }
+    expect(preCount).toBe(3);
+
+    // Mark the workflow terminal — this should trigger the sequence-map cleanup.
+    engine.dispatchEvent(new WorkflowCompletedEvent(workflowId, 'ok', 1));
+    // WorkflowCompletedEvent is also persisted, and cleanup waits for the
+    // current serialization chain to drain before evicting the maps.
+    await Bun.sleep(100);
+
+    // Emit another event for the same workflowId *after* cleanup. With the
+    // sequence state evicted, `ensureSequenceInitialized` must re-read from
+    // storage and resume after the highest existing sequence number — not
+    // restart at 0 and overwrite the previously persisted events.
+    engine.dispatchEvent(new TokenEvent(workflowId, 'post-terminal', 'gpt-4'));
+    await Bun.sleep(50);
+
+    const keys: string[] = [];
+    for await (const [key] of engine.storage.scan(`ev:${workflowId}:`)) {
+      keys.push(key);
+    }
+
+    // 3 tokens + 1 terminal + 1 post-terminal = 5 distinct sequence keys.
+    // If the cleanup dropped the counter mid-persist or the rehydration
+    // restarted at 0, we would see fewer than 5 entries (collisions).
+    expect(keys.length).toBe(5);
+
+    // Keys are `ev:{workflowId}:{sequence}` and scan order is lexicographic.
+    // Verify the sequences are contiguous (no gaps, no collisions).
+    const sequences = keys.map((key) => {
+      const parts = key.split(':');
+      return parseInt(parts[parts.length - 1] ?? '', 10);
+    });
+    sequences.sort((a, b) => a - b);
+    for (let i = 0; i < sequences.length; i++) {
+      expect(sequences[i]).toBe(i);
+    }
+  });
+
+  it('does not retain sequence state across many terminated workflows', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    // Emit and terminate a batch of workflows. If the sequence maps are not
+    // cleaned up on termination, each workflow leaks one entry per map; this
+    // test exercises that path without relying on private-state inspection.
+    // The invariant we verify is the same as the previous test (events are
+    // persisted correctly), but applied across many workflows so a future
+    // regression that re-introduces the leak is more likely to manifest as
+    // visible behavior rather than silent memory growth.
+    const workflowCount = 25;
+    for (let i = 0; i < workflowCount; i++) {
+      const workflowId = `bulk-wf-${i}`;
+      engine.dispatchEvent(new TokenEvent(workflowId, `token-${i}`, 'gpt-4'));
+      engine.dispatchEvent(new WorkflowCompletedEvent(workflowId, i, 1));
+    }
+
+    // Let all serialization chains drain.
+    await Bun.sleep(200);
+
+    // Each workflow should have exactly 2 stored events (the token + terminal).
+    for (let i = 0; i < workflowCount; i++) {
+      const workflowId = `bulk-wf-${i}`;
+      let count = 0;
+      for await (const [_key] of engine.storage.scan(`ev:${workflowId}:`)) {
+        count++;
+      }
+      expect(count).toBe(2);
+    }
   });
 });
 
@@ -2448,6 +2547,117 @@ describe('visibility timeout expiry triggers task reassignment', () => {
 
     ws.close();
     await Bun.sleep(50);
+  });
+
+  // -------------------------------------------------------------------------
+  // Regression: the deadline-heap fast path and the full-storage reconciliation
+  // scanner must not both process the same expired task. Before the fix they
+  // each had their own running guard but no shared per-operation coordination,
+  // so both could call `registry.completeTask` / `reassignOrExpireTask` for
+  // the same operationId and dispatch duplicate `ActivityFailedEvent`s when
+  // retries were exhausted.
+  //
+  // In-memory storage resolves faster than the event loop, so the race window
+  // is vanishingly small under normal load. We wrap `MemoryStorage` with a
+  // subclass that stalls reads of the target inflight key long enough for the
+  // other scanner to also observe the still-present record before either call
+  // completes — making the race reliably reproducible in tests.
+  // -------------------------------------------------------------------------
+  it('dispatches ActivityFailedEvent exactly once when both scanners race on the same expired task', async () => {
+    const targetOperationId = 'race-op-1';
+
+    class DelayedStorage extends MemoryStorage {
+      #stalledOnce = false;
+
+      override async get(key: string): Promise<Uint8Array | null> {
+        const value = await super.get(key);
+        if (
+          !this.#stalledOnce &&
+          key === KEYS.operationInflight(targetOperationId) &&
+          value !== null
+        ) {
+          this.#stalledOnce = true;
+          // Park long enough for the reconciliation scanner to also tick
+          // (its interval is visibility × 12 = 120ms) and observe the
+          // still-present inflight record before this caller proceeds to
+          // `transitionInflightToResolved`. 200ms is well past both one
+          // reconciliation period and the fast-path retry cadence.
+          await new Promise<void>((resolve) => setTimeout(resolve, 200));
+        }
+        return value;
+      }
+    }
+
+    const delayedStorage = new DelayedStorage();
+    const localEngine = new Engine({ storage: delayedStorage });
+    localEngine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    const localServer = serve({
+      engine: localEngine,
+      port: 0,
+      visibilityPollIntervalMs: 10,
+    });
+
+    try {
+      const failedOperationIds: string[] = [];
+      localEngine.addEventListener(ActivityFailedEvent.type, (event) => {
+        if (event instanceof ActivityFailedEvent) {
+          failedOperationIds.push(event.operationId);
+        }
+      });
+
+      const workflowId = 'race-wf-1';
+      const policy: RetryPolicy = {
+        maxAttempts: 1,
+        initialBackoff: 10,
+        backoffMultiplier: 1,
+        maxBackoff: 10,
+      };
+
+      // Connect a worker so `dispatchTask` adds the record to the deadline
+      // heap (rather than falling through to the long-poll queue).
+      const wsUrl = localServer.url.replace('http://', 'ws://');
+      const ws = new WebSocket(`${wsUrl}/v1/tasks/default/stream`);
+      await new Promise<void>((resolve, reject) => {
+        ws.addEventListener('open', () => resolve());
+        ws.addEventListener('error', () => reject(new Error('ws failed')));
+      });
+      ws.send(
+        JSON.stringify({
+          type: 'register',
+          workerId: 'race-worker',
+          activities: ['charge'],
+          concurrency: 1,
+        }),
+      );
+      await Bun.sleep(50);
+
+      await localServer.dispatchTask({
+        operationId: targetOperationId,
+        activityName: 'charge',
+        input: null,
+        workflowId,
+        visibilityTimeout: 50,
+        retryPolicy: policy,
+      });
+
+      // Give both scanners many ticks to race on the same expired record.
+      // The fast path fires every 10ms; the reconciliation scan fires every
+      // 120ms (10ms × RECONCILIATION_MULTIPLIER). The delayed read parks for
+      // 200ms, spanning at least one reconciliation tick, so the bug would
+      // produce a duplicate failure event.
+      await Bun.sleep(700);
+
+      const relevant = failedOperationIds.filter((id) => id === targetOperationId);
+      expect(relevant.length).toBe(1);
+
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      await localServer.stop();
+      localEngine[Symbol.dispose]();
+    }
   });
 });
 

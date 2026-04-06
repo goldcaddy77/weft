@@ -96,6 +96,7 @@ export class ProviderHealthTracker {
     }
 
     state.entries.push({ timestamp: this.#now(), success: true });
+    this.#prune(state);
   }
 
   /** Record a failed call to a provider. */
@@ -111,6 +112,7 @@ export class ProviderHealthTracker {
     }
 
     state.entries.push({ timestamp: this.#now(), success: false });
+    this.#prune(state);
 
     // Evaluate whether to trip the circuit (only in closed state).
     if (state.circuit === 'closed') {
@@ -140,6 +142,19 @@ export class ProviderHealthTracker {
     }
 
     return state.circuit;
+  }
+
+  /**
+   * Get the number of entries currently stored for a provider. This reflects
+   * the size of the backing array after pruning, which may exceed the number
+   * of entries inside the current sliding window (pruning is best-effort) but
+   * is guaranteed to be bounded by the recording rate and window duration.
+   *
+   * Primarily useful for metrics and for verifying memory behavior in tests.
+   */
+  getEntryCount(provider: string): number {
+    const state = this.#providers.get(provider);
+    return state?.entries.length ?? 0;
   }
 
   /** Get the current error rate for a provider within the sliding window. */
@@ -183,6 +198,22 @@ export class ProviderHealthTracker {
   #windowEntries(state: ProviderState): RequestEntry[] {
     const cutoff = this.#now() - this.#options.windowDuration;
     return state.entries.filter((entry) => entry.timestamp > cutoff);
+  }
+
+  /**
+   * Drop expired entries from the backing array to prevent unbounded growth.
+   *
+   * `#windowEntries` filters for reads but never mutates the underlying array,
+   * so without this the entries array would grow indefinitely for a provider
+   * that stays in the closed state.
+   */
+  #prune(state: ProviderState): void {
+    const cutoff = this.#now() - this.#options.windowDuration;
+    // Fast path: nothing expired at the head of the array.
+    if (state.entries.length === 0 || state.entries[0]!.timestamp > cutoff) {
+      return;
+    }
+    state.entries = state.entries.filter((entry) => entry.timestamp > cutoff);
   }
 
   /** Evaluate whether the circuit should trip from closed to open. */

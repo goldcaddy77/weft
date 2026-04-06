@@ -81,6 +81,12 @@ export interface AgentOptions {
   healthTracker?: ProviderHealthTracker | undefined;
   /** Tool result cache TTL in milliseconds. Defaults to 300 000 (5 minutes). */
   toolCacheTTL?: number | undefined;
+  /**
+   * Maximum number of tool result cache entries. When the cache grows past
+   * this cap, the oldest entry (by insertion order) is evicted to make room.
+   * Defaults to 1000.
+   */
+  toolCacheMaxSize?: number | undefined;
   signal?: AbortSignal | undefined;
   hooks?: AgentHooks | undefined;
   eventTarget?: EventTarget | undefined;
@@ -163,6 +169,7 @@ interface ResolvedAgentOptions {
   contextManager?: ContextWindowManager | undefined;
   healthTracker?: ProviderHealthTracker | undefined;
   toolCacheTTL: number;
+  toolCacheMaxSize: number;
   signal?: AbortSignal | undefined;
   hooks?: AgentHooks | undefined;
   eventTarget?: EventTarget | undefined;
@@ -231,13 +238,44 @@ interface ToolExecutionOutcome {
 // Tool result cache
 // ---------------------------------------------------------------------------
 
-interface CacheEntry {
+/** @internal Exported for tests only. */
+export interface CacheEntry {
   output: string;
   timestamp: number;
 }
 
 function buildCacheKey(toolName: string, input: unknown): string {
   return `${toolName}:${JSON.stringify(input)}`;
+}
+
+/**
+ * Insert a tool result cache entry, enforcing the configured max size.
+ *
+ * `Map` preserves insertion order, so deleting the first key evicts the
+ * oldest entry. If the key already exists, we delete it first so the
+ * updated entry is re-inserted at the tail, keeping insertion order
+ * consistent with recency.
+ *
+ * @internal Exported for tests only.
+ */
+export function _setToolCacheEntry(
+  cache: Map<string, CacheEntry>,
+  key: string,
+  entry: CacheEntry,
+  maxSize: number,
+): void {
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, entry);
+
+  while (cache.size > maxSize) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
 }
 
 /**
@@ -317,15 +355,31 @@ type InitializeToolsResult = {
 };
 
 /**
+ * Factory that constructs an MCP client for a given tool source. Injectable
+ * so tests can substitute a stub that records lifecycle calls.
+ *
+ * @internal
+ */
+export type MCPClientFactory = (source: MCPToolSource) => MCPClient;
+
+const defaultMCPClientFactory: MCPClientFactory = (source) => {
+  const transport = createTransportForSource(source);
+  return new MCPClient({ transport, timeout: source.timeout });
+};
+
+/**
  * Process a mixed tools array (local `AgentTool` + `MCPToolSource` entries).
  *
  * For each MCP source: health check, discover tools, register in the registry.
  * For each local tool: register in the registry.
  * Finally, validate for name conflicts and return the populated registry.
+ *
+ * @internal Exported for tests only.
  */
-async function initializeTools(
+export async function _initializeTools(
   tools: (AgentTool | MCPToolSource)[],
   signal?: AbortSignal,
+  createClient: MCPClientFactory = defaultMCPClientFactory,
 ): Promise<InitializeToolsResult> {
   const registry = new ToolRegistry();
   const clients: MCPClient[] = [];
@@ -334,8 +388,7 @@ async function initializeTools(
     for (const entry of tools) {
       signal?.throwIfAborted();
       if (isMCPToolSource(entry)) {
-        const transport = createTransportForSource(entry);
-        const client = new MCPClient({ transport, timeout: entry.timeout });
+        const client = createClient(entry);
         clients.push(client);
 
         // Health check — fail fast if the server is unreachable
@@ -367,14 +420,16 @@ async function initializeTools(
         registry.registerLocal(entry.definition, entry.execute);
       }
     }
+
+    // Validate for name conflicts before the agent loop starts.
+    // Kept inside the try block so that a ToolNameConflictError (or any
+    // other validation failure) still disposes the MCP clients we created.
+    registry.validate();
   } catch (error) {
     // Dispose all clients on any initialization failure
     for (const client of clients) client[Symbol.dispose]();
     throw error;
   }
-
-  // Validate for name conflicts before the agent loop starts
-  registry.validate();
 
   const dispose = () => {
     for (const client of clients) client[Symbol.dispose]();
@@ -398,6 +453,7 @@ function resolveAgentOptions(options: AgentOptions): ResolvedAgentOptions {
     contextManager: options.contextManager,
     healthTracker: options.healthTracker,
     toolCacheTTL: options.toolCacheTTL ?? 300_000,
+    toolCacheMaxSize: options.toolCacheMaxSize ?? 1000,
     signal: options.signal,
     hooks: options.hooks,
     eventTarget: options.eventTarget,
@@ -437,7 +493,7 @@ function createInitialConversation(systemPrompt: string | undefined, input: stri
 
 async function createAgentRuntime(options: AgentOptions, input: string): Promise<AgentRuntime> {
   const resolvedOptions = resolveAgentOptions(options);
-  const { registry, dispose } = await initializeTools(options.tools ?? [], resolvedOptions.signal);
+  const { registry, dispose } = await _initializeTools(options.tools ?? [], resolvedOptions.signal);
   const { toolMap, toolDefinitions } = createToolLookups(registry.getAll());
 
   return {
@@ -851,7 +907,12 @@ async function resolveToolExecution(
     try {
       const rawOutput = await tool.execute(toolCall.input);
       output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
-      runtime.state.toolCache.set(cacheKey, { output, timestamp: Date.now() });
+      _setToolCacheEntry(
+        runtime.state.toolCache,
+        cacheKey,
+        { output, timestamp: Date.now() },
+        runtime.options.toolCacheMaxSize,
+      );
     } catch (error: unknown) {
       output = JSON.stringify({ error: error instanceof Error ? error.message : String(error) });
       success = false;

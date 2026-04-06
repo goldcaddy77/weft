@@ -15,6 +15,12 @@ import {
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
 } from '../ai/events';
+import {
+  WorkflowCancelledEvent,
+  WorkflowCompletedEvent,
+  WorkflowFailedEvent,
+  WorkflowTimedOutEvent,
+} from '../core/events';
 import type {
   ActivityExecutionInterception,
   ActivityInterception,
@@ -90,9 +96,19 @@ export type ObservabilityOptions = {
    */
   otelApi?: OtelApi;
   /**
-   * Event target that the agent loop dispatches lifecycle events on.
-   * When provided, the agent interceptor creates child spans for each
-   * turn (`agent:turn:N`) and tool call (`agent:tool:name`).
+   * Event target that the engine dispatches lifecycle events on.
+   *
+   * When provided, the factory subscribes to the engine's workflow lifecycle
+   * events (`workflow:completed`, `workflow:failed`, `workflow:cancelled`,
+   * `workflow:timed-out`) and automatically ends the root workflow span with
+   * the appropriate status. This prevents the internal `workflowSpans` map
+   * from growing unbounded and ensures exported traces reflect terminal state.
+   *
+   * The same target is also used by the agent interceptor to create child
+   * spans for each turn (`agent:turn:N`) and tool call (`agent:tool:name`).
+   *
+   * In practice, pass your `Engine` instance here—it dispatches both agent
+   * and workflow lifecycle events on itself.
    */
   eventTarget?: EventTarget;
 };
@@ -153,8 +169,17 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   workflow: WorkflowInterceptor;
   activity: ActivityInterceptor;
   metrics: MetricsCollectorClass;
-  /** End the workflow root span. Call from the engine when a workflow reaches terminal state. */
+  /**
+   * End the workflow root span. Usually wired automatically via `eventTarget`,
+   * but exposed for callers that need to end spans manually.
+   */
   endWorkflowSpan: (workflowId: string, status: 'ok' | 'error', errorMessage?: string) => void;
+  /**
+   * Unsubscribe any workflow lifecycle listeners registered on the `eventTarget`
+   * and end any still-open workflow spans. Call this when tearing down the
+   * engine so the interceptor doesn't leak listeners or spans.
+   */
+  dispose: () => void;
 } {
   const api = options?.otelApi ?? getOtelApi();
   const { trace, SpanStatusCode } = api;
@@ -644,5 +669,61 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
     workflowSpans.delete(workflowId);
   }
 
-  return { workflow, activity, metrics, endWorkflowSpan };
+  // -----------------------------------------------------------------------
+  // Workflow lifecycle subscription
+  // -----------------------------------------------------------------------
+  //
+  // When an event target is provided (typically the engine), subscribe to
+  // workflow terminal events so root spans are automatically ended with the
+  // correct status. Without this, `workflowSpans` would grow unbounded and
+  // exported traces would show workflow spans as "in progress" forever.
+
+  const onWorkflowCompleted = (event: Event): void => {
+    if (!(event instanceof WorkflowCompletedEvent)) return;
+    endWorkflowSpan(event.workflowId, 'ok');
+  };
+
+  const onWorkflowFailed = (event: Event): void => {
+    if (!(event instanceof WorkflowFailedEvent)) return;
+    endWorkflowSpan(event.workflowId, 'error', event.error.message);
+  };
+
+  const onWorkflowCancelled = (event: Event): void => {
+    if (!(event instanceof WorkflowCancelledEvent)) return;
+    endWorkflowSpan(event.workflowId, 'error', 'Workflow cancelled');
+  };
+
+  const onWorkflowTimedOut = (event: Event): void => {
+    if (!(event instanceof WorkflowTimedOutEvent)) return;
+    endWorkflowSpan(
+      event.workflowId,
+      'error',
+      `Workflow timed out (${event.timeoutType}) after ${event.elapsed}ms`,
+    );
+  };
+
+  if (eventTarget) {
+    eventTarget.addEventListener(WorkflowCompletedEvent.type, onWorkflowCompleted);
+    eventTarget.addEventListener(WorkflowFailedEvent.type, onWorkflowFailed);
+    eventTarget.addEventListener(WorkflowCancelledEvent.type, onWorkflowCancelled);
+    eventTarget.addEventListener(WorkflowTimedOutEvent.type, onWorkflowTimedOut);
+  }
+
+  function dispose(): void {
+    if (eventTarget) {
+      eventTarget.removeEventListener(WorkflowCompletedEvent.type, onWorkflowCompleted);
+      eventTarget.removeEventListener(WorkflowFailedEvent.type, onWorkflowFailed);
+      eventTarget.removeEventListener(WorkflowCancelledEvent.type, onWorkflowCancelled);
+      eventTarget.removeEventListener(WorkflowTimedOutEvent.type, onWorkflowTimedOut);
+    }
+
+    // End any still-open workflow spans so the map cannot leak past dispose.
+    for (const [workflowId, span] of workflowSpans) {
+      span.setStatus({ code: SpanStatusCode.ERROR, message: 'Observability disposed' });
+      span.end();
+      workflowSpans.delete(workflowId);
+    }
+  }
+
+  return { workflow, activity, metrics, endWorkflowSpan, dispose };
 }

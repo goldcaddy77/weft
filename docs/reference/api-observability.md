@@ -14,17 +14,32 @@ Factory that creates a matched pair of workflow and activity interceptors. The w
 function createObservabilityInterceptors(options?: ObservabilityOptions): {
   workflow: WorkflowInterceptor;
   activity: ActivityInterceptor;
+  metrics: MetricsCollector;
+  /**
+   * End the workflow root span. Usually wired automatically via `eventTarget`,
+   * but exposed for callers that need to end spans manually.
+   */
+  endWorkflowSpan: (workflowId: string, status: 'ok' | 'error', errorMessage?: string) => void;
+  /**
+   * Unsubscribe workflow lifecycle listeners and end any still-open workflow
+   * spans. Call when tearing down the engine so the interceptor doesn't leak.
+   */
+  dispose: () => void;
 };
 ```
 
+> [!IMPORTANT]
+> Pass your `Engine` instance as `options.eventTarget`. The factory then subscribes to the engine's workflow lifecycle events (`workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`) and automatically ends the root span with the appropriate status. Without this wiring, root spans stay "in progress" forever and the internal span map grows unbounded.
+
 ### `ObservabilityOptions`
 
-| Field            | Type                       | Default     | Description                                                |
-| ---------------- | -------------------------- | ----------- | ---------------------------------------------------------- |
-| `recordPayloads` | `boolean`                  | `false`     | Record activity/workflow inputs as span attributes         |
-| `maxPayloadSize` | `number`                   | `1024`      | Maximum serialized payload size in bytes before truncation |
-| `onSpanStart`    | `(span: SpanInfo) => void` | `undefined` | Callback when a span starts                                |
-| `onSpanEnd`      | `(span: SpanInfo) => void` | `undefined` | Callback when a span ends                                  |
+| Field            | Type                       | Default     | Description                                                                                                                                                    |
+| ---------------- | -------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `recordPayloads` | `boolean`                  | `false`     | Record activity/workflow inputs as span attributes                                                                                                             |
+| `maxPayloadSize` | `number`                   | `1024`      | Maximum serialized payload size in bytes before truncation                                                                                                     |
+| `eventTarget`    | `EventTarget`              | `undefined` | Engine (or other `EventTarget`) that dispatches workflow lifecycle and agent events. Required for automatic root-span cleanup and for per-turn/per-tool spans. |
+| `onSpanStart`    | `(span: SpanInfo) => void` | `undefined` | Callback when a span starts                                                                                                                                    |
+| `onSpanEnd`      | `(span: SpanInfo) => void` | `undefined` | Callback when a span ends                                                                                                                                      |
 
 ### `SpanInfo`
 
@@ -49,19 +64,19 @@ Span names follow the pattern `workflow:<type>`, `activity:<name>`, `sleep`, or 
 ```ts
 import { createObservabilityInterceptors, Engine } from 'weft';
 
-const spans: SpanInfo[] = [];
-const { workflow, activity } = createObservabilityInterceptors({
+const engine = new Engine();
+
+const { workflow, activity, dispose } = createObservabilityInterceptors({
   recordPayloads: true,
-  onSpanStart: (span) => spans.push(span),
-  onSpanEnd: (span) => {
-    const existing = spans.find((s) => s.spanId === span.spanId);
-    if (existing) Object.assign(existing, span);
-  },
+  eventTarget: engine, // enables automatic root-span cleanup on terminal events
 });
 
-const engine = new Engine();
 engine.addInterceptor(workflow);
 engine.addActivityInterceptor(activity);
+
+// When tearing down:
+// dispose();
+// engine[Symbol.dispose]();
 ```
 
 ---

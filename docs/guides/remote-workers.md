@@ -36,6 +36,8 @@ interface RemoteWorkerOptions {
   activities: Record<string, (input: unknown) => Promise<unknown>>;
   concurrency?: number; // default: 10
   queue?: string; // default: 'default'
+  disconnectTimeoutMs?: number; // default: 30_000
+  interceptors?: ActivityInterceptor[];
 }
 ```
 
@@ -66,6 +68,79 @@ The worker looks up the activity function, executes it, and sends back a result:
 ```
 
 If the activity function throws, the result message carries `"status": "failed"` with an error string. If the activity name isn't registered on this worker, an error result is sent immediately.
+
+## Activity interceptors
+
+You want to trace every remote activity with OpenTelemetry, log timing for the on-call dashboard, or validate that the headers coming across the wire include a tenant ID before anything touches your business logic. Sprinkling that code into every activity function is exactly the kind of duplication interceptors exist to solve.
+
+Pass an array of `ActivityInterceptor` objects to `RemoteWorker`, and they wrap every task execution on this worker. The chain runs _after_ the task arrives off the WebSocket but _before_ your activity function sees the input, which means interceptors can read propagated headers, transform inputs, observe failures, and record timing without your activities knowing anything about them.
+
+```typescript
+import { RemoteWorker } from 'weft/worker';
+import type { ActivityInterceptor } from 'weft';
+
+const loggingInterceptor: ActivityInterceptor = {
+  async execute(interception, next) {
+    const start = Date.now();
+    console.log(`[remote:start] ${interception.activityName} (attempt ${interception.attempt})`);
+
+    try {
+      const result = await next(interception);
+      console.log(`[remote:done] ${interception.activityName} (${Date.now() - start}ms)`);
+      return result;
+    } catch (error) {
+      console.log(`[remote:error] ${interception.activityName} (${Date.now() - start}ms)`);
+      throw error;
+    }
+  },
+};
+
+const worker = new RemoteWorker({
+  serverUrl: 'ws://weft-server:7233/v1/tasks/default/stream',
+  activities: {
+    transcribe: async (input) => {
+      /* ... */
+    },
+  },
+  interceptors: [loggingInterceptor],
+});
+```
+
+The interception context gives you everything you need to observe the call:
+
+```typescript
+interface ActivityExecutionInterception {
+  activityName: string;
+  input: unknown; // mutable — interceptors can transform it
+  attempt: number;
+  headers: Map<string, string>; // propagated from the dispatching workflow
+  operationId?: string; // present on remote workers
+  signal?: AbortSignal; // present on remote workers — aborts on cancel
+}
+```
+
+The `headers` Map is the important piece for remote workers. When a workflow interceptor sets a header on the dispatch side (for example, an OpenTelemetry `traceparent` or an `authorization` token), the engine serializes it into the WebSocket task message, and the `RemoteWorker` rehydrates it into the `headers` Map before calling your interceptor chain. That's how trace context crosses the network boundary without your activity function knowing anything about tracing.
+
+The most common use case is observability. The built-in `createObservabilityInterceptors()` factory returns a matched pair of workflow and activity interceptors that share trace context across the boundary. Pass the activity half to every remote worker that should show up in your traces:
+
+```typescript
+import { createObservabilityInterceptors } from 'weft/observability';
+
+const { activity } = createObservabilityInterceptors();
+
+const worker = new RemoteWorker({
+  serverUrl: 'ws://weft-server:7233/v1/tasks/default/stream',
+  activities: {
+    /* ... */
+  },
+  interceptors: [activity],
+});
+```
+
+Multiple interceptors compose like middleware: the first one in the array is the outermost wrapper, and each calls `next(interception)` to delegate inward. Registration order matters---put tracing first so it measures everything that happens inside, and put validation near the inside so it runs after logging has already captured the attempt. See the [interceptors guide](./interceptors.md) for the full composition model and the workflow-side counterparts.
+
+> [!NOTE]
+> If you pass zero interceptors (or omit the option entirely), the worker skips the composition path and calls your activity function directly. There's no overhead for workers that don't need instrumentation.
 
 ## Heartbeats
 

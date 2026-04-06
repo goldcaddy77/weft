@@ -204,6 +204,27 @@ describe('StdioTransport', () => {
     expect(() => transport[Symbol.dispose]()).not.toThrow();
   });
 
+  it('cleans up read loops after disposal without hanging', async () => {
+    const script = await createMockServer('echo');
+    const transport = new StdioTransport({ command: 'bun', args: [script] });
+
+    // Drive a request so the process is spawned and both read loops are running
+    await transport.send({ method: 'test' });
+
+    // Dispose kills the child process; the read loops should observe the
+    // stream close, run their finally blocks, cancel their readers, and exit.
+    expect(() => transport[Symbol.dispose]()).not.toThrow();
+
+    // Give the read loops a moment to observe the cancelled reads and run
+    // their finally blocks. If the readers were not released, future runs
+    // might leak file descriptors, but at minimum this test ensures the
+    // disposal sequence completes without throwing and subsequent sends
+    // reject cleanly.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await expect(transport.send({ method: 'test' })).rejects.toThrow(MCPTransportError);
+  });
+
   describe('healthCheck', () => {
     it('returns true when server responds to ping', async () => {
       const script = await createMockServer('health');

@@ -36,6 +36,7 @@ export class StdioTransport implements MCPTransport {
   #buffer = '';
   #disposed = false;
   #readLoopActive = false;
+  #stderrLoopActive = false;
 
   constructor(options: StdioTransportOptions) {
     this.#command = options.command;
@@ -180,6 +181,9 @@ export class StdioTransport implements MCPTransport {
   async #startStderrLoop(proc: ReturnType<typeof Bun.spawn>): Promise<void> {
     const stderr = proc.stderr;
     if (!stderr) return;
+    if (this.#stderrLoopActive) return;
+    this.#stderrLoopActive = true;
+
     const reader = (stderr as ReadableStream<Uint8Array>).getReader();
     const decoder = new TextDecoder();
 
@@ -199,6 +203,13 @@ export class StdioTransport implements MCPTransport {
       }
     } catch {
       // Stream closed — handled by process exit handler
+    } finally {
+      // Cancel the reader to release its lock on the underlying stream so the
+      // stream can be garbage-collected when the child process exits or the
+      // transport is disposed. Swallow any error — the stream may already be
+      // errored or closed.
+      reader.cancel().catch(() => {});
+      this.#stderrLoopActive = false;
     }
   }
 
@@ -252,6 +263,11 @@ export class StdioTransport implements MCPTransport {
     } catch {
       // Stream closed or errored — handled by process exit handler
     } finally {
+      // Cancel the reader to release its lock on the underlying stream so the
+      // stream can be garbage-collected when the child process exits or the
+      // transport is disposed. Swallow any error — the stream may already be
+      // errored or closed.
+      reader.cancel().catch(() => {});
       this.#readLoopActive = false;
     }
   }
