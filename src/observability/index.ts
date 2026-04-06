@@ -168,14 +168,49 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   const metrics = options?.metrics ?? new MetricsCollectorClass();
 
   // Root spans keyed by workflow ID. Supports concurrent workflows sharing
-  // a single interceptor instance without span mis-parenting.
-  const workflowSpans = new Map<string, OtelSpan>();
+  // a single interceptor instance without span mis-parenting. Each entry
+  // stores a creation timestamp so stale spans from orphaned workflows can
+  // be evicted before the map grows unbounded.
+  const WORKFLOW_SPAN_TTL_MS = 60 * 60 * 1000; // 1 hour
+  const WORKFLOW_SPAN_MAX_SIZE = 10_000;
+
+  type WorkflowSpanEntry = { span: OtelSpan; createdAt: number };
+  const workflowSpans = new Map<string, WorkflowSpanEntry>();
+
+  /**
+   * Evict workflow span entries that exceed the TTL or, if the map still
+   * exceeds the size cap after TTL eviction, drop the oldest entries until
+   * the cap is satisfied.
+   */
+  function evictStaleWorkflowSpans(): void {
+    const now = Date.now();
+
+    // Phase 1: TTL-based eviction
+    for (const [id, entry] of workflowSpans) {
+      if (now - entry.createdAt > WORKFLOW_SPAN_TTL_MS) {
+        entry.span.end();
+        workflowSpans.delete(id);
+      }
+    }
+
+    // Phase 2: cap-based eviction (oldest-first — Map iterates in insertion order)
+    if (workflowSpans.size > WORKFLOW_SPAN_MAX_SIZE) {
+      const excess = workflowSpans.size - WORKFLOW_SPAN_MAX_SIZE;
+      let removed = 0;
+      for (const [id, entry] of workflowSpans) {
+        if (removed >= excess) break;
+        entry.span.end();
+        workflowSpans.delete(id);
+        removed++;
+      }
+    }
+  }
 
   /** End and remove the span for a given workflow ID. */
   function endAndRemoveWorkflowSpan(workflowId: string): void {
-    const span = workflowSpans.get(workflowId);
-    if (span) {
-      span.end();
+    const entry = workflowSpans.get(workflowId);
+    if (entry) {
+      entry.span.end();
       workflowSpans.delete(workflowId);
     }
   }
@@ -198,10 +233,13 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: WorkflowStartInterception,
       next: (interception: WorkflowStartInterception) => void,
     ): void {
+      // Evict stale spans before adding a new one to bound memory usage.
+      evictStaleWorkflowSpans();
+
       // End any existing span for the same workflow ID (e.g., re-execution)
-      const existingSpan = workflowSpans.get(interception.workflowId);
-      if (existingSpan) {
-        existingSpan.setStatus({ code: SpanStatusCode.OK });
+      const existingEntry = workflowSpans.get(interception.workflowId);
+      if (existingEntry) {
+        existingEntry.span.setStatus({ code: SpanStatusCode.OK });
         endAndRemoveWorkflowSpan(interception.workflowId);
       }
 
@@ -212,7 +250,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
         },
       });
 
-      workflowSpans.set(interception.workflowId, span);
+      workflowSpans.set(interception.workflowId, { span, createdAt: Date.now() });
 
       injectSpanContext(span, interception.headers);
 
@@ -234,9 +272,9 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: ActivityInterception,
       next: (interception: ActivityInterception) => Generator<unknown, unknown, unknown>,
     ): Generator<unknown, unknown, unknown> {
-      const rootSpan = workflowSpans.get(interception.workflowId);
-      const parentCtx = rootSpan
-        ? trace.setSpan(api.context.ROOT_CONTEXT, rootSpan)
+      const rootEntry = workflowSpans.get(interception.workflowId);
+      const parentCtx = rootEntry
+        ? trace.setSpan(api.context.ROOT_CONTEXT, rootEntry.span)
         : api.context.ROOT_CONTEXT;
 
       const span = tracer.startSpan(
@@ -282,9 +320,9 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: SleepInterception,
       next: (interception: SleepInterception) => Generator<unknown, void, unknown>,
     ): Generator<unknown, void, unknown> {
-      const rootSpan = workflowSpans.get(interception.workflowId);
-      const parentCtx = rootSpan
-        ? trace.setSpan(api.context.ROOT_CONTEXT, rootSpan)
+      const rootEntry = workflowSpans.get(interception.workflowId);
+      const parentCtx = rootEntry
+        ? trace.setSpan(api.context.ROOT_CONTEXT, rootEntry.span)
         : api.context.ROOT_CONTEXT;
 
       const span = tracer.startSpan(
@@ -315,9 +353,9 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: SignalInterception,
       next: (interception: SignalInterception) => Generator<unknown, unknown, unknown>,
     ): Generator<unknown, unknown, unknown> {
-      const rootSpan = workflowSpans.get(interception.workflowId);
-      const parentCtx = rootSpan
-        ? trace.setSpan(api.context.ROOT_CONTEXT, rootSpan)
+      const rootEntry = workflowSpans.get(interception.workflowId);
+      const parentCtx = rootEntry
+        ? trace.setSpan(api.context.ROOT_CONTEXT, rootEntry.span)
         : api.context.ROOT_CONTEXT;
 
       const span = tracer.startSpan(
@@ -349,9 +387,9 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       interception: AgentInterception,
       next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
     ): Generator<unknown, unknown, unknown> {
-      const rootSpan = workflowSpans.get(interception.workflowId);
-      const parentCtx = rootSpan
-        ? trace.setSpan(api.context.ROOT_CONTEXT, rootSpan)
+      const rootEntry = workflowSpans.get(interception.workflowId);
+      const parentCtx = rootEntry
+        ? trace.setSpan(api.context.ROOT_CONTEXT, rootEntry.span)
         : api.context.ROOT_CONTEXT;
 
       const span = tracer.startSpan(
@@ -630,17 +668,17 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   };
 
   function endWorkflowSpan(workflowId: string, status: 'ok' | 'error', message?: string): void {
-    const span = workflowSpans.get(workflowId);
-    if (!span) return;
+    const entry = workflowSpans.get(workflowId);
+    if (!entry) return;
     if (status === 'error') {
-      span.setStatus({
+      entry.span.setStatus({
         code: SpanStatusCode.ERROR,
         ...(message ? { message } : {}),
       });
     } else {
-      span.setStatus({ code: SpanStatusCode.OK });
+      entry.span.setStatus({ code: SpanStatusCode.OK });
     }
-    span.end();
+    entry.span.end();
     workflowSpans.delete(workflowId);
   }
 

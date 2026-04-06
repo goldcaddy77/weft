@@ -12,7 +12,6 @@
 
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
-import type { LLMProvider } from '../ai/providers/interface.ts';
 import {
   ReviewCoordinator,
   ReviewTimeoutError,
@@ -20,6 +19,7 @@ import {
   type HumanReviewResult,
   type ReviewRequest,
 } from '../ai/human-review.ts';
+import type { LLMProvider } from '../ai/providers/interface.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
@@ -2969,7 +2969,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #executeSubOperation(
-    _workflowId: string,
+    workflowId: string,
     operation: ContextOperationRequest,
   ): Promise<unknown> {
     switch (operation.type) {
@@ -2979,16 +2979,30 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return callMemoFunction(operation.fn);
       case 'agent': {
         const { executeAgentLoop } = await import('../ai/agent.ts');
-        const { BudgetTracker } = await import('../ai/budget.ts');
-        const { prompt, budget, ...rest } = operation.options;
+        const { prompt, budget: budgetOptions, budgetNamespace, ...rest } = operation.options;
+        const budgetTracker = await this.#createAgentBudgetTracker(
+          workflowId,
+          operation,
+          budgetOptions,
+        );
+        const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
+        await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
+
         const agentResult = await executeAgentLoop(
           {
             ...rest,
-            budget: budget ? new BudgetTracker(budget) : undefined,
+            budget: budgetTracker,
           },
           prompt,
         );
-        return agentResult;
+
+        await this.#recordAgentBudgetCost(
+          operation.operationId,
+          resolvedBudgetNamespace,
+          agentResult.totalCost,
+        );
+
+        return agentResult.content;
       }
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);

@@ -1121,6 +1121,9 @@ export function serve(options: ServeOptions): WeftServer {
   const visibilityPollMs = options.visibilityPollIntervalMs ?? 5_000;
   let scanRunning = false;
 
+  /** Prevents both scanners from processing the same operationId concurrently. */
+  const processingOperationIds = new Set<string>();
+
   /**
    * Drain expired entries from the in-memory deadline heap and reassign
    * their tasks. Only touches storage for the specific operations whose
@@ -1134,6 +1137,8 @@ export function serve(options: ServeOptions): WeftServer {
       const expired = deadlineTracker.drainExpired(now);
 
       for (const { operationId, deadline } of expired) {
+        if (processingOperationIds.has(operationId)) continue;
+        processingOperationIds.add(operationId);
         try {
           const inflightKey = KEYS.operationInflight(operationId);
           const existing = await options.engine.storage.get(inflightKey);
@@ -1165,6 +1170,8 @@ export function serve(options: ServeOptions): WeftServer {
             `[weft] Failed to process expired task "${operationId}" — will retry:`,
             error,
           );
+        } finally {
+          processingOperationIds.delete(operationId);
         }
       }
     } catch (error) {
@@ -1202,11 +1209,17 @@ export function serve(options: ServeOptions): WeftServer {
             continue;
           }
 
-          // Expired orphan — remove from heap, registry, and workflow index, then reassign.
-          deadlineTracker.remove(decoded.operationId);
-          registry.completeTask(decoded.operationId);
-          cleanupWorkflowIndex(decoded.operationId);
-          await reassignOrExpireTask(decoded.operationId, decoded);
+          if (processingOperationIds.has(decoded.operationId)) continue;
+          processingOperationIds.add(decoded.operationId);
+          try {
+            // Expired orphan — remove from heap, registry, and workflow index, then reassign.
+            deadlineTracker.remove(decoded.operationId);
+            registry.completeTask(decoded.operationId);
+            cleanupWorkflowIndex(decoded.operationId);
+            await reassignOrExpireTask(decoded.operationId, decoded);
+          } finally {
+            processingOperationIds.delete(decoded.operationId);
+          }
         } catch (error) {
           console.error('[weft] Failed to reconcile inflight record — skipping:', error);
         }
