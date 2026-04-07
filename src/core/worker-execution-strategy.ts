@@ -68,11 +68,11 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     deadline?: number;
     headers?: [string, string][];
     /**
-     * Worker mode currently drops the resolved tenant context — the
-     * `WorkerInboundMessage` protocol does not carry it across the
-     * `postMessage` boundary, and the worker-side runner does not
-     * instantiate a Context with engine-side fields anyway. Documented as
-     * a known limitation. Inline mode does honor this field.
+     * Resolved tenant context for the run. Forwarded to the worker via the
+     * `WorkerInboundMessage.tenant` field so worker-side handlers can read
+     * it from the first argument of their generator. Values inside
+     * `attributes` must be structured-clone safe (no functions or class
+     * instances) — see the JSDoc on `WorkerInboundMessage` for details.
      */
     tenant?: import('./tenant.ts').TenantContext;
   }): void {
@@ -89,8 +89,9 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     if (parameters.headers) {
       message.headers = parameters.headers;
     }
-    // Intentionally drop `parameters.tenant` here — worker protocol cannot
-    // carry it yet. See JSDoc above and `reference/IMPORTANT.md`.
+    if (parameters.tenant !== undefined) {
+      message.tenant = parameters.tenant;
+    }
     void this.#acquireAndSend(parameters.workflowId, message);
   }
 

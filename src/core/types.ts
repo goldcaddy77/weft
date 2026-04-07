@@ -276,6 +276,14 @@ export type WorkerInboundMessage =
       input: unknown;
       deadline?: number;
       headers?: [string, string][];
+      /**
+       * Resolved tenant context for this workflow run, forwarded across the
+       * `postMessage` boundary. The `attributes` values MUST be
+       * structured-clone safe — functions, class instances, and DOM nodes
+       * will crash the transfer with `DataCloneError`. Stick to plain
+       * objects, arrays, strings, numbers, booleans, and null.
+       */
+      tenant?: import('./tenant.ts').TenantContext;
     }
   | {
       type: 'resume';

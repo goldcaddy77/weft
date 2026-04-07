@@ -698,21 +698,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   constructor(options?: EngineConstructorOptions) {
     super();
 
-    // Stop-gap until WorkerExecutionStrategy threads `tenant` across the
-    // postMessage boundary: refuse to start when both are configured. The
-    // worker-side runner currently builds a Context with `tenant === undefined`,
-    // which makes agent `validateInput` and `toolsForTenant` hooks see no
-    // tenant at all — a "tools fallback to admin set" or "fail-open validator"
-    // would silently leak privileges. See `src/core/worker-execution-strategy.ts:78-94`.
-    if (options?.workerExecution && options?.tenantResolver) {
-      throw new Error(
-        '[weft] Engine: workerExecution mode does not yet propagate tenant context across the ' +
-          'postMessage boundary, so combining `workerExecution` with `tenantResolver` would ' +
-          'silently drop the resolved tenant inside agent hooks (validateInput, toolsForTenant). ' +
-          'Use inline execution mode (omit `workerExecution`) when tenancy is required.',
-      );
-    }
-
     this.#registrations = new Map();
 
     const storage = resolveEngineStorage(options, this.#getAgentWorkflowIds.bind(this));
