@@ -1,13 +1,6 @@
 <script lang="ts" module>
-  export interface AgentTurnData {
-    turnIndex: number;
-    model: string;
-    inputTokens: number;
-    outputTokens: number;
-    cost: number;
-    toolCalls: Array<{ name: string; input: unknown; output: unknown }>;
-    response: string;
-  }
+  import type { AgentTurnData } from './agent-turn-types.ts';
+  export type { AgentTurnData } from './agent-turn-types.ts';
 
   export type AgentTurnProps = {
     turn: AgentTurnData;

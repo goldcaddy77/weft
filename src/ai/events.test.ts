@@ -53,6 +53,7 @@ describe('AgentTurnCompletedEvent', () => {
       3,
       1,
       'thinking step by step',
+      [],
     );
     expect(event.workflowId).toBe('wf-2');
     expect(event.agentId).toBe('agent-2');
@@ -84,6 +85,7 @@ describe('AgentTurnCompletedEvent', () => {
       0,
       0,
       undefined,
+      [],
     );
     expect(event.reasoningTrace).toBeUndefined();
   });
@@ -103,6 +105,7 @@ describe('AgentTurnCompletedEvent', () => {
       0,
       0,
       undefined,
+      [],
     );
     expect(event.type).toBe(AgentTurnCompletedEvent.type);
     expect(event.type).toBe('agent:turn:completed');
@@ -123,6 +126,7 @@ describe('AgentTurnCompletedEvent', () => {
       0,
       0,
       undefined,
+      [],
     );
     expect(event).toBeInstanceOf(Event);
   });
