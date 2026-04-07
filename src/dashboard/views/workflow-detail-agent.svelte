@@ -34,6 +34,14 @@
   // Data state
   // ---------------------------------------------------------------------------
 
+  // Cap the in-memory event buffer so a long-running agent emitting thousands
+  // of token events cannot grow memory unbounded or slow the per-event
+  // `buildAgentTurns` recomputation linearly. When the cap is exceeded the
+  // oldest events are dropped; agent turns and budget totals derived from the
+  // most recent events stay accurate, and the full history remains available
+  // by reloading the page (which re-fetches via the API).
+  const MAX_EVENT_BUFFER = 2000;
+
   let workflow: WorkflowState | null = $state(null);
   let events: WorkflowEvent[] = $state([]);
   let loading = $state(true);
@@ -204,7 +212,8 @@
       if (generation !== fetchGeneration) return;
 
       workflow = workflowResult;
-      events = Array.isArray(eventsResult) ? eventsResult : [];
+      const fetched = Array.isArray(eventsResult) ? eventsResult : [];
+      events = fetched.length > MAX_EVENT_BUFFER ? fetched.slice(fetched.length - MAX_EVENT_BUFFER) : fetched;
       error = null;
     } catch (fetchError) {
       if (generation !== fetchGeneration) return;
@@ -233,7 +242,8 @@
     const pendingWebSocketEvents: WorkflowEvent[] = [];
 
     function applyEvent(event: WorkflowEvent): void {
-      events = [...events, event];
+      const next = [...events, event];
+      events = next.length > MAX_EVENT_BUFFER ? next.slice(next.length - MAX_EVENT_BUFFER) : next;
 
       // Accumulate streaming tokens
       if (event.type === 'agent:token') {

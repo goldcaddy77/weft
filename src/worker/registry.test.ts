@@ -38,6 +38,51 @@ describe('WorkerRegistry', () => {
     expect(info).toBeUndefined();
   });
 
+  it('unregister purges fair-share counters and in-flight tasks owned by the worker', () => {
+    const registry = new WorkerRegistry({ policy: 'fair-share' });
+
+    registry.register({
+      id: 'worker-doomed',
+      queue: 'default',
+      activities: ['runAgent'],
+      concurrency: 5,
+    });
+    registry.register({
+      id: 'worker-survivor',
+      queue: 'default',
+      activities: ['runAgent'],
+      concurrency: 5,
+    });
+
+    // Stack a few fair-share tasks on the worker we are about to remove.
+    registry.assignTask('worker-doomed', 'op-1', 30_000, 'tenant-alpha');
+    registry.assignTask('worker-doomed', 'op-2', 30_000, 'tenant-alpha');
+    registry.assignTask('worker-doomed', 'op-3', 30_000, 'tenant-beta');
+
+    // And one task on the survivor so we can assert it isn't disturbed.
+    registry.assignTask('worker-survivor', 'op-survivor', 30_000, 'tenant-alpha');
+
+    registry.unregister('worker-doomed');
+
+    // In-flight rows for the unregistered worker are gone, but the survivor's
+    // row is intact.
+    expect(registry.isAssigned('op-1')).toBe(false);
+    expect(registry.isAssigned('op-2')).toBe(false);
+    expect(registry.isAssigned('op-3')).toBe(false);
+    expect(registry.isAssigned('op-survivor')).toBe(true);
+    expect(registry.getWorkerTasks('worker-doomed')).toHaveLength(0);
+    expect(registry.getWorkerTasks('worker-survivor')).toHaveLength(1);
+
+    // Fair-share counters for the unregistered worker are also gone — when
+    // the survivor is the only candidate left, fair-share picks it for both
+    // tenant-alpha (despite already carrying one) and tenant-beta (zero).
+    const alphaPick = registry.findWorker('runAgent', { fairShareKey: 'tenant-alpha' });
+    expect(alphaPick?.id).toBe('worker-survivor');
+
+    const betaPick = registry.findWorker('runAgent', { fairShareKey: 'tenant-beta' });
+    expect(betaPick?.id).toBe('worker-survivor');
+  });
+
   it('heartbeat updates lastHeartbeat', () => {
     const registry = new WorkerRegistry();
 
@@ -844,17 +889,17 @@ describe('WorkerRegistry', () => {
       expect(registry.completeTask('nonexistent')).toBeUndefined();
     });
 
-    it('does not decrement below zero if worker was already unregistered', () => {
+    it('returns undefined when completing a task whose worker was already unregistered', () => {
       const registry = new WorkerRegistry();
       registry.register({ id: 'w1', queue: 'default', activities: ['doWork'], concurrency: 5 });
 
       registry.assignTask('w1', 'op-1', 30_000);
       registry.unregister('w1');
 
-      // Worker is gone, but in-flight task record still exists
-      const removed = registry.completeTask('op-1');
-      expect(removed).toBeDefined();
-      expect(removed!.operationId).toBe('op-1');
+      // unregister() now purges in-flight rows that referenced the worker so
+      // the registry never carries stale entries after a forced removal.
+      expect(registry.isAssigned('op-1')).toBe(false);
+      expect(registry.completeTask('op-1')).toBeUndefined();
     });
 
     it('handles multiple tasks completing independently', () => {

@@ -46,6 +46,16 @@ type CompletionCallback = (result: TaskResult) => void;
  * - `'lifo'` prepends to the start of the list. Newest tasks are dequeued
  *   first. Use this for time-sensitive, short-lived work where fresh requests
  *   are more valuable than stale ones (e.g. interactive UI refreshes).
+ *
+ *   **Starvation warning**: under sustained load, tasks at the bottom of the
+ *   LIFO stack may never be dequeued. They sit in the pending list while
+ *   newer arrivals jump in front of them, and when {@link TaskQueueOptions.pendingTaskTimeToLive}
+ *   is finite (the default is 5 minutes) they eventually expire and fail with
+ *   a generic timeout error — the producer gets no signal that LIFO ordering
+ *   was responsible. Only choose `'lifo'` for workloads where you actively
+ *   want bursty arrivals to displace older work, and consider setting
+ *   `pendingTaskTimeToLive` to `Infinity` (or aggressively low) to make the
+ *   trade-off explicit.
  */
 export type SchedulingPolicy = 'priority' | 'fifo' | 'lifo';
 
@@ -69,6 +79,21 @@ export type TaskQueueOptions = {
 };
 
 const DEFAULT_PENDING_TASK_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Tracks whether the LIFO + finite-TTL starvation warning has already been
+ * emitted in this process. The warning is one-shot to avoid spamming logs when
+ * many TaskQueues are constructed with the same configuration (e.g. tests).
+ */
+let lifoStarvationWarningEmitted = false;
+
+/**
+ * Reset the one-shot LIFO starvation warning. Test-only: production code
+ * should never need to call this.
+ */
+export function resetLifoStarvationWarningForTesting(): void {
+  lifoStarvationWarningEmitted = false;
+}
 
 interface Waiter {
   activities: string[];
@@ -100,6 +125,28 @@ export class TaskQueue {
     const ttl = options?.pendingTaskTimeToLive ?? DEFAULT_PENDING_TASK_TTL;
     this.#pendingTaskTimeToLive = ttl;
     this.#schedulingPolicy = options?.schedulingPolicy ?? 'priority';
+
+    // Warn once per process when LIFO is paired with a finite expiration. The
+    // combination silently produces "task expired" failures for tasks that
+    // never reach the head of the stack under sustained load — the producer
+    // sees a generic timeout, not the LIFO scheduling decision behind it.
+    // We only warn (rather than reject) so existing configurations keep
+    // working; the docs on `SchedulingPolicy` describe the trade-off in full.
+    if (
+      this.#schedulingPolicy === 'lifo' &&
+      this.#pendingTaskTimeToLive > 0 &&
+      Number.isFinite(this.#pendingTaskTimeToLive) &&
+      !lifoStarvationWarningEmitted
+    ) {
+      lifoStarvationWarningEmitted = true;
+      console.warn(
+        `[weft] TaskQueue configured with schedulingPolicy='lifo' and a finite ` +
+          `pendingTaskTimeToLive (${this.#pendingTaskTimeToLive}ms). Under sustained ` +
+          `load, tasks at the bottom of the LIFO stack can sit unclaimed until they ` +
+          `expire and fail with a generic timeout error. Set pendingTaskTimeToLive to ` +
+          `Infinity to disable expiration, or use 'fifo'/'priority' if fairness matters.`,
+      );
+    }
   }
 
   /** The scheduling policy this queue was configured with. */
@@ -187,11 +234,17 @@ export class TaskQueue {
         if (waiters.length === 0) this.#waiters.delete(queue);
       };
 
+      // Captured so the abort listener can be removed when the poll settles
+      // normally. Without explicit removal, `{ once: true }` only prunes the
+      // listener after `abort` actually fires, which leaks closures on
+      // long-lived signals (one per worker poll loop polls thousands of times).
       const settle = (value: PendingTask | null) => {
         clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
         cleanup();
         resolve(value);
       };
+      const onAbort = () => settle(null);
 
       const timer = setTimeout(() => settle(null), timeout);
 
@@ -203,7 +256,7 @@ export class TaskQueue {
       waiters.push(waiter);
 
       if (signal) {
-        signal.addEventListener('abort', () => settle(null), { once: true });
+        signal.addEventListener('abort', onAbort, { once: true });
       }
     });
   }

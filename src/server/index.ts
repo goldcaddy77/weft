@@ -28,7 +28,7 @@ import { calculateBackoff } from '../core/scheduler.ts';
 import type { RetryPolicy } from '../core/types.ts';
 import type { MetricsCollector, PrometheusExporter } from '../observability/metrics.ts';
 import { KEYS } from '../storage/interface.ts';
-import type { RoutingPolicy } from '../worker/registry.ts';
+import type { RoutingOptions, RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
@@ -89,13 +89,11 @@ export interface ServeOptions {
    * rotation across workers.
    *
    * **Note on `'fair-share'`:** fair-share requires a `fairShareKey` to be
-   * passed at dispatch time (per-call, via `TaskDispatch`), which `serve()`
-   * does not currently derive from `ctx.tenant` automatically. Setting
-   * `routingPolicy: 'fair-share'` here without wiring `fairShareKey` on
-   * each `dispatchTask()` call makes the policy silently fall back to
-   * least-loaded. Use the {@link WorkerRegistry} directly, or pass
-   * `fairShareKey` explicitly on every dispatch, until an end-to-end hook
-   * is added.
+   * passed at dispatch time via {@link TaskDispatch.fairShareKey}. `serve()`
+   * does not currently derive that key from `ctx.tenant` automatically — call
+   * sites must thread it through each `dispatchTask()` call themselves. When
+   * the key is omitted on a dispatch, the registry degrades gracefully to
+   * least-loaded for that single call.
    */
   routingPolicy?: RoutingPolicy;
   /**
@@ -141,6 +139,12 @@ export interface TaskDispatch {
   headers?: Record<string, string>;
   /** Task priority. Higher values are dequeued first. Agent tasks default to 10. */
   priority?: number;
+  /**
+   * Partition key for `'fair-share'` routing — typically a tenant or customer
+   * id. Ignored by other policies. When omitted under `'fair-share'`, the
+   * registry degrades gracefully to `'least-loaded'` for that dispatch.
+   */
+  fairShareKey?: string;
 }
 
 export interface WeftServer extends AsyncDisposable {
@@ -1438,9 +1442,16 @@ export function serve(options: ServeOptions): WeftServer {
       stickyWorkerId = workerAffinity.get(task.workflowId);
     }
 
-    // Try WebSocket workers first (lowest latency)
-    const routingOptions =
-      stickyWorkerId !== undefined ? { queue, sticky: stickyWorkerId } : { queue };
+    // Try WebSocket workers first (lowest latency). Build routing options
+    // with `exactOptionalPropertyTypes` in mind — only attach optional fields
+    // when they are actually defined.
+    const routingOptions: RoutingOptions = { queue };
+    if (stickyWorkerId !== undefined) {
+      routingOptions.sticky = stickyWorkerId;
+    }
+    if (task.fairShareKey !== undefined) {
+      routingOptions.fairShareKey = task.fairShareKey;
+    }
     const worker = registry.findWorker(task.activityName, routingOptions);
     if (worker) {
       const ws = workerSockets.get(worker.id);
@@ -1455,7 +1466,7 @@ export function serve(options: ServeOptions): WeftServer {
             ...(task.headers ? { headers: task.headers } : {}),
           }),
         );
-        registry.assignTask(worker.id, task.operationId, visibilityTimeout);
+        registry.assignTask(worker.id, task.operationId, visibilityTimeout, task.fairShareKey);
 
         // Persist in-flight record to storage so it survives server restart.
         // Uses a batch to atomically remove any stale queued record and write the inflight record.

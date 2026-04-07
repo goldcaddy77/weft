@@ -56,7 +56,13 @@ export class WorkerRegistry {
   #workers: Map<string, WorkerInfo>;
   #inFlightTasks: Map<string, InFlightTask>;
   #policy: RoutingPolicy;
-  /** Rotating cursor for round-robin routing, keyed by queue name. */
+  /**
+   * Rotating cursor for round-robin routing, keyed by `${queue}::${activity}`.
+   * The eligible-worker set is `(queue ∩ activity ∩ has-capacity)`, so two
+   * activities sharing one queue must not contend for the same cursor — that
+   * would let an activity-A request advance the cursor past an activity-A-only
+   * worker because the previous request was for activity B.
+   */
   #roundRobinCursor: Map<string, number>;
   /**
    * Inflight counts per worker per fair-share key. Outer key is `workerId`,
@@ -93,12 +99,29 @@ export class WorkerRegistry {
     });
   }
 
-  /** Unregister a worker. Returns its info for reassignment of in-flight tasks. */
+  /**
+   * Unregister a worker. Returns its info for reassignment of in-flight tasks.
+   *
+   * Purges any fair-share counters and in-flight task entries that referenced
+   * this worker so the registry never carries stale rows after a forced
+   * removal, crash recovery, or reset path that bypasses the per-task
+   * `completeTask` loop.
+   */
   unregister(workerId: string): WorkerInfo | undefined {
     const info = this.#workers.get(workerId);
-    if (info !== undefined) {
-      this.#workers.delete(workerId);
+    if (info === undefined) {
+      return undefined;
     }
+
+    this.#workers.delete(workerId);
+    this.#fairShareCounts.delete(workerId);
+
+    for (const [operationId, task] of this.#inFlightTasks) {
+      if (task.workerId === workerId) {
+        this.#inFlightTasks.delete(operationId);
+      }
+    }
+
     return info;
   }
 
@@ -161,7 +184,7 @@ export class WorkerRegistry {
 
     switch (this.#policy) {
       case 'round-robin':
-        return this.#pickRoundRobin(eligible, queue);
+        return this.#pickRoundRobin(eligible, queue, activityName);
       case 'fair-share':
         if (fairShareKey !== undefined) {
           return this.#pickFairShare(eligible, queue, fairShareKey);
@@ -175,14 +198,21 @@ export class WorkerRegistry {
   }
 
   /**
-   * Round-robin over eligible workers in stable registration order. Cursor state
-   * is kept per queue so two queues don't contend for the same cursor position.
+   * Round-robin over eligible workers in stable registration order. Cursor
+   * state is keyed by `(queue, activity)` so two activities sharing one queue
+   * don't contend for the same cursor — otherwise an activity-A request could
+   * advance the cursor past an activity-A-only worker just because the
+   * previous request was for activity B.
    */
-  #pickRoundRobin(eligible: WorkerInfo[], queue: string | undefined): WorkerInfo {
+  #pickRoundRobin(
+    eligible: WorkerInfo[],
+    queue: string | undefined,
+    activityName: string,
+  ): WorkerInfo {
     // `eligible` preserves the registration order from `this.#workers.values()`
     // because `Map` iteration order is insertion order. No per-call sort
     // needed — the cursor is stable as long as the worker set is stable.
-    const key = queue ?? '__default__';
+    const key = `${queue ?? '__default__'}::${activityName}`;
     const cursor = this.#roundRobinCursor.get(key) ?? 0;
     const pick = eligible[cursor % eligible.length]!;
     this.#roundRobinCursor.set(key, cursor + 1);

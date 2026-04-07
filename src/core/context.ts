@@ -474,8 +474,17 @@ export class Context implements WorkflowContext {
    * arrives, the generator resumes with the signal payload.
    *
    * This primitive closes the "serverless suspension" gap vs Inngest's
-   * `step.ai.infer()` and Restate's journal-based suspension — the worker is
-   * free to pick up other work while the workflow is parked in its checkpoint.
+   * `step.ai.infer()` and Restate's journal-based suspension. In the default
+   * inline-execution mode, the engine writes a checkpoint and releases its
+   * scheduling slot so the host process is free to pick up other work while
+   * the workflow is parked.
+   *
+   * **Worker-execution caveat:** when the engine is configured with
+   * `workerExecution`, the slot-release benefit does NOT apply.
+   * `WorkerExecutionStrategy` keeps the dedicated Web Worker pinned to the
+   * workflow id until the workflow completes, so a parked `suspendUntil`
+   * still occupies its worker. Use inline mode if you need true serverless
+   * suspension semantics.
    *
    * **Token collision caveat:** resume tokens share the signal namespace with
    * `waitForSignal`. Pick tokens that can't collide with named signals the

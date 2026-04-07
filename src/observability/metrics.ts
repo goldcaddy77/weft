@@ -192,6 +192,20 @@ function sumNumbers(values: number[]): number {
  * Keeping this as an interface rather than hard-wiring the OTel SDK avoids
  * pulling `@opentelemetry/sdk-metrics` into the runtime footprint while still
  * giving projects that *do* want full OTel a clean plug point.
+ *
+ * > [!WARNING] `/v1/metrics` is unauthenticated by default
+ * > The Weft server treats `/v1/metrics` as a public path (see
+ * > `DEFAULT_PUBLIC_PATHS` in `src/server/authentication.ts`) so that
+ * > Prometheus scrapers can read it without credentials. The default
+ * > {@link createMetricsCollectorExporter} only emits aggregate counters and
+ * > histograms with no labels, which is safe to expose. **A custom
+ * > `PrometheusExporter` that emits labels — especially labels containing
+ * > tenant identifiers, user identifiers, request paths with IDs, or any
+ * > other PII — will leak that data to anyone who can reach the endpoint.**
+ * >
+ * > If your exporter emits sensitive labels, override the default by setting
+ * > `auth.publicPaths` on the server options to a list that does *not*
+ * > include `/v1/metrics`, then scrape it with an authenticated client.
  */
 export interface PrometheusExporter {
   /**

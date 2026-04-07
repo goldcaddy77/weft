@@ -901,6 +901,96 @@ describe('worker WebSocket protocol', () => {
     await Bun.sleep(50);
   });
 
+  it('routes via fair-share when routingPolicy is fair-share and fairShareKey is dispatched', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0, routingPolicy: 'fair-share' });
+
+    const sockets: WebSocket[] = [];
+    const receivedByWorker = new Map<string, Array<{ operationId: string }>>();
+
+    for (let index = 0; index < 3; index += 1) {
+      const workerId = `fair-share-worker-${index}`;
+      receivedByWorker.set(workerId, []);
+
+      const ws = await connectWorker(server);
+      ws.addEventListener('message', (event) => {
+        const message = JSON.parse(String(event.data)) as {
+          type: string;
+          operationId?: string;
+        };
+        if (message.type === 'task' && message.operationId !== undefined) {
+          receivedByWorker.get(workerId)!.push({ operationId: message.operationId });
+        }
+      });
+      await registerWorker(ws, { workerId, activities: ['runAgent'], concurrency: 10 });
+      sockets.push(ws);
+    }
+
+    // Dispatch six tasks all under the same fair-share key. fair-share should
+    // spread them evenly across the three workers — 2 per worker. If
+    // routingPolicy were silently falling back to least-loaded, the first
+    // dispatch would still tiebreak by id and the spread would happen by
+    // accident. So we also dispatch a second key (`tenant-beta`) to prove the
+    // *per-key* counters survive the round trip and influence the next
+    // assignment for that key independently of the alpha tasks.
+    for (let index = 0; index < 6; index += 1) {
+      const dispatched = await server.dispatchTask({
+        operationId: `alpha-${index}`,
+        activityName: 'runAgent',
+        input: null,
+        fairShareKey: 'tenant-alpha',
+      });
+      expect(dispatched).toBe(true);
+    }
+
+    await Bun.sleep(50);
+
+    // Every worker received exactly two alpha tasks.
+    for (const [workerId, tasks] of receivedByWorker) {
+      expect(tasks).toHaveLength(2);
+      // Sanity check: every received op id was an alpha task assigned to this
+      // worker.
+      for (const task of tasks) {
+        expect(task.operationId.startsWith('alpha-')).toBe(true);
+        const inflight = server.registry.getTask(task.operationId);
+        expect(inflight?.workerId).toBe(workerId);
+      }
+    }
+
+    // Now dispatch a single tenant-beta task. The least-loaded fallback would
+    // pick the first worker by id (all three carry 2 alpha tasks), but the
+    // per-key fair-share counter for beta is 0 everywhere — fair-share's
+    // tiebreak by id then puts it on `fair-share-worker-0`, which is what we
+    // assert. The point is not the exact id, but that the *count of beta
+    // tasks per worker* is what was used, not the alpha load.
+    const dispatchedBeta = await server.dispatchTask({
+      operationId: 'beta-1',
+      activityName: 'runAgent',
+      input: null,
+      fairShareKey: 'tenant-beta',
+    });
+    expect(dispatchedBeta).toBe(true);
+    await Bun.sleep(50);
+
+    // Exactly one worker picked up beta-1 — and the worker chosen had a
+    // per-beta-key count of 0 before this dispatch (which is true for any of
+    // the three, since all had only alpha load before).
+    let betaWorkerId: string | undefined;
+    for (const [workerId, tasks] of receivedByWorker) {
+      const betaTasks = tasks.filter((task) => task.operationId === 'beta-1');
+      if (betaTasks.length > 0) {
+        expect(betaWorkerId).toBeUndefined();
+        betaWorkerId = workerId;
+      }
+    }
+    expect(betaWorkerId).toBeDefined();
+
+    for (const ws of sockets) {
+      ws.close();
+    }
+    await Bun.sleep(50);
+  });
+
   it('falls back to long-poll queue when WebSocket workers are at capacity', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });

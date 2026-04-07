@@ -203,9 +203,46 @@ function callMemoFunction(fn: Function): unknown {
   return (fn as () => unknown)();
 }
 
+/**
+ * Validate that a decoded `tenant` field is shaped like a TenantContext.
+ * Returns true only when `tenant` is `undefined`, or an object with a
+ * non-empty string `id` and (when present) an `attributes` object. Defensive
+ * because `state.tenant` is fed directly into agent `validateInput` and
+ * `toolsForTenant` hooks; a corrupt or tampered storage record could
+ * otherwise inject a forged tenant identity into security decisions.
+ */
+function isValidDecodedTenant(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (value === null || typeof value !== 'object') return false;
+  const candidate = value as { id?: unknown; attributes?: unknown };
+  if (typeof candidate.id !== 'string' || candidate.id.length === 0) return false;
+  if (
+    candidate.attributes !== undefined &&
+    (candidate.attributes === null || typeof candidate.attributes !== 'object')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
   // bytes were written by encode(WorkflowState) — shape is guaranteed by our own storage
-  return decode(bytes) as WorkflowState;
+  const state = decode(bytes) as WorkflowState;
+  // Defensive check on the security-relevant tenant field. Other fields are
+  // trusted by construction, but `tenant` feeds directly into agent decision
+  // functions so we refuse to propagate a forged identity. On invalid shape we
+  // log a warning and fall back to `undefined` (the safe default) rather than
+  // throwing — refusing to decode would break recovery for unrelated workflows
+  // sharing the same storage backend.
+  if (!isValidDecodedTenant(state.tenant)) {
+    console.warn(
+      `[weft] Decoded workflow state for "${String(state.id)}" has an invalid tenant field; ` +
+        `falling back to undefined tenant. This usually indicates corruption or tampering of ` +
+        `the storage record.`,
+    );
+    delete state.tenant;
+  }
+  return state;
 }
 
 function enqueueWorkflowHandleEvent(queue: WorkflowHandleEventQueue, event: Event): void {
@@ -321,6 +358,44 @@ function createAlertManagerForEngine(
   return alerts ? new AlertManager(engine, alerts, getNow) : null;
 }
 
+/**
+ * Maximum number of attribute-index scans to run in parallel during a single
+ * `engine.list()` call. Bounds fan-out on connection-limited storage backends.
+ */
+const ATTRIBUTE_SCAN_CONCURRENCY = 8;
+
+/**
+ * Run an async mapper over `inputs` with bounded concurrency, preserving the
+ * original order in the resolved array. Used in place of an unbounded
+ * `Promise.all` when each task may issue an independent storage scan, so we
+ * don't fan out N concurrent connections to the storage backend.
+ */
+async function mapWithConcurrency<Input, Output>(
+  inputs: readonly Input[],
+  concurrency: number,
+  mapper: (input: Input, index: number) => Promise<Output>,
+): Promise<Output[]> {
+  const results: Output[] = Array.from({ length: inputs.length });
+  const limit = Math.max(1, Math.min(concurrency, inputs.length));
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= inputs.length) return;
+      results[currentIndex] = await mapper(inputs[currentIndex]!, currentIndex);
+    }
+  }
+
+  const workers: Promise<void>[] = [];
+  for (let workerIndex = 0; workerIndex < limit; workerIndex += 1) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+  return results;
+}
+
 function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | null {
   const [firstSet, ...remainingSets] = idSets;
   if (!firstSet) {
@@ -358,6 +433,17 @@ function matchesListFilter(
   return filter?.type === undefined || state.type === filter.type;
 }
 
+/**
+ * Slice an in-memory list of {@link WorkflowSummary} into a {@link PaginatedResult}.
+ *
+ * Important note on `total` semantics: the returned `total` reflects the number
+ * of workflows that matched the supplied {@link ListFilter} (status, type, and
+ * search attribute filters). It is **not** the absolute count of workflows in
+ * storage. A UI computing "page 1 of N" from `total` will see the page count
+ * for the active filter; the unfiltered population is intentionally not
+ * surfaced through this response, since recovering it would require a separate
+ * full scan that defeats the purpose of the filter fast path.
+ */
 function paginateWorkflowSummaries(
   items: WorkflowSummary[],
   filter?: ListFilter,
@@ -638,6 +724,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   constructor(options?: EngineConstructorOptions) {
     super();
+
+    // Stop-gap until WorkerExecutionStrategy threads `tenant` across the
+    // postMessage boundary: refuse to start when both are configured. The
+    // worker-side runner currently builds a Context with `tenant === undefined`,
+    // which makes agent `validateInput` and `toolsForTenant` hooks see no
+    // tenant at all — a "tools fallback to admin set" or "fail-open validator"
+    // would silently leak privileges. See `src/core/worker-execution-strategy.ts:78-94`.
+    if (options?.workerExecution && options?.tenantResolver) {
+      throw new Error(
+        '[weft] Engine: workerExecution mode does not yet propagate tenant context across the ' +
+          'postMessage boundary, so combining `workerExecution` with `tenantResolver` would ' +
+          'silently drop the resolved tenant inside agent hooks (validateInput, toolsForTenant). ' +
+          'Use inline execution mode (omit `workerExecution`) when tenancy is required.',
+      );
+    }
 
     this.#registrations = new Map();
 
@@ -1178,8 +1279,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // the shape the architecture "<1ms single-attribute equality" target
     // assumes.
     if (constrainedIds !== null) {
-      for (const workflowId of constrainedIds) {
-        const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
+      // Parallelize storage reads. On in-memory backends this is essentially
+      // free; on remote backends (network KV, S3-backed) it converts N
+      // sequential round-trips into a single fan-out, which is what the
+      // architecture's <1ms attribute-equality target relies on.
+      // `Promise.all` preserves input order, so iterating the resolved array
+      // in lockstep with the original id list keeps results deterministic
+      // (insertion order from the attribute index intersection).
+      const orderedIds = [...constrainedIds];
+      const stateBytesList = await Promise.all(
+        orderedIds.map((workflowId) => this.#storage.get(KEYS.workflow(workflowId))),
+      );
+
+      for (const stateBytes of stateBytesList) {
         if (!stateBytes) continue;
 
         const state = decodeWorkflowState(stateBytes);
@@ -1439,8 +1551,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return null;
     }
 
-    const idSets = await Promise.all(
-      attributeFilters.map((attributeFilter) => this.#queryAttributeIndex(attributeFilter)),
+    // Bound concurrency so a request with many attribute filters can't
+    // saturate a connection-limited storage backend with N parallel scans.
+    // 8 is a balance between latency (parallelism) and pressure on the pool.
+    const idSets = await mapWithConcurrency(
+      attributeFilters,
+      ATTRIBUTE_SCAN_CONCURRENCY,
+      (attributeFilter) => this.#queryAttributeIndex(attributeFilter),
     );
     return intersectIdentifierSets(idSets);
   }
