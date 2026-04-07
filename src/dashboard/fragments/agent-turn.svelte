@@ -1,13 +1,6 @@
 <script lang="ts" module>
-  export interface AgentTurnData {
-    turnIndex: number;
-    model: string;
-    inputTokens: number;
-    outputTokens: number;
-    cost: number;
-    toolCalls: Array<{ name: string; input: unknown; output: unknown }>;
-    response: string;
-  }
+  import type { AgentTurnData } from './agent-turn-types.ts';
+  export type { AgentTurnData } from './agent-turn-types.ts';
 
   export type AgentTurnProps = {
     turn: AgentTurnData;
@@ -63,7 +56,7 @@
       </button>
       {#if toolCallsExpanded}
         <div class="agent-turn-tool-calls-list">
-          {#each turn.toolCalls as toolCall, index}
+          {#each turn.toolCalls as toolCall, index (index)}
             <div class="agent-turn-tool-call">
               <div class="agent-turn-tool-call-name font-mono">{toolCall.name}</div>
               <JsonViewer data={toolCall.input} label="Input" collapsed />

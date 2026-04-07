@@ -10,10 +10,21 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
  *
  * Registers a workflow that calls one trivial activity, starts many
  * workflows, waits for all to complete, and measures completions/sec.
- * Architecture target is 30K/sec; relaxed to 20K (or 5K on CI).
+ *
+ * Architecture target: 30K/sec. Measured 2026-04-07: ~14K/sec on Apple
+ * Silicon (up from ~9K/sec — same prepared-statement, dedup-skip, and
+ * completion-state-merge optimizations as the workflow-start benchmark).
+ * The remaining gap to spec is dominated by the per-workflow scheduler
+ * cancel and `#cleanupTerminalWorkflow` deletes; further work would need
+ * to coalesce these into the completion batch. Tracked in
+ * `reference/IMPORTANT.md`.
+ *
+ * Previous threshold: 3_000 (5_000 on CI), relaxed because ~9K/sec was
+ * the prior measured ceiling. New thresholds enforce the post-optimization
+ * floor with headroom for machine variance.
  */
 
-const TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 2_000 : 3_000;
+const TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 5_000 : 10_000;
 
 describe('Activity completion throughput', () => {
   let storage: BunSQLiteStorage;

@@ -21,7 +21,7 @@ describe('workflow runner integration', () => {
     it('completes immediately when the generator returns without yielding', async () => {
       const context = createWorkflowRunnerContext();
 
-      const handler = async function* (_input: unknown) {
+      const handler = async function* (_ctx: unknown, _input: unknown) {
         return 'done';
       };
 
@@ -40,7 +40,7 @@ describe('workflow runner integration', () => {
     it('yields a checkpoint when the generator yields an operation', async () => {
       const context = createWorkflowRunnerContext();
 
-      const handler = async function* (_input: unknown) {
+      const handler = async function* (_ctx: unknown, _input: unknown) {
         const value: unknown = yield {
           id: 'op-1',
           workflowId: 'wf-1',
@@ -114,7 +114,7 @@ describe('workflow runner integration', () => {
     it('completes the workflow when result is fed back', async () => {
       const context = createWorkflowRunnerContext();
 
-      const handler = async function* (_input: unknown) {
+      const handler = async function* (_ctx: unknown, _input: unknown) {
         const value: unknown = yield {
           id: 'op-1',
           workflowId: 'wf-1',
@@ -155,7 +155,7 @@ describe('workflow runner integration', () => {
     it('yields another checkpoint for multi-step workflows', async () => {
       const context = createWorkflowRunnerContext();
 
-      const handler = async function* (_input: unknown) {
+      const handler = async function* (_ctx: unknown, _input: unknown) {
         const first: unknown = yield {
           id: 'op-1',
           workflowId: 'wf-1',
@@ -239,7 +239,7 @@ describe('workflow runner integration', () => {
     it('cleans up generator and abort controller', async () => {
       const context = createWorkflowRunnerContext();
 
-      const handler = async function* (_input: unknown) {
+      const handler = async function* (_ctx: unknown, _input: unknown) {
         const value: unknown = yield {
           id: 'op-1',
           workflowId: 'wf-1',

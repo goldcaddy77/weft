@@ -1,3 +1,5 @@
+import type { Message } from './providers/types.ts';
+
 export class AgentTurnStartedEvent extends Event {
   static readonly type = 'agent:turn:started' as const;
   readonly workflowId: string;
@@ -40,6 +42,13 @@ export class AgentTurnCompletedEvent extends Event {
   readonly toolCallCount: number;
   readonly fallbackAttempts: number;
   readonly reasoningTrace: string | undefined;
+  /**
+   * Size-bounded snapshot of the agent's conversation at the moment this
+   * turn completed. Truncated per the caps in `event-message-snapshot.ts`
+   * (`MAX_MESSAGE_CHARS`, `MAX_TOOL_RESULT_CHARS`, `MAX_SNAPSHOT_MESSAGES`)
+   * so that long-running agents cannot blow up the event stream.
+   */
+  readonly messages: readonly Message[];
 
   constructor(
     workflowId: string,
@@ -55,6 +64,7 @@ export class AgentTurnCompletedEvent extends Event {
     toolCallCount: number,
     fallbackAttempts: number,
     reasoningTrace: string | undefined,
+    messages: readonly Message[],
   ) {
     super(AgentTurnCompletedEvent.type);
     this.workflowId = workflowId;
@@ -70,6 +80,7 @@ export class AgentTurnCompletedEvent extends Event {
     this.toolCallCount = toolCallCount;
     this.fallbackAttempts = fallbackAttempts;
     this.reasoningTrace = reasoningTrace;
+    this.messages = messages;
   }
 }
 

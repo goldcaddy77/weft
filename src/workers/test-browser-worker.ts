@@ -10,6 +10,7 @@
 
 /// <reference lib="webworker" />
 
+import type { WorkerWorkflowContext } from './workflow-runner.ts';
 import { initializeWorkerMessageLoop } from './workflow-worker-entry.ts';
 
 // ---------------------------------------------------------------------------
@@ -17,13 +18,16 @@ import { initializeWorkerMessageLoop } from './workflow-worker-entry.ts';
 // ---------------------------------------------------------------------------
 
 /* eslint-disable require-yield */
-const registrations = new Map<string, (...arguments_: unknown[]) => AsyncGenerator>();
+const registrations = new Map<
+  string,
+  (ctx: WorkerWorkflowContext, input: unknown) => AsyncGenerator
+>();
 
-registrations.set('simple', async function* (input: unknown) {
+registrations.set('simple', async function* (_ctx, input) {
   return { input, computed: 42 };
 });
 
-registrations.set('with-activity', async function* (input: unknown) {
+registrations.set('with-activity', async function* (_ctx, input) {
   const result: unknown = yield {
     id: 'op-1',
     workflowId: 'wf-1',
@@ -42,7 +46,7 @@ registrations.set('with-activity', async function* (input: unknown) {
   return { input, activity_result: result };
 });
 
-registrations.set('multi-step', async function* (_input: unknown) {
+registrations.set('multi-step', async function* (_ctx, _input) {
   const step1: unknown = yield {
     id: 'op-1',
     workflowId: 'wf-1',

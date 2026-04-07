@@ -1,4 +1,54 @@
-import type { OperationOutcome, OperationRequest, WorkerOutboundMessage } from '../core/types.ts';
+import type { TenantContext } from '../core/tenant.ts';
+import type {
+  OperationOutcome,
+  OperationRequest,
+  WorkerOutboundMessage,
+  WorkflowContext,
+} from '../core/types.ts';
+
+// ---------------------------------------------------------------------------
+// Worker-side workflow context
+// ---------------------------------------------------------------------------
+
+/**
+ * Subset of {@link WorkflowContext} that the worker-side runner can build
+ * locally from the `run` message. Engine-side fields (`executionTimeRemaining`
+ * in particular) are stub values because the worker has no clock authority —
+ * any user code reading them will see static numbers, not live deadlines. The
+ * tenant field is the load-bearing one: it's how multi-tenant agent handlers
+ * see their tenant inside worker mode.
+ */
+export type WorkerWorkflowContext = Pick<
+  WorkflowContext,
+  'workflowId' | 'tenant' | 'signal' | 'startedAt'
+>;
+
+interface RunMessageShape {
+  workflowId: string;
+  workflowType: string;
+  input: unknown;
+  tenant?: TenantContext;
+  deadline?: number;
+  headers?: [string, string][];
+}
+
+/**
+ * Construct the worker-side `ctx` argument that gets passed as the first
+ * positional parameter to a registered workflow handler. Engine-side fields
+ * not represented in the `run` message are intentionally omitted — only the
+ * `Pick`-ed subset above is populated.
+ */
+export function createWorkerWorkflowContext(
+  message: RunMessageShape,
+  controller: AbortController,
+): WorkerWorkflowContext {
+  return {
+    workflowId: message.workflowId,
+    tenant: message.tenant,
+    signal: controller.signal,
+    startedAt: Date.now(),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Workflow runner context: holds live generator state for in-flight workflows
@@ -22,8 +72,17 @@ export function createWorkflowRunnerContext(): WorkflowRunnerContext {
 
 export async function handleRunMessage(
   context: WorkflowRunnerContext,
-  message: { workflowId: string; workflowType: string; input: unknown },
-  getWorkflowHandler: (type: string) => ((...arguments_: unknown[]) => AsyncGenerator) | undefined,
+  message: {
+    workflowId: string;
+    workflowType: string;
+    input: unknown;
+    tenant?: TenantContext;
+    deadline?: number;
+    headers?: [string, string][];
+  },
+  getWorkflowHandler: (
+    type: string,
+  ) => ((ctx: WorkerWorkflowContext, input: unknown) => AsyncGenerator) | undefined,
 ): Promise<WorkerOutboundMessage> {
   const handler = getWorkflowHandler(message.workflowType);
 
@@ -38,7 +97,8 @@ export async function handleRunMessage(
   const controller = new AbortController();
   context.abortControllers.set(message.workflowId, controller);
 
-  const generator = handler(message.input);
+  const workerContext = createWorkerWorkflowContext(message, controller);
+  const generator = handler(workerContext, message.input);
 
   try {
     const step = await generator.next();

@@ -158,6 +158,45 @@ describe('WorkerExecutionStrategy', () => {
       expect(worker._listeners.get('message')?.size).toBeGreaterThan(0);
     });
 
+    it('forwards tenant context onto the run message', async () => {
+      setup();
+
+      strategy.startWorkflow({
+        workflowId: 'wf-tenant',
+        workflowType: 'test',
+        input: { value: 1 },
+        checkpoint: new ArrayBuffer(0),
+        tenant: { id: 'acme', attributes: { tier: 'gold' } },
+      });
+
+      await Bun.sleep(10);
+
+      const worker = firstWorker();
+      const sentMessage = worker.postMessage.mock.calls[0]![0];
+      expect(sentMessage.type).toBe('run');
+      expect(sentMessage.tenant).toBeDefined();
+      expect(sentMessage.tenant.id).toBe('acme');
+      expect(sentMessage.tenant.attributes.tier).toBe('gold');
+    });
+
+    it('omits the tenant field when no tenant is provided', async () => {
+      setup();
+
+      strategy.startWorkflow({
+        workflowId: 'wf-no-tenant',
+        workflowType: 'test',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await Bun.sleep(10);
+
+      const worker = firstWorker();
+      const sentMessage = worker.postMessage.mock.calls[0]![0];
+      expect(sentMessage.type).toBe('run');
+      expect(sentMessage.tenant).toBeUndefined();
+    });
+
     it('emits a failed message if pool acquisition fails', async () => {
       mockWorkers = [];
       mockPool = createMockPool([]);
@@ -540,22 +579,24 @@ describe('WorkerExecutionStrategy', () => {
   // -------------------------------------------------------------------------
 
   describe('disposal', () => {
-    it('disposes the pool on synchronous dispose', () => {
+    it('calls pool dispose on synchronous dispose', () => {
       setup();
+      const poolDispose = mock(() => {});
+      mockPool[Symbol.dispose] = poolDispose;
 
       strategy[Symbol.dispose]();
 
-      // Should be callable without error
-      expect(true).toBe(true);
+      expect(poolDispose).toHaveBeenCalledTimes(1);
     });
 
-    it('disposes the pool on async dispose', async () => {
+    it('calls pool asyncDispose on async dispose', async () => {
       setup();
+      const poolAsyncDispose = mock(async () => {});
+      mockPool[Symbol.asyncDispose] = poolAsyncDispose;
 
       await strategy[Symbol.asyncDispose]();
 
-      // Should complete without error
-      expect(true).toBe(true);
+      expect(poolAsyncDispose).toHaveBeenCalledTimes(1);
     });
   });
 });

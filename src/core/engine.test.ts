@@ -502,6 +502,41 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('throws when options.id is an empty string', async () => {
+    const engine = new Engine();
+    engine.register('empty-id', async function* () {
+      return 'ok';
+    });
+
+    await expect(engine.start('empty-id', null, { id: '' })).rejects.toThrow(
+      'options.id must not be an empty string',
+    );
+    engine[Symbol.dispose]();
+  });
+
+  it('does not hit storage for dedup when starting without a caller-provided id', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    engine.register('noop', async function* () {
+      return 'ok';
+    });
+
+    const getSpy = spyOn(storage, 'get');
+
+    const handle = await engine.start('noop', null); // no options.id — auto UUID
+    await handle.result();
+
+    // The dedup `storage.get` only fires for caller-provided IDs. Auto-UUIDs
+    // skip it entirely. Filter to workflow-key reads to avoid false positives
+    // from checkpoint or index reads that happen during execution.
+    const workflowKeyReads = getSpy.mock.calls.filter(
+      ([key]) => typeof key === 'string' && key.startsWith('workflow:'),
+    );
+    expect(workflowKeyReads.length).toBe(0);
+
+    engine[Symbol.dispose]();
+  });
+
   it('register(name, registration) accepts a WorkflowRegistration object', async () => {
     const engine = new Engine();
     const handler = async function* (_ctx: WorkflowContext, input: unknown) {
@@ -3406,19 +3441,18 @@ describe('Engine', () => {
 // ---------------------------------------------------------------------------
 
 describe('Engine tenant-isolation guards', () => {
-  it('refuses to construct when both workerExecution and tenantResolver are configured', () => {
-    expect(
-      () =>
-        new Engine({
-          tenantResolver: {
-            resolve: () => ({ id: 'acme' }),
-          },
-          workerExecution: {
-            workerUrl: new URL('https://example.invalid/worker.js'),
-            concurrency: 1,
-          },
-        }),
-    ).toThrow(/workerExecution mode does not yet propagate tenant context/);
+  it('constructs when both workerExecution and tenantResolver are configured', () => {
+    const engine = new Engine({
+      tenantResolver: {
+        resolve: () => ({ id: 'acme' }),
+      },
+      workerExecution: {
+        workerUrl: new URL('https://example.invalid/worker.js'),
+        concurrency: 1,
+      },
+    });
+    expect(engine).toBeInstanceOf(Engine);
+    engine[Symbol.dispose]();
   });
 
   it('still constructs when only workerExecution is configured (no tenant)', () => {
