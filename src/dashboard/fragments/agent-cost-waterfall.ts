@@ -11,10 +11,6 @@ export type WaterfallBar = {
   ariaLabel: string;
 };
 
-function formatCostForLabel(cost: number): string {
-  return `$${cost.toFixed(4)}`;
-}
-
 /**
  * Build a normalized waterfall view of agent turn costs. Bars are sized
  * relative to the most expensive turn in the input. An empty input returns
@@ -35,7 +31,7 @@ export function computeWaterfallBars(turns: readonly AgentTurnData[]): Waterfall
       model: turn.model,
       cost: turn.cost,
       widthPercentage,
-      ariaLabel: `Turn ${turn.turnIndex + 1}, model ${turn.model}, ${formatCostForLabel(turn.cost)}`,
+      ariaLabel: `Turn ${turn.turnIndex + 1}, model ${turn.model}, $${turn.cost.toFixed(4)}`,
     };
   });
 }

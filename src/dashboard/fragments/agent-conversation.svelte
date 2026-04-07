@@ -18,6 +18,10 @@
   function isTruncated(content: string): boolean {
     return /\[truncated \d+ chars\]$/.test(content);
   }
+
+  function isSnapshotTruncationMarker(message: { role: string; content: string }): boolean {
+    return message.role === 'system' && /^\[\d+ earlier messages truncated\]$/.test(message.content);
+  }
 </script>
 
 {#if groups.length === 0}
@@ -31,7 +35,11 @@
           <p class="empty-turn">No new messages in this turn.</p>
         {:else}
           {#each group.messages as message, messageIndex (messageIndex)}
-            {#if message.role === 'system'}
+            {#if isSnapshotTruncationMarker(message)}
+              <div class="conversation-message" data-role="truncation-marker">
+                <Badge variant="warning" label={message.content} size="xs" />
+              </div>
+            {:else if message.role === 'system'}
               <details class="conversation-message" data-role="system">
                 <summary>System prompt</summary>
                 <pre>{message.content}</pre>

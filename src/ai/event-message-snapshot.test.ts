@@ -30,7 +30,8 @@ describe('snapshotConversationForEvent', () => {
     const result = snapshotConversationForEvent(conversation);
     expect(result[0]?.content.length).toBe(MAX_MESSAGE_CHARS);
     expect(result[0]?.content.endsWith('chars]')).toBe(true);
-    expect(result[0]?.content).toContain('[truncated 500 chars]');
+    // dropped = value.length - keepLength (not value.length - cap) — see truncateString
+    expect(result[0]?.content).toContain('[truncated 522 chars]');
   });
 
   it('truncates oversized tool result output strings', () => {
@@ -45,7 +46,7 @@ describe('snapshotConversationForEvent', () => {
     const result = snapshotConversationForEvent(conversation);
     const truncatedOutput = result[0]?.toolResults?.[0]?.output ?? '';
     expect(truncatedOutput.length).toBe(MAX_TOOL_RESULT_CHARS);
-    expect(truncatedOutput).toContain('[truncated 200 chars]');
+    expect(truncatedOutput).toContain('[truncated 222 chars]');
   });
 
   it('truncates both content and toolResults in the same message', () => {
@@ -58,9 +59,9 @@ describe('snapshotConversationForEvent', () => {
     ];
     const result = snapshotConversationForEvent(conversation);
     expect(result[0]?.content.length).toBe(MAX_MESSAGE_CHARS);
-    expect(result[0]?.content).toContain('[truncated 100 chars]');
+    expect(result[0]?.content).toContain('[truncated 122 chars]');
     expect(result[0]?.toolResults?.[0]?.output.length).toBe(MAX_TOOL_RESULT_CHARS);
-    expect(result[0]?.toolResults?.[0]?.output).toContain('[truncated 50 chars]');
+    expect(result[0]?.toolResults?.[0]?.output).toContain('[truncated 71 chars]');
   });
 
   it('caps long conversations and preserves the first message', () => {

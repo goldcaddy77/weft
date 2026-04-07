@@ -26,11 +26,22 @@ function truncateString(value: string, cap: number): string {
   if (value.length <= cap) {
     return value;
   }
-  const dropped = value.length - cap;
-  const marker = ` [truncated ${dropped} chars]`;
+  // Use an iterative approach: estimate keepLength, build the marker, then
+  // recompute. One iteration is sufficient because the marker digit count only
+  // changes when the dropped count crosses a power-of-ten boundary, which
+  // cannot happen after the first correction (the marker gets shorter, not
+  // longer, as kept content shrinks).
+  //
+  // Computing dropped as `value.length - cap` would undercount by
+  // `marker.length` characters — the marker itself occupies space that
+  // displaces original content. We need `dropped = value.length - keepLength`.
+  let marker = ` [truncated ${value.length - cap} chars]`; // initial estimate
+  let keepLength = Math.max(0, cap - marker.length);
+  const dropped = value.length - keepLength;
+  marker = ` [truncated ${dropped} chars]`;
+  keepLength = Math.max(0, cap - marker.length);
   // Keep the total output at exactly `cap` characters so that a second pass
   // over the same string is a no-op (idempotency requirement).
-  const keepLength = Math.max(0, cap - marker.length);
   return `${value.slice(0, keepLength)}${marker}`;
 }
 
