@@ -9,6 +9,7 @@
  */
 
 import type { WorkerInboundMessage, WorkerOutboundMessage } from '../core/types.ts';
+import type { WorkerWorkflowContext } from './workflow-runner.ts';
 import {
   createWorkflowRunnerContext,
   handleCancelMessage,
@@ -20,9 +21,15 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Factory that resolves a workflow type name to its handler. Handlers receive
+ * a worker-side {@link WorkerWorkflowContext} as the first argument so they
+ * can read `ctx.tenant` and `ctx.workflowId` exactly like inline-mode
+ * handlers do.
+ */
 export type WorkflowHandlerFactory = (
   type: string,
-) => ((...arguments_: unknown[]) => AsyncGenerator) | undefined;
+) => ((ctx: WorkerWorkflowContext, input: unknown) => AsyncGenerator) | undefined;
 
 // ---------------------------------------------------------------------------
 // Worker bootstrap
@@ -96,7 +103,7 @@ function postOutboundMessage(message: WorkerOutboundMessage): void {
  * @returns A Blob URL suitable for `new Worker(url)`.
  */
 export function createWorkerEntryUrl(
-  registrations: Map<string, (...arguments_: unknown[]) => AsyncGenerator>,
+  registrations: Map<string, (ctx: WorkerWorkflowContext, input: unknown) => AsyncGenerator>,
 ): string {
   // Build a self-contained script that imports the entry point and wires
   // up registrations. This relies on the bundler/runtime supporting

@@ -3406,19 +3406,18 @@ describe('Engine', () => {
 // ---------------------------------------------------------------------------
 
 describe('Engine tenant-isolation guards', () => {
-  it('refuses to construct when both workerExecution and tenantResolver are configured', () => {
-    expect(
-      () =>
-        new Engine({
-          tenantResolver: {
-            resolve: () => ({ id: 'acme' }),
-          },
-          workerExecution: {
-            workerUrl: new URL('https://example.invalid/worker.js'),
-            concurrency: 1,
-          },
-        }),
-    ).toThrow(/workerExecution mode does not yet propagate tenant context/);
+  it('constructs when both workerExecution and tenantResolver are configured', () => {
+    const engine = new Engine({
+      tenantResolver: {
+        resolve: () => ({ id: 'acme' }),
+      },
+      workerExecution: {
+        workerUrl: new URL('https://example.invalid/worker.js'),
+        concurrency: 1,
+      },
+    });
+    expect(engine).toBeInstanceOf(Engine);
+    engine[Symbol.dispose]();
   });
 
   it('still constructs when only workerExecution is configured (no tenant)', () => {
