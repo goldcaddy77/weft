@@ -204,22 +204,27 @@ function callMemoFunction(fn: Function): unknown {
 }
 
 /**
- * Validate that a decoded `tenant` field is shaped like a TenantContext.
- * Returns true only when `tenant` is `undefined`, or an object with a
- * non-empty string `id` and (when present) an `attributes` object. Defensive
- * because `state.tenant` is fed directly into agent `validateInput` and
- * `toolsForTenant` hooks; a corrupt or tampered storage record could
- * otherwise inject a forged tenant identity into security decisions.
+ * Type predicate that validates a decoded `tenant` field is shaped like a
+ * {@link import('./tenant.ts').TenantContext}. Returns true only when `tenant`
+ * is `undefined`, or an object with a non-empty string `id` and (when present)
+ * an `attributes` object. Defensive because `state.tenant` is fed directly
+ * into agent `validateInput` and `toolsForTenant` hooks; a corrupt or tampered
+ * storage record could otherwise inject a forged tenant identity into
+ * security decisions.
+ *
+ * `null` is rejected intentionally — the canonical "no tenant" value is
+ * `undefined`. A stored `null` indicates corruption.
  */
-function isValidDecodedTenant(value: unknown): boolean {
+function isValidDecodedTenant(
+  value: unknown,
+): value is import('./tenant.ts').TenantContext | undefined {
   if (value === undefined) return true;
   if (value === null || typeof value !== 'object') return false;
-  const candidate = value as { id?: unknown; attributes?: unknown };
-  if (typeof candidate.id !== 'string' || candidate.id.length === 0) return false;
-  if (
-    candidate.attributes !== undefined &&
-    (candidate.attributes === null || typeof candidate.attributes !== 'object')
-  ) {
+  const record = value as Record<string, unknown>;
+  const id = record['id'];
+  if (typeof id !== 'string' || id.length === 0) return false;
+  const attributes = record['attributes'];
+  if (attributes !== undefined && (attributes === null || typeof attributes !== 'object')) {
     return false;
   }
   return true;
@@ -363,38 +368,6 @@ function createAlertManagerForEngine(
  * `engine.list()` call. Bounds fan-out on connection-limited storage backends.
  */
 const ATTRIBUTE_SCAN_CONCURRENCY = 8;
-
-/**
- * Run an async mapper over `inputs` with bounded concurrency, preserving the
- * original order in the resolved array. Used in place of an unbounded
- * `Promise.all` when each task may issue an independent storage scan, so we
- * don't fan out N concurrent connections to the storage backend.
- */
-async function mapWithConcurrency<Input, Output>(
-  inputs: readonly Input[],
-  concurrency: number,
-  mapper: (input: Input, index: number) => Promise<Output>,
-): Promise<Output[]> {
-  const results: Output[] = Array.from({ length: inputs.length });
-  const limit = Math.max(1, Math.min(concurrency, inputs.length));
-  let nextIndex = 0;
-
-  async function worker(): Promise<void> {
-    while (true) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      if (currentIndex >= inputs.length) return;
-      results[currentIndex] = await mapper(inputs[currentIndex]!, currentIndex);
-    }
-  }
-
-  const workers: Promise<void>[] = [];
-  for (let workerIndex = 0; workerIndex < limit; workerIndex += 1) {
-    workers.push(worker());
-  }
-  await Promise.all(workers);
-  return results;
-}
 
 function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | null {
   const [firstSet, ...remainingSets] = idSets;
@@ -1553,13 +1526,30 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Bound concurrency so a request with many attribute filters can't
     // saturate a connection-limited storage backend with N parallel scans.
-    // 8 is a balance between latency (parallelism) and pressure on the pool.
-    const idSets = await mapWithConcurrency(
-      attributeFilters,
-      ATTRIBUTE_SCAN_CONCURRENCY,
-      (attributeFilter) => this.#queryAttributeIndex(attributeFilter),
-    );
-    return intersectIdentifierSets(idSets);
+    // Inline worker-pool loop: each worker pulls the next unclaimed filter
+    // and writes the result into its original index. JavaScript is
+    // single-threaded, so the `nextIndex += 1` read-modify-write is atomic
+    // across event-loop yields.
+    const idSets: Array<Set<string> | undefined> = Array.from({
+      length: attributeFilters.length,
+    });
+    const workerLimit = Math.max(1, Math.min(ATTRIBUTE_SCAN_CONCURRENCY, attributeFilters.length));
+    let nextIndex = 0;
+    const runWorker = async (): Promise<void> => {
+      while (true) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        if (currentIndex >= attributeFilters.length) return;
+        const attributeFilter = attributeFilters[currentIndex]!;
+        idSets[currentIndex] = await this.#queryAttributeIndex(attributeFilter);
+      }
+    };
+    const workers: Promise<void>[] = [];
+    for (let workerIndex = 0; workerIndex < workerLimit; workerIndex += 1) {
+      workers.push(runWorker());
+    }
+    await Promise.all(workers);
+    return intersectIdentifierSets(idSets as Set<string>[]);
   }
 
   #isTopLevelWorkflowStateKey(key: string): boolean {

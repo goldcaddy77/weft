@@ -3475,13 +3475,20 @@ describe('Engine tenant-isolation guards', () => {
       // through fast/slow paths).
       expect(warnings.some((w) => w.includes('invalid tenant field'))).toBe(true);
 
-      // And the persisted-but-tampered tenant did NOT survive recovery on
-      // the in-memory state used by subsequent loads.
+      // The entire point of this guard: when the engine returns a decoded
+      // WorkflowState, the tampered tenant must be stripped to `undefined`
+      // so agent `validateInput` / `toolsForTenant` hooks never see it.
+      const fetched = await engine.get('wf-tampered');
+      expect(fetched).not.toBeNull();
+      expect(fetched?.tenant).toBeUndefined();
+
+      // The raw on-disk bytes are deliberately NOT rewritten — we leave
+      // remediation of corrupt records to storage-level tooling — so the
+      // tampered bytes still exist. Verify the guard is load-time, not
+      // persistence-time: the record on disk is unchanged.
       const reloadedBytes = await storage.get(KEYS.workflow('wf-tampered'));
       expect(reloadedBytes).toBeTruthy();
       const reloaded = decode(reloadedBytes!) as { tenant?: unknown };
-      // The on-disk record is still tampered (we don't rewrite storage), but
-      // any decode call now strips it.
       expect(reloaded.tenant).toEqual({ id: 1, attributes: { role: 'admin' } });
 
       engine[Symbol.dispose]();

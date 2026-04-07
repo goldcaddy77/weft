@@ -1075,21 +1075,31 @@ describe('handleRequest', () => {
         },
       };
 
-      // Silence the expected console.error from the handler.
-      const originalConsoleError = console.error;
-      console.error = () => {};
+      // Silence the expected console.error from the handler and verify it
+      // fired. We swap `console.error` for a recording function (parallel-
+      // safe within this test because Bun runs tests in one file serially)
+      // rather than `spyOn`, because `spyOn(console, 'error')` does not
+      // reliably intercept in this context.
+      const recordedCalls: unknown[][] = [];
+      const originalError = console.error;
+      console.error = ((...args: unknown[]) => {
+        recordedCalls.push(args);
+      }) as typeof console.error;
       let response: Response;
       try {
         response = await handleRequest(request('GET', '/v1/metrics'), engine, {
           prometheusExporter: failingExporter,
         });
       } finally {
-        console.error = originalConsoleError;
+        console.error = originalError;
       }
 
       expect(response.status).toBe(503);
       expect(response.headers.get('Content-Type')).toBe('application/json; charset=utf-8');
       expect(await json(response)).toEqual({ error: 'metrics exporter failed' });
+      expect(recordedCalls).toHaveLength(1);
+      const logged = recordedCalls[0]?.map(String).join(' ') ?? '';
+      expect(logged).toContain('PrometheusExporter.serialize()');
     });
 
     it('returns 503 when an async exporter rejects', async () => {
@@ -1101,19 +1111,23 @@ describe('handleRequest', () => {
         },
       };
 
-      const originalConsoleError = console.error;
-      console.error = () => {};
+      const recordedCalls: unknown[][] = [];
+      const originalError = console.error;
+      console.error = ((...args: unknown[]) => {
+        recordedCalls.push(args);
+      }) as typeof console.error;
       let response: Response;
       try {
         response = await handleRequest(request('GET', '/v1/metrics'), engine, {
           prometheusExporter: failingExporter,
         });
       } finally {
-        console.error = originalConsoleError;
+        console.error = originalError;
       }
 
       expect(response.status).toBe(503);
       expect(await json(response)).toEqual({ error: 'metrics exporter failed' });
+      expect(recordedCalls).toHaveLength(1);
     });
   });
 
