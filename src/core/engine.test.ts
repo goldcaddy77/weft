@@ -508,7 +508,9 @@ describe('Engine', () => {
       return 'ok';
     });
 
-    await expect(engine.start('empty-id', null, { id: '' })).rejects.toThrow();
+    await expect(engine.start('empty-id', null, { id: '' })).rejects.toThrow(
+      'options.id must not be an empty string',
+    );
     engine[Symbol.dispose]();
   });
 

@@ -15,8 +15,6 @@
   const bars = $derived(computeWaterfallBars(turns));
   const rowHeight = 24;
   const viewBoxHeight = $derived(Math.max(rowHeight, bars.length * rowHeight));
-  // Bind SVG width so we can scale SVG user units to CSS pixels correctly.
-  let svgWidth = $state(0);
 </script>
 
 {#if bars.length === 0}
@@ -28,8 +26,6 @@
     aria-label="Per-turn cost waterfall"
     viewBox={`0 0 100 ${viewBoxHeight}`}
     preserveAspectRatio="xMinYMin meet"
-    bind:clientWidth={svgWidth}
-    style:height={svgWidth > 0 ? `${(svgWidth * viewBoxHeight) / 100}px` : 'auto'}
   >
     {#each bars as bar, index (bar.turnIndex)}
       <g transform={`translate(0, ${index * rowHeight})`}>
