@@ -16,7 +16,6 @@ All items in this list are also tracked as acceptance criteria in the **"Competi
   - **Memory per workflow**: spec `≤2KB`, measured `~7KB` in isolation and `~15KB` under full-suite pollution → **does not meet spec** (3-7x over; also a flaky benchmark — suite order causes the jump from 7KB to 15KB).
   - **Cold start (binary mode)**: spec `<100ms`, measured `~1022ms` → **does not meet spec** (10x over; this may be measurement-method dependent — the binary bundle spawn cost dominates).
     The gaps are genuine architectural work, not benchmark sloppiness. Any future attempt to hit the spec targets should start with workflow start throughput and memory-per-workflow, since those are the two the architecture doc most loudly advertises.
-- [~] **AI dashboard detail view (core landed)**: `workflow-detail-agent.svelte` already composes the agent fragments into a per-workflow view (route `/ui/workflows/:id/agent`). The three proposed extra fragments (cost waterfall, conversation, reasoning trace) remain deferred until the underlying event data is emitted end-to-end.
 
 ## Addressed in follow-up PR (2026-04-07)
 
@@ -39,3 +38,4 @@ The PR #73 review items previously tracked here have been resolved. Summary of m
 - **`ctx.suspendUntil` JSDoc**: updated to clarify that the slot-release benefit applies only to inline execution; worker-mode caveat documented.
 - **Dashboard agent detail view buffer**: `events` now capped at 2000 entries with oldest-first eviction on both WS append and initial fetch paths.
 - **Attribute scan fan-out**: `#resolveConstrainedIds` now uses a small worker-pool helper capping concurrent storage scans at 8.
+- **AI dashboard detail view enhancements**: `workflow-detail-agent.svelte` now composes three new fragments — `agent-cost-waterfall.svelte` (per-turn cost bars normalized against the max-cost turn), `agent-conversation.svelte` (rolling conversation history grouped by turn delta, with collapsible system/tool blocks and a `warning` badge whenever a message ends with `[truncated N chars]`), and `agent-reasoning-trace.svelte` (accordion over provider reasoning traces). Each fragment pairs with a pure `.ts` helper unit-tested via `bun:test` (no Svelte DOM harness introduced). To feed the conversation view, `AgentTurnCompletedEvent` now carries a `messages` snapshot built by `src/ai/event-message-snapshot.ts`. Snapshot caps: **4KB per tool result output**, **8KB per message content**, **200 messages per snapshot** (oldest tail dropped, first message + synthetic system marker preserved).

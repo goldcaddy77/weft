@@ -1564,6 +1564,7 @@ describe('createObservabilityInterceptors', () => {
               1,
               0,
               undefined,
+              [],
             ),
           );
           return 'agent-result';
@@ -1630,6 +1631,7 @@ describe('createObservabilityInterceptors', () => {
               1,
               0,
               undefined,
+              [],
             ),
           );
           return 'done';
@@ -1685,6 +1687,7 @@ describe('createObservabilityInterceptors', () => {
               1,
               0,
               undefined,
+              [],
             ),
           );
 
@@ -1720,6 +1723,7 @@ describe('createObservabilityInterceptors', () => {
               1,
               0,
               undefined,
+              [],
             ),
           );
 
@@ -1796,6 +1800,7 @@ describe('createObservabilityInterceptors', () => {
               2,
               0,
               undefined,
+              [],
             ),
           );
           return 'done';

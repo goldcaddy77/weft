@@ -7,12 +7,13 @@
 <script lang="ts">
   import { getContext, untrack } from 'svelte';
 
+  import type { Message, MessageRole } from '../../ai/providers/types.ts';
   import type { ApiClient, WorkflowState, WorkflowEvent } from '../api-client.ts';
   import type { AgentTurnData } from '../fragments/agent-turn.svelte';
   import { WebSocketClient } from '../websocket-client.svelte.ts';
   import { chevronLeft, xCircle, bot } from '../icons.ts';
   import { navigate } from '../router.svelte.ts';
-  import { formatRelativeTime, formatTimestamp } from '../utilities/format-date.ts';
+  import { formatTimestamp } from '../utilities/format-date.ts';
   import { formatDuration } from '../utilities/format-duration.ts';
   import Page from '../components/page.svelte';
   import Card from '../components/card.svelte';
@@ -25,6 +26,9 @@
   import ExecutionDeadline from '../fragments/execution-deadline.svelte';
   import AgentTurn from '../fragments/agent-turn.svelte';
   import AgentBudgetGauge from '../fragments/agent-budget-gauge.svelte';
+  import AgentCostWaterfall from '../fragments/agent-cost-waterfall.svelte';
+  import AgentConversation from '../fragments/agent-conversation.svelte';
+  import AgentReasoningTrace from '../fragments/agent-reasoning-trace.svelte';
 
   let { id }: WorkflowDetailAgentProps = $props();
 
@@ -86,6 +90,35 @@
     return typeof value === 'number' ? value : fallback;
   }
 
+  const VALID_MESSAGE_ROLES: ReadonlySet<string> = new Set<MessageRole>([
+    'system',
+    'user',
+    'assistant',
+    'tool',
+  ]);
+
+  function isMessage(value: unknown): value is Message {
+    if (typeof value !== 'object' || value === null) {
+      return false;
+    }
+    // Narrowed to a non-null object above; this cast only widens to an
+    // indexable type so we can read individual fields safely.
+    const record: Record<string, unknown> = value as Record<string, unknown>;
+    const role = record['role'];
+    const content = record['content'];
+    if (typeof role !== 'string' || !VALID_MESSAGE_ROLES.has(role)) {
+      return false;
+    }
+    if (typeof content !== 'string') {
+      return false;
+    }
+    return true;
+  }
+
+  function isMessageArray(value: unknown): value is Message[] {
+    return Array.isArray(value) && value.every(isMessage);
+  }
+
   function createAgentTurn(
     turnIndex: number,
     data?: WorkflowEvent['data'],
@@ -98,6 +131,8 @@
       cost: data ? readEventNumber(data, 'cost', 0) : 0,
       toolCalls: [],
       response: '',
+      messages: [],
+      reasoningTrace: '',
     };
   }
 
@@ -122,6 +157,14 @@
     turn.inputTokens = readEventNumber(data, 'inputTokens', turn.inputTokens);
     turn.outputTokens = readEventNumber(data, 'outputTokens', turn.outputTokens);
     turn.cost = readEventNumber(data, 'cost', turn.cost);
+    const messagesValue = data['messages'];
+    if (isMessageArray(messagesValue)) {
+      turn.messages = messagesValue;
+    }
+    const reasoningValue = data['reasoningTrace'];
+    if (typeof reasoningValue === 'string') {
+      turn.reasoningTrace = reasoningValue;
+    }
   }
 
   function applyToolCalledEvent(data: WorkflowEvent['data']): void {
@@ -432,6 +475,13 @@
         </Card>
       {/if}
 
+      <!-- Cost Waterfall -->
+      {#if turns.length > 0}
+        <Card title="Cost Waterfall">
+          <AgentCostWaterfall {turns} />
+        </Card>
+      {/if}
+
       <!-- Agent Turns -->
       {#if turns.length > 0}
         <Card title="Agent Turns" count={turns.length}>
@@ -440,6 +490,20 @@
               <AgentTurn {turn} />
             {/each}
           </div>
+        </Card>
+      {/if}
+
+      <!-- Conversation -->
+      {#if turns.length > 0}
+        <Card title="Conversation">
+          <AgentConversation {turns} />
+        </Card>
+      {/if}
+
+      <!-- Reasoning Trace -->
+      {#if turns.length > 0}
+        <Card title="Reasoning Trace">
+          <AgentReasoningTrace {turns} />
         </Card>
       {/if}
 

@@ -11,6 +11,7 @@
 import type { BudgetTracker } from './budget';
 import { BudgetExceededError } from './budget';
 import type { ContextWindowManager } from './context-window';
+import { snapshotConversationForEvent } from './event-message-snapshot';
 import {
   AgentCheckpointSizeWarningEvent,
   AgentContextCompactedEvent,
@@ -967,6 +968,7 @@ function dispatchTurnCompleted(
   toolCallCount: number,
 ): void {
   if (runtime.options.eventTarget && runtime.options.workflowId) {
+    const messagesSnapshot = snapshotConversationForEvent(runtime.state.conversation);
     runtime.options.eventTarget.dispatchEvent(
       new AgentTurnCompletedEvent(
         runtime.options.workflowId,
@@ -982,6 +984,7 @@ function dispatchTurnCompleted(
         toolCallCount,
         turnResult.fallbackAttempts,
         response.reasoningTrace,
+        messagesSnapshot,
       ),
     );
   }
