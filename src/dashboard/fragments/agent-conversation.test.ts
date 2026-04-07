@@ -98,4 +98,40 @@ describe('groupConversationMessages', () => {
     expect(groups[0]?.messages).toEqual([{ role: 'user', content: 'hi' }]);
     expect(groups[1]?.messages).toEqual([]);
   });
+
+  it('falls back to per-turn arrays when the latest snapshot has been windowed (>200 messages)', () => {
+    // Simulate what snapshotConversationForEvent produces when the conversation
+    // exceeds MAX_SNAPSHOT_MESSAGES: [first, marker, ...tail].
+    // In this case index-based slicing from earlier turns is unreliable because
+    // middle messages have been replaced by the synthetic marker.
+    const systemMsg: Message = { role: 'system', content: 'sys' };
+    const marker: Message = {
+      role: 'system',
+      content: '[150 earlier messages truncated]',
+    };
+    const tailMessages: Message[] = Array.from({ length: 48 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: `tail message ${i}`,
+    })) as Message[];
+
+    // Windowed latest snapshot: [system, marker, ...48 tail messages] = 50 items.
+    const windowedSnapshot = [systemMsg, marker, ...tailMessages];
+
+    // Turn 0 snapshot: small, from early in the conversation.
+    const turn0Messages: Message[] = [
+      systemMsg,
+      { role: 'user', content: 'early msg 0' },
+      { role: 'assistant', content: 'early reply 0' },
+    ];
+
+    const groups = groupConversationMessages([
+      makeTurn(0, turn0Messages),
+      makeTurn(1, windowedSnapshot),
+    ]);
+
+    // Should fall back: each group gets its own turn's messages array.
+    expect(groups.length).toBe(2);
+    expect(groups[0]?.messages).toEqual(turn0Messages);
+    expect(groups[1]?.messages).toEqual(windowedSnapshot);
+  });
 });

@@ -8,6 +8,24 @@ export type ConversationGroup = {
 };
 
 /**
+ * Returns true when `snapshotConversationForEvent` has applied the windowing
+ * truncation — i.e. the snapshot has replaced middle messages with a synthetic
+ * "[N earlier messages truncated]" marker at index 1. When this happens the
+ * per-message indices stored on intermediate turns no longer align with the
+ * latest snapshot, so delta slicing is unreliable.
+ */
+function isWindowedSnapshot(snapshot: readonly Message[]): boolean {
+  if (snapshot.length < 2) return false;
+  const second = snapshot[1];
+  return (
+    second !== undefined &&
+    second.role === 'system' &&
+    typeof second.content === 'string' &&
+    second.content.includes('earlier messages truncated')
+  );
+}
+
+/**
  * Group a conversation into per-turn slices.
  *
  * The `messages` field on each `AgentTurnData` is a **cumulative** snapshot —
@@ -16,8 +34,11 @@ export type ConversationGroup = {
  * boundary using message-count deltas so each group contains only the new
  * messages added during that turn (no duplicated prefixes).
  *
- * Falls back to rendering each turn's messages directly if the final turn
- * has an empty snapshot (legacy events without the `messages` field).
+ * Falls back to rendering each turn's messages directly if:
+ * - The final turn has an empty snapshot (legacy events without the `messages` field).
+ * - The final snapshot has been windowed by `snapshotConversationForEvent`
+ *   (conversation exceeded MAX_SNAPSHOT_MESSAGES). In that case the synthetic
+ *   truncation marker at index 1 invalidates index-based slicing for earlier turns.
  */
 export function groupConversationMessages(turns: readonly AgentTurnData[]): ConversationGroup[] {
   if (turns.length === 0) {
@@ -27,8 +48,9 @@ export function groupConversationMessages(turns: readonly AgentTurnData[]): Conv
   const lastTurn = turns[turns.length - 1];
   const latestSnapshot = lastTurn?.messages ?? [];
 
-  if (latestSnapshot.length === 0) {
-    // Legacy event with no snapshot — fall back to whatever each turn carries.
+  if (latestSnapshot.length === 0 || isWindowedSnapshot(latestSnapshot)) {
+    // Legacy event with no snapshot, or windowed snapshot that breaks index
+    // alignment — fall back to whatever each turn carries directly.
     return turns.map((turn) => ({
       turnIndex: turn.turnIndex,
       messages: [...turn.messages],
