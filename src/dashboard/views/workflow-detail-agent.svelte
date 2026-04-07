@@ -332,7 +332,7 @@
 
       // Accumulate streaming tokens
       if (event.type === 'agent:token') {
-        streamingText += (event.data['token'] as string) ?? '';
+        streamingText += readEventString(event.data, 'token', '');
       }
 
       // Clear streaming text on turn completion

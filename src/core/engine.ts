@@ -1109,6 +1109,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`No workflow registered with name "${type}"`);
     }
 
+    if (options?.id !== undefined && options.id.length === 0) {
+      throw new Error('options.id must not be an empty string');
+    }
     const callerProvidedId = options?.id !== undefined;
     const workflowId = options?.id ?? crypto.randomUUID();
 

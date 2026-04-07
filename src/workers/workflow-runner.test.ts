@@ -301,6 +301,47 @@ describe('handleResumeMessage', () => {
     expect((result as { error: string }).error).toContain('wf-nonexistent');
   });
 
+  it('throws the operation error into the generator when operationResult is failed', async () => {
+    const context = createWorkflowRunnerContext();
+    let caughtError: string | undefined;
+
+    const operationRequest: OperationRequest = {
+      id: 'op-fail',
+      workflowId: 'wf-op-fail',
+      kind: 'activity',
+      queue: 'default',
+      attempt: 1,
+      retryPolicy: { maxAttempts: 1, initialBackoff: 0, backoffMultiplier: 1, maxBackoff: 0 },
+      scheduledAt: Date.now(),
+    };
+
+    async function* failureHandlingWorkflow() {
+      try {
+        yield operationRequest;
+      } catch (error) {
+        caughtError = (error as Error).message;
+      }
+      return 'caught';
+    }
+
+    // Run to first yield
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-op-fail', workflowType: 'fail-test', input: null },
+      () => failureHandlingWorkflow,
+    );
+
+    // Resume with a failed operation outcome
+    const result = await handleResumeMessage(context, {
+      workflowId: 'wf-op-fail',
+      result: null,
+      operationResult: { status: 'failed', error: 'activity timed out' },
+    });
+
+    expect(result.type).toBe('completed');
+    expect(caughtError).toBe('activity timed out');
+  });
+
   it('returns the next checkpoint when the generator yields again', async () => {
     const context = createWorkflowRunnerContext();
 

@@ -56,7 +56,7 @@
       </button>
       {#if toolCallsExpanded}
         <div class="agent-turn-tool-calls-list">
-          {#each turn.toolCalls as toolCall, index}
+          {#each turn.toolCalls as toolCall, index (index)}
             <div class="agent-turn-tool-call">
               <div class="agent-turn-tool-call-name font-mono">{toolCall.name}</div>
               <JsonViewer data={toolCall.input} label="Input" collapsed />

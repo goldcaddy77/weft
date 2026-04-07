@@ -48,6 +48,21 @@ describe('snapshotConversationForEvent', () => {
     expect(truncatedOutput).toContain('[truncated 200 chars]');
   });
 
+  it('truncates both content and toolResults in the same message', () => {
+    const conversation: Message[] = [
+      {
+        role: 'tool',
+        content: 'x'.repeat(MAX_MESSAGE_CHARS + 100),
+        toolResults: [{ toolCallId: 'tc-1', output: 'y'.repeat(MAX_TOOL_RESULT_CHARS + 50) }],
+      },
+    ];
+    const result = snapshotConversationForEvent(conversation);
+    expect(result[0]?.content.length).toBe(MAX_MESSAGE_CHARS);
+    expect(result[0]?.content).toContain('[truncated 100 chars]');
+    expect(result[0]?.toolResults?.[0]?.output.length).toBe(MAX_TOOL_RESULT_CHARS);
+    expect(result[0]?.toolResults?.[0]?.output).toContain('[truncated 50 chars]');
+  });
+
   it('caps long conversations and preserves the first message', () => {
     const conversation: Message[] = [{ role: 'system', content: 'system prompt' }];
     for (let index = 0; index < MAX_SNAPSHOT_MESSAGES + 10; index += 1) {

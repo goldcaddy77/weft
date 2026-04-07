@@ -579,22 +579,24 @@ describe('WorkerExecutionStrategy', () => {
   // -------------------------------------------------------------------------
 
   describe('disposal', () => {
-    it('disposes the pool on synchronous dispose', () => {
+    it('calls pool dispose on synchronous dispose', () => {
       setup();
+      const poolDispose = mock(() => {});
+      mockPool[Symbol.dispose] = poolDispose;
 
       strategy[Symbol.dispose]();
 
-      // Should be callable without error
-      expect(true).toBe(true);
+      expect(poolDispose).toHaveBeenCalledTimes(1);
     });
 
-    it('disposes the pool on async dispose', async () => {
+    it('calls pool asyncDispose on async dispose', async () => {
       setup();
+      const poolAsyncDispose = mock(async () => {});
+      mockPool[Symbol.asyncDispose] = poolAsyncDispose;
 
       await strategy[Symbol.asyncDispose]();
 
-      // Should complete without error
-      expect(true).toBe(true);
+      expect(poolAsyncDispose).toHaveBeenCalledTimes(1);
     });
   });
 });
