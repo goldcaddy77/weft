@@ -116,6 +116,9 @@ export class WorkerRegistry {
     this.#workers.delete(workerId);
     this.#fairShareCounts.delete(workerId);
 
+    // Deleting from a Map during `for..of` iteration over that same Map is
+    // safe per ECMAScript §23.1.3.5: already-visited entries are not
+    // revisited, and entries deleted before being visited are skipped.
     for (const [operationId, task] of this.#inFlightTasks) {
       if (task.workerId === workerId) {
         this.#inFlightTasks.delete(operationId);

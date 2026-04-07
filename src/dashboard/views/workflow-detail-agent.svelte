@@ -54,9 +54,14 @@
   let fetchGeneration = 0;
 
   // Durable agent aggregates — updated incrementally in `applyEvent`, NEVER
-  // derived from the evicting `events` buffer. `turnMap` is the authoritative
-  // store; `turns` is a sorted snapshot that mirrors it for rendering.
-  let turnMap: Map<number, AgentTurnData> = $state(new Map());
+  // derived from the evicting `events` buffer. `turnMap` is a plain (non-
+  // reactive) index: nothing reads it in the template. `turns` is the
+  // reactive sorted snapshot that the template iterates; `refreshTurnsSnapshot`
+  // rebuilds it from `turnMap` after every mutation. Wrapping a native `Map`
+  // in `$state(...)` does not make mutations reactive anyway — the Svelte
+  // proxy only deeply tracks plain objects/arrays — so the plain `let` is
+  // both lighter and more honest about the data flow.
+  let turnMap: Map<number, AgentTurnData> = new Map();
   let turns: AgentTurnData[] = $state([]);
   let tokensUsed = $state(0);
   let costUsed = $state(0);
@@ -165,11 +170,14 @@
         break;
       case 'agent:budget:warning':
       case 'agent:budget:exceeded': {
-        const budget = event.data['tokenBudget'] as number | undefined;
-        if (budget !== undefined) tokenBudget = budget;
-        if (event.type === 'agent:budget:exceeded') {
-          const max = event.data['maxCost'] as number | undefined;
-          if (max !== undefined) maxCost = max;
+        // Use `readEventNumber` so a malformed event with e.g.
+        // `tokenBudget: "1000"` cannot lie its way into `$state` and
+        // break the budget gauge.
+        if (typeof event.data['tokenBudget'] === 'number') {
+          tokenBudget = readEventNumber(event.data, 'tokenBudget', tokenBudget ?? 0);
+        }
+        if (event.type === 'agent:budget:exceeded' && typeof event.data['maxCost'] === 'number') {
+          maxCost = readEventNumber(event.data, 'maxCost', maxCost ?? 0);
         }
         break;
       }
@@ -224,8 +232,9 @@
       const fetched = Array.isArray(eventsResult) ? eventsResult : [];
       // Replay the full fetched history into the durable aggregates (so
       // turnMap, budgets, and running totals reflect every event even if
-      // the visible timeline buffer is capped).
-      resetAgentAggregates();
+      // the visible timeline buffer is capped). The `$effect` already
+      // called `resetAgentAggregates()` before starting the fetch, so
+      // we ingest directly without a second reset here.
       for (const event of fetched) {
         ingestAgentEvent(event);
       }
