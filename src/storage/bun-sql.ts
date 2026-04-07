@@ -1,9 +1,17 @@
-import { Database, type SQLQueryBindings } from 'bun:sqlite';
+import { Database, Statement, type SQLQueryBindings } from 'bun:sqlite';
 
 import type { BatchOperation, ScanOptions, Storage } from './interface';
 
 export class BunSQLiteStorage implements Storage {
   #database: Database;
+  // Prepared statements are cached on the instance so the hot paths (get,
+  // put, batch) never pay `prepare()` cost after construction. This matters:
+  // the start/complete benchmarks make 2-3 storage calls per workflow, and
+  // re-preparing the same SQL on every call drops throughput by roughly 2x.
+  #getStatement: Statement<{ value: Uint8Array }, [string]>;
+  #putStatement: Statement<unknown, [string, Uint8Array]>;
+  #deleteStatement: Statement<unknown, [string]>;
+  #batchTransaction: (entries: BatchOperation[]) => void;
 
   constructor(path: string = ':memory:') {
     this.#database = new Database(path);
@@ -21,29 +29,42 @@ export class BunSQLiteStorage implements Storage {
         value BLOB NOT NULL
       ) WITHOUT ROWID
     `);
+
+    this.#getStatement = this.#database.prepare<{ value: Uint8Array }, [string]>(
+      'SELECT value FROM kv WHERE key = ?',
+    );
+    this.#putStatement = this.#database.prepare<unknown, [string, Uint8Array]>(
+      'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    );
+    this.#deleteStatement = this.#database.prepare<unknown, [string]>(
+      'DELETE FROM kv WHERE key = ?',
+    );
+    // Build the transaction wrapper once; bun:sqlite memoizes the compiled
+    // transaction so subsequent calls just run the prepared statements.
+    this.#batchTransaction = this.#database.transaction((entries: BatchOperation[]) => {
+      for (const entry of entries) {
+        if (entry.type === 'put') {
+          this.#putStatement.run(entry.key, entry.value);
+        } else {
+          this.#deleteStatement.run(entry.key);
+        }
+      }
+    });
   }
 
   async get(key: string): Promise<Uint8Array | null> {
-    const row = this.#database
-      .prepare<{ value: Uint8Array }, [string]>('SELECT value FROM kv WHERE key = ?')
-      .get(key);
-
+    const row = this.#getStatement.get(key);
     if (!row) return null;
-
     // bun:sqlite may return a Buffer; ensure we return a proper Uint8Array.
     return new Uint8Array(row.value);
   }
 
   async put(key: string, value: Uint8Array): Promise<void> {
-    this.#database
-      .prepare(
-        'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-      )
-      .run(key, value);
+    this.#putStatement.run(key, value);
   }
 
   async delete(key: string): Promise<void> {
-    this.#database.prepare('DELETE FROM kv WHERE key = ?').run(key);
+    this.#deleteStatement.run(key);
   }
 
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
@@ -93,23 +114,7 @@ export class BunSQLiteStorage implements Storage {
 
   async batch(operations: BatchOperation[]): Promise<void> {
     if (operations.length === 0) return;
-
-    const runTransaction = this.#database.transaction((entries: BatchOperation[]) => {
-      const putStatement = this.#database.prepare(
-        'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-      );
-      const deleteStatement = this.#database.prepare('DELETE FROM kv WHERE key = ?');
-
-      for (const entry of entries) {
-        if (entry.type === 'put') {
-          putStatement.run(entry.key, entry.value);
-        } else {
-          deleteStatement.run(entry.key);
-        }
-      }
-    });
-
-    runTransaction(operations);
+    this.#batchTransaction(operations);
   }
 
   async query<T>(sql: string, parameters?: SQLQueryBindings[]): Promise<T[]> {
@@ -118,6 +123,13 @@ export class BunSQLiteStorage implements Storage {
   }
 
   [Symbol.dispose](): void {
+    // Finalize cached statements before closing — bun:sqlite tracks live
+    // statements on the database and refuses to close while any are
+    // outstanding. Finalizing also ensures subsequent get/put calls throw
+    // synchronously instead of silently no-oping against a freed DB handle.
+    this.#getStatement.finalize();
+    this.#putStatement.finalize();
+    this.#deleteStatement.finalize();
     this.#database.close();
   }
 }

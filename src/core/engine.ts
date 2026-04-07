@@ -1109,6 +1109,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`No workflow registered with name "${type}"`);
     }
 
+    const callerProvidedId = options?.id !== undefined;
     const workflowId = options?.id ?? crypto.randomUUID();
 
     // Capture and clear pending parent headers immediately, before any async
@@ -1125,9 +1126,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     let startSucceeded = false;
 
     try {
-      const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
-      if (existingBytes !== null) {
-        throw new Error(`Workflow with id "${workflowId}" already exists`);
+      // Only hit storage to dedup when the caller supplied the id. A
+      // freshly-generated v4 UUID is (for all practical purposes) unique, so
+      // the extra round trip is wasted work on the hot start path. This is
+      // the dominant optimization behind the workflow-start benchmark — the
+      // get → batch sequence was two storage calls per start, now one.
+      if (callerProvidedId) {
+        const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
+        if (existingBytes !== null) {
+          throw new Error(`Workflow with id "${workflowId}" already exists`);
+        }
       }
 
       // Resolve the tenant context before the first checkpoint is written so
@@ -1491,7 +1499,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   ): void {
     const nestingDepth = this.#pendingNestingDepth ?? 0;
     this.#pendingNestingDepth = undefined;
-    this.#workflowNestingDepths.set(workflowId, nestingDepth);
+    // Skip the map entry for the common non-nested case — readers fall back
+    // to 0. Saves per-workflow V8 Map overhead (~80 bytes) on the hot path.
+    if (nestingDepth !== 0) {
+      this.#workflowNestingDepths.set(workflowId, nestingDepth);
+    }
     this.#strategy.startWorkflow({
       workflowId,
       workflowType,
@@ -3927,10 +3939,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const now = this.#options.getNow();
     const duration = now - state.createdAt;
 
-    await this.#updateWorkflowState(workflowId, {
-      status: 'completed',
+    // Avoid re-reading the workflow state — we already have it from the
+    // load above. Mutating in place + a single put cuts one storage round
+    // trip per completion, which is the dominant cost in the activity-
+    // completions throughput benchmark.
+    const updatedState = {
+      ...state,
+      status: 'completed' as const,
       result,
-    });
+      updatedAt: now,
+    };
+    await this.#storage.put(KEYS.workflow(workflowId), encode(updatedState));
 
     // Clean up attribute indexes and deadline timer
     await this.#cleanupAttributeIndex(workflowId);

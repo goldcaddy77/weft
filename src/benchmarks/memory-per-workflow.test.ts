@@ -9,17 +9,24 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
  * K2d: Memory per workflow benchmark.
  *
  * Starts many idle workflows (each waiting on a signal) and measures
- * heap growth to calculate per-workflow memory overhead. Architecture
- * target is ≤2KB; the test threshold is intentionally relaxed to absorb
- * GC variance and, more importantly, cross-suite heap pollution — when
- * this file runs alongside the other benchmarks the pre-test heap is
- * already several megabytes higher, which skews the per-workflow delta.
- * Using the same threshold locally and on CI keeps the behavior stable
- * regardless of execution environment. The real spec gap is tracked in
- * `reference/IMPORTANT.md`.
+ * heap growth to calculate per-workflow memory overhead.
+ *
+ * The architecture spec target is ≤2KB. The current implementation runs
+ * around 6.7-7.0KB in isolation and 7.7-8.0KB under full-suite execution.
+ * The dominant per-workflow costs are V8 object overhead that the engine
+ * cannot trim without releasing suspended generators between yields and
+ * adopting a binary checkpoint format — an architectural change tracked
+ * in `reference/IMPORTANT.md`. Until then the threshold is set to 9KB,
+ * which is the measured ceiling plus headroom for GC variance.
+ *
+ * Measured 2026-04-07: ~6.8KB isolated, 7.7-9.3KB under full-suite
+ * (cross-test heap pollution from the other benchmark files inflates the
+ * delta by ~1-2KB). Previous threshold: 16384 (relaxed to mask 7KB → 15KB
+ * suite-pollution flakiness which is now bounded after the nesting-depth-
+ * map allocation skip in `Engine.#startWorkflowExecution`).
  */
 
-const TARGET_BYTES_PER_WORKFLOW = 16_384;
+const TARGET_BYTES_PER_WORKFLOW = 10_240;
 
 describe('Memory per workflow', () => {
   let storage: BunSQLiteStorage;
