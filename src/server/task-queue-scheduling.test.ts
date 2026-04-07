@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import type { PendingTask } from './task-queue.ts';
-import { TaskQueue } from './task-queue.ts';
+import { resetLifoStarvationWarningForTesting, TaskQueue } from './task-queue.ts';
 
 function makeTask(id: string, priority?: number): PendingTask {
   const task: PendingTask = {
@@ -92,5 +92,65 @@ describe('TaskQueue scheduling policies', () => {
     expect(new TaskQueue().schedulingPolicy).toBe('priority');
     expect(new TaskQueue({ schedulingPolicy: 'fifo' }).schedulingPolicy).toBe('fifo');
     expect(new TaskQueue({ schedulingPolicy: 'lifo' }).schedulingPolicy).toBe('lifo');
+  });
+
+  describe('LIFO + finite TTL starvation warning', () => {
+    let warnSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+      resetLifoStarvationWarningForTesting();
+      warnSpy = spyOn(console, 'warn').mockImplementation(mock(() => {}));
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+      resetLifoStarvationWarningForTesting();
+    });
+
+    it('warns once when LIFO is paired with the default finite TTL', () => {
+      const lifoQueue = new TaskQueue({ schedulingPolicy: 'lifo' });
+      expect(lifoQueue.schedulingPolicy).toBe('lifo');
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const message = String(warnSpy.mock.calls[0]?.[0] ?? '');
+      expect(message).toContain("schedulingPolicy='lifo'");
+      expect(message).toContain('pendingTaskTimeToLive');
+    });
+
+    it('warns at most once even when many LIFO queues are constructed', () => {
+      const queues = [
+        new TaskQueue({ schedulingPolicy: 'lifo' }),
+        new TaskQueue({ schedulingPolicy: 'lifo', pendingTaskTimeToLive: 1000 }),
+        new TaskQueue({ schedulingPolicy: 'lifo' }),
+      ];
+      expect(queues).toHaveLength(3);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not warn when LIFO is paired with Infinity TTL', () => {
+      const queue = new TaskQueue({ schedulingPolicy: 'lifo', pendingTaskTimeToLive: Infinity });
+      expect(queue.schedulingPolicy).toBe('lifo');
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when LIFO expiration is disabled with 0', () => {
+      const queue = new TaskQueue({ schedulingPolicy: 'lifo', pendingTaskTimeToLive: 0 });
+      expect(queue.schedulingPolicy).toBe('lifo');
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not warn for FIFO or priority policies with finite TTL', () => {
+      const queues = [
+        new TaskQueue({ schedulingPolicy: 'fifo' }),
+        new TaskQueue({ schedulingPolicy: 'priority' }),
+        new TaskQueue(),
+      ];
+      expect(queues).toHaveLength(3);
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
   });
 });

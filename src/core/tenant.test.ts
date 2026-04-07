@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
+import { unlinkSync } from 'node:fs';
 
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 import type { Context } from './context.ts';
@@ -31,6 +32,24 @@ describe('tenantFromInputField', () => {
     const resolver = tenantFromInputField('tenantId');
     expect(resolver.resolve('wf-1', { tenantId: '' }, 'my-workflow')).toBeUndefined();
   });
+
+  it('coerces numeric ids to strings (auto-increment DB keys)', () => {
+    const resolver = tenantFromInputField('tenantId');
+    expect(resolver.resolve('wf-1', { tenantId: 12345 }, 'my-workflow')).toEqual({ id: '12345' });
+    expect(resolver.resolve('wf-1', { tenantId: 0 }, 'my-workflow')).toEqual({ id: '0' });
+  });
+
+  it('rejects non-finite numeric ids', () => {
+    const resolver = tenantFromInputField('tenantId');
+    expect(resolver.resolve('wf-1', { tenantId: Number.NaN }, 'my-workflow')).toBeUndefined();
+    expect(resolver.resolve('wf-1', { tenantId: Infinity }, 'my-workflow')).toBeUndefined();
+  });
+
+  it('returns undefined for unsupported value types (boolean, object)', () => {
+    const resolver = tenantFromInputField('tenantId');
+    expect(resolver.resolve('wf-1', { tenantId: true }, 'my-workflow')).toBeUndefined();
+    expect(resolver.resolve('wf-1', { tenantId: { nested: 'x' } }, 'my-workflow')).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -38,6 +57,24 @@ describe('tenantFromInputField', () => {
 // ---------------------------------------------------------------------------
 
 describe('Engine with tenantResolver', () => {
+  // Track on-disk SQLite files created by tests below so we can delete them
+  // even when an assertion failure interrupts the body of a test.
+  const temporarySqliteFiles: string[] = [];
+
+  afterEach(() => {
+    while (temporarySqliteFiles.length > 0) {
+      const path = temporarySqliteFiles.pop()!;
+      for (const suffix of ['', '-wal', '-shm']) {
+        try {
+          unlinkSync(`${path}${suffix}`);
+        } catch {
+          // File may not exist if the test never reached the create step, or
+          // the WAL companions weren't produced. Best-effort cleanup.
+        }
+      }
+    }
+  });
+
   it('populates ctx.tenant for new workflows', async () => {
     const captured: Array<TenantContext | undefined> = [];
     const engine = new Engine({
@@ -142,6 +179,7 @@ describe('Engine with tenantResolver', () => {
   it('ctx.tenant survives recovery across engine restart', async () => {
     // Use a shared on-disk path so a second engine can reopen the same storage.
     const path = `/tmp/weft-tenant-recovery-${crypto.randomUUID()}.sqlite`;
+    temporarySqliteFiles.push(path);
     const workflowId = `wf-${crypto.randomUUID()}`;
 
     const resolver: TenantResolver = {

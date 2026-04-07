@@ -34,13 +34,39 @@
   // Data state
   // ---------------------------------------------------------------------------
 
+  // The raw `events` buffer feeds the Timeline display and is capped so a
+  // long-running agent emitting thousands of token events cannot grow memory
+  // unbounded. Once the cap is exceeded the oldest events are dropped from
+  // the timeline only — the derived aggregates (`turns`, `tokensUsed`,
+  // `costUsed`, `tokenBudget`, `maxCost`) are NOT derived from this buffer.
+  // They are held as durable `$state` and updated incrementally by
+  // `applyEvent`, so eviction cannot silently corrupt running totals or the
+  // budget gauge.
+  const MAX_EVENT_BUFFER = 2000;
+
   let workflow: WorkflowState | null = $state(null);
   let events: WorkflowEvent[] = $state([]);
+  let totalEventsReceived = $state(0);
   let loading = $state(true);
   let error: string | null = $state(null);
   let cancelling = $state(false);
   let streamingText = $state('');
   let fetchGeneration = 0;
+
+  // Durable agent aggregates — updated incrementally in `applyEvent`, NEVER
+  // derived from the evicting `events` buffer. `turnMap` is a plain (non-
+  // reactive) index: nothing reads it in the template. `turns` is the
+  // reactive sorted snapshot that the template iterates; `refreshTurnsSnapshot`
+  // rebuilds it from `turnMap` after every mutation. Wrapping a native `Map`
+  // in `$state(...)` does not make mutations reactive anyway — the Svelte
+  // proxy only deeply tracks plain objects/arrays — so the plain `let` is
+  // both lighter and more honest about the data flow.
+  let turnMap: Map<number, AgentTurnData> = new Map();
+  let turns: AgentTurnData[] = $state([]);
+  let tokensUsed = $state(0);
+  let costUsed = $state(0);
+  let tokenBudget: number | undefined = $state(undefined);
+  let maxCost: number | undefined = $state(undefined);
 
   function readEventString(
     data: WorkflowEvent['data'],
@@ -76,7 +102,6 @@
   }
 
   function getOrCreateTurn(
-    turnMap: Map<number, AgentTurnData>,
     turnIndex: number,
     data?: WorkflowEvent['data'],
   ): AgentTurnData {
@@ -90,24 +115,18 @@
     return turn;
   }
 
-  function applyCompletedTurnEvent(
-    turnMap: Map<number, AgentTurnData>,
-    data: WorkflowEvent['data'],
-  ): void {
+  function applyCompletedTurnEvent(data: WorkflowEvent['data']): void {
     const turnIndex = readEventNumber(data, 'turnIndex', 0);
-    const turn = getOrCreateTurn(turnMap, turnIndex, data);
+    const turn = getOrCreateTurn(turnIndex, data);
     turn.model = readEventString(data, 'model', turn.model);
     turn.inputTokens = readEventNumber(data, 'inputTokens', turn.inputTokens);
     turn.outputTokens = readEventNumber(data, 'outputTokens', turn.outputTokens);
     turn.cost = readEventNumber(data, 'cost', turn.cost);
   }
 
-  function applyToolCalledEvent(
-    turnMap: Map<number, AgentTurnData>,
-    data: WorkflowEvent['data'],
-  ): void {
+  function applyToolCalledEvent(data: WorkflowEvent['data']): void {
     const turnIndex = readEventNumber(data, 'turnIndex', 0);
-    const turn = getOrCreateTurn(turnMap, turnIndex);
+    const turn = getOrCreateTurn(turnIndex);
     turn.toolCalls.push({
       name: readEventString(data, 'toolName', 'unknown'),
       input: data['toolInput'] ?? null,
@@ -115,10 +134,7 @@
     });
   }
 
-  function applyToolReturnedEvent(
-    turnMap: Map<number, AgentTurnData>,
-    data: WorkflowEvent['data'],
-  ): void {
+  function applyToolReturnedEvent(data: WorkflowEvent['data']): void {
     const turnIndex = readEventNumber(data, 'turnIndex', 0);
     const toolName = readEventString(data, 'toolName', '');
     const turn = turnMap.get(turnIndex);
@@ -134,54 +150,63 @@
     }
   }
 
-  function buildAgentTurns(workflowEvents: WorkflowEvent[]): AgentTurnData[] {
-    const turnMap = new Map<number, AgentTurnData>();
-
-    for (const event of workflowEvents) {
-      switch (event.type) {
-        case 'agent:turn:completed':
-          applyCompletedTurnEvent(turnMap, event.data);
-          break;
-        case 'agent:tool:called':
-          applyToolCalledEvent(turnMap, event.data);
-          break;
-        case 'agent:tool:returned':
-          applyToolReturnedEvent(turnMap, event.data);
-          break;
+  // Incremental aggregate update. Called once per event (both on WS arrival
+  // and on initial fetch replay), updating the durable `turnMap`/`turns`/
+  // budget/total state in place. This is what makes eviction of the raw
+  // `events` buffer safe — the aggregates never rebuild from that buffer.
+  function ingestAgentEvent(event: WorkflowEvent): void {
+    switch (event.type) {
+      case 'agent:turn:completed':
+        applyCompletedTurnEvent(event.data);
+        refreshTurnsSnapshot();
+        break;
+      case 'agent:tool:called':
+        applyToolCalledEvent(event.data);
+        refreshTurnsSnapshot();
+        break;
+      case 'agent:tool:returned':
+        applyToolReturnedEvent(event.data);
+        refreshTurnsSnapshot();
+        break;
+      case 'agent:budget:warning':
+      case 'agent:budget:exceeded': {
+        // Use `readEventNumber` so a malformed event with e.g.
+        // `tokenBudget: "1000"` cannot lie its way into `$state` and
+        // break the budget gauge.
+        if (typeof event.data['tokenBudget'] === 'number') {
+          tokenBudget = readEventNumber(event.data, 'tokenBudget', tokenBudget ?? 0);
+        }
+        if (event.type === 'agent:budget:exceeded' && typeof event.data['maxCost'] === 'number') {
+          maxCost = readEventNumber(event.data, 'maxCost', maxCost ?? 0);
+        }
+        break;
       }
     }
-
-    return Array.from(turnMap.values()).toSorted((a, b) => a.turnIndex - b.turnIndex);
   }
 
-  // ---------------------------------------------------------------------------
-  // Agent-specific derived state
-  // ---------------------------------------------------------------------------
-
-  const turns: AgentTurnData[] = $derived.by(() => buildAgentTurns(events));
-
-  const tokensUsed = $derived(turns.reduce((sum, turn) => sum + turn.inputTokens + turn.outputTokens, 0));
-  const costUsed = $derived(turns.reduce((sum, turn) => sum + turn.cost, 0));
-
-  const tokenBudget = $derived.by(() => {
-    for (const event of events) {
-      if (event.type === 'agent:budget:exceeded' || event.type === 'agent:budget:warning') {
-        const budget = event.data['tokenBudget'] as number | undefined;
-        if (budget !== undefined) return budget;
-      }
+  function refreshTurnsSnapshot(): void {
+    // Rebuild the sorted snapshot plus running totals from the authoritative
+    // turnMap. Cost here is O(k) in number of turns, not O(n) in events.
+    const sorted = Array.from(turnMap.values()).toSorted((a, b) => a.turnIndex - b.turnIndex);
+    turns = sorted;
+    let nextTokens = 0;
+    let nextCost = 0;
+    for (const turn of sorted) {
+      nextTokens += turn.inputTokens + turn.outputTokens;
+      nextCost += turn.cost;
     }
-    return undefined;
-  });
+    tokensUsed = nextTokens;
+    costUsed = nextCost;
+  }
 
-  const maxCost = $derived.by(() => {
-    for (const event of events) {
-      if (event.type === 'agent:budget:exceeded') {
-        const max = event.data['maxCost'] as number | undefined;
-        if (max !== undefined) return max;
-      }
-    }
-    return undefined;
-  });
+  function resetAgentAggregates(): void {
+    turnMap = new Map();
+    turns = [];
+    tokensUsed = 0;
+    costUsed = 0;
+    tokenBudget = undefined;
+    maxCost = undefined;
+  }
 
   const pageTitle = $derived(workflow?.type ?? 'Agent Workflow');
   const isRunning = $derived(workflow?.status === 'running' || workflow?.status === 'pending');
@@ -204,7 +229,22 @@
       if (generation !== fetchGeneration) return;
 
       workflow = workflowResult;
-      events = Array.isArray(eventsResult) ? eventsResult : [];
+      const fetched = Array.isArray(eventsResult) ? eventsResult : [];
+      // Replay the full fetched history into the durable aggregates (so
+      // turnMap, budgets, and running totals reflect every event even if
+      // the visible timeline buffer is capped). The `$effect` already
+      // called `resetAgentAggregates()` before starting the fetch, so
+      // we ingest directly without a second reset here.
+      for (const event of fetched) {
+        ingestAgentEvent(event);
+      }
+      totalEventsReceived = fetched.length;
+      // Timeline buffer itself is capped — older events are dropped from
+      // the visible list only, not from the aggregates above.
+      events =
+        fetched.length > MAX_EVENT_BUFFER
+          ? fetched.slice(fetched.length - MAX_EVENT_BUFFER)
+          : fetched;
       error = null;
     } catch (fetchError) {
       if (generation !== fetchGeneration) return;
@@ -225,6 +265,8 @@
   $effect(() => {
     loading = true;
     streamingText = '';
+    totalEventsReceived = 0;
+    resetAgentAggregates();
     const generation = ++fetchGeneration;
 
     // Buffer WS events that arrive while the initial fetch is in-flight so they
@@ -233,7 +275,17 @@
     const pendingWebSocketEvents: WorkflowEvent[] = [];
 
     function applyEvent(event: WorkflowEvent): void {
-      events = [...events, event];
+      // Durable aggregates first — these never evict.
+      ingestAgentEvent(event);
+      totalEventsReceived += 1;
+
+      // Then append to the timeline buffer, dropping the oldest entry if
+      // the cap is exceeded so the visible timeline stays bounded.
+      if (events.length >= MAX_EVENT_BUFFER) {
+        events = [...events.slice(events.length - MAX_EVENT_BUFFER + 1), event];
+      } else {
+        events = [...events, event];
+      }
 
       // Accumulate streaming tokens
       if (event.type === 'agent:token') {
@@ -409,7 +461,13 @@
       </div>
 
       <!-- Timeline -->
-      <Card title="Timeline" count={events.length}>
+      <Card title="Timeline" count={totalEventsReceived}>
+        {#if totalEventsReceived > events.length}
+          <p class="timeline-truncated-notice">
+            Showing the most recent {events.length} of {totalEventsReceived} events. Earlier events were
+            dropped from the view; aggregates and budgets above remain accurate.
+          </p>
+        {/if}
         <EventTimeline {events} />
       </Card>
     </div>
@@ -469,6 +527,15 @@
     .workflow-detail-agent-data-row {
       grid-template-columns: 1fr 1fr;
     }
+  }
+
+  .timeline-truncated-notice {
+    margin: 0 0 var(--space-3, 0.75rem);
+    padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+    background: var(--surface-muted, rgba(0, 0, 0, 0.04));
+    border-radius: var(--radius-sm, 0.25rem);
+    font-size: var(--text-xs, 0.75rem);
+    color: var(--text-muted, #6b7280);
   }
 
   .streaming-output {

@@ -102,6 +102,31 @@ describe('WorkerRegistry routing policies', () => {
       expect(registry.findWorker('t', { queue: 'a' })?.id).toBe('a-0');
     });
 
+    it('keeps independent cursors per (queue, activity) pair', () => {
+      // Two activities sharing one queue: A is handled by 3 workers, B by 1.
+      // Interleaving requests for A and B must not let B's request advance
+      // A's cursor (or vice versa) — otherwise A-only requests would skip
+      // workers because the previous request for B nudged the cursor past
+      // an A-only worker.
+      const registry = new WorkerRegistry({ policy: 'round-robin' });
+      registry.register({ id: 'multi-0', queue: 'shared', activities: ['a', 'b'], concurrency: 5 });
+      registry.register({ id: 'a-only-1', queue: 'shared', activities: ['a'], concurrency: 5 });
+      registry.register({ id: 'a-only-2', queue: 'shared', activities: ['a'], concurrency: 5 });
+
+      // Activity A rotates over all three eligible workers.
+      expect(registry.findWorker('a', { queue: 'shared' })?.id).toBe('multi-0');
+
+      // Interleave a B request — only one worker is eligible for B.
+      expect(registry.findWorker('b', { queue: 'shared' })?.id).toBe('multi-0');
+
+      // The A cursor must continue from where it left off, ignoring the B
+      // request entirely.
+      expect(registry.findWorker('a', { queue: 'shared' })?.id).toBe('a-only-1');
+      expect(registry.findWorker('b', { queue: 'shared' })?.id).toBe('multi-0');
+      expect(registry.findWorker('a', { queue: 'shared' })?.id).toBe('a-only-2');
+      expect(registry.findWorker('a', { queue: 'shared' })?.id).toBe('multi-0');
+    });
+
     it('respects sticky over round-robin', () => {
       const { registry, workerIds } = makeRegistryWithWorkers(3, 'sendEmail', {
         policy: 'round-robin',

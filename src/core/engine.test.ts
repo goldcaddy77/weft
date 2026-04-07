@@ -922,6 +922,77 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('list with attribute filter loads matched workflows in parallel and preserves filter semantics', async () => {
+    const engine = new Engine();
+    engine.register('attr-listable', {
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('block');
+        return 'ok';
+      },
+      version: '1',
+      searchAttributes: { customerId: { type: 'string' } },
+    });
+    engine.register('other-type', {
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('block');
+        return 'ok';
+      },
+      version: '1',
+      searchAttributes: { customerId: { type: 'string' } },
+    });
+
+    // Three matches for customer "alpha", one for "beta", and one of a
+    // different type that should be filtered out by `type`.
+    await engine.start('attr-listable', null, {
+      id: 'alpha-1',
+      searchAttributes: { customerId: 'alpha' },
+    });
+    await engine.start('attr-listable', null, {
+      id: 'alpha-2',
+      searchAttributes: { customerId: 'alpha' },
+    });
+    await engine.start('attr-listable', null, {
+      id: 'alpha-3',
+      searchAttributes: { customerId: 'alpha' },
+    });
+    await engine.start('attr-listable', null, {
+      id: 'beta-1',
+      searchAttributes: { customerId: 'beta' },
+    });
+    await engine.start('other-type', null, {
+      id: 'alpha-other',
+      searchAttributes: { customerId: 'alpha' },
+    });
+
+    // Spy on storage.get to verify the fast path issued reads in parallel
+    // (i.e. as a single batch) instead of awaiting each one serially.
+    const storage = engine.storage;
+    const getSpy = spyOn(storage, 'get');
+
+    const matched = await engine.list({
+      type: 'attr-listable',
+      attributes: [{ key: 'customerId', value: 'alpha' }],
+    });
+
+    // All three alpha workflows of the requested type, no beta, no other-type.
+    expect(matched.items.map((item) => item.id).toSorted()).toEqual([
+      'alpha-1',
+      'alpha-2',
+      'alpha-3',
+    ]);
+    expect(matched.total).toBe(3);
+    expect(matched.items.every((item) => item.type === 'attr-listable')).toBe(true);
+
+    // The fast path should have queued at least the three matched ids before
+    // any awaited; with `Promise.all`, all calls are issued before the first
+    // resolves. Verify call count rather than ordering since the spy can't
+    // tell us "were they parallel" directly.
+    expect(getSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
+
+    getSpy.mockRestore();
+    engine[Symbol.dispose]();
+  });
+
   it('cancel on already completed workflow updates state', async () => {
     const engine = new Engine();
     engine.register('already-done', async function* () {
@@ -3327,5 +3398,130 @@ describe('Engine', () => {
 
       engine[Symbol.dispose]();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Engine: tenant-isolation safety guards
+// ---------------------------------------------------------------------------
+
+describe('Engine tenant-isolation guards', () => {
+  it('refuses to construct when both workerExecution and tenantResolver are configured', () => {
+    expect(
+      () =>
+        new Engine({
+          tenantResolver: {
+            resolve: () => ({ id: 'acme' }),
+          },
+          workerExecution: {
+            workerUrl: new URL('https://example.invalid/worker.js'),
+            concurrency: 1,
+          },
+        }),
+    ).toThrow(/workerExecution mode does not yet propagate tenant context/);
+  });
+
+  it('still constructs when only workerExecution is configured (no tenant)', () => {
+    const engine = new Engine({
+      workerExecution: {
+        workerUrl: new URL('https://example.invalid/worker.js'),
+        concurrency: 1,
+      },
+    });
+    expect(engine).toBeInstanceOf(Engine);
+    engine[Symbol.dispose]();
+  });
+
+  it('still constructs when only tenantResolver is configured (inline mode)', () => {
+    const engine = new Engine({
+      tenantResolver: { resolve: () => ({ id: 'acme' }) },
+    });
+    expect(engine).toBeInstanceOf(Engine);
+    engine[Symbol.dispose]();
+  });
+
+  it('decodeWorkflowState falls back to undefined tenant when persisted tenant is malformed', async () => {
+    const storage = new MemoryStorage();
+
+    // Forge a state record with a tampered `tenant` field — `id` is a number,
+    // not a string. A naive `as` cast would let this through and an agent's
+    // `toolsForTenant` could end up matching on `state.tenant.id === 1` and
+    // dispatching admin tools.
+    const tamperedState = {
+      id: 'wf-tampered',
+      type: 'tampered-workflow',
+      status: 'completed',
+      input: null,
+      version: '1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      tenant: { id: 1, attributes: { role: 'admin' } },
+    };
+    await storage.put(KEYS.workflow('wf-tampered'), encode(tamperedState));
+
+    const warnings: string[] = [];
+    const warnSpy = spyOn(console, 'warn').mockImplementation((message: unknown) => {
+      warnings.push(String(message));
+    });
+
+    try {
+      const engine = new Engine({ storage: storage as WeftStorage });
+      const listed = await engine.list();
+
+      expect(listed.items).toHaveLength(1);
+      expect(listed.items[0]?.id).toBe('wf-tampered');
+
+      // The warning was emitted (at least once — list() may decode twice
+      // through fast/slow paths).
+      expect(warnings.some((w) => w.includes('invalid tenant field'))).toBe(true);
+
+      // The entire point of this guard: when the engine returns a decoded
+      // WorkflowState, the tampered tenant must be stripped to `undefined`
+      // so agent `validateInput` / `toolsForTenant` hooks never see it.
+      const fetched = await engine.get('wf-tampered');
+      expect(fetched).not.toBeNull();
+      expect(fetched?.tenant).toBeUndefined();
+
+      // The raw on-disk bytes are deliberately NOT rewritten — we leave
+      // remediation of corrupt records to storage-level tooling — so the
+      // tampered bytes still exist. Verify the guard is load-time, not
+      // persistence-time: the record on disk is unchanged.
+      const reloadedBytes = await storage.get(KEYS.workflow('wf-tampered'));
+      expect(reloadedBytes).toBeTruthy();
+      const reloaded = decode(reloadedBytes!) as { tenant?: unknown };
+      expect(reloaded.tenant).toEqual({ id: 1, attributes: { role: 'admin' } });
+
+      engine[Symbol.dispose]();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('decodeWorkflowState accepts a well-formed tenant unchanged', async () => {
+    const storage = new MemoryStorage();
+    const validState: WorkflowState = {
+      id: 'wf-valid-tenant',
+      type: 'valid-tenant-workflow',
+      status: 'completed',
+      input: null,
+      version: '1',
+      createdAt: 1000,
+      updatedAt: 2000,
+      tenant: { id: 'acme', attributes: { tier: 'pro' } },
+    };
+    await storage.put(KEYS.workflow('wf-valid-tenant'), encode(validState));
+
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const engine = new Engine({ storage: storage as WeftStorage });
+      const listed = await engine.list();
+      expect(listed.items).toHaveLength(1);
+      // No tenant warning should have fired for a well-formed record.
+      const warnCalls = warnSpy.mock.calls.flatMap((call) => call.map(String));
+      expect(warnCalls.some((c) => c.includes('invalid tenant field'))).toBe(false);
+      engine[Symbol.dispose]();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

@@ -170,6 +170,57 @@ describe('TaskQueue', () => {
 
       expect(queue.hasWaiter('default', 'charge')).toBe(false);
     });
+
+    it('does not accumulate abort listeners across many polls on the same signal', async () => {
+      const queue = new TaskQueue();
+      const controller = new AbortController();
+
+      // Wrap the real signal so we can count `addEventListener` /
+      // `removeEventListener` calls. The wrapper forwards every other
+      // AbortSignal API to the underlying signal so the queue treats it
+      // identically.
+      let addedAbortListeners = 0;
+      let removedAbortListeners = 0;
+      const realSignal = controller.signal;
+      const countingSignal = new Proxy(realSignal, {
+        get(target, property, receiver) {
+          if (property === 'addEventListener') {
+            return (
+              type: string,
+              listener: EventListenerOrEventListenerObject,
+              options?: AddEventListenerOptions | boolean,
+            ) => {
+              if (type === 'abort') addedAbortListeners += 1;
+              target.addEventListener(type, listener, options);
+            };
+          }
+          if (property === 'removeEventListener') {
+            return (
+              type: string,
+              listener: EventListenerOrEventListenerObject,
+              options?: EventListenerOptions | boolean,
+            ) => {
+              if (type === 'abort') removedAbortListeners += 1;
+              target.removeEventListener(type, listener, options);
+            };
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+
+      // Poll many times with a tight timeout so each call settles via the
+      // timer path (not via abort). Every settled poll must remove its
+      // listener — otherwise the count grows linearly.
+      const iterations = 50;
+      for (let i = 0; i < iterations; i += 1) {
+        const result = await queue.poll('default', ['charge'], 1, countingSignal);
+        expect(result).toBeNull();
+      }
+
+      expect(addedAbortListeners).toBe(iterations);
+      expect(removedAbortListeners).toBe(iterations);
+    });
   });
 
   describe('complete', () => {

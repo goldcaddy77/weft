@@ -71,8 +71,16 @@ export function tenantFromInputField(field: string): TenantResolver {
     resolve(_workflowId, input) {
       if (input === null || typeof input !== 'object') return undefined;
       const value = (input as Record<string, unknown>)[field];
-      if (typeof value !== 'string' || value.length === 0) return undefined;
-      return { id: value };
+      if (typeof value === 'string') {
+        return value.length === 0 ? undefined : { id: value };
+      }
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        // Numeric tenant ids are common when ids come from auto-increment DB
+        // keys; coerce to string so the rest of the engine can treat tenant
+        // ids uniformly.
+        return { id: String(value) };
+      }
+      return undefined;
     },
   };
 }

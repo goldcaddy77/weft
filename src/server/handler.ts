@@ -907,7 +907,16 @@ async function handleGetMetrics(
   metricsCollector: MetricsCollector | undefined,
 ): Promise<Response> {
   const exporter = prometheusExporter ?? createMetricsCollectorExporter(metricsCollector);
-  const body = await exporter.serialize();
+  let body: string;
+  try {
+    body = await exporter.serialize();
+  } catch (error) {
+    console.error('PrometheusExporter.serialize() threw', { error });
+    return new Response(JSON.stringify({ error: 'metrics exporter failed' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
+  }
   return new Response(body, {
     status: 200,
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
