@@ -130,6 +130,10 @@ export class BunSQLiteStorage implements Storage {
     this.#getStatement.finalize();
     this.#putStatement.finalize();
     this.#deleteStatement.finalize();
+    // database.close() finalizes any remaining compiled statements including the
+    // internal BEGIN/COMMIT/ROLLBACK statements created by database.transaction().
+    // We close after finalizing named statements so their handles are released
+    // explicitly, giving bun:sqlite a clean shutdown path.
     this.#database.close();
   }
 }

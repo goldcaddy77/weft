@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import type { AgentTurnData } from './agent-turn.svelte';
+  import type { AgentTurnData } from './agent-turn-types.ts';
 
   export type AgentCostWaterfallProps = {
     turns: readonly AgentTurnData[];
@@ -15,6 +15,8 @@
   const bars = $derived(computeWaterfallBars(turns));
   const rowHeight = 24;
   const viewBoxHeight = $derived(Math.max(rowHeight, bars.length * rowHeight));
+  // Bind SVG width so we can scale SVG user units to CSS pixels correctly.
+  let svgWidth = $state(0);
 </script>
 
 {#if bars.length === 0}
@@ -25,10 +27,13 @@
     role="img"
     aria-label="Per-turn cost waterfall"
     viewBox={`0 0 100 ${viewBoxHeight}`}
-    preserveAspectRatio="none"
+    preserveAspectRatio="xMinYMin meet"
+    bind:clientWidth={svgWidth}
+    style:height={svgWidth > 0 ? `${(svgWidth * viewBoxHeight) / 100}px` : 'auto'}
   >
     {#each bars as bar, index (bar.turnIndex)}
-      <g aria-label={bar.ariaLabel} transform={`translate(0, ${index * rowHeight})`}>
+      <g transform={`translate(0, ${index * rowHeight})`}>
+        <title>{bar.ariaLabel}</title>
         <rect
           class="waterfall-bar"
           x="0"
@@ -65,7 +70,9 @@
   }
 
   .waterfall-label {
-    font-size: 6px;
+    /* SVG user units, not CSS pixels — the viewBox is 100 units wide so 5
+       gives roughly the same apparent size as 0.875rem on a typical display. */
+    font-size: 5;
     font-family: var(--font-mono, monospace);
     fill: var(--text, #111827);
     dominant-baseline: middle;

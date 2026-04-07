@@ -61,6 +61,34 @@ describe('groupConversationMessages', () => {
     ]);
   });
 
+  it('records an empty group for an intermediate turn with a missing snapshot', () => {
+    // Turn 1 has no snapshot (legacy event) but turns 0 and 2 do, so the final
+    // turn snapshot is non-empty. The function must NOT fall back to the
+    // per-turn path — it should push an empty group for the middle turn and
+    // continue computing deltas from the adjacent turns' counts.
+    const turn0Messages: Message[] = [
+      { role: 'user', content: 'first' },
+      { role: 'assistant', content: 'reply' },
+    ];
+    const turn2Messages: Message[] = [
+      ...turn0Messages,
+      { role: 'user', content: 'third' },
+      { role: 'assistant', content: 'final' },
+    ];
+    const groups = groupConversationMessages([
+      makeTurn(0, turn0Messages),
+      makeTurn(1, []),
+      makeTurn(2, turn2Messages),
+    ]);
+    expect(groups.length).toBe(3);
+    // Turn 0: all its own messages.
+    expect(groups[0]?.messages.map((m) => m.content)).toEqual(['first', 'reply']);
+    // Turn 1: empty because the intermediate snapshot is missing.
+    expect(groups[1]?.messages).toEqual([]);
+    // Turn 2: delta from turn0 length (2) to turn2 length (4).
+    expect(groups[2]?.messages.map((m) => m.content)).toEqual(['third', 'final']);
+  });
+
   it('falls back to per-turn arrays when the last turn has an empty snapshot', () => {
     const groups = groupConversationMessages([
       makeTurn(0, [{ role: 'user', content: 'hi' }]),

@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import type { AgentTurnData } from './agent-turn.svelte';
+  import type { AgentTurnData } from './agent-turn-types.ts';
 
   export type AgentConversationProps = {
     turns: readonly AgentTurnData[];
@@ -45,7 +45,7 @@
                 {#if message.content}
                   <pre>{message.content}</pre>
                 {/if}
-                {#if message.toolResults}
+                {#if message.toolResults && message.toolResults.length > 0}
                   {#each message.toolResults as result (result.toolCallId)}
                     <JsonViewer data={result} label={result.toolCallId} collapsed />
                   {/each}

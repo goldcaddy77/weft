@@ -54,7 +54,7 @@ describe('snapshotConversationForEvent', () => {
       conversation.push({ role: 'user', content: `message ${index}` });
     }
     const result = snapshotConversationForEvent(conversation);
-    expect(result.length).toBeLessThanOrEqual(MAX_SNAPSHOT_MESSAGES);
+    expect(result.length).toBe(MAX_SNAPSHOT_MESSAGES);
     expect(result[0]).toEqual({ role: 'system', content: 'system prompt' });
     expect(result[1]?.role).toBe('system');
     expect(result[1]?.content).toContain('earlier messages truncated');

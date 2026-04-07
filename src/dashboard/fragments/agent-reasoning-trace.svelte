@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import type { AgentTurnData } from './agent-turn.svelte';
+  import type { AgentTurnData } from './agent-turn-types.ts';
 
   export type AgentReasoningTraceProps = {
     turns: readonly AgentTurnData[];
