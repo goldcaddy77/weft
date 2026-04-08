@@ -27,6 +27,9 @@ async function buildEntry(
   const absoluteTarget = join(distPath, distRelativePath);
 
   try {
+    // Use the absolute POSIX path as the import specifier. Bun.build does not
+    // accept file:// URLs — and since this script only runs on Bun (macOS/Linux),
+    // backslash path separators are not a concern.
     await Bun.write(
       entryFile,
       `import { ${namedExport} } from ${JSON.stringify(absoluteTarget)}; export { ${namedExport} };`,
