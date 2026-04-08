@@ -327,11 +327,19 @@ export class AgentCheckpointSizeWarningEvent extends Event {
   }
 }
 
+/**
+ * Fired after an agent loop completes when the effect log replayed at least
+ * one committed tool-call result. This occurs primarily during checkpoint
+ * restores (the agent re-synthesizes a previously dispatched tool call and
+ * the effect log short-circuits it), but may also fire when the model emits
+ * the same tool call twice within a single run and the second invocation is
+ * replayed from the committed record.
+ */
 export class AgentCheckpointResumedEvent extends Event {
   static readonly type = 'agent:checkpoint:resumed' as const;
   readonly workflowId: string;
   readonly agentId: string;
-  /** Number of tool calls that were short-circuited via committed-replay during this resume. */
+  /** Number of tool calls replayed from the effect log rather than re-executed. */
   readonly duplicatesPrevented: number;
 
   constructor(workflowId: string, agentId: string, duplicatesPrevented: number) {

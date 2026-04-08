@@ -53,7 +53,7 @@ export interface ToolIdentityResult {
   semanticHash: string;
   /**
    * Names of the input fields whose values were included in the hash.
-   * Informational — recorded in the effect log for observability.
+   * Informational — identifies which input fields contributed to `semanticHash`.
    */
   intentCriticalFields: string[];
 }

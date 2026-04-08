@@ -94,7 +94,8 @@ export function computeSemanticHash(input: unknown): string {
 
 /** Recursively sort object keys to produce a canonical JSON representation. */
 function canonicalize(value: unknown): string {
-  if (value === null || value === undefined) return JSON.stringify(value);
+  if (value === null) return 'null';
+  if (value === undefined) return '"undefined"';
   if (typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) {
     return '[' + value.map(canonicalize).join(',') + ']';
@@ -212,9 +213,10 @@ export class ToolEffectLog {
   /**
    * Mark the call as `aborted` with a reason string.
    *
-   * Call this when the tool throws an error that is not expected to recur
-   * (e.g. a validation error). On restore the agent loop will re-execute the
-   * tool (allowing retries) rather than replaying the error.
+   * Call this when the tool fails and that failure should not be replayed
+   * from the effect log. On restore the agent loop will re-execute the tool
+   * rather than replaying the error, so only use this for failures where a
+   * future retry is safe and desired.
    */
   async abort(semanticHash: string, toolName: string, reason: string): Promise<void> {
     const record: EffectRecord = {

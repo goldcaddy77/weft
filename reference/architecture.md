@@ -5767,7 +5767,7 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 
 ### Track 1 — Foundations
 
-- [x] `src/ai/tool-effect-log.ts` exists, exports `ToolEffectLog` with `record(call)`, `lookup(semanticHash)`, `commit(hash, result)`, `abort(hash)`. (Note: file named for behavior, not paper acronym; `computeSemanticHash` and `ToolCallReplayConflictError` also exported.)
+- [x] `src/ai/tool-effect-log.ts` exists, exports `ToolEffectLog` with `record(semanticHash, toolName)`, `lookup(semanticHash)`, `commit(semanticHash, toolName, output)`, `abort(semanticHash, toolName, reason)`. (Note: file named for behavior, not paper acronym; `computeSemanticHash` and `ToolCallReplayConflictError` also exported.)
 - [x] `AgentToolDefinition` in `src/ai/declaration.ts` has an optional `identity: (input) => { semanticHash: string; intentCriticalFields: string[] }` field.
 - [x] `executeAgentLoop` in `src/ai/agent.ts` consults the effect log before every tool call and short-circuits on `committed` matches.
 - [x] `bun test src/ai/tool-effect-log.test.ts` passes tests that crash mid-tool-call, restore, and assert the tool ran exactly once (mock call count verified).

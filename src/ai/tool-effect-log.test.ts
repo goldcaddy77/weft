@@ -162,8 +162,10 @@ describe('ToolEffectLog crash-and-restore scenarios', () => {
 
     const hash = computeSemanticHash({ recipient: 'alice', amount: 100 });
 
-    // Simulate first run: record (in-flight) then tool executes
+    // Simulate first run: record in-flight, execute tool, then crash before commit
     await log1.record(hash, 'charge');
+    await mockTool(); // tool runs exactly once before the crash
+    expect(callCount).toBe(1);
     // Crash happens here — commit never called on log1
 
     // Restore: new log instance sees the in-flight record
@@ -179,9 +181,7 @@ describe('ToolEffectLog crash-and-restore scenarios', () => {
       }
     }).toThrow(ToolCallReplayConflictError);
 
-    // Tool was only invoked before the crash — not during restore
-    expect(callCount).toBe(0);
-    await mockTool(); // just to show mock works
+    // Tool ran once before the crash and was not re-invoked during restore
     expect(callCount).toBe(1);
   });
 

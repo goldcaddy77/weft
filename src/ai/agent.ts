@@ -827,17 +827,30 @@ async function resolveToolExecution(
   // version of an already-dispatched tool call.
   // ---------------------------------------------------------------------------
   if (effectLog) {
-    const semanticHash = tool?.identity
-      ? tool.identity(toolCall.input).semanticHash
-      : computeSemanticHash({ name: toolCall.name, input: toolCall.input });
+    const semanticHash = (() => {
+      if (tool?.identity) {
+        const result = tool.identity(toolCall.input);
+        // Validate that the custom identity returns a well-formed 16-char hex
+        // string. An invalid hash would produce unpredictable storage keys.
+        // Fall back to the default hash if validation fails.
+        if (/^[0-9a-f]{16}$/.test(result.semanticHash)) {
+          return result.semanticHash;
+        }
+      }
+      return computeSemanticHash({ name: toolCall.name, input: toolCall.input });
+    })();
 
     const existing = await effectLog.lookup(semanticHash);
 
     if (existing?.status === 'committed') {
-      // A prior run completed this tool call successfully — replay the result
-      // without re-executing the tool.
-      effectLog.recordReplay();
-      return { output: existing.output, success: true };
+      // Guard against cross-tool hash collisions: a custom identity() that
+      // omits the tool name could produce the same hash for two different
+      // tools. Only replay if the stored tool name matches the current call.
+      if (existing.toolName === toolCall.name) {
+        effectLog.recordReplay();
+        return { output: existing.output, success: true };
+      }
+      // Hash collision across tools — fall through to execute normally.
     }
 
     if (existing?.status === 'in-flight') {
