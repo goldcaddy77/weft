@@ -1228,6 +1228,58 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('WorkflowHandle Symbol.observable synthetic event does not leak to other listeners on the handle', async () => {
+    // Regression: the old synthesis path called `this.dispatchEvent(synthetic)`
+    // which broadcasts to every listener attached to the handle — concurrent
+    // iterators, other subscribers, and application code. The synthetic
+    // event is a private reconstruction for one subscription and must not
+    // leak into the handle's global dispatch stream.
+    const engine = new Engine();
+    engine.register('observable-global-leak', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('observable-global-leak', null);
+    await handle.result();
+    await flush();
+
+    // Foreign listener: a direct addEventListener on the handle. Simulates
+    // application code, a concurrent iterator, or another observer.
+    const foreignEvents: string[] = [];
+    const foreignListener = (event: Event) => {
+      foreignEvents.push(event.type);
+    };
+    handle.addEventListener('workflow:completed', foreignListener);
+
+    // Now subscribe via the observable, which runs the synthesis path
+    // because the workflow is already terminated.
+    const receivedTypes: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      complete: () => {
+        resolve();
+      },
+    });
+
+    await promise;
+    await flush();
+
+    // The subscriber observed the synthetic completion via its own callbacks.
+    expect(receivedTypes).toContain('workflow:completed');
+    // The foreign listener must NOT have received the synthetic event —
+    // the real `workflow:completed` had already fired before the foreign
+    // listener was attached, and synthesis is private to the subscription.
+    expect(foreignEvents).toHaveLength(0);
+
+    handle.removeEventListener('workflow:completed', foreignListener);
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
   it('WorkflowHandle Symbol.observable does not emit next() after error/complete on race', async () => {
     // Regression: the `listener` (observer.next) was registered on every
     // event type including terminals, with no `terminalDelivered` guard. If

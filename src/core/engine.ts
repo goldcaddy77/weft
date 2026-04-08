@@ -675,12 +675,29 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
         // are attached synchronously above, so if the workflow transitions
         // between attachment and the async status read, the real event wins
         // and `terminalDelivered` is set, causing us to skip synthesis.
+        //
+        // We deliver the synthetic event directly to this subscription's
+        // handlers rather than via `this.dispatchEvent(...)`, which would
+        // broadcast the event to every other listener on the handle
+        // (concurrent iterators, other observables, application code). The
+        // synthetic event is a private reconstruction for this subscription
+        // alone and must not leak into the handle's global dispatch stream.
         void (async () => {
           const persisted = await this.#engine.get(this.id);
           if (controller.signal.aborted || terminalDelivered || !persisted) return;
           const synthetic = synthesizeTerminalEventFromState(persisted);
           if (!synthetic) return;
-          this.dispatchEvent(synthetic);
+          // Mirror the dispatch order EventTarget would use: next → error or
+          // complete. The `terminalDelivered` guard is already respected
+          // inside each handler.
+          nextListener?.(synthetic);
+          if (synthetic instanceof WorkflowFailedEvent) {
+            errorHandler(synthetic);
+          } else if (synthetic instanceof WorkflowTimedOutEvent) {
+            errorHandler(synthetic);
+          } else {
+            completeDispatcher();
+          }
         })();
 
         return {

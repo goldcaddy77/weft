@@ -285,6 +285,33 @@ describe('BunSQLiteStorage', () => {
     expect(() => storage[Symbol.dispose]()).not.toThrow();
   });
 
+  it('scan statement cache stays bounded when callers vary the LIMIT value', async () => {
+    // Regression: the cache key used to be the fully-interpolated SQL
+    // string, including `LIMIT ${limit}`. Every distinct numeric limit
+    // became a separate cache entry, letting the cache grow without bound
+    // for callers that use dynamic pagination sizes — exactly the leak the
+    // cache was meant to prevent. The fix uses a bound parameter for LIMIT,
+    // so 100 distinct limit values collapse to a single cache entry.
+    const storage = new BunSQLiteStorage(':memory:');
+    for (let index = 0; index < 50; index++) {
+      await storage.put(`key:${String(index).padStart(3, '0')}`, encode(String(index)));
+    }
+
+    for (let limit = 1; limit <= 100; limit++) {
+      await collect(storage.scan('key:', { limit }));
+    }
+
+    // One entry for the "prefix-range + limit" shape, not 100.
+    expect(storage.scanStatementCacheSize).toBe(1);
+
+    // Adding a different structural shape (no limit) creates exactly one
+    // additional entry — the shape space is bounded, not the value space.
+    await collect(storage.scan('key:'));
+    expect(storage.scanStatementCacheSize).toBe(2);
+
+    storage[Symbol.dispose]();
+  });
+
   it('query with parameters', async () => {
     const storage = new BunSQLiteStorage(':memory:');
     await storage.put('a', encode('1'));
