@@ -1240,6 +1240,42 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already timed out', async () => {
+    let now = 1000;
+    const engine = new Engine({ getNow: () => now });
+    engine.register('already-timed-out', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('already-timed-out', null, { executionTimeout: 5000 });
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+
+    now = 7000;
+    await engine.scheduler.tick(now);
+    await flush();
+    await resultPromise;
+
+    const collected: Event[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event);
+      }
+    })();
+
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    const timedOut = collected.find((event) => event instanceof WorkflowTimedOutEvent);
+    expect(timedOut).toBeInstanceOf(WorkflowTimedOutEvent);
+    expect((timedOut as WorkflowTimedOutEvent).workflowId).toBe(handle.id);
+    engine[Symbol.dispose]();
+  });
+
   it('WorkflowHandle Symbol.observable does not hang when workflow already completed', async () => {
     const engine = new Engine();
     engine.register('observable-already-done', async function* () {
@@ -1270,6 +1306,139 @@ describe('Engine', () => {
 
     expect(result).toBe('completed');
     expect(receivedTypes).toContain('workflow:completed');
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not hang when workflow already failed', async () => {
+    const engine = new Engine();
+    engine.register('observable-already-failed', async function* () {
+      throw new Error('kaboom');
+    });
+
+    const handle = await engine.start('observable-already-failed', null);
+    await handle.result().catch(() => {});
+    await flush();
+
+    const receivedTypes: string[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      error: (error: Error) => {
+        reject(error);
+      },
+      complete: () => {
+        resolve(new Error('should have errored, not completed'));
+      },
+    });
+
+    const settled = await Promise.race([
+      promise.then(
+        (value) => ({ kind: 'complete' as const, value }),
+        (error: Error) => ({ kind: 'error' as const, error }),
+      ),
+      Bun.sleep(500).then(() => ({ kind: 'timeout' as const })),
+    ]);
+
+    expect(settled.kind).toBe('error');
+    if (settled.kind === 'error') {
+      expect(settled.error.message).toBe('kaboom');
+    }
+    expect(receivedTypes).toContain('workflow:failed');
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not hang when workflow already cancelled', async () => {
+    const engine = new Engine();
+    engine.register('observable-already-cancelled', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('observable-already-cancelled', null);
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+    await handle.cancel();
+    await resultPromise;
+    await flush();
+
+    const receivedTypes: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      complete: () => {
+        resolve();
+      },
+    });
+
+    const result = await Promise.race([
+      promise.then(() => 'completed' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('completed');
+    expect(receivedTypes).toContain('workflow:cancelled');
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not hang when workflow already timed out', async () => {
+    let now = 1000;
+    const engine = new Engine({ getNow: () => now });
+    engine.register('observable-already-timed-out', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('observable-already-timed-out', null, {
+      executionTimeout: 5000,
+    });
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+
+    now = 7000;
+    await engine.scheduler.tick(now);
+    await flush();
+    await resultPromise;
+
+    const receivedTypes: string[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      error: (error: Error) => {
+        reject(error);
+      },
+      complete: () => {
+        resolve(new Error('should have errored, not completed'));
+      },
+    });
+
+    const settled = await Promise.race([
+      promise.then(
+        (value) => ({ kind: 'complete' as const, value }),
+        (error: Error) => ({ kind: 'error' as const, error }),
+      ),
+      Bun.sleep(500).then(() => ({ kind: 'timeout' as const })),
+    ]);
+
+    expect(settled.kind).toBe('error');
+    if (settled.kind === 'error') {
+      expect(settled.error).toBeInstanceOf(WorkflowTimeoutError);
+    }
+    expect(receivedTypes).toContain('workflow:timed-out');
     subscription.unsubscribe();
     engine[Symbol.dispose]();
   });
