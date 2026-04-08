@@ -260,6 +260,14 @@ function finishWorkflowHandleIteration(
   queue: WorkflowHandleEventQueue,
   event: Event,
 ): void {
+  // Guard against the "synthesized terminal event already landed" race: when
+  // iteration starts after a workflow has already finished, the asyncIterator
+  // synthesizes a terminal event from persisted state and sets `state.done =
+  // true`. If the real terminal event then arrives (because it was in flight
+  // between `addEventListener` and `await this.#engine.get()`), we must not
+  // enqueue it a second time — the test suite asserts terminal events are
+  // yielded exactly once.
+  if (state.done) return;
   state.done = true;
   enqueueWorkflowHandleEvent(queue, event);
 }
@@ -587,7 +595,7 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
         error?: (error: Error) => void;
       }) => {
         const controller = new AbortController();
-        const listener = observer.next?.bind(observer);
+        const nextListener = observer.next?.bind(observer);
 
         const types = [
           'workflow:completed',
@@ -600,15 +608,21 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
 
         // Track whether the subscription has been terminated (via `complete`
         // or `error`). Per the Observable contract these are mutually
-        // exclusive — once one fires, the subscription is closed and the
-        // other must not fire. This flag is also used by the "subscribed
-        // after workflow already finished" guard below to skip synthetic
-        // dispatch if a real terminal event beat it to the listeners.
+        // exclusive — once one fires, the subscription is closed and no
+        // further `next`/`error`/`complete` notifications may be delivered.
+        // This flag is checked by EVERY listener (not just error/complete)
+        // so that a late real terminal event arriving after a synthesized
+        // one cannot re-emit `observer.next` after the subscription is
+        // already closed.
         let terminalDelivered = false;
 
-        if (listener) {
+        if (nextListener) {
+          const guardedNext = (event: Event) => {
+            if (terminalDelivered) return;
+            nextListener(event);
+          };
           for (const type of types) {
-            this.addEventListener(type, listener, { signal: controller.signal });
+            this.addEventListener(type, guardedNext, { signal: controller.signal });
           }
         }
 

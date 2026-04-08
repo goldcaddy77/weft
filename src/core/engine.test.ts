@@ -1187,6 +1187,94 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('WorkflowHandle Symbol.asyncIterator does not double-emit when a late real terminal event races with synthesis', async () => {
+    // Regression: the synthesis path pushes a synthetic terminal event and
+    // sets `state.done = true`. If a real terminal event arrived later (e.g.
+    // because it was in flight between `addEventListener` and the persisted
+    // status read), `finishWorkflowHandleIteration` used to unconditionally
+    // enqueue it, producing two terminal events. The fix guards it on
+    // `state.done`. We simulate the race by starting iteration on an
+    // already-terminated workflow and then dispatching a second real
+    // terminal event on the handle after synthesis has run.
+    const engine = new Engine();
+    engine.register('race-target', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('race-target', null);
+    await handle.result();
+    await flush();
+
+    const collected: string[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event.type);
+      }
+    })();
+
+    // Give the iterator a microtask to attach listeners and synthesize.
+    await flush();
+    // Now dispatch a second terminal event that, without the guard, would
+    // hit `finishWorkflowHandleIteration` and enqueue a duplicate.
+    handle.dispatchEvent(new WorkflowCompletedEvent(handle.id, 'ok', 0));
+
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    expect(collected.filter((type) => type === 'workflow:completed')).toHaveLength(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not emit next() after error/complete on race', async () => {
+    // Regression: the `listener` (observer.next) was registered on every
+    // event type including terminals, with no `terminalDelivered` guard. If
+    // the synthesis path dispatched a synthetic terminal event first (setting
+    // `terminalDelivered = true`), a subsequent real terminal event would
+    // still invoke `observer.next` even though `observer.complete` or
+    // `observer.error` had already fired — violating the Observable
+    // contract. The fix wraps the next listener in a `terminalDelivered`
+    // guard. Simulate the race by subscribing to an already-completed
+    // workflow, letting synthesis fire, then dispatching another terminal
+    // event on the handle.
+    const engine = new Engine();
+    engine.register('observable-race', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('observable-race', null);
+    await handle.result();
+    await flush();
+
+    const receivedTypes: string[] = [];
+    let completeCallCount = 0;
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      complete: () => {
+        completeCallCount++;
+        resolve();
+      },
+    });
+
+    await promise;
+    // Now dispatch a second terminal event post-completion. Without the
+    // guard, `observer.next` would fire again after `observer.complete`.
+    handle.dispatchEvent(new WorkflowCompletedEvent(handle.id, 'ok', 0));
+    await flush();
+
+    expect(completeCallCount).toBe(1);
+    expect(receivedTypes.filter((type) => type === 'workflow:completed')).toHaveLength(1);
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
   it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already failed', async () => {
     const engine = new Engine();
     engine.register('already-failed', async function* () {
