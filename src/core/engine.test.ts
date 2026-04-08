@@ -1142,10 +1142,13 @@ describe('Engine', () => {
 
     for await (const event of handle) {
       collectedTypes.push(event.type);
-      if (event.type === 'workflow:completed') break;
     }
 
     expect(collectedTypes).toContain('workflow:completed');
+    // Regression guard: previously `workflow:completed` fired twice because
+    // both the generic `listener` and the `terminal` handler were registered
+    // on terminal event types, so each terminal event was enqueued twice.
+    expect(collectedTypes.filter((type) => type === 'workflow:completed')).toHaveLength(1);
     engine[Symbol.dispose]();
   });
 
@@ -1177,6 +1180,10 @@ describe('Engine', () => {
 
     expect(result).toBe('iterated');
     expect(collected).toContain('workflow:completed');
+    // The terminal event must be yielded exactly once — a regression would
+    // surface as a duplicate if `listener` and `terminal` were both
+    // registered on `workflow:completed`.
+    expect(collected.filter((type) => type === 'workflow:completed')).toHaveLength(1);
     engine[Symbol.dispose]();
   });
 
@@ -1321,7 +1328,9 @@ describe('Engine', () => {
     await flush();
 
     const receivedTypes: string[] = [];
-    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    let completeCallCount = 0;
+    let capturedError: Error | undefined;
+    const { promise, resolve } = Promise.withResolvers<void>();
 
     const observable = handle[Symbol.observable]();
     const subscription = observable.subscribe({
@@ -1329,25 +1338,27 @@ describe('Engine', () => {
         receivedTypes.push(event.type);
       },
       error: (error: Error) => {
-        reject(error);
+        capturedError = error;
+        resolve();
       },
       complete: () => {
-        resolve(new Error('should have errored, not completed'));
+        completeCallCount++;
       },
     });
 
-    const settled = await Promise.race([
-      promise.then(
-        (value) => ({ kind: 'complete' as const, value }),
-        (error: Error) => ({ kind: 'error' as const, error }),
-      ),
-      Bun.sleep(500).then(() => ({ kind: 'timeout' as const })),
+    const result = await Promise.race([
+      promise.then(() => 'errored' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
     ]);
 
-    expect(settled.kind).toBe('error');
-    if (settled.kind === 'error') {
-      expect(settled.error.message).toBe('kaboom');
-    }
+    // Give any erroneously-queued `complete()` call a chance to fire so the
+    // assertion below is meaningful.
+    await flush();
+
+    expect(result).toBe('errored');
+    expect(capturedError?.message).toBe('kaboom');
+    // Observable contract: `error` and `complete` are mutually exclusive.
+    expect(completeCallCount).toBe(0);
     expect(receivedTypes).toContain('workflow:failed');
     subscription.unsubscribe();
     engine[Symbol.dispose]();
@@ -1411,7 +1422,9 @@ describe('Engine', () => {
     await resultPromise;
 
     const receivedTypes: string[] = [];
-    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    let completeCallCount = 0;
+    let capturedError: Error | undefined;
+    const { promise, resolve } = Promise.withResolvers<void>();
 
     const observable = handle[Symbol.observable]();
     const subscription = observable.subscribe({
@@ -1419,25 +1432,27 @@ describe('Engine', () => {
         receivedTypes.push(event.type);
       },
       error: (error: Error) => {
-        reject(error);
+        capturedError = error;
+        resolve();
       },
       complete: () => {
-        resolve(new Error('should have errored, not completed'));
+        completeCallCount++;
       },
     });
 
-    const settled = await Promise.race([
-      promise.then(
-        (value) => ({ kind: 'complete' as const, value }),
-        (error: Error) => ({ kind: 'error' as const, error }),
-      ),
-      Bun.sleep(500).then(() => ({ kind: 'timeout' as const })),
+    const result = await Promise.race([
+      promise.then(() => 'errored' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
     ]);
 
-    expect(settled.kind).toBe('error');
-    if (settled.kind === 'error') {
-      expect(settled.error).toBeInstanceOf(WorkflowTimeoutError);
-    }
+    // Give any erroneously-queued `complete()` call a chance to fire so the
+    // assertion below is meaningful.
+    await flush();
+
+    expect(result).toBe('errored');
+    expect(capturedError).toBeInstanceOf(WorkflowTimeoutError);
+    // Observable contract: `error` and `complete` are mutually exclusive.
+    expect(completeCallCount).toBe(0);
     expect(receivedTypes).toContain('workflow:timed-out');
     subscription.unsubscribe();
     engine[Symbol.dispose]();
