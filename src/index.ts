@@ -123,14 +123,12 @@ export { createBunCompressor } from './core/compression';
 export type { CompressionAlgorithm, CompressionOptions, Compressor } from './core/compression';
 export { CompressedStorage } from './storage/compressed-storage';
 
-// Storage
-export { BunSQLiteStorage } from './storage/bun-sql';
+// Storage — interface, KEYS, and zero-native-dep backends only.
+// Heavy backends (BunSQLiteStorage, LMDBStorage, TursoStorage) are subpath-only:
+//   weft/storage/bun-sqlite | weft/storage/lmdb | weft/storage/turso
 export { KEYS } from './storage/interface';
 export type { BatchOperation, ScanOptions, Storage } from './storage/interface';
-export { LMDBStorage } from './storage/lmdb';
 export { MemoryStorage } from './storage/memory';
-export { TursoStorage } from './storage/turso';
-export type { TursoStorageOptions } from './storage/turso';
 
 // Codec
 export { decode, encode, validateCloneable } from './core/codec';
