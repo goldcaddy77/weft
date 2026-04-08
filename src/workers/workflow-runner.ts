@@ -161,27 +161,44 @@ export async function handleResumeMessage(
  * try/catch because a well-behaved workflow's `finally` block may still throw
  * on cancellation (e.g. a `using` disposer), and we must never let that
  * prevent the rest of cleanup from running.
+ *
+ * The function is async (it awaits `generator.return()` so the workflow's
+ * `finally` blocks actually complete before cleanup), which opens a narrow
+ * race window: while awaiting, the worker message loop can process another
+ * message for the same workflow ID — most dangerously a `run` that installs
+ * a brand-new generator and controller into the context maps. We must not
+ * clobber that state when this cancel handler resumes. The cleanup below
+ * therefore only deletes the cached entries if they still point at the
+ * *same* generator/controller we captured before the await.
  */
 export async function handleCancelMessage(
   context: WorkflowRunnerContext,
   message: { workflowId: string },
 ): Promise<void> {
-  const controller = context.abortControllers.get(message.workflowId);
-  if (controller) {
-    controller.abort();
+  const capturedController = context.abortControllers.get(message.workflowId);
+  const capturedGenerator = context.generators.get(message.workflowId);
+
+  if (capturedController) {
+    capturedController.abort();
   }
 
-  const generator = context.generators.get(message.workflowId);
-  if (generator) {
+  if (capturedGenerator) {
     try {
-      await generator.return(undefined);
+      await capturedGenerator.return(undefined);
     } catch {
       // Swallow: a finalizer in the workflow's try/finally may throw on
       // cancel, but we still need to proceed to cleanup regardless.
     }
   }
 
-  cleanup(context, message.workflowId);
+  // Identity-compare before deleting: if a new `run` message arrived
+  // during the await and replaced either entry, leave it alone.
+  if (context.generators.get(message.workflowId) === capturedGenerator) {
+    context.generators.delete(message.workflowId);
+  }
+  if (context.abortControllers.get(message.workflowId) === capturedController) {
+    context.abortControllers.delete(message.workflowId);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -581,6 +581,97 @@ describe('handleCancelMessage', () => {
     expect(context.generators.has('wf-finally-throws')).toBe(false);
     expect(context.abortControllers.has('wf-finally-throws')).toBe(false);
   });
+
+  it('does not clobber a freshly-installed workflow when cancel races with a new run of the same id', async () => {
+    // Regression: `handleCancelMessage` is async because it awaits
+    // `generator.return()` so finally blocks can run. During that await,
+    // the worker message loop can process another message for the same
+    // workflow id — including a `run` that installs a brand-new generator
+    // and controller in the context maps. The old cleanup unconditionally
+    // deleted by workflow id, wiping the new workflow's state. The fix is
+    // an identity check: only delete if the entry still matches what the
+    // cancel handler captured before awaiting.
+    const context = createWorkflowRunnerContext();
+
+    const operationRequest: OperationRequest = {
+      id: 'op-1',
+      workflowId: 'wf-race',
+      kind: 'activity',
+      queue: 'default',
+      attempt: 1,
+      retryPolicy: {
+        maxAttempts: 3,
+        initialBackoff: 1000,
+        backoffMultiplier: 2,
+        maxBackoff: 30_000,
+      },
+      scheduledAt: Date.now(),
+    };
+
+    // First workflow: `finally` block awaits a slow disposer so
+    // `generator.return()` takes long enough for us to interleave another
+    // message before cleanup runs.
+    let resolveDisposer!: () => void;
+    const disposerGate = new Promise<void>((resolve) => {
+      resolveDisposer = resolve;
+    });
+
+    async function* slowCleanupWorkflow() {
+      try {
+        yield operationRequest;
+      } finally {
+        await disposerGate;
+      }
+    }
+
+    async function* secondWorkflow() {
+      yield operationRequest;
+    }
+
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-race', workflowType: 'slow-cleanup', input: null },
+      () => slowCleanupWorkflow,
+    );
+
+    const originalController = context.abortControllers.get('wf-race');
+    const originalGenerator = context.generators.get('wf-race');
+    expect(originalController).toBeDefined();
+    expect(originalGenerator).toBeDefined();
+
+    // Kick off cancel; it will park on `await generator.return()` because
+    // the workflow's finally block is waiting on `disposerGate`.
+    const cancelPromise = handleCancelMessage(context, { workflowId: 'wf-race' });
+
+    // Give the cancel handler a microtask to capture the original
+    // generator/controller and enter the await.
+    await Promise.resolve();
+
+    // Simulate a concurrent `run` that installs a new workflow with the
+    // same id. This is the scenario the race guards against.
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-race', workflowType: 'second', input: null },
+      () => secondWorkflow,
+    );
+
+    const newController = context.abortControllers.get('wf-race');
+    const newGenerator = context.generators.get('wf-race');
+    expect(newController).toBeDefined();
+    expect(newGenerator).toBeDefined();
+    expect(newController).not.toBe(originalController);
+    expect(newGenerator).not.toBe(originalGenerator);
+
+    // Release the slow disposer so cancel can finish cleanup.
+    resolveDisposer();
+    await cancelPromise;
+
+    // After the cancel handler's cleanup step runs, the newly installed
+    // workflow must still be present — the identity check must have
+    // prevented the stale cancel from deleting it.
+    expect(context.abortControllers.get('wf-race')).toBe(newController);
+    expect(context.generators.get('wf-race')).toBe(newGenerator);
+  });
 });
 
 describe('handleResumeMessage — error paths', () => {
