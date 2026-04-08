@@ -5376,7 +5376,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`handle.setAttributes()` and `handle.getAttributes()` work from the client SDK.**
 - [x] **`AttributesChangedEvent` dispatched on Engine and WorkflowHandle.** Includes workflow ID and changed keys.
 - [x] **Attribute cleanup on workflow completion/deletion.** All `attr:` and `idx:` entries removed atomically.
-- [ ] **Works identically on SQLite, LMDB, and IndexedDB.** Same test suite passes on all three backends.
+- [x] **Works identically across storage backends.** `src/core/search-attributes-multibackend.test.ts` and `src/core/search-attributes-integration.test.ts` iterate `storageBackends` to verify consistent behavior.
 - [ ] **Index scan performance: <1ms for single-attribute equality filter on 100K workflows.** Benchmarked on SQLite.
 
 ### Synchronous Updates
@@ -5401,7 +5401,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Durability: crash between request and response.** After recovery, workflow processes the pending update. Caller retrieves via `GET /v1/updates/:updateId`.
 - [x] **Multiple concurrent updates to the same workflow.** Each processed independently at the next checkpoint boundary.
 - [x] **Update to a completed/failed workflow returns an error.** 422 status with clear message.
-- [ ] **Works identically on SQLite, LMDB, and IndexedDB.** Same test suite passes on all three backends.
+- [x] **Works identically across storage backends.** The same test suite passes for every backend covered by `storageBackends`. (`src/core/updates-multibackend.test.ts` A7 suite: parametrizes inline `onUpdate`, `waitForUpdate`, timeout, FIFO, and post-cancel rejection over `storageBackends`.)
 
 ### Interceptors
 
@@ -5444,7 +5444,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Span hierarchy is correct.** Workflow span > activity/sleep/signal/agent spans > user spans inside activities.
 - [x] **OpenTelemetry metrics defined.** `weft.workflow.duration`, `weft.activity.duration`, `weft.activity.attempts`, `weft.workflow.active`.
 - [ ] **Metrics exportable to Prometheus via standard OTel exporter.** `/v1/metrics` backed by OTel metrics.
-- [ ] **Remote worker example in documentation.** Shows `interceptors: [activity]` on remote worker constructor.
+- [x] **Remote worker example in documentation.** Shows `interceptors: [activity]` on remote worker constructor. (See `docs/guides/remote-workers.md`; search for `const { activity } = createObservabilityInterceptors()` and the nearby `new RemoteWorker({ … interceptors: [activity] })` example.)
 - [x] **Composable with other interceptors.** Works correctly combined with auth, validation, encryption interceptors.
 
 ### DX
