@@ -4,6 +4,7 @@ import {
   AgentBudgetExceededEvent,
   AgentBudgetWarningEvent,
   AgentCheckpointResumedEvent,
+  AgentCheckpointSizeWarningEvent,
   AgentContextCompactedEvent,
   AgentModelFallbackEvent,
   AgentProviderCircuitOpenEvent,
@@ -364,6 +365,27 @@ describe('HumanReviewCompletedEvent', () => {
   });
 });
 
+describe('AgentCheckpointSizeWarningEvent', () => {
+  it('sets all properties from constructor arguments', () => {
+    const event = new AgentCheckpointSizeWarningEvent('wf-sz', 'agent-sz', 65536, 3);
+    expect(event.workflowId).toBe('wf-sz');
+    expect(event.agentId).toBe('agent-sz');
+    expect(event.sizeBytes).toBe(65536);
+    expect(event.turnIndex).toBe(3);
+  });
+
+  it('has a matching static type and instance type', () => {
+    const event = new AgentCheckpointSizeWarningEvent('wf-sz', 'agent-sz', 0, 0);
+    expect(event.type).toBe(AgentCheckpointSizeWarningEvent.type);
+    expect(event.type).toBe('agent:checkpoint-size-warning');
+  });
+
+  it('is an instance of Event', () => {
+    const event = new AgentCheckpointSizeWarningEvent('wf-sz', 'agent-sz', 0, 0);
+    expect(event).toBeInstanceOf(Event);
+  });
+});
+
 describe('AgentCheckpointResumedEvent', () => {
   it('sets all properties from constructor arguments', () => {
     const event = new AgentCheckpointResumedEvent('wf-cp', 'agent-cp', 3);
@@ -397,6 +419,7 @@ describe('WeftAgentEventMap type coverage', () => {
     expect(AgentProviderCircuitOpenEvent.type).toBe('agent:provider:circuit-open');
     expect(HumanReviewRequestedEvent.type).toBe('human-review:requested');
     expect(HumanReviewCompletedEvent.type).toBe('human-review:completed');
+    expect(AgentCheckpointSizeWarningEvent.type).toBe('agent:checkpoint-size-warning');
     expect(AgentCheckpointResumedEvent.type).toBe('agent:checkpoint:resumed');
   });
 });

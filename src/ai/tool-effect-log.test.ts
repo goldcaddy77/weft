@@ -236,27 +236,27 @@ describe('ToolEffectLog crash-and-restore scenarios', () => {
     log2.recordReplay();
     expect(log2.duplicatesPrevented).toBe(2);
   });
-});
 
-it('aborted record is treated as retriable: lookup returns aborted status on restore', async () => {
-  const storage = new MemoryStorage();
-  const log1 = makeLog(storage);
-  const hash = computeSemanticHash({ op: 'charge', amount: 50 });
+  it('aborted record is treated as retriable: lookup returns aborted status on restore', async () => {
+    const storage = new MemoryStorage();
+    const log1 = makeLog(storage);
+    const hash = computeSemanticHash({ op: 'charge', amount: 50 });
 
-  await log1.record(hash, 'charge');
-  await log1.abort(hash, 'charge', 'card declined');
+    await log1.record(hash, 'charge');
+    await log1.abort(hash, 'charge', 'card declined');
 
-  // Restore: new log sees aborted entry
-  const log2 = makeLog(storage);
-  const entry = await log2.lookup(hash);
-  expect(entry?.status).toBe('aborted');
+    // Restore: new log sees aborted entry
+    const log2 = makeLog(storage);
+    const entry = await log2.lookup(hash);
+    expect(entry?.status).toBe('aborted');
 
-  // The agent loop treats aborted as retriable — it falls through to re-record
-  // and re-execute rather than replaying the failure or throwing a conflict error.
-  // Verify the aborted status is not 'committed' or 'in-flight' so callers can
-  // choose their handling (re-execute in the default path).
-  expect(entry?.status).not.toBe('committed');
-  expect(entry?.status).not.toBe('in-flight');
+    // The agent loop treats aborted as retriable — it falls through to re-record
+    // and re-execute rather than replaying the failure or throwing a conflict error.
+    // Verify the aborted status is not 'committed' or 'in-flight' so callers can
+    // choose their handling (re-execute in the default path).
+    expect(entry?.status).not.toBe('committed');
+    expect(entry?.status).not.toBe('in-flight');
+  });
 });
 
 // ---------------------------------------------------------------------------
