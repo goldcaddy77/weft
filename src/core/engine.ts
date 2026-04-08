@@ -296,7 +296,14 @@ function synthesizeTerminalEventFromState(state: WorkflowState): Event | null {
     case 'cancelled':
       return new WorkflowCancelledEvent(state.id);
     case 'timed-out': {
-      const elapsed = state.executionDeadline ? state.executionDeadline - state.createdAt : 0;
+      // Mirror the real dispatch in `#terminateWorkflow`, which computes
+      // `elapsed` as `getNow() - state.createdAt` and then persists the
+      // termination wall-clock time as `state.updatedAt`. Reading
+      // `updatedAt - createdAt` here recovers the same value the real event
+      // carried; `executionDeadline` would be the configured timeout budget
+      // instead of the actual elapsed, which is a subtly different number
+      // when the scheduler ticks past the deadline.
+      const elapsed = state.updatedAt - state.createdAt;
       return new WorkflowTimedOutEvent(state.id, 'execution', elapsed);
     }
     default:
