@@ -747,7 +747,8 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
  *
  * @example Run with a SQLite backend
  * ```ts
- * import { Engine, BunSQLiteStorage } from 'weft';
+ * import { Engine } from 'weft';
+ * import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
  *
  * await using storage = new BunSQLiteStorage('./weft.db');
  * await using engine = new Engine({ storage });
