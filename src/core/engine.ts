@@ -3233,6 +3233,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const agentInterception = this.#createAgentInterception(workflowId, rest.model, prompt);
     const agentInterceptorGenerator = this.#openAgentInterceptor(agentInterception);
+    const { ToolEffectLog } = await import('../ai/tool-effect-log.ts');
+    const toolEffectLog = new ToolEffectLog(this.#storage, workflowId, operation.operationId);
     const agentResult = await executeAgentLoop(
       {
         ...rest,
@@ -3245,6 +3247,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         onTurnCompleted: agentInterception.onTurnCompleted,
         onToolCalled: agentInterception.onToolCalled,
         onToolReturned: agentInterception.onToolReturned,
+        toolEffectLog,
       },
       prompt,
     );
@@ -3677,6 +3680,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
         await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
 
+        const { ToolEffectLog } = await import('../ai/tool-effect-log.ts');
+        const subOpEffectLog = new ToolEffectLog(this.#storage, workflowId, operation.operationId);
         const agentResult = await executeAgentLoop(
           {
             ...rest,
@@ -3684,6 +3689,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             // Thread the abort signal so losing branches of `ctx.race()`
             // stop consuming budget after the race settles.
             signal,
+            toolEffectLog: subOpEffectLog,
           },
           prompt,
         );

@@ -327,6 +327,21 @@ export class AgentCheckpointSizeWarningEvent extends Event {
   }
 }
 
+export class AgentCheckpointResumedEvent extends Event {
+  static readonly type = 'agent:checkpoint:resumed' as const;
+  readonly workflowId: string;
+  readonly agentId: string;
+  /** Number of tool calls that were short-circuited via committed-replay during this resume. */
+  readonly duplicatesPrevented: number;
+
+  constructor(workflowId: string, agentId: string, duplicatesPrevented: number) {
+    super(AgentCheckpointResumedEvent.type);
+    this.workflowId = workflowId;
+    this.agentId = agentId;
+    this.duplicatesPrevented = duplicatesPrevented;
+  }
+}
+
 export type WeftAgentEventMap = {
   'agent:turn:started': AgentTurnStartedEvent;
   'agent:turn:completed': AgentTurnCompletedEvent;
@@ -340,4 +355,5 @@ export type WeftAgentEventMap = {
   'agent:provider:circuit-open': AgentProviderCircuitOpenEvent;
   'human-review:requested': HumanReviewRequestedEvent;
   'human-review:completed': HumanReviewCompletedEvent;
+  'agent:checkpoint:resumed': AgentCheckpointResumedEvent;
 };

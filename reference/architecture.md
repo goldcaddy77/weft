@@ -5767,10 +5767,10 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 
 ### Track 1 — Foundations
 
-- [ ] `src/ai/effect-log.ts` exists, exports `EffectLog` with `record(call)`, `lookup(semanticHash)`, `commit(hash, result)`, `abort(hash)`.
-- [ ] `AgentToolDefinition` in `src/ai/declaration.ts` has an optional `identity: (input) => { semanticHash: string; intentCritical: string[] }` field.
-- [ ] `executeAgentLoop` in `src/ai/agent.ts` consults the effect log before every tool call and short-circuits on `committed` matches.
-- [ ] `bun test src/ai/__tests__/acr-fence.test.ts` passes a test that crashes mid-tool-call, restores, and asserts the tool ran exactly once (grep the mock call count).
+- [x] `src/ai/tool-effect-log.ts` exists, exports `ToolEffectLog` with `record(call)`, `lookup(semanticHash)`, `commit(hash, result)`, `abort(hash)`. (Note: file named for behavior, not paper acronym; `computeSemanticHash` and `ToolCallReplayConflictError` also exported.)
+- [x] `AgentToolDefinition` in `src/ai/declaration.ts` has an optional `identity: (input) => { semanticHash: string; intentCriticalFields: string[] }` field.
+- [x] `executeAgentLoop` in `src/ai/agent.ts` consults the effect log before every tool call and short-circuits on `committed` matches.
+- [x] `bun test src/ai/tool-effect-log.test.ts` passes tests that crash mid-tool-call, restore, and assert the tool ran exactly once (mock call count verified).
 - [ ] `src/core/event-log.ts` exists, exports `EventLog` with `append(event)`, `scan(workflowId)`, `replay(workflowId, toStep)`.
 - [ ] Event log entries are written in the same `storage.batch()` call as the checkpoint they correspond to (assertable by reading the storage backend's write log).
 - [ ] Each event entry contains `prevHash: string` chained from the previous entry; `weft verify <workflowId>` exits 0 on unmodified logs and non-zero on tampered logs.

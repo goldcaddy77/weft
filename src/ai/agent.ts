@@ -13,6 +13,7 @@ import { BudgetExceededError } from './budget';
 import type { ContextWindowManager } from './context-window';
 import { snapshotConversationForEvent } from './event-message-snapshot';
 import {
+  AgentCheckpointResumedEvent,
   AgentCheckpointSizeWarningEvent,
   AgentContextCompactedEvent,
   AgentModelFallbackEvent,
@@ -46,6 +47,8 @@ import {
   sweepExpiredCacheEntries,
   TOOL_CACHE_SWEEP_THRESHOLD,
 } from './tool-cache';
+import type { ToolEffectLog } from './tool-effect-log';
+import { computeSemanticHash, ToolCallReplayConflictError } from './tool-effect-log';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -103,11 +106,19 @@ export interface AgentOptions {
    * is dispatched via the eventTarget. Defaults to 65 536 (64 KB).
    */
   checkpointSizeWarningThreshold?: number | undefined;
+  /**
+   * Durable tool effect log for deduplicating tool calls across
+   * checkpoint-restore cycles. When provided, the agent loop consults the log
+   * before each tool execution and short-circuits on committed matches.
+   */
+  toolEffectLog?: ToolEffectLog | undefined;
 }
 
 export interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
+  /** See {@link AgentToolDefinition.identity}. */
+  identity?: (input: unknown) => { semanticHash: string; intentCriticalFields: string[] };
 }
 
 export interface TurnInfo {
@@ -182,6 +193,7 @@ interface ResolvedAgentOptions {
   onToolCalled?: ((call: ToolCallInfo) => void) | undefined;
   onToolReturned?: ((result: ToolReturnInfo) => void) | undefined;
   checkpointSizeWarningThreshold: number;
+  toolEffectLog?: ToolEffectLog | undefined;
 }
 
 interface AgentLoopState {
@@ -326,7 +338,7 @@ export async function initializeTools(
           return client.invokeTool(toolName, input, signal);
         });
       } else {
-        registry.registerLocal(entry.definition, entry.execute);
+        registry.registerLocal(entry.definition, entry.execute, entry.identity);
       }
     }
 
@@ -374,6 +386,7 @@ function resolveAgentOptions(options: AgentOptions): ResolvedAgentOptions {
     onToolCalled: options.onToolCalled,
     onToolReturned: options.onToolReturned,
     checkpointSizeWarningThreshold: options.checkpointSizeWarningThreshold ?? 65_536,
+    toolEffectLog: options.toolEffectLog,
   };
 }
 
@@ -802,6 +815,60 @@ async function resolveToolExecution(
   toolCall: ToolCall,
   tool: RegistryTool | undefined,
 ): Promise<ToolExecutionOutcome> {
+  const effectLog = runtime.options.toolEffectLog;
+
+  // ---------------------------------------------------------------------------
+  // Effect log — durable deduplication across checkpoint-restore cycles
+  //
+  // Compute the semantic hash and consult the log before any execution.
+  // This prevents duplicate tool calls when the agent is restored from a
+  // checkpoint mid-turn and the LLM re-synthesizes a semantically different
+  // version of an already-dispatched tool call.
+  // ---------------------------------------------------------------------------
+  if (effectLog) {
+    const semanticHash = tool?.identity
+      ? tool.identity(toolCall.input).semanticHash
+      : computeSemanticHash({ name: toolCall.name, input: toolCall.input });
+
+    const existing = await effectLog.lookup(semanticHash);
+
+    if (existing?.status === 'committed') {
+      // A prior run completed this tool call successfully — replay the result
+      // without re-executing the tool.
+      effectLog.recordReplay();
+      return { output: existing.output, success: true };
+    }
+
+    if (existing?.status === 'in-flight') {
+      // The process crashed between recording in-flight and receiving the
+      // result. Re-executing a non-idempotent tool could cause duplicate
+      // effects. Throw so the caller can escalate.
+      throw new ToolCallReplayConflictError(semanticHash, toolCall.name);
+    }
+
+    // No existing record — mark as in-flight before executing.
+    await effectLog.record(semanticHash, toolCall.name);
+
+    // Run the tool and update the log on success or failure.
+    const outcome = await resolveToolExecutionInner(runtime, turnIndex, toolCall, tool);
+    if (outcome.success) {
+      await effectLog.commit(semanticHash, outcome.output);
+    } else {
+      await effectLog.abort(semanticHash, outcome.output);
+    }
+    return outcome;
+  }
+
+  // No effect log configured — execute directly (original behaviour).
+  return resolveToolExecutionInner(runtime, turnIndex, toolCall, tool);
+}
+
+async function resolveToolExecutionInner(
+  runtime: AgentRuntime,
+  turnIndex: number,
+  toolCall: ToolCall,
+  tool: RegistryTool | undefined,
+): Promise<ToolExecutionOutcome> {
   const cacheKey = buildCacheKey(toolCall.name, toolCall.input);
 
   // Proactively evict expired entries when the cache grows large. The
@@ -1084,6 +1151,26 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       const shouldContinue = await executeAgentTurn(runtime, turnIndex);
       if (!shouldContinue) {
         break;
+      }
+    }
+
+    // Dispatch a resume event if the effect log recorded any committed replays.
+    // This fires even on the happy path (duplicatesPrevented === 0) to confirm
+    // the wiring is active and the agent ran clean.
+    if (
+      runtime.options.toolEffectLog &&
+      runtime.options.eventTarget &&
+      runtime.options.workflowId
+    ) {
+      const duplicatesPrevented = runtime.options.toolEffectLog.duplicatesPrevented;
+      if (duplicatesPrevented > 0) {
+        runtime.options.eventTarget.dispatchEvent(
+          new AgentCheckpointResumedEvent(
+            runtime.options.workflowId,
+            runtime.options.agentId,
+            duplicatesPrevented,
+          ),
+        );
       }
     }
 
