@@ -205,7 +205,7 @@ describe('handleRunMessage', () => {
 
     expect(capturedSignal).toBeDefined();
     expect(capturedSignal!.aborted).toBe(false);
-    handleCancelMessage(context, { workflowId: 'wf-signal' });
+    await handleCancelMessage(context, { workflowId: 'wf-signal' });
     expect(capturedSignal!.aborted).toBe(true);
   });
 
@@ -449,16 +449,16 @@ describe('handleCancelMessage', () => {
     expect(controller).toBeDefined();
     expect(controller!.signal.aborted).toBe(false);
 
-    handleCancelMessage(context, { workflowId: 'wf-cancel' });
+    await handleCancelMessage(context, { workflowId: 'wf-cancel' });
 
     expect(controller!.signal.aborted).toBe(true);
   });
 
-  it('is a no-op for a non-existent workflow', () => {
+  it('is a no-op for a non-existent workflow', async () => {
     const context = createWorkflowRunnerContext();
 
     // Should not throw
-    handleCancelMessage(context, { workflowId: 'wf-nonexistent' });
+    await handleCancelMessage(context, { workflowId: 'wf-nonexistent' });
   });
 
   it('cleans up generators and controllers after cancellation', async () => {
@@ -490,10 +490,187 @@ describe('handleCancelMessage', () => {
       () => workflow,
     );
 
-    handleCancelMessage(context, { workflowId: 'wf-cleanup' });
+    await handleCancelMessage(context, { workflowId: 'wf-cleanup' });
 
     expect(context.generators.has('wf-cleanup')).toBe(false);
     expect(context.abortControllers.has('wf-cleanup')).toBe(false);
+  });
+
+  it('runs finally blocks in the workflow generator when cancelled', async () => {
+    const context = createWorkflowRunnerContext();
+    let sideEffect = 0;
+
+    const operationRequest: OperationRequest = {
+      id: 'op-1',
+      workflowId: 'wf-finally',
+      kind: 'activity',
+      queue: 'default',
+      attempt: 1,
+      retryPolicy: {
+        maxAttempts: 3,
+        initialBackoff: 1000,
+        backoffMultiplier: 2,
+        maxBackoff: 30_000,
+      },
+      scheduledAt: Date.now(),
+    };
+
+    async function* finallyWorkflow() {
+      try {
+        const result: unknown = yield operationRequest;
+        return result;
+      } finally {
+        sideEffect++;
+      }
+    }
+
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-finally', workflowType: 'finally-test', input: null },
+      () => finallyWorkflow,
+    );
+
+    expect(sideEffect).toBe(0);
+
+    await handleCancelMessage(context, { workflowId: 'wf-finally' });
+
+    expect(sideEffect).toBe(1);
+    expect(context.generators.has('wf-finally')).toBe(false);
+    expect(context.abortControllers.has('wf-finally')).toBe(false);
+  });
+
+  it('swallows exceptions thrown from a workflow generator finalizer on cancel', async () => {
+    const context = createWorkflowRunnerContext();
+
+    const operationRequest: OperationRequest = {
+      id: 'op-1',
+      workflowId: 'wf-finally-throws',
+      kind: 'activity',
+      queue: 'default',
+      attempt: 1,
+      retryPolicy: {
+        maxAttempts: 3,
+        initialBackoff: 1000,
+        backoffMultiplier: 2,
+        maxBackoff: 30_000,
+      },
+      scheduledAt: Date.now(),
+    };
+
+    const throwOnDispose = (): never => {
+      throw new Error('finalizer exploded');
+    };
+
+    async function* throwingFinallyWorkflow() {
+      try {
+        yield operationRequest;
+      } finally {
+        throwOnDispose();
+      }
+    }
+
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-finally-throws', workflowType: 'throw-finally', input: null },
+      () => throwingFinallyWorkflow,
+    );
+
+    // Must not throw even though the finalizer raises.
+    await handleCancelMessage(context, { workflowId: 'wf-finally-throws' });
+
+    expect(context.generators.has('wf-finally-throws')).toBe(false);
+    expect(context.abortControllers.has('wf-finally-throws')).toBe(false);
+  });
+
+  it('does not clobber a freshly-installed workflow when cancel races with a new run of the same id', async () => {
+    // Regression: `handleCancelMessage` is async because it awaits
+    // `generator.return()` so finally blocks can run. During that await,
+    // the worker message loop can process another message for the same
+    // workflow id — including a `run` that installs a brand-new generator
+    // and controller in the context maps. The old cleanup unconditionally
+    // deleted by workflow id, wiping the new workflow's state. The fix is
+    // an identity check: only delete if the entry still matches what the
+    // cancel handler captured before awaiting.
+    const context = createWorkflowRunnerContext();
+
+    const operationRequest: OperationRequest = {
+      id: 'op-1',
+      workflowId: 'wf-race',
+      kind: 'activity',
+      queue: 'default',
+      attempt: 1,
+      retryPolicy: {
+        maxAttempts: 3,
+        initialBackoff: 1000,
+        backoffMultiplier: 2,
+        maxBackoff: 30_000,
+      },
+      scheduledAt: Date.now(),
+    };
+
+    // First workflow: `finally` block awaits a slow disposer so
+    // `generator.return()` takes long enough for us to interleave another
+    // message before cleanup runs.
+    let resolveDisposer!: () => void;
+    const disposerGate = new Promise<void>((resolve) => {
+      resolveDisposer = resolve;
+    });
+
+    async function* slowCleanupWorkflow() {
+      try {
+        yield operationRequest;
+      } finally {
+        await disposerGate;
+      }
+    }
+
+    async function* secondWorkflow() {
+      yield operationRequest;
+    }
+
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-race', workflowType: 'slow-cleanup', input: null },
+      () => slowCleanupWorkflow,
+    );
+
+    const originalController = context.abortControllers.get('wf-race');
+    const originalGenerator = context.generators.get('wf-race');
+    expect(originalController).toBeDefined();
+    expect(originalGenerator).toBeDefined();
+
+    // Kick off cancel; it will park on `await generator.return()` because
+    // the workflow's finally block is waiting on `disposerGate`.
+    const cancelPromise = handleCancelMessage(context, { workflowId: 'wf-race' });
+
+    // Give the cancel handler a microtask to capture the original
+    // generator/controller and enter the await.
+    await Promise.resolve();
+
+    // Simulate a concurrent `run` that installs a new workflow with the
+    // same id. This is the scenario the race guards against.
+    await handleRunMessage(
+      context,
+      { workflowId: 'wf-race', workflowType: 'second', input: null },
+      () => secondWorkflow,
+    );
+
+    const newController = context.abortControllers.get('wf-race');
+    const newGenerator = context.generators.get('wf-race');
+    expect(newController).toBeDefined();
+    expect(newGenerator).toBeDefined();
+    expect(newController).not.toBe(originalController);
+    expect(newGenerator).not.toBe(originalGenerator);
+
+    // Release the slow disposer so cancel can finish cleanup.
+    resolveDisposer();
+    await cancelPromise;
+
+    // After the cancel handler's cleanup step runs, the newly installed
+    // workflow must still be present — the identity check must have
+    // prevented the stale cancel from deleting it.
+    expect(context.abortControllers.get('wf-race')).toBe(newController);
+    expect(context.generators.get('wf-race')).toBe(newGenerator);
   });
 });
 

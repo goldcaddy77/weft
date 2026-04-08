@@ -12,6 +12,26 @@ export class BunSQLiteStorage implements Storage {
   #putStatement: Statement<unknown, [string, Uint8Array]>;
   #deleteStatement: Statement<unknown, [string]>;
   #batchTransaction: (entries: BatchOperation[]) => void;
+  // Cache prepared statements for scan() keyed by the fully-built SQL string.
+  // The set of SQL variants is bounded by the structural shape of the scan
+  // arguments (presence of gt/gte/lt/lte/reverse/limit), not by their
+  // numeric values — LIMIT is a bound parameter, not interpolated into the
+  // SQL, so varying `limit` values collapse onto a single cache entry. The
+  // cache grows at most by the number of distinct shape combinations, which
+  // is ≤ 2^6 = 64. bun:sqlite tracks live statements on the database and
+  // refuses to close while any are outstanding, so we finalize every cached
+  // entry in [Symbol.dispose].
+  #scanStatements: Map<string, Statement<{ key: string; value: Uint8Array }, SQLQueryBindings[]>> =
+    new Map();
+
+  /**
+   * Number of distinct prepared-statement cache entries for scan().
+   * Exposed for regression tests that assert the cache stays bounded
+   * regardless of the numeric values callers pass.
+   */
+  get scanStatementCacheSize(): number {
+    return this.#scanStatements.size;
+  }
 
   constructor(path: string = ':memory:') {
     this.#database = new Database(path);
@@ -98,14 +118,27 @@ export class BunSQLiteStorage implements Storage {
     }
 
     const direction = reverse ? 'DESC' : 'ASC';
-    const limitClause = limit !== undefined ? `LIMIT ${limit}` : '';
+    // Use a bound parameter for LIMIT rather than interpolating the value
+    // into the SQL string. If `limit` were interpolated, every distinct
+    // numeric value would be a separate cache key, letting the statement
+    // cache grow without bound for callers that use varying pagination
+    // sizes — exactly the leak the cache was meant to prevent.
+    const limitClause = limit !== undefined ? 'LIMIT ?' : '';
+    if (limit !== undefined) {
+      parameters.push(limit);
+    }
 
     const sql = `SELECT key, value FROM kv WHERE ${conditions.join(' AND ')} ORDER BY key ${direction} ${limitClause}`;
 
-    const rows = this.#database.prepare(sql).all(...parameters) as {
-      key: string;
-      value: Uint8Array;
-    }[];
+    let statement = this.#scanStatements.get(sql);
+    if (!statement) {
+      statement = this.#database.prepare<{ key: string; value: Uint8Array }, SQLQueryBindings[]>(
+        sql,
+      );
+      this.#scanStatements.set(sql, statement);
+    }
+
+    const rows = statement.all(...parameters);
 
     for (const row of rows) {
       yield [row.key, new Uint8Array(row.value)];
@@ -118,8 +151,16 @@ export class BunSQLiteStorage implements Storage {
   }
 
   async query<T>(sql: string, parameters?: SQLQueryBindings[]): Promise<T[]> {
-    const statement = this.#database.prepare(sql);
-    return statement.all(...(parameters ?? [])) as T[];
+    // query() accepts arbitrary caller-supplied SQL, so caching is not safe
+    // (the set of distinct strings is unbounded). Finalize the statement
+    // explicitly — bun:sqlite tracks live statements on the database handle
+    // and refuses to close while any are outstanding.
+    const statement = this.#database.prepare<T, SQLQueryBindings[]>(sql);
+    try {
+      return statement.all(...(parameters ?? []));
+    } finally {
+      statement.finalize();
+    }
   }
 
   [Symbol.dispose](): void {
@@ -130,6 +171,10 @@ export class BunSQLiteStorage implements Storage {
     this.#getStatement.finalize();
     this.#putStatement.finalize();
     this.#deleteStatement.finalize();
+    for (const statement of this.#scanStatements.values()) {
+      statement.finalize();
+    }
+    this.#scanStatements.clear();
     // database.close() finalizes any remaining compiled statements including the
     // internal BEGIN/COMMIT/ROLLBACK statements created by database.transaction().
     // We close after finalizing named statements so their handles are released

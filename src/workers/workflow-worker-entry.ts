@@ -71,7 +71,7 @@ export function initializeWorkerMessageLoop(getWorkflowHandler: WorkflowHandlerF
       }
 
       case 'cancel': {
-        handleCancelMessage(runnerContext, message);
+        await handleCancelMessage(runnerContext, message);
         break;
       }
     }

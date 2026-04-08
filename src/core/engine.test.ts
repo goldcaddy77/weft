@@ -1142,10 +1142,459 @@ describe('Engine', () => {
 
     for await (const event of handle) {
       collectedTypes.push(event.type);
-      if (event.type === 'workflow:completed') break;
     }
 
     expect(collectedTypes).toContain('workflow:completed');
+    // Regression guard: previously `workflow:completed` fired twice because
+    // both the generic `listener` and the `terminal` handler were registered
+    // on terminal event types, so each terminal event was enqueued twice.
+    expect(collectedTypes.filter((type) => type === 'workflow:completed')).toHaveLength(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already completed', async () => {
+    const engine = new Engine();
+    engine.register('already-done', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('already-done', null);
+    // Wait for the workflow to fully terminate and the completion event to
+    // have fired before we begin iterating.
+    await handle.result();
+    await flush();
+
+    const collected: string[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event.type);
+      }
+    })();
+
+    // Watchdog: if the iterator hangs the race returns the sentinel and the
+    // test fails. The sentinel is distinct so we can detect a hang specifically.
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    expect(collected).toContain('workflow:completed');
+    // The terminal event must be yielded exactly once — a regression would
+    // surface as a duplicate if `listener` and `terminal` were both
+    // registered on `workflow:completed`.
+    expect(collected.filter((type) => type === 'workflow:completed')).toHaveLength(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.asyncIterator does not double-emit when a late real terminal event races with synthesis', async () => {
+    // Regression: the synthesis path pushes a synthetic terminal event and
+    // sets `state.done = true`. If a real terminal event arrived later (e.g.
+    // because it was in flight between `addEventListener` and the persisted
+    // status read), `finishWorkflowHandleIteration` used to unconditionally
+    // enqueue it, producing two terminal events. The fix guards it on
+    // `state.done`. We simulate the race by starting iteration on an
+    // already-terminated workflow and then dispatching a second real
+    // terminal event on the handle after synthesis has run.
+    const engine = new Engine();
+    engine.register('race-target', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('race-target', null);
+    await handle.result();
+    await flush();
+
+    const collected: string[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event.type);
+      }
+    })();
+
+    // Give the iterator a microtask to attach listeners and synthesize.
+    await flush();
+    // Now dispatch a second terminal event that, without the guard, would
+    // hit `finishWorkflowHandleIteration` and enqueue a duplicate.
+    handle.dispatchEvent(new WorkflowCompletedEvent(handle.id, 'ok', 0));
+
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    expect(collected.filter((type) => type === 'workflow:completed')).toHaveLength(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable synthetic event does not leak to other listeners on the handle', async () => {
+    // Regression: the old synthesis path called `this.dispatchEvent(synthetic)`
+    // which broadcasts to every listener attached to the handle — concurrent
+    // iterators, other subscribers, and application code. The synthetic
+    // event is a private reconstruction for one subscription and must not
+    // leak into the handle's global dispatch stream.
+    const engine = new Engine();
+    engine.register('observable-global-leak', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('observable-global-leak', null);
+    await handle.result();
+    await flush();
+
+    // Foreign listener: a direct addEventListener on the handle. Simulates
+    // application code, a concurrent iterator, or another observer.
+    const foreignEvents: string[] = [];
+    const foreignListener = (event: Event) => {
+      foreignEvents.push(event.type);
+    };
+    handle.addEventListener('workflow:completed', foreignListener);
+
+    // Now subscribe via the observable, which runs the synthesis path
+    // because the workflow is already terminated.
+    const receivedTypes: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      complete: () => {
+        resolve();
+      },
+    });
+
+    await promise;
+    await flush();
+
+    // The subscriber observed the synthetic completion via its own callbacks.
+    expect(receivedTypes).toContain('workflow:completed');
+    // The foreign listener must NOT have received the synthetic event —
+    // the real `workflow:completed` had already fired before the foreign
+    // listener was attached, and synthesis is private to the subscription.
+    expect(foreignEvents).toHaveLength(0);
+
+    handle.removeEventListener('workflow:completed', foreignListener);
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not emit next() after error/complete on race', async () => {
+    // Regression: the `listener` (observer.next) was registered on every
+    // event type including terminals, with no `terminalDelivered` guard. If
+    // the synthesis path dispatched a synthetic terminal event first (setting
+    // `terminalDelivered = true`), a subsequent real terminal event would
+    // still invoke `observer.next` even though `observer.complete` or
+    // `observer.error` had already fired — violating the Observable
+    // contract. The fix wraps the next listener in a `terminalDelivered`
+    // guard. Simulate the race by subscribing to an already-completed
+    // workflow, letting synthesis fire, then dispatching another terminal
+    // event on the handle.
+    const engine = new Engine();
+    engine.register('observable-race', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('observable-race', null);
+    await handle.result();
+    await flush();
+
+    const receivedTypes: string[] = [];
+    let completeCallCount = 0;
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      complete: () => {
+        completeCallCount++;
+        resolve();
+      },
+    });
+
+    await promise;
+    // Now dispatch a second terminal event post-completion. Without the
+    // guard, `observer.next` would fire again after `observer.complete`.
+    handle.dispatchEvent(new WorkflowCompletedEvent(handle.id, 'ok', 0));
+    await flush();
+
+    expect(completeCallCount).toBe(1);
+    expect(receivedTypes.filter((type) => type === 'workflow:completed')).toHaveLength(1);
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already failed', async () => {
+    const engine = new Engine();
+    engine.register('already-failed', async function* () {
+      throw new Error('boom');
+    });
+
+    const handle = await engine.start('already-failed', null);
+    await handle.result().catch(() => {});
+    await flush();
+
+    const collected: Event[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event);
+      }
+    })();
+
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    const failure = collected.find((event) => event instanceof WorkflowFailedEvent);
+    expect(failure).toBeInstanceOf(WorkflowFailedEvent);
+    expect((failure as WorkflowFailedEvent).error.message).toBe('boom');
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already cancelled', async () => {
+    const engine = new Engine();
+    engine.register('already-cancelled', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('already-cancelled', null);
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+    await handle.cancel();
+    await resultPromise;
+    await flush();
+
+    const collected: Event[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event);
+      }
+    })();
+
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    expect(collected.some((event) => event instanceof WorkflowCancelledEvent)).toBe(true);
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already timed out', async () => {
+    let now = 1000;
+    const engine = new Engine({ getNow: () => now });
+    engine.register('already-timed-out', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('already-timed-out', null, { executionTimeout: 5000 });
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+
+    now = 7000;
+    await engine.scheduler.tick(now);
+    await flush();
+    await resultPromise;
+
+    const collected: Event[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event);
+      }
+    })();
+
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    const timedOut = collected.find((event) => event instanceof WorkflowTimedOutEvent);
+    expect(timedOut).toBeInstanceOf(WorkflowTimedOutEvent);
+    expect((timedOut as WorkflowTimedOutEvent).workflowId).toBe(handle.id);
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not hang when workflow already completed', async () => {
+    const engine = new Engine();
+    engine.register('observable-already-done', async function* () {
+      return 'done';
+    });
+
+    const handle = await engine.start('observable-already-done', null);
+    await handle.result();
+    await flush();
+
+    const receivedTypes: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      complete: () => {
+        resolve();
+      },
+    });
+
+    const result = await Promise.race([
+      promise.then(() => 'completed' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('completed');
+    expect(receivedTypes).toContain('workflow:completed');
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not hang when workflow already failed', async () => {
+    const engine = new Engine();
+    engine.register('observable-already-failed', async function* () {
+      throw new Error('kaboom');
+    });
+
+    const handle = await engine.start('observable-already-failed', null);
+    await handle.result().catch(() => {});
+    await flush();
+
+    const receivedTypes: string[] = [];
+    let completeCallCount = 0;
+    let capturedError: Error | undefined;
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      error: (error: Error) => {
+        capturedError = error;
+        resolve();
+      },
+      complete: () => {
+        completeCallCount++;
+      },
+    });
+
+    const result = await Promise.race([
+      promise.then(() => 'errored' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    // Give any erroneously-queued `complete()` call a chance to fire so the
+    // assertion below is meaningful.
+    await flush();
+
+    expect(result).toBe('errored');
+    expect(capturedError?.message).toBe('kaboom');
+    // Observable contract: `error` and `complete` are mutually exclusive.
+    expect(completeCallCount).toBe(0);
+    expect(receivedTypes).toContain('workflow:failed');
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not hang when workflow already cancelled', async () => {
+    const engine = new Engine();
+    engine.register('observable-already-cancelled', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('observable-already-cancelled', null);
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+    await handle.cancel();
+    await resultPromise;
+    await flush();
+
+    const receivedTypes: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      complete: () => {
+        resolve();
+      },
+    });
+
+    const result = await Promise.race([
+      promise.then(() => 'completed' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('completed');
+    expect(receivedTypes).toContain('workflow:cancelled');
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not hang when workflow already timed out', async () => {
+    let now = 1000;
+    const engine = new Engine({ getNow: () => now });
+    engine.register('observable-already-timed-out', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('observable-already-timed-out', null, {
+      executionTimeout: 5000,
+    });
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+
+    now = 7000;
+    await engine.scheduler.tick(now);
+    await flush();
+    await resultPromise;
+
+    const receivedTypes: string[] = [];
+    let completeCallCount = 0;
+    let capturedError: Error | undefined;
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      error: (error: Error) => {
+        capturedError = error;
+        resolve();
+      },
+      complete: () => {
+        completeCallCount++;
+      },
+    });
+
+    const result = await Promise.race([
+      promise.then(() => 'errored' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    // Give any erroneously-queued `complete()` call a chance to fire so the
+    // assertion below is meaningful.
+    await flush();
+
+    expect(result).toBe('errored');
+    expect(capturedError).toBeInstanceOf(WorkflowTimeoutError);
+    // Observable contract: `error` and `complete` are mutually exclusive.
+    expect(completeCallCount).toBe(0);
+    expect(receivedTypes).toContain('workflow:timed-out');
+    subscription.unsubscribe();
     engine[Symbol.dispose]();
   });
 
