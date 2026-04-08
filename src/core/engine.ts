@@ -264,6 +264,38 @@ function finishWorkflowHandleIteration(
   enqueueWorkflowHandleEvent(queue, event);
 }
 
+/**
+ * Build a synthetic terminal event matching the persisted status of a
+ * workflow that has already finished. Returns `null` for non-terminal states.
+ *
+ * Used by {@link WorkflowHandle[Symbol.asyncIterator]} and
+ * {@link WorkflowHandle[Symbol.observable]} to avoid hanging when a consumer
+ * starts iterating after the workflow has already reached a terminal state —
+ * the real terminal event was dispatched before any listener was attached and
+ * will never re-fire.
+ */
+function synthesizeTerminalEventFromState(state: WorkflowState): Event | null {
+  switch (state.status) {
+    case 'completed': {
+      const duration = state.updatedAt - state.createdAt;
+      return new WorkflowCompletedEvent(state.id, state.result, duration);
+    }
+    case 'failed': {
+      const error = new Error(state.error ?? 'Workflow failed');
+      if (state.errorStack) error.stack = state.errorStack;
+      return new WorkflowFailedEvent(state.id, error);
+    }
+    case 'cancelled':
+      return new WorkflowCancelledEvent(state.id);
+    case 'timed-out': {
+      const elapsed = state.executionDeadline ? state.executionDeadline - state.createdAt : 0;
+      return new WorkflowTimedOutEvent(state.id, 'execution', elapsed);
+    }
+    default:
+      return null;
+  }
+}
+
 function resolveEngineStorage(
   options?: EngineConstructorOptions,
   getAgentWorkflowIds?: () => ReadonlySet<string>,
@@ -507,7 +539,25 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
     }
 
     try {
-      while (!state.done) {
+      // Guard against the "started iterating after workflow already finished"
+      // hang: terminal events fire exactly once and are not replayed, so a
+      // consumer that attaches listeners post-termination would wait forever.
+      // We intentionally attach listeners BEFORE checking persisted status so
+      // the race is trivially safe — if the workflow transitions between
+      // listener attachment and the status read, the real event is already
+      // queued and `state.done` is true, and we skip synthesis.
+      if (!state.done) {
+        const persisted = await this.#engine.get(this.id);
+        if (persisted && !state.done) {
+          const synthetic = synthesizeTerminalEventFromState(persisted);
+          if (synthetic) {
+            queue.events.push(synthetic);
+            state.done = true;
+          }
+        }
+      }
+
+      while (!state.done || queue.events.length > 0) {
         if (queue.events.length === 0) {
           const { promise, resolve } = Promise.withResolvers<void>();
           queue.resolver = resolve;
@@ -553,6 +603,23 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
           'activity:completed',
         ];
 
+        // Track whether a real terminal event has been observed so the
+        // "started subscribing after workflow finished" guard below can avoid
+        // delivering a duplicate synthetic event if it races with a real one.
+        let terminalDelivered = false;
+        const markTerminal = () => {
+          terminalDelivered = true;
+        };
+        const terminalTypes = [
+          'workflow:completed',
+          'workflow:failed',
+          'workflow:cancelled',
+          'workflow:timed-out',
+        ];
+        for (const type of terminalTypes) {
+          this.addEventListener(type, markTerminal, { signal: controller.signal });
+        }
+
         if (listener) {
           for (const type of types) {
             this.addEventListener(type, listener, { signal: controller.signal });
@@ -577,6 +644,19 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
         };
         this.addEventListener('workflow:failed', errorHandler, { signal: controller.signal });
         this.addEventListener('workflow:timed-out', errorHandler, { signal: controller.signal });
+
+        // Guard against the "subscribed after workflow already finished" hang:
+        // terminal events fire once and are not replayed. Listeners are
+        // attached synchronously above, so if the workflow transitions between
+        // attachment and the async status read, the real event wins and
+        // `terminalDelivered` is set, causing us to skip synthesis.
+        void (async () => {
+          const persisted = await this.#engine.get(this.id);
+          if (controller.signal.aborted || terminalDelivered || !persisted) return;
+          const synthetic = synthesizeTerminalEventFromState(persisted);
+          if (!synthetic) return;
+          this.dispatchEvent(synthetic);
+        })();
 
         return {
           unsubscribe: controller.abort.bind(controller),

@@ -243,6 +243,48 @@ describe('BunSQLiteStorage', () => {
     storage[Symbol.dispose]();
   });
 
+  it('[Symbol.dispose] does not throw after many scan/query calls (prepared-statement leak regression)', async () => {
+    // Regression: scan() and query() used to call database.prepare() without
+    // ever finalizing the statement. bun:sqlite tracks live statements on the
+    // database and refuses to close while any are outstanding, so
+    // database.close() would throw mid-shutdown. Exercise every scan variant
+    // and a handful of raw queries, then verify dispose() is clean.
+    const storage = new BunSQLiteStorage(':memory:');
+
+    for (let index = 0; index < 50; index++) {
+      await storage.put(`key:${String(index).padStart(3, '0')}`, encode(String(index)));
+    }
+
+    // Exercise every distinct SQL variant scan() can produce.
+    for (let iteration = 0; iteration < 20; iteration++) {
+      await collect(storage.scan('key:'));
+      await collect(storage.scan('key:', { reverse: true }));
+      await collect(storage.scan('key:', { limit: 5 }));
+      await collect(storage.scan('key:', { limit: 5, reverse: true }));
+      await collect(storage.scan('key:', { gt: 'key:010' }));
+      await collect(storage.scan('key:', { gte: 'key:010' }));
+      await collect(storage.scan('key:', { lt: 'key:040' }));
+      await collect(storage.scan('key:', { lte: 'key:040' }));
+      await collect(storage.scan('key:', { gt: 'key:010', lt: 'key:040' }));
+      await collect(storage.scan('key:', { gte: 'key:010', lte: 'key:040', limit: 3 }));
+      await collect(
+        storage.scan('key:', { gt: 'key:010', lt: 'key:040', reverse: true, limit: 3 }),
+      );
+    }
+
+    // query() uses caller-supplied SQL; simulate varying queries so each
+    // prepare() call is distinct. A leak would leave 20 compiled statements
+    // dangling on the database handle.
+    for (let iteration = 0; iteration < 20; iteration++) {
+      await storage.query<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM kv WHERE key > ? AND key < ? -- iteration ${iteration}`,
+        ['key:000', 'key:999'],
+      );
+    }
+
+    expect(() => storage[Symbol.dispose]()).not.toThrow();
+  });
+
   it('query with parameters', async () => {
     const storage = new BunSQLiteStorage(':memory:');
     await storage.put('a', encode('1'));

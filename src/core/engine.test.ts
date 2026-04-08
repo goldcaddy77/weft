@@ -1149,6 +1149,131 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already completed', async () => {
+    const engine = new Engine();
+    engine.register('already-done', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('already-done', null);
+    // Wait for the workflow to fully terminate and the completion event to
+    // have fired before we begin iterating.
+    await handle.result();
+    await flush();
+
+    const collected: string[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event.type);
+      }
+    })();
+
+    // Watchdog: if the iterator hangs the race returns the sentinel and the
+    // test fails. The sentinel is distinct so we can detect a hang specifically.
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    expect(collected).toContain('workflow:completed');
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already failed', async () => {
+    const engine = new Engine();
+    engine.register('already-failed', async function* () {
+      throw new Error('boom');
+    });
+
+    const handle = await engine.start('already-failed', null);
+    await handle.result().catch(() => {});
+    await flush();
+
+    const collected: Event[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event);
+      }
+    })();
+
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    const failure = collected.find((event) => event instanceof WorkflowFailedEvent);
+    expect(failure).toBeInstanceOf(WorkflowFailedEvent);
+    expect((failure as WorkflowFailedEvent).error.message).toBe('boom');
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.asyncIterator does not hang when workflow already cancelled', async () => {
+    const engine = new Engine();
+    engine.register('already-cancelled', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('never');
+      return 'nope';
+    });
+
+    const handle = await engine.start('already-cancelled', null);
+    const resultPromise = handle.result().catch(() => {});
+    await flush();
+    await handle.cancel();
+    await resultPromise;
+    await flush();
+
+    const collected: Event[] = [];
+    const iterate = (async () => {
+      for await (const event of handle) {
+        collected.push(event);
+      }
+    })();
+
+    const result = await Promise.race([
+      iterate.then(() => 'iterated' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('iterated');
+    expect(collected.some((event) => event instanceof WorkflowCancelledEvent)).toBe(true);
+    engine[Symbol.dispose]();
+  });
+
+  it('WorkflowHandle Symbol.observable does not hang when workflow already completed', async () => {
+    const engine = new Engine();
+    engine.register('observable-already-done', async function* () {
+      return 'done';
+    });
+
+    const handle = await engine.start('observable-already-done', null);
+    await handle.result();
+    await flush();
+
+    const receivedTypes: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const observable = handle[Symbol.observable]();
+    const subscription = observable.subscribe({
+      next: (event: Event) => {
+        receivedTypes.push(event.type);
+      },
+      complete: () => {
+        resolve();
+      },
+    });
+
+    const result = await Promise.race([
+      promise.then(() => 'completed' as const),
+      Bun.sleep(500).then(() => 'timeout' as const),
+    ]);
+
+    expect(result).toBe('completed');
+    expect(receivedTypes).toContain('workflow:completed');
+    subscription.unsubscribe();
+    engine[Symbol.dispose]();
+  });
+
   // ---------------------------------------------------------------------------
   // WorkflowHandle Symbol.observable
   // ---------------------------------------------------------------------------

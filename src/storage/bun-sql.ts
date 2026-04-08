@@ -12,6 +12,14 @@ export class BunSQLiteStorage implements Storage {
   #putStatement: Statement<unknown, [string, Uint8Array]>;
   #deleteStatement: Statement<unknown, [string]>;
   #batchTransaction: (entries: BatchOperation[]) => void;
+  // Cache prepared statements for scan() keyed by the fully-built SQL string.
+  // The set of SQL variants is finite (bounded by the combinations of
+  // gt/gte/lt/lte/reverse/limit), so an unbounded Map is acceptable here and
+  // avoids leaking a compiled statement on every call. bun:sqlite tracks live
+  // statements on the database and refuses to close while any are
+  // outstanding, so we finalize every cached entry in [Symbol.dispose].
+  #scanStatements: Map<string, Statement<{ key: string; value: Uint8Array }, SQLQueryBindings[]>> =
+    new Map();
 
   constructor(path: string = ':memory:') {
     this.#database = new Database(path);
@@ -102,10 +110,15 @@ export class BunSQLiteStorage implements Storage {
 
     const sql = `SELECT key, value FROM kv WHERE ${conditions.join(' AND ')} ORDER BY key ${direction} ${limitClause}`;
 
-    const rows = this.#database.prepare(sql).all(...parameters) as {
-      key: string;
-      value: Uint8Array;
-    }[];
+    let statement = this.#scanStatements.get(sql);
+    if (!statement) {
+      statement = this.#database.prepare<{ key: string; value: Uint8Array }, SQLQueryBindings[]>(
+        sql,
+      );
+      this.#scanStatements.set(sql, statement);
+    }
+
+    const rows = statement.all(...parameters);
 
     for (const row of rows) {
       yield [row.key, new Uint8Array(row.value)];
@@ -118,8 +131,16 @@ export class BunSQLiteStorage implements Storage {
   }
 
   async query<T>(sql: string, parameters?: SQLQueryBindings[]): Promise<T[]> {
-    const statement = this.#database.prepare(sql);
-    return statement.all(...(parameters ?? [])) as T[];
+    // query() accepts arbitrary caller-supplied SQL, so caching is not safe
+    // (the set of distinct strings is unbounded). Finalize the statement
+    // explicitly — bun:sqlite tracks live statements on the database handle
+    // and refuses to close while any are outstanding.
+    const statement = this.#database.prepare<T, SQLQueryBindings[]>(sql);
+    try {
+      return statement.all(...(parameters ?? []));
+    } finally {
+      statement.finalize();
+    }
   }
 
   [Symbol.dispose](): void {
@@ -130,6 +151,10 @@ export class BunSQLiteStorage implements Storage {
     this.#getStatement.finalize();
     this.#putStatement.finalize();
     this.#deleteStatement.finalize();
+    for (const statement of this.#scanStatements.values()) {
+      statement.finalize();
+    }
+    this.#scanStatements.clear();
     // database.close() finalizes any remaining compiled statements including the
     // internal BEGIN/COMMIT/ROLLBACK statements created by database.transaction().
     // We close after finalizing named statements so their handles are released

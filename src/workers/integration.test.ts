@@ -267,7 +267,7 @@ describe('workflow runner integration', () => {
       expect(context.generators.has('wf-1')).toBe(true);
       expect(context.abortControllers.has('wf-1')).toBe(true);
 
-      handleCancelMessage(context, { workflowId: 'wf-1' });
+      await handleCancelMessage(context, { workflowId: 'wf-1' });
 
       expect(context.generators.has('wf-1')).toBe(false);
       expect(context.abortControllers.has('wf-1')).toBe(false);

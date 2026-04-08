@@ -154,14 +154,33 @@ export async function handleResumeMessage(
 // Handle "cancel" – abort the controller and tear down state
 // ---------------------------------------------------------------------------
 
-export function handleCancelMessage(
+/**
+ * Handle a `cancel` message: abort the workflow's {@link AbortController},
+ * run the generator's `finally` blocks by calling `generator.return()`, and
+ * tear down the runner's in-memory state. The `return()` call is wrapped in a
+ * try/catch because a well-behaved workflow's `finally` block may still throw
+ * on cancellation (e.g. a `using` disposer), and we must never let that
+ * prevent the rest of cleanup from running.
+ */
+export async function handleCancelMessage(
   context: WorkflowRunnerContext,
   message: { workflowId: string },
-): void {
+): Promise<void> {
   const controller = context.abortControllers.get(message.workflowId);
   if (controller) {
     controller.abort();
   }
+
+  const generator = context.generators.get(message.workflowId);
+  if (generator) {
+    try {
+      await generator.return(undefined);
+    } catch {
+      // Swallow: a finalizer in the workflow's try/finally may throw on
+      // cancel, but we still need to proceed to cleanup regardless.
+    }
+  }
+
   cleanup(context, message.workflowId);
 }
 
