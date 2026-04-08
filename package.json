@@ -61,8 +61,7 @@
     },
     "./storage/bun-sqlite": {
       "types": "./dist/storage/bun-sql.d.ts",
-      "bun": "./dist/storage/bun-sql.js",
-      "default": "./dist/storage/bun-sql.js"
+      "bun": "./dist/storage/bun-sql.js"
     },
     "./storage/lmdb": {
       "types": "./dist/storage/lmdb.d.ts",

@@ -17,7 +17,7 @@
  *
  * @module weft/storage
  */
-export { CompressedStorage } from './compressed-storage.ts';
-export { KEYS } from './interface.ts';
-export type { BatchOperation, ScanOptions, Storage } from './interface.ts';
-export { MemoryStorage } from './memory.ts';
+export { CompressedStorage } from './compressed-storage';
+export { KEYS } from './interface';
+export type { BatchOperation, ScanOptions, Storage } from './interface';
+export { MemoryStorage } from './memory';

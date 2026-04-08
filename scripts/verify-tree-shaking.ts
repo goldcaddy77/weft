@@ -8,7 +8,7 @@
  * Run after `bun run build`: bun run verify:exports
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,10 +27,9 @@ async function buildEntry(
   const absoluteTarget = join(distPath, distRelativePath);
 
   try {
-    writeFileSync(
+    await Bun.write(
       entryFile,
       `import { ${namedExport} } from ${JSON.stringify(absoluteTarget)}; export { ${namedExport} };`,
-      'utf-8',
     );
 
     const result = await Bun.build({
