@@ -108,7 +108,7 @@ describe('ToolEffectLog', () => {
 
   it('commit stores output and marks the call as committed', async () => {
     await log.record('hash-1', 'my-tool');
-    await log.commit('hash-1', 'tool output');
+    await log.commit('hash-1', 'my-tool', 'tool output');
     const entry = await log.lookup('hash-1');
     expect(entry?.status).toBe('committed');
     if (entry?.status === 'committed') {
@@ -118,14 +118,14 @@ describe('ToolEffectLog', () => {
 
   it('abort marks the call as aborted', async () => {
     await log.record('hash-1', 'my-tool');
-    await log.abort('hash-1', 'something went wrong');
+    await log.abort('hash-1', 'my-tool', 'something went wrong');
     const entry = await log.lookup('hash-1');
     expect(entry?.status).toBe('aborted');
   });
 
   it('committed result is replayed from storage after a new log instance is created (simulates restore)', async () => {
     await log.record('hash-1', 'charge');
-    await log.commit('hash-1', '{"status":"ok"}');
+    await log.commit('hash-1', 'charge', '{"status":"ok"}');
 
     // New ToolEffectLog instance — same storage, same scope
     const restoredLog = makeLog(storage);
@@ -200,7 +200,7 @@ describe('ToolEffectLog crash-and-restore scenarios', () => {
     // First run: record, execute, commit
     await log1.record(hash, 'debit');
     const output = await mockTool();
-    await log1.commit(hash, output);
+    await log1.commit(hash, 'debit', output);
     expect(callCount).toBe(1);
 
     // Restore: new log sees committed entry — tool should NOT run again
@@ -225,7 +225,7 @@ describe('ToolEffectLog crash-and-restore scenarios', () => {
     const hash = computeSemanticHash({ op: 'send', to: 'bob' });
 
     await log1.record(hash, 'send');
-    await log1.commit(hash, 'ok');
+    await log1.commit(hash, 'send', 'ok');
 
     const log2 = makeLog(storage);
     const entry = await log2.lookup(hash);
@@ -236,6 +236,27 @@ describe('ToolEffectLog crash-and-restore scenarios', () => {
     log2.recordReplay();
     expect(log2.duplicatesPrevented).toBe(2);
   });
+});
+
+it('aborted record is treated as retriable: lookup returns aborted status on restore', async () => {
+  const storage = new MemoryStorage();
+  const log1 = makeLog(storage);
+  const hash = computeSemanticHash({ op: 'charge', amount: 50 });
+
+  await log1.record(hash, 'charge');
+  await log1.abort(hash, 'charge', 'card declined');
+
+  // Restore: new log sees aborted entry
+  const log2 = makeLog(storage);
+  const entry = await log2.lookup(hash);
+  expect(entry?.status).toBe('aborted');
+
+  // The agent loop treats aborted as retriable — it falls through to re-record
+  // and re-execute rather than replaying the failure or throwing a conflict error.
+  // Verify the aborted status is not 'committed' or 'in-flight' so callers can
+  // choose their handling (re-execute in the default path).
+  expect(entry?.status).not.toBe('committed');
+  expect(entry?.status).not.toBe('in-flight');
 });
 
 // ---------------------------------------------------------------------------

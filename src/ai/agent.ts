@@ -11,6 +11,7 @@
 import type { BudgetTracker } from './budget';
 import { BudgetExceededError } from './budget';
 import type { ContextWindowManager } from './context-window';
+import type { ToolIdentityResult } from './declaration';
 import { snapshotConversationForEvent } from './event-message-snapshot';
 import {
   AgentCheckpointResumedEvent,
@@ -118,7 +119,7 @@ export interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
   /** See {@link AgentToolDefinition.identity}. */
-  identity?: (input: unknown) => { semanticHash: string; intentCriticalFields: string[] };
+  identity?: (input: unknown) => ToolIdentityResult;
 }
 
 export interface TurnInfo {
@@ -846,15 +847,19 @@ async function resolveToolExecution(
       throw new ToolCallReplayConflictError(semanticHash, toolCall.name);
     }
 
-    // No existing record — mark as in-flight before executing.
+    // An `aborted` record means the tool previously threw a retriable error.
+    // Re-execute rather than replaying the failure — the error condition may
+    // have resolved since the last attempt.
+
+    // No existing record (or aborted) — mark as in-flight before executing.
     await effectLog.record(semanticHash, toolCall.name);
 
     // Run the tool and update the log on success or failure.
     const outcome = await resolveToolExecutionInner(runtime, turnIndex, toolCall, tool);
     if (outcome.success) {
-      await effectLog.commit(semanticHash, outcome.output);
+      await effectLog.commit(semanticHash, toolCall.name, outcome.output);
     } else {
-      await effectLog.abort(semanticHash, outcome.output);
+      await effectLog.abort(semanticHash, toolCall.name, outcome.output);
     }
     return outcome;
   }
@@ -1154,9 +1159,8 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
       }
     }
 
-    // Dispatch a resume event if the effect log recorded any committed replays.
-    // This fires even on the happy path (duplicatesPrevented === 0) to confirm
-    // the wiring is active and the agent ran clean.
+    // Dispatch a checkpoint-resumed event when the effect log prevented at
+    // least one duplicate tool call. Only fires when replays actually occurred.
     if (
       runtime.options.toolEffectLog &&
       runtime.options.eventTarget &&

@@ -107,6 +107,24 @@ function canonicalize(value: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// Runtime type guard
+// ---------------------------------------------------------------------------
+
+/** Narrow an unknown decoded value to `EffectRecord`. Used in {@link ToolEffectLog.lookup}. */
+function isEffectRecord(value: unknown): value is EffectRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj['status'] !== 'string' || typeof obj['toolName'] !== 'string') return false;
+  const s = obj['status'];
+  if (s === 'in-flight') return typeof obj['recordedAt'] === 'number';
+  if (s === 'committed')
+    return typeof obj['output'] === 'string' && typeof obj['completedAt'] === 'number';
+  if (s === 'aborted')
+    return typeof obj['reason'] === 'string' && typeof obj['completedAt'] === 'number';
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // ToolEffectLog
 // ---------------------------------------------------------------------------
 
@@ -155,7 +173,9 @@ export class ToolEffectLog {
     const key = KEYS.toolEffect(this.#workflowId, this.#agentId, semanticHash);
     const bytes = await this.#storage.get(key);
     if (!bytes) return null;
-    return decode(bytes) as EffectRecord;
+    const decoded = decode(bytes);
+    if (!isEffectRecord(decoded)) return null;
+    return decoded;
   }
 
   /**
@@ -179,10 +199,10 @@ export class ToolEffectLog {
    * Call this after the tool has returned successfully so that a subsequent
    * restore will replay this output instead of re-executing.
    */
-  async commit(semanticHash: string, output: string): Promise<void> {
+  async commit(semanticHash: string, toolName: string, output: string): Promise<void> {
     const record: EffectRecord = {
       status: 'committed',
-      toolName: await this.#getToolName(semanticHash),
+      toolName,
       output,
       completedAt: Date.now(),
     };
@@ -193,13 +213,13 @@ export class ToolEffectLog {
    * Mark the call as `aborted` with a reason string.
    *
    * Call this when the tool throws an error that is not expected to recur
-   * (e.g. a validation error). On restore the agent loop will re-throw the
-   * original error rather than re-executing the tool.
+   * (e.g. a validation error). On restore the agent loop will re-execute the
+   * tool (allowing retries) rather than replaying the error.
    */
-  async abort(semanticHash: string, reason: string): Promise<void> {
+  async abort(semanticHash: string, toolName: string, reason: string): Promise<void> {
     const record: EffectRecord = {
       status: 'aborted',
-      toolName: await this.#getToolName(semanticHash),
+      toolName,
       reason,
       completedAt: Date.now(),
     };
@@ -213,10 +233,5 @@ export class ToolEffectLog {
   async #put(semanticHash: string, record: EffectRecord): Promise<void> {
     const key = KEYS.toolEffect(this.#workflowId, this.#agentId, semanticHash);
     await this.#storage.put(key, encode(record));
-  }
-
-  async #getToolName(semanticHash: string): Promise<string> {
-    const existing = await this.lookup(semanticHash);
-    return existing?.toolName ?? 'unknown';
   }
 }

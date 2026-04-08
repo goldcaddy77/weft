@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   AgentBudgetExceededEvent,
   AgentBudgetWarningEvent,
+  AgentCheckpointResumedEvent,
   AgentContextCompactedEvent,
   AgentModelFallbackEvent,
   AgentProviderCircuitOpenEvent,
@@ -363,6 +364,26 @@ describe('HumanReviewCompletedEvent', () => {
   });
 });
 
+describe('AgentCheckpointResumedEvent', () => {
+  it('sets all properties from constructor arguments', () => {
+    const event = new AgentCheckpointResumedEvent('wf-cp', 'agent-cp', 3);
+    expect(event.workflowId).toBe('wf-cp');
+    expect(event.agentId).toBe('agent-cp');
+    expect(event.duplicatesPrevented).toBe(3);
+  });
+
+  it('has a matching static type and instance type', () => {
+    const event = new AgentCheckpointResumedEvent('wf-cp', 'agent-cp', 1);
+    expect(event.type).toBe(AgentCheckpointResumedEvent.type);
+    expect(event.type).toBe('agent:checkpoint:resumed');
+  });
+
+  it('is an instance of Event', () => {
+    const event = new AgentCheckpointResumedEvent('wf-cp', 'agent-cp', 0);
+    expect(event).toBeInstanceOf(Event);
+  });
+});
+
 describe('WeftAgentEventMap type coverage', () => {
   it('maps all event type strings to their respective classes', () => {
     expect(AgentTurnStartedEvent.type).toBe('agent:turn:started');
@@ -376,6 +397,7 @@ describe('WeftAgentEventMap type coverage', () => {
     expect(AgentProviderCircuitOpenEvent.type).toBe('agent:provider:circuit-open');
     expect(HumanReviewRequestedEvent.type).toBe('human-review:requested');
     expect(HumanReviewCompletedEvent.type).toBe('human-review:completed');
+    expect(AgentCheckpointResumedEvent.type).toBe('agent:checkpoint:resumed');
   });
 });
 
