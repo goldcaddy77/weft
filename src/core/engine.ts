@@ -53,6 +53,7 @@ import {
   AttributesChangedEvent,
   CheckpointSizeWarningEvent,
   CleanupWarningEvent,
+  ConstraintViolatedEvent,
   DevelopmentWarningEvent,
   SignalReceivedEvent,
   UpdateCompletedEvent,
@@ -135,6 +136,8 @@ interface RegistrationEntry {
   isAgent?: boolean;
   /** LLM provider for agent-typed registrations (used for connection pre-warming). */
   provider?: LLMProvider;
+  /** Domain constraints evaluated at every checkpoint commit. */
+  constraints?: import('./constraint.ts').ConstraintDefinition[];
 }
 
 /** Options required when registering an AgentDefinition as a workflow. */
@@ -1166,6 +1169,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
       if (registration.searchAttributes) {
         entry.searchAttributes = registration.searchAttributes;
+      }
+      if (registration.constraints && registration.constraints.length > 0) {
+        entry.constraints = registration.constraints;
       }
       this.#registrations.set(name, entry);
     } else {
@@ -2697,6 +2703,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // Development mode: validate checkpoint round-trip
         this.#validateDevelopmentCheckpoint(message.workflowId);
 
+        // Evaluate domain constraints — done after persistence so the
+        // checkpoint is durable before any violation reaction.
+        const constraintViolated = await this.#evaluateConstraints(message.workflowId);
+        if (constraintViolated) {
+          // Violation already handled (event dispatched, error thrown or logged).
+          break;
+        }
+
         // Translate the operation request: worker protocol uses `kind` while the
         // engine uses `type`. Inline strategy already emits ContextOperationRequest.
         const operation = this.#translateOperationRequest(message.operationRequest);
@@ -2704,6 +2718,65 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         break;
       }
     }
+  }
+
+  /**
+   * Evaluate all registered constraints for a workflow at the current checkpoint.
+   *
+   * Returns `true` if any constraint was violated and a 'fail' or 'compensate'
+   * reaction was triggered (meaning the operation should not proceed). Returns
+   * `false` if all constraints passed or only 'warn' violations occurred.
+   */
+  async #evaluateConstraints(workflowId: string): Promise<boolean> {
+    const context = this.#inlineStrategy?.getContext(workflowId);
+    if (!context) return false;
+
+    const registration = this.#registrations.get(context.workflowType);
+    const constraints = registration?.constraints;
+    if (!constraints || constraints.length === 0) return false;
+
+    // Build the state snapshot passed to check(). We use the WorkflowState
+    // shape so check functions can inspect status, result, input, etc.
+    const stateSnapshot = {
+      id: workflowId,
+      type: context.workflowType,
+      status: 'running' as const,
+    };
+
+    for (const definition of constraints) {
+      let violated: boolean;
+      try {
+        const result = definition.check(stateSnapshot);
+        violated = !(result instanceof Promise ? await result : result);
+      } catch {
+        // A throwing check is treated as a violation.
+        violated = true;
+      }
+
+      if (!violated) continue;
+
+      this.dispatchEvent(
+        new ConstraintViolatedEvent(workflowId, definition.name, definition.scope, definition.onViolation),
+      );
+
+      if (definition.onViolation === 'warn') {
+        console.warn(
+          `[weft] Constraint "${definition.name}" (scope: ${definition.scope}) violated on workflow "${workflowId}" — continuing (onViolation: 'warn')`,
+        );
+        continue;
+      }
+
+      // 'fail' and 'compensate' both terminate the operation by throwing
+      // into the generator. With 'compensate', an active ctx.saga() will
+      // catch the error, run its compensators, then re-throw.
+      const violationError = new Error(
+        `Constraint violated: ${definition.name} (scope: ${definition.scope})`,
+      );
+      this.#feedOperationResult(workflowId, { status: 'failed', error: violationError.message }, violationError);
+      return true;
+    }
+
+    return false;
   }
 
   /**

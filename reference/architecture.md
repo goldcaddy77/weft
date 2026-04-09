@@ -5788,9 +5788,9 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 - [ ] `WorkflowState.failureCategory: 'memory' | 'reflection' | 'planning' | 'action' | 'system' | null` is populated on all failed workflows.
 - [ ] Search attributes include `failureCategory` so `engine.list({ attributes: { failureCategory: { equals: 'planning' }}})` works.
 - [ ] `weft validate <entry.ts>` CLI command exists; exits 0 on a clean workflow registration and non-zero when it detects any of: non-serializable closure in a workflow, stateful activity without a compensator, unbounded retry policy.
-- [ ] `src/core/constraint.ts` exists and exports `constraint(name, { scope, check, onViolation })`.
-- [ ] `engine.register(workflow, { constraints: [...] })` attaches constraints; constraints are evaluated at every checkpoint commit; `ConstraintViolatedEvent` fires on violation.
-- [ ] `bun test src/core/__tests__/constraints.test.ts` passes a test that a violated constraint with `onViolation: 'compensate'` triggers the workflow's saga compensators.
+- [x] `src/core/constraint.ts` exists and exports `constraint(name, { scope, check, onViolation })`.
+- [x] `engine.register(workflow, { constraints: [...] })` attaches constraints; constraints are evaluated at every checkpoint commit; `ConstraintViolatedEvent` fires on violation.
+- [x] `bun test src/core/__tests__/constraints.test.ts` passes a test that a violated constraint with `onViolation: 'compensate'` triggers the workflow's saga compensators.
 
 ### Track 3 — Latency and throughput
 

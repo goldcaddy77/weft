@@ -399,6 +399,12 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
   handler: WorkflowFunction<TInput, TOutput>;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
+  /**
+   * Domain constraints evaluated at every checkpoint commit. When a constraint's
+   * `check` returns false, the engine dispatches a `ConstraintViolatedEvent`
+   * and reacts per `onViolation` ('fail' | 'compensate' | 'warn').
+   */
+  constraints?: import('./constraint.ts').ConstraintDefinition[];
 }
 
 // ---------------------------------------------------------------------------

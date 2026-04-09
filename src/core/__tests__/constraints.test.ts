@@ -1,0 +1,345 @@
+/**
+ * Tests for the workflow constraint primitive.
+ *
+ * Constraints are domain invariants checked at every checkpoint commit.
+ * On violation the engine dispatches a `ConstraintViolatedEvent` and reacts
+ * per `onViolation`: 'fail' | 'compensate' | 'warn'.
+ */
+
+import { describe, expect, it } from 'bun:test';
+
+import type { Context } from '../context.ts';
+import { constraint } from '../constraint.ts';
+import { ConstraintViolatedEvent } from '../events.ts';
+import { Engine } from '../engine.ts';
+import type { ActivityDefinition, WorkflowContext } from '../types.ts';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeActivity<TInput, TOutput>(options: {
+  name: string;
+  execute: (input: TInput) => TOutput | Promise<TOutput>;
+  compensate?: (input: TInput, output: TOutput) => void | Promise<void>;
+}): ActivityDefinition<TInput, TOutput> {
+  return {
+    name: options.name,
+    execute: async (input: TInput) => options.execute(input),
+    ...(options.compensate !== undefined ? { compensate: options.compensate } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 1. Violated constraint with onViolation: 'compensate' triggers saga
+//    compensators.
+// ---------------------------------------------------------------------------
+
+describe('constraint primitive', () => {
+  it('violated constraint with onViolation: compensate triggers saga compensators', async () => {
+    const engine = new Engine();
+    const compensationOrder: string[] = [];
+    const violationEvents: ConstraintViolatedEvent[] = [];
+
+    // Track violation events.
+    engine.addEventListener('constraint:violated', (event) => {
+      violationEvents.push(event);
+    });
+
+    // A flag flipped by step-one's execute. The constraint fails exactly once,
+    // on the checkpoint commit that follows step-one's completion.
+    let stepOneComplete = false;
+    let constraintViolationAllowed = true; // Only fail once.
+
+    const balanceCheck = constraint('positiveBalance', {
+      scope: 'transaction',
+      check: () => {
+        if (!constraintViolationAllowed) return true; // Only violate once.
+        if (stepOneComplete) {
+          constraintViolationAllowed = false;
+          return false; // Trigger the violation.
+        }
+        return true;
+      },
+      onViolation: 'compensate',
+    });
+
+    const stepOne = makeActivity({
+      name: 'step-one',
+      execute: (_input: string) => {
+        stepOneComplete = true;
+        return 'output-one';
+      },
+      compensate: (_input, _output) => {
+        compensationOrder.push('step-one');
+      },
+    });
+
+    const stepTwo = makeActivity({
+      name: 'step-two',
+      execute: (_input: string) => 'output-two',
+      compensate: (_input, _output) => {
+        compensationOrder.push('step-two');
+      },
+    });
+
+    engine.register('constrained-saga', {
+      handler: async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        yield* c.saga([
+          { definition: stepOne, input: 'a' },
+          { definition: stepTwo, input: 'b' },
+        ]);
+      },
+      constraints: [balanceCheck],
+    });
+
+    const handle = await engine.start('constrained-saga', null);
+    await expect(handle.result()).rejects.toThrow('Constraint violated: positiveBalance');
+
+    // The ConstraintViolatedEvent must have fired.
+    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents[0]!.constraintName).toBe('positiveBalance');
+    expect(violationEvents[0]!.scope).toBe('transaction');
+    expect(violationEvents[0]!.onViolation).toBe('compensate');
+
+    // step-one completed before the violation, so its compensator must run.
+    // step-two never ran, so it has no compensator call.
+    expect(compensationOrder).toEqual(['step-one']);
+
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 2. onViolation: 'fail' — workflow fails immediately.
+  // ---------------------------------------------------------------------------
+
+  it('violated constraint with onViolation: fail causes the workflow to fail immediately', async () => {
+    const engine = new Engine();
+    const violationEvents: ConstraintViolatedEvent[] = [];
+    let compensatorCalled = false;
+
+    engine.addEventListener('constraint:violated', (event) => {
+      violationEvents.push(event);
+    });
+
+    let firstStepComplete = false;
+    let constraintAllowed = true;
+
+    const hardLimit = constraint('hardLimit', {
+      scope: 'budget',
+      check: () => {
+        if (!constraintAllowed) return true;
+        if (firstStepComplete) {
+          constraintAllowed = false;
+          return false;
+        }
+        return true;
+      },
+      onViolation: 'fail',
+    });
+
+    const step = makeActivity({
+      name: 'step',
+      execute: (_input: string) => {
+        firstStepComplete = true;
+        return 'ok';
+      },
+      compensate: () => {
+        compensatorCalled = true;
+      },
+    });
+
+    engine.register('fail-fast', {
+      handler: async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        yield* c.saga([
+          { definition: step, input: 'x' },
+          { definition: step, input: 'y' },
+        ]);
+      },
+      constraints: [hardLimit],
+    });
+
+    const handle = await engine.start('fail-fast', null);
+    await expect(handle.result()).rejects.toThrow('Constraint violated: hardLimit');
+
+    // Event must have fired.
+    expect(violationEvents).toHaveLength(1);
+    expect(violationEvents[0]!.onViolation).toBe('fail');
+
+    // With 'fail', the error propagates through saga — saga will compensate
+    // the completed step before re-throwing.
+    expect(compensatorCalled).toBe(true);
+
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 3. onViolation: 'warn' — workflow continues, event fires.
+  // ---------------------------------------------------------------------------
+
+  it('violated constraint with onViolation: warn fires event but workflow continues', async () => {
+    const engine = new Engine();
+    const violationEvents: ConstraintViolatedEvent[] = [];
+
+    engine.addEventListener('constraint:violated', (event) => {
+      violationEvents.push(event);
+    });
+
+    let checkpointCount = 0;
+
+    const softLimit = constraint('softLimit', {
+      scope: 'advisory',
+      check: () => {
+        checkpointCount += 1;
+        // Fail once (on second checkpoint), then pass again.
+        return checkpointCount !== 2;
+      },
+      onViolation: 'warn',
+    });
+
+    const step = makeActivity({
+      name: 'step',
+      execute: (input: number) => input + 1,
+    });
+
+    engine.register('warn-only', {
+      handler: async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        return yield* c.saga([
+          { definition: step, input: 1 },
+          { definition: step, input: 2 },
+        ]);
+      },
+      constraints: [softLimit],
+    });
+
+    const handle = await engine.start('warn-only', null);
+    const result = await handle.result();
+
+    // Workflow completed successfully despite the violation.
+    expect(result).toBe(3);
+
+    // Event fired for the violation.
+    expect(violationEvents.length).toBeGreaterThanOrEqual(1);
+    expect(violationEvents[0]!.constraintName).toBe('softLimit');
+    expect(violationEvents[0]!.onViolation).toBe('warn');
+
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 4. Constraint check runs at each checkpoint.
+  // ---------------------------------------------------------------------------
+
+  it('check function is called at each checkpoint commit', async () => {
+    const engine = new Engine();
+    const checkpointsSeen: number[] = [];
+
+    let count = 0;
+
+    const counter = constraint('checkpoint-counter', {
+      scope: 'test',
+      check: () => {
+        count += 1;
+        checkpointsSeen.push(count);
+        return true; // Never violate — just count.
+      },
+      onViolation: 'warn',
+    });
+
+    const step = makeActivity({
+      name: 'noop',
+      execute: (input: number) => input,
+    });
+
+    engine.register('count-checkpoints', {
+      handler: async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        yield* c.saga([
+          { definition: step, input: 1 },
+          { definition: step, input: 2 },
+          { definition: step, input: 3 },
+        ]);
+      },
+      constraints: [counter],
+    });
+
+    const handle = await engine.start('count-checkpoints', null);
+    await handle.result();
+
+    // Each saga step creates a checkpoint, so the check should have been
+    // called at least once per step.
+    expect(checkpointsSeen.length).toBeGreaterThanOrEqual(3);
+
+    engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 5. constraint() factory returns the correct shape.
+  // ---------------------------------------------------------------------------
+
+  it('constraint() factory produces the expected ConstraintDefinition', () => {
+    const check = (_state: unknown) => true;
+    const defined = constraint('myConstraint', {
+      scope: 'domain',
+      check,
+      onViolation: 'warn',
+    });
+
+    expect(defined.name).toBe('myConstraint');
+    expect(defined.scope).toBe('domain');
+    expect(defined.check).toBe(check);
+    expect(defined.onViolation).toBe('warn');
+  });
+
+  // ---------------------------------------------------------------------------
+  // 6. ConstraintViolatedEvent has the correct event type string.
+  // ---------------------------------------------------------------------------
+
+  it('ConstraintViolatedEvent fires with type "constraint:violated"', async () => {
+    const engine = new Engine();
+    const events: Event[] = [];
+
+    engine.addEventListener('constraint:violated', (event) => {
+      events.push(event);
+    });
+
+    let fired = false;
+
+    const alwaysFail = constraint('alwaysFail', {
+      scope: 'test',
+      check: () => {
+        const first = !fired;
+        fired = true;
+        return first; // Fail on second checkpoint.
+      },
+      onViolation: 'warn',
+    });
+
+    const step = makeActivity({
+      name: 'step',
+      execute: (_input: string) => 'done',
+    });
+
+    engine.register('event-type-check', {
+      handler: async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        yield* c.saga([
+          { definition: step, input: 'a' },
+          { definition: step, input: 'b' },
+        ]);
+      },
+      constraints: [alwaysFail],
+    });
+
+    const handle = await engine.start('event-type-check', null);
+    await handle.result();
+
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events[0]!.type).toBe('constraint:violated');
+
+    engine[Symbol.dispose]();
+  });
+});
