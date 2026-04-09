@@ -494,3 +494,62 @@ describe('effect log: cross-tool hash collision guard', () => {
     expect(entry?.status).toBe('in-flight');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Agent-level: in-flight record is aborted when inner execution throws
+// ---------------------------------------------------------------------------
+
+describe('effect log: dangling in-flight guard', () => {
+  it('aborts the in-flight record when resolveToolExecutionInner throws', async () => {
+    const storage = new MemoryStorage();
+    const effectLog = new ToolEffectLog(storage, 'wf-throw', 'agent-throw');
+
+    const tool = createSimpleTool('boom');
+    const provider = createSingleToolProvider('boom', {});
+
+    // afterToolCall hook throws — this propagates out of resolveToolExecutionInner
+    // since the hook is called without a surrounding try/catch there.
+    await expect(
+      executeAgentLoop(
+        {
+          model: 'test-model',
+          provider,
+          tools: [tool],
+          toolEffectLog: effectLog,
+          hooks: {
+            afterToolCall: async () => {
+              throw new Error('hook failure');
+            },
+          },
+        },
+        'Go',
+      ),
+    ).rejects.toThrow('hook failure');
+
+    // The in-flight record must have been aborted — not left dangling
+    const hash = computeSemanticHash({ name: 'boom', input: {} });
+    const entry = await effectLog.lookup(hash);
+    expect(entry?.status).toBe('aborted');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Storage key naming: tool-effect: prefix
+// ---------------------------------------------------------------------------
+
+describe('effect log: storage key prefix', () => {
+  it('uses the tool-effect: prefix in storage keys', async () => {
+    const storage = new MemoryStorage();
+    const effectLog = new ToolEffectLog(storage, 'wf-key', 'agent-key');
+    const hash = computeSemanticHash({ op: 'test' });
+    await effectLog.record(hash, 'my-tool');
+
+    // Verify the key written to storage uses the full descriptive prefix
+    const keys: string[] = [];
+    for await (const [key] of storage.scan('tool-effect:')) {
+      keys.push(key);
+    }
+    expect(keys.length).toBe(1);
+    expect(keys[0]).toContain('tool-effect:wf-key:agent-key:');
+  });
+});

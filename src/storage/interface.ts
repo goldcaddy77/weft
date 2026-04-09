@@ -63,5 +63,5 @@ export const KEYS = {
   streamMetadata: (workflowId: string, key: string) => `blob:${workflowId}:${key}:meta`,
   budgetCharged: (operationId: string) => `budget-charged:${operationId}`,
   toolEffect: (workflowId: string, agentId: string, semanticHash: string) =>
-    `fx:${workflowId}:${agentId}:${semanticHash}`,
+    `tool-effect:${workflowId}:${agentId}:${semanticHash}`,
 } as const;

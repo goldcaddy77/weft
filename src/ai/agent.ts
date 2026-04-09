@@ -876,7 +876,19 @@ async function resolveToolExecution(
     // Run the tool and update the log on success or failure.
     // Skip log writes on hash collision (shouldRecord=false) to avoid
     // overwriting a committed record that belongs to a different tool.
-    const outcome = await resolveToolExecutionInner(runtime, turnIndex, toolCall, tool);
+    // Use try/finally to abort the in-flight record if resolveToolExecutionInner
+    // throws unexpectedly — leaving it in-flight permanently would cause a
+    // ToolCallReplayConflictError on every future restore.
+    let outcome: Awaited<ReturnType<typeof resolveToolExecutionInner>>;
+    try {
+      outcome = await resolveToolExecutionInner(runtime, turnIndex, toolCall, tool);
+    } catch (error) {
+      if (shouldRecord) {
+        const reason = error instanceof Error ? error.message : String(error);
+        await effectLog.abort(semanticHash, toolCall.name, reason);
+      }
+      throw error;
+    }
     if (shouldRecord) {
       if (outcome.success) {
         await effectLog.commit(semanticHash, toolCall.name, outcome.output);
