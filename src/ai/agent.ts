@@ -829,12 +829,16 @@ async function resolveToolExecution(
   if (effectLog) {
     const semanticHash = (() => {
       if (tool?.identity) {
-        const result = tool.identity(toolCall.input);
-        // Validate that the custom identity returns a well-formed 16-char hex
-        // string. An invalid hash would produce unpredictable storage keys.
-        // Fall back to the default hash if validation fails.
-        if (/^[0-9a-f]{16}$/.test(result.semanticHash)) {
-          return result.semanticHash;
+        try {
+          const result = tool.identity(toolCall.input);
+          // Validate that the custom identity returns a well-formed 16-char hex
+          // string. An invalid hash would produce unpredictable storage keys.
+          // Fall back to the default hash if validation fails.
+          if (/^[0-9a-f]{16}$/.test(result.semanticHash)) {
+            return result.semanticHash;
+          }
+        } catch {
+          // identity() threw — fall through to the default hash.
         }
       }
       return computeSemanticHash({ name: toolCall.name, input: toolCall.input });

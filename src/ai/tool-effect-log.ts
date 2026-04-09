@@ -116,11 +116,11 @@ function isEffectRecord(value: unknown): value is EffectRecord {
   if (typeof value !== 'object' || value === null) return false;
   const obj = value as Record<string, unknown>;
   if (typeof obj['status'] !== 'string' || typeof obj['toolName'] !== 'string') return false;
-  const s = obj['status'];
-  if (s === 'in-flight') return typeof obj['recordedAt'] === 'number';
-  if (s === 'committed')
+  const status = obj['status'];
+  if (status === 'in-flight') return typeof obj['recordedAt'] === 'number';
+  if (status === 'committed')
     return typeof obj['output'] === 'string' && typeof obj['completedAt'] === 'number';
-  if (s === 'aborted')
+  if (status === 'aborted')
     return typeof obj['reason'] === 'string' && typeof obj['completedAt'] === 'number';
   return false;
 }
