@@ -22,8 +22,8 @@ describe('checkVersionCompatibility', () => {
     expect(checkVersionCompatibility('1.0.0', '2.0.0', true)).toBe('needs-migration');
   });
 
-  it('returns "resume-as-is" when versions differ and no migration is available', () => {
-    expect(checkVersionCompatibility('1.0.0', '2.0.0', false)).toBe('resume-as-is');
+  it('returns "incompatible" when versions differ and no migration is available', () => {
+    expect(checkVersionCompatibility('1.0.0', '2.0.0', false)).toBe('incompatible');
   });
 });
 
@@ -124,6 +124,22 @@ describe('VersionMismatchError', () => {
     expect(error.message).toContain('order-workflow');
     expect(error.message).toContain('1.0.0');
     expect(error.message).toContain('3.0.0');
+  });
+
+  it('describes persisted-state drift when workflow versions match', () => {
+    const error = new VersionMismatchError(
+      'wf-version-tuple',
+      'versioned-workflow',
+      '1.0.0',
+      '1.0.0',
+      undefined,
+      {
+        toolVersions: [{ tool: 'search', change: 'changed', from: '1.0.0', to: '2.0.0' }],
+      },
+    );
+
+    expect(error.message).toContain('persisted state is incompatible');
+    expect(error.message).toContain('search');
   });
 
   it('is an instance of Error', () => {

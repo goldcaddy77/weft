@@ -171,6 +171,12 @@ export interface AgentResult {
   reasoningTraces: string[];
   /** Per-turn cost breakdown with token counts, model, and tools used. */
   turnCosts: TurnCostEntry[];
+  /**
+   * Confidence score surfaced by the provider, if available.
+   * A value in [0, 1] where higher means more confident.
+   * `undefined` when the provider does not surface a confidence value.
+   */
+  confidence?: number | undefined;
 }
 
 interface ResolvedAgentOptions {

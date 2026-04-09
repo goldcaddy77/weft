@@ -20,6 +20,7 @@
 import type { BatchOperation, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { decode, encode } from './codec.ts';
+import type { WorkflowVersionTuple } from './workflow-version-tuple.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -49,6 +50,12 @@ export interface WorkflowLogEntry {
   payload: unknown;
   /** Unix timestamp (ms) at the time of the append. */
   timestamp: number;
+  /**
+   * Workflow, agent, and tool version tuple captured at the time of this
+   * entry. Only present when the caller passes a `versionTuple` argument.
+   * Absent for entries written by non-agent workflows or callers that opt out.
+   */
+  versionTuple?: WorkflowVersionTuple;
 }
 
 /**
@@ -139,8 +146,9 @@ export class EventLog {
     event: { type: string; payload: unknown },
     batchOperations: BatchOperation[],
     head: Readonly<EventHeadRecord>,
+    versionTuple?: WorkflowVersionTuple,
   ): EventHeadRecord {
-    const { encoded, newHead } = this.#buildEntry(event, head);
+    const { encoded, newHead } = this.#buildEntry(event, head, versionTuple);
 
     batchOperations.push(
       { type: 'put', key: KEYS.event(this.#workflowId, newHead.sequence), value: encoded },
@@ -167,9 +175,10 @@ export class EventLog {
   async append(
     event: { type: string; payload: unknown },
     batchOperations?: BatchOperation[],
+    versionTuple?: WorkflowVersionTuple,
   ): Promise<{ sequence: number; hash: string; newHead: EventHeadRecord }> {
     const head = await this.#readHead();
-    const { encoded, hash, newHead } = this.#buildEntry(event, head);
+    const { encoded, hash, newHead } = this.#buildEntry(event, head, versionTuple);
 
     const entryPut: BatchOperation = {
       type: 'put',
@@ -307,6 +316,7 @@ export class EventLog {
   #buildEntry(
     event: { type: string; payload: unknown },
     head: Readonly<EventHeadRecord>,
+    versionTuple?: WorkflowVersionTuple,
   ): { entry: WorkflowLogEntry; encoded: Uint8Array; hash: string; newHead: EventHeadRecord } {
     const sequence = head.sequence + 1;
     const prevHash = head.lastHash;
@@ -319,6 +329,10 @@ export class EventLog {
       payload: event.payload,
       timestamp: Date.now(),
     };
+
+    if (versionTuple !== undefined) {
+      entry.versionTuple = versionTuple;
+    }
 
     const encoded = encode(entry);
     const hash = hashBytes(encoded);

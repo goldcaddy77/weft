@@ -5720,7 +5720,7 @@ This is a small amount of code sitting on top of primitives Weft already has. Th
 
 ---
 
-## 9. Versioning across the entire TEA stack (AgentOrchestra)
+## 9. Versioning across workflow, agent, and tool definitions (AgentOrchestra)
 
 AgentOrchestra (2506.12508) argues that **Tool, Environment, and Agent** are all independently versioned components, and that a durable execution system should support rolling each one forward or back without invalidating in-flight workflows. Weft already versions workflows (`src/core/versioning.ts`) with explicit `migrate(checkpoint, fromVersion)` hooks. It does not version:
 
@@ -5812,15 +5812,15 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 
 ### Track 4 — Multi-agent reliability
 
-- [ ] `AgentResponse` includes an optional `confidence: number` field in [0, 1].
-- [ ] `supervise({ ..., voting: 'confidence-weighted' })` computes consensus using vote weights proportional to confidence scores.
-- [ ] `supervise({ ..., n: (task) => number })` supports dynamic n-sizing.
-- [ ] `METRICS.dpmo` is a counter in `src/observability/metrics.ts` that tracks `(defects / operations) * 1e6` and is exported via the existing Prometheus path.
-- [ ] `bun test src/ai/__tests__/bft.test.ts` passes a test with 1 byzantine agent out of 5 where confidence-weighted voting produces the correct answer and naive voting does not.
-- [ ] `AgentDefinition` and `AgentToolDefinition` expose a `version: string` field.
-- [ ] Event log entries (Track 1) record `(workflowVersion, agentVersion, toolVersions[])` on every event.
-- [ ] Resuming a workflow whose recorded version tuple is incompatible with the currently-registered versions, with no migration hook provided, throws `VersionMismatchError` with a structured breakdown of which component mismatched.
-- [ ] `bun test src/core/__tests__/tea-versioning.test.ts` passes a test that resumes a mid-flight workflow across a tool-schema version bump, with and without a migration hook.
+- [x] `AgentResult` includes an optional `confidence: number` field in [0, 1].
+- [x] `supervise({ ..., voting: 'confidence-weighted' })` computes consensus using vote weights proportional to confidence scores.
+- [x] `supervise({ ..., n: (task) => number })` supports dynamic n-sizing.
+- [x] `src/observability/metrics.ts` exposes `weft.dpmo.defects` and `weft.dpmo.operations`, with a derived `weft_dpmo` gauge exported via the existing Prometheus path.
+- [x] `bun test src/ai/__tests__/bft.test.ts` passes a test with 3 byzantine agents vs 2 honest agents where confidence-weighted voting produces the correct answer and naive voting does not.
+- [x] `AgentDefinition` and `AgentToolDefinition` expose a `version: string` field.
+- [x] Event log entries (Track 1) record `(workflowVersion, agentVersion, toolVersions[])` on every event.
+- [x] Resuming a workflow whose recorded version tuple is incompatible with the currently-registered versions, with no migration hook provided, throws `VersionMismatchError` with a structured breakdown of which component mismatched.
+- [x] `bun test src/core/__tests__/workflow-version-resume.test.ts` passes a test that resumes a mid-flight workflow across a tool-schema version bump, with and without a migration hook.
 
 ### Final verification
 

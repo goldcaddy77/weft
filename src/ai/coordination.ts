@@ -10,6 +10,7 @@
 import type { AgentResult } from './agent';
 import { executeAgentLoop } from './agent';
 import type { BudgetTracker } from './budget';
+import { confidenceWeightedConsensus } from './confidence-voting';
 import type { AgentDefinition } from './declaration';
 import type { LLMProvider } from './providers/interface';
 import type { Message } from './providers/types';
@@ -87,6 +88,20 @@ export interface SuperviseOptions {
   budget?: BudgetTracker | undefined;
   /** Abort signal propagated to all workers and supervisor. */
   signal?: AbortSignal | undefined;
+  /**
+   * Voting algorithm used during the `consensus` strategy.
+   * - `'naive'` (default): workers must produce identical strings to agree.
+   * - `'confidence-weighted'`: groups by exact content; winner is the group
+   *   with the highest total confidence weight.
+   */
+  voting?: 'naive' | 'confidence-weighted' | undefined;
+  /**
+   * Override the effective worker count at runtime.
+   * - A number: trim or round-robin-replicate `workers` to this length.
+   * - A function: called with the input string; return value is used as the count.
+   * Clamped to a minimum of 1.
+   */
+  n?: number | ((input: string) => number) | undefined;
 }
 
 export interface HandoffResult {
@@ -270,12 +285,83 @@ export async function debate(options: DebateOptions): Promise<DebateResult> {
 }
 
 // ---------------------------------------------------------------------------
+// supervise — helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the effective worker list from a `SuperviseOptions.n` override.
+ * - When `n` is a number: trim or round-robin-replicate `workers` to that length.
+ * - When `n` is a function: call it with `input` to obtain the count.
+ * - Clamped to a minimum of 1.
+ */
+function resolveWorkers(
+  workers: AgentDefinition[],
+  n: number | ((input: string) => number) | undefined,
+  input: string,
+): AgentDefinition[] {
+  if (workers.length === 0) throw new Error('supervise requires at least one worker agent');
+  if (n === undefined) return workers;
+
+  const requestedCount = typeof n === 'function' ? n(input) : n;
+  const effectiveCount = Number.isFinite(requestedCount)
+    ? Math.max(1, Math.floor(requestedCount))
+    : 1;
+  if (effectiveCount <= workers.length) {
+    return workers.slice(0, effectiveCount);
+  }
+  // Round-robin replicate to fill up to effectiveCount.
+  const expanded: AgentDefinition[] = [];
+  for (let index = 0; index < effectiveCount; index++) {
+    expanded.push(workers[index % workers.length]!);
+  }
+  return expanded;
+}
+
+/**
+ * Format worker results as a numbered summary string for supervisor prompts.
+ *
+ * @example "Worker 1: alpha\n\nWorker 2: beta"
+ */
+function formatWorkerSummary(results: AgentResult[]): string {
+  return results.map((result, index) => `Worker ${index + 1}: ${result.content}`).join('\n\n');
+}
+
+/**
+ * Determine the consensus winner for the `consensus` strategy.
+ * Returns `null` when workers disagree (or there is a confidence tie),
+ * signalling that the supervisor should be invoked.
+ */
+function resolveConsensusWinner(
+  results: AgentResult[],
+  voting: 'naive' | 'confidence-weighted' | undefined,
+): string | null {
+  if (voting === 'confidence-weighted') {
+    return confidenceWeightedConsensus(results).winner;
+  }
+  // Naive default: unanimous exact-string agreement required.
+  const allAgree = results.every((r) => r.content === results[0]!.content);
+  return allAgree ? (results[0]?.content ?? null) : null;
+}
+
+// ---------------------------------------------------------------------------
 // supervise
 // ---------------------------------------------------------------------------
 
 /** Run supervised multi-agent execution with synthesis. */
 export async function supervise(options: SuperviseOptions): Promise<SuperviseResult> {
-  const { workers, supervisor, input, strategy, provider, budget, signal: parentSignal } = options;
+  const {
+    workers: rawWorkers,
+    supervisor,
+    input,
+    strategy,
+    provider,
+    budget,
+    signal: parentSignal,
+    voting,
+    n,
+  } = options;
+
+  const workers = resolveWorkers(rawWorkers, n, input);
 
   // Unlike handoff/debate (sequential), supervise runs workers in parallel via
   // Promise.all. A dedicated AbortController lets budget exhaustion in one
@@ -332,29 +418,14 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
 
     switch (strategy) {
       case 'consensus': {
-        // Check if all workers produced the same response
-        const allResponses: string[] = [];
-        for (const result of workerResults) {
-          allResponses.push(result.content);
-        }
-        let allAgree = true;
-        for (const response of allResponses) {
-          if (response !== allResponses[0]) {
-            allAgree = false;
-            break;
-          }
-        }
+        const consensusWinner = resolveConsensusWinner(workerResults, voting);
 
-        if (allAgree) {
-          finalResult = allResponses[0]!;
+        if (consensusWinner !== null) {
+          finalResult = consensusWinner;
         } else {
-          // Workers disagree; ask supervisor to resolve
-          const workerSummaryLines: string[] = [];
-          for (const [index, response] of allResponses.entries()) {
-            workerSummaryLines.push(`Worker ${index + 1}: ${response}`);
-          }
-          const workerSummary = workerSummaryLines.join('\n\n');
-
+          // Workers disagree (or confidence-weighted voting was a tie);
+          // ask the supervisor to resolve.
+          const workerSummary = formatWorkerSummary(workerResults);
           const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nThe workers disagree. Please determine the correct answer.`;
 
           const supervisorResult = await executeAgentLoop(
@@ -376,12 +447,7 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       }
 
       case 'best-of-n': {
-        const workerSummaryLines: string[] = [];
-        for (const [index, result] of workerResults.entries()) {
-          workerSummaryLines.push(`Worker ${index + 1}: ${result.content}`);
-        }
-        const workerSummary = workerSummaryLines.join('\n\n');
-
+        const workerSummary = formatWorkerSummary(workerResults);
         const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nPick the best response and explain why.`;
 
         const supervisorResult = await executeAgentLoop(
@@ -402,12 +468,7 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       }
 
       case 'merge': {
-        const workerSummaryLines: string[] = [];
-        for (const [index, result] of workerResults.entries()) {
-          workerSummaryLines.push(`Worker ${index + 1}: ${result.content}`);
-        }
-        const workerSummary = workerSummaryLines.join('\n\n');
-
+        const workerSummary = formatWorkerSummary(workerResults);
         const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nMerge these responses into a single comprehensive answer.`;
 
         const supervisorResult = await executeAgentLoop(

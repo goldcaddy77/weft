@@ -687,6 +687,230 @@ describe('supervise', () => {
 });
 
 // ---------------------------------------------------------------------------
+// supervise — dynamic n and confidence-weighted voting
+// ---------------------------------------------------------------------------
+
+describe('supervise: dynamic n and confidence-weighted voting', () => {
+  it('with numeric n trims workers to the specified count', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('same');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const result = await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+        createAgentDefinition({ name: 'w4' }),
+        createAgentDefinition({ name: 'w5' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: 3,
+      provider,
+    });
+
+    // Only 3 workers ran (all returned 'same', so no supervisor call)
+    expect(result.workerResults).toHaveLength(3);
+    expect(callCount).toBe(3);
+  });
+
+  it('with n as a function resolves the count from input', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('same');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+        createAgentDefinition({ name: 'w4' }),
+        createAgentDefinition({ name: 'w5' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: () => 2,
+      provider,
+    });
+
+    // n function returns 2, so only 2 workers ran; they agreed → no supervisor
+    expect(callCount).toBe(2);
+  });
+
+  it('with fractional n floors to the nearest integer', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('same');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+        createAgentDefinition({ name: 'w4' }),
+        createAgentDefinition({ name: 'w5' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: 2.9, // floors to 2
+      provider,
+    });
+
+    // 2.9 floors to 2; only 2 workers ran
+    expect(callCount).toBe(2);
+  });
+
+  it('with voting "confidence-weighted" picks the unanimous answer without calling the supervisor', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('worker answer');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const result = await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      voting: 'confidence-weighted',
+      provider,
+    });
+
+    // Both workers agreed on 'worker answer'; confidence-weighted picks the unanimous winner
+    expect(result.finalResult).toBe('worker answer');
+    // Supervisor should NOT be called — workers agreed (only 2 calls)
+    expect(callCount).toBe(2);
+  });
+
+  it('with voting "confidence-weighted" falls through to supervisor when workers are evenly split', async () => {
+    let callSequence = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callSequence++;
+        // First two calls are workers (alternating answers); third is supervisor
+        if (callSequence === 1) return createChatResponse('alpha');
+        if (callSequence === 2) return createChatResponse('beta');
+        return createChatResponse('supervisor picked alpha'); // supervisor resolves the tie
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const result = await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      voting: 'confidence-weighted',
+      provider,
+    });
+
+    // Workers disagreed (alpha vs beta) with equal weight (confidence undefined → 0.5 each)
+    // → confidence-weighted detects a tie and falls through to supervisor
+    expect(result.finalResult).toBe('supervisor picked alpha');
+    expect(callSequence).toBe(3);
+  });
+
+  it('clamps non-finite n values to one worker', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('worker answer');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const infinityResult = await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: () => Number.POSITIVE_INFINITY,
+      provider,
+    });
+
+    const nanResult = await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: () => Number.NaN,
+      provider,
+    });
+
+    expect(infinityResult.finalResult).toBe('worker answer');
+    expect(nanResult.finalResult).toBe('worker answer');
+    expect(callCount).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // summarizeConversation
 // ---------------------------------------------------------------------------
 

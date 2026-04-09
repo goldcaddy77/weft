@@ -6,6 +6,7 @@ import {
   MetricsCollector,
   createMetricsCollectorExporter,
   createOtelMetrics,
+  serializeMetricsSnapshotForPrometheus,
 } from './metrics';
 import type { OtelMeter } from './no-op-telemetry';
 
@@ -335,5 +336,34 @@ describe('Prometheus exporter', () => {
       },
     };
     expect(custom.serialize()).toContain('custom 1');
+  });
+
+  it('emits weft_dpmo gauge as (defects / operations) * 1e6', () => {
+    const collector = new MetricsCollector();
+    // 3 defects out of 10 operations = 300000 DPMO
+    collector.increment('weft.dpmo.defects', 3);
+    collector.increment('weft.dpmo.operations', 10);
+
+    const text = serializeMetricsSnapshotForPrometheus(collector.snapshot());
+
+    expect(text).toContain('weft_dpmo 300000');
+    expect(text).toContain('weft_dpmo_defects_total 3');
+    expect(text).toContain('weft_dpmo_operations_total 10');
+  });
+
+  it('serializes weft_dpmo without introducing avoidable decimal artifacts', () => {
+    const collector = new MetricsCollector();
+    collector.increment('weft.dpmo.defects', 3);
+    collector.increment('weft.dpmo.operations', 10);
+
+    const text = serializeMetricsSnapshotForPrometheus(collector.snapshot());
+    const dpmoLine = text.split('\n').find((line) => line.startsWith('weft_dpmo '));
+
+    expect(dpmoLine).toBe('weft_dpmo 300000');
+  });
+
+  it('emits weft_dpmo 0 when no operations have been recorded', () => {
+    const text = serializeMetricsSnapshotForPrometheus({});
+    expect(text).toContain('weft_dpmo 0');
   });
 });

@@ -10,6 +10,8 @@
 
 import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
+import type { WorkflowVersionDiff } from './workflow-version-tuple.ts';
+import { formatWorkflowVersionDiff } from './workflow-version-tuple.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -22,7 +24,7 @@ export const DEFAULT_WORKFLOW_VERSION = '0.0.0';
 // Types
 // ---------------------------------------------------------------------------
 
-export type VersionCompatibility = 'compatible' | 'needs-migration' | 'resume-as-is';
+export type VersionCompatibility = 'compatible' | 'needs-migration' | 'incompatible';
 
 // ---------------------------------------------------------------------------
 // Version comparison
@@ -33,8 +35,8 @@ export type VersionCompatibility = 'compatible' | 'needs-migration' | 'resume-as
  *
  * - `"compatible"` — versions match; no action needed.
  * - `"needs-migration"` — versions differ and a migration function is available.
- * - `"resume-as-is"` — versions differ but no migration is available; the
- *   workflow will resume with the existing checkpoint as-is.
+ * - `"incompatible"` — versions differ and no migration is available; the engine
+ *   will throw a {@link VersionMismatchError} instead of resuming silently.
  */
 export function checkVersionCompatibility(
   storedVersion: string,
@@ -45,7 +47,7 @@ export function checkVersionCompatibility(
     return 'compatible';
   }
 
-  return hasMigration ? 'needs-migration' : 'resume-as-is';
+  return hasMigration ? 'needs-migration' : 'incompatible';
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +186,9 @@ export type ShapeDiffOptions = {
  *
  * When shape information is provided, the error message includes a
  * field-level diff describing exactly which fields changed.
+ *
+ * When version tuple information is provided, the error message includes a
+ * summary of which workflow, agent, or tool versions changed.
  */
 export class VersionMismatchError extends Error {
   readonly workflowId: string;
@@ -191,6 +196,7 @@ export class VersionMismatchError extends Error {
   readonly registeredVersion: string;
   readonly workflowType: string;
   readonly fieldDiffs: FieldDiff[] | undefined;
+  readonly versionDiff: WorkflowVersionDiff | undefined;
 
   constructor(
     workflowId: string,
@@ -198,23 +204,36 @@ export class VersionMismatchError extends Error {
     storedVersion: string,
     registeredVersion: string,
     shapeDiff?: ShapeDiffOptions,
+    versionDiff?: WorkflowVersionDiff,
   ) {
     const diffs = shapeDiff
       ? diffCheckpointShapes(shapeDiff.oldShape, shapeDiff.newShape)
       : undefined;
+    const hasVersionDiff =
+      versionDiff !== undefined &&
+      (versionDiff.workflowVersion !== undefined ||
+        versionDiff.agentVersion !== undefined ||
+        (versionDiff.toolVersions?.length ?? 0) > 0);
+    const hasPersistedStateDrift =
+      storedVersion === registeredVersion && ((diffs?.length ?? 0) > 0 || hasVersionDiff);
 
-    const baseMessage =
-      `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
-      `stored version ${storedVersion} does not match registered version ${registeredVersion}`;
+    const baseMessage = hasPersistedStateDrift
+      ? `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
+        `stored version ${storedVersion} matches registered version ${registeredVersion}, ` +
+        `but the persisted state is incompatible with the registered definition`
+      : `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
+        `stored version ${storedVersion} does not match registered version ${registeredVersion}`;
 
     const diffSuffix = diffs && diffs.length > 0 ? formatFieldDiffs(diffs) : '';
+    const versionSuffix = versionDiff ? formatWorkflowVersionDiff(versionDiff) : '';
 
-    super(baseMessage + diffSuffix);
+    super(baseMessage + diffSuffix + versionSuffix);
     this.name = 'VersionMismatchError';
     this.workflowId = workflowId;
     this.workflowType = workflowType;
     this.storedVersion = storedVersion;
     this.registeredVersion = registeredVersion;
     this.fieldDiffs = diffs;
+    this.versionDiff = versionDiff;
   }
 }

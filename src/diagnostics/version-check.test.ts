@@ -107,7 +107,7 @@ describe('runVersionCheck', () => {
 
     expect(report.overallVerdict).toBe('unsafe');
     expect(report.workflowTypes).toHaveLength(1);
-    expect(report.workflowTypes[0]!.compatibility).toBe('resume-as-is');
+    expect(report.workflowTypes[0]!.compatibility).toBe('incompatible');
     expect(report.workflowTypes[0]!.hasMigration).toBe(false);
   });
 
