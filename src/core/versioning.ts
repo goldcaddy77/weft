@@ -10,8 +10,8 @@
 
 import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
-import type { TeaVersionDiff } from './tea-versioning.ts';
-import { formatTeaVersionDiff } from './tea-versioning.ts';
+import type { WorkflowVersionDiff } from './workflow-version-tuple.ts';
+import { formatWorkflowVersionDiff } from './workflow-version-tuple.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -187,8 +187,8 @@ export type ShapeDiffOptions = {
  * When shape information is provided, the error message includes a
  * field-level diff describing exactly which fields changed.
  *
- * When TEA version information is provided, the error message includes a
- * summary of which tool/agent/workflow versions changed.
+ * When version tuple information is provided, the error message includes a
+ * summary of which workflow, agent, or tool versions changed.
  */
 export class VersionMismatchError extends Error {
   readonly workflowId: string;
@@ -196,7 +196,7 @@ export class VersionMismatchError extends Error {
   readonly registeredVersion: string;
   readonly workflowType: string;
   readonly fieldDiffs: FieldDiff[] | undefined;
-  readonly teaDiff: TeaVersionDiff | undefined;
+  readonly versionDiff: WorkflowVersionDiff | undefined;
 
   constructor(
     workflowId: string,
@@ -204,18 +204,18 @@ export class VersionMismatchError extends Error {
     storedVersion: string,
     registeredVersion: string,
     shapeDiff?: ShapeDiffOptions,
-    teaDiff?: TeaVersionDiff,
+    versionDiff?: WorkflowVersionDiff,
   ) {
     const diffs = shapeDiff
       ? diffCheckpointShapes(shapeDiff.oldShape, shapeDiff.newShape)
       : undefined;
-    const hasTeaDiff =
-      teaDiff !== undefined &&
-      (teaDiff.workflowVersion !== undefined ||
-        teaDiff.agentVersion !== undefined ||
-        (teaDiff.toolVersions?.length ?? 0) > 0);
+    const hasVersionDiff =
+      versionDiff !== undefined &&
+      (versionDiff.workflowVersion !== undefined ||
+        versionDiff.agentVersion !== undefined ||
+        (versionDiff.toolVersions?.length ?? 0) > 0);
     const hasPersistedStateDrift =
-      storedVersion === registeredVersion && ((diffs?.length ?? 0) > 0 || hasTeaDiff);
+      storedVersion === registeredVersion && ((diffs?.length ?? 0) > 0 || hasVersionDiff);
 
     const baseMessage = hasPersistedStateDrift
       ? `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
@@ -225,15 +225,15 @@ export class VersionMismatchError extends Error {
         `stored version ${storedVersion} does not match registered version ${registeredVersion}`;
 
     const diffSuffix = diffs && diffs.length > 0 ? formatFieldDiffs(diffs) : '';
-    const teaSuffix = teaDiff ? formatTeaVersionDiff(teaDiff) : '';
+    const versionSuffix = versionDiff ? formatWorkflowVersionDiff(versionDiff) : '';
 
-    super(baseMessage + diffSuffix + teaSuffix);
+    super(baseMessage + diffSuffix + versionSuffix);
     this.name = 'VersionMismatchError';
     this.workflowId = workflowId;
     this.workflowType = workflowType;
     this.storedVersion = storedVersion;
     this.registeredVersion = registeredVersion;
     this.fieldDiffs = diffs;
-    this.teaDiff = teaDiff;
+    this.versionDiff = versionDiff;
   }
 }

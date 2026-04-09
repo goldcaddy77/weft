@@ -1,9 +1,10 @@
 /**
- * End-to-end tests for TEA (Tool/Environment/Agent) versioning.
+ * End-to-end tests for workflow, agent, and tool version tracking on resume.
  *
- * Verifies that when a workflow is resumed after a tool/agent version change:
- * - Without a migration hook: throws VersionMismatchError with teaDiff
+ * Verifies that when a workflow is resumed after an agent or tool change:
+ * - Without a migration hook: throws VersionMismatchError with versionDiff
  * - With a migration hook: resumes normally
+ * - Legacy agent workflows are upgraded with version metadata on resume
  */
 
 import { describe, expect, it } from 'bun:test';
@@ -11,8 +12,11 @@ import { describe, expect, it } from 'bun:test';
 import { defineAgent } from '../../ai/declaration.ts';
 import type { LLMProvider } from '../../ai/providers/interface.ts';
 import type { ChatResponse } from '../../ai/providers/types.ts';
+import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
+import { decode, encode } from '../codec.ts';
 import { Engine } from '../engine.ts';
+import type { WorkflowState } from '../types.ts';
 import { VersionMismatchError } from '../versioning.ts';
 
 // ---------------------------------------------------------------------------
@@ -63,8 +67,8 @@ async function flush(): Promise<void> {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('TEA versioning', () => {
-  it('throws VersionMismatchError with teaDiff when tool version changes without a migration hook', async () => {
+describe('workflow version resume checks', () => {
+  it('throws VersionMismatchError with versionDiff when agent and tool versions change without a migration hook', async () => {
     const storage = new MemoryStorage();
 
     const toolV1 = {
@@ -89,7 +93,7 @@ describe('TEA versioning', () => {
     engine1.register(agentV1, { provider: makeBlockingProvider() });
 
     // Catch the rejection so it doesn't surface as an unhandled rejection.
-    engine1.start('versioned-agent', 'hello', { id: 'wf-tea-test' }).catch(() => {
+    engine1.start('versioned-agent', 'hello', { id: 'wf-version-resume-test' }).catch(() => {
       /* expected: engine disposed before LLM resolves */
     });
     await flush();
@@ -119,18 +123,18 @@ describe('TEA versioning', () => {
 
     let caught: unknown;
     try {
-      await engine2.resume('wf-tea-test');
+      await engine2.resume('wf-version-resume-test');
     } catch (error) {
       caught = error;
     }
 
     expect(caught).toBeInstanceOf(VersionMismatchError);
     const vmError = caught as VersionMismatchError;
-    expect(vmError.teaDiff).toBeDefined();
-    // The workflow version changed 1.0.0 → 2.0.0
-    expect(vmError.teaDiff?.workflowVersion).toEqual(['1.0.0', '2.0.0']);
+    expect(vmError.versionDiff).toBeDefined();
+    expect(vmError.versionDiff?.workflowVersion).toBeUndefined();
+    expect(vmError.versionDiff?.agentVersion).toEqual(['1.0.0', '2.0.0']);
     // The tool version changed 1.0.0 → 2.0.0
-    const toolChange = vmError.teaDiff?.toolVersions?.find((c) => c.tool === 'my-tool');
+    const toolChange = vmError.versionDiff?.toolVersions?.find((c) => c.tool === 'my-tool');
     expect(toolChange).toBeDefined();
     expect(toolChange?.change).toBe('changed');
     if (toolChange?.change === 'changed') {
@@ -199,8 +203,10 @@ describe('TEA versioning', () => {
 
     expect(caught).toBeInstanceOf(VersionMismatchError);
     const vmError = caught as VersionMismatchError;
-    expect(vmError.teaDiff?.workflowVersion).toBeUndefined();
-    const toolChange = vmError.teaDiff?.toolVersions?.find((c) => c.tool === 'same-workflow-tool');
+    expect(vmError.versionDiff?.workflowVersion).toBeUndefined();
+    const toolChange = vmError.versionDiff?.toolVersions?.find(
+      (c) => c.tool === 'same-workflow-tool',
+    );
     expect(toolChange).toBeDefined();
     expect(toolChange?.change).toBe('changed');
 
@@ -256,6 +262,58 @@ describe('TEA versioning', () => {
     expect(state?.toolVersions).toEqual(['pro-tool@2.0.0']);
 
     engine[Symbol.dispose]();
+  });
+
+  it('resumes a legacy agent workflow and backfills version metadata', async () => {
+    const storage = new MemoryStorage();
+
+    const legacyTool = {
+      definition: {
+        name: 'legacy-tool',
+        description: 'A legacy test tool',
+        inputSchema: { type: 'object' as const, properties: {} },
+      },
+      execute: async (_input: unknown) => 'legacy-result',
+      version: '1.0.0',
+    };
+
+    const agent = defineAgent({
+      name: 'legacy-agent',
+      model: 'test-model',
+      tools: [legacyTool],
+    });
+
+    const engine1 = new Engine({ storage });
+    engine1.register(agent, { provider: makeBlockingProvider() });
+    engine1.start('legacy-agent', 'hello', { id: 'wf-legacy-version-metadata' }).catch(() => {
+      /* expected: engine disposed before LLM resolves */
+    });
+    await flush();
+
+    const stateBytes = await storage.get(KEYS.workflow('wf-legacy-version-metadata'));
+    expect(stateBytes).not.toBeNull();
+    const state = decode(stateBytes!) as WorkflowState;
+    const legacyState: WorkflowState = {
+      ...state,
+      version: '1',
+    };
+    delete legacyState.agentVersion;
+    delete legacyState.toolVersions;
+    await storage.put(KEYS.workflow('wf-legacy-version-metadata'), encode(legacyState));
+
+    engine1[Symbol.dispose]();
+
+    const engine2 = new Engine({ storage });
+    engine2.register(agent, { provider: makeBlockingProvider() });
+    await engine2.resume('wf-legacy-version-metadata');
+    await flush();
+
+    const upgradedState = await engine2.get('wf-legacy-version-metadata');
+    expect(upgradedState?.version).toBe('1');
+    expect(upgradedState?.agentVersion).toBe('0.0.0');
+    expect(upgradedState?.toolVersions).toEqual(['legacy-tool@1.0.0']);
+
+    engine2[Symbol.dispose]();
   });
 
   it('resumes successfully when a migration hook is provided', async () => {

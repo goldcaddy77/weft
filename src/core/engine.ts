@@ -87,11 +87,6 @@ import {
   isAsyncGeneratorFunction,
   isGeneratorResult,
 } from './step-context.ts';
-import {
-  collectToolVersions,
-  diffTeaVersionTuples,
-  type TeaVersionTuple,
-} from './tea-versioning.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   AttributeFilter,
@@ -128,6 +123,12 @@ import {
   migrateCheckpoint,
 } from './versioning.ts';
 import { WorkerExecutionStrategy } from './worker-execution-strategy.ts';
+import {
+  collectToolVersions,
+  diffWorkflowVersionTuples,
+  type WorkflowVersionDiff,
+  type WorkflowVersionTuple,
+} from './workflow-version-tuple.ts';
 
 declare global {
   interface SymbolConstructor {
@@ -150,10 +151,10 @@ interface RegistrationEntry {
   provider?: LLMProvider;
   /** Domain constraints evaluated at every checkpoint commit. */
   constraints?: ConstraintDefinition[];
-  /** Resolve the effective TEA version tuple for the workflow's tenant context. */
-  teaVersionTupleForTenant?: (
+  /** Resolve the effective workflow version tuple for the workflow's tenant context. */
+  versionTupleForTenant?: (
     tenant: import('./tenant.ts').TenantContext | undefined,
-  ) => TeaVersionTuple;
+  ) => WorkflowVersionTuple;
 }
 
 /** Options required when registering an AgentDefinition as a workflow. */
@@ -845,12 +846,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    */
   #eventLogHeads: Map<string, Readonly<EventHeadRecord>> = new Map();
   /**
-   * In-memory cache of the TEA version tuple for each active workflow.
+   * In-memory cache of the workflow version tuple for each active workflow.
    * Populated at start/resume time and forwarded to event-log entries so every
    * checkpoint carry the workflow/agent/tool versions that were current when
    * the checkpoint was written.
    */
-  #teaVersionTuples: Map<string, TeaVersionTuple> = new Map();
+  #workflowVersionTuples: Map<string, WorkflowVersionTuple> = new Map();
 
   constructor(options?: EngineConstructorOptions) {
     super();
@@ -1124,14 +1125,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const agentDef = nameOrAgent;
       const agentOptions = handlerOrRegistrationOrOptions as AgentRegistrationOptions;
       const agentVersion = agentDef.version ?? '0.0.0';
+      const workflowVersion = '1';
       const resolveEffectiveTools = (tenant: import('./tenant.ts').TenantContext | undefined) =>
         agentDef.toolsForTenant ? agentDef.toolsForTenant(tenant) : agentDef.tools;
-      const resolveTeaVersionTuple = (
+      const resolveVersionTuple = (
         tenant: import('./tenant.ts').TenantContext | undefined,
-      ): TeaVersionTuple => {
+      ): WorkflowVersionTuple => {
         const effectiveTools = resolveEffectiveTools(tenant);
         return {
-          workflowVersion: agentVersion,
+          workflowVersion,
           agentVersion,
           ...(effectiveTools &&
             effectiveTools.length > 0 && {
@@ -1176,10 +1178,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       const agentRegistrationEntry: RegistrationEntry = {
         handler,
-        version: agentVersion,
+        version: workflowVersion,
         isAgent: true,
         provider: agentOptions.provider,
-        teaVersionTupleForTenant: resolveTeaVersionTuple,
+        versionTupleForTenant: resolveVersionTuple,
       };
 
       this.#registrations.set(agentDef.name, agentRegistrationEntry);
@@ -1335,25 +1337,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // Resolve the tenant context before the first checkpoint is written so
       // it gets persisted as part of the initial state blob.
       const tenant = await this.#resolveTenantForStart(workflowId, type, input);
-      const teaVersionTuple = this.#createTeaVersionTuple(registration, tenant);
+      const versionTuple = this.#createWorkflowVersionTuple(registration, tenant);
 
       const state = this.#createInitialWorkflowState(
         workflowId,
         type,
         input,
-        teaVersionTuple,
+        versionTuple,
         options,
         tenant,
       );
       const checkpoint = this.#createInitialCheckpoint(
         workflowId,
-        teaVersionTuple.workflowVersion,
+        versionTuple.workflowVersion,
         options,
       );
       this.#checkpoints.set(workflowId, checkpoint);
 
-      // Cache TEA version tuple for forwarding to event-log entries.
-      this.#teaVersionTuples.set(workflowId, teaVersionTuple);
+      // Cache the workflow version tuple for forwarding to event-log entries.
+      this.#workflowVersionTuples.set(workflowId, versionTuple);
 
       // Agent optimization: register before the initial storage batch so the
       // first checkpoint write uses agent-specific compression (brotli).
@@ -1496,13 +1498,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return paginateWorkflowSummaries(items, filter);
   }
 
-  /** Build a {@link TeaVersionTuple} from a {@link RegistrationEntry}. */
-  #createTeaVersionTuple(
+  /** Build a {@link WorkflowVersionTuple} from a {@link RegistrationEntry}. */
+  #createWorkflowVersionTuple(
     registration: RegistrationEntry,
     tenant?: import('./tenant.ts').TenantContext,
-  ): TeaVersionTuple {
-    if (registration.teaVersionTupleForTenant) {
-      return registration.teaVersionTupleForTenant(tenant);
+  ): WorkflowVersionTuple {
+    if (registration.versionTupleForTenant) {
+      return registration.versionTupleForTenant(tenant);
     }
 
     return {
@@ -1510,7 +1512,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     };
   }
 
-  #teaVersionTupleFromState(state: WorkflowState): TeaVersionTuple {
+  #workflowVersionTupleFromState(state: WorkflowState): WorkflowVersionTuple {
     return {
       workflowVersion: state.version,
       ...(state.agentVersion !== undefined && { agentVersion: state.agentVersion }),
@@ -1518,9 +1520,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     };
   }
 
-  #workflowStateWithTeaVersionTuple(
+  #workflowStateWithVersionTuple(
     state: WorkflowState,
-    teaVersionTuple: TeaVersionTuple,
+    versionTuple: WorkflowVersionTuple,
   ): WorkflowState {
     const {
       agentVersion: _existingAgentVersion,
@@ -1530,15 +1532,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     return {
       ...rest,
-      version: teaVersionTuple.workflowVersion,
+      version: versionTuple.workflowVersion,
       updatedAt: this.#options.getNow(),
-      ...(teaVersionTuple.agentVersion !== undefined && {
-        agentVersion: teaVersionTuple.agentVersion,
+      ...(versionTuple.agentVersion !== undefined && {
+        agentVersion: versionTuple.agentVersion,
       }),
-      ...(teaVersionTuple.toolVersions !== undefined && {
-        toolVersions: teaVersionTuple.toolVersions,
+      ...(versionTuple.toolVersions !== undefined && {
+        toolVersions: versionTuple.toolVersions,
       }),
     };
+  }
+
+  /**
+   * Legacy agent workflows stored only the workflow version (`"1"`) and did
+   * not persist agent or tool version metadata. Resume them once, then
+   * backfill the current tuple so future resumes become strict.
+   */
+  #isLegacyAgentVersionState(state: WorkflowState, registration: RegistrationEntry): boolean {
+    return (
+      registration.isAgent === true &&
+      state.agentVersion === undefined &&
+      state.toolVersions === undefined
+    );
   }
 
   async #prepareResumeState(
@@ -1549,46 +1564,64 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   ): Promise<{
     state: WorkflowState;
     checkpoint: Checkpoint;
-    teaVersionTuple: TeaVersionTuple;
+    versionTuple: WorkflowVersionTuple;
   }> {
     const compatibility = checkVersionCompatibility(
       checkpoint.version,
       registration.version,
       !!registration.migrate,
     );
-    const registeredTeaVersionTuple = this.#createTeaVersionTuple(registration, state.tenant);
-    const teaDiff = diffTeaVersionTuples(
-      this.#teaVersionTupleFromState(state),
-      registeredTeaVersionTuple,
-    );
-    const hasTeaVersionDrift =
-      teaDiff.workflowVersion !== undefined ||
-      teaDiff.agentVersion !== undefined ||
-      teaDiff.toolVersions !== undefined;
+    const registeredVersionTuple = this.#createWorkflowVersionTuple(registration, state.tenant);
+    const isLegacyAgentVersionState = this.#isLegacyAgentVersionState(state, registration);
+    const versionDiff = isLegacyAgentVersionState
+      ? {}
+      : diffWorkflowVersionTuples(
+          this.#workflowVersionTupleFromState(state),
+          registeredVersionTuple,
+        );
+    const hasVersionTupleDrift =
+      versionDiff.workflowVersion !== undefined ||
+      versionDiff.agentVersion !== undefined ||
+      versionDiff.toolVersions !== undefined;
 
-    if (compatibility === 'incompatible' || (hasTeaVersionDrift && !registration.migrate)) {
-      this.#throwVersionMismatch(workflowId, state, registration);
+    if (compatibility === 'incompatible' || (hasVersionTupleDrift && !registration.migrate)) {
+      this.#throwVersionMismatch(workflowId, state, registration, versionDiff);
     }
 
     let resumeState = state;
     let resumeCheckpoint = checkpoint;
-    if ((compatibility === 'needs-migration' || hasTeaVersionDrift) && registration.migrate) {
+    if (isLegacyAgentVersionState) {
+      resumeState = this.#workflowStateWithVersionTuple(state, registeredVersionTuple);
+
+      // Persist the backfilled version metadata atomically with the existing checkpoint.
+      await this.#storage.batch(
+        buildVersionUpdateOperations(
+          workflowId,
+          serializeCheckpoint(resumeCheckpoint),
+          registeredVersionTuple.workflowVersion,
+          encode(resumeState),
+        ),
+      );
+    } else if (
+      (compatibility === 'needs-migration' || hasVersionTupleDrift) &&
+      registration.migrate
+    ) {
       const migrated = migrateCheckpoint(
         checkpoint,
         checkpoint.version,
         registration.version,
         registration.migrate,
       ) as import('./types.ts').Checkpoint;
-      migrated.version = registeredTeaVersionTuple.workflowVersion;
+      migrated.version = registeredVersionTuple.workflowVersion;
       resumeCheckpoint = migrated;
-      resumeState = this.#workflowStateWithTeaVersionTuple(state, registeredTeaVersionTuple);
+      resumeState = this.#workflowStateWithVersionTuple(state, registeredVersionTuple);
 
       // Persist the migrated checkpoint and matching workflow-state metadata atomically.
       await this.#storage.batch(
         buildVersionUpdateOperations(
           workflowId,
           serializeCheckpoint(resumeCheckpoint),
-          registeredTeaVersionTuple.workflowVersion,
+          registeredVersionTuple.workflowVersion,
           encode(resumeState),
         ),
       );
@@ -1597,26 +1630,24 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return {
       state: resumeState,
       checkpoint: resumeCheckpoint,
-      teaVersionTuple: registeredTeaVersionTuple,
+      versionTuple: registeredVersionTuple,
     };
   }
 
-  /** Throws a {@link VersionMismatchError} with a full TEA diff. Never returns. */
+  /** Throws a {@link VersionMismatchError} with a full version diff. Never returns. */
   #throwVersionMismatch(
     workflowId: string,
     state: import('./types.ts').WorkflowState,
     registration: RegistrationEntry,
+    versionDiff: WorkflowVersionDiff,
   ): never {
-    const storedTuple = this.#teaVersionTupleFromState(state);
-    const registeredTuple = this.#createTeaVersionTuple(registration, state.tenant);
-    const teaDiff = diffTeaVersionTuples(storedTuple, registeredTuple);
     throw new VersionMismatchError(
       workflowId,
       state.type,
       state.version,
       registration.version,
       undefined,
-      teaDiff,
+      versionDiff,
     );
   }
 
@@ -1624,7 +1655,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     type: string,
     input: unknown,
-    teaVersionTuple: TeaVersionTuple,
+    versionTuple: WorkflowVersionTuple,
     options?: StartOptions,
     tenant?: import('./tenant.ts').TenantContext,
   ): WorkflowState {
@@ -1634,14 +1665,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       type,
       status: 'running',
       input,
-      version: teaVersionTuple.workflowVersion,
+      version: versionTuple.workflowVersion,
       createdAt: now,
       updatedAt: now,
-      ...(teaVersionTuple.agentVersion !== undefined && {
-        agentVersion: teaVersionTuple.agentVersion,
+      ...(versionTuple.agentVersion !== undefined && {
+        agentVersion: versionTuple.agentVersion,
       }),
-      ...(teaVersionTuple.toolVersions !== undefined && {
-        toolVersions: teaVersionTuple.toolVersions,
+      ...(versionTuple.toolVersions !== undefined && {
+        toolVersions: versionTuple.toolVersions,
       }),
     };
 
@@ -2233,13 +2264,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
     state = preparedResumeState.state;
     const resumeCheckpoint = preparedResumeState.checkpoint;
-    const registeredTeaVersionTuple = preparedResumeState.teaVersionTuple;
+    const registeredVersionTuple = preparedResumeState.versionTuple;
 
     // Store checkpoint for future persistence
     this.#checkpoints.set(workflowId, resumeCheckpoint);
 
-    // Cache TEA version tuple for forwarding to event-log entries.
-    this.#teaVersionTuples.set(workflowId, registeredTeaVersionTuple);
+    // Cache the workflow version tuple for forwarding to event-log entries.
+    this.#workflowVersionTuples.set(workflowId, registeredVersionTuple);
 
     // Restore the event log head from storage so that the next appendToBatch()
     // call uses the correct sequence number and prevHash rather than falling
@@ -2683,7 +2714,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#chargedAgentOperationsByWorkflow.clear();
     this.#agentWorkflowIds.clear();
     this.#eventLogHeads.clear();
-    this.#teaVersionTuples.clear();
+    this.#workflowVersionTuples.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
   }
@@ -2779,7 +2810,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         { type: 'workflow:checkpoint', payload: { step: advanced.step } },
         operations,
         this.#eventLogHeads.get(workflowId) ?? EMPTY_EVENT_HEAD,
-        this.#teaVersionTuples.get(workflowId),
+        this.#workflowVersionTuples.get(workflowId),
       );
 
       await this.#storage.batch(operations);
@@ -2821,7 +2852,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         { type: 'workflow:checkpoint', payload: { step: checkpoint.step } },
         operations,
         this.#eventLogHeads.get(workflowId) ?? EMPTY_EVENT_HEAD,
-        this.#teaVersionTuples.get(workflowId),
+        this.#workflowVersionTuples.get(workflowId),
       );
 
       await this.#storage.batch(operations);
@@ -4186,7 +4217,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#heartbeatDetails.delete(workflowId);
     this.#agentWorkflowIds.delete(workflowId);
     this.#eventLogHeads.delete(workflowId);
-    this.#teaVersionTuples.delete(workflowId);
+    this.#workflowVersionTuples.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
     // Release the workflow's agent operation dedup entries via the reverse

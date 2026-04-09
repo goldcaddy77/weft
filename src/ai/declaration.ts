@@ -63,7 +63,7 @@ export interface ToolIdentityResult {
 export interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
-  /** Semantic version of this tool. Used for TEA versioning. Defaults to `"0.0.0"` when not provided. */
+  /** Semantic version of this tool. Used for workflow resume compatibility checks. Defaults to `"0.0.0"` when not provided. */
   version?: string;
   /**
    * Compute a stable semantic identity for a tool invocation.

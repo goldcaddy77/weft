@@ -26,7 +26,7 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
  * full suite after Track 4 additions + 0.8KB headroom). Isolated runs
  * consistently measure ~8-9KB.
  * Previous threshold: 11264 (set after Track 2 test files in PRs #84–#86;
- * Track 4 TEA versioning fields on WorkflowState raised the full-suite ceiling).
+ * Track 4 workflow version metadata fields on WorkflowState raised the full-suite ceiling).
  */
 
 const TARGET_BYTES_PER_WORKFLOW = 14_336;

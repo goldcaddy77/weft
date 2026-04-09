@@ -1,11 +1,11 @@
 /**
- * Tool/Environment/Agent (TEA) versioning utilities.
+ * Workflow, agent, and tool version tuple utilities.
  *
- * Captures a (workflowVersion, agentVersion, toolVersions[]) tuple on every
+ * Captures a `(workflowVersion, agentVersion, toolVersions[])` tuple on every
  * event-log entry and provides diff utilities to detect mismatches between
  * stored tuples and currently-registered definitions when resuming workflows.
  *
- * @module core/tea-versioning
+ * @module core/workflow-version-tuple
  */
 
 // ---------------------------------------------------------------------------
@@ -13,24 +13,24 @@
 // ---------------------------------------------------------------------------
 
 /** Version tuple captured at workflow start and on every event-log entry. */
-export type TeaVersionTuple = {
+export type WorkflowVersionTuple = {
   workflowVersion: string;
   agentVersion?: string;
   /** Sorted `"${name}@${version}"` strings, one per tool. */
   toolVersions?: string[];
 };
 
-/** A single tool-level version change surfaced by {@link diffTeaVersionTuples}. */
-export type TeaToolVersionChange =
+/** A single tool-level version change surfaced by {@link diffWorkflowVersionTuples}. */
+export type WorkflowToolVersionChange =
   | { tool: string; change: 'added'; to: string }
   | { tool: string; change: 'removed'; from: string }
   | { tool: string; change: 'changed'; from: string; to: string };
 
-/** Structured field-level diff between two {@link TeaVersionTuple}s. */
-export type TeaVersionDiff = {
+/** Structured field-level diff between two {@link WorkflowVersionTuple}s. */
+export type WorkflowVersionDiff = {
   workflowVersion?: [string, string];
   agentVersion?: [string, string];
-  toolVersions?: TeaToolVersionChange[];
+  toolVersions?: WorkflowToolVersionChange[];
 };
 
 // ---------------------------------------------------------------------------
@@ -57,20 +57,20 @@ export function collectToolVersions(
 }
 
 // ---------------------------------------------------------------------------
-// diffTeaVersionTuples
+// diffWorkflowVersionTuples
 // ---------------------------------------------------------------------------
 
 /**
- * Compare two {@link TeaVersionTuple}s and return structured field-level diffs.
+ * Compare two {@link WorkflowVersionTuple}s and return structured field-level diffs.
  *
  * Only fields that actually differ are included in the output. An empty
  * object means the tuples are identical.
  */
-export function diffTeaVersionTuples(
-  stored: TeaVersionTuple,
-  registered: TeaVersionTuple,
-): TeaVersionDiff {
-  const diff: TeaVersionDiff = {};
+export function diffWorkflowVersionTuples(
+  stored: WorkflowVersionTuple,
+  registered: WorkflowVersionTuple,
+): WorkflowVersionDiff {
+  const diff: WorkflowVersionDiff = {};
 
   // Workflow version
   if (stored.workflowVersion !== registered.workflowVersion) {
@@ -89,7 +89,7 @@ export function diffTeaVersionTuples(
   const registeredTools = parseToolVersionMap(registered.toolVersions ?? []);
 
   const allToolNames = new Set([...storedTools.keys(), ...registeredTools.keys()]);
-  const toolChanges: TeaToolVersionChange[] = [];
+  const toolChanges: WorkflowToolVersionChange[] = [];
 
   for (const name of allToolNames) {
     const from = storedTools.get(name);
@@ -112,15 +112,15 @@ export function diffTeaVersionTuples(
 }
 
 // ---------------------------------------------------------------------------
-// formatTeaVersionDiff
+// formatWorkflowVersionDiff
 // ---------------------------------------------------------------------------
 
 /**
- * Format a human-readable summary of a {@link TeaVersionDiff} for error messages.
+ * Format a human-readable summary of a {@link WorkflowVersionDiff} for error messages.
  *
  * Returns an empty string when the diff has no changes.
  */
-export function formatTeaVersionDiff(diff: TeaVersionDiff): string {
+export function formatWorkflowVersionDiff(diff: WorkflowVersionDiff): string {
   const lines: string[] = [];
 
   if (diff.workflowVersion) {
@@ -150,7 +150,7 @@ export function formatTeaVersionDiff(diff: TeaVersionDiff): string {
   }
 
   if (lines.length === 0) return '';
-  return `\nTEA version changes:\n${lines.join('\n')}`;
+  return `\nVersion tuple changes:\n${lines.join('\n')}`;
 }
 
 // ---------------------------------------------------------------------------
