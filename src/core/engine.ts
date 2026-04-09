@@ -150,13 +150,6 @@ interface RegistrationEntry {
   provider?: LLMProvider;
   /** Domain constraints evaluated at every checkpoint commit. */
   constraints?: ConstraintDefinition[];
-  /** Semantic version of the agent definition (TEA versioning). Only set for agent registrations. */
-  agentVersion?: string;
-  /**
-   * Sorted `"${name}@${version}"` tool version strings (TEA versioning).
-   * Only populated when the agent's tool set is static across tenants.
-   */
-  toolVersions?: string[];
   /** Resolve the effective TEA version tuple for the workflow's tenant context. */
   teaVersionTupleForTenant?: (
     tenant: import('./tenant.ts').TenantContext | undefined,
@@ -1186,13 +1179,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         version: agentVersion,
         isAgent: true,
         provider: agentOptions.provider,
-        agentVersion,
         teaVersionTupleForTenant: resolveTeaVersionTuple,
       };
-
-      if (!agentDef.toolsForTenant && agentDef.tools && agentDef.tools.length > 0) {
-        agentRegistrationEntry.toolVersions = collectToolVersions(agentDef.tools);
-      }
 
       this.#registrations.set(agentDef.name, agentRegistrationEntry);
       return;
@@ -1519,8 +1507,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     return {
       workflowVersion: registration.version,
-      ...(registration.agentVersion !== undefined && { agentVersion: registration.agentVersion }),
-      ...(registration.toolVersions !== undefined && { toolVersions: registration.toolVersions }),
     };
   }
 
