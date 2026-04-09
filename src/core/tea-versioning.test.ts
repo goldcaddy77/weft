@@ -60,6 +60,12 @@ describe('diffTeaVersionTuples', () => {
     expect(diff.agentVersion).toEqual(['1.0.0', '2.0.0']);
   });
 
+  it('ignores agent version drift when both sides normalize to the default', () => {
+    const stored = { workflowVersion: '1.0.0' };
+    const registered = { workflowVersion: '1.0.0', agentVersion: '0.0.0' };
+    expect(diffTeaVersionTuples(stored, registered)).toEqual({});
+  });
+
   it('detects tool added', () => {
     const stored = { workflowVersion: '1.0.0' };
     const registered = { workflowVersion: '1.0.0', toolVersions: ['new-tool@1.0.0'] };

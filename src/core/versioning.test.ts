@@ -126,6 +126,15 @@ describe('VersionMismatchError', () => {
     expect(error.message).toContain('3.0.0');
   });
 
+  it('describes persisted-state drift when workflow versions match', () => {
+    const error = new VersionMismatchError('wf-tea', 'tea-workflow', '1.0.0', '1.0.0', undefined, {
+      toolVersions: [{ tool: 'search', change: 'changed', from: '1.0.0', to: '2.0.0' }],
+    });
+
+    expect(error.message).toContain('persisted state is incompatible');
+    expect(error.message).toContain('search');
+  });
+
   it('is an instance of Error', () => {
     const error = new VersionMismatchError('wf-789', 'test-workflow', '1.0.0', '2.0.0');
 

@@ -78,10 +78,10 @@ export function diffTeaVersionTuples(
   }
 
   // Agent version
-  const storedAgent = stored.agentVersion;
-  const registeredAgent = registered.agentVersion;
+  const storedAgent = stored.agentVersion ?? '0.0.0';
+  const registeredAgent = registered.agentVersion ?? '0.0.0';
   if (storedAgent !== registeredAgent) {
-    diff.agentVersion = [storedAgent ?? '0.0.0', registeredAgent ?? '0.0.0'];
+    diff.agentVersion = [storedAgent, registeredAgent];
   }
 
   // Tool versions — parse "name@version" strings into a map for diffing

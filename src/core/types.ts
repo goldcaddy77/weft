@@ -69,9 +69,9 @@ export interface WorkflowState {
    */
   agentVersion?: string;
   /**
-   * Sorted `"${name}@${version}"` tool version strings captured at workflow
-   * start. Populated when the workflow was registered via an
-   * {@link AgentDefinition} with tools; absent otherwise.
+   * Sorted `"${name}@${version}"` tool version strings captured from the
+   * effective tool list at workflow start. Populated when the workflow was
+   * registered via an {@link AgentDefinition} with tools; absent otherwise.
    */
   toolVersions?: string[];
   createdAt: number;

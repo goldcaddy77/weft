@@ -141,6 +141,123 @@ describe('TEA versioning', () => {
     engine2[Symbol.dispose]();
   });
 
+  it('throws VersionMismatchError when only the tool version drifts', async () => {
+    const storage = new MemoryStorage();
+
+    const toolV1 = {
+      definition: {
+        name: 'same-workflow-tool',
+        description: 'A test tool',
+        inputSchema: { type: 'object' as const, properties: {} },
+      },
+      execute: async (_input: unknown) => 'tool-result',
+      version: '1.0.0',
+    };
+
+    const agentV1 = defineAgent({
+      name: 'tool-drift-agent',
+      model: 'test-model',
+      version: '1.0.0',
+      tools: [toolV1],
+    });
+
+    const engine1 = new Engine({ storage });
+    engine1.register(agentV1, { provider: makeBlockingProvider() });
+    engine1.start('tool-drift-agent', 'hello', { id: 'wf-tool-drift' }).catch(() => {
+      /* expected: engine disposed before LLM resolves */
+    });
+    await flush();
+
+    engine1[Symbol.dispose]();
+
+    const toolV2 = {
+      definition: {
+        name: 'same-workflow-tool',
+        description: 'A test tool',
+        inputSchema: { type: 'object' as const, properties: {} },
+      },
+      execute: async (_input: unknown) => 'tool-result-v2',
+      version: '2.0.0',
+    };
+
+    const agentV2 = defineAgent({
+      name: 'tool-drift-agent',
+      model: 'test-model',
+      version: '1.0.0',
+      tools: [toolV2],
+    });
+
+    const engine2 = new Engine({ storage });
+    engine2.register(agentV2, { provider: makeMockProvider() });
+
+    let caught: unknown;
+    try {
+      await engine2.resume('wf-tool-drift');
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(VersionMismatchError);
+    const vmError = caught as VersionMismatchError;
+    expect(vmError.teaDiff?.workflowVersion).toBeUndefined();
+    const toolChange = vmError.teaDiff?.toolVersions?.find((c) => c.tool === 'same-workflow-tool');
+    expect(toolChange).toBeDefined();
+    expect(toolChange?.change).toBe('changed');
+
+    engine2[Symbol.dispose]();
+  });
+
+  it('captures tenant-specific tool versions in workflow state at start', async () => {
+    const storage = new MemoryStorage();
+
+    const freeTool = {
+      definition: {
+        name: 'free-tool',
+        description: 'Tool for free tenants',
+        inputSchema: { type: 'object' as const, properties: {} },
+      },
+      execute: async (_input: unknown) => 'free',
+      version: '1.0.0',
+    };
+
+    const proTool = {
+      definition: {
+        name: 'pro-tool',
+        description: 'Tool for pro tenants',
+        inputSchema: { type: 'object' as const, properties: {} },
+      },
+      execute: async (_input: unknown) => 'pro',
+      version: '2.0.0',
+    };
+
+    const agent = defineAgent({
+      name: 'tenant-aware-agent',
+      model: 'test-model',
+      version: '1.0.0',
+      tools: [freeTool],
+      toolsForTenant(tenant) {
+        return tenant?.id === 'pro' ? [proTool] : [freeTool];
+      },
+    });
+
+    const engine = new Engine({
+      storage,
+      tenantResolver: {
+        resolve: () => ({ id: 'pro' }),
+      },
+    });
+    engine.register(agent, { provider: makeBlockingProvider() });
+    engine.start('tenant-aware-agent', 'hello', { id: 'wf-tenant-tool-versions' }).catch(() => {
+      /* expected: engine disposed before LLM resolves */
+    });
+    await flush();
+
+    const state = await engine.get('wf-tenant-tool-versions');
+    expect(state?.toolVersions).toEqual(['pro-tool@2.0.0']);
+
+    engine[Symbol.dispose]();
+  });
+
   it('resumes successfully when a migration hook is provided', async () => {
     const storage = new MemoryStorage();
 
@@ -185,6 +302,10 @@ describe('TEA versioning', () => {
     const resumeHandle = await engine2.resume('wf-migration-test');
     // Resume returns a WorkflowHandle with the correct id
     expect(resumeHandle.id).toBe('wf-migration-test');
+    await resumeHandle.result();
+
+    const resumedState = await engine2.get('wf-migration-test');
+    expect(resumedState?.version).toBe('2.0.0');
 
     engine2[Symbol.dispose]();
   });

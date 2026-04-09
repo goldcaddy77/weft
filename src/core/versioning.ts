@@ -209,10 +209,20 @@ export class VersionMismatchError extends Error {
     const diffs = shapeDiff
       ? diffCheckpointShapes(shapeDiff.oldShape, shapeDiff.newShape)
       : undefined;
+    const hasTeaDiff =
+      teaDiff !== undefined &&
+      (teaDiff.workflowVersion !== undefined ||
+        teaDiff.agentVersion !== undefined ||
+        (teaDiff.toolVersions?.length ?? 0) > 0);
+    const hasPersistedStateDrift =
+      storedVersion === registeredVersion && ((diffs?.length ?? 0) > 0 || hasTeaDiff);
 
-    const baseMessage =
-      `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
-      `stored version ${storedVersion} does not match registered version ${registeredVersion}`;
+    const baseMessage = hasPersistedStateDrift
+      ? `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
+        `stored version ${storedVersion} matches registered version ${registeredVersion}, ` +
+        `but the persisted state is incompatible with the registered definition`
+      : `Version mismatch for workflow "${workflowType}" (${workflowId}): ` +
+        `stored version ${storedVersion} does not match registered version ${registeredVersion}`;
 
     const diffSuffix = diffs && diffs.length > 0 ? formatFieldDiffs(diffs) : '';
     const teaSuffix = teaDiff ? formatTeaVersionDiff(teaDiff) : '';
