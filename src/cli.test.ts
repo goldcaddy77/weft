@@ -8,9 +8,11 @@ import {
   type CliCommand,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,
+  VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
   createStorage,
   executeDoctor,
+  executeValidate,
   executeVersionCheck,
   parseCliArguments,
 } from './cli.ts';
@@ -20,6 +22,7 @@ import { KEYS } from './storage/interface.ts';
 type ServeCommand = Extract<CliCommand, { command: 'serve' }>;
 type DoctorCommand = Extract<CliCommand, { command: 'doctor' }>;
 type VersionCheckCommand = Extract<CliCommand, { command: 'version:check' }>;
+type ValidateCommand = Extract<CliCommand, { command: 'validate' }>;
 
 describe('CLI argument parsing', () => {
   describe('default subcommand (serve)', () => {
@@ -47,19 +50,19 @@ describe('CLI argument parsing', () => {
     });
 
     it('parses --database flag', () => {
-      const result = parseCliArguments(['--database', '/tmp/test.db']);
+      const result = parseCliArguments(['--database', '/tmp/test.db']) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.database).toBe('/tmp/test.db');
     });
 
     it('parses -d short flag for database', () => {
-      const result = parseCliArguments(['-d', '/tmp/other.db']);
+      const result = parseCliArguments(['-d', '/tmp/other.db']) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.database).toBe('/tmp/other.db');
     });
 
     it('defaults database to ./weft.db', () => {
-      const result = parseCliArguments([]);
+      const result = parseCliArguments([]) as ServeCommand;
       expect(result.command).toBe('serve');
       expect(result.database).toBe('./weft.db');
     });
@@ -183,19 +186,19 @@ describe('CLI argument parsing', () => {
     });
 
     it('parses --database flag', () => {
-      const result = parseCliArguments(['doctor', '--database', '/tmp/doc.db']);
+      const result = parseCliArguments(['doctor', '--database', '/tmp/doc.db']) as DoctorCommand;
       expect(result.command).toBe('doctor');
       expect(result.database).toBe('/tmp/doc.db');
     });
 
     it('parses -d short flag for database', () => {
-      const result = parseCliArguments(['doctor', '-d', '/tmp/doc.db']);
+      const result = parseCliArguments(['doctor', '-d', '/tmp/doc.db']) as DoctorCommand;
       expect(result.command).toBe('doctor');
       expect(result.database).toBe('/tmp/doc.db');
     });
 
     it('defaults database to ./weft.db', () => {
-      const result = parseCliArguments(['doctor']);
+      const result = parseCliArguments(['doctor']) as DoctorCommand;
       expect(result.command).toBe('doctor');
       expect(result.database).toBe('./weft.db');
     });
@@ -255,19 +258,27 @@ describe('CLI argument parsing', () => {
     });
 
     it('parses --database flag', () => {
-      const result = parseCliArguments(['version:check', '--database', '/tmp/vc.db']);
+      const result = parseCliArguments([
+        'version:check',
+        '--database',
+        '/tmp/vc.db',
+      ]) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.database).toBe('/tmp/vc.db');
     });
 
     it('parses -d short flag for database', () => {
-      const result = parseCliArguments(['version:check', '-d', '/tmp/vc.db']);
+      const result = parseCliArguments([
+        'version:check',
+        '-d',
+        '/tmp/vc.db',
+      ]) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.database).toBe('/tmp/vc.db');
     });
 
     it('defaults database to ./weft.db', () => {
-      const result = parseCliArguments(['version:check']);
+      const result = parseCliArguments(['version:check']) as VersionCheckCommand;
       expect(result.command).toBe('version:check');
       expect(result.database).toBe('./weft.db');
     });
@@ -351,6 +362,58 @@ describe('CLI argument parsing', () => {
       expect(() => parseCliArguments(['version:check', '--port', '8080'])).toThrow();
     });
   });
+
+  describe('validate subcommand', () => {
+    it('returns command validate when validate is the first positional', () => {
+      const result = parseCliArguments(['validate']);
+      expect(result.command).toBe('validate');
+    });
+
+    it('parses entry path as first positional argument', () => {
+      const result = parseCliArguments(['validate', './my-workflow.ts']) as ValidateCommand;
+      expect(result.command).toBe('validate');
+      expect(result.entryPath).toBe('./my-workflow.ts');
+    });
+
+    it('defaults entryPath to empty string when no positional is given', () => {
+      const result = parseCliArguments(['validate']) as ValidateCommand;
+      expect(result.entryPath).toBe('');
+    });
+
+    it('parses --json flag', () => {
+      const result = parseCliArguments(['validate', 'entry.ts', '--json']) as ValidateCommand;
+      expect(result.json).toBe(true);
+    });
+
+    it('parses -j short flag for json', () => {
+      const result = parseCliArguments(['validate', 'entry.ts', '-j']) as ValidateCommand;
+      expect(result.json).toBe(true);
+    });
+
+    it('defaults json to false', () => {
+      const result = parseCliArguments(['validate']) as ValidateCommand;
+      expect(result.json).toBe(false);
+    });
+
+    it('parses --help flag', () => {
+      const result = parseCliArguments(['validate', '--help']) as ValidateCommand;
+      expect(result.help).toBe(true);
+    });
+
+    it('parses -h short flag for help', () => {
+      const result = parseCliArguments(['validate', '-h']) as ValidateCommand;
+      expect(result.help).toBe(true);
+    });
+
+    it('defaults help to false', () => {
+      const result = parseCliArguments(['validate']) as ValidateCommand;
+      expect(result.help).toBe(false);
+    });
+
+    it('throws on unknown flags due to strict mode', () => {
+      expect(() => parseCliArguments(['validate', '--port', '8080'])).toThrow();
+    });
+  });
 });
 
 describe('help text', () => {
@@ -362,8 +425,29 @@ describe('help text', () => {
     expect(HELP_TEXT).toContain('version:check');
   });
 
+  it('HELP_TEXT contains validate subcommand', () => {
+    expect(HELP_TEXT).toContain('validate');
+  });
+
   it('HELP_TEXT contains serve subcommand', () => {
     expect(HELP_TEXT).toContain('serve');
+  });
+
+  it('VALIDATE_HELP_TEXT contains exit codes section', () => {
+    expect(VALIDATE_HELP_TEXT).toContain('Exit codes');
+    expect(VALIDATE_HELP_TEXT).toContain('0');
+    expect(VALIDATE_HELP_TEXT).toContain('1');
+    expect(VALIDATE_HELP_TEXT).toContain('2');
+  });
+
+  it('VALIDATE_HELP_TEXT contains checks section', () => {
+    expect(VALIDATE_HELP_TEXT).toContain('unbounded-retry');
+    expect(VALIDATE_HELP_TEXT).toContain('stateful-without-compensator');
+  });
+
+  it('VALIDATE_HELP_TEXT contains --json and --help flags', () => {
+    expect(VALIDATE_HELP_TEXT).toContain('--json');
+    expect(VALIDATE_HELP_TEXT).toContain('--help');
   });
 
   it('DOCTOR_HELP_TEXT contains --database flag', () => {
@@ -687,6 +771,154 @@ describe('CLI direct execution', () => {
 
     const exitCode = await process.exited;
     expect(exitCode).toBe(0);
+  });
+});
+
+describe('executeValidate', () => {
+  it('returns exitCode 2 and stderr when entryPath is empty', async () => {
+    const result = await executeValidate({ entryPath: '', json: false });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('entry file path is required');
+    expect(result.stdout).toBe('');
+  });
+
+  it('returns exitCode 2 and stderr when entry file does not exist', async () => {
+    const result = await executeValidate({
+      entryPath: '/does/not/exist/entry.ts',
+      json: false,
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('could not load entry file');
+  });
+
+  it('returns exitCode 0 and stdout with no-issues message for a clean module', async () => {
+    const entryPath = join(tmpdir(), `weft-validate-clean-${crypto.randomUUID()}.ts`);
+    try {
+      await Bun.write(
+        entryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'export const myWorkflow: WorkflowRegistration = {',
+          '  handler: async function* () { return "done"; },',
+          '};',
+        ].join('\n'),
+      );
+
+      const result = await executeValidate({ entryPath, json: false });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('No issues found.');
+    } finally {
+      rmSync(entryPath, { force: true });
+    }
+  });
+
+  it('returns exitCode 1 when an activity has unbounded retry', async () => {
+    const entryPath = join(tmpdir(), `weft-validate-error-${crypto.randomUUID()}.ts`);
+    try {
+      await Bun.write(
+        entryPath,
+        [
+          'import type { ActivityDefinition } from "./src/core/types.ts";',
+          'export const badActivity: ActivityDefinition = {',
+          '  name: "badActivity",',
+          '  execute: async (input: unknown) => input,',
+          '  idempotent: true,',
+          '  retry: { maxAttempts: Infinity, initialBackoff: "1s", backoffMultiplier: 2, maxBackoff: "30s" },',
+          '};',
+        ].join('\n'),
+      );
+
+      const result = await executeValidate({ entryPath, json: false });
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain('unbounded-retry');
+    } finally {
+      rmSync(entryPath, { force: true });
+    }
+  });
+
+  it('returns valid JSON when json: true', async () => {
+    const entryPath = join(tmpdir(), `weft-validate-json-${crypto.randomUUID()}.ts`);
+    try {
+      await Bun.write(
+        entryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'export const myWorkflow: WorkflowRegistration = {',
+          '  handler: async function* () { return "done"; },',
+          '};',
+        ].join('\n'),
+      );
+
+      const result = await executeValidate({ entryPath, json: true });
+      expect(result.exitCode).toBe(0);
+      const parsed = JSON.parse(result.stdout);
+      expect(parsed).toMatchObject({ valid: true, issues: [], workflowCount: expect.any(Number) });
+    } finally {
+      rmSync(entryPath, { force: true });
+    }
+  });
+});
+
+describe('loadRegistrationsFromModule', () => {
+  it('extracts WorkflowRegistration from named exports', async () => {
+    const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
+    const entryPath = join(tmpdir(), `weft-load-named-${crypto.randomUUID()}.ts`);
+    try {
+      await Bun.write(
+        entryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'export const myWorkflow: WorkflowRegistration = {',
+          '  handler: async function* () { return "done"; },',
+          '};',
+        ].join('\n'),
+      );
+      const result = await loadRegistrationsFromModule(entryPath);
+      expect('myWorkflow' in result.registrations).toBe(true);
+      expect(result.activities).toHaveLength(0);
+    } finally {
+      rmSync(entryPath, { force: true });
+    }
+  });
+
+  it('extracts ActivityDefinition from named exports', async () => {
+    const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
+    const entryPath = join(tmpdir(), `weft-load-activity-${crypto.randomUUID()}.ts`);
+    try {
+      await Bun.write(
+        entryPath,
+        [
+          'import type { ActivityDefinition } from "./src/core/types.ts";',
+          'export const sendEmail: ActivityDefinition = {',
+          '  name: "sendEmail",',
+          '  execute: async (input: unknown) => input,',
+          '};',
+        ].join('\n'),
+      );
+      const result = await loadRegistrationsFromModule(entryPath);
+      expect(result.activities).toHaveLength(1);
+      expect(result.activities[0]!.name).toBe('sendEmail');
+    } finally {
+      rmSync(entryPath, { force: true });
+    }
+  });
+
+  it('rejects with an error for a non-existent file', async () => {
+    const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
+    await expect(loadRegistrationsFromModule('/does/not/exist/workflow.ts')).rejects.toThrow();
+  });
+
+  it('returns empty registrations and activities for a module with no matching exports', async () => {
+    const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
+    const entryPath = join(tmpdir(), `weft-load-empty-${crypto.randomUUID()}.ts`);
+    try {
+      await Bun.write(entryPath, 'export const foo = 42;\n');
+      const result = await loadRegistrationsFromModule(entryPath);
+      expect(Object.keys(result.registrations)).toHaveLength(0);
+      expect(result.activities).toHaveLength(0);
+    } finally {
+      rmSync(entryPath, { force: true });
+    }
   });
 });
 

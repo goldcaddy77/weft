@@ -144,8 +144,9 @@ export function validateRegistrations(
   const issues: ValidationIssue[] = [];
   const workflowTypes = Object.keys(registrations);
 
-  // Check per-registration extracted activities (currently always empty —
-  // activities must be passed explicitly via the `activities` parameter).
+  // extractActivities always returns [] — activities inside workflow handlers
+  // are closures and cannot be extracted statically. This loop is kept for
+  // future extensibility but currently produces no issues.
   for (const [type, registration] of Object.entries(registrations)) {
     for (const activity of extractActivities(registration)) {
       const retryIssue = checkUnboundedRetry(type, activity);
@@ -156,9 +157,10 @@ export function validateRegistrations(
     }
   }
 
-  // Check explicitly-passed activities once — attributed to the first workflow
-  // type if registrations exist, otherwise labelled '(unknown)'.
-  const defaultType = workflowTypes[0] ?? '(unknown)';
+  // Check explicitly-passed activities. Activities are not tied to a specific
+  // workflow registration (they live in closures), so they are labelled
+  // '(standalone)' when no registration context is available.
+  const defaultType = workflowTypes[0] ?? '(standalone)';
   for (const activity of activities) {
     const retryIssue = checkUnboundedRetry(defaultType, activity);
     if (retryIssue) issues.push(retryIssue);
@@ -212,6 +214,10 @@ export async function loadRegistrationsFromModule(modulePath: string): Promise<{
   }
 
   // Also scan named exports for registrations and activities.
+  // Guard against modules that don't export a plain object (e.g. export default 42).
+  if (typeof mod !== 'object' || mod === null) {
+    return { registrations, activities };
+  }
   for (const [key, value] of Object.entries(mod as Record<string, unknown>)) {
     if (key === 'default') continue;
     if (isWorkflowRegistration(value) && !(key in registrations)) {
@@ -233,7 +239,7 @@ function isWorkflowRegistration(value: unknown): value is WorkflowRegistration {
     typeof value === 'object' &&
     value !== null &&
     'handler' in value &&
-    typeof (value as Record<string, unknown>)['handler'] === 'function'
+    typeof (value as { handler: unknown }).handler === 'function'
   );
 }
 
@@ -243,8 +249,8 @@ function isActivityDefinition(value: unknown): value is ActivityDefinition {
     value !== null &&
     'name' in value &&
     'execute' in value &&
-    typeof (value as Record<string, unknown>)['name'] === 'string' &&
-    typeof (value as Record<string, unknown>)['execute'] === 'function'
+    typeof (value as { name: unknown; execute: unknown }).name === 'string' &&
+    typeof (value as { name: unknown; execute: unknown }).execute === 'function'
   );
 }
 

@@ -11,6 +11,7 @@
 
 import { parseArgs } from 'node:util';
 
+import type { ActivityDefinition, WorkflowRegistration } from './core/types.ts';
 import type { Storage } from './storage/interface.ts';
 
 // ---------------------------------------------------------------------------
@@ -339,15 +340,15 @@ export async function executeValidate(options: {
     return {
       stdout: '',
       stderr: 'Error: entry file path is required for validate',
-      exitCode: 1,
+      exitCode: 2,
     };
   }
 
   const { loadRegistrationsFromModule, validateRegistrations, formatValidationReport } =
     await import('./diagnostics/validate.ts');
 
-  let registrations: Record<string, import('./core/types.ts').WorkflowRegistration>;
-  let activities: import('./core/types.ts').ActivityDefinition[];
+  let registrations: Record<string, WorkflowRegistration>;
+  let activities: ActivityDefinition[];
 
   try {
     const loaded = await loadRegistrationsFromModule(options.entryPath);
