@@ -28,7 +28,7 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../workers/pool.ts';
 import type { ActivityRegistrationOptions } from './activity-registry.ts';
-import type { ConstraintDefinition } from './constraint.ts';
+import type { ConstraintCheckState, ConstraintDefinition } from './constraint.ts';
 import { ActivityRegistry } from './activity-registry.ts';
 import {
   advanceCheckpoint,
@@ -2741,12 +2741,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const constraints = registration?.constraints;
     if (!constraints || constraints.length === 0) return false;
 
-    // Build the state snapshot passed to check(). We use the WorkflowState
-    // shape so check functions can inspect status, result, input, etc.
-    const stateSnapshot = {
+    // Build the minimal snapshot passed to check(). Only id, type, and a
+    // fixed status of 'running' are available — constraints are evaluated
+    // mid-execution, before the workflow has a result or final status.
+    // To inspect external state, capture it in the enclosing scope instead.
+    const stateSnapshot: ConstraintCheckState = {
       id: workflowId,
       type: context.workflowType,
-      status: 'running' as const,
+      status: 'running',
     };
 
     for (const definition of constraints) {
@@ -2776,9 +2778,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         continue;
       }
 
-      // 'fail' and 'compensate' both terminate the operation by throwing
-      // into the generator. With 'compensate', an active ctx.saga() will
-      // catch the error, run its compensators, then re-throw.
+      // Both 'fail' and 'compensate' terminate the operation by throwing
+      // into the generator via #feedOperationResult. If a ctx.saga() is
+      // active in the workflow, it will catch the thrown error, run its
+      // registered compensators, and then re-throw — that is the effective
+      // difference between 'fail' and 'compensate' from the workflow author's
+      // perspective. At the engine level the dispatch is identical.
       // Stop at first actionable violation — remaining constraints are not evaluated.
       const violationError = new Error(
         `Constraint violated: ${definition.name} (scope: ${definition.scope})`,

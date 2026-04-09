@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { Context } from '../context.ts';
+import type { ConstraintCheckState } from '../constraint.ts';
 import { constraint } from '../constraint.ts';
 import { ConstraintViolatedEvent } from '../events.ts';
 import { Engine } from '../engine.ts';
@@ -281,7 +282,7 @@ describe('constraint primitive', () => {
   // ---------------------------------------------------------------------------
 
   it('constraint() factory produces the expected ConstraintDefinition', () => {
-    const check = (_state: unknown) => true;
+    const check = (_state: ConstraintCheckState) => true;
     const defined = constraint('myConstraint', {
       scope: 'domain',
       check,

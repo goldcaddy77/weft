@@ -148,7 +148,7 @@ export { Scheduler, calculateBackoff, parseDuration } from './core/scheduler';
 
 // Constraint
 export { constraint } from './core/constraint';
-export type { ConstraintDefinition, ConstraintViolation } from './core/constraint';
+export type { ConstraintCheckState, ConstraintDefinition, ConstraintViolation } from './core/constraint';
 
 // Activity
 export { activity } from './core/activity';
