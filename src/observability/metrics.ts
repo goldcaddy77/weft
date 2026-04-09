@@ -253,7 +253,7 @@ export function serializeMetricsSnapshotForPrometheus(snapshot: MetricsSnapshot)
   const dpmoOperationsEntry = snapshot[METRICS.dpmoOperations.name];
   const dpmoDefects = dpmoDefectsEntry?.type === 'counter' ? dpmoDefectsEntry.value : 0;
   const dpmoOperations = dpmoOperationsEntry?.type === 'counter' ? dpmoOperationsEntry.value : 0;
-  const dpmoValue = dpmoOperations === 0 ? 0 : (dpmoDefects / dpmoOperations) * 1_000_000;
+  const dpmoValue = dpmoOperations === 0 ? 0 : (dpmoDefects * 1_000_000) / dpmoOperations;
   const dpmoGaugeName = 'weft_dpmo';
   lines.push(
     `# HELP ${dpmoGaugeName} Defects per million operations (failed workflows / started workflows * 1e6)`,

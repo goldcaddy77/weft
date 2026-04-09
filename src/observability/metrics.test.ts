@@ -351,6 +351,17 @@ describe('Prometheus exporter', () => {
     expect(text).toContain('weft_dpmo_operations_total 10');
   });
 
+  it('serializes weft_dpmo without introducing avoidable decimal artifacts', () => {
+    const collector = new MetricsCollector();
+    collector.increment('weft.dpmo.defects', 3);
+    collector.increment('weft.dpmo.operations', 10);
+
+    const text = serializeMetricsSnapshotForPrometheus(collector.snapshot());
+    const dpmoLine = text.split('\n').find((line) => line.startsWith('weft_dpmo '));
+
+    expect(dpmoLine).toBe('weft_dpmo 300000');
+  });
+
   it('emits weft_dpmo 0 when no operations have been recorded', () => {
     const text = serializeMetricsSnapshotForPrometheus({});
     expect(text).toContain('weft_dpmo 0');

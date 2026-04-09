@@ -27,6 +27,14 @@ function areWeightsEffectivelyEqual(left: number, right: number): boolean {
   return Math.abs(left - right) <= scale * FLOATING_POINT_TIE_TOLERANCE;
 }
 
+function normalizeConfidence(confidence: number | undefined): number {
+  if (confidence === undefined || !Number.isFinite(confidence)) {
+    return DEFAULT_CONFIDENCE;
+  }
+
+  return Math.min(Math.max(confidence, 0), 1);
+}
+
 /**
  * Select a consensus answer by summing confidence weights per unique response.
  *
@@ -38,7 +46,7 @@ export function confidenceWeightedConsensus(results: AgentResult[]): VotingResul
   const weights = new Map<string, number>();
 
   for (const result of results) {
-    const weight = result.confidence ?? DEFAULT_CONFIDENCE;
+    const weight = normalizeConfidence(result.confidence);
     weights.set(result.content, (weights.get(result.content) ?? 0) + weight);
   }
 

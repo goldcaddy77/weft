@@ -84,6 +84,24 @@ describe('confidenceWeightedConsensus', () => {
     expect(winner).toBeNull();
   });
 
+  it('defaults non-finite confidence values to 0.5', () => {
+    const results = [makeResult('a', Number.NaN), makeResult('b', Number.POSITIVE_INFINITY)];
+    const { winner, weights } = confidenceWeightedConsensus(results);
+
+    expect(weights.get('a')).toBeCloseTo(0.5);
+    expect(weights.get('b')).toBeCloseTo(0.5);
+    expect(winner).toBeNull();
+  });
+
+  it('clamps out-of-range confidence values to the valid range', () => {
+    const results = [makeResult('a', -2), makeResult('b', 1.8)];
+    const { winner, weights } = confidenceWeightedConsensus(results);
+
+    expect(weights.get('a')).toBe(0);
+    expect(weights.get('b')).toBe(1);
+    expect(winner).toBe('b');
+  });
+
   it('includes all unique content strings in weights map', () => {
     const results = [makeResult('x', 0.3), makeResult('y', 0.6), makeResult('z', 0.1)];
     const { weights } = confidenceWeightedConsensus(results);
