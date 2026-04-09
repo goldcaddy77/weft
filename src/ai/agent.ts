@@ -846,37 +846,43 @@ async function resolveToolExecution(
 
     const existing = await effectLog.lookup(semanticHash);
 
-    if (existing?.status === 'committed') {
-      // Guard against cross-tool hash collisions: a custom identity() that
-      // omits the tool name could produce the same hash for two different
-      // tools. Only replay if the stored tool name matches the current call.
-      if (existing.toolName === toolCall.name) {
-        effectLog.recordReplay();
-        return { output: existing.output, success: true };
-      }
-      // Hash collision across tools — fall through to execute normally.
+    if (existing?.status === 'committed' && existing.toolName === toolCall.name) {
+      // A prior run completed this tool call successfully — replay the result
+      // without re-executing the tool. The toolName check guards against
+      // cross-tool hash collisions from custom identity() functions that omit
+      // the tool name. A mismatched toolName falls through to execute normally.
+      effectLog.recordReplay();
+      return { output: existing.output, success: true };
     }
 
-    if (existing?.status === 'in-flight') {
+    if (existing?.status === 'in-flight' && existing.toolName === toolCall.name) {
       // The process crashed between recording in-flight and receiving the
       // result. Re-executing a non-idempotent tool could cause duplicate
-      // effects. Throw so the caller can escalate.
+      // effects. Throw so the caller can escalate. The toolName check guards
+      // against spurious conflicts from cross-tool hash collisions.
       throw new ToolCallReplayConflictError(semanticHash, toolCall.name);
     }
 
-    // An `aborted` record means the tool previously threw a retriable error.
-    // Re-execute rather than replaying the failure — the error condition may
-    // have resolved since the last attempt.
-
-    // No existing record (or aborted) — mark as in-flight before executing.
-    await effectLog.record(semanticHash, toolCall.name);
+    // Reaches here when:
+    // - No existing record for this hash
+    // - existing is `aborted` (retriable — re-execute)
+    // - existing is `committed` or `in-flight` for a different tool (hash
+    //   collision — proceed but do NOT overwrite the other tool's record)
+    const shouldRecord = !existing || existing.toolName === toolCall.name;
+    if (shouldRecord) {
+      await effectLog.record(semanticHash, toolCall.name);
+    }
 
     // Run the tool and update the log on success or failure.
+    // Skip log writes on hash collision (shouldRecord=false) to avoid
+    // overwriting a committed record that belongs to a different tool.
     const outcome = await resolveToolExecutionInner(runtime, turnIndex, toolCall, tool);
-    if (outcome.success) {
-      await effectLog.commit(semanticHash, toolCall.name, outcome.output);
-    } else {
-      await effectLog.abort(semanticHash, toolCall.name, outcome.output);
+    if (shouldRecord) {
+      if (outcome.success) {
+        await effectLog.commit(semanticHash, toolCall.name, outcome.output);
+      } else {
+        await effectLog.abort(semanticHash, toolCall.name, outcome.output);
+      }
     }
     return outcome;
   }
