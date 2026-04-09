@@ -240,9 +240,12 @@ export type {
 } from './server/authentication';
 
 // Testing
+export { withChaos } from './testing/chaos';
+export type { ChaosScenario, FailureCategory, FaultClass } from './testing/chaos';
 export { ActivityMockRegistry } from './testing/mocks';
-export type { MockCall, MockHandle } from './testing/mocks';
+export type { MockCall, MockHandle, MockedActivity } from './testing/mocks';
 export { TestEngine } from './testing/test-engine';
+export type { RunNOptions, RunNResult } from './testing/test-engine';
 export { TimeControl } from './testing/time-control';
 
 // AI / Agent
