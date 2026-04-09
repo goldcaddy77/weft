@@ -28,6 +28,7 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../workers/pool.ts';
 import type { ActivityRegistrationOptions } from './activity-registry.ts';
+import type { ConstraintDefinition } from './constraint.ts';
 import { ActivityRegistry } from './activity-registry.ts';
 import {
   advanceCheckpoint,
@@ -137,7 +138,7 @@ interface RegistrationEntry {
   /** LLM provider for agent-typed registrations (used for connection pre-warming). */
   provider?: LLMProvider;
   /** Domain constraints evaluated at every checkpoint commit. */
-  constraints?: import('./constraint.ts').ConstraintDefinition[];
+  constraints?: ConstraintDefinition[];
 }
 
 /** Options required when registering an AgentDefinition as a workflow. */
@@ -2726,6 +2727,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * Returns `true` if any constraint was violated and a 'fail' or 'compensate'
    * reaction was triggered (meaning the operation should not proceed). Returns
    * `false` if all constraints passed or only 'warn' violations occurred.
+   *
+   * **Note**: Constraints are only evaluated when the inline execution strategy
+   * is active. When a workflow runs in a Web Worker, `this.#inlineStrategy` has
+   * no context for that workflow and this method returns `false` — constraints
+   * are silently skipped. This is a known v1 limitation.
    */
   async #evaluateConstraints(workflowId: string): Promise<boolean> {
     const context = this.#inlineStrategy?.getContext(workflowId);
@@ -2748,8 +2754,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       try {
         const result = definition.check(stateSnapshot);
         violated = !(result instanceof Promise ? await result : result);
-      } catch {
-        // A throwing check is treated as a violation.
+      } catch (error) {
+        // A throwing check is treated as a violation so the workflow doesn't
+        // silently continue in an unknown state. Log the original error to aid
+        // debugging — without this, users would see only the constraint
+        // violation message with no indication their check() is broken.
+        console.warn(`[weft] Constraint "${definition.name}" check() threw an error:`, error);
         violated = true;
       }
 
@@ -2769,6 +2779,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // 'fail' and 'compensate' both terminate the operation by throwing
       // into the generator. With 'compensate', an active ctx.saga() will
       // catch the error, run its compensators, then re-throw.
+      // Stop at first actionable violation — remaining constraints are not evaluated.
       const violationError = new Error(
         `Constraint violated: ${definition.name} (scope: ${definition.scope})`,
       );

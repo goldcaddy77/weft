@@ -20,12 +20,34 @@
 
 export type ConstraintViolation = 'compensate' | 'fail' | 'warn';
 
-export interface ConstraintDefinition<TState = unknown> {
+export interface ConstraintDefinition {
   name: string;
   /** Domain label for observability (e.g. 'transaction', 'budget'). */
   scope: string;
-  /** Return `true` when the invariant holds, `false` when it is violated. */
-  check: (state: TState) => boolean | Promise<boolean>;
+  /**
+   * Return `true` when the invariant holds, `false` when it is violated.
+   *
+   * The `state` parameter is always `{ id: string; type: string; status: 'running' }`.
+   * It reflects the minimal in-flight snapshot available at checkpoint time —
+   * not user-defined workflow state. To check external state (e.g. a balance
+   * from your own closure), capture it in the enclosing scope instead:
+   *
+   * ```ts
+   * let balance = 0;
+   * const balanceCheck = constraint('positiveBalance', {
+   *   scope: 'transaction',
+   *   check: () => balance >= 0,
+   *   onViolation: 'compensate',
+   * });
+   * ```
+   *
+   * The function may be async — returning `Promise<boolean>` is supported.
+   *
+   * **Note**: Constraints are only evaluated when using the inline execution
+   * strategy. Workflows running in a Web Worker will silently skip constraint
+   * evaluation. Document this on your registration if using worker execution.
+   */
+  check: (state: unknown) => boolean | Promise<boolean>;
   onViolation: ConstraintViolation;
 }
 
@@ -36,20 +58,26 @@ export interface ConstraintDefinition<TState = unknown> {
 /**
  * Create a constraint definition.
  *
+ * Constraints are domain invariants evaluated at every checkpoint commit.
+ * Capture external state in the enclosing scope — the `state` parameter
+ * passed to `check` is always a minimal `{ id, type, status }` snapshot.
+ *
  * @example
  * ```ts
+ * let balance = 0;
+ *
  * const positiveBalance = constraint('positiveBalance', {
  *   scope: 'transaction',
- *   check: (state) => (state as { balance: number }).balance >= 0,
+ *   check: () => balance >= 0,
  *   onViolation: 'compensate',
  * });
  *
  * engine.register(workflow, { constraints: [positiveBalance] });
  * ```
  */
-export function constraint<TState = unknown>(
+export function constraint(
   name: string,
-  options: Omit<ConstraintDefinition<TState>, 'name'>,
-): ConstraintDefinition<TState> {
+  options: Omit<ConstraintDefinition, 'name'>,
+): ConstraintDefinition {
   return { name, ...options };
 }
