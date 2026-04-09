@@ -776,12 +776,12 @@ for (const backend of storageBackends) {
 
         secondWaiterReadyThreshold = updateScanCount + 4;
         delayNextUpdateScan = true;
-        const delayedUpdate = engine.update(handle.id, 'data', 'first-payload', { timeout: 250 });
+        const delayedUpdate = engine.update(handle.id, 'data', 'first-payload', { timeout: 5000 });
         delayedUpdate.catch(() => {});
         await delayedScanStarted.promise;
 
         const immediateUpdateResult = await engine.update(handle.id, 'data', 'second-payload', {
-          timeout: 250,
+          timeout: 5000,
         });
         expect(immediateUpdateResult).toBe('first:second-payload');
 

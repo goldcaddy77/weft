@@ -1,3 +1,4 @@
+import type { ToolIdentityResult } from '../declaration';
 import type { ToolDefinition } from '../providers/types';
 
 export interface RegistryTool {
@@ -5,6 +6,12 @@ export interface RegistryTool {
   execute: (input: unknown) => Promise<unknown>;
   source: 'local' | 'mcp';
   serverUrl?: string;
+  /**
+   * Optional semantic identity function. When provided, the tool effect log
+   * uses the returned hash to deduplicate tool calls across
+   * checkpoint-restore cycles. When absent, the full input is hashed.
+   */
+  identity?: (input: unknown) => ToolIdentityResult;
 }
 
 class RegistryToolEntry implements RegistryTool {
@@ -12,6 +19,7 @@ class RegistryToolEntry implements RegistryTool {
   readonly execute: (input: unknown) => Promise<unknown>;
   readonly source: 'local' | 'mcp';
   readonly serverUrl?: string;
+  readonly identity?: (input: unknown) => ToolIdentityResult;
   readonly #localExecute: ((input: unknown) => Promise<unknown>) | undefined;
   readonly #mcpExecute: ((toolName: string, input: unknown) => Promise<unknown>) | undefined;
 
@@ -21,6 +29,7 @@ class RegistryToolEntry implements RegistryTool {
     serverUrl?: string;
     localExecute?: (input: unknown) => Promise<unknown>;
     mcpExecute?: (toolName: string, input: unknown) => Promise<unknown>;
+    identity?: (input: unknown) => ToolIdentityResult;
   }) {
     this.definition = options.definition;
     this.source = options.source;
@@ -29,6 +38,9 @@ class RegistryToolEntry implements RegistryTool {
     }
     this.#localExecute = options.localExecute;
     this.#mcpExecute = options.mcpExecute;
+    if (options.identity !== undefined) {
+      this.identity = options.identity;
+    }
     this.execute = (input: unknown): Promise<unknown> => {
       if (this.#localExecute) {
         return this.#localExecute(input);
@@ -47,12 +59,21 @@ export class ToolRegistry {
   }
 
   /** Register a local function as a tool. */
-  registerLocal(definition: ToolDefinition, execute: (input: unknown) => Promise<unknown>): void {
-    const entry: RegistryTool = new RegistryToolEntry({
-      definition,
-      source: 'local',
-      localExecute: execute,
-    });
+  registerLocal(
+    definition: ToolDefinition,
+    execute: (input: unknown) => Promise<unknown>,
+    identity?: (input: unknown) => ToolIdentityResult,
+  ): void {
+    const entryOptions: {
+      definition: ToolDefinition;
+      source: 'local';
+      localExecute: (input: unknown) => Promise<unknown>;
+      identity?: (input: unknown) => ToolIdentityResult;
+    } = { definition, source: 'local', localExecute: execute };
+    if (identity !== undefined) {
+      entryOptions.identity = identity;
+    }
+    const entry: RegistryTool = new RegistryToolEntry(entryOptions);
     const existing = this.#tools.get(definition.name);
 
     if (existing) {

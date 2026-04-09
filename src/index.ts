@@ -262,7 +262,7 @@ export { ContextWindowManager, composeStrategies, noopStrategy } from './ai/cont
 export type { ContextStrategy } from './ai/context-window';
 export { createChildHeaders, debate, handoff, supervise } from './ai/coordination';
 export { defineAgent, isAgentDefinition } from './ai/declaration';
-export type { AgentDefinition } from './ai/declaration';
+export type { AgentDefinition, AgentToolDefinition, ToolIdentityResult } from './ai/declaration';
 export type { AgentHooks } from './ai/hooks';
 export { ReviewCoordinator, ReviewTimeoutError } from './ai/human-review';
 export type { ReviewCoordinatorOptions } from './ai/human-review';
@@ -281,6 +281,7 @@ export type { AgentRegistrationOptions } from './core/engine';
 export {
   AgentBudgetExceededEvent,
   AgentBudgetWarningEvent,
+  AgentCheckpointResumedEvent,
   AgentContextCompactedEvent,
   AgentModelFallbackEvent,
   AgentProviderCircuitOpenEvent,
@@ -291,6 +292,12 @@ export {
   HumanReviewCompletedEvent,
   HumanReviewRequestedEvent,
 } from './ai/events';
+export {
+  ToolCallReplayConflictError,
+  ToolEffectLog,
+  computeSemanticHash,
+} from './ai/tool-effect-log';
+export type { EffectRecord } from './ai/tool-effect-log';
 
 // Providers
 export { AnthropicProvider } from './ai/providers/anthropic';

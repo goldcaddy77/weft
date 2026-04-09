@@ -47,9 +47,49 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   readonly _outputType?: TOutput;
 }
 
+/** Result of a tool identity function — the stable hash and which fields it covered. */
+export interface ToolIdentityResult {
+  /** 16-character hex hash of the intent-critical fields. */
+  semanticHash: string;
+  /**
+   * Names of the input fields whose values were included in the hash.
+   * Informational — identifies which input fields contributed to `semanticHash`.
+   */
+  intentCriticalFields: string[];
+}
+
 export interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
+  /**
+   * Compute a stable semantic identity for a tool invocation.
+   *
+   * When provided, the engine uses the returned `semanticHash` as the key in
+   * the tool effect log. This lets you exclude non-critical fields (retry
+   * counters, timestamps, nonces) from the hash while still deduplicating on
+   * the fields that determine the tool's observable effect (recipient, amount,
+   * resource ID).
+   *
+   * When absent, the engine hashes the full input with {@link computeSemanticHash}.
+   *
+   * @example Mark only the payment-critical fields
+   * ```ts
+   * import { computeSemanticHash } from 'weft';
+   *
+   * const chargeTool: AgentToolDefinition = {
+   *   definition: { name: 'charge', ... },
+   *   execute: async (input) => { ... },
+   *   identity: (input) => {
+   *     const { recipient, amount } = input as { recipient: string; amount: number };
+   *     return {
+   *       semanticHash: computeSemanticHash({ recipient, amount }),
+   *       intentCriticalFields: ['recipient', 'amount'],
+   *     };
+   *   },
+   * };
+   * ```
+   */
+  identity?: (input: unknown) => ToolIdentityResult;
 }
 
 export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
