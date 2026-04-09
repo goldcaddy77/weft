@@ -11,10 +11,10 @@
  * last message of that prefix with an Anthropic `cache_control: ephemeral`
  * marker so the provider knows to cache up to that point.
  *
- * The trie is keyed by per-message SHA-256 content hashes. Two arrays share a
- * prefix when their first N messages hash identically. A hit requires at least
- * two matching messages (a single-message prefix is too short to be worth
- * caching).
+ * The trie is keyed by per-message `Bun.hash` values (64-bit wyhash),
+ * represented as 16-hex-char strings. Two arrays share a prefix when their
+ * first N messages hash identically. A hit requires at least two matching
+ * messages (a single-message prefix is too short to be worth caching).
  *
  * @see arXiv 2603.16104 ("Helium") for the research motivation.
  *
@@ -164,9 +164,10 @@ export class PromptCache {
    * an Anthropic `cache_control: { type: 'ephemeral' }` marker. The full
    * sequence is then inserted into the trie so future calls can match it.
    *
-   * Returns `{ messages, hit }`. The returned array is a shallow copy — the
-   * annotated boundary message is replaced with a new object; all other
-   * messages are the original references.
+   * Returns `{ messages, hit }`. On a hit, the returned array is a shallow
+   * copy — the annotated boundary message is replaced with a new object; all
+   * other messages are the original references. On a miss, the original array
+   * reference is returned unchanged (no allocation).
    */
   annotate(messages: Message[]): AnnotateResult {
     if (messages.length === 0) {
@@ -315,6 +316,13 @@ export class PromptCache {
    * has no children, and then recomputes `hasTerminalDescendant` bottom-up on
    * the ancestor path so that `#longestMatchingPrefix` stops walking at the
    * first node that no longer has any live terminals in its subtree.
+   *
+   * **Performance note.** This is an O(N) DFS over all nodes, where N is at
+   * most `maxEntries * avgSequenceLength`. For the default cap of 1000 entries
+   * and typical short LLM prefix sequences, this is fast in practice. If your
+   * workload uses a very large `maxEntries` under sustained write churn, replace
+   * this with an auxiliary min-heap keyed by `sequence` to get O(log N)
+   * eviction.
    *
    * @internal
    */
