@@ -2787,6 +2787,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // 'fail': bypass saga — directly mark the workflow failed without
         // throwing into the generator. Any active ctx.saga() will NOT run
         // its compensators. Use 'compensate' if you want compensation to run.
+        // Cancel the workflow in the strategy first to release the generator,
+        // context, and abort controller — same as #terminateWorkflow does.
+        this.#strategy.cancelWorkflow(workflowId);
         await this.#failWorkflow(workflowId, violationError);
       } else {
         // 'compensate': throw into the generator. If an active ctx.saga() is
