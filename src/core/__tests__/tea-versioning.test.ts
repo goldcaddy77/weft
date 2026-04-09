@@ -19,6 +19,19 @@ import { VersionMismatchError } from '../versioning.ts';
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** An LLM provider whose chat call never resolves — keeps the workflow running. */
+function makeBlockingProvider(): LLMProvider {
+  return {
+    name: 'blocking',
+    chat: () =>
+      new Promise<ChatResponse>(() => {
+        /* never resolves */
+      }),
+    stream: async () => new ReadableStream(),
+    countTokens: async () => 1,
+  };
+}
+
 /** A minimal LLM provider that immediately returns a fixed response. */
 function makeMockProvider(): LLMProvider {
   return {
@@ -53,9 +66,7 @@ async function flush(): Promise<void> {
 describe('TEA versioning', () => {
   it('throws VersionMismatchError with teaDiff when tool version changes without a migration hook', async () => {
     const storage = new MemoryStorage();
-    const provider = makeMockProvider();
 
-    // --- v1: register agent with tool@1.0.0 ---
     const toolV1 = {
       definition: {
         name: 'my-tool',
@@ -73,23 +84,19 @@ describe('TEA versioning', () => {
       tools: [toolV1],
     });
 
+    // Engine 1: start the workflow — it will block forever waiting for LLM
     const engine1 = new Engine({ storage });
-    engine1.register(agentV1, { provider });
+    engine1.register(agentV1, { provider: makeBlockingProvider() });
 
-    await engine1.start('versioned-agent', 'hello');
+    // Catch the rejection so it doesn't surface as an unhandled rejection.
+    engine1.start('versioned-agent', 'hello', { id: 'wf-tea-test' }).catch(() => {
+      /* expected: engine disposed before LLM resolves */
+    });
     await flush();
 
-    // Workflow should have completed — agent returns immediately with mock provider.
-    // We just need the state persisted. If it completed, that's fine for our test
-    // since we can also test the resume path by forcing a "running" state.
-    // Instead, let's test via a workflow that pauses, so we manually park it.
     engine1[Symbol.dispose]();
 
-    // --- Approach: use a raw Engine and plain WorkflowRegistration with agentVersion/toolVersions ---
-    // Since only AgentDefinition registrations populate agentVersion/toolVersions,
-    // we verify the teaDiff via the public API.
-
-    // Create a second engine with the same storage but tool bumped to 2.0.0, no migrate
+    // Engine 2: same workflow name but bumped versions, no migration hook
     const toolV2 = {
       definition: {
         name: 'my-tool',
@@ -103,91 +110,39 @@ describe('TEA versioning', () => {
     const agentV2 = defineAgent({
       name: 'versioned-agent',
       model: 'test-model',
-      version: '2.0.0', // bumped workflow version triggers incompatibility
-      tools: [toolV2],
-    });
-
-    const engine2 = new Engine({ storage });
-    engine2.register(agentV2, { provider });
-
-    // Find any running workflow — if the mock provider completes immediately the
-    // workflow may be done. Re-run with a storage that has a running workflow.
-    const storage2 = new MemoryStorage();
-    const provider2 = makeMockProvider();
-
-    // Workflow that blocks on sleep so it stays in running state
-    const blockingProvider: LLMProvider = {
-      name: 'blocking',
-      chat: () =>
-        new Promise<ChatResponse>(() => {
-          /* never resolves */
-        }),
-      stream: async () => new ReadableStream(),
-      countTokens: async () => 1,
-    };
-
-    const agentV1b = defineAgent({
-      name: 'versioned-agent',
-      model: 'test-model',
-      version: '1.0.0',
-      tools: [toolV1],
-    });
-
-    const engine3 = new Engine({ storage: storage2 });
-    engine3.register(agentV1b, { provider: blockingProvider });
-
-    // Start workflow — it will block forever waiting for LLM
-    const startHandle = engine3.start('versioned-agent', 'hello', { id: 'wf-tea-test' });
-    await flush();
-    void startHandle; // fire-and-forget; workflow is now "running" and blocked
-
-    engine3[Symbol.dispose]();
-
-    // --- Resume with v2 (tool bumped, no migrate) ---
-    const agentV2b = defineAgent({
-      name: 'versioned-agent',
-      model: 'test-model',
       version: '2.0.0',
       tools: [toolV2],
     });
 
-    const engine4 = new Engine({ storage: storage2 });
-    engine4.register(agentV2b, { provider: provider2 });
+    const engine2 = new Engine({ storage });
+    engine2.register(agentV2, { provider: makeMockProvider() });
 
-    await expect(engine4.resume('wf-tea-test')).rejects.toThrow(VersionMismatchError);
-
+    let caught: unknown;
     try {
-      await engine4.resume('wf-tea-test');
+      await engine2.resume('wf-tea-test');
     } catch (error) {
-      expect(error).toBeInstanceOf(VersionMismatchError);
-      const vmError = error as VersionMismatchError;
-      expect(vmError.teaDiff).toBeDefined();
-      // The workflow version changed 1.0.0 → 2.0.0
-      expect(vmError.teaDiff?.workflowVersion).toEqual(['1.0.0', '2.0.0']);
-      // The tool version changed 1.0.0 → 2.0.0
-      expect(vmError.teaDiff?.toolVersions).toBeDefined();
-      const toolChange = vmError.teaDiff?.toolVersions?.find((c) => c.tool === 'my-tool');
-      expect(toolChange).toBeDefined();
-      expect(toolChange?.change).toBe('changed');
-      expect(toolChange?.from).toBe('1.0.0');
-      expect(toolChange?.to).toBe('2.0.0');
+      caught = error;
     }
 
-    engine4[Symbol.dispose]();
+    expect(caught).toBeInstanceOf(VersionMismatchError);
+    const vmError = caught as VersionMismatchError;
+    expect(vmError.teaDiff).toBeDefined();
+    // The workflow version changed 1.0.0 → 2.0.0
+    expect(vmError.teaDiff?.workflowVersion).toEqual(['1.0.0', '2.0.0']);
+    // The tool version changed 1.0.0 → 2.0.0
+    const toolChange = vmError.teaDiff?.toolVersions?.find((c) => c.tool === 'my-tool');
+    expect(toolChange).toBeDefined();
+    expect(toolChange?.change).toBe('changed');
+    if (toolChange?.change === 'changed') {
+      expect(toolChange.from).toBe('1.0.0');
+      expect(toolChange.to).toBe('2.0.0');
+    }
+
+    engine2[Symbol.dispose]();
   });
 
   it('resumes successfully when a migration hook is provided', async () => {
     const storage = new MemoryStorage();
-
-    const blockingProvider: LLMProvider = {
-      name: 'blocking',
-      chat: () =>
-        new Promise<ChatResponse>(() => {
-          /* never resolves */
-        }),
-      stream: async () => new ReadableStream(),
-      countTokens: async () => 1,
-    };
 
     const toolV1 = {
       definition: {
@@ -206,19 +161,19 @@ describe('TEA versioning', () => {
       tools: [toolV1],
     });
 
-    // Engine 1: start the workflow (will block on LLM call)
+    // Engine 1: start the workflow — it will block forever waiting for LLM
     const engine1 = new Engine({ storage });
-    engine1.register(agentV1, { provider: blockingProvider });
+    engine1.register(agentV1, { provider: makeBlockingProvider() });
 
-    const startHandle = engine1.start('migration-agent', 'hello', { id: 'wf-migration-test' });
+    engine1.start('migration-agent', 'hello', { id: 'wf-migration-test' }).catch(() => {
+      /* expected: engine disposed before LLM resolves */
+    });
     await flush();
-    void startHandle;
 
     engine1[Symbol.dispose]();
 
-    // Engine 2: register v2 WITH a migration hook (plain handler, no agent definition needed)
+    // Engine 2: register v2 WITH a migration hook — allows resume despite version mismatch
     const engine2 = new Engine({ storage });
-    // Register with a no-op migration hook — this allows resume despite version mismatch
     engine2.register('migration-agent', {
       handler: async function* () {
         return 'migrated';
@@ -228,7 +183,8 @@ describe('TEA versioning', () => {
     });
 
     const resumeHandle = await engine2.resume('wf-migration-test');
-    expect(resumeHandle).toBeDefined();
+    // Resume returns a WorkflowHandle with the correct id
+    expect(resumeHandle.id).toBe('wf-migration-test');
 
     engine2[Symbol.dispose]();
   });

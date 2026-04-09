@@ -762,13 +762,13 @@ describe('supervise: dynamic n and confidence-weighted voting', () => {
     expect(callCount).toBe(2);
   });
 
-  it('with voting "confidence-weighted" resolves agreement on a simple 2-worker split', async () => {
+  it('with voting "confidence-weighted" picks the unanimous answer without calling the supervisor', async () => {
     let callCount = 0;
     const provider: LLMProvider = {
       name: 'mock',
       async chat(): Promise<ChatResponse> {
         callCount++;
-        return createChatResponse('answer');
+        return createChatResponse('worker answer');
       },
       async stream() {
         return new ReadableStream();
@@ -787,9 +787,44 @@ describe('supervise: dynamic n and confidence-weighted voting', () => {
       provider,
     });
 
-    // Both workers agreed on 'answer'; no supervisor needed
-    expect(result.finalResult).toBe('answer');
+    // Both workers agreed on 'worker answer'; confidence-weighted picks the unanimous winner
+    expect(result.finalResult).toBe('worker answer');
+    // Supervisor should NOT be called — workers agreed (only 2 calls)
     expect(callCount).toBe(2);
+  });
+
+  it('with voting "confidence-weighted" falls through to supervisor when workers are evenly split', async () => {
+    let callSequence = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callSequence++;
+        // First two calls are workers (alternating answers); third is supervisor
+        if (callSequence === 1) return createChatResponse('alpha');
+        if (callSequence === 2) return createChatResponse('beta');
+        return createChatResponse('supervisor picked alpha'); // supervisor resolves the tie
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const result = await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      voting: 'confidence-weighted',
+      provider,
+    });
+
+    // Workers disagreed (alpha vs beta) with equal weight (confidence undefined → 0.5 each)
+    // → confidence-weighted detects a tie and falls through to supervisor
+    expect(result.finalResult).toBe('supervisor picked alpha');
+    expect(callSequence).toBe(3);
   });
 });
 

@@ -299,6 +299,7 @@ function resolveWorkers(
   n: number | ((input: string) => number) | undefined,
   input: string,
 ): AgentDefinition[] {
+  if (workers.length === 0) throw new Error('supervise requires at least one worker agent');
   if (n === undefined) return workers;
 
   const effectiveCount = Math.max(1, typeof n === 'function' ? n(input) : n);

@@ -24,11 +24,7 @@ export const DEFAULT_WORKFLOW_VERSION = '0.0.0';
 // Types
 // ---------------------------------------------------------------------------
 
-export type VersionCompatibility =
-  | 'compatible'
-  | 'needs-migration'
-  | 'resume-as-is'
-  | 'incompatible';
+export type VersionCompatibility = 'compatible' | 'needs-migration' | 'incompatible';
 
 // ---------------------------------------------------------------------------
 // Version comparison
@@ -41,7 +37,6 @@ export type VersionCompatibility =
  * - `"needs-migration"` — versions differ and a migration function is available.
  * - `"incompatible"` — versions differ and no migration is available; the engine
  *   will throw a {@link VersionMismatchError} instead of resuming silently.
- * - `"resume-as-is"` — versions match (explicit no-op case, kept for completeness).
  */
 export function checkVersionCompatibility(
   storedVersion: string,

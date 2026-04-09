@@ -21,12 +21,10 @@ export type TeaVersionTuple = {
 };
 
 /** A single tool-level version change surfaced by {@link diffTeaVersionTuples}. */
-export type TeaToolVersionChange = {
-  tool: string;
-  change: 'added' | 'removed' | 'changed';
-  from?: string;
-  to?: string;
-};
+export type TeaToolVersionChange =
+  | { tool: string; change: 'added'; to: string }
+  | { tool: string; change: 'removed'; from: string }
+  | { tool: string; change: 'changed'; from: string; to: string };
 
 /** Structured field-level diff between two {@link TeaVersionTuple}s. */
 export type TeaVersionDiff = {

@@ -179,9 +179,6 @@ export interface AgentResult {
   confidence?: number | undefined;
 }
 
-/** Alias for {@link AgentResult}. */
-export type AgentResponse = AgentResult;
-
 interface ResolvedAgentOptions {
   defaultModel: string;
   provider: LLMProvider;

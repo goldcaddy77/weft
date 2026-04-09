@@ -2,7 +2,7 @@
  * Byzantine Fault Tolerance (BFT) scenario tests for confidence-weighted voting.
  *
  * Verifies that confidence-weighted consensus correctly identifies the honest
- * majority answer even when a minority of agents produce wrong answers.
+ * minority answer even when a naive plurality would pick the wrong answer.
  */
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
@@ -64,23 +64,32 @@ const workerAgent = defineAgent({ name: 'worker', model: 'test-model' });
 const supervisorAgent = defineAgent({ name: 'supervisor', model: 'test-model' });
 
 // ---------------------------------------------------------------------------
-// BFT: 5 agents, 1 byzantine
+// BFT: 5 agents, 3 byzantine (plurality) vs 2 honest (confident minority)
+//
+// Scenario design:
+//   - 3 byzantine agents: wrong answer, low confidence (0.2 each) → total weight 0.6
+//   - 2 honest agents:    correct answer, high confidence (0.9 each) → total weight 1.8
+//
+// Naive plurality: wrong answer wins (3 > 2), so supervise falls through to supervisor
+//   which, by majority, also returns the wrong answer.
+// Confidence-weighted: correct answer wins (1.8 > 0.6), no supervisor needed.
 // ---------------------------------------------------------------------------
 
-describe('BFT: 5 agents, 1 byzantine with confidence-weighted voting', () => {
+describe('BFT: 5 agents, 3 byzantine plurality vs 2 confident honest minority', () => {
   beforeEach(() => {
     agentResultQueue.length = 0;
   });
 
-  it('(a) confidence-weighted voting returns the correct answer despite 1 byzantine', async () => {
-    // 4 honest agents produce the correct answer with confidence 0.9
-    // 1 byzantine agent produces a wrong answer with any confidence
+  it('(a) confidence-weighted voting picks the honest minority over the byzantine plurality', async () => {
+    // 3 byzantine: wrong answer, low confidence
+    // 2 honest: correct answer, high confidence
+    // confidence-weighted: correct (1.8) beats wrong (0.6) → no supervisor
     agentResultQueue.push(
-      makeAgentResult('correct answer', 0.9),
-      makeAgentResult('correct answer', 0.9),
-      makeAgentResult('correct answer', 0.9),
-      makeAgentResult('correct answer', 0.9),
-      makeAgentResult('wrong answer', 0.95), // byzantine: high confidence, wrong
+      makeAgentResult('wrong answer', 0.2), // byzantine
+      makeAgentResult('wrong answer', 0.2), // byzantine
+      makeAgentResult('wrong answer', 0.2), // byzantine
+      makeAgentResult('correct answer', 0.9), // honest
+      makeAgentResult('correct answer', 0.9), // honest
     );
 
     const result = await supervise({
@@ -95,19 +104,16 @@ describe('BFT: 5 agents, 1 byzantine with confidence-weighted voting', () => {
     expect(result.finalResult).toBe('correct answer');
   });
 
-  it('(b) naive consensus returns wrong answer when 3 byzantine agents outnumber 2 honest', async () => {
-    // 3 byzantine agents produce the wrong answer
-    // 2 honest agents produce the correct answer
-    // naive consensus picks the plurality — which is the wrong answer
+  it('(b) naive consensus defers to supervisor when workers disagree, yielding the wrong answer', async () => {
+    // Same 3 byzantine vs 2 honest split — naive sees disagreement and asks supervisor.
+    // Supervisor (mocked) returns the wrong answer (representing majority-biased supervisor).
     agentResultQueue.push(
-      makeAgentResult('wrong answer'),
-      makeAgentResult('wrong answer'),
-      makeAgentResult('wrong answer'),
-      makeAgentResult('correct answer'),
-      makeAgentResult('correct answer'),
-      // supervisor is called because not all agree — returns the wrong answer
-      // (simulating a supervisor that goes with the majority)
-      makeAgentResult('wrong answer'),
+      makeAgentResult('wrong answer'), // byzantine
+      makeAgentResult('wrong answer'), // byzantine
+      makeAgentResult('wrong answer'), // byzantine
+      makeAgentResult('correct answer'), // honest
+      makeAgentResult('correct answer'), // honest
+      makeAgentResult('wrong answer'), // supervisor goes with majority
     );
 
     const result = await supervise({
@@ -119,9 +125,8 @@ describe('BFT: 5 agents, 1 byzantine with confidence-weighted voting', () => {
       provider: stubProvider,
     });
 
-    // Without confidence-weighted voting, naive consensus defers to the
-    // supervisor when workers disagree; the supervisor (mocked) returns the
-    // wrong answer, representing a failure to identify the honest minority.
+    // Naive consensus sees disagreement, falls through to supervisor which returns the
+    // wrong answer — demonstrating why confidence-weighted voting is necessary.
     expect(result.finalResult).toBe('wrong answer');
   });
 });

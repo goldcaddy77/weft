@@ -249,16 +249,17 @@ export function serializeMetricsSnapshotForPrometheus(snapshot: MetricsSnapshot)
   }
 
   // Derived DPMO gauge: (defects / operations) * 1_000_000
-  const dpmoDefectsEntry = snapshot['weft.dpmo.defects'];
-  const dpmoOperationsEntry = snapshot['weft.dpmo.operations'];
+  const dpmoDefectsEntry = snapshot[METRICS.dpmoDefects.name];
+  const dpmoOperationsEntry = snapshot[METRICS.dpmoOperations.name];
   const dpmoDefects = dpmoDefectsEntry?.type === 'counter' ? dpmoDefectsEntry.value : 0;
   const dpmoOperations = dpmoOperationsEntry?.type === 'counter' ? dpmoOperationsEntry.value : 0;
   const dpmoValue = dpmoOperations === 0 ? 0 : (dpmoDefects / dpmoOperations) * 1_000_000;
+  const dpmoGaugeName = 'weft_dpmo';
   lines.push(
-    '# HELP weft_dpmo Defects per million operations (failed workflows / started workflows * 1e6)',
+    `# HELP ${dpmoGaugeName} Defects per million operations (failed workflows / started workflows * 1e6)`,
   );
-  lines.push('# TYPE weft_dpmo gauge');
-  lines.push(`weft_dpmo ${dpmoValue}`);
+  lines.push(`# TYPE ${dpmoGaugeName} gauge`);
+  lines.push(`${dpmoGaugeName} ${dpmoValue}`);
 
   return lines.join('\n') + '\n';
 }
