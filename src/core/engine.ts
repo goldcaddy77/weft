@@ -28,6 +28,7 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../workers/pool.ts';
 import type { ActivityRegistrationOptions } from './activity-registry.ts';
+import type { ConstraintCheckState, ConstraintDefinition } from './constraint.ts';
 import { ActivityRegistry } from './activity-registry.ts';
 import {
   advanceCheckpoint,
@@ -53,6 +54,7 @@ import {
   AttributesChangedEvent,
   CheckpointSizeWarningEvent,
   CleanupWarningEvent,
+  ConstraintViolatedEvent,
   DevelopmentWarningEvent,
   SignalReceivedEvent,
   UpdateCompletedEvent,
@@ -136,6 +138,8 @@ interface RegistrationEntry {
   isAgent?: boolean;
   /** LLM provider for agent-typed registrations (used for connection pre-warming). */
   provider?: LLMProvider;
+  /** Domain constraints evaluated at every checkpoint commit. */
+  constraints?: ConstraintDefinition[];
 }
 
 /** Options required when registering an AgentDefinition as a workflow. */
@@ -1167,6 +1171,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
       if (registration.searchAttributes) {
         entry.searchAttributes = registration.searchAttributes;
+      }
+      if (registration.constraints && registration.constraints.length > 0) {
+        entry.constraints = registration.constraints;
       }
       this.#registrations.set(name, entry);
     } else {
@@ -2702,6 +2709,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // Development mode: validate checkpoint round-trip
         this.#validateDevelopmentCheckpoint(message.workflowId);
 
+        // Evaluate domain constraints — done after persistence so the
+        // checkpoint is durable before any violation reaction.
+        const constraintViolated = await this.#evaluateConstraints(message.workflowId);
+        if (constraintViolated) {
+          // Violation already handled (event dispatched, error thrown or logged).
+          break;
+        }
+
         // Translate the operation request: worker protocol uses `kind` while the
         // engine uses `type`. Inline strategy already emits ContextOperationRequest.
         const operation = this.#translateOperationRequest(message.operationRequest);
@@ -2709,6 +2724,88 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         break;
       }
     }
+  }
+
+  /**
+   * Evaluate all registered constraints for a workflow at the current checkpoint.
+   *
+   * Returns `true` if any constraint was violated and a 'fail' or 'compensate'
+   * reaction was triggered (meaning the operation should not proceed). Returns
+   * `false` if all constraints passed or only 'warn' violations occurred.
+   *
+   * **Note**: Constraints are only evaluated when the inline execution strategy
+   * is active. When a workflow runs in a Web Worker, `this.#inlineStrategy` has
+   * no context for that workflow and this method returns `false` — constraints
+   * are silently skipped. This is a known v1 limitation.
+   */
+  async #evaluateConstraints(workflowId: string): Promise<boolean> {
+    const context = this.#inlineStrategy?.getContext(workflowId);
+    if (!context) return false;
+
+    const registration = this.#registrations.get(context.workflowType);
+    const constraints = registration?.constraints;
+    if (!constraints || constraints.length === 0) return false;
+
+    // Build the minimal snapshot passed to check(). Only id, type, and a
+    // fixed status of 'running' are available — constraints are evaluated
+    // mid-execution, before the workflow has a result or final status.
+    // To inspect external state, capture it in the enclosing scope instead.
+    const stateSnapshot: ConstraintCheckState = {
+      id: workflowId,
+      type: context.workflowType,
+      status: 'running',
+    };
+
+    for (const definition of constraints) {
+      let violated: boolean;
+      try {
+        const result = definition.check(stateSnapshot);
+        violated = !(result instanceof Promise ? await result : result);
+      } catch (error) {
+        // A throwing check is treated as a violation so the workflow doesn't
+        // silently continue in an unknown state. Log the original error to aid
+        // debugging — without this, users would see only the constraint
+        // violation message with no indication their check() is broken.
+        console.warn(`[weft] Constraint "${definition.name}" check() threw an error:`, error);
+        violated = true;
+      }
+
+      if (!violated) continue;
+
+      this.dispatchEvent(
+        new ConstraintViolatedEvent(workflowId, definition.name, definition.scope, definition.onViolation),
+      );
+
+      if (definition.onViolation === 'warn') {
+        console.warn(
+          `[weft] Constraint "${definition.name}" (scope: ${definition.scope}) violated on workflow "${workflowId}" — continuing (onViolation: 'warn')`,
+        );
+        continue;
+      }
+
+      // Stop at first actionable violation — remaining constraints are not evaluated.
+      const violationError = new Error(
+        `Constraint violated: ${definition.name} (scope: ${definition.scope})`,
+      );
+
+      if (definition.onViolation === 'fail') {
+        // 'fail': bypass saga — directly mark the workflow failed without
+        // throwing into the generator. Any active ctx.saga() will NOT run
+        // its compensators. Use 'compensate' if you want compensation to run.
+        // Cancel the workflow in the strategy first to release the generator,
+        // context, and abort controller — same as #terminateWorkflow does.
+        this.#strategy.cancelWorkflow(workflowId);
+        await this.#failWorkflow(workflowId, violationError);
+      } else {
+        // 'compensate': throw into the generator. If an active ctx.saga() is
+        // wrapping the current step it will catch the error, run its registered
+        // compensators in reverse, and then re-throw, completing the workflow failure.
+        this.#feedOperationResult(workflowId, { status: 'failed', error: violationError.message }, violationError);
+      }
+      return true;
+    }
+
+    return false;
   }
 
   /**

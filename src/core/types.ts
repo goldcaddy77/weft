@@ -2,6 +2,7 @@ import type { ModelRouter } from '../ai/model-router.ts';
 import type { AlertingOptions } from '../alerting/types.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import type { CompressionAlgorithm, CompressionOptions } from './compression.ts';
+import type { ConstraintDefinition } from './constraint.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow identity
@@ -432,6 +433,16 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
   handler: WorkflowFunction<TInput, TOutput>;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
+  /**
+   * Domain constraints evaluated at every checkpoint commit. When a constraint's
+   * `check` returns false, the engine dispatches a `ConstraintViolatedEvent`
+   * and reacts per `onViolation` ('fail' | 'compensate' | 'warn').
+   *
+   * **Note**: Constraints are only evaluated when using the default inline
+   * execution strategy. Workflows running in a Web Worker
+   * (`workerExecution` option) will silently skip constraint evaluation.
+   */
+  constraints?: ConstraintDefinition[];
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import type { WeftAgentEventMap } from '../ai/events.ts';
+import type { ConstraintViolation } from './constraint.ts';
 
 export class WorkflowStartedEvent extends Event {
   static readonly type = 'workflow:started' as const;
@@ -302,6 +303,27 @@ export class AlertResolvedEvent extends Event {
   }
 }
 
+export class ConstraintViolatedEvent extends Event {
+  static readonly type = 'constraint:violated' as const;
+  readonly workflowId: string;
+  readonly constraintName: string;
+  readonly scope: string;
+  readonly onViolation: ConstraintViolation;
+
+  constructor(
+    workflowId: string,
+    constraintName: string,
+    scope: string,
+    onViolation: ConstraintViolation,
+  ) {
+    super(ConstraintViolatedEvent.type);
+    this.workflowId = workflowId;
+    this.constraintName = constraintName;
+    this.scope = scope;
+    this.onViolation = onViolation;
+  }
+}
+
 export type WeftEventMap = WeftAgentEventMap & {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
@@ -324,6 +346,7 @@ export type WeftEventMap = WeftAgentEventMap & {
   'storage:size-reported': StorageSizeReportedEvent;
   'alert:fired': AlertFiredEvent;
   'alert:resolved': AlertResolvedEvent;
+  'constraint:violated': ConstraintViolatedEvent;
 };
 
 export interface TypedEventTarget<TEventMap extends Record<string, Event>> {
