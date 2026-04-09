@@ -15,6 +15,10 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { MemoryStorage } from '../storage/memory';
+import type { AgentTool } from './agent';
+import { executeAgentLoop } from './agent';
+import type { LLMProvider } from './providers/interface';
+import type { ChatResponse } from './providers/types';
 import { computeSemanticHash, ToolCallReplayConflictError, ToolEffectLog } from './tool-effect-log';
 
 // ---------------------------------------------------------------------------
@@ -55,6 +59,28 @@ describe('computeSemanticHash', () => {
     const a = computeSemanticHash({ outer: { z: 3, y: 2 } });
     const b = computeSemanticHash({ outer: { y: 2, z: 3 } });
     expect(a).toBe(b);
+  });
+
+  it('does not crash when called with null', () => {
+    // canonicalize(null) must return the string 'null', not throw
+    expect(() => computeSemanticHash(null)).not.toThrow();
+    expect(computeSemanticHash(null)).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('does not crash when called with undefined', () => {
+    // canonicalize(undefined) previously returned JS undefined (not a string),
+    // causing Bun.hash.wyhash to throw. It must now return a string.
+    expect(() => computeSemanticHash(undefined)).not.toThrow();
+    expect(computeSemanticHash(undefined)).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('produces stable, distinct hashes for null and undefined', () => {
+    const nullHash = computeSemanticHash(null);
+    const undefinedHash = computeSemanticHash(undefined);
+    expect(nullHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(undefinedHash).toMatch(/^[0-9a-f]{16}$/);
+    // null and undefined must not collide with each other
+    expect(nullHash).not.toBe(undefinedHash);
   });
 
   it('custom identity can restrict to intent-critical fields', () => {
@@ -114,6 +140,19 @@ describe('ToolEffectLog', () => {
     if (entry?.status === 'committed') {
       expect(entry.output).toBe('tool output');
     }
+  });
+
+  it('committed record stores the toolName', async () => {
+    await log.record('hash-c', 'send');
+    await log.commit('hash-c', 'send', 'ok');
+    const entry = await log.lookup('hash-c');
+    expect(entry?.toolName).toBe('send');
+  });
+
+  it('in-flight record stores the toolName', async () => {
+    await log.record('hash-f', 'transfer');
+    const entry = await log.lookup('hash-f');
+    expect(entry?.toolName).toBe('transfer');
   });
 
   it('abort marks the call as aborted', async () => {
@@ -276,5 +315,182 @@ describe('ToolCallReplayConflictError', () => {
     expect(err.message).toContain('abc123');
     expect(err.toolName).toBe('charge');
     expect(err.semanticHash).toBe('abc123');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Agent-level integration: identity() edge cases and cross-tool collision guard
+// ---------------------------------------------------------------------------
+
+/** Minimal one-tool-call-then-done provider. */
+function createSingleToolProvider(toolName: string, toolInput: unknown): LLMProvider {
+  let called = false;
+  return {
+    name: 'single-tool-mock',
+    async chat(): Promise<ChatResponse> {
+      if (!called) {
+        called = true;
+        return {
+          content: '',
+          toolCalls: [{ id: 'call-1', name: toolName, input: toolInput }],
+          usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+          model: 'test-model',
+          stopReason: 'tool_use',
+        };
+      }
+      return {
+        content: 'done',
+        toolCalls: [],
+        usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+        model: 'test-model',
+        stopReason: 'end_turn',
+      };
+    },
+    async stream() {
+      return new ReadableStream();
+    },
+    async countTokens() {
+      return 100;
+    },
+  };
+}
+
+function createSimpleTool(name: string, onExecute?: () => void): AgentTool {
+  return {
+    definition: { name, description: 'test tool', inputSchema: { type: 'object' } },
+    execute: async (_input: unknown) => {
+      onExecute?.();
+      return { result: 'ok' };
+    },
+  };
+}
+
+describe('effect log: identity() edge cases', () => {
+  it('falls back to default hash when identity() throws', async () => {
+    const storage = new MemoryStorage();
+    const effectLog = new ToolEffectLog(storage, 'wf-id', 'agent-id');
+    let executeCount = 0;
+
+    const tool: AgentTool = {
+      ...createSimpleTool('charge', () => executeCount++),
+      identity: (_input: unknown) => {
+        throw new Error('identity exploded');
+      },
+    };
+
+    const provider = createSingleToolProvider('charge', { amount: 50 });
+    await executeAgentLoop(
+      { model: 'test-model', provider, tools: [tool], toolEffectLog: effectLog },
+      'Go',
+    );
+
+    // Tool should have executed once despite identity() throwing
+    expect(executeCount).toBe(1);
+    // A record should have been written using the default hash
+    const defaultHash = computeSemanticHash({ name: 'charge', input: { amount: 50 } });
+    const entry = await effectLog.lookup(defaultHash);
+    expect(entry?.status).toBe('committed');
+  });
+
+  it('falls back to default hash when identity() returns an invalid hash format', async () => {
+    const storage = new MemoryStorage();
+    const effectLog = new ToolEffectLog(storage, 'wf-id', 'agent-id');
+    let executeCount = 0;
+
+    const tool: AgentTool = {
+      ...createSimpleTool('charge', () => executeCount++),
+      identity: (_input: unknown) => ({
+        semanticHash: 'not-a-valid-hex-hash!!!!',
+        intentCriticalFields: ['amount'],
+      }),
+    };
+
+    const provider = createSingleToolProvider('charge', { amount: 50 });
+    await executeAgentLoop(
+      { model: 'test-model', provider, tools: [tool], toolEffectLog: effectLog },
+      'Go',
+    );
+
+    // Tool should have executed once despite invalid identity hash
+    expect(executeCount).toBe(1);
+    // Record written under the default hash
+    const defaultHash = computeSemanticHash({ name: 'charge', input: { amount: 50 } });
+    const entry = await effectLog.lookup(defaultHash);
+    expect(entry?.status).toBe('committed');
+  });
+});
+
+describe('effect log: cross-tool hash collision guard', () => {
+  it('does not replay committed result when stored toolName does not match', async () => {
+    const storage = new MemoryStorage();
+
+    // Pre-seed a committed record for 'tool-a' under a known hash
+    const collisionHash = 'aaaa1111bbbb2222'; // fake 16-char hex
+    const log1 = new ToolEffectLog(storage, 'wf-1', 'agent-1');
+    await log1.record(collisionHash, 'tool-a');
+    await log1.commit(collisionHash, 'tool-a', '"tool-a-result"');
+
+    // A second tool ('tool-b') has a custom identity() that returns the same hash
+    let toolBExecuteCount = 0;
+    const toolB: AgentTool = {
+      ...createSimpleTool('tool-b', () => toolBExecuteCount++),
+      identity: (_input: unknown) => ({
+        semanticHash: collisionHash,
+        intentCriticalFields: [],
+      }),
+    };
+
+    const log2 = new ToolEffectLog(storage, 'wf-1', 'agent-1');
+    const provider = createSingleToolProvider('tool-b', { x: 1 });
+    await executeAgentLoop(
+      { model: 'test-model', provider, tools: [toolB], toolEffectLog: log2 },
+      'Go',
+    );
+
+    // tool-b must execute — it must NOT replay tool-a's committed result
+    expect(toolBExecuteCount).toBe(1);
+
+    // The original tool-a committed record must be preserved (not overwritten)
+    const entry = await log2.lookup(collisionHash);
+    expect(entry?.toolName).toBe('tool-a');
+    expect(entry?.status).toBe('committed');
+  });
+
+  it('does not throw ToolCallReplayConflictError when in-flight record belongs to a different tool', async () => {
+    const storage = new MemoryStorage();
+
+    // Pre-seed an in-flight record for 'tool-a' under a known hash
+    const collisionHash = 'cccc3333dddd4444'; // fake 16-char hex
+    const log1 = new ToolEffectLog(storage, 'wf-2', 'agent-2');
+    await log1.record(collisionHash, 'tool-a');
+
+    // tool-b returns the same hash via custom identity()
+    let toolBExecuteCount = 0;
+    const toolB: AgentTool = {
+      ...createSimpleTool('tool-b', () => toolBExecuteCount++),
+      identity: (_input: unknown) => ({
+        semanticHash: collisionHash,
+        intentCriticalFields: [],
+      }),
+    };
+
+    const log2 = new ToolEffectLog(storage, 'wf-2', 'agent-2');
+    const provider = createSingleToolProvider('tool-b', { y: 2 });
+
+    // Must NOT throw ToolCallReplayConflictError — the in-flight record is for a different tool
+    await expect(
+      executeAgentLoop(
+        { model: 'test-model', provider, tools: [toolB], toolEffectLog: log2 },
+        'Go',
+      ),
+    ).resolves.toBeDefined();
+
+    // tool-b should have executed
+    expect(toolBExecuteCount).toBe(1);
+
+    // The original in-flight record for tool-a must be preserved
+    const entry = await log2.lookup(collisionHash);
+    expect(entry?.toolName).toBe('tool-a');
+    expect(entry?.status).toBe('in-flight');
   });
 });
