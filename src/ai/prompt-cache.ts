@@ -362,22 +362,45 @@ export class PromptCache {
       // Update hasTerminalDescendant on the evicted node itself.
       oldestNode.hasTerminalDescendant = this.#subtreeHasTerminal(oldestNode);
 
-      // Recompute hasTerminalDescendant bottom-up on ancestors.
-      const parent = oldestAncestors[oldestAncestors.length - 1] ?? null;
+      // Walk ancestors bottom-up: recompute hasTerminalDescendant and prune
+      // childless non-terminal nodes to prevent memory accumulation.
+      //
+      // We maintain a "last child hash" so that each ancestor can delete the
+      // child below it if that child has become dead (no children, not terminal).
+      // Start with the evicted node as the initial "child to maybe prune".
+      let childToMaybePrune: TrieNode = oldestNode;
+      let childHash = oldestHash;
 
-      // Prune the leaf if it has no children to avoid accumulating dead nodes.
-      if (oldestNode.children.size === 0 && parent !== null) {
-        parent.children.delete(oldestHash);
-      }
-
-      // Walk ancestors from deepest to root, recomputing the flag.
       for (let i = oldestAncestors.length - 1; i >= 0; i--) {
         const ancestor = oldestAncestors[i];
-        if (ancestor) {
-          ancestor.hasTerminalDescendant = this.#subtreeHasTerminal(ancestor);
+        if (!ancestor) continue;
+
+        // Prune the child if it is now dead (no children and not terminal).
+        if (childToMaybePrune.children.size === 0 && !childToMaybePrune.isTerminal) {
+          ancestor.children.delete(childHash);
         }
+
+        ancestor.hasTerminalDescendant = this.#subtreeHasTerminal(ancestor);
+
+        // This ancestor is now the child for the next iteration.
+        childToMaybePrune = ancestor;
+        const grandparent = oldestAncestors[i - 1];
+        childHash = grandparent ? this.#findChildHash(grandparent, ancestor) : '';
       }
     }
+  }
+
+  /**
+   * Find the key in `parent.children` that maps to `child`.
+   * Used during bottom-up ancestor pruning to identify the edge to remove.
+   *
+   * @internal
+   */
+  #findChildHash(parent: TrieNode, child: TrieNode): string {
+    for (const [hash, node] of parent.children) {
+      if (node === child) return hash;
+    }
+    return '';
   }
 
   /**

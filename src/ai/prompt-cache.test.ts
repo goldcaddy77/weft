@@ -144,6 +144,20 @@ describe('PromptCache', () => {
       const { hit } = cache.annotate([SYSTEM, TURN_1_USER, TURN_2_USER]);
       expect(hit).toBe(false);
     });
+
+    it('evicted ancestors are pruned — size reflects only live sequences', () => {
+      // Regression: after eviction, orphaned ancestor nodes must be removed
+      // so trie memory doesn't grow without bound.
+      // With maxEntries=1 and 3 unique sequences inserted, we evict twice.
+      // After eviction the size must still be 1 (only the live sequence).
+      const cache = new PromptCache({ maxEntries: 1 });
+
+      cache.annotate([SYSTEM, TURN_1_USER, TURN_1_ASST]);
+      cache.annotate([msg('user', 'seq B1'), msg('assistant', 'seq B2')]);
+      cache.annotate([msg('user', 'seq C1'), msg('assistant', 'seq C2')]);
+
+      expect(cache.size).toBe(1);
+    });
   });
 
   describe('hit/miss counters', () => {
