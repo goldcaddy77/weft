@@ -861,6 +861,53 @@ describe('supervise: dynamic n and confidence-weighted voting', () => {
     expect(result.finalResult).toBe('supervisor picked alpha');
     expect(callSequence).toBe(3);
   });
+
+  it('clamps non-finite n values to one worker', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('worker answer');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const infinityResult = await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: () => Number.POSITIVE_INFINITY,
+      provider,
+    });
+
+    const nanResult = await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: () => Number.NaN,
+      provider,
+    });
+
+    expect(infinityResult.finalResult).toBe('worker answer');
+    expect(nanResult.finalResult).toBe('worker answer');
+    expect(callCount).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

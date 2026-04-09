@@ -302,7 +302,10 @@ function resolveWorkers(
   if (workers.length === 0) throw new Error('supervise requires at least one worker agent');
   if (n === undefined) return workers;
 
-  const effectiveCount = Math.max(1, Math.floor(typeof n === 'function' ? n(input) : n));
+  const requestedCount = typeof n === 'function' ? n(input) : n;
+  const effectiveCount = Number.isFinite(requestedCount)
+    ? Math.max(1, Math.floor(requestedCount))
+    : 1;
   if (effectiveCount <= workers.length) {
     return workers.slice(0, effectiveCount);
   }

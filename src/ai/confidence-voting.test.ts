@@ -69,6 +69,21 @@ describe('confidenceWeightedConsensus', () => {
     expect(winner).toBeNull();
   });
 
+  it('treats floating-point-equivalent totals as a tie', () => {
+    const results = [
+      makeResult('a', 0.1),
+      makeResult('a', 0.1),
+      makeResult('a', 0.1),
+      makeResult('b', 0.3),
+    ];
+
+    const { winner, weights } = confidenceWeightedConsensus(results);
+
+    expect(weights.get('a')).toBeCloseTo(0.3);
+    expect(weights.get('b')).toBeCloseTo(0.3);
+    expect(winner).toBeNull();
+  });
+
   it('includes all unique content strings in weights map', () => {
     const results = [makeResult('x', 0.3), makeResult('y', 0.6), makeResult('z', 0.1)];
     const { weights } = confidenceWeightedConsensus(results);

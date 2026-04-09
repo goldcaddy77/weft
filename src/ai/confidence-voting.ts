@@ -13,12 +13,18 @@ import type { AgentResult } from './agent';
 
 /** Default confidence assumed when a result has no `confidence` field. */
 const DEFAULT_CONFIDENCE = 0.5;
+const FLOATING_POINT_TIE_TOLERANCE = 1e-12;
 
 export interface VotingResult {
   /** The winning content string, or `null` when there is a tie. */
   winner: string | null;
   /** Total accumulated weight for each unique content string. */
   weights: Map<string, number>;
+}
+
+function areWeightsEffectivelyEqual(left: number, right: number): boolean {
+  const scale = Math.max(1, Math.abs(left), Math.abs(right));
+  return Math.abs(left - right) <= scale * FLOATING_POINT_TIE_TOLERANCE;
 }
 
 /**
@@ -45,7 +51,7 @@ export function confidenceWeightedConsensus(results: AgentResult[]): VotingResul
       topWeight = weight;
       topContent = content;
       tied = false;
-    } else if (weight === topWeight) {
+    } else if (areWeightsEffectivelyEqual(weight, topWeight)) {
       tied = true;
     }
   }
