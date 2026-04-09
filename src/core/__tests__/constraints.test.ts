@@ -405,4 +405,59 @@ describe('constraint primitive', () => {
 
     engine[Symbol.dispose]();
   });
+
+  // -------------------------------------------------------------------------
+  // Worker execution mode rejects constraint registration.
+  //
+  // Constraints are evaluated via the inline strategy's per-workflow context.
+  // Worker mode has no inline strategy, so every constraint would be silently
+  // skipped at runtime. The engine must fail loudly at registration time.
+  // -------------------------------------------------------------------------
+
+  it('throws when registering a workflow with constraints on a worker-mode engine', () => {
+    const engine = new Engine({
+      workerExecution: {
+        workerUrl: new URL('https://example.invalid/worker.js'),
+        concurrency: 1,
+      },
+    });
+
+    const alwaysOk = constraint('alwaysOk', {
+      scope: 'transaction',
+      check: () => true,
+      onViolation: 'warn',
+    });
+
+    expect(() => {
+      engine.register('worker-mode-constrained', {
+        handler: async function* (_ctx: WorkflowContext) {
+          return 'done';
+        },
+        constraints: [alwaysOk],
+      });
+    }).toThrow(/constraints are not supported in worker execution mode/);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('allows registering a workflow with constraints on the default (inline) engine', () => {
+    const engine = new Engine();
+
+    const alwaysOk = constraint('alwaysOk', {
+      scope: 'transaction',
+      check: () => true,
+      onViolation: 'warn',
+    });
+
+    expect(() => {
+      engine.register('inline-mode-constrained', {
+        handler: async function* (_ctx: WorkflowContext) {
+          return 'done';
+        },
+        constraints: [alwaysOk],
+      });
+    }).not.toThrow();
+
+    engine[Symbol.dispose]();
+  });
 });

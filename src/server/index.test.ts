@@ -3507,7 +3507,10 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     const persisted = decode(
       (await storage.get(KEYS.operationInflight('heartbeat-stale-heap-op')))!,
     ) as { deadline: number };
-    expect(persisted.deadline).toBe(extendedDeadline);
+    // The deadline may advance further if another heartbeat fires during the
+    // sleep above — the only invariant is that it never regresses to the
+    // stale initialRecord.deadline value that the expiry scan would pick up.
+    expect(persisted.deadline).toBeGreaterThanOrEqual(extendedDeadline);
 
     ws.close();
     await Bun.sleep(50);

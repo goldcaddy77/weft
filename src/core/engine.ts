@@ -28,7 +28,6 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../workers/pool.ts';
 import type { ActivityRegistrationOptions } from './activity-registry.ts';
-import type { ConstraintCheckState, ConstraintDefinition } from './constraint.ts';
 import { ActivityRegistry } from './activity-registry.ts';
 import {
   advanceCheckpoint,
@@ -38,6 +37,7 @@ import {
   validateCheckpointRoundTrip,
 } from './checkpoint.ts';
 import { decode, encode } from './codec.ts';
+import type { ConstraintCheckState, ConstraintDefinition } from './constraint.ts';
 import type { ContextOperationRequest, StreamReference, StreamSink } from './context.ts';
 import { Context } from './context.ts';
 import {
@@ -1173,6 +1173,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         entry.searchAttributes = registration.searchAttributes;
       }
       if (registration.constraints && registration.constraints.length > 0) {
+        // Constraints are only evaluated by the inline execution strategy —
+        // `#evaluateConstraints` reads per-workflow context via
+        // `this.#inlineStrategy.getContext(...)`. In worker execution mode the
+        // inline strategy is absent, so every constraint would be silently
+        // skipped. Fail loud at registration time rather than swallowing the
+        // invariant at runtime.
+        if (this.#inlineStrategy === null) {
+          throw new Error(
+            `Cannot register workflow "${name}" with constraints: constraints are not supported in worker execution mode. ` +
+              `The engine was constructed with \`workerExecution\`, which runs workflows in a Web Worker where the inline ` +
+              `execution context required by constraint evaluation is unavailable. Remove the \`constraints\` option, or ` +
+              `construct the engine without \`workerExecution\` to run workflows inline.`,
+          );
+        }
         entry.constraints = registration.constraints;
       }
       this.#registrations.set(name, entry);
@@ -2734,9 +2748,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * `false` if all constraints passed or only 'warn' violations occurred.
    *
    * **Note**: Constraints are only evaluated when the inline execution strategy
-   * is active. When a workflow runs in a Web Worker, `this.#inlineStrategy` has
-   * no context for that workflow and this method returns `false` — constraints
-   * are silently skipped. This is a known v1 limitation.
+   * is active. Worker execution mode cannot reach this code path with
+   * constraints present — `register()` throws at registration time if
+   * constraints are supplied while `#inlineStrategy` is `null`, so the
+   * `!context` guard here only fires for benign cases (e.g. the workflow has
+   * already terminated or the context was cleared mid-evaluation).
    */
   async #evaluateConstraints(workflowId: string): Promise<boolean> {
     const context = this.#inlineStrategy?.getContext(workflowId);
@@ -2773,7 +2789,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (!violated) continue;
 
       this.dispatchEvent(
-        new ConstraintViolatedEvent(workflowId, definition.name, definition.scope, definition.onViolation),
+        new ConstraintViolatedEvent(
+          workflowId,
+          definition.name,
+          definition.scope,
+          definition.onViolation,
+        ),
       );
 
       if (definition.onViolation === 'warn') {
@@ -2800,7 +2821,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // 'compensate': throw into the generator. If an active ctx.saga() is
         // wrapping the current step it will catch the error, run its registered
         // compensators in reverse, and then re-throw, completing the workflow failure.
-        this.#feedOperationResult(workflowId, { status: 'failed', error: violationError.message }, violationError);
+        this.#feedOperationResult(
+          workflowId,
+          { status: 'failed', error: violationError.message },
+          violationError,
+        );
       }
       return true;
     }
@@ -3934,8 +3959,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     includeOutputArtifacts: boolean,
   ): Promise<void> {
-    // Always sweep internal state (signals are workflow-scoped scratch space).
-    const prefixes: string[] = [`sig:${workflowId}:`];
+    // Always sweep internal state. Signals are workflow-scoped scratch space,
+    // and the tool-effect log holds per-tool-call dedup records that have no
+    // consumers after the workflow terminates — leaving them behind would
+    // leak linearly with tool-call volume across the engine's lifetime.
+    const prefixes: string[] = [`sig:${workflowId}:`, `tool-effect:${workflowId}:`];
 
     if (includeOutputArtifacts) {
       // Terminated workflows have no waiting consumers, so drop the output

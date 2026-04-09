@@ -149,7 +149,11 @@ export { Scheduler, calculateBackoff, parseDuration } from './core/scheduler';
 
 // Constraint
 export { constraint } from './core/constraint';
-export type { ConstraintCheckState, ConstraintDefinition, ConstraintViolation } from './core/constraint';
+export type {
+  ConstraintCheckState,
+  ConstraintDefinition,
+  ConstraintViolation,
+} from './core/constraint';
 
 // Activity
 export { activity } from './core/activity';
@@ -246,7 +250,12 @@ export type {
 } from './server/authentication';
 
 // Testing
-export { withChaos } from './testing/chaos';
+export {
+  ChaosNonRetryableError,
+  ChaosTimeoutError,
+  ChaosTransientError,
+  withChaos,
+} from './testing/chaos';
 export type { ChaosScenario, FaultClass } from './testing/chaos';
 export { ActivityMockRegistry } from './testing/mocks';
 export type { MockCall, MockHandle, MockedActivity } from './testing/mocks';
