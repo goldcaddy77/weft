@@ -1350,6 +1350,36 @@ describe('createObservabilityInterceptors', () => {
           snapshot['weft.activity.attempts']!.value,
       ).toBe(1);
     });
+
+    it('counts timed-out workflows as DPMO defects', () => {
+      const metricsCollector = new MetricsCollector();
+      const eventTarget = new EventTarget();
+      const { workflow } = createObservabilityInterceptors({
+        metrics: metricsCollector,
+        eventTarget,
+      });
+
+      workflow.workflowStart!(
+        {
+          workflowId: 'wf-timeout-dpmo',
+          workflowType: 'TestWorkflow',
+          input: undefined,
+          headers: new Map<string, string>(),
+        },
+        () => {},
+      );
+
+      eventTarget.dispatchEvent(new WorkflowTimedOutEvent('wf-timeout-dpmo', 'execution', 5000));
+
+      const snapshot = metricsCollector.snapshot();
+      expect(
+        snapshot['weft.dpmo.operations']!.type === 'counter' &&
+          snapshot['weft.dpmo.operations']!.value,
+      ).toBe(1);
+      expect(
+        snapshot['weft.dpmo.defects']!.type === 'counter' && snapshot['weft.dpmo.defects']!.value,
+      ).toBe(1);
+    });
   });
 
   describe('without OTel API (default no-op)', () => {

@@ -755,6 +755,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       'error',
       `Workflow timed out (${event.timeoutType}) after ${event.elapsed}ms`,
     );
+    metrics.increment('weft.dpmo.defects');
   };
 
   if (eventTarget) {
