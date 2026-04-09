@@ -81,8 +81,9 @@ describe('withChaos', () => {
     await wrapped(undefined);
     const elapsed = Date.now() - start;
 
-    // delay fault should add at least some latency
-    expect(elapsed).toBeGreaterThanOrEqual(0);
+    // Delay fault must actually delay — DELAY_FAULT_MS in chaos.ts is 50ms.
+    // A trivially-true ≥0 assertion would not catch a broken delay implementation.
+    expect(elapsed).toBeGreaterThanOrEqual(50);
   });
 
   it('uses seed for deterministic behavior', async () => {
