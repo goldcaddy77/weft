@@ -31,11 +31,62 @@ import { validateAttributeType } from './search-attributes.ts';
 import { isAsyncGeneratorFunction, isGeneratorFunction } from './step-context.ts';
 import type {
   ActivityCallOptions,
+  ActivityContext,
+  ActivityDefinition,
   Duration,
   SearchAttributeSchema,
   SearchAttributeValue,
   WorkflowContext,
 } from './types.ts';
+
+// ---------------------------------------------------------------------------
+// Saga step — pairs an ActivityDefinition with its input for use in ctx.saga()
+// ---------------------------------------------------------------------------
+
+/**
+ * A single step in a saga: an activity definition and the input to pass to it.
+ *
+ * `TInput` and `TOutput` are inferred from the definition so that `compensate`
+ * receives correctly-typed arguments at the definition site. At the array
+ * boundary inside `ctx.saga`, types are erased to `unknown` — the
+ * implementation guarantees that the input passed to `execute` and `compensate`
+ * always matches what was supplied in the original step object.
+ */
+export interface SagaStep<TInput = unknown, TOutput = unknown> {
+  definition: ActivityDefinition<TInput, TOutput>;
+  input: TInput;
+}
+
+// ---------------------------------------------------------------------------
+// Erased saga step used as the saga() parameter element type.
+//
+// TypeScript's contravariance rules mean ActivityDefinition<string, string>
+// cannot be assigned to ActivityDefinition<unknown, unknown> (the execute
+// parameter type `string` is narrower than `unknown`). By using rest-args
+// (...args: unknown[]) for the execute and compensate signatures — the same
+// technique used by ctx.run() — we satisfy assignability for any concrete
+// ActivityFunction, regardless of its declared input type.
+//
+// The nested structure mirrors SagaStep so callers can pass
+// { definition: activityDefinition, input: value } objects directly.
+// ---------------------------------------------------------------------------
+
+// Method-syntax declarations use bivariant parameter checking under
+// strictFunctionTypes, which lets ActivityDefinition<string, string>.execute
+// (typed as a specific arrow function) be assigned to this interface.
+// This intentional use of bivariance is the correct TypeScript idiom for
+// "accept any callable with this shape" — the same approach used throughout
+// the standard library (e.g., Array.prototype.sort compareFn).
+interface ErasedActivityDefinition {
+  name: string;
+  execute(...args: unknown[]): unknown;
+  compensate?(...args: unknown[]): unknown;
+}
+
+interface ErasedSagaStep {
+  definition: ErasedActivityDefinition;
+  input: unknown;
+}
 
 // ---------------------------------------------------------------------------
 // Offload reference — returned by ctx.offload(), consumed by ctx.load()
@@ -833,6 +884,113 @@ export class Context implements WorkflowContext {
 
     this.#accumulatedResults.set(step, result);
     return result as Record<keyof T, unknown>;
+  }
+
+  /**
+   * Run a sequence of activities as a saga.
+   *
+   * Steps run in order. When a step fails, the compensators for every
+   * previously-completed step run in **reverse order** (last-completed first),
+   * each receiving the original input and the output produced by `execute`.
+   * The original error is re-thrown after compensation.
+   *
+   * The failing step's own compensator is **not** called — compensation is
+   * only for steps that fully completed before the failure.
+   *
+   * Compensators are dispatched as durable activity operations so they are
+   * checkpointed and survive engine restarts.
+   *
+   * @example
+   * ```ts
+   * const result = yield* ctx.saga([
+   *   { definition: charge, input: { customerId, amount } },
+   *   { definition: reserve, input: { itemId, quantity } },
+   *   { definition: ship,    input: { orderId } },
+   * ]);
+   * ```
+   */
+  *saga<TFinalOutput = unknown>(
+    steps: ErasedSagaStep[],
+  ): Generator<ContextOperationRequest, TFinalOutput, unknown> {
+    // Track completed steps so we can compensate in reverse on failure.
+    const completed: Array<{
+      definition: ErasedActivityDefinition;
+      input: unknown;
+      output: unknown;
+    }> = [];
+
+    let lastOutput: unknown;
+
+    for (const step of steps) {
+      const stepDefinition = step.definition;
+      try {
+        // Close step.input inside the wrapper so it is never passed as a
+        // positional argument to ctx.run(). If we passed it as a separate arg,
+        // the isActivityCallOptions heuristic could silently strip it when the
+        // input object happens to look like ActivityCallOptions (e.g.
+        // { queue: 'orders' }).  The wrapper accepts the ActivityContext the
+        // engine injects as its only positional arg (args=[], so the engine
+        // appends context at position 0) and forwards it to execute so that
+        // activities running inside a saga still receive cancellation signals
+        // and can send heartbeats.
+        const capturedInput = step.input;
+        // ctx.run() expects fn: (...args: unknown[]) => ... so the wrapper must
+        // accept a rest-args signature. The engine appends ActivityContext after
+        // operation.args (which is empty for a saga step), so injected[0] is the
+        // ActivityContext. Casting here is safe by construction — the engine only
+        // ever appends ActivityContext values.
+        const executeActivity = (...injected: unknown[]) =>
+          stepDefinition.execute(capturedInput, injected[0] as ActivityContext | undefined);
+
+        // Give the wrapper a stable name so ctx.run() derives a meaningful
+        // activityName (fn.name || 'anonymous'). Without this, every saga
+        // step appears as 'anonymous' in logs and interceptors.
+        Object.defineProperty(executeActivity, 'name', {
+          value: stepDefinition.name,
+          configurable: true,
+        });
+
+        const output = yield* this.run(executeActivity);
+        completed.push({ definition: stepDefinition, input: step.input, output });
+        lastOutput = output;
+      } catch (stepError) {
+        // Run compensators for all completed steps in reverse order.
+        // We don't let compensator failures mask the original error.
+        for (let index = completed.length - 1; index >= 0; index--) {
+          const completedStep = completed[index]!;
+          if (completedStep.definition.compensate !== undefined) {
+            const capturedInput = completedStep.input;
+            const capturedOutput = completedStep.output;
+            const capturedDefinition = completedStep.definition;
+
+            // Wrap the compensator in an async arrow function so ctx.run() can
+            // dispatch it as a durable activity. Calling compensate as a method
+            // call (obj.method()) preserves any `this` binding and avoids the
+            // unbound-method lint rule (which only flags method extractions to
+            // standalone variables).
+            const compensateActivity = async () =>
+              capturedDefinition.compensate?.(capturedInput, capturedOutput);
+
+            // Give the compensator a stable name for observability.
+            Object.defineProperty(compensateActivity, 'name', {
+              value: `compensate:${completedStep.definition.name}`,
+              configurable: true,
+            });
+
+            try {
+              yield* this.run(compensateActivity);
+            } catch {
+              // Compensator failures are intentionally swallowed so the
+              // original error propagates to the caller unchanged.
+            }
+          }
+        }
+
+        throw stepError;
+      }
+    }
+
+    return lastOutput as TFinalOutput;
   }
 
   *startChild<TResult = unknown>(
