@@ -2778,17 +2778,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         continue;
       }
 
-      // Both 'fail' and 'compensate' terminate the operation by throwing
-      // into the generator via #feedOperationResult. If a ctx.saga() is
-      // active in the workflow, it will catch the thrown error, run its
-      // registered compensators, and then re-throw — that is the effective
-      // difference between 'fail' and 'compensate' from the workflow author's
-      // perspective. At the engine level the dispatch is identical.
       // Stop at first actionable violation — remaining constraints are not evaluated.
       const violationError = new Error(
         `Constraint violated: ${definition.name} (scope: ${definition.scope})`,
       );
-      this.#feedOperationResult(workflowId, { status: 'failed', error: violationError.message }, violationError);
+
+      if (definition.onViolation === 'fail') {
+        // 'fail': bypass saga — directly mark the workflow failed without
+        // throwing into the generator. Any active ctx.saga() will NOT run
+        // its compensators. Use 'compensate' if you want compensation to run.
+        await this.#failWorkflow(workflowId, violationError);
+      } else {
+        // 'compensate': throw into the generator. If an active ctx.saga() is
+        // wrapping the current step it will catch the error, run its registered
+        // compensators in reverse, and then re-throw, completing the workflow failure.
+        this.#feedOperationResult(workflowId, { status: 'failed', error: violationError.message }, violationError);
+      }
       return true;
     }
 

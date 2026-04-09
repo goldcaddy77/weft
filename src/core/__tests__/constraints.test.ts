@@ -169,11 +169,73 @@ describe('constraint primitive', () => {
     expect(violationEvents).toHaveLength(1);
     expect(violationEvents[0]!.onViolation).toBe('fail');
 
-    // With 'fail', the error propagates through saga — saga will compensate
-    // the completed step before re-throwing.
-    expect(compensatorCalled).toBe(true);
+    // With 'fail', the workflow fails directly — saga compensators do NOT run.
+    // This is the key behavioral difference from 'compensate'.
+    expect(compensatorCalled).toBe(false);
 
     engine[Symbol.dispose]();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 2b. Regression: 'fail' and 'compensate' MUST have different behavior.
+  //     'fail' bypasses saga; 'compensate' throws into the generator.
+  // ---------------------------------------------------------------------------
+
+  it("'compensate' runs saga compensators but 'fail' does not — behaviors are distinct", async () => {
+    async function runWithViolation(onViolation: 'fail' | 'compensate'): Promise<boolean> {
+      const engine = new Engine();
+      let compensatorRan = false;
+
+      let stepDone = false;
+      let allowedOnce = true;
+
+      const c = constraint('test', {
+        scope: 'test',
+        check: () => {
+          if (stepDone && allowedOnce) {
+            allowedOnce = false;
+            return false;
+          }
+          return true;
+        },
+        onViolation,
+      });
+
+      const step = makeActivity({
+        name: 'step',
+        execute: (_input: string) => {
+          stepDone = true;
+          return 'ok';
+        },
+        compensate: () => {
+          compensatorRan = true;
+        },
+      });
+
+      engine.register('wf', {
+        handler: async function* (ctx: WorkflowContext) {
+          const cx = ctx as Context;
+          yield* cx.saga([
+            { definition: step, input: 'x' },
+            { definition: step, input: 'y' },
+          ]);
+        },
+        constraints: [c],
+      });
+
+      const handle = await engine.start('wf', null);
+      await handle.result().catch(() => {});
+      engine[Symbol.dispose]();
+      return compensatorRan;
+    }
+
+    // 'compensate' throws into generator — active saga catches it and runs compensators
+    const compensateRanCompensators = await runWithViolation('compensate');
+    expect(compensateRanCompensators).toBe(true);
+
+    // 'fail' bypasses generator — saga never sees the error, no compensators run
+    const failRanCompensators = await runWithViolation('fail');
+    expect(failRanCompensators).toBe(false);
   });
 
   // ---------------------------------------------------------------------------

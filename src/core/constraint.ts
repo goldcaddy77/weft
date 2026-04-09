@@ -6,7 +6,7 @@
  * `check` function returns `false`, the engine dispatches a
  * {@link ConstraintViolatedEvent} and reacts according to `onViolation`:
  *
- * - `'fail'`       — throws immediately, failing the workflow.
+ * - `'fail'`       — immediately fails the workflow; saga compensators do NOT run.
  * - `'compensate'` — throws into the generator so an active `ctx.saga()`
  *                    can run its compensators before the error propagates.
  * - `'warn'`       — logs a warning and continues execution.
@@ -65,12 +65,13 @@ export interface ConstraintDefinition {
   /**
    * Reaction when the constraint is violated.
    *
-   * - `'fail'`       — throws into the workflow generator, failing it immediately.
-   * - `'compensate'` — throws into the workflow generator; if a `ctx.saga()` is
-   *                    active it will catch the error, run its compensators, then
-   *                    re-throw. Both `'fail'` and `'compensate'` use the same
-   *                    engine dispatch path — the difference is visible only to
-   *                    the workflow generator (via an active saga handler).
+   * - `'fail'`       — immediately fails the workflow without running any
+   *                    `ctx.saga()` compensators. Use this for hard invariants
+   *                    where partial rollback would be unsafe or meaningless.
+   * - `'compensate'` — throws into the workflow generator so an active
+   *                    `ctx.saga()` can catch the error, run its compensators
+   *                    in reverse, and then re-throw. Use this when you have
+   *                    compensating actions registered that need to execute.
    * - `'warn'`       — logs a warning and continues execution.
    */
   onViolation: ConstraintViolation;
