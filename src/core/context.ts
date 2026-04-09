@@ -31,11 +31,44 @@ import { validateAttributeType } from './search-attributes.ts';
 import { isAsyncGeneratorFunction, isGeneratorFunction } from './step-context.ts';
 import type {
   ActivityCallOptions,
+  ActivityDefinition,
   Duration,
   SearchAttributeSchema,
   SearchAttributeValue,
   WorkflowContext,
 } from './types.ts';
+
+// ---------------------------------------------------------------------------
+// Saga step — an activity definition paired with its invocation input
+// ---------------------------------------------------------------------------
+
+/**
+ * The minimal shape the saga implementation requires from an activity.
+ * Typed as a structural intersection so that any `ActivityDefinition<TInput, TOutput>`
+ * is assignable regardless of its concrete type parameters.
+ */
+export interface SagaActivityShape {
+  name: string;
+  // Method syntax makes TypeScript treat this as bivariant (checked less
+  // strictly than a property-function signature), which allows concrete
+  // ActivityDefinition<TInput, TOutput> instances to be passed wherever a
+  // SagaActivityShape is expected — the saga itself passes `step.input`
+  // (typed as unknown) and handles the runtime contract.
+  execute(input: unknown): Promise<unknown>;
+  compensate?(input: unknown, output: unknown): Promise<void> | void;
+}
+
+/**
+ * A single step in a `ctx.saga()` sequence.
+ *
+ * Pairs an activity — which may carry an optional `compensate` handler —
+ * with the concrete input for this invocation. Any {@link ActivityDefinition}
+ * is assignable here regardless of its type parameters.
+ */
+export interface SagaStep {
+  activity: SagaActivityShape;
+  input: unknown;
+}
 
 // ---------------------------------------------------------------------------
 // Offload reference — returned by ctx.offload(), consumed by ctx.load()
@@ -1083,5 +1116,95 @@ export class Context implements WorkflowContext {
 
   streamUrl(reference: StreamReference): string {
     return `/v1/workflows/${encodeURIComponent(reference.workflowId)}/streams/${encodeURIComponent(reference.key)}`;
+  }
+
+  // -------------------------------------------------------------------------
+  // Saga primitive
+  // -------------------------------------------------------------------------
+
+  /**
+   * Run a sequence of compensatable steps as a saga.
+   *
+   * Each step is an object pairing an {@link ActivityDefinition} (which may
+   * carry an optional `compensate` handler) with the input to pass on this
+   * invocation. Steps execute sequentially in order. If any step throws, the
+   * compensators for all previously-completed steps run in **reverse** order
+   * (last-completed first), each receiving the original input and the recorded
+   * output for that step. The original error is re-thrown after all
+   * compensators have run.
+   *
+   * Compensators themselves are run as durable activities via `ctx.run()` so
+   * that a crash mid-compensation can be recovered without double-executing
+   * compensators that already completed.
+   *
+   * @example
+   * ```ts
+   * engine.register('order', async function* (ctx, input) {
+   *   yield* (ctx as Context).saga([
+   *     { activity: reserveInventory, input: { sku: input.sku, qty: 1 } },
+   *     { activity: chargeCard,       input: { card: input.card, amount: 99 } },
+   *     { activity: scheduleShipment, input: { orderId: input.id } },
+   *   ]);
+   * });
+   * ```
+   */
+  *saga(steps: SagaStep[]): Generator<ContextOperationRequest, void, unknown> {
+    interface CompletedEntry {
+      activity: SagaStep['activity'];
+      input: unknown;
+      output: unknown;
+    }
+
+    const completed: CompletedEntry[] = [];
+    let failureError: unknown;
+    let failed = false;
+
+    for (const step of steps) {
+      try {
+        const executeFn = step.activity.execute.bind(step.activity);
+        const output = yield* this.run(executeFn, step.input);
+        completed.push({ activity: step.activity, input: step.input, output });
+      } catch (error) {
+        failureError = error;
+        failed = true;
+        break;
+      }
+    }
+
+    if (failed) {
+      // Run compensators in reverse order for all completed steps.
+      for (let index = completed.length - 1; index >= 0; index--) {
+        const entry = completed[index]!;
+        const activityName = entry.activity.name;
+        const boundCompensate = entry.activity.compensate?.bind(entry.activity);
+        if (boundCompensate) {
+          // Wrap the compensator as an anonymous named function so ctx.run can
+          // dispatch it as a durable activity. The closure captures the frozen
+          // input/output values so no live references escape the checkpoint.
+          const boundInput = entry.input;
+          const boundOutput = entry.output;
+          const compensationFn = async function () {
+            await boundCompensate(boundInput, boundOutput);
+          };
+          Object.defineProperty(compensationFn, 'name', {
+            value: `compensate:${activityName}`,
+            configurable: true,
+          });
+          try {
+            yield* this.run(compensationFn);
+          } catch (compensatorError) {
+            // Swallow compensator failures and log — the original error is the
+            // one that matters and must propagate. Compensators should be
+            // idempotent and written not to fail.
+            console.error(
+              `[weft] saga compensator for "${activityName}" failed:`,
+              compensatorError,
+            );
+          }
+        }
+      }
+
+      throw failureError;
+    }
   }
 }

@@ -250,6 +250,25 @@ export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
   idempotent?: boolean;
   /** Visibility timeout for this activity. Defaults to 30 seconds. */
   visibilityTimeout?: Duration;
+  /**
+   * Optional compensation handler. When provided it is registered alongside
+   * the activity. If `ctx.saga()` detects a failure after this activity has
+   * already completed successfully, the compensator is invoked with the
+   * original input AND the recorded output so it can reverse the exact effect.
+   */
+  compensate?: (input: TInput, output: TOutput) => Promise<void> | void;
+  /**
+   * Optional scope key used for resource-level locking or deduplication.
+   * Returns a string that identifies the resource this activity operates on
+   * (e.g. `payment:${customerId}`).
+   */
+  resourceScope?: (input: TInput) => string;
+  /**
+   * Optional idempotency key factory. Distinct from the per-call
+   * `ActivityCallOptions.idempotencyKey` — this one is derived from the
+   * activity definition and applied automatically for every invocation.
+   */
+  idempotencyKey?: (input: TInput) => string;
 }
 
 // ---------------------------------------------------------------------------
