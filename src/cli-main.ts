@@ -4,9 +4,11 @@ import {
   createStorage,
   DOCTOR_HELP_TEXT,
   executeDoctor,
+  executeValidate,
   executeVersionCheck,
   HELP_TEXT,
   parseCliArguments,
+  VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
 } from './cli.ts';
 import { Engine } from './core/engine.ts';
@@ -96,6 +98,16 @@ if (parsedArguments.command === 'serve') {
   }
 
   const result = await executeVersionCheck(parsedArguments);
+  if (result.stderr) console.error(result.stderr);
+  if (result.stdout) console.log(result.stdout);
+  process.exit(result.exitCode);
+} else if (parsedArguments.command === 'validate') {
+  if (parsedArguments.help) {
+    console.log(VALIDATE_HELP_TEXT);
+    process.exit(0);
+  }
+
+  const result = await executeValidate(parsedArguments);
   if (result.stderr) console.error(result.stderr);
   if (result.stdout) console.log(result.stdout);
   process.exit(result.exitCode);
