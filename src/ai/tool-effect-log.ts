@@ -92,10 +92,32 @@ export function computeSemanticHash(input: unknown): string {
   return raw.toString(16).padStart(16, '0');
 }
 
-/** Recursively sort object keys to produce a canonical JSON representation. */
+/**
+ * Sentinel for `undefined` in the canonical form.
+ *
+ * Starts with a NUL byte so it cannot collide with any output of
+ * `JSON.stringify` — JSON strings are always quoted, and no other
+ * canonicalize branch emits a NUL-prefixed token. In particular, this
+ * distinguishes `undefined` from the literal string `"undefined"`.
+ */
+const UNDEFINED_SENTINEL = '\u0000undefined';
+
+/**
+ * Recursively sort object keys to produce a canonical string representation.
+ *
+ * Object keys whose values are `undefined` are omitted entirely, matching
+ * `JSON.stringify` semantics. This keeps `{ a: undefined }` distinct from
+ * `{ a: 'undefined' }` and from `{}` (the latter two differ because the
+ * literal string serializes as `{"a":"undefined"}`).
+ *
+ * Top-level and array-element `undefined` values cannot be omitted without
+ * losing positional/identity information, so they serialize to
+ * {@link UNDEFINED_SENTINEL} — a NUL-prefixed token that no other branch
+ * can produce.
+ */
 function canonicalize(value: unknown): string {
   if (value === null) return 'null';
-  if (value === undefined) return '"undefined"';
+  if (value === undefined) return UNDEFINED_SENTINEL;
   if (typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) {
     return '[' + value.map(canonicalize).join(',') + ']';
@@ -103,6 +125,7 @@ function canonicalize(value: unknown): string {
   const record = value as Record<string, unknown>;
   const sorted = Object.keys(record)
     .toSorted()
+    .filter((key) => record[key] !== undefined)
     .map((key) => `${JSON.stringify(key)}:${canonicalize(record[key])}`);
   return '{' + sorted.join(',') + '}';
 }

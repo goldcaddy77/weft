@@ -8,7 +8,12 @@ import { describe, expect, it } from 'bun:test';
 
 import type { WorkflowContext } from '../../core/types.ts';
 import type { ChaosScenario, FailureCategory } from '../chaos.ts';
-import { withChaos } from '../chaos.ts';
+import {
+  ChaosNonRetryableError,
+  ChaosTimeoutError,
+  ChaosTransientError,
+  withChaos,
+} from '../chaos.ts';
 import type { RunNResult } from '../test-engine.ts';
 import { TestEngine } from '../test-engine.ts';
 
@@ -84,6 +89,101 @@ describe('withChaos', () => {
     // Delay fault must actually delay — DELAY_FAULT_MS in chaos.ts is 50ms.
     // A trivially-true ≥0 assertion would not catch a broken delay implementation.
     expect(elapsed).toBeGreaterThanOrEqual(50);
+  });
+
+  // -------------------------------------------------------------------------
+  // Distinct fault class behaviors
+  // -------------------------------------------------------------------------
+
+  it("fault class 'transient' throws a retryable ChaosTransientError", async () => {
+    const base = async (_input: undefined) => 'ok';
+    const wrapped = withChaos(base, { faultRate: 1, faults: ['transient'] });
+
+    let caught: unknown;
+    try {
+      await wrapped(undefined);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ChaosTransientError);
+    expect(caught).toBeInstanceOf(Error);
+    // Discriminates from ChaosNonRetryableError and ChaosTimeoutError
+    expect(caught).not.toBeInstanceOf(ChaosNonRetryableError);
+    expect(caught).not.toBeInstanceOf(ChaosTimeoutError);
+    expect((caught as ChaosTransientError).name).toBe('ChaosTransientError');
+    expect((caught as ChaosTransientError).retryable).toBe(true);
+  });
+
+  it("fault class 'error' throws a non-retryable ChaosNonRetryableError", async () => {
+    const base = async (_input: undefined) => 'ok';
+    const wrapped = withChaos(base, { faultRate: 1, faults: ['error'] });
+
+    let caught: unknown;
+    try {
+      await wrapped(undefined);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ChaosNonRetryableError);
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(ChaosTransientError);
+    expect(caught).not.toBeInstanceOf(ChaosTimeoutError);
+    expect((caught as ChaosNonRetryableError).name).toBe('ChaosNonRetryableError');
+    expect((caught as ChaosNonRetryableError).retryable).toBe(false);
+  });
+
+  it("fault class 'timeout' waits for AbortSignal.timeout() then throws ChaosTimeoutError", async () => {
+    const base = async (_input: undefined) => 'ok';
+    const wrapped = withChaos(base, { faultRate: 1, faults: ['timeout'] });
+
+    const start = Date.now();
+    let caught: unknown;
+    try {
+      await wrapped(undefined);
+    } catch (error) {
+      caught = error;
+    }
+    const elapsed = Date.now() - start;
+
+    expect(caught).toBeInstanceOf(ChaosTimeoutError);
+    expect(caught).not.toBeInstanceOf(ChaosTransientError);
+    expect(caught).not.toBeInstanceOf(ChaosNonRetryableError);
+    expect((caught as ChaosTimeoutError).name).toBe('ChaosTimeoutError');
+    // The timeout fault must actually wait for the abort signal to fire —
+    // a synchronous throw would return in ~0ms. TIMEOUT_FAULT_MS is 25ms,
+    // allow a small timer-resolution margin.
+    expect(elapsed).toBeGreaterThanOrEqual(20);
+    expect((caught as ChaosTimeoutError).timeoutMilliseconds).toBeGreaterThan(0);
+  });
+
+  it('three fault classes are observably distinct — each produces its own error subclass', async () => {
+    const base = async (_input: undefined) => 'ok';
+
+    const transientWrapped = withChaos(base, { faultRate: 1, faults: ['transient'] });
+    const errorWrapped = withChaos(base, { faultRate: 1, faults: ['error'] });
+    const timeoutWrapped = withChaos(base, { faultRate: 1, faults: ['timeout'] });
+
+    const errors: unknown[] = [];
+    for (const fn of [transientWrapped, errorWrapped, timeoutWrapped]) {
+      try {
+        await fn(undefined);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+
+    expect(errors).toHaveLength(3);
+    const [transientErr, nonRetryableErr, timeoutErr] = errors;
+    expect(transientErr).toBeInstanceOf(ChaosTransientError);
+    expect(nonRetryableErr).toBeInstanceOf(ChaosNonRetryableError);
+    expect(timeoutErr).toBeInstanceOf(ChaosTimeoutError);
+
+    // All three names are distinct — confirms the bug fix where they
+    // previously all threw plain `Error` and were indistinguishable.
+    const names = new Set(errors.map((error) => (error as Error).name));
+    expect(names.size).toBe(3);
   });
 
   it('uses seed for deterministic behavior', async () => {

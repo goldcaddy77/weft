@@ -62,18 +62,105 @@ function makePrng(seed: number): () => number {
 }
 
 // ---------------------------------------------------------------------------
+// Fault error classes
+// ---------------------------------------------------------------------------
+
+/**
+ * Transient chaos fault. Represents a retryable failure — the kind of error an
+ * engine retry policy should re-attempt. Carries `retryable = true` so consumers
+ * inspecting the error can make an informed retry decision without parsing
+ * error messages.
+ */
+export class ChaosTransientError extends Error {
+  /** Discriminator for retry-policy consumers. Always `true` for this class. */
+  readonly retryable = true as const;
+
+  constructor(message = '[chaos] transient fault injected') {
+    super(message);
+    this.name = 'ChaosTransientError';
+  }
+}
+
+/**
+ * Non-retryable chaos fault. Represents a permanent failure — the kind of
+ * error a retry policy should surface immediately without further attempts.
+ * Carries `retryable = false` and a `.name` suitable for inclusion in a
+ * {@link RetryPolicy.nonRetryableErrors} list.
+ */
+export class ChaosNonRetryableError extends Error {
+  /** Discriminator for retry-policy consumers. Always `false` for this class. */
+  readonly retryable = false as const;
+
+  constructor(message = '[chaos] non-retryable fault injected') {
+    super(message);
+    this.name = 'ChaosNonRetryableError';
+  }
+}
+
+/**
+ * Timeout chaos fault. Thrown when the simulated activity runs long enough for
+ * an `AbortSignal.timeout()` to fire. Unlike the other fault classes this is
+ * emitted after the injected timeout actually elapses, so calling code
+ * exercises the same async/abort shape it would see from a real slow dependency.
+ */
+export class ChaosTimeoutError extends Error {
+  /** Milliseconds the chaos wrapper waited before raising the timeout. */
+  readonly timeoutMilliseconds: number;
+
+  constructor(timeoutMilliseconds: number) {
+    super(`[chaos] timeout fault fired after ${timeoutMilliseconds}ms`);
+    this.name = 'ChaosTimeoutError';
+    this.timeoutMilliseconds = timeoutMilliseconds;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // withChaos combinator
 // ---------------------------------------------------------------------------
 
 /** Delay added when a 'delay' fault fires (milliseconds). */
 const DELAY_FAULT_MS = 50;
 
+/** Duration an injected 'timeout' fault waits before the AbortSignal fires. */
+const TIMEOUT_FAULT_MS = 25;
+
+/**
+ * Wait for an `AbortSignal.timeout()` to fire, then throw a
+ * {@link ChaosTimeoutError}. Modeled as a promise that never resolves on its
+ * own — the abort is the only exit path — so callers with their own abort
+ * signals still experience a genuine "hung then aborted" shape.
+ */
+async function raiseTimeoutFault(timeoutMilliseconds: number): Promise<never> {
+  const signal = AbortSignal.timeout(timeoutMilliseconds);
+  await new Promise<void>((_resolve, reject) => {
+    if (signal.aborted) {
+      reject(new ChaosTimeoutError(timeoutMilliseconds));
+      return;
+    }
+    signal.addEventListener('abort', () => reject(new ChaosTimeoutError(timeoutMilliseconds)), {
+      once: true,
+    });
+  });
+  // `await` above either rejects or hangs forever — this line is unreachable,
+  // but satisfies TypeScript's `Promise<never>` return contract.
+  /* c8 ignore next */
+  throw new ChaosTimeoutError(timeoutMilliseconds);
+}
+
 /**
  * Wraps an activity mock function with fault injection driven by `scenario`.
  *
  * On each call the combinator consults the PRNG (seeded or `Math.random`) to
- * decide whether to inject a fault. If yes, it picks a fault class and either
- * throws an error, introduces a short delay, or both, depending on the class.
+ * decide whether to inject a fault. If yes, it picks a fault class and produces
+ * a behavior that is observably distinct from every other class:
+ *
+ * - `'transient'` throws {@link ChaosTransientError} (retryable).
+ * - `'error'` throws {@link ChaosNonRetryableError} (non-retryable).
+ * - `'timeout'` waits for an `AbortSignal.timeout()` to fire, then throws
+ *   {@link ChaosTimeoutError}. This actually occupies the async timeline so
+ *   that engine timeout-handling paths can run.
+ * - `'delay'` calls the underlying mock after a short sleep.
+ *
  * If no fault fires the underlying `mock` is called normally.
  *
  * @param mock     The activity mock implementation to wrap.
@@ -99,13 +186,13 @@ export function withChaos<TInput, TOutput>(
 
       switch (faultClass) {
         case 'transient':
-          throw new Error('[chaos] transient fault injected');
+          throw new ChaosTransientError();
 
         case 'timeout':
-          throw new Error('[chaos] timeout fault injected');
+          return raiseTimeoutFault(TIMEOUT_FAULT_MS);
 
         case 'error':
-          throw new Error('[chaos] error fault injected');
+          throw new ChaosNonRetryableError();
 
         case 'delay':
           await Bun.sleep(DELAY_FAULT_MS);
