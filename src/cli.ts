@@ -36,13 +36,14 @@ export type CliCommand =
       workflows: string;
       help: boolean;
       json: boolean;
-    };
+    }
+  | { command: 'validate'; entryPath: string; help: boolean; json: boolean };
 
 // ---------------------------------------------------------------------------
 // Known subcommands
 // ---------------------------------------------------------------------------
 
-const KNOWN_SUBCOMMANDS = new Set(['doctor', 'version:check']);
+const KNOWN_SUBCOMMANDS = new Set(['doctor', 'version:check', 'validate']);
 
 const VALID_STORAGE_BACKENDS = new Set<string>(['sqlite', 'lmdb', 'memory']);
 
@@ -93,6 +94,10 @@ export function parseCliArguments(args: string[]): CliCommand {
 
   if (subcommand === 'version:check') {
     return parseVersionCheckArguments(remainingArgs);
+  }
+
+  if (subcommand === 'validate') {
+    return parseValidateArguments(remainingArgs);
   }
 
   return parseServeArguments(remainingArgs);
@@ -178,6 +183,25 @@ function parseVersionCheckArguments(args: string[]): CliCommand {
   };
 }
 
+function parseValidateArguments(args: string[]): CliCommand {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      help: { type: 'boolean', short: 'h', default: false },
+      json: { type: 'boolean', short: 'j', default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+
+  return {
+    command: 'validate',
+    entryPath: positionals[0] ?? '',
+    help: values.help ?? false,
+    json: values.json ?? false,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Help text
 // ---------------------------------------------------------------------------
@@ -191,6 +215,7 @@ Commands:
   serve           Start the Weft server (default)
   doctor          Run diagnostics on the Weft database
   version:check   Check workflow version compatibility
+  validate        Lint workflow registrations for design-time anti-patterns
 
 Serve Options:
   -p, --port <port>           Server port (default: 7233)
@@ -221,6 +246,29 @@ Options:
   -w, --workflows <path>    Path to workflows module
   -j, --json                Output results as JSON
   -h, --help                Show this help message
+`;
+
+export const VALIDATE_HELP_TEXT = `
+weft validate - Lint workflow registrations for design-time anti-patterns
+
+Usage: weft validate <entry.ts> [options]
+
+Arguments:
+  <entry.ts>              Path to a TypeScript module that exports workflow
+                          registrations and/or activity definitions.
+
+Options:
+  -j, --json              Output results as JSON
+  -h, --help              Show this help message
+
+Exit codes:
+  0   No errors (warnings may be present)
+  1   One or more errors detected
+  2   Entry file could not be loaded
+
+Checks performed:
+  unbounded-retry               Activity retry.maxAttempts is Infinity
+  stateful-without-compensator  Non-idempotent activity has no compensate fn
 `;
 
 // ---------------------------------------------------------------------------
@@ -281,6 +329,46 @@ export async function executeVersionCheck(options: {
   } finally {
     storage[Symbol.dispose]();
   }
+}
+
+export async function executeValidate(options: {
+  entryPath: string;
+  json: boolean;
+}): Promise<CommandOutput> {
+  if (!options.entryPath) {
+    return {
+      stdout: '',
+      stderr: 'Error: entry file path is required for validate',
+      exitCode: 1,
+    };
+  }
+
+  const { loadRegistrationsFromModule, validateRegistrations, formatValidationReport } =
+    await import('./diagnostics/validate.ts');
+
+  let registrations: Record<string, import('./core/types.ts').WorkflowRegistration>;
+  let activities: import('./core/types.ts').ActivityDefinition[];
+
+  try {
+    const loaded = await loadRegistrationsFromModule(options.entryPath);
+    registrations = loaded.registrations;
+    activities = loaded.activities;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      stdout: '',
+      stderr: `Error: could not load entry file '${options.entryPath}': ${message}`,
+      exitCode: 2,
+    };
+  }
+
+  const report = validateRegistrations(registrations, activities);
+
+  const stdout = options.json
+    ? JSON.stringify(report, null, 2)
+    : formatValidationReport(report, options.entryPath);
+
+  return { stdout, exitCode: report.valid ? 0 : 1 };
 }
 
 // ---------------------------------------------------------------------------

@@ -8,11 +8,11 @@
 
 import { describe, expect, it } from 'bun:test';
 
-import type { Context } from '../context.ts';
 import type { ConstraintCheckState } from '../constraint.ts';
 import { constraint } from '../constraint.ts';
-import { ConstraintViolatedEvent } from '../events.ts';
+import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
+import { ConstraintViolatedEvent } from '../events.ts';
 import type { ActivityDefinition, WorkflowContext } from '../types.ts';
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ describe('constraint primitive', () => {
 
     // Track violation events.
     engine.addEventListener('constraint:violated', (event) => {
-      violationEvents.push(event);
+      violationEvents.push(event as ConstraintViolatedEvent);
     });
 
     // A flag flipped by step-one's execute. The constraint fails exactly once,
@@ -121,7 +121,7 @@ describe('constraint primitive', () => {
     let compensatorCalled = false;
 
     engine.addEventListener('constraint:violated', (event) => {
-      violationEvents.push(event);
+      violationEvents.push(event as ConstraintViolatedEvent);
     });
 
     let firstStepComplete = false;
@@ -247,7 +247,7 @@ describe('constraint primitive', () => {
     const violationEvents: ConstraintViolatedEvent[] = [];
 
     engine.addEventListener('constraint:violated', (event) => {
-      violationEvents.push(event);
+      violationEvents.push(event as ConstraintViolatedEvent);
     });
 
     let checkpointCount = 0;
