@@ -5782,9 +5782,9 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 
 ### Track 2 — Testing and diagnosis
 
-- [ ] `src/testing/chaos.ts` exists with `ChaosScenario` type and `withChaos(mock, scenario)` combinator.
-- [ ] `TestEngine.runN(workflow, input, { runs: N, chaos })` returns `{ passRate: number; consistency: number; categories: Record<FailureCategory, number> }`.
-- [ ] `bun test src/testing/__tests__/chaos.test.ts` passes a suite asserting `passRate < 1.0` on a known-flaky workflow under a documented scenario.
+- [x] `src/testing/chaos.ts` exists with `ChaosScenario` type and `withChaos(mock, scenario)` combinator.
+- [x] `TestEngine.runN(workflow, input, { runs: N, chaos })` returns `{ passRate: number; consistency: number; categories: Record<FailureCategory, number> }`.
+- [x] `bun test src/testing/__tests__/chaos.test.ts` passes a suite asserting `passRate < 1.0` on a known-flaky workflow under a documented scenario.
 - [x] `WorkflowState.failureCategory: 'memory' | 'reflection' | 'planning' | 'action' | 'system' | null` is populated on all failed workflows.
 - [x] Search attributes include `failureCategory` so `engine.list({ attributes: { failureCategory: { equals: 'planning' }}})` works.
 - [ ] `weft validate <entry.ts>` CLI command exists; exits 0 on a clean workflow registration and non-zero when it detects any of: non-serializable closure in a workflow, stateful activity without a compensator, unbounded retry policy.

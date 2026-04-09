@@ -23,6 +23,8 @@ export interface MockHandle<TArgs extends unknown[], TResult> {
   readonly calls: ReadonlyArray<MockCall<TArgs, TResult>>;
   readonly callCount: number;
   readonly lastCall: MockCall<TArgs, TResult> | undefined;
+  /** The current base implementation (excludes one-time overrides). */
+  readonly currentImplementation: (...args: TArgs) => TResult | Promise<TResult>;
   mockImplementation(implementation: (...args: TArgs) => TResult | Promise<TResult>): void;
   mockReturnValueOnce(value: TResult): MockHandle<TArgs, TResult>;
   mockRejectionOnce(error: Error): MockHandle<TArgs, TResult>;
@@ -34,7 +36,7 @@ export interface MockHandle<TArgs extends unknown[], TResult> {
 // Internal types
 // ---------------------------------------------------------------------------
 
-interface MockedActivity {
+export interface MockedActivity {
   implementation: (...args: unknown[]) => unknown;
   handle: MockHandle<unknown[], unknown>;
 }
@@ -74,6 +76,10 @@ class MockHandleImplementation<TArgs extends unknown[], TResult> implements Mock
 
   get lastCall(): MockCall<TArgs, TResult> | undefined {
     return this.#calls[this.#calls.length - 1];
+  }
+
+  get currentImplementation(): (...args: TArgs) => TResult | Promise<TResult> {
+    return this.#baseImplementation;
   }
 
   mockImplementation(implementation: (...args: TArgs) => TResult | Promise<TResult>): void {
@@ -191,5 +197,13 @@ export class ActivityMockRegistry {
 
   restoreAll(): void {
     this.#mocks.clear();
+  }
+
+  /**
+   * Iterate all registered mock entries as `[activityFn, MockedActivity]` pairs.
+   * Used internally by `TestEngine.runN` to propagate mocks to per-run engines.
+   */
+  entries(): IterableIterator<[Function, MockedActivity]> {
+    return this.#mocks.entries();
   }
 }
