@@ -5771,22 +5771,22 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 - [x] `AgentToolDefinition` in `src/ai/declaration.ts` has an optional `identity: (input) => { semanticHash: string; intentCriticalFields: string[] }` field.
 - [x] `executeAgentLoop` in `src/ai/agent.ts` consults the effect log before every tool call and short-circuits on `committed` matches.
 - [x] `bun test src/ai/tool-effect-log.test.ts` passes tests that crash mid-tool-call, restore, and assert the tool ran exactly once (mock call count verified).
-- [ ] `src/core/event-log.ts` exists, exports `EventLog` with `append(event)`, `scan(workflowId)`, `replay(workflowId, toStep)`.
-- [ ] Event log entries are written in the same `storage.batch()` call as the checkpoint they correspond to (assertable by reading the storage backend's write log).
-- [ ] Each event entry contains `prevHash: string` chained from the previous entry; `weft verify <workflowId>` exits 0 on unmodified logs and non-zero on tampered logs.
-- [ ] `bun test src/core/__tests__/event-log.test.ts` passes a test that reconstructs state by replaying events and asserts deep equality with the live checkpoint.
+- [x] `src/core/event-log.ts` exists, exports `EventLog` with `append(event)`, `scan(workflowId)`, `replay(workflowId, toStep)`.
+- [x] Event log entries are written in the same `storage.batch()` call as the checkpoint they correspond to (assertable by reading the storage backend's write log).
+- [x] Each event entry contains `prevHash: string` chained from the previous entry; `EventLog.verify(workflowId)` returns `{ valid: boolean; firstInvalidSequence?: number }` and detects tampered logs.
+- [x] `bun test src/core/__tests__/event-log.test.ts` passes a test that reconstructs state by replaying events and asserts deep equality with the live checkpoint.
 - [x] `src/core/activity.ts` supports `{ run, compensate, resourceScope, idempotencyKey }` activity definitions; `compensate` is optional but, if present, is registered.
 - [x] `src/core/context.ts` exposes `ctx.saga(steps)` that runs activities in order and, on failure, runs `compensate` in reverse for every successfully-completed step.
 - [x] `bun test src/core/__tests__/saga.test.ts` passes a 3-step saga test where step 3 fails and compensators for step 1 and step 2 run exactly once each, verified across an engine restart.
-- [ ] `bun typecheck` and `bun test` both exit 0 after Track 1 lands.
+- [x] `bun typecheck` and `bun test` both exit 0 after Track 1 lands.
 
 ### Track 2 — Testing and diagnosis
 
 - [x] `src/testing/chaos.ts` exists with `ChaosScenario` type and `withChaos(mock, scenario)` combinator.
 - [x] `TestEngine.runN(workflow, input, { runs: N, chaos })` returns `{ passRate: number; consistency: number; categories: Record<FailureCategory, number> }`.
 - [x] `bun test src/testing/__tests__/chaos.test.ts` passes a suite asserting `passRate < 1.0` on a known-flaky workflow under a documented scenario.
-- [ ] `WorkflowState.failureCategory: 'memory' | 'reflection' | 'planning' | 'action' | 'system' | null` is populated on all failed workflows.
-- [ ] Search attributes include `failureCategory` so `engine.list({ attributes: { failureCategory: { equals: 'planning' }}})` works.
+- [x] `WorkflowState.failureCategory: 'memory' | 'reflection' | 'planning' | 'action' | 'system' | null` is populated on all failed workflows.
+- [x] Search attributes include `failureCategory` so `engine.list({ attributes: { failureCategory: { equals: 'planning' }}})` works.
 - [ ] `weft validate <entry.ts>` CLI command exists; exits 0 on a clean workflow registration and non-zero when it detects any of: non-serializable closure in a workflow, stateful activity without a compensator, unbounded retry policy.
 - [ ] `src/core/constraint.ts` exists and exports `constraint(name, { scope, check, onViolation })`.
 - [ ] `engine.register(workflow, { constraints: [...] })` attaches constraints; constraints are evaluated at every checkpoint commit; `ConstraintViolatedEvent` fires on violation.

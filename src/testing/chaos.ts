@@ -12,8 +12,9 @@
 // Types
 // ---------------------------------------------------------------------------
 
-/** The five agent-debug failure categories used for run bucketing. */
-export type FailureCategory = 'memory' | 'reflection' | 'planning' | 'action' | 'system';
+// FailureCategory is the canonical export from core/types — re-exported here
+// for backwards-compatible imports from testing/chaos.
+export type { FailureCategory } from '../core/types.ts';
 
 /** Fault classes that chaos injection can produce. */
 export type FaultClass = 'transient' | 'timeout' | 'error' | 'delay';
