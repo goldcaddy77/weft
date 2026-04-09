@@ -1337,11 +1337,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#checkpoints.set(workflowId, checkpoint);
 
       // Cache TEA version tuple for forwarding to event-log entries.
-      this.#teaVersionTuples.set(workflowId, {
-        workflowVersion: registration.version,
-        ...(registration.agentVersion !== undefined && { agentVersion: registration.agentVersion }),
-        ...(registration.toolVersions !== undefined && { toolVersions: registration.toolVersions }),
-      });
+      this.#teaVersionTuples.set(workflowId, this.#createTeaVersionTuple(registration));
 
       // Agent optimization: register before the initial storage batch so the
       // first checkpoint write uses agent-specific compression (brotli).
@@ -1484,6 +1480,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return paginateWorkflowSummaries(items, filter);
   }
 
+  /** Build a {@link TeaVersionTuple} from a {@link RegistrationEntry}. */
+  #createTeaVersionTuple(registration: RegistrationEntry): TeaVersionTuple {
+    return {
+      workflowVersion: registration.version,
+      ...(registration.agentVersion !== undefined && { agentVersion: registration.agentVersion }),
+      ...(registration.toolVersions !== undefined && { toolVersions: registration.toolVersions }),
+    };
+  }
+
   /** Throws a {@link VersionMismatchError} with a full TEA diff. Never returns. */
   #throwVersionMismatch(
     workflowId: string,
@@ -1495,11 +1500,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       ...(state.agentVersion !== undefined && { agentVersion: state.agentVersion }),
       ...(state.toolVersions !== undefined && { toolVersions: state.toolVersions }),
     };
-    const registeredTuple: TeaVersionTuple = {
-      workflowVersion: registration.version,
-      ...(registration.agentVersion !== undefined && { agentVersion: registration.agentVersion }),
-      ...(registration.toolVersions !== undefined && { toolVersions: registration.toolVersions }),
-    };
+    const registeredTuple = this.#createTeaVersionTuple(registration);
     const teaDiff = diffTeaVersionTuples(storedTuple, registeredTuple);
     throw new VersionMismatchError(
       workflowId,
@@ -2148,11 +2149,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#checkpoints.set(workflowId, resumeCheckpoint);
 
     // Cache TEA version tuple for forwarding to event-log entries.
-    this.#teaVersionTuples.set(workflowId, {
-      workflowVersion: registration.version,
-      ...(registration.agentVersion !== undefined && { agentVersion: registration.agentVersion }),
-      ...(registration.toolVersions !== undefined && { toolVersions: registration.toolVersions }),
-    });
+    this.#teaVersionTuples.set(workflowId, this.#createTeaVersionTuple(registration));
 
     // Restore the event log head from storage so that the next appendToBatch()
     // call uses the correct sequence number and prevHash rather than falling

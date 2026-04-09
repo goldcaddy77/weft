@@ -302,7 +302,7 @@ function resolveWorkers(
   if (workers.length === 0) throw new Error('supervise requires at least one worker agent');
   if (n === undefined) return workers;
 
-  const effectiveCount = Math.max(1, typeof n === 'function' ? n(input) : n);
+  const effectiveCount = Math.max(1, Math.floor(typeof n === 'function' ? n(input) : n));
   if (effectiveCount <= workers.length) {
     return workers.slice(0, effectiveCount);
   }
@@ -312,6 +312,15 @@ function resolveWorkers(
     expanded.push(workers[index % workers.length]!);
   }
   return expanded;
+}
+
+/**
+ * Format worker results as a numbered summary string for supervisor prompts.
+ *
+ * @example "Worker 1: alpha\n\nWorker 2: beta"
+ */
+function formatWorkerSummary(results: AgentResult[]): string {
+  return results.map((result, index) => `Worker ${index + 1}: ${result.content}`).join('\n\n');
 }
 
 /**
@@ -413,12 +422,7 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
         } else {
           // Workers disagree (or confidence-weighted voting was a tie);
           // ask the supervisor to resolve.
-          const workerSummaryLines: string[] = [];
-          for (const [index, result] of workerResults.entries()) {
-            workerSummaryLines.push(`Worker ${index + 1}: ${result.content}`);
-          }
-          const workerSummary = workerSummaryLines.join('\n\n');
-
+          const workerSummary = formatWorkerSummary(workerResults);
           const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nThe workers disagree. Please determine the correct answer.`;
 
           const supervisorResult = await executeAgentLoop(
@@ -440,12 +444,7 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       }
 
       case 'best-of-n': {
-        const workerSummaryLines: string[] = [];
-        for (const [index, result] of workerResults.entries()) {
-          workerSummaryLines.push(`Worker ${index + 1}: ${result.content}`);
-        }
-        const workerSummary = workerSummaryLines.join('\n\n');
-
+        const workerSummary = formatWorkerSummary(workerResults);
         const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nPick the best response and explain why.`;
 
         const supervisorResult = await executeAgentLoop(
@@ -466,12 +465,7 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
       }
 
       case 'merge': {
-        const workerSummaryLines: string[] = [];
-        for (const [index, result] of workerResults.entries()) {
-          workerSummaryLines.push(`Worker ${index + 1}: ${result.content}`);
-        }
-        const workerSummary = workerSummaryLines.join('\n\n');
-
+        const workerSummary = formatWorkerSummary(workerResults);
         const supervisorInput = `The following workers were asked: "${input}"\n\nTheir responses:\n${workerSummary}\n\nMerge these responses into a single comprehensive answer.`;
 
         const supervisorResult = await executeAgentLoop(

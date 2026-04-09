@@ -47,7 +47,13 @@ export type TeaVersionDiff = {
 export function collectToolVersions(
   tools: Array<{ definition: { name: string }; version?: string }>,
 ): string[] {
-  return tools.map((tool) => `${tool.definition.name}@${tool.version ?? '0.0.0'}`).toSorted();
+  return tools
+    .map((tool) => {
+      const name = tool.definition.name;
+      if (!name) throw new Error(`collectToolVersions: tool is missing a required name field`);
+      return `${name}@${tool.version ?? '0.0.0'}`;
+    })
+    .toSorted();
 }
 
 // ---------------------------------------------------------------------------
