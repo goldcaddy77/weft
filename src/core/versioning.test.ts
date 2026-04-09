@@ -22,8 +22,8 @@ describe('checkVersionCompatibility', () => {
     expect(checkVersionCompatibility('1.0.0', '2.0.0', true)).toBe('needs-migration');
   });
 
-  it('returns "resume-as-is" when versions differ and no migration is available', () => {
-    expect(checkVersionCompatibility('1.0.0', '2.0.0', false)).toBe('resume-as-is');
+  it('returns "incompatible" when versions differ and no migration is available', () => {
+    expect(checkVersionCompatibility('1.0.0', '2.0.0', false)).toBe('incompatible');
   });
 });
 

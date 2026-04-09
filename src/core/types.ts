@@ -62,6 +62,18 @@ export interface WorkflowState {
    */
   failureCategory?: FailureCategory | null;
   version: string;
+  /**
+   * Semantic version of the agent definition at the time this workflow was
+   * started. Populated when the workflow was registered via an
+   * {@link AgentDefinition}; absent for plain workflow functions.
+   */
+  agentVersion?: string;
+  /**
+   * Sorted `"${name}@${version}"` tool version strings captured at workflow
+   * start. Populated when the workflow was registered via an
+   * {@link AgentDefinition} with tools; absent otherwise.
+   */
+  toolVersions?: string[];
   createdAt: number;
   updatedAt: number;
   executionDeadline?: number;

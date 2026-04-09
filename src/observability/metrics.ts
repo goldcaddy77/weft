@@ -248,6 +248,18 @@ export function serializeMetricsSnapshotForPrometheus(snapshot: MetricsSnapshot)
     }
   }
 
+  // Derived DPMO gauge: (defects / operations) * 1_000_000
+  const dpmoDefectsEntry = snapshot['weft.dpmo.defects'];
+  const dpmoOperationsEntry = snapshot['weft.dpmo.operations'];
+  const dpmoDefects = dpmoDefectsEntry?.type === 'counter' ? dpmoDefectsEntry.value : 0;
+  const dpmoOperations = dpmoOperationsEntry?.type === 'counter' ? dpmoOperationsEntry.value : 0;
+  const dpmoValue = dpmoOperations === 0 ? 0 : (dpmoDefects / dpmoOperations) * 1_000_000;
+  lines.push(
+    '# HELP weft_dpmo Defects per million operations (failed workflows / started workflows * 1e6)',
+  );
+  lines.push('# TYPE weft_dpmo gauge');
+  lines.push(`weft_dpmo ${dpmoValue}`);
+
   return lines.join('\n') + '\n';
 }
 
@@ -326,6 +338,18 @@ export const METRICS = {
     name: 'weft.prompt_cache.misses',
     description: 'Total prompt prefix cache misses',
     unit: 'misses',
+    type: 'counter' as const,
+  },
+  dpmoDefects: {
+    name: 'weft.dpmo.defects',
+    description: 'Total failed workflows (DPMO numerator)',
+    unit: 'workflows',
+    type: 'counter' as const,
+  },
+  dpmoOperations: {
+    name: 'weft.dpmo.operations',
+    description: 'Total started workflows (DPMO denominator)',
+    unit: 'workflows',
     type: 'counter' as const,
   },
 } as const;

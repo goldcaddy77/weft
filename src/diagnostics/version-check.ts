@@ -82,7 +82,7 @@ export async function runVersionCheck(
   let overallVerdict: VersionCheckReport['overallVerdict'] = 'safe';
 
   for (const typeReport of workflowTypes) {
-    if (typeReport.compatibility === 'resume-as-is') {
+    if (typeReport.compatibility === 'incompatible') {
       // Versions differ but no migration — unsafe
       overallVerdict = 'unsafe';
       break;

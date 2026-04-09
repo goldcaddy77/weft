@@ -10,6 +10,8 @@
 
 import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
+import type { TeaVersionDiff } from './tea-versioning.ts';
+import { formatTeaVersionDiff } from './tea-versioning.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -22,7 +24,11 @@ export const DEFAULT_WORKFLOW_VERSION = '0.0.0';
 // Types
 // ---------------------------------------------------------------------------
 
-export type VersionCompatibility = 'compatible' | 'needs-migration' | 'resume-as-is';
+export type VersionCompatibility =
+  | 'compatible'
+  | 'needs-migration'
+  | 'resume-as-is'
+  | 'incompatible';
 
 // ---------------------------------------------------------------------------
 // Version comparison
@@ -33,8 +39,9 @@ export type VersionCompatibility = 'compatible' | 'needs-migration' | 'resume-as
  *
  * - `"compatible"` — versions match; no action needed.
  * - `"needs-migration"` — versions differ and a migration function is available.
- * - `"resume-as-is"` — versions differ but no migration is available; the
- *   workflow will resume with the existing checkpoint as-is.
+ * - `"incompatible"` — versions differ and no migration is available; the engine
+ *   will throw a {@link VersionMismatchError} instead of resuming silently.
+ * - `"resume-as-is"` — versions match (explicit no-op case, kept for completeness).
  */
 export function checkVersionCompatibility(
   storedVersion: string,
@@ -45,7 +52,7 @@ export function checkVersionCompatibility(
     return 'compatible';
   }
 
-  return hasMigration ? 'needs-migration' : 'resume-as-is';
+  return hasMigration ? 'needs-migration' : 'incompatible';
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +191,9 @@ export type ShapeDiffOptions = {
  *
  * When shape information is provided, the error message includes a
  * field-level diff describing exactly which fields changed.
+ *
+ * When TEA version information is provided, the error message includes a
+ * summary of which tool/agent/workflow versions changed.
  */
 export class VersionMismatchError extends Error {
   readonly workflowId: string;
@@ -191,6 +201,7 @@ export class VersionMismatchError extends Error {
   readonly registeredVersion: string;
   readonly workflowType: string;
   readonly fieldDiffs: FieldDiff[] | undefined;
+  readonly teaDiff: TeaVersionDiff | undefined;
 
   constructor(
     workflowId: string,
@@ -198,6 +209,7 @@ export class VersionMismatchError extends Error {
     storedVersion: string,
     registeredVersion: string,
     shapeDiff?: ShapeDiffOptions,
+    teaDiff?: TeaVersionDiff,
   ) {
     const diffs = shapeDiff
       ? diffCheckpointShapes(shapeDiff.oldShape, shapeDiff.newShape)
@@ -208,13 +220,15 @@ export class VersionMismatchError extends Error {
       `stored version ${storedVersion} does not match registered version ${registeredVersion}`;
 
     const diffSuffix = diffs && diffs.length > 0 ? formatFieldDiffs(diffs) : '';
+    const teaSuffix = teaDiff ? formatTeaVersionDiff(teaDiff) : '';
 
-    super(baseMessage + diffSuffix);
+    super(baseMessage + diffSuffix + teaSuffix);
     this.name = 'VersionMismatchError';
     this.workflowId = workflowId;
     this.workflowType = workflowType;
     this.storedVersion = storedVersion;
     this.registeredVersion = registeredVersion;
     this.fieldDiffs = diffs;
+    this.teaDiff = teaDiff;
   }
 }

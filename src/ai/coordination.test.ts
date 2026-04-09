@@ -687,6 +687,113 @@ describe('supervise', () => {
 });
 
 // ---------------------------------------------------------------------------
+// supervise — dynamic n and confidence-weighted voting
+// ---------------------------------------------------------------------------
+
+describe('supervise: dynamic n and confidence-weighted voting', () => {
+  it('with numeric n trims workers to the specified count', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('same');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const result = await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+        createAgentDefinition({ name: 'w4' }),
+        createAgentDefinition({ name: 'w5' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: 3,
+      provider,
+    });
+
+    // Only 3 workers ran (all returned 'same', so no supervisor call)
+    expect(result.workerResults).toHaveLength(3);
+    expect(callCount).toBe(3);
+  });
+
+  it('with n as a function resolves the count from input', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('same');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+        createAgentDefinition({ name: 'w4' }),
+        createAgentDefinition({ name: 'w5' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: () => 2,
+      provider,
+    });
+
+    // n function returns 2, so only 2 workers ran; they agreed → no supervisor
+    expect(callCount).toBe(2);
+  });
+
+  it('with voting "confidence-weighted" resolves agreement on a simple 2-worker split', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('answer');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const result = await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      voting: 'confidence-weighted',
+      provider,
+    });
+
+    // Both workers agreed on 'answer'; no supervisor needed
+    expect(result.finalResult).toBe('answer');
+    expect(callCount).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // summarizeConversation
 // ---------------------------------------------------------------------------
 

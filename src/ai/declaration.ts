@@ -13,6 +13,8 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   readonly _brand: string;
   name: string;
   model: string;
+  /** Semantic version of this agent definition. Defaults to `"0.0.0"` when not provided. */
+  version?: string;
   systemPrompt?: string;
   tools?: AgentToolDefinition[];
   maxTurns?: number;
@@ -61,6 +63,8 @@ export interface ToolIdentityResult {
 export interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
+  /** Semantic version of this tool. Used for TEA versioning. Defaults to `"0.0.0"` when not provided. */
+  version?: string;
   /**
    * Compute a stable semantic identity for a tool invocation.
    *
@@ -95,6 +99,8 @@ export interface AgentToolDefinition {
 export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
   name: string;
   model: string;
+  /** Semantic version of this agent definition. Defaults to `"0.0.0"` when not provided. */
+  version?: string;
   systemPrompt?: string;
   tools?: AgentToolDefinition[];
   maxTurns?: number;
@@ -177,6 +183,7 @@ export function defineAgent<TInput = unknown, TOutput = unknown>(
   const { validateInput, ...rest } = options;
   const definition: AgentDefinition<TInput, TOutput> = {
     ...rest,
+    version: rest.version ?? '0.0.0',
     _brand: AGENT_DEFINITION_BRAND,
   };
   // Widen the caller's typed validator to the stored `unknown` signature so

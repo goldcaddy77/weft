@@ -259,7 +259,7 @@ describe('formatVersionCheckReport', () => {
           storedVersion: '1.0.0',
           registeredVersion: '3.0.0',
           runningCount: 2,
-          compatibility: 'resume-as-is',
+          compatibility: 'incompatible',
           hasMigration: false,
         },
       ],

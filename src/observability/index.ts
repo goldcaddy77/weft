@@ -294,6 +294,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
       applyCustomAttributes(span, interception);
 
       metrics.increment('weft.workflow.started');
+      metrics.increment('weft.dpmo.operations');
 
       next(interception);
     },
@@ -739,6 +740,7 @@ export function createObservabilityInterceptors(options?: ObservabilityOptions):
   const onWorkflowFailed = (event: Event): void => {
     if (!(event instanceof WorkflowFailedEvent)) return;
     endWorkflowSpan(event.workflowId, 'error', event.error.message);
+    metrics.increment('weft.dpmo.defects');
   };
 
   const onWorkflowCancelled = (event: Event): void => {

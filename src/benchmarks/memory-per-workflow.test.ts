@@ -22,14 +22,14 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
  * Measured 2026-04-07: ~6.8KB isolated, 7.7-9.3KB under full-suite
  * (cross-test heap pollution from the other benchmark files inflates the
  * delta by ~1-2KB). As the test suite grows, cross-test heap pressure grows
- * proportionally. Threshold is set to 11KB (measured ceiling ~9.5KB + 1.5KB
- * headroom) after additional Track 2 test files were added in PRs #84–#86.
- * Previous threshold: 16384 (relaxed to mask 7KB → 15KB suite-pollution
- * flakiness which is now bounded after the nesting-depth-map allocation skip
- * in `Engine.#startWorkflowExecution`).
+ * proportionally. Threshold is set to 14KB (measured ceiling ~13.2KB under
+ * full suite after Track 4 additions + 0.8KB headroom). Isolated runs
+ * consistently measure ~8-9KB.
+ * Previous threshold: 11264 (set after Track 2 test files in PRs #84–#86;
+ * Track 4 TEA versioning fields on WorkflowState raised the full-suite ceiling).
  */
 
-const TARGET_BYTES_PER_WORKFLOW = 11_264;
+const TARGET_BYTES_PER_WORKFLOW = 14_336;
 
 describe('Memory per workflow', () => {
   let storage: BunSQLiteStorage;
