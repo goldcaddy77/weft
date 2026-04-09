@@ -5804,8 +5804,8 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 - [ ] `ctx.speculate(fn)` runs a child generator against a copy-on-write checkpoint view; commits only after verifications drain.
 - [ ] On verification failure, the speculative branch is discarded and compensators (Track 1) run for any externalized effects.
 - [ ] `benchmarks/speculation.bench.ts` exists; asserts ≥30% end-to-end latency reduction on a 5-turn agent workflow with 500ms mock tool latency, across ≥100 runs, with zero incorrect results.
-- [ ] `src/ai/prompt-cache.ts` exists; implements a templated radix tree for prefix sharing; exposes hit/miss counters via the metrics collector.
-- [ ] `benchmarks/prompt-cache.bench.ts` shows ≥30% latency reduction on a workload with ≥50% prefix overlap.
+- [x] `src/ai/prompt-cache.ts` exists; implements a templated radix tree for prefix sharing; exposes hit/miss counters via the metrics collector.
+- [x] `benchmarks/prompt-cache.bench.ts` shows ≥30% latency reduction on a workload with ≥50% prefix overlap.
 - [ ] Activity completions benchmark: `benchmarks/throughput.bench.ts` reports ≥20K/sec (up from ~9K/sec; spec is >30K/sec).
 - [ ] Memory per workflow: `benchmarks/memory.bench.ts` reports ≤5KB/workflow on a synthetic population of 10K workflows (down from ~7–15KB; spec is ≤2KB).
 - [ ] `bun typecheck` and `bun test` both exit 0 after Track 3 lands.
