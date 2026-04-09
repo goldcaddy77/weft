@@ -22,6 +22,8 @@
  * @module diagnostics/validate
  */
 
+import { resolve } from 'node:path';
+
 import type { ActivityDefinition, WorkflowRegistration } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -111,7 +113,7 @@ function checkStatefulWithoutCompensator(
   // function it cannot participate in saga-style rollback.
   if (!activity.idempotent && !activity.compensate) {
     return {
-      severity: 'warning',
+      severity: 'error',
       code: 'stateful-without-compensator',
       workflowType,
       activityName: activity.name,
@@ -187,8 +189,12 @@ export function validateRegistrations(
  *
  * The entry module may export:
  * - `default`: a `Record<string, WorkflowRegistration>` — used directly.
- * - `registrations`: same shape — used if `default` is absent.
  * - Named exports typed as `WorkflowRegistration` with a `handler` field.
+ * - Named exports typed as `ActivityDefinition` with `name` and `execute` fields.
+ *
+ * Relative `modulePath` values are resolved against `process.cwd()` so that
+ * paths like `./my-workflows.ts` work correctly when the CLI is invoked from
+ * the user's project directory.
  *
  * Returns `{ registrations, activities }` extracted from the module.
  */
@@ -196,7 +202,8 @@ export async function loadRegistrationsFromModule(modulePath: string): Promise<{
   registrations: Record<string, WorkflowRegistration>;
   activities: ActivityDefinition[];
 }> {
-  const mod = await import(modulePath);
+  const absolutePath = resolve(process.cwd(), modulePath);
+  const mod = await import(absolutePath);
 
   const registrations: Record<string, WorkflowRegistration> = {};
   const activities: ActivityDefinition[] = [];
@@ -244,14 +251,14 @@ function isWorkflowRegistration(value: unknown): value is WorkflowRegistration {
 }
 
 function isActivityDefinition(value: unknown): value is ActivityDefinition {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'name' in value &&
-    'execute' in value &&
-    typeof (value as { name: unknown; execute: unknown }).name === 'string' &&
-    typeof (value as { name: unknown; execute: unknown }).execute === 'function'
-  );
+  // Activity definitions created by the `activity()` helper are functions
+  // (with `name` and `execute` assigned as own properties), not plain objects.
+  // Accept both object and function shapes.
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+    return false;
+  }
+  const v = value as { name?: unknown; execute?: unknown };
+  return typeof v.name === 'string' && typeof v.execute === 'function';
 }
 
 // ---------------------------------------------------------------------------

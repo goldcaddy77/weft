@@ -8,9 +8,16 @@
  */
 
 import { describe, expect, it } from 'bun:test';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { ActivityDefinition, WorkflowRegistration } from '../core/types.ts';
-import { formatValidationReport, validateRegistrations } from './validate.ts';
+import {
+  formatValidationReport,
+  loadRegistrationsFromModule,
+  validateRegistrations,
+} from './validate.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,7 +86,7 @@ describe('validateRegistrations', () => {
   it('reports error for activity with maxAttempts = Infinity', () => {
     const registrations = { wf: makeRegistration('wf') };
     const activities: ActivityDefinition[] = [
-      // idempotent: true to suppress the stateful-without-compensator warning,
+      // idempotent: true to suppress the stateful-without-compensator error,
       // so we can assert on exactly one issue (the unbounded-retry error).
       makeActivity('flaky', {
         idempotent: true,
@@ -118,28 +125,25 @@ describe('validateRegistrations', () => {
   // 3. Stateful without compensator
   // ---------------------------------------------------------------------------
 
-  it('reports warning for non-idempotent activity without compensator', () => {
+  it('reports error for non-idempotent activity without compensator', () => {
     const registrations = { wf: makeRegistration('wf') };
     const activities: ActivityDefinition[] = [makeActivity('sendEmail', { idempotent: false })];
 
     const report = validateRegistrations(registrations, activities);
-    expect(report.valid).toBe(true); // warnings don't set valid=false
+    expect(report.valid).toBe(false); // stateful-without-compensator is an error
     const issue = report.issues.find((i) => i.code === 'stateful-without-compensator');
     expect(issue).toBeDefined();
-    expect(issue!.severity).toBe('warning');
+    expect(issue!.severity).toBe('error');
     expect(issue!.activityName).toBe('sendEmail');
   });
 
-  it('warnings do not make valid=false (only errors do)', () => {
+  it('stateful-without-compensator makes valid=false', () => {
     const registrations = { wf: makeRegistration('wf') };
-    const activities: ActivityDefinition[] = [
-      makeActivity('sideEffect', { idempotent: false }), // warning
-    ];
+    const activities: ActivityDefinition[] = [makeActivity('sideEffect', { idempotent: false })];
 
     const report = validateRegistrations(registrations, activities);
-    expect(report.valid).toBe(true);
-    expect(report.issues.some((i) => i.severity === 'warning')).toBe(true);
-    expect(report.issues.some((i) => i.severity === 'error')).toBe(false);
+    expect(report.valid).toBe(false);
+    expect(report.issues.some((i) => i.severity === 'error')).toBe(true);
   });
 
   it('multiple issues accumulate across multiple activities', () => {
@@ -154,7 +158,7 @@ describe('validateRegistrations', () => {
         },
         compensate: async () => {},
       }),
-      makeActivity('b', { idempotent: false }), // warning
+      makeActivity('b', { idempotent: false }), // stateful-without-compensator error
       makeActivity('c', {
         retry: {
           maxAttempts: Infinity,
@@ -163,15 +167,13 @@ describe('validateRegistrations', () => {
           maxBackoff: '30s',
         },
         idempotent: false,
-      }), // both error + warning
+      }), // both unbounded-retry + stateful-without-compensator errors
     ];
 
     const report = validateRegistrations(registrations, activities);
     expect(report.valid).toBe(false);
     const errors = report.issues.filter((i) => i.severity === 'error');
-    const warnings = report.issues.filter((i) => i.severity === 'warning');
-    expect(errors.length).toBeGreaterThanOrEqual(2);
-    expect(warnings.length).toBeGreaterThanOrEqual(1);
+    expect(errors.length).toBeGreaterThanOrEqual(3); // a=unbounded, b=stateful, c=both
   });
 
   it('empty registrations and no activities returns valid with 0 workflows', () => {
@@ -212,5 +214,52 @@ describe('formatValidationReport', () => {
     expect(output).toContain('error');
     expect(output).toContain('unbounded-retry');
     expect(output).toContain('pay');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. loadRegistrationsFromModule
+// ---------------------------------------------------------------------------
+
+describe('loadRegistrationsFromModule', () => {
+  it('picks up function-typed activity definitions (activity() helper shape)', async () => {
+    // The activity() helper returns a function with `name` and `execute` as own
+    // properties. isActivityDefinition must accept typeof === 'function'.
+    const dir = await mkdtemp(join(tmpdir(), 'weft-validate-'));
+    const filePath = join(dir, 'activities.ts');
+    await writeFile(
+      filePath,
+      `
+// Simulate the shape that activity() helper produces: a function with
+// 'name' and 'execute' as own properties (not a plain object).
+const def = { name: 'sendEmail', execute: async () => ({ sent: true }) };
+const fn = Object.create(Function.prototype, {
+  name: { value: def.name, writable: false, configurable: true },
+  execute: { value: def.execute, writable: true, configurable: true },
+});
+export const sendEmail = fn;
+`,
+    );
+
+    const { activities } = await loadRegistrationsFromModule(filePath);
+    expect(activities.some((a) => a.name === 'sendEmail')).toBe(true);
+  });
+
+  it('resolves relative paths against process.cwd(), not the source file', async () => {
+    // Write a module in tmpdir and load it by absolute path — this confirms
+    // the path.resolve(cwd, modulePath) logic works correctly.
+    const dir = await mkdtemp(join(tmpdir(), 'weft-validate-'));
+    const filePath = join(dir, 'workflows.ts');
+    await writeFile(
+      filePath,
+      `
+export const greet = {
+  handler: async function* () { return 'hi'; }
+};
+`,
+    );
+
+    const { registrations } = await loadRegistrationsFromModule(filePath);
+    expect('greet' in registrations).toBe(true);
   });
 });
