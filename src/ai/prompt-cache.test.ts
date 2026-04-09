@@ -124,6 +124,26 @@ describe('PromptCache', () => {
       const { hit: secondHit } = cache.annotate([SYSTEM, TURN_1_USER]);
       expect(secondHit).toBe(true); // now present again
     });
+
+    it('evicted prefix does not produce false hit on a different tail', () => {
+      // Regression: orphaned intermediate nodes left after eviction must NOT
+      // cause a hit when a query shares a prefix with the evicted sequence.
+      //
+      // Insert [SYSTEM, TURN_1_USER, TURN_1_ASST] — terminal at depth 3.
+      // Evict it (fill beyond maxEntries). Now SYSTEM and TURN_1_USER are
+      // orphaned intermediates. A query [SYSTEM, TURN_1_USER, TURN_2_USER]
+      // must NOT hit on [SYSTEM, TURN_1_USER] because that prefix belongs to
+      // an evicted sequence, not a live one.
+      const cache = new PromptCache({ maxEntries: 1 });
+
+      cache.annotate([SYSTEM, TURN_1_USER, TURN_1_ASST]);
+      // Trigger eviction of the first sequence.
+      cache.annotate([msg('user', 'unrelated A'), msg('assistant', 'unrelated B')]);
+
+      // The evicted prefix must not produce a false hit.
+      const { hit } = cache.annotate([SYSTEM, TURN_1_USER, TURN_2_USER]);
+      expect(hit).toBe(false);
+    });
   });
 
   describe('hit/miss counters', () => {

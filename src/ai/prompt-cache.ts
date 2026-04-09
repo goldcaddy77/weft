@@ -84,6 +84,13 @@ interface TrieNode {
    */
   isTerminal: boolean;
   /**
+   * True when this subtree contains at least one live terminal (either this
+   * node itself or any descendant). Used by `#longestMatchingPrefix` to
+   * distinguish live intermediate nodes (on the path to a real sequence) from
+   * orphaned intermediates left behind after eviction.
+   */
+  hasTerminalDescendant: boolean;
+  /**
    * Insertion-order sequence number, used to evict the oldest terminal when
    * the cache exceeds `maxEntries`.
    */
@@ -137,7 +144,12 @@ export class PromptCache {
   constructor(options?: { maxEntries?: number; metrics?: MetricsCollector }) {
     this.#maxEntries = Math.max(1, options?.maxEntries ?? 1000);
     this.#metrics = options?.metrics;
-    this.#root = { children: new Map(), isTerminal: false, sequence: 0 };
+    this.#root = {
+      children: new Map(),
+      isTerminal: false,
+      hasTerminalDescendant: false,
+      sequence: 0,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -219,12 +231,17 @@ export class PromptCache {
   // ---------------------------------------------------------------------------
 
   /**
-   * Walk the trie and return the length of the longest matching prefix.
-   * Returns 0 if no messages match at all.
+   * Walk the trie and return the length of the longest prefix of `hashes` that
+   * is a prefix of at least one live (non-evicted) stored sequence.
    *
-   * Any existing node was created by a prior insert, so the walk depth is the
-   * correct hit boundary — the terminal flag exists only for eviction ordering,
-   * not for hit detection.
+   * A node is "live" when `hasTerminalDescendant` is true — meaning it or one
+   * of its descendants is a terminal that has not been evicted. Walking through
+   * a live node extends the matching prefix length.
+   *
+   * An orphaned intermediate node left behind after eviction will have
+   * `hasTerminalDescendant === false` (cleared by `#evictOldest`). Reaching
+   * such a node stops the walk, preventing false cache hits from orphaned
+   * ancestors.
    *
    * @internal
    */
@@ -235,6 +252,8 @@ export class PromptCache {
     for (const hash of hashes) {
       const child = node.children.get(hash);
       if (!child) break;
+      // Stop if the child is orphaned (no live terminals in its subtree).
+      if (!child.hasTerminalDescendant && !child.isTerminal) break;
       node = child;
       depth++;
     }
@@ -244,14 +263,15 @@ export class PromptCache {
 
   /**
    * Insert a hash sequence into the trie, marking the last node as a
-   * terminal. Evicts the oldest terminal if the size cap is exceeded.
+   * terminal and setting `hasTerminalDescendant = true` on all ancestor nodes.
+   * Evicts the oldest terminal if the size cap is exceeded.
    *
    * @internal
    */
   #insert(hashes: string[]): void {
-    // Walk/create nodes for the full sequence.
+    // Walk/create nodes for the full sequence, collecting ancestors.
     let node = this.#root;
-    const path: string[] = [];
+    const ancestors: TrieNode[] = [node];
 
     for (const hash of hashes) {
       let child = node.children.get(hash);
@@ -259,12 +279,13 @@ export class PromptCache {
         child = {
           children: new Map(),
           isTerminal: false,
+          hasTerminalDescendant: false,
           sequence: 0,
         };
         node.children.set(hash, child);
       }
-      path.push(hash);
       node = child;
+      ancestors.push(node);
     }
 
     // If this path is already a terminal, nothing to do.
@@ -272,8 +293,14 @@ export class PromptCache {
 
     // Mark as a new terminal and record the insertion sequence.
     node.isTerminal = true;
+    node.hasTerminalDescendant = true;
     node.sequence = ++this.#sequence;
     this.#size++;
+
+    // Propagate hasTerminalDescendant up to all ancestors.
+    for (const ancestor of ancestors) {
+      ancestor.hasTerminalDescendant = true;
+    }
 
     // Evict the oldest terminal if we exceed the cap.
     if (this.#size > this.#maxEntries) {
@@ -284,39 +311,39 @@ export class PromptCache {
   /**
    * Find and remove the terminal with the smallest sequence number.
    *
-   * We do a DFS of all terminal nodes, pick the one with the lowest sequence,
-   * then clear its terminal flag. If the node has no children after clearing
-   * it, it can be pruned — but we do a lazy prune (only the terminal flag is
-   * cleared here; orphaned non-terminal leaf nodes are harmless and low in
-   * number since this only fires at the cap).
+   * Clears `isTerminal` on the evicted node, prunes it from its parent if it
+   * has no children, and then recomputes `hasTerminalDescendant` bottom-up on
+   * the ancestor path so that `#longestMatchingPrefix` stops walking at the
+   * first node that no longer has any live terminals in its subtree.
    *
    * @internal
    */
   #evictOldest(): void {
     let oldestNode: TrieNode | null = null;
-    let oldestParent: TrieNode | null = null;
+    let oldestAncestors: TrieNode[] = [];
     let oldestHash = '';
 
     // DFS to find the terminal with the minimum sequence number.
-    const stack: Array<{ node: TrieNode; parent: TrieNode | null; hash: string }> = [
-      { node: this.#root, parent: null, hash: '' },
+    // Carry the full ancestor path so we can recompute hasTerminalDescendant.
+    const stack: Array<{ node: TrieNode; ancestors: TrieNode[]; hash: string }> = [
+      { node: this.#root, ancestors: [], hash: '' },
     ];
 
     while (stack.length > 0) {
       const entry = stack.pop();
       if (!entry) break;
-      const { node, parent, hash } = entry;
+      const { node, ancestors, hash } = entry;
 
       if (node.isTerminal) {
         if (oldestNode === null || node.sequence < oldestNode.sequence) {
           oldestNode = node;
-          oldestParent = parent;
+          oldestAncestors = ancestors;
           oldestHash = hash;
         }
       }
 
       for (const [childHash, child] of node.children) {
-        stack.push({ node: child, parent: node, hash: childHash });
+        stack.push({ node: child, ancestors: [...ancestors, node], hash: childHash });
       }
     }
 
@@ -324,12 +351,39 @@ export class PromptCache {
       oldestNode.isTerminal = false;
       this.#size--;
 
-      // Prune the leaf node if it has no children to avoid accumulating dead
-      // nodes over time.
-      if (oldestNode.children.size === 0 && oldestParent !== null) {
-        oldestParent.children.delete(oldestHash);
+      // Update hasTerminalDescendant on the evicted node itself.
+      oldestNode.hasTerminalDescendant = this.#subtreeHasTerminal(oldestNode);
+
+      // Recompute hasTerminalDescendant bottom-up on ancestors.
+      const parent = oldestAncestors[oldestAncestors.length - 1] ?? null;
+
+      // Prune the leaf if it has no children to avoid accumulating dead nodes.
+      if (oldestNode.children.size === 0 && parent !== null) {
+        parent.children.delete(oldestHash);
+      }
+
+      // Walk ancestors from deepest to root, recomputing the flag.
+      for (let i = oldestAncestors.length - 1; i >= 0; i--) {
+        const ancestor = oldestAncestors[i];
+        if (ancestor) {
+          ancestor.hasTerminalDescendant = this.#subtreeHasTerminal(ancestor);
+        }
       }
     }
+  }
+
+  /**
+   * Return true if the given node is a terminal or has any terminal
+   * descendant. Used to recompute `hasTerminalDescendant` after eviction.
+   *
+   * @internal
+   */
+  #subtreeHasTerminal(node: TrieNode): boolean {
+    if (node.isTerminal) return true;
+    for (const child of node.children.values()) {
+      if (child.hasTerminalDescendant || child.isTerminal) return true;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------
