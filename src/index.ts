@@ -149,7 +149,11 @@ export { Scheduler, calculateBackoff, parseDuration } from './core/scheduler';
 
 // Constraint
 export { constraint } from './core/constraint';
-export type { ConstraintCheckState, ConstraintDefinition, ConstraintViolation } from './core/constraint';
+export type {
+  ConstraintCheckState,
+  ConstraintDefinition,
+  ConstraintViolation,
+} from './core/constraint';
 
 // Activity
 export { activity } from './core/activity';
@@ -283,6 +287,13 @@ export {
   staticFallbackRouter,
 } from './ai/model-router';
 export type { ModelRouter, ModelSelection, RoutingContext } from './ai/model-router';
+export { PromptCache } from './ai/prompt-cache';
+export type {
+  AnnotateResult,
+  AnnotatedMessage,
+  AnthropicCacheControl,
+  PromptCacheProviderMetadata,
+} from './ai/prompt-cache';
 export { ProviderHealthTracker } from './ai/provider-health';
 export { ReconnectionBuffer, StreamMultiplexer, TokenBridge } from './ai/streaming';
 export type { AgentRegistrationOptions } from './core/engine';
