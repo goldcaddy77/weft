@@ -762,6 +762,41 @@ describe('supervise: dynamic n and confidence-weighted voting', () => {
     expect(callCount).toBe(2);
   });
 
+  it('with fractional n floors to the nearest integer', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse('same');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1' }),
+        createAgentDefinition({ name: 'w2' }),
+        createAgentDefinition({ name: 'w3' }),
+        createAgentDefinition({ name: 'w4' }),
+        createAgentDefinition({ name: 'w5' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: 2.9, // floors to 2
+      provider,
+    });
+
+    // 2.9 floors to 2; only 2 workers ran
+    expect(callCount).toBe(2);
+  });
+
   it('with voting "confidence-weighted" picks the unanimous answer without calling the supervisor', async () => {
     let callCount = 0;
     const provider: LLMProvider = {
