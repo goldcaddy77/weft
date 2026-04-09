@@ -106,9 +106,9 @@ const UNDEFINED_SENTINEL = '\u0000undefined';
  * Recursively sort object keys to produce a canonical string representation.
  *
  * Object keys whose values are `undefined` are omitted entirely, matching
- * `JSON.stringify` semantics. This keeps `{ a: undefined }` distinct from
- * `{ a: 'undefined' }` and from `{}` (the latter two differ because the
- * literal string serializes as `{"a":"undefined"}`).
+ * `JSON.stringify` semantics. This means `{ a: undefined }` canonicalizes
+ * the same as `{}`, while still remaining distinct from
+ * `{ a: 'undefined' }` (which serializes as `{"a":"undefined"}`).
  *
  * Top-level and array-element `undefined` values cannot be omitted without
  * losing positional/identity information, so they serialize to
