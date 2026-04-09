@@ -3589,6 +3589,90 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
+    it('completing a workflow drops tool-effect log entries', async () => {
+      // Regression test for the tool-effect cleanup bug: `#cleanupWorkflowStorage`
+      // previously swept `sig:`, `offload:`, `blob:`, and `shared:` prefixes but
+      // omitted `tool-effect:`, so every completed workflow left its per-tool-call
+      // dedup records behind forever.
+      const storage = new MemoryStorage();
+      const engine = new Engine({ storage });
+
+      // Mock provider that drives four turns: three tool calls, then a final
+      // response. The agent loop records a tool-effect entry for each tool call.
+      let callIndex = 0;
+      const provider: LLMProvider = {
+        name: 'mock',
+        async chat(): Promise<ChatResponse> {
+          callIndex++;
+          if (callIndex <= 3) {
+            return {
+              content: '',
+              toolCalls: [
+                {
+                  id: `call-${callIndex}`,
+                  name: 'noop',
+                  // Distinct input per call so each produces a unique semantic
+                  // hash and therefore a unique tool-effect storage key.
+                  input: { iteration: callIndex },
+                },
+              ],
+              usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+              model: 'test-model',
+              stopReason: 'tool_use',
+            };
+          }
+          return {
+            content: 'done',
+            toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 10, totalTokens: 20 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      };
+
+      const noopTool = {
+        definition: { name: 'noop', description: 'No-op', inputSchema: { type: 'object' } },
+        execute: async () => 'ok',
+      };
+
+      engine.register('tool-effect-cleanup-workflow', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        yield* context.agent({
+          model: 'test-model',
+          prompt: 'Call the tool three times',
+          provider,
+          tools: [noopTool],
+          maxTurns: 10,
+        });
+        return 'done';
+      });
+
+      const handle = await engine.start('tool-effect-cleanup-workflow', null);
+      await handle.result();
+      await flush();
+
+      // Sanity check: the mock fired exactly four turns (3 tool calls + final).
+      expect(callIndex).toBe(4);
+
+      // The per-tool-call dedup records must be gone after completion — the
+      // workflow has no consumers for them, and leaving them behind leaks
+      // linearly with tool-call volume.
+      const remainingToolEffectKeys: string[] = [];
+      for await (const [key] of storage.scan('tool-effect:')) {
+        remainingToolEffectKeys.push(key);
+      }
+      expect(remainingToolEffectKeys).toEqual([]);
+
+      engine[Symbol.dispose]();
+    });
+
     it('cancelling a workflow drops output artifacts but preserves event history', async () => {
       const storage = new MemoryStorage();
       const engine = new Engine({ storage });

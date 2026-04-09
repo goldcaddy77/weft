@@ -83,6 +83,32 @@ describe('computeSemanticHash', () => {
     expect(nullHash).not.toBe(undefinedHash);
   });
 
+  it('does not collide undefined with the literal string "undefined"', () => {
+    // Regression: canonicalize previously encoded `undefined` as the JSON
+    // string '"undefined"', colliding with the literal string "undefined"
+    // and allowing one tool call to shadow another in the effect log.
+    expect(computeSemanticHash(undefined)).not.toBe(computeSemanticHash('undefined'));
+    expect(computeSemanticHash({ a: undefined })).not.toBe(computeSemanticHash({ a: 'undefined' }));
+    expect(computeSemanticHash([undefined])).not.toBe(computeSemanticHash(['undefined']));
+  });
+
+  it('omits object keys whose values are undefined', () => {
+    // Keys with undefined values should be dropped from the canonical form,
+    // matching JSON.stringify semantics.
+    expect(computeSemanticHash({ a: 1, b: undefined })).toBe(computeSemanticHash({ a: 1 }));
+    expect(computeSemanticHash({ a: undefined })).toBe(computeSemanticHash({}));
+  });
+
+  it('preserves array element positions for undefined entries', () => {
+    // Arrays can't drop undefined elements without shifting indices, so
+    // [undefined] and [] must hash differently, and [undefined, 1] must
+    // differ from [1].
+    expect(computeSemanticHash([undefined])).not.toBe(computeSemanticHash([]));
+    expect(computeSemanticHash([undefined, 1])).not.toBe(computeSemanticHash([1]));
+    // Position matters.
+    expect(computeSemanticHash([undefined, 1])).not.toBe(computeSemanticHash([1, undefined]));
+  });
+
   it('custom identity can restrict to intent-critical fields', () => {
     const identity = (input: unknown) => {
       const { recipient, amount } = input as {
