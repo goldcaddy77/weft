@@ -223,6 +223,49 @@ describe('TestEngine.runN', () => {
     engine[Symbol.dispose]();
   });
 
+  it('seeded chaos produces varied fault sequences across runs (not identical)', async () => {
+    // Regression: using the same seed for every run produces identical fault sequences,
+    // collapsing passRate to always 0.0 or 1.0. Per-run seed derivation (seed + i)
+    // ensures each run sees a different fault pattern.
+    const engine = new TestEngine();
+
+    const activity = async () => 'ok';
+
+    engine.register('seed-variety', async function* (ctx: WorkflowContext) {
+      const mockedActivity = engine.mocks.get(activity);
+      const fn = mockedActivity ? mockedActivity.implementation : activity;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return yield* (ctx as any).run(fn, undefined);
+    });
+
+    engine.mock(activity, async () => 'ok');
+
+    // With faultRate=0.5 and a seed, if all runs use the same seed they'd all
+    // produce the same outcome. With per-run seed derivation the passRate should
+    // be somewhere between 0.0 and 1.0 (not locked to either extreme) over
+    // enough runs. We use a large run count and verify we see both outcomes.
+    const scenario: ChaosScenario = { faultRate: 0.5, faults: ['error'], seed: 7 };
+    const result = await engine.runN('seed-variety', undefined, { runs: 30, chaos: scenario });
+
+    // Both passes and failures should occur — passRate should be strictly between extremes
+    expect(result.passRate).toBeGreaterThan(0);
+    expect(result.passRate).toBeLessThan(1);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('TestEngine has no register override — workflow registration uses base Engine.register', () => {
+    // Regression: a dead register() override captured registrations into an unused
+    // #capturedRegistrations field. Verify that TestEngine does not shadow Engine.register
+    // by checking that Engine.prototype.register is the method resolved on a TestEngine instance.
+    const engine = new TestEngine();
+
+    // register should be inherited from Engine — not overridden on TestEngine
+    expect(Object.prototype.hasOwnProperty.call(TestEngine.prototype, 'register')).toBe(false);
+
+    engine[Symbol.dispose]();
+  });
+
   it('failure counts sum to (1 - passRate) * runs', async () => {
     const engine = new TestEngine();
 

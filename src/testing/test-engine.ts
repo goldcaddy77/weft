@@ -8,15 +8,9 @@
  * @module testing/test-engine
  */
 
-import type { AgentDefinition } from '../ai/declaration.ts';
 import { Engine } from '../core/engine.ts';
 import { parseDuration } from '../core/scheduler.ts';
-import type {
-  Duration,
-  StepWorkflowFunction,
-  WorkflowFunction,
-  WorkflowRegistration,
-} from '../core/types.ts';
+import type { Duration } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { ChaosScenario, FailureCategory } from './chaos.ts';
 import { withChaos } from './chaos.ts';
@@ -53,14 +47,6 @@ export interface RunNResult {
 }
 
 // ---------------------------------------------------------------------------
-// Internal type for captured registration entries
-// ---------------------------------------------------------------------------
-
-type CapturedRegistration =
-  | { kind: 'handler'; name: string; handler: WorkflowFunction | StepWorkflowFunction }
-  | { kind: 'registration'; name: string; registration: WorkflowRegistration };
-
-// ---------------------------------------------------------------------------
 // TestEngine
 // ---------------------------------------------------------------------------
 
@@ -68,15 +54,6 @@ export class TestEngine extends Engine {
   #timeControl: TimeControl;
   #mocks: ActivityMockRegistry;
   #memoryStorage: MemoryStorage;
-
-  /**
-   * Captured workflow registrations so `runN` can re-register them on
-   * per-run engine instances. Populated by the overridden `register` method.
-   *
-   * Agent registrations are intentionally excluded — chaos testing targets
-   * activity-level workflows, not multi-turn LLM agents.
-   */
-  #capturedRegistrations: CapturedRegistration[] = [];
 
   constructor(options?: { startTime?: number }) {
     const storage = new MemoryStorage();
@@ -90,55 +67,6 @@ export class TestEngine extends Engine {
     this.#timeControl = timeControl;
     this.#mocks = new ActivityMockRegistry();
     this.#memoryStorage = storage;
-  }
-
-  // ---------------------------------------------------------------------------
-  // register override — capture for runN re-registration
-  // ---------------------------------------------------------------------------
-
-  override register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void;
-  override register(name: string, registration: WorkflowRegistration): void;
-  override register(agentDef: AgentDefinition, options: object): void;
-  override register(
-    nameOrAgent: string | AgentDefinition,
-    handlerOrRegistrationOrOptions:
-      | WorkflowFunction
-      | StepWorkflowFunction
-      | WorkflowRegistration
-      | object,
-  ): void {
-    // Delegate to the parent implementation first.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (super.register as (...args: any[]) => void)(nameOrAgent, handlerOrRegistrationOrOptions);
-
-    // Capture non-agent registrations for runN.
-    if (typeof nameOrAgent === 'string') {
-      const name = nameOrAgent;
-      const handlerOrRegistration = handlerOrRegistrationOrOptions as
-        | WorkflowFunction
-        | StepWorkflowFunction
-        | WorkflowRegistration;
-
-      const isRegistrationObject =
-        typeof handlerOrRegistration === 'object' &&
-        handlerOrRegistration !== null &&
-        'handler' in handlerOrRegistration;
-
-      if (isRegistrationObject) {
-        this.#capturedRegistrations.push({
-          kind: 'registration',
-          name,
-          registration: handlerOrRegistration,
-        });
-      } else {
-        this.#capturedRegistrations.push({
-          kind: 'handler',
-          name,
-          handler: handlerOrRegistration,
-        });
-      }
-    }
-    // Agent definitions are not captured — runN does not replay agent workflows.
   }
 
   // ---------------------------------------------------------------------------
@@ -267,8 +195,12 @@ export class TestEngine extends Engine {
           const original = mocked.handle.currentImplementation;
           savedImplementations.set(activity, original);
 
+          // Derive a per-run seed so each run gets a different fault sequence.
+          // Using the same seed for all N runs would produce identical fault patterns,
+          // making passRate always 0.0 or 1.0 and masking real reliability variance.
+          const perRunChaos = chaos.seed !== undefined ? { ...chaos, seed: chaos.seed + i } : chaos;
           // Build a chaos-wrapped version of the variadic original.
-          const chaosWrapped = withChaos((args: unknown[]) => original(...args), chaos);
+          const chaosWrapped = withChaos((args: unknown[]) => original(...args), perRunChaos);
 
           // Replace the handle's base implementation for this run.
           mocked.handle.mockImplementation((...args: unknown[]) => chaosWrapped(args));
