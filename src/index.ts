@@ -287,7 +287,7 @@ export {
   staticFallbackRouter,
 } from './ai/model-router';
 export type { ModelRouter, ModelSelection, RoutingContext } from './ai/model-router';
-export { PromptCache } from './ai/prompt-cache';
+export { PROMPT_CACHE_HIT_METRIC, PROMPT_CACHE_MISS_METRIC, PromptCache } from './ai/prompt-cache';
 export type {
   AnnotateResult,
   AnnotatedMessage,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import type { CounterMetric } from '../observability/metrics';
 import { MetricsCollector } from '../observability/metrics';
 import { PROMPT_CACHE_HIT_METRIC, PROMPT_CACHE_MISS_METRIC, PromptCache } from './prompt-cache';
 import type { Message } from './providers/types';
@@ -116,12 +117,12 @@ describe('PromptCache', () => {
       // Cache size is within cap.
       expect(cache.size).toBeLessThanOrEqual(2);
 
-      // A known sequence that survived eviction should still hit on its second call.
-      cache.annotate([SYSTEM, TURN_1_USER]);
-      const { hit } = cache.annotate([SYSTEM, TURN_1_USER]);
-      // May or may not hit depending on which entry was evicted — the important
-      // thing is that no error is thrown and the result is boolean.
-      expect(typeof hit).toBe('boolean');
+      // The oldest entry ([SYSTEM, TURN_1_USER], sequence 1) was evicted.
+      // Re-inserting it is a miss (cold), but the second call is a hit.
+      const { hit: firstHit } = cache.annotate([SYSTEM, TURN_1_USER]);
+      expect(firstHit).toBe(false); // evicted — cold miss on re-insert
+      const { hit: secondHit } = cache.annotate([SYSTEM, TURN_1_USER]);
+      expect(secondHit).toBe(true); // now present again
     });
   });
 
@@ -166,8 +167,12 @@ describe('PromptCache', () => {
       cache.annotate(messages); // hit
 
       const snapshot = collector.snapshot();
-      expect((snapshot[PROMPT_CACHE_HIT_METRIC] as { value: number } | undefined)?.value).toBe(1);
-      expect((snapshot[PROMPT_CACHE_MISS_METRIC] as { value: number } | undefined)?.value).toBe(1);
+      const hitEntry = snapshot[PROMPT_CACHE_HIT_METRIC] as CounterMetric | undefined;
+      expect(hitEntry?.type).toBe('counter');
+      expect(hitEntry?.value).toBe(1);
+      const missEntry = snapshot[PROMPT_CACHE_MISS_METRIC] as CounterMetric | undefined;
+      expect(missEntry?.type).toBe('counter');
+      expect(missEntry?.value).toBe(1);
     });
 
     it('does not throw when no MetricsCollector is provided', () => {

@@ -316,4 +316,16 @@ export const METRICS = {
     unit: 'workflows',
     type: 'counter' as const,
   },
+  promptCacheHits: {
+    name: 'weft.prompt_cache.hits',
+    description: 'Total prompt prefix cache hits',
+    unit: 'hits',
+    type: 'counter' as const,
+  },
+  promptCacheMisses: {
+    name: 'weft.prompt_cache.misses',
+    description: 'Total prompt prefix cache misses',
+    unit: 'misses',
+    type: 'counter' as const,
+  },
 } as const;

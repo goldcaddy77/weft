@@ -88,11 +88,6 @@ interface TrieNode {
    * the cache exceeds `maxEntries`.
    */
   sequence: number;
-  /**
-   * The full hash path from the root to this node, stored so eviction can
-   * walk the trie without scanning all nodes.
-   */
-  hashPath: string[];
 }
 
 /**
@@ -142,7 +137,7 @@ export class PromptCache {
   constructor(options?: { maxEntries?: number; metrics?: MetricsCollector }) {
     this.#maxEntries = Math.max(1, options?.maxEntries ?? 1000);
     this.#metrics = options?.metrics;
-    this.#root = { children: new Map(), isTerminal: false, sequence: 0, hashPath: [] };
+    this.#root = { children: new Map(), isTerminal: false, sequence: 0 };
   }
 
   // ---------------------------------------------------------------------------
@@ -265,7 +260,6 @@ export class PromptCache {
           children: new Map(),
           isTerminal: false,
           sequence: 0,
-          hashPath: [],
         };
         node.children.set(hash, child);
       }
@@ -279,7 +273,6 @@ export class PromptCache {
     // Mark as a new terminal and record the insertion sequence.
     node.isTerminal = true;
     node.sequence = ++this.#sequence;
-    node.hashPath = [...path];
     this.#size++;
 
     // Evict the oldest terminal if we exceed the cap.
