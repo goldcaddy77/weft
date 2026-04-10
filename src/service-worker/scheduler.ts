@@ -189,7 +189,6 @@ export class ServiceWorkerScheduler implements Disposable {
 
     this.#timeoutHandle = setTimeout(() => {
       void this.tick()
-        /* c8 ignore next 3 -- polling error logging requires injected timer-loop failures */
         .catch((error: unknown) => {
           console.error('[weft] ServiceWorkerScheduler tick failed:', error);
         })

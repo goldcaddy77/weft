@@ -792,6 +792,7 @@ describe('executeValidate', () => {
   });
 
   it('returns exitCode 0 and stdout with no-issues message for a clean module', async () => {
+    const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
     const entryPath = join(tmpdir(), `weft-validate-clean-${crypto.randomUUID()}.ts`);
     try {
       await Bun.write(
@@ -807,12 +808,16 @@ describe('executeValidate', () => {
       const result = await executeValidate({ entryPath, json: false });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('No issues found.');
+      const loaded = await loadRegistrationsFromModule(entryPath);
+      const iterator = loaded.registrations['myWorkflow']!.handler({} as never, undefined);
+      await expect(iterator.next()).resolves.toEqual({ value: 'done', done: true });
     } finally {
       rmSync(entryPath, { force: true });
     }
   });
 
   it('returns exitCode 1 when an activity has unbounded retry', async () => {
+    const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
     const entryPath = join(tmpdir(), `weft-validate-error-${crypto.randomUUID()}.ts`);
     try {
       await Bun.write(
@@ -831,12 +836,15 @@ describe('executeValidate', () => {
       const result = await executeValidate({ entryPath, json: false });
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toContain('unbounded-retry');
+      const loaded = await loadRegistrationsFromModule(entryPath);
+      await expect(loaded.activities[0]!.execute('payload')).resolves.toBe('payload');
     } finally {
       rmSync(entryPath, { force: true });
     }
   });
 
   it('returns valid JSON when json: true', async () => {
+    const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
     const entryPath = join(tmpdir(), `weft-validate-json-${crypto.randomUUID()}.ts`);
     try {
       await Bun.write(
@@ -853,6 +861,9 @@ describe('executeValidate', () => {
       expect(result.exitCode).toBe(0);
       const parsed = JSON.parse(result.stdout);
       expect(parsed).toMatchObject({ valid: true, issues: [], workflowCount: expect.any(Number) });
+      const loaded = await loadRegistrationsFromModule(entryPath);
+      const iterator = loaded.registrations['myWorkflow']!.handler({} as never, undefined);
+      await expect(iterator.next()).resolves.toEqual({ value: 'done', done: true });
     } finally {
       rmSync(entryPath, { force: true });
     }
@@ -876,6 +887,8 @@ describe('loadRegistrationsFromModule', () => {
       const result = await loadRegistrationsFromModule(entryPath);
       expect('myWorkflow' in result.registrations).toBe(true);
       expect(result.activities).toHaveLength(0);
+      const iterator = result.registrations['myWorkflow']!.handler({} as never, undefined);
+      await expect(iterator.next()).resolves.toEqual({ value: 'done', done: true });
     } finally {
       rmSync(entryPath, { force: true });
     }
@@ -898,6 +911,7 @@ describe('loadRegistrationsFromModule', () => {
       const result = await loadRegistrationsFromModule(entryPath);
       expect(result.activities).toHaveLength(1);
       expect(result.activities[0]!.name).toBe('sendEmail');
+      await expect(result.activities[0]!.execute('payload')).resolves.toBe('payload');
     } finally {
       rmSync(entryPath, { force: true });
     }

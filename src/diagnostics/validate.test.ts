@@ -182,6 +182,13 @@ describe('validateRegistrations', () => {
     expect(report.workflowCount).toBe(0);
     expect(report.issues).toHaveLength(0);
   });
+
+  it('labels explicitly passed activities as standalone when no registrations are present', () => {
+    const report = validateRegistrations({}, [makeActivity('sendEmail', { idempotent: false })]);
+
+    expect(report.valid).toBe(false);
+    expect(report.issues[0]?.workflowType).toBe('(standalone)');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -243,6 +250,7 @@ export const sendEmail = fn;
 
     const { activities } = await loadRegistrationsFromModule(filePath);
     expect(activities.some((a) => a.name === 'sendEmail')).toBe(true);
+    await expect(activities[0]!.execute('payload')).resolves.toEqual({ sent: true });
   });
 
   it('resolves relative paths against process.cwd(), not the source file', async () => {
@@ -261,5 +269,55 @@ export const greet = {
 
     const { registrations } = await loadRegistrationsFromModule(filePath);
     expect('greet' in registrations).toBe(true);
+    const iterator = registrations['greet']!.handler({} as never, undefined);
+    await expect(iterator.next()).resolves.toEqual({ value: 'hi', done: true });
+  });
+
+  it('loads registrations and activities from a default export object', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'weft-validate-'));
+    const filePath = join(dir, 'default-exports.ts');
+    await writeFile(
+      filePath,
+      `
+const registration = {
+  handler: async function* () { return 'hi'; }
+};
+
+const activity = Object.create(Function.prototype, {
+  name: { value: 'sendEmail', writable: false, configurable: true },
+  execute: { value: async () => ({ sent: true }), writable: true, configurable: true },
+});
+
+export default {
+  greet: registration,
+  sendEmail: activity,
+};
+`,
+    );
+
+    const result = await loadRegistrationsFromModule(filePath);
+    expect(result.registrations['greet']).toBeDefined();
+    expect(result.activities.some((activity) => activity.name === 'sendEmail')).toBe(true);
+    const iterator = result.registrations['greet']!.handler({} as never, undefined);
+    await expect(iterator.next()).resolves.toEqual({ value: 'hi', done: true });
+    await expect(result.activities[0]!.execute('payload')).resolves.toEqual({ sent: true });
+  });
+
+  it('ignores primitive exports that are neither registrations nor activity definitions', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'weft-validate-'));
+    const filePath = join(dir, 'mixed-exports.ts');
+    await writeFile(
+      filePath,
+      `
+export const greeting = 'hello';
+export default {
+  count: 3,
+};
+`,
+    );
+
+    const result = await loadRegistrationsFromModule(filePath);
+    expect(result.registrations).toEqual({});
+    expect(result.activities).toEqual([]);
   });
 });
