@@ -108,6 +108,26 @@ export interface Checkpoint {
 }
 
 // ---------------------------------------------------------------------------
+// Checkpoint history: time-travel debugging
+// ---------------------------------------------------------------------------
+
+/** Summary metadata for a single checkpoint history entry. */
+export type CheckpointSummary = {
+  step: number;
+  timestamp: number;
+  sizeBytes: number;
+};
+
+/** Full deserialized state at a specific checkpoint step. */
+export type CheckpointState = {
+  step: number;
+  locals: Record<string, unknown>;
+  searchAttributes: Record<string, SearchAttributeValue>;
+  version: string;
+  createdAt: number;
+};
+
+// ---------------------------------------------------------------------------
 // Retry policy for activities
 // ---------------------------------------------------------------------------
 

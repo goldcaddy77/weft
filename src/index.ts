@@ -58,6 +58,8 @@ export type {
   ActivityDefinition,
   ActivityFunction,
   Checkpoint,
+  CheckpointState,
+  CheckpointSummary,
   CoordinatedUpdateResult,
   Duration,
   EngineOptions,
