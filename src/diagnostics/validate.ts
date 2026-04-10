@@ -54,29 +54,6 @@ export interface ValidationReport {
 }
 
 // ---------------------------------------------------------------------------
-// Activity extraction
-// ---------------------------------------------------------------------------
-
-/**
- * Heuristically extract `ActivityDefinition` references from a workflow
- * handler function. The engine's `ctx.run(activity, input)` pattern means
- * activities are captured as closures by the workflow — we cannot extract
- * them from the registration object alone at static-analysis time.
- *
- * For the validate command we instead require activity definitions to be
- * passed alongside registrations via the module's named exports. This function
- * is a no-op placeholder — the caller should collect activity definitions
- * separately and pass them in.
- */
-function extractActivities(registration: WorkflowRegistration): ActivityDefinition[] {
-  // Activities are not directly reachable from WorkflowRegistration —
-  // they live in closures inside the handler. Return empty; callers that
-  // want activity-level checks must pass activities explicitly.
-  void registration;
-  return [];
-}
-
-// ---------------------------------------------------------------------------
 // Check: unbounded retry policy
 // ---------------------------------------------------------------------------
 
@@ -146,19 +123,6 @@ export function validateRegistrations(
   const issues: ValidationIssue[] = [];
   const workflowTypes = Object.keys(registrations);
 
-  // extractActivities always returns [] — activities inside workflow handlers
-  // are closures and cannot be extracted statically. This loop is kept for
-  // future extensibility but currently produces no issues.
-  for (const [type, registration] of Object.entries(registrations)) {
-    for (const activity of extractActivities(registration)) {
-      const retryIssue = checkUnboundedRetry(type, activity);
-      if (retryIssue) issues.push(retryIssue);
-
-      const compensatorIssue = checkStatefulWithoutCompensator(type, activity);
-      if (compensatorIssue) issues.push(compensatorIssue);
-    }
-  }
-
   // Check explicitly-passed activities. Activities are not tied to a specific
   // workflow registration (they live in closures), so they are labelled
   // '(standalone)' when no registration context is available.
@@ -221,10 +185,6 @@ export async function loadRegistrationsFromModule(modulePath: string): Promise<{
   }
 
   // Also scan named exports for registrations and activities.
-  // Guard against modules that don't export a plain object (e.g. export default 42).
-  if (typeof mod !== 'object' || mod === null) {
-    return { registrations, activities };
-  }
   for (const [key, value] of Object.entries(mod as Record<string, unknown>)) {
     if (key === 'default') continue;
     if (isWorkflowRegistration(value) && !(key in registrations)) {
