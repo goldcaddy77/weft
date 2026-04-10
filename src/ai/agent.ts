@@ -113,13 +113,23 @@ export interface AgentOptions {
    * before each tool execution and short-circuits on committed matches.
    */
   toolEffectLog?: ToolEffectLog | undefined;
+  /**
+   * Internal hook used by speculative execution to defer tool-result
+   * verification until the enclosing speculative branch drains.
+   */
+  verificationRecorder?: VerificationRecorder | undefined;
 }
 
 export interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
+  verify?: (result: unknown) => Promise<boolean> | boolean;
   /** See {@link AgentToolDefinition.identity}. */
   identity?: (input: unknown) => ToolIdentityResult;
+}
+
+export interface VerificationRecorder {
+  recordVerification(verification: Promise<void>): void;
 }
 
 export interface TurnInfo {
@@ -201,6 +211,7 @@ interface ResolvedAgentOptions {
   onToolReturned?: ((result: ToolReturnInfo) => void) | undefined;
   checkpointSizeWarningThreshold: number;
   toolEffectLog?: ToolEffectLog | undefined;
+  verificationRecorder?: VerificationRecorder | undefined;
 }
 
 interface AgentLoopState {
@@ -345,7 +356,7 @@ export async function initializeTools(
           return client.invokeTool(toolName, input, signal);
         });
       } else {
-        registry.registerLocal(entry.definition, entry.execute, entry.identity);
+        registry.registerLocal(entry.definition, entry.execute, entry.identity, entry.verify);
       }
     }
 
@@ -394,6 +405,7 @@ function resolveAgentOptions(options: AgentOptions): ResolvedAgentOptions {
     onToolReturned: options.onToolReturned,
     checkpointSizeWarningThreshold: options.checkpointSizeWarningThreshold ?? 65_536,
     toolEffectLog: options.toolEffectLog,
+    verificationRecorder: options.verificationRecorder,
   };
 }
 
@@ -942,6 +954,20 @@ async function resolveToolExecutionInner(
   } else {
     try {
       const rawOutput = await tool.execute(toolCall.input);
+      if (tool.verify) {
+        const verification = (async () => {
+          const verified = await tool.verify?.(rawOutput);
+          if (!verified) {
+            throw new Error(`Verification failed for tool "${toolCall.name}"`);
+          }
+        })();
+
+        if (runtime.options.verificationRecorder) {
+          runtime.options.verificationRecorder.recordVerification(verification);
+        } else {
+          await verification;
+        }
+      }
       output = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
       setToolCacheEntry(
         runtime.state.toolCache,

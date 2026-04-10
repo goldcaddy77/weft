@@ -2426,4 +2426,38 @@ describe('executeAgentLoop', () => {
 
     expect(executeCount).toBe(3);
   });
+
+  it('marks a tool result as error when the verify hook rejects the output', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'a' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => ({ value: 'unsafe-result' }),
+      verify: async () => false,
+    };
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+      },
+      'Lookup a key',
+    );
+
+    const toolMessage = result.conversation.find((message) => message.role === 'tool');
+    expect(toolMessage).toBeDefined();
+    expect(toolMessage!.toolResults).toHaveLength(1);
+    expect(toolMessage!.toolResults?.[0]?.isError).toBe(true);
+    expect(JSON.parse(toolMessage!.toolResults?.[0]?.output ?? '{}')).toEqual({
+      error: 'Verification failed for tool "lookup"',
+    });
+  });
 });

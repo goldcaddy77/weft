@@ -156,9 +156,9 @@ export type {
 } from './core/constraint';
 
 // Activity
-export { activity } from './core/activity';
 export { ActivityRegistry } from './core/activity-registry';
 export type { ActivityMetadata, ActivityRegistrationOptions } from './core/activity-registry';
+export { activity } from './core/types';
 
 // Context
 export { Context } from './core/context';

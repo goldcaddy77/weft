@@ -3984,6 +3984,120 @@ describe('Engine', () => {
   });
 });
 
+describe('Engine speculative execution', () => {
+  it('commits speculative branch state only after verification succeeds', async () => {
+    const engine = new Engine();
+    const events: string[] = [];
+
+    const verified = activity({
+      name: 'verified-activity',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      verify: async (result: string) => {
+        await Bun.sleep(10);
+        events.push(`verify:${result}`);
+        return true;
+      },
+    });
+
+    engine.register('speculate-success', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.setAttribute('phase', 'root');
+
+      const result = yield* context.speculate(async function* (branch) {
+        branch.setAttribute('phase', 'speculated');
+        return yield* branch.run(verified, 'ok');
+      });
+
+      events.push(`after:${String(context.getAttribute('phase'))}`);
+      return { result, phase: context.getAttribute('phase') };
+    });
+
+    const handle = await engine.start('speculate-success', null);
+    const result = (await handle.result()) as { result: string; phase: string };
+
+    expect(result).toEqual({ result: 'result:ok', phase: 'speculated' });
+    expect(events).toEqual(['execute:ok', 'verify:result:ok', 'after:speculated']);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('discards speculative state and compensates completed activities when verification fails', async () => {
+    const engine = new Engine();
+    const events: string[] = [];
+
+    const first = activity({
+      name: 'first-activity',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      verify: async (result: string) => {
+        await Bun.sleep(20);
+        events.push(`verify:${result}`);
+        return false;
+      },
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:${String(input)}:${output}`);
+      },
+    });
+
+    const second = activity({
+      name: 'second-activity',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:${String(input)}:${output}`);
+      },
+    });
+
+    engine.register('speculate-rollback', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.setAttribute('phase', 'root');
+
+      try {
+        yield* context.speculate(async function* (branch) {
+          branch.setAttribute('phase', 'speculated');
+          yield* branch.run(first, 'first');
+          yield* branch.run(second, 'second');
+          return 'unreachable';
+        });
+        return { phase: context.getAttribute('phase'), error: null };
+      } catch (error) {
+        events.push(`caught:${String(context.getAttribute('phase'))}`);
+        return {
+          phase: context.getAttribute('phase'),
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+
+    const handle = await engine.start('speculate-rollback', null);
+    const result = (await handle.result()) as { phase: string; error: string };
+
+    expect(result.phase).toBe('root');
+    expect(result.error).toContain('Verification failed for activity "first-activity"');
+    expect(events.indexOf('execute:second')).toBeLessThan(events.indexOf('verify:result:first'));
+    expect(events).toEqual([
+      'execute:first',
+      'execute:second',
+      'verify:result:first',
+      'compensate:second:result:second',
+      'compensate:first:result:first',
+      'caught:root',
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Engine: tenant-isolation safety guards
 // ---------------------------------------------------------------------------
