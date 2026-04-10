@@ -4096,6 +4096,117 @@ describe('Engine speculative execution', () => {
 
     engine[Symbol.dispose]();
   });
+
+  it('rolls back speculative runAll activity branches when verification fails', async () => {
+    const engine = new Engine();
+    const events: string[] = [];
+
+    const first = activity({
+      name: 'run-all-first',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      verify: async (result: string) => {
+        await Bun.sleep(10);
+        events.push(`verify:${result}`);
+        return false;
+      },
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:${String(input)}:${output}`);
+      },
+    });
+
+    const second = activity({
+      name: 'run-all-second',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        await Bun.sleep(5);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:${String(input)}:${output}`);
+      },
+    });
+
+    engine.register('speculate-run-all-rollback', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.setAttribute('phase', 'root');
+
+      try {
+        yield* context.speculate(async function* (branch) {
+          branch.setAttribute('phase', 'speculated');
+          return yield* branch.runAll({
+            first: [first, 'first'],
+            second: [second, 'second'],
+          });
+        });
+        return { phase: context.getAttribute('phase'), error: null };
+      } catch (error) {
+        return {
+          phase: context.getAttribute('phase'),
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+
+    const handle = await engine.start('speculate-run-all-rollback', null);
+    const result = (await handle.result()) as { phase: string; error: string };
+
+    expect(result.phase).toBe('root');
+    expect(result.error).toContain('Verification failed for activity "run-all-first"');
+    expect(events).toEqual([
+      'execute:first',
+      'execute:second',
+      'verify:result:first',
+      'compensate:second:result:second',
+      'compensate:first:result:first',
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('treats undefined verification rejections as speculative failures', async () => {
+    const engine = new Engine();
+
+    const verified = activity({
+      name: 'rejects-undefined',
+      execute: async (input: unknown) => `result:${String(input)}`,
+      verify: async () => {
+        throw undefined;
+      },
+    });
+
+    engine.register(
+      'speculate-undefined-verification-rejection',
+      async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        context.setAttribute('phase', 'root');
+
+        try {
+          yield* context.speculate(async function* (branch) {
+            branch.setAttribute('phase', 'speculated');
+            return yield* branch.run(verified, 'ok');
+          });
+          return { phase: context.getAttribute('phase'), error: null };
+        } catch (error) {
+          return {
+            phase: context.getAttribute('phase'),
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    );
+
+    const handle = await engine.start('speculate-undefined-verification-rejection', null);
+    const result = (await handle.result()) as { phase: string; error: string };
+
+    expect(result).toEqual({ phase: 'root', error: 'undefined' });
+
+    engine[Symbol.dispose]();
+  });
 });
 
 // ---------------------------------------------------------------------------
