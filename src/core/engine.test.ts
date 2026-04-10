@@ -3792,6 +3792,78 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
+    it('ctx.race propagates parent aborts into nested races', async () => {
+      const engine = new Engine();
+
+      let capturedSignal: AbortSignal | undefined;
+      const { promise: nestedRaceStarted, resolve: resolveNestedRaceStarted } =
+        Promise.withResolvers<void>();
+      const { promise: outerRaceResolved, resolve: resolveOuterRaceResolved } =
+        Promise.withResolvers<void>();
+
+      const provider: LLMProvider = {
+        name: 'nested-abort-aware',
+        async chat(_messages, options): Promise<ChatResponse> {
+          capturedSignal = options.signal;
+          resolveNestedRaceStarted();
+
+          return await new Promise<ChatResponse>((_resolve, reject) => {
+            options.signal?.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+              },
+              { once: true },
+            );
+          });
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 1;
+        },
+      };
+
+      const outerWinner = async () => {
+        await nestedRaceStarted;
+        return 'outer-winner';
+      };
+
+      const nestedSlowActivity = async () => {
+        await Bun.sleep(100);
+        return 'nested-slow';
+      };
+
+      engine.register('nested-race-abort-workflow', async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        const result = yield* c.race([
+          c.run(outerWinner),
+          c.race([
+            c.agent({
+              model: 'test-model',
+              prompt: 'slow nested branch',
+              provider,
+            }),
+            c.run(nestedSlowActivity),
+          ]),
+        ]);
+        resolveOuterRaceResolved();
+        return result;
+      });
+
+      const handle = await engine.start('nested-race-abort-workflow', null);
+
+      await outerRaceResolved;
+
+      expect(capturedSignal).toBeDefined();
+      expect(capturedSignal!.aborted).toBe(true);
+
+      const result = await handle.result();
+      expect(result).toBe('outer-winner');
+      engine[Symbol.dispose]();
+    });
+
     it('records org budget for agents inside ctx.all() sub-operations', async () => {
       const engine = new Engine();
       await engine.setBudgetPolicy({

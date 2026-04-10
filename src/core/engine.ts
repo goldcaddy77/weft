@@ -4222,6 +4222,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'race': {
         signal?.throwIfAborted();
         const controller = new AbortController();
+        const abortNestedRace = () => {
+          controller.abort(signal?.reason);
+        };
+        signal?.addEventListener('abort', abortNestedRace, { once: true });
         const subOperations = operation.operations.map((subOperation) =>
           this.#executeSubOperation(workflowId, subOperation, controller.signal, speculativeState),
         );
@@ -4231,6 +4235,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         try {
           return await Promise.race(subOperations);
         } finally {
+          signal?.removeEventListener('abort', abortNestedRace);
           controller.abort();
         }
       }
@@ -4315,6 +4320,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return executeRunAllBranches(
       operation.branches as Parameters<typeof executeRunAllBranches>[0],
       (fn, args) => {
+        // Only speculative runAll activity branches need the full execution
+        // pipeline so verification and compensation tracking are preserved.
         if (!speculativeState || !this.#isConfiguredInlineActivity(fn)) {
           return callActivityFunction(fn, args);
         }
