@@ -126,12 +126,11 @@ export function validateRegistrations(
   // Check explicitly-passed activities. Activities are not tied to a specific
   // workflow registration (they live in closures), so they are labelled
   // '(standalone)' when no registration context is available.
-  const defaultType = workflowTypes[0] ?? '(standalone)';
   for (const activity of activities) {
-    const retryIssue = checkUnboundedRetry(defaultType, activity);
+    const retryIssue = checkUnboundedRetry('(standalone)', activity);
     if (retryIssue) issues.push(retryIssue);
 
-    const compensatorIssue = checkStatefulWithoutCompensator(defaultType, activity);
+    const compensatorIssue = checkStatefulWithoutCompensator('(standalone)', activity);
     if (compensatorIssue) issues.push(compensatorIssue);
   }
 
