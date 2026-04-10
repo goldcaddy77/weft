@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
+import { BudgetTracker } from '../ai/budget.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import {
   Context,
@@ -1281,6 +1282,23 @@ describe('Context', () => {
       expect(state!.tokensUsed).toBe(0);
       expect(state!.tokensRemaining).toBe(10000);
       expect(state!.costRemaining).toBe(5.0);
+    });
+
+    it('clones the budget tracker into speculative children', () => {
+      const context = createContext();
+      context.setBudget({
+        maxTokens: 10000,
+        maxCost: 5.0,
+        models: {
+          'gpt-4': { inputCostPer1K: 0.03, outputCostPer1K: 0.06 },
+        },
+      });
+
+      const cloneSpy = spyOn(BudgetTracker.prototype, 'clone');
+      context.createSpeculativeChild();
+
+      expect(cloneSpy).toHaveBeenCalledTimes(1);
+      mock.restore();
     });
   });
 

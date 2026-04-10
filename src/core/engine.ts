@@ -213,7 +213,7 @@ type WorkflowHandleIteratorState = {
 };
 
 class SpeculativeExecutionState implements VerificationRecorder {
-  readonly #verifications: Array<Promise<unknown>>;
+  readonly #verifications: Array<Promise<{ failed: false } | { failed: true; error: unknown }>>;
   readonly #compensations: Array<() => Promise<void>>;
 
   constructor() {
@@ -224,8 +224,8 @@ class SpeculativeExecutionState implements VerificationRecorder {
   recordVerification(verification: Promise<void>): void {
     this.#verifications.push(
       verification.then(
-        () => undefined,
-        (error) => error,
+        () => ({ failed: false as const }),
+        (error) => ({ failed: true as const, error }),
       ),
     );
   }
@@ -236,9 +236,9 @@ class SpeculativeExecutionState implements VerificationRecorder {
 
   async drainVerifications(): Promise<void> {
     const outcomes = await Promise.all(this.#verifications);
-    const failure = outcomes.find((outcome) => outcome !== undefined);
-    if (failure !== undefined) {
-      throw failure;
+    const failure = outcomes.find((outcome) => outcome.failed);
+    if (failure) {
+      throw failure.error;
     }
   }
 
@@ -3678,11 +3678,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     operation: Extract<ContextOperationRequest, { type: 'run-all' }>,
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, () =>
-      executeRunAllBranches(
-        // `ctx.runAll()` stores raw Function references on the request by construction.
-        operation.branches as Parameters<typeof executeRunAllBranches>[0],
-        callActivityFunction as Parameters<typeof executeRunAllBranches>[1],
-      ),
+      this.#executeRunAllOperationResult(workflowId, operation),
     );
   }
 
@@ -4226,6 +4222,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'race': {
         signal?.throwIfAborted();
         const controller = new AbortController();
+        const abortNestedRace = () => {
+          controller.abort(signal?.reason);
+        };
+        signal?.addEventListener('abort', abortNestedRace, { once: true });
         const subOperations = operation.operations.map((subOperation) =>
           this.#executeSubOperation(workflowId, subOperation, controller.signal, speculativeState),
         );
@@ -4235,15 +4235,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         try {
           return await Promise.race(subOperations);
         } finally {
+          signal?.removeEventListener('abort', abortNestedRace);
           controller.abort();
         }
       }
       case 'run-all':
         signal?.throwIfAborted();
-        return executeRunAllBranches(
-          operation.branches as Parameters<typeof executeRunAllBranches>[0],
-          callActivityFunction as Parameters<typeof executeRunAllBranches>[1],
-        );
+        return this.#executeRunAllOperationResult(workflowId, operation, speculativeState);
       case 'agent': {
         if (speculativeState) {
           throw new Error('ctx.speculate() does not yet support ctx.agent()');
@@ -4305,6 +4303,42 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);
     }
+  }
+
+  #isConfiguredInlineActivity(
+    fn: Function,
+  ): fn is Extract<ContextOperationRequest, { type: 'activity' }>['fn'] &
+    ActivityFunctionWithMetadata {
+    return typeof (fn as { execute?: unknown }).execute === 'function';
+  }
+
+  async #executeRunAllOperationResult(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'run-all' }>,
+    speculativeState?: SpeculativeExecutionState,
+  ): Promise<Record<string, unknown>> {
+    return executeRunAllBranches(
+      operation.branches as Parameters<typeof executeRunAllBranches>[0],
+      (fn, args) => {
+        // Only speculative runAll activity branches need the full execution
+        // pipeline so verification and compensation tracking are preserved.
+        if (!speculativeState || !this.#isConfiguredInlineActivity(fn)) {
+          return callActivityFunction(fn, args);
+        }
+
+        return this.#executeActivityOperationResult(
+          workflowId,
+          {
+            type: 'activity',
+            operationId: crypto.randomUUID(),
+            activityName: fn.name,
+            fn,
+            args,
+          },
+          speculativeState,
+        );
+      },
+    );
   }
 
   async #handleTimerFired(entry: { id: string; workflowId: string; kind: string }): Promise<void> {
