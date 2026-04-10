@@ -908,6 +908,76 @@ describe('supervise: dynamic n and confidence-weighted voting', () => {
     expect(nanResult.finalResult).toBe('worker answer');
     expect(callCount).toBe(2);
   });
+
+  it('round-robin replicates workers when n exceeds the worker count', async () => {
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(): Promise<ChatResponse> {
+        callCount++;
+        return createChatResponse(`same-${callCount <= 5 ? 'answer' : 'supervisor'}`);
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const result = await supervise({
+      workers: [createAgentDefinition({ name: 'w1' }), createAgentDefinition({ name: 'w2' })],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: 5,
+      provider,
+    });
+
+    expect(result.workerResults).toHaveLength(5);
+    expect(result.finalResult).toBe('same-answer');
+    expect(callCount).toBe(5);
+  });
+
+  it('replicates workers in round-robin order when n resolves above the worker count', async () => {
+    const seenSystemPrompts: string[] = [];
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(messages): Promise<ChatResponse> {
+        const systemPrompt = messages.find((message) => message.role === 'system')?.content;
+        if (systemPrompt) {
+          seenSystemPrompts.push(systemPrompt);
+        }
+        return createChatResponse('same-answer');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    await supervise({
+      workers: [
+        createAgentDefinition({ name: 'w1', systemPrompt: 'worker-one' }),
+        createAgentDefinition({ name: 'w2', systemPrompt: 'worker-two' }),
+      ],
+      supervisor: createAgentDefinition({ name: 'supervisor', systemPrompt: 'supervisor' }),
+      input: 'Go',
+      strategy: 'consensus',
+      n: () => 5,
+      provider,
+    });
+
+    expect(seenSystemPrompts).toEqual([
+      'worker-one',
+      'worker-two',
+      'worker-one',
+      'worker-two',
+      'worker-one',
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

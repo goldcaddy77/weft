@@ -48,7 +48,7 @@ import {
   sweepExpiredCacheEntries,
   TOOL_CACHE_SWEEP_THRESHOLD,
 } from './tool-cache';
-import type { ToolEffectLog } from './tool-effect-log';
+import type { ToolEffectLogLike } from './tool-effect-log';
 import { computeSemanticHash, ToolCallReplayConflictError } from './tool-effect-log';
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ export interface AgentOptions {
    * checkpoint-restore cycles. When provided, the agent loop consults the log
    * before each tool execution and short-circuits on committed matches.
    */
-  toolEffectLog?: ToolEffectLog | undefined;
+  toolEffectLog?: ToolEffectLogLike | undefined;
   /**
    * Internal hook used by speculative execution to defer tool-result
    * verification until the enclosing speculative branch drains.
@@ -210,7 +210,7 @@ interface ResolvedAgentOptions {
   onToolCalled?: ((call: ToolCallInfo) => void) | undefined;
   onToolReturned?: ((result: ToolReturnInfo) => void) | undefined;
   checkpointSizeWarningThreshold: number;
-  toolEffectLog?: ToolEffectLog | undefined;
+  toolEffectLog?: ToolEffectLogLike | undefined;
   verificationRecorder?: VerificationRecorder | undefined;
 }
 

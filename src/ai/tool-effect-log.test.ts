@@ -526,6 +526,54 @@ describe('effect log: cross-tool hash collision guard', () => {
 // ---------------------------------------------------------------------------
 
 describe('effect log: dangling in-flight guard', () => {
+  it('throws ToolCallReplayConflictError when the same tool sees a lingering in-flight record', async () => {
+    const storage = new MemoryStorage();
+    const effectLog = new ToolEffectLog(storage, 'wf-conflict', 'agent-conflict');
+    const provider = createSingleToolProvider('charge', { amount: 50 });
+    const hash = computeSemanticHash({ name: 'charge', input: { amount: 50 } });
+
+    await effectLog.record(hash, 'charge');
+
+    await expect(
+      executeAgentLoop(
+        {
+          model: 'test-model',
+          provider,
+          tools: [createSimpleTool('charge')],
+          toolEffectLog: effectLog,
+        },
+        'Go',
+      ),
+    ).rejects.toThrow(ToolCallReplayConflictError);
+  });
+
+  it('aborts the effect-log record when a tool returns an execution failure', async () => {
+    const storage = new MemoryStorage();
+    const effectLog = new ToolEffectLog(storage, 'wf-fail', 'agent-fail');
+    const provider = createSingleToolProvider('boom', {});
+    const hash = computeSemanticHash({ name: 'boom', input: {} });
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [
+          {
+            definition: { name: 'boom', description: 'boom', inputSchema: { type: 'object' } },
+            execute: async () => {
+              throw new Error('boom');
+            },
+          },
+        ],
+        toolEffectLog: effectLog,
+      },
+      'Go',
+    );
+
+    const entry = await effectLog.lookup(hash);
+    expect(entry?.status).toBe('aborted');
+  });
+
   it('aborts the in-flight record when resolveToolExecutionInner throws', async () => {
     const storage = new MemoryStorage();
     const effectLog = new ToolEffectLog(storage, 'wf-throw', 'agent-throw');
