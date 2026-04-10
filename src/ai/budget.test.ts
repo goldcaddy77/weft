@@ -328,6 +328,27 @@ describe('BudgetTracker', () => {
     });
   });
 
+  describe('clone', () => {
+    it('preserves projections and isolates later mutations', () => {
+      const tracker = new BudgetTracker(createOptions({ maxTokens: undefined, maxCost: 10 }));
+      tracker.recordUsage('gpt-4', 1000, 500);
+      tracker.recordUsage('gpt-4', 500, 250);
+
+      const originalProjection = tracker.budgetProjection();
+      const clone = tracker.clone();
+
+      expect(clone.budgetRemaining()).toEqual(tracker.budgetRemaining());
+      expect(clone.budgetProjection()).toEqual(originalProjection);
+
+      clone.recordUsage('gpt-3.5', 2000, 1000);
+
+      expect(tracker.budgetRemaining().tokensUsed).toBe(2250);
+      expect(clone.budgetRemaining().tokensUsed).toBe(5250);
+      expect(tracker.budgetRemaining().breakdown).toHaveLength(1);
+      expect(clone.budgetRemaining().breakdown).toHaveLength(2);
+    });
+  });
+
   describe('checkBudget passes when budget available', () => {
     it('does not throw when under budget', () => {
       const tracker = new BudgetTracker(createOptions());

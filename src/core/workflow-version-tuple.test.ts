@@ -111,11 +111,30 @@ describe('formatWorkflowVersionDiff', () => {
     expect(output).toContain('workflow version: 1.0.0 → 2.0.0');
   });
 
+  it('formats agent version change', () => {
+    const output = formatWorkflowVersionDiff({ agentVersion: ['1.0.0', '2.0.0'] });
+    expect(output).toContain('agent version: 1.0.0 → 2.0.0');
+  });
+
   it('formats tool added', () => {
     const output = formatWorkflowVersionDiff({
       toolVersions: [{ tool: 'new-tool', change: 'added', to: '1.0.0' }],
     });
     expect(output).toContain('new-tool');
     expect(output).toContain('added');
+  });
+
+  it('formats removed and changed tools', () => {
+    const output = formatWorkflowVersionDiff({
+      toolVersions: [
+        { tool: 'legacy-tool', change: 'removed', from: '1.0.0' },
+        { tool: 'active-tool', change: 'changed', from: '1.0.0', to: '2.0.0' },
+      ],
+    });
+
+    expect(output).toContain('legacy-tool');
+    expect(output).toContain('removed (was: 1.0.0)');
+    expect(output).toContain('active-tool');
+    expect(output).toContain('version: 1.0.0 → 2.0.0');
   });
 });

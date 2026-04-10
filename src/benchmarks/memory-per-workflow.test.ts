@@ -22,14 +22,21 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
  * Measured 2026-04-07: ~6.8KB isolated, 7.7-9.3KB under full-suite
  * (cross-test heap pollution from the other benchmark files inflates the
  * delta by ~1-2KB). As the test suite grows, cross-test heap pressure grows
- * proportionally. Threshold is set to 14KB (measured ceiling ~13.2KB under
- * full suite after Track 4 additions + 0.8KB headroom). Isolated runs
- * consistently measure ~8-9KB.
+ * proportionally. Coverage-instrumented full-suite runs on 2026-04-10 measured
+ * ~18.5KB per workflow despite isolated runs remaining ~6-10KB, so the test
+ * keeps its primary regression guardrail tied to non-coverage execution and
+ * only uses a wider allowance when V8 coverage instrumentation is active.
  * Previous threshold: 11264 (set after Track 2 test files in PRs #84–#86;
  * Track 4 workflow version metadata fields on WorkflowState raised the full-suite ceiling).
  */
 
-const TARGET_BYTES_PER_WORKFLOW = 14_336;
+const BASELINE_TARGET_BYTES_PER_WORKFLOW = 14_336;
+const COVERAGE_TARGET_BYTES_PER_WORKFLOW = 20_480;
+
+function isCoverageInstrumentationEnabled(): boolean {
+  const coverageDirectory = Bun.env['NODE_V8_COVERAGE'];
+  return typeof coverageDirectory === 'string' && coverageDirectory.length > 0;
+}
 
 describe('Memory per workflow', () => {
   let storage: BunSQLiteStorage;
@@ -40,7 +47,15 @@ describe('Memory per workflow', () => {
     storage[Symbol.dispose]();
   });
 
-  it(`idle workflow memory ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB per workflow`, async () => {
+  it(`idle workflow memory ≤${(
+    (isCoverageInstrumentationEnabled()
+      ? COVERAGE_TARGET_BYTES_PER_WORKFLOW
+      : BASELINE_TARGET_BYTES_PER_WORKFLOW) / 1024
+  ).toFixed(0)}KB per workflow`, async () => {
+    const targetBytesPerWorkflow = isCoverageInstrumentationEnabled()
+      ? COVERAGE_TARGET_BYTES_PER_WORKFLOW
+      : BASELINE_TARGET_BYTES_PER_WORKFLOW;
+
     // Force GC upfront to reduce noise from unrelated allocations.
     if (typeof Bun.gc === 'function') Bun.gc(true);
     await Bun.sleep(10);
@@ -91,10 +106,11 @@ describe('Memory per workflow', () => {
         `    Heap after:      ${(heapAfter / 1024 / 1024).toFixed(1)}MB`,
         `    Heap growth:     ${(heapGrowth / 1024 / 1024).toFixed(2)}MB`,
         `    Per workflow:    ${bytesPerWorkflow.toLocaleString()} bytes (${(bytesPerWorkflow / 1024).toFixed(2)}KB)`,
-        `    Target:          ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB\n`,
+        `    Target:          ≤${(targetBytesPerWorkflow / 1024).toFixed(0)}KB`,
+        `    Coverage mode:   ${isCoverageInstrumentationEnabled() ? 'yes' : 'no'}\n`,
       ].join('\n'),
     );
 
-    expect(bytesPerWorkflow).toBeLessThanOrEqual(TARGET_BYTES_PER_WORKFLOW);
+    expect(bytesPerWorkflow).toBeLessThanOrEqual(targetBytesPerWorkflow);
   }, 120_000);
 });

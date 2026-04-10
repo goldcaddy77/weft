@@ -223,6 +223,16 @@ export type ContextOperationRequest =
       callerStack?: string;
     }
   | {
+      type: 'speculate';
+      operationId: string;
+      execute: (
+        context: Context,
+      ) =>
+        | Generator<ContextOperationRequest, unknown, unknown>
+        | AsyncGenerator<unknown, unknown, unknown>;
+      callerStack?: string;
+    }
+  | {
       type: 'stream';
       operationId: string;
       key: string;
@@ -341,6 +351,7 @@ export class Context implements WorkflowContext {
   readonly startedAt: number;
   readonly signal: AbortSignal;
 
+  #abortController: AbortController;
   #stepIndex: number;
   #accumulatedResults: Map<number, unknown>;
   #searchAttributes: Record<string, SearchAttributeValue>;
@@ -366,6 +377,7 @@ export class Context implements WorkflowContext {
     this.workflowId = options.workflowId;
     this.workflowType = options.workflowType;
     this.startedAt = options.startedAt;
+    this.#abortController = options.abortController;
     this.signal = options.abortController.signal;
 
     this.#stepIndex = options.initialStep ?? 0;
@@ -430,6 +442,50 @@ export class Context implements WorkflowContext {
 
   get explainEnabled(): boolean {
     return this.#explainMode;
+  }
+
+  createSpeculativeChild(): Context {
+    const childOptions: ContextOptions = {
+      workflowId: this.workflowId,
+      workflowType: this.workflowType,
+      startedAt: this.startedAt,
+      abortController: this.#abortController,
+      getNow: this.#getNow,
+      initialStep: this.#stepIndex,
+      accumulatedResults: new Map(this.#accumulatedResults),
+      searchAttributes: this.#searchAttributes,
+      nestingDepth: this.#nestingDepth,
+      ...(this.#deadline !== undefined ? { deadline: this.#deadline } : {}),
+      ...(this.#searchAttributeSchema !== undefined
+        ? { searchAttributeSchema: this.#searchAttributeSchema }
+        : {}),
+      ...(this.#tenant !== undefined ? { tenant: this.#tenant } : {}),
+      ...(this.#sleepReferenceTime !== undefined
+        ? { sleepReferenceTime: this.#sleepReferenceTime }
+        : {}),
+    };
+    const child = new Context(childOptions);
+
+    child.#pendingAttributeChanges = { ...this.#pendingAttributeChanges };
+    child.#updateHandlers = new Map(this.#updateHandlers);
+    child.#exposedValues = new Map(this.#exposedValues);
+    child.#memoCache = new Map(this.#memoCache);
+    child.#explainMode = this.#explainMode;
+    child.#budgetTracker = this.#budgetTracker?.clone();
+
+    return child;
+  }
+
+  commitSpeculativeChild(child: Context): void {
+    this.#stepIndex = child.#stepIndex;
+    this.#accumulatedResults = new Map(child.#accumulatedResults);
+    this.#searchAttributes = { ...child.#searchAttributes };
+    this.#pendingAttributeChanges = { ...child.#pendingAttributeChanges };
+    this.#updateHandlers = new Map(child.#updateHandlers);
+    this.#exposedValues = new Map(child.#exposedValues);
+    this.#memoCache = new Map(child.#memoCache);
+    this.#budgetTracker = child.#budgetTracker;
+    this.#sleepReferenceTime = child.#sleepReferenceTime;
   }
 
   // -------------------------------------------------------------------------
@@ -1070,6 +1126,32 @@ export class Context implements WorkflowContext {
 
     this.#accumulatedResults.set(step, result);
     return result;
+  }
+
+  *speculate<TResult>(
+    execute: (
+      context: Context,
+    ) =>
+      | Generator<ContextOperationRequest, TResult, unknown>
+      | AsyncGenerator<unknown, TResult, unknown>,
+  ): Generator<ContextOperationRequest, TResult, unknown> {
+    const step = this.#stepIndex++;
+
+    if (this.#accumulatedResults.has(step)) {
+      return this.#accumulatedResults.get(step) as TResult;
+    }
+
+    const operationId = crypto.randomUUID();
+    const callerStack = this.#captureCallerStack();
+    const result = yield {
+      type: 'speculate' as const,
+      operationId,
+      execute,
+      callerStack,
+    };
+
+    this.#accumulatedResults.set(step, result);
+    return result as TResult;
   }
 
   // -------------------------------------------------------------------------

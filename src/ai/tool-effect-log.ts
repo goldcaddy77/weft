@@ -41,6 +41,18 @@ export type EffectRecord =
   | { status: 'committed'; toolName: string; output: string; completedAt: number }
   | { status: 'aborted'; toolName: string; reason: string; completedAt: number };
 
+/**
+ * Public contract the agent loop relies on when deduplicating tool calls.
+ *
+ * This narrower type keeps tests honest without forcing them to construct a
+ * full {@link ToolEffectLog} instance when they only need the runtime-facing
+ * methods and counter.
+ */
+export type ToolEffectLogLike = Pick<
+  ToolEffectLog,
+  'lookup' | 'recordReplay' | 'record' | 'commit' | 'abort' | 'duplicatesPrevented'
+>;
+
 // ---------------------------------------------------------------------------
 // ToolCallReplayConflictError
 // ---------------------------------------------------------------------------

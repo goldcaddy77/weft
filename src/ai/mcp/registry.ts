@@ -4,6 +4,7 @@ import type { ToolDefinition } from '../providers/types';
 export interface RegistryTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
+  verify?: (result: unknown) => Promise<boolean> | boolean;
   source: 'local' | 'mcp';
   serverUrl?: string;
   /**
@@ -17,6 +18,7 @@ export interface RegistryTool {
 class RegistryToolEntry implements RegistryTool {
   readonly definition: ToolDefinition;
   readonly execute: (input: unknown) => Promise<unknown>;
+  readonly verify?: (result: unknown) => Promise<boolean> | boolean;
   readonly source: 'local' | 'mcp';
   readonly serverUrl?: string;
   readonly identity?: (input: unknown) => ToolIdentityResult;
@@ -30,6 +32,7 @@ class RegistryToolEntry implements RegistryTool {
     localExecute?: (input: unknown) => Promise<unknown>;
     mcpExecute?: (toolName: string, input: unknown) => Promise<unknown>;
     identity?: (input: unknown) => ToolIdentityResult;
+    verify?: (result: unknown) => Promise<boolean> | boolean;
   }) {
     this.definition = options.definition;
     this.source = options.source;
@@ -40,6 +43,9 @@ class RegistryToolEntry implements RegistryTool {
     this.#mcpExecute = options.mcpExecute;
     if (options.identity !== undefined) {
       this.identity = options.identity;
+    }
+    if (options.verify !== undefined) {
+      this.verify = options.verify;
     }
     this.execute = (input: unknown): Promise<unknown> => {
       if (this.#localExecute) {
@@ -63,15 +69,20 @@ export class ToolRegistry {
     definition: ToolDefinition,
     execute: (input: unknown) => Promise<unknown>,
     identity?: (input: unknown) => ToolIdentityResult,
+    verify?: (result: unknown) => Promise<boolean> | boolean,
   ): void {
     const entryOptions: {
       definition: ToolDefinition;
       source: 'local';
       localExecute: (input: unknown) => Promise<unknown>;
       identity?: (input: unknown) => ToolIdentityResult;
+      verify?: (result: unknown) => Promise<boolean> | boolean;
     } = { definition, source: 'local', localExecute: execute };
     if (identity !== undefined) {
       entryOptions.identity = identity;
+    }
+    if (verify !== undefined) {
+      entryOptions.verify = verify;
     }
     const entry: RegistryTool = new RegistryToolEntry(entryOptions);
     const existing = this.#tools.get(definition.name);

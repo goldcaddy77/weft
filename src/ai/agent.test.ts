@@ -24,6 +24,8 @@ import type { MCPRequest, MCPResponse, MCPTransport } from './mcp/transport';
 import type { ModelRouter, RoutingContext } from './model-router';
 import type { CacheEntry } from './tool-cache';
 import { setToolCacheEntry } from './tool-cache';
+import type { EffectRecord, ToolEffectLogLike } from './tool-effect-log';
+import { ToolCallReplayConflictError } from './tool-effect-log';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -66,6 +68,27 @@ function createToolCallResponse(
     usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
     model: 'test-model',
     stopReason: 'tool_use',
+    ...overrides,
+  };
+}
+
+function createFakeToolEffectLog(
+  overrides: Partial<{
+    lookup: (semanticHash: string) => Promise<EffectRecord | null>;
+    recordReplay: () => void;
+    record: (semanticHash: string, toolName: string) => Promise<void>;
+    commit: (semanticHash: string, toolName: string, output: string) => Promise<void>;
+    abort: (semanticHash: string, toolName: string, reason: string) => Promise<void>;
+    duplicatesPrevented: number;
+  }> = {},
+): ToolEffectLogLike {
+  return {
+    lookup: async () => null,
+    recordReplay: () => {},
+    record: async () => {},
+    commit: async () => {},
+    abort: async () => {},
+    duplicatesPrevented: 0,
     ...overrides,
   };
 }
@@ -2425,5 +2448,119 @@ describe('executeAgentLoop', () => {
     );
 
     expect(executeCount).toBe(3);
+  });
+
+  it('marks a tool result as error when the verify hook rejects the output', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'a' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => ({ value: 'unsafe-result' }),
+      verify: async () => false,
+    };
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+      },
+      'Lookup a key',
+    );
+
+    const toolMessage = result.conversation.find((message) => message.role === 'tool');
+    expect(toolMessage).toBeDefined();
+    expect(toolMessage!.toolResults).toHaveLength(1);
+    expect(toolMessage!.toolResults?.[0]?.isError).toBe(true);
+    expect(JSON.parse(toolMessage!.toolResults?.[0]?.output ?? '{}')).toEqual({
+      error: 'Verification failed for tool "lookup"',
+    });
+  });
+
+  it('throws when the effect log reports an in-flight record for the same tool', async () => {
+    const effectLog = createFakeToolEffectLog({
+      lookup: async () => ({
+        status: 'in-flight',
+        toolName: 'lookup',
+        recordedAt: Date.now(),
+      }),
+    });
+
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'abc' } }]),
+    ]);
+
+    await expect(
+      executeAgentLoop(
+        {
+          model: 'test-model',
+          provider,
+          tools: [
+            {
+              definition: {
+                name: 'lookup',
+                description: 'Lookup a key',
+                inputSchema: { type: 'object' },
+              },
+              execute: async () => ({ value: 42 }),
+            },
+          ],
+          toolEffectLog: effectLog,
+        },
+        'Lookup abc',
+      ),
+    ).rejects.toBeInstanceOf(ToolCallReplayConflictError);
+  });
+
+  it('aborts the effect-log record instead of committing when tool execution fails', async () => {
+    const abortCalls: Array<[string, string, string]> = [];
+    const commitCalls: Array<[string, string, string]> = [];
+    const effectLog = createFakeToolEffectLog({
+      abort: async (semanticHash, toolName, reason) => {
+        abortCalls.push([semanticHash, toolName, reason]);
+      },
+      commit: async (semanticHash, toolName, output) => {
+        commitCalls.push([semanticHash, toolName, output]);
+      },
+    });
+
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'explode', input: {} }]),
+      createChatResponse('Recovered'),
+    ]);
+
+    const result = await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [
+          {
+            definition: {
+              name: 'explode',
+              description: 'Always fails',
+              inputSchema: { type: 'object' },
+            },
+            execute: async () => {
+              throw new Error('tool exploded');
+            },
+          },
+        ],
+        toolEffectLog: effectLog,
+      },
+      'Explode',
+    );
+
+    expect(result.content).toBe('Recovered');
+    expect(commitCalls).toEqual([]);
+    expect(abortCalls).toHaveLength(1);
+    expect(abortCalls[0]![1]).toBe('explode');
+    expect(abortCalls[0]![2]).toContain('tool exploded');
   });
 });

@@ -3792,6 +3792,78 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
+    it('ctx.race propagates parent aborts into nested races', async () => {
+      const engine = new Engine();
+
+      let capturedSignal: AbortSignal | undefined;
+      const { promise: nestedRaceStarted, resolve: resolveNestedRaceStarted } =
+        Promise.withResolvers<void>();
+      const { promise: outerRaceResolved, resolve: resolveOuterRaceResolved } =
+        Promise.withResolvers<void>();
+
+      const provider: LLMProvider = {
+        name: 'nested-abort-aware',
+        async chat(_messages, options): Promise<ChatResponse> {
+          capturedSignal = options.signal;
+          resolveNestedRaceStarted();
+
+          return await new Promise<ChatResponse>((_resolve, reject) => {
+            options.signal?.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+              },
+              { once: true },
+            );
+          });
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 1;
+        },
+      };
+
+      const outerWinner = async () => {
+        await nestedRaceStarted;
+        return 'outer-winner';
+      };
+
+      const nestedSlowActivity = async () => {
+        await Bun.sleep(100);
+        return 'nested-slow';
+      };
+
+      engine.register('nested-race-abort-workflow', async function* (ctx: WorkflowContext) {
+        const c = ctx as Context;
+        const result = yield* c.race([
+          c.run(outerWinner),
+          c.race([
+            c.agent({
+              model: 'test-model',
+              prompt: 'slow nested branch',
+              provider,
+            }),
+            c.run(nestedSlowActivity),
+          ]),
+        ]);
+        resolveOuterRaceResolved();
+        return result;
+      });
+
+      const handle = await engine.start('nested-race-abort-workflow', null);
+
+      await outerRaceResolved;
+
+      expect(capturedSignal).toBeDefined();
+      expect(capturedSignal!.aborted).toBe(true);
+
+      const result = await handle.result();
+      expect(result).toBe('outer-winner');
+      engine[Symbol.dispose]();
+    });
+
     it('records org budget for agents inside ctx.all() sub-operations', async () => {
       const engine = new Engine();
       await engine.setBudgetPolicy({
@@ -3981,6 +4053,231 @@ describe('Engine', () => {
 
       engine[Symbol.dispose]();
     });
+  });
+});
+
+describe('Engine speculative execution', () => {
+  it('commits speculative branch state only after verification succeeds', async () => {
+    const engine = new Engine();
+    const events: string[] = [];
+
+    const verified = activity({
+      name: 'verified-activity',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      verify: async (result: string) => {
+        await Bun.sleep(10);
+        events.push(`verify:${result}`);
+        return true;
+      },
+    });
+
+    engine.register('speculate-success', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.setAttribute('phase', 'root');
+
+      const result = yield* context.speculate(async function* (branch) {
+        branch.setAttribute('phase', 'speculated');
+        return yield* branch.run(verified, 'ok');
+      });
+
+      events.push(`after:${String(context.getAttribute('phase'))}`);
+      return { result, phase: context.getAttribute('phase') };
+    });
+
+    const handle = await engine.start('speculate-success', null);
+    const result = (await handle.result()) as { result: string; phase: string };
+
+    expect(result).toEqual({ result: 'result:ok', phase: 'speculated' });
+    expect(events).toEqual(['execute:ok', 'verify:result:ok', 'after:speculated']);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('discards speculative state and compensates completed activities when verification fails', async () => {
+    const engine = new Engine();
+    const events: string[] = [];
+
+    const first = activity({
+      name: 'first-activity',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      verify: async (result: string) => {
+        await Bun.sleep(20);
+        events.push(`verify:${result}`);
+        return false;
+      },
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:${String(input)}:${output}`);
+      },
+    });
+
+    const second = activity({
+      name: 'second-activity',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:${String(input)}:${output}`);
+      },
+    });
+
+    engine.register('speculate-rollback', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.setAttribute('phase', 'root');
+
+      try {
+        yield* context.speculate(async function* (branch) {
+          branch.setAttribute('phase', 'speculated');
+          yield* branch.run(first, 'first');
+          yield* branch.run(second, 'second');
+          return 'unreachable';
+        });
+        return { phase: context.getAttribute('phase'), error: null };
+      } catch (error) {
+        events.push(`caught:${String(context.getAttribute('phase'))}`);
+        return {
+          phase: context.getAttribute('phase'),
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+
+    const handle = await engine.start('speculate-rollback', null);
+    const result = (await handle.result()) as { phase: string; error: string };
+
+    expect(result.phase).toBe('root');
+    expect(result.error).toContain('Verification failed for activity "first-activity"');
+    expect(events.indexOf('execute:second')).toBeLessThan(events.indexOf('verify:result:first'));
+    expect(events).toEqual([
+      'execute:first',
+      'execute:second',
+      'verify:result:first',
+      'compensate:second:result:second',
+      'compensate:first:result:first',
+      'caught:root',
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('rolls back speculative runAll activity branches when verification fails', async () => {
+    const engine = new Engine();
+    const events: string[] = [];
+
+    const first = activity({
+      name: 'run-all-first',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      verify: async (result: string) => {
+        await Bun.sleep(10);
+        events.push(`verify:${result}`);
+        return false;
+      },
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:${String(input)}:${output}`);
+      },
+    });
+
+    const second = activity({
+      name: 'run-all-second',
+      execute: async (input: unknown) => {
+        const typedInput = String(input);
+        await Bun.sleep(5);
+        events.push(`execute:${typedInput}`);
+        return `result:${typedInput}`;
+      },
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:${String(input)}:${output}`);
+      },
+    });
+
+    engine.register('speculate-run-all-rollback', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.setAttribute('phase', 'root');
+
+      try {
+        yield* context.speculate(async function* (branch) {
+          branch.setAttribute('phase', 'speculated');
+          return yield* branch.runAll({
+            first: [first, 'first'],
+            second: [second, 'second'],
+          });
+        });
+        return { phase: context.getAttribute('phase'), error: null };
+      } catch (error) {
+        return {
+          phase: context.getAttribute('phase'),
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    });
+
+    const handle = await engine.start('speculate-run-all-rollback', null);
+    const result = (await handle.result()) as { phase: string; error: string };
+
+    expect(result.phase).toBe('root');
+    expect(result.error).toContain('Verification failed for activity "run-all-first"');
+    expect(events).toEqual([
+      'execute:first',
+      'execute:second',
+      'verify:result:first',
+      'compensate:second:result:second',
+      'compensate:first:result:first',
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('treats undefined verification rejections as speculative failures', async () => {
+    const engine = new Engine();
+
+    const verified = activity({
+      name: 'rejects-undefined',
+      execute: async (input: unknown) => `result:${String(input)}`,
+      verify: async () => {
+        throw undefined;
+      },
+    });
+
+    engine.register(
+      'speculate-undefined-verification-rejection',
+      async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        context.setAttribute('phase', 'root');
+
+        try {
+          yield* context.speculate(async function* (branch) {
+            branch.setAttribute('phase', 'speculated');
+            return yield* branch.run(verified, 'ok');
+          });
+          return { phase: context.getAttribute('phase'), error: null };
+        } catch (error) {
+          return {
+            phase: context.getAttribute('phase'),
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    );
+
+    const handle = await engine.start('speculate-undefined-verification-rejection', null);
+    const result = (await handle.result()) as { phase: string; error: string };
+
+    expect(result).toEqual({ phase: 'root', error: 'undefined' });
+
+    engine[Symbol.dispose]();
   });
 });
 

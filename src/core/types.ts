@@ -283,6 +283,13 @@ export interface ActivityCallOptions {
 export interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   execute: ActivityFunction<TInput, TOutput>;
+  /**
+   * Optional post-execution verifier.
+   *
+   * Return `true` to confirm the activity result, or `false` to reject it.
+   * Throwing is treated the same as a failed verification.
+   */
+  verify?: (result: TOutput) => Promise<boolean> | boolean;
   retry?: RetryPolicy;
   timeout?: Duration;
   queue?: string;
