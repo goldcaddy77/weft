@@ -10,6 +10,7 @@
  * @module core/engine
  */
 
+import type { VerificationRecorder } from '../ai/agent.ts';
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
 import {
@@ -190,6 +191,11 @@ type OperationWithCallerStack = {
   callerStack?: string;
 };
 
+type ActivityFunctionWithMetadata = ((...arguments_: unknown[]) => unknown) & {
+  verify?: (result: unknown) => Promise<boolean> | boolean;
+  compensate?: (input: unknown, output: unknown) => Promise<void> | void;
+};
+
 type ConsumedSignalResult =
   | { found: false }
   | {
@@ -205,6 +211,44 @@ type WorkflowHandleEventQueue = {
 type WorkflowHandleIteratorState = {
   done: boolean;
 };
+
+class SpeculativeExecutionState implements VerificationRecorder {
+  readonly #verifications: Array<Promise<{ failed: false } | { failed: true; error: unknown }>>;
+  readonly #compensations: Array<() => Promise<void>>;
+
+  constructor() {
+    this.#verifications = [];
+    this.#compensations = [];
+  }
+
+  recordVerification(verification: Promise<void>): void {
+    this.#verifications.push(
+      verification.then(
+        () => ({ failed: false as const }),
+        (error) => ({ failed: true as const, error }),
+      ),
+    );
+  }
+
+  recordCompensation(compensation: () => Promise<void>): void {
+    this.#compensations.push(compensation);
+  }
+
+  async drainVerifications(): Promise<void> {
+    const outcomes = await Promise.all(this.#verifications);
+    const failure = outcomes.find((outcome) => outcome.failed);
+    if (failure) {
+      throw failure.error;
+    }
+  }
+
+  async rollback(): Promise<void> {
+    for (let index = this.#compensations.length - 1; index >= 0; index--) {
+      await this.#compensations[index]!().catch(() => {});
+    }
+    await Promise.all(this.#verifications);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -3109,6 +3153,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return this.#processRunAllOperation(workflowId, operation);
       case 'agent':
         return this.#processAgentContextOperation(workflowId, operation);
+      case 'speculate':
+        return this.#processSpeculateOperation(workflowId, operation);
       case 'stream':
         return this.#processStreamOperation(workflowId, operation);
       case 'wait-review':
@@ -3172,12 +3218,86 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
+  #getActivityFunctionWithMetadata(
+    operation: Extract<ContextOperationRequest, { type: 'activity' }>,
+  ): ActivityFunctionWithMetadata | undefined {
+    if (typeof operation.fn === 'function') {
+      return operation.fn as ActivityFunctionWithMetadata;
+    }
+
+    const registered = this.#activityRegistry.resolve(operation.activityName);
+    if (registered) {
+      return registered as ActivityFunctionWithMetadata;
+    }
+
+    return undefined;
+  }
+
+  #buildActivityVerification(
+    activityName: string,
+    verify: (result: unknown) => Promise<boolean> | boolean,
+    result: unknown,
+  ): Promise<void> {
+    return (async () => {
+      const verified = await verify(result);
+      if (!verified) {
+        throw new Error(`Verification failed for activity "${activityName}"`);
+      }
+    })();
+  }
+
+  #buildActivityCompensation(
+    operation: Extract<ContextOperationRequest, { type: 'activity' }>,
+    result: unknown,
+  ): (() => Promise<void>) | undefined {
+    const activity = this.#getActivityFunctionWithMetadata(operation);
+    if (!activity?.compensate) {
+      return undefined;
+    }
+
+    const input = operation.args.length <= 1 ? operation.args[0] : operation.args;
+    return async () => {
+      await activity.compensate?.(input, result);
+    };
+  }
+
+  async #executeActivityOperationResult(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'activity' }>,
+    speculativeState?: SpeculativeExecutionState,
+  ): Promise<unknown> {
+    const result = await this.#executeActivity(workflowId, operation);
+
+    const compensation = speculativeState
+      ? this.#buildActivityCompensation(operation, result)
+      : undefined;
+    if (compensation) {
+      speculativeState?.recordCompensation(compensation);
+    }
+
+    const activity = this.#getActivityFunctionWithMetadata(operation);
+    if (activity?.verify) {
+      const verification = this.#buildActivityVerification(
+        operation.activityName,
+        activity.verify,
+        result,
+      );
+      if (speculativeState) {
+        speculativeState.recordVerification(verification);
+      } else {
+        await verification;
+      }
+    }
+
+    return result;
+  }
+
   async #processActivityOperation(
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'activity' }>,
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, () =>
-      this.#executeActivity(workflowId, operation),
+      this.#executeActivityOperationResult(workflowId, operation),
     );
   }
 
@@ -3558,11 +3678,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     operation: Extract<ContextOperationRequest, { type: 'run-all' }>,
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, () =>
-      executeRunAllBranches(
-        // `ctx.runAll()` stores raw Function references on the request by construction.
-        operation.branches as Parameters<typeof executeRunAllBranches>[0],
-        callActivityFunction as Parameters<typeof executeRunAllBranches>[1],
-      ),
+      this.#executeRunAllOperationResult(workflowId, operation),
     );
   }
 
@@ -3572,6 +3688,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, () =>
       this.#executeAgentContextOperationResult(workflowId, operation),
+    );
+  }
+
+  async #processSpeculateOperation(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'speculate' }>,
+  ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      this.#executeSpeculativeBranch(workflowId, operation),
     );
   }
 
@@ -3628,6 +3753,70 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       agentResult.totalCost,
     );
     return agentResult.content;
+  }
+
+  async #executeSpeculativeBranch(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'speculate' }>,
+  ): Promise<unknown> {
+    if (!this.#inlineStrategy) {
+      throw new Error('ctx.speculate() requires inline execution mode');
+    }
+
+    const parentContext = this.#inlineStrategy.getContext(workflowId);
+    if (!parentContext) {
+      throw new Error(`No active inline context for workflow "${workflowId}"`);
+    }
+
+    const speculativeContext = parentContext.createSpeculativeChild();
+    const speculativeState = new SpeculativeExecutionState();
+    const generator = operation.execute(speculativeContext);
+
+    try {
+      const result = await this.#driveSpeculativeGenerator(workflowId, generator, speculativeState);
+      await speculativeState.drainVerifications();
+      parentContext.commitSpeculativeChild(speculativeContext);
+      return result;
+    } catch (error) {
+      await speculativeState.rollback();
+      throw error;
+    }
+  }
+
+  async #driveSpeculativeGenerator(
+    workflowId: string,
+    generator:
+      | Generator<ContextOperationRequest, unknown, unknown>
+      | AsyncGenerator<unknown, unknown, unknown>,
+    speculativeState: SpeculativeExecutionState,
+  ): Promise<unknown> {
+    let lastResult: unknown = undefined;
+    let errorToThrow: Error | undefined;
+
+    while (true) {
+      const iterationResult =
+        errorToThrow === undefined
+          ? await generator.next(lastResult)
+          : await generator.throw(errorToThrow);
+
+      errorToThrow = undefined;
+
+      if (iterationResult.done) {
+        return iterationResult.value;
+      }
+
+      const nextOperation = iterationResult.value as ContextOperationRequest;
+      try {
+        lastResult = await this.#executeSubOperation(
+          workflowId,
+          nextOperation,
+          undefined,
+          speculativeState,
+        );
+      } catch (error) {
+        errorToThrow = error instanceof Error ? error : new Error(String(error));
+      }
+    }
   }
 
   async #createAgentBudgetTracker(
@@ -4010,6 +4199,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: ContextOperationRequest,
     signal?: AbortSignal,
+    speculativeState?: SpeculativeExecutionState,
   ): Promise<unknown> {
     // Check for abort before starting any sub-operation so that losing race
     // branches are skipped if the winner has already settled.
@@ -4018,11 +4208,44 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     switch (operation.type) {
       case 'activity':
         signal?.throwIfAborted();
-        return callActivityFunction(operation.fn, operation.args);
+        return this.#executeActivityOperationResult(workflowId, operation, speculativeState);
       case 'memo':
         signal?.throwIfAborted();
         return callMemoFunction(operation.fn);
+      case 'parallel':
+        signal?.throwIfAborted();
+        return Promise.all(
+          operation.operations.map((subOperation) =>
+            this.#executeSubOperation(workflowId, subOperation, signal, speculativeState),
+          ),
+        );
+      case 'race': {
+        signal?.throwIfAborted();
+        const controller = new AbortController();
+        const abortNestedRace = () => {
+          controller.abort(signal?.reason);
+        };
+        signal?.addEventListener('abort', abortNestedRace, { once: true });
+        const subOperations = operation.operations.map((subOperation) =>
+          this.#executeSubOperation(workflowId, subOperation, controller.signal, speculativeState),
+        );
+        for (const promise of subOperations) {
+          promise.catch(() => {});
+        }
+        try {
+          return await Promise.race(subOperations);
+        } finally {
+          signal?.removeEventListener('abort', abortNestedRace);
+          controller.abort();
+        }
+      }
+      case 'run-all':
+        signal?.throwIfAborted();
+        return this.#executeRunAllOperationResult(workflowId, operation, speculativeState);
       case 'agent': {
+        if (speculativeState) {
+          throw new Error('ctx.speculate() does not yet support ctx.agent()');
+        }
         const { executeAgentLoop } = await import('../ai/agent.ts');
         const {
           prompt,
@@ -4080,6 +4303,42 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       default:
         throw new Error(`Unsupported sub-operation type: ${operation.type}`);
     }
+  }
+
+  #isConfiguredInlineActivity(
+    fn: Function,
+  ): fn is Extract<ContextOperationRequest, { type: 'activity' }>['fn'] &
+    ActivityFunctionWithMetadata {
+    return typeof (fn as { execute?: unknown }).execute === 'function';
+  }
+
+  async #executeRunAllOperationResult(
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'run-all' }>,
+    speculativeState?: SpeculativeExecutionState,
+  ): Promise<Record<string, unknown>> {
+    return executeRunAllBranches(
+      operation.branches as Parameters<typeof executeRunAllBranches>[0],
+      (fn, args) => {
+        // Only speculative runAll activity branches need the full execution
+        // pipeline so verification and compensation tracking are preserved.
+        if (!speculativeState || !this.#isConfiguredInlineActivity(fn)) {
+          return callActivityFunction(fn, args);
+        }
+
+        return this.#executeActivityOperationResult(
+          workflowId,
+          {
+            type: 'activity',
+            operationId: crypto.randomUUID(),
+            activityName: fn.name,
+            fn,
+            args,
+          },
+          speculativeState,
+        );
+      },
+    );
   }
 
   async #handleTimerFired(entry: { id: string; workflowId: string; kind: string }): Promise<void> {

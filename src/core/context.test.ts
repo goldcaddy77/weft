@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
+import { BudgetTracker } from '../ai/budget.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import {
   Context,
@@ -713,6 +714,34 @@ describe('Context', () => {
     });
   });
 
+  describe('ctx.speculate', () => {
+    it('yields a speculative operation request', () => {
+      const context = createContext();
+
+      const generator = context.speculate(async function* (branch) {
+        return yield* branch.run(task);
+      });
+      const request = expectRequest(generator.next(), 'speculate');
+
+      expect(request.operationId).toMatch(UUID_PATTERN);
+      expect(typeof request.execute).toBe('function');
+    });
+
+    it('on recovery returns cached result without yielding', () => {
+      const accumulatedResults = new Map<number, unknown>();
+      accumulatedResults.set(0, 'cached-speculation-result');
+      const context = createContext({ accumulatedResults });
+
+      const generator = context.speculate(async function* (branch) {
+        return yield* branch.run(task);
+      });
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('cached-speculation-result');
+    });
+  });
+
   describe('ctx.runAll fed-back result', () => {
     it('returns the fed-back result', () => {
       const context = createContext();
@@ -1253,6 +1282,23 @@ describe('Context', () => {
       expect(state!.tokensUsed).toBe(0);
       expect(state!.tokensRemaining).toBe(10000);
       expect(state!.costRemaining).toBe(5.0);
+    });
+
+    it('clones the budget tracker into speculative children', () => {
+      const context = createContext();
+      context.setBudget({
+        maxTokens: 10000,
+        maxCost: 5.0,
+        models: {
+          'gpt-4': { inputCostPer1K: 0.03, outputCostPer1K: 0.06 },
+        },
+      });
+
+      const cloneSpy = spyOn(BudgetTracker.prototype, 'clone');
+      context.createSpeculativeChild();
+
+      expect(cloneSpy).toHaveBeenCalledTimes(1);
+      mock.restore();
     });
   });
 

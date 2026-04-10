@@ -63,6 +63,13 @@ export interface ToolIdentityResult {
 export interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
+  /**
+   * Optional post-execution verifier for the raw tool result.
+   *
+   * Return `true` to accept the tool output, or `false` to reject it.
+   * Throwing is treated the same as a failed verification.
+   */
+  verify?: (result: unknown) => Promise<boolean> | boolean;
   /** Semantic version of this tool. Used for workflow resume compatibility checks. Defaults to `"0.0.0"` when not provided. */
   version?: string;
   /**
