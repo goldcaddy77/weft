@@ -471,7 +471,7 @@ export class Context implements WorkflowContext {
     child.#exposedValues = new Map(this.#exposedValues);
     child.#memoCache = new Map(this.#memoCache);
     child.#explainMode = this.#explainMode;
-    child.#budgetTracker = this.#budgetTracker;
+    child.#budgetTracker = this.#budgetTracker?.clone();
 
     return child;
   }

@@ -276,6 +276,24 @@ export class BudgetTracker {
     this.#abortController = controller;
   }
 
+  /** Create an isolated copy that can diverge without mutating this tracker. */
+  clone(): BudgetTracker {
+    const tracker = new BudgetTracker(this.#options, {
+      ...(this.#onWarning ? { onWarning: this.#onWarning } : {}),
+      ...(this.#onExceeded ? { onExceeded: this.#onExceeded } : {}),
+    });
+    tracker.#tokensUsed = this.#tokensUsed;
+    tracker.#costUsed = this.#costUsed;
+    tracker.#warningFired = this.#warningFired;
+    tracker.#usageCount = this.#usageCount;
+
+    for (const [model, entry] of this.#breakdown) {
+      tracker.#breakdown.set(model, { ...entry });
+    }
+
+    return tracker;
+  }
+
   /** Serialize budget state for checkpoint. */
   toJSON(): SerializedBudgetState {
     return {
