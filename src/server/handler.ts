@@ -932,7 +932,7 @@ async function handleGetCheckpointAt(
   stepParam: string,
 ): Promise<Response> {
   const step = Number(stepParam);
-  if (!Number.isInteger(step) || step < 0) {
+  if (!Number.isSafeInteger(step) || step < 0) {
     return errorResponse(`Invalid step: ${stepParam}`, 400);
   }
 

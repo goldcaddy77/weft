@@ -119,13 +119,10 @@ export type CheckpointSummary = {
 };
 
 /** Full deserialized state at a specific checkpoint step. */
-export type CheckpointState = {
-  step: number;
-  locals: Record<string, unknown>;
-  searchAttributes: Record<string, SearchAttributeValue>;
-  version: string;
-  createdAt: number;
-};
+export type CheckpointState = Pick<
+  Checkpoint,
+  'step' | 'locals' | 'searchAttributes' | 'version' | 'createdAt'
+>;
 
 // ---------------------------------------------------------------------------
 // Retry policy for activities

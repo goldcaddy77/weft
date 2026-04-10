@@ -267,6 +267,14 @@ describe('checkpoint history', () => {
       const handle = await engine.start('steps-then-wait', null);
       await flush();
 
+      // Confirm pruning actually ran — only 2 history entries should remain
+      const entries: string[] = [];
+      const prefix = `wf:${handle.id}:ckpt:`;
+      for await (const [key] of storage.scan(prefix)) {
+        entries.push(key);
+      }
+      expect(entries).toHaveLength(2);
+
       // The bare checkpoint key (wf:{id}:ckpt) should still exist
       const currentCheckpoint = await storage.get(KEYS.checkpoint(handle.id));
       expect(currentCheckpoint).not.toBeNull();

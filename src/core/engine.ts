@@ -2567,7 +2567,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * Returns summary metadata only — use {@link getCheckpointAt} for full state.
    */
   async listCheckpoints(workflowId: string): Promise<CheckpointSummary[]> {
-    if (this.#options.checkpointHistory === 0) return [];
+    if (this.#options.checkpointHistory <= 0) return [];
 
     const prefix = `wf:${workflowId}:ckpt:`;
     const summaries: CheckpointSummary[] = [];
@@ -2909,7 +2909,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       await this.#storage.batch(operations);
       this.#checkpoints.set(workflowId, advanced);
       this.#eventLogHeads.set(workflowId, newHead);
-      await this.#pruneCheckpointHistory(workflowId);
+      await this.#pruneCheckpointHistory(workflowId, advanced.step);
 
       if (hasPendingAttributeChanges) {
         this.dispatchEvent(
@@ -2952,33 +2952,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       await this.#storage.batch(operations);
       this.#checkpoints.set(workflowId, checkpoint);
       this.#eventLogHeads.set(workflowId, newHead);
-      await this.#pruneCheckpointHistory(workflowId);
+      await this.#pruneCheckpointHistory(workflowId, checkpoint.step);
     }
   }
 
   /**
-   * Delete checkpoint history entries beyond the configured retention limit.
-   * Called after every checkpoint persist to bound storage growth.
+   * Delete the single checkpoint history entry that overflows the retention
+   * limit. Since steps are monotonic and increment by one, writing step `s`
+   * means step `s - limit` is now the first entry beyond the window.
+   * O(1) per persist instead of O(retention-window).
    */
-  async #pruneCheckpointHistory(workflowId: string): Promise<void> {
+  async #pruneCheckpointHistory(workflowId: string, currentStep: number): Promise<void> {
     const limit = this.#options.checkpointHistory;
     if (limit <= 0) return;
 
-    const prefix = `wf:${workflowId}:ckpt:`;
-    const keysToDelete: string[] = [];
-    let kept = 0;
+    const overflowStep = currentStep - limit;
+    if (overflowStep < 1) return;
 
-    // Reverse scan gives newest-first; skip the first `limit` entries, delete the rest.
-    for await (const [key] of this.#storage.scan(prefix, { reverse: true })) {
-      kept++;
-      if (kept > limit) {
-        keysToDelete.push(key);
-      }
-    }
-
-    if (keysToDelete.length > 0) {
-      await this.#storage.batch(keysToDelete.map((key) => ({ type: 'delete' as const, key })));
-    }
+    const key = KEYS.checkpointHistory(workflowId, overflowStep);
+    await this.#storage.delete(key);
   }
 
   // -------------------------------------------------------------------------

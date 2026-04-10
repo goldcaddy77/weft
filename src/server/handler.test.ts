@@ -2240,7 +2240,6 @@ describe('handleRequest', () => {
   // -------------------------------------------------------------------------
 
   it('GET /v1/workflows/:id/checkpoints returns checkpoint list', async () => {
-    engine = createEngine();
     const storage = new MemoryStorage();
     engine = new Engine({ storage, checkpointHistory: 10 });
     engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
