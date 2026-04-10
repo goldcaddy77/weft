@@ -79,6 +79,8 @@ The narrative architecture material, examples, and long-form rationale now live 
 - [x] **All storage adapters implement `Disposable`.** `using storage = new XStorage(...)` works.
 - [x] **50K+ writes/sec on SQLite.** Benchmarked on commodity hardware (M1 MacBook or equivalent).
 - [x] **Batch operations are atomic.** All-or-nothing semantics verified by crash injection tests.
+- [ ] **`has`, `deletePrefix`, `keys`, `count` convenience methods.** See Track 6 for full acceptance criteria.
+- [ ] **`scoped()` namespace utility and `withCodec()` typed wrapper.** See Track 6 for full acceptance criteria.
 
 ### Web Workers
 
@@ -494,6 +496,10 @@ If I were sequencing this, I would do it in five tracks that can partially paral
 
 **Track 5 — Multi-agent reliability.** Confidence-weighted voting in `supervise`, dynamic n-sizing, DPMO metrics in the collector, and tool, agent, and provider versioning.
 
+**Track 6 — Storage ergonomics.** Extend the `Storage` interface with convenience methods (`has`, `deletePrefix`, `keys`, `count`) and ship composable utilities (`scoped()` for namespace isolation, `withCodec()` for typed serialization). These make `Storage` a viable foundation for consumers building higher-level abstractions (application state, caches, session stores) without reimplementing the same adapter boilerplate. All additions are optional on the interface so existing third-party adapters aren't broken.
+
+**Track 7 — Platform completeness.** Scheduled/recurring workflows, delayed start, workflow composition operators, garbage collection with TTL, per-tenant resource quotas, lightweight tagging, bulk operations, workflow forking, event replay for time-travel debugging, and first-class streaming resumption tokens. These are the features that turn Weft from a durable execution engine into a complete platform — the things every serious deployment eventually needs and every consumer eventually builds themselves if the engine doesn't provide them.
+
 Each track produces verifiable artifacts. Each item below is a checkbox a reviewer can tick without subjective judgment.
 
 ---
@@ -575,6 +581,118 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 - [x] Resuming a workflow whose recorded version tuple is incompatible with the currently-registered versions, with no migration hook provided, throws `VersionMismatchError` with a structured breakdown of which component mismatched.
 - [x] `bun test src/core/__tests__/workflow-version-resume.test.ts` passes a test that resumes a mid-flight workflow across a tool-schema version bump, with and without a migration hook.
 
+### Track 6 — Storage ergonomics
+
+The `Storage` interface is the right primitive for Weft internals (binary KV with range scans and atomic batch). But consumers building higher-level abstractions on top — application state, caches, session stores, configuration — hit friction that should be smoothed out at the Weft level rather than reimplemented by every consumer.
+
+- [ ] **`has(key)` method on `Storage`.** Returns `Promise<boolean>`. Adapters implement efficiently: SQLite uses `SELECT 1 … LIMIT 1`, LMDB checks key existence without value copy, Memory checks `Map.has()`. Avoids deserializing the full value just to check existence. Default implementation falls back to `get(key) !== null` so existing adapters aren't broken.
+- [ ] **`deletePrefix(prefix)` method on `Storage`.** Returns `Promise<number>` (count of deleted keys). SQLite uses `DELETE FROM kv WHERE key >= ? AND key < ?` in one statement. LMDB uses range delete. Memory iterates and deletes. Avoids the `scan()` → collect all keys → `batch(deletes)` round-trip that forces holding all keys in memory.
+- [ ] **`keys(prefix, options?)` method on `Storage`.** Returns `AsyncIterable<string>` (keys only, no values). Same signature as `scan()` minus the value in the tuple. SQLite uses `SELECT key FROM kv WHERE …` (no blob read). LMDB iterates keys without value materialization. Useful when consumers only need to list or count entries without reading payloads.
+- [ ] **`count(prefix)` method on `Storage`.** Returns `Promise<number>`. SQLite uses `SELECT COUNT(*) FROM kv WHERE …`. Avoids streaming every entry through an async iterator just to count. Useful for dashboards, health checks, and queue depth monitoring.
+- [ ] **`storage.scoped(prefix)` namespace utility.** Returns a `Storage` instance where all operations are transparently prefixed with `${prefix}:` and `scan()`/`keys()` results have the prefix stripped. Composes: `storage.scoped('a').scoped('b')` produces keys under `a:b:`. Shipped as a utility alongside `CompressedStorage`, not baked into the interface — adapters don't need to implement it.
+- [ ] **`TypedStorage<T>` codec wrapper.** `withCodec(storage, codec)` returns a higher-level interface: `get(key): Promise<T | null>`, `put(key, value: T): Promise<void>`, with `scan`, `batch`, etc. forwarding through the codec. Ships with `jsonCodec` (JSON string round-trip) and `msgpackCodec` (MessagePack round-trip via the existing codec module). Eliminates `TextEncoder`/`TextDecoder` boilerplate for every consumer that stores structured data.
+- [ ] **All new methods are optional on the `Storage` interface.** Marked with `?` so existing third-party adapters aren't broken. Weft's built-in adapters (BunSQLite, LMDB, Memory, IndexedDB, Turso) implement all of them. The `scoped()` and `withCodec()` utilities work with any `Storage` that implements the core five methods.
+- [ ] **Tests cover all new methods across all built-in adapters.** The existing parametrized storage test factory (`src/testing/storage-backends.ts`) is extended with cases for `has`, `deletePrefix`, `keys`, and `count`. The `scoped()` and `withCodec()` utilities have dedicated test files.
+- [ ] `bun typecheck` and `bun test` both exit 0 after Track 6 lands.
+
+### Track 7 — Platform completeness
+
+#### 7a. Scheduled and recurring workflows
+
+Weft has durable `ctx.sleep()` for delays within a running workflow, but no way to express "run this workflow every hour" or "start this workflow at 3am on Tuesdays." Every durable execution platform eventually needs cron — Temporal has it, and consumers who don't get it from the engine build it themselves on top (usually badly).
+
+- [ ] **`engine.schedule(type, input, cronExpression, options?)` registers a recurring workflow.** Accepts a standard cron expression (5-field or 6-field with seconds). Returns a `ScheduleHandle` with `pause()`, `resume()`, `cancel()`, `update(newCron)`, and `describe()`.
+- [ ] **Schedules are durable.** Stored in storage under `schedule:{id}`. Survive process restarts. The scheduler scans for due schedules on startup and resumes ticking.
+- [ ] **Overlap policy is configurable.** `{ overlap: 'skip' | 'queue' | 'cancel-running' | 'allow' }`. Default: `'skip'` (if the previous run is still executing, don't start another). `'queue'` waits for the previous run to complete before starting. `'cancel-running'` cancels the previous run. `'allow'` starts regardless.
+- [ ] **Schedules support backfill.** If the engine was down and missed 3 ticks, `{ backfill: true }` runs them all on recovery. `{ backfill: false }` (default) skips missed ticks and resumes from the next future tick.
+- [ ] **Schedules are listable and queryable.** `engine.listSchedules(filter?)` returns all active schedules with their next fire time, last fire time, and status.
+- [ ] **`GET /v1/schedules` and `POST /v1/schedules` HTTP endpoints.** Full CRUD via REST. Dashboard shows schedule state, history, and next fire time.
+- [ ] **`weft schedule` CLI subcommand.** `weft schedule list`, `weft schedule create`, `weft schedule pause <id>`, `weft schedule cancel <id>`.
+- [ ] Tests cover: create/fire/cancel cycle, overlap policies, backfill after downtime, cron edge cases (Feb 29, DST transitions), multi-tenant schedule isolation.
+
+#### 7b. Delayed start
+
+- [ ] **`engine.start(type, input, { startAt: timestamp })` defers execution to a future time.** Workflow enters `'pending'` status immediately, transitions to `'running'` at the specified time. The pending workflow is visible via `engine.get()` and `engine.list()` before it starts.
+- [ ] **`engine.start(type, input, { startAfter: duration })` accepts a relative delay.** Converted to absolute timestamp at submission time. Uses the same `Duration` type as `ctx.sleep()` (number or string like `'30m'`).
+- [ ] **Delayed starts survive restarts.** Stored as `wf-delayed:{startAt}:{id}` in storage. Scheduler picks them up on recovery.
+- [ ] **Delayed starts are cancellable before execution.** `handle.cancel()` on a pending-but-not-yet-started workflow cancels without ever running.
+
+#### 7c. Workflow composition operators
+
+Child workflows exist, but composing them into pipelines, fan-out/fan-in DAGs, or conditional branches requires manual boilerplate.
+
+- [ ] **`ctx.pipe(stages)` runs a sequence of workflows where each stage's output is the next stage's input.** `stages` is an array of `{ type, options? }` or workflow functions. Returns the final stage's output. Each stage is independently checkpointed as a child workflow. If the pipeline fails at stage 3, recovery skips stages 1–2.
+- [ ] **`ctx.map(items, workflowType, options?)` runs a workflow for each item in parallel.** Like `ctx.all()` but parameterized over a collection. Supports `{ concurrency: number }` to limit parallelism. Returns results in input order.
+- [ ] **`ctx.reduce(items, workflowType, initialValue, options?)` sequentially folds items through a workflow.** Each invocation receives `{ accumulator, item, index }`. Returns the final accumulator. Checkpointed after each fold step.
+- [ ] Tests cover: 3-stage pipeline, pipeline failure at middle stage with compensation, map with concurrency limit, reduce over empty array, nested composition (pipe inside map).
+
+#### 7d. Workflow garbage collection and TTL
+
+- [ ] **`EngineOptions.retention` configures automatic cleanup of terminal workflows.** Accepts `{ completed?: Duration, failed?: Duration, cancelled?: Duration, timedOut?: Duration }`. Default: no retention (keep forever). When set, a background sweep deletes workflows whose `updatedAt + TTL < now`.
+- [ ] **Retention sweep runs on a configurable interval.** Default: every 5 minutes. Deletes in batches (default 1000 per sweep) to avoid blocking storage.
+- [ ] **Retention is per-workflow-type overridable.** `engine.register(type, { handler, retention: { completed: '7d' } })` overrides the engine-level default for that type.
+- [ ] **Retention deletes all associated data.** Workflow state, checkpoints, checkpoint history, events, search attribute indexes, offloaded data, archived data, and stream chunks. One `batch()` call per workflow.
+- [ ] **`engine.purge(filter)` manually triggers cleanup.** For one-off housekeeping outside the automatic sweep.
+- [ ] Dashboard shows retention policy per workflow type and next scheduled sweep.
+
+#### 7e. Per-tenant resource quotas
+
+- [ ] **`EngineOptions.quotas` configures per-tenant limits.** Accepts `{ maxConcurrentWorkflows?: number, maxWorkflowCreationRate?: { count: number, window: Duration }, maxStorageBytes?: number }`.
+- [ ] **Quota violations throw `QuotaExceededError`.** Error includes: which quota was violated, current usage, and the limit. Callers can catch and decide whether to queue, reject, or wait.
+- [ ] **Quotas are enforced at `engine.start()` time.** Concurrent workflow count checked atomically with workflow creation. Rate limit uses a sliding window counter stored at `quota:{tenant}:rate:{window}`.
+- [ ] **Quotas are queryable.** `engine.getQuotaUsage(tenantId)` returns current usage vs. limits. Exposed via `GET /v1/tenants/:id/quota`.
+- [ ] **Quota usage visible in dashboard.** Per-tenant usage gauges with warning thresholds.
+
+#### 7f. Lightweight tagging
+
+- [ ] **`StartOptions.tags` accepts `string[]`.** Tags are stored alongside workflow state and indexed for filtering. Unlike search attributes, tags require no schema declaration — they're free-form labels.
+- [ ] **`handle.addTags(...tags)` and `handle.removeTags(...tags)` mutate tags on a running workflow.** Changes are durable (written in the next checkpoint batch).
+- [ ] **`engine.list({ tags: ['nightly', 'v2'] })` filters by tag intersection.** A workflow matches if it has all specified tags.
+- [ ] **Tags are distinct from search attributes.** Search attributes are typed, schema-declared, and support range queries. Tags are untyped, schema-free, and support only equality/intersection. Both are useful; neither replaces the other.
+- [ ] Tags visible in dashboard workflow list as badges. Filterable via tag chips in the UI.
+
+#### 7g. Bulk operations
+
+- [ ] **`engine.cancelAll(filter)` cancels all workflows matching a filter.** Returns `{ cancelled: number, failed: number, errors: Array<{ id, error }> }`. Filter supports the same shape as `engine.list()` (type, status, attributes, tags).
+- [ ] **`engine.signalAll(filter, name, payload?)` sends a signal to all matching workflows.** Returns `{ signalled: number, failed: number }`.
+- [ ] **`engine.deleteAll(filter)` permanently removes all matching terminal workflows.** Only operates on terminal statuses (completed, failed, cancelled, timed-out). Returns `{ deleted: number }`. Rejects if filter would match running workflows.
+- [ ] **`engine.tagAll(filter, tags)` and `engine.untagAll(filter, tags)` bulk-modify tags.** Returns `{ modified: number }`.
+- [ ] **All bulk operations have HTTP equivalents.** `POST /v1/workflows/bulk/cancel`, `POST /v1/workflows/bulk/signal`, `DELETE /v1/workflows/bulk`, `PATCH /v1/workflows/bulk/tags`.
+- [ ] **Bulk operations are batched internally.** Process in chunks of 1000 to avoid holding storage locks. Progress is observable via returned counts.
+
+#### 7h. Workflow forking
+
+- [ ] **`engine.fork(workflowId, options?)` creates a new workflow from an existing workflow's checkpoint.** The forked workflow starts from the same step with the same accumulated results, but gets a new ID and can diverge from that point. Original workflow is unaffected.
+- [ ] **Fork options include `{ fromStep?: number }`.** Default: fork from the latest checkpoint. `fromStep` allows forking from a historical checkpoint (if checkpoint history is retained).
+- [ ] **Fork records lineage.** Forked workflow state includes `forkedFrom: { workflowId, step }`. Queryable via search attribute `weft:forkedFrom`.
+- [ ] **`POST /v1/workflows/:id/fork` HTTP endpoint.** Returns the new workflow handle.
+- [ ] Tests cover: fork and diverge, fork from historical step, fork a completed workflow (starts from last checkpoint, re-runs terminal step), fork lineage chain (A → B → C).
+
+#### 7i. Event replay and time-travel debugging
+
+Weft already has a hash-chained event log — the data is there, but there's no query interface for inspecting or replaying it.
+
+- [ ] **`engine.getTimeline(workflowId)` returns a structured timeline.** Each entry includes: step number, operation type, input summary, output summary, duration, timestamp, and version tuple. This is a high-level view — not raw events, but a human-readable execution trace.
+- [ ] **`engine.replayTo(workflowId, step)` reconstructs workflow state at a historical step.** Returns the checkpoint, accumulated results, and event log up to that point. Read-only — does not modify the workflow.
+- [ ] **Dashboard timeline view.** Visual execution trace showing each step as a node: what operation ran, what it returned, how long it took, and what the checkpoint looked like at that point. Clicking a step shows the full checkpoint state (locals, accumulated results, search attributes).
+- [ ] **Dashboard diff view.** Select two steps and see what changed between them: new locals, changed search attributes, budget consumption delta, conversation growth.
+- [ ] **`GET /v1/workflows/:id/timeline` HTTP endpoint.** Returns the structured timeline as JSON.
+- [ ] **`weft timeline <workflowId>` CLI subcommand.** Prints the execution trace to stdout. `--step N` shows checkpoint state at step N. `--diff N M` shows the delta between two steps.
+
+#### 7j. Streaming resumption tokens
+
+Weft streams tokens over WebSocket with a reconnection buffer, but if the buffer has been flushed before the client reconnects, there's a gap.
+
+- [ ] **Every streamed chunk includes a monotonic `sequence: number`.** The sequence is persisted alongside the chunk in storage (`blob:{workflowId}:{key}:chunk:{sequence}`).
+- [ ] **Client reconnection accepts `{ resumeFrom: sequence }`.** Server replays all chunks with `sequence > resumeFrom` from storage, then switches to live streaming. No gaps, no duplicates.
+- [ ] **`GET /v1/workflows/:id/streams/:key?after=N` HTTP endpoint.** Returns chunks after sequence N as a JSON array (for non-WebSocket clients) or SSE stream.
+- [ ] **Resumption works across server restarts.** Since chunks are in storage, a client can reconnect to a different server instance and resume without loss.
+- [ ] Tests cover: disconnect and resume mid-stream, resume after server restart, resume with sequence=0 (replay all), resume after stream completion (returns all chunks immediately).
+
+#### Final
+
+- [ ] `bun typecheck` and `bun test` both exit 0 after Track 7 lands.
+
 ### Final verification
 
 - [ ] `bun test` passes across the whole repo.
@@ -589,3 +707,238 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 - [ ] A browser-targeted bundle of `import { createFetchHandler } from 'weft/service-worker'` and `import { IndexedDBStorage } from 'weft/storage/indexeddb'` succeeds without unresolved `bun:*` or `node:*` imports.
 - [ ] `weft validate examples/**/*.ts` exits 0 on the bundled examples.
 - [ ] Every new primitive from this document has a dedicated test file under `src/**/__tests__/` and every acceptance criterion above is covered by at least one `test(...)` call whose failure message names the criterion.
+
+---
+
+## Agent Bureau Integration Analysis
+
+> This section documents what Agent Bureau (an AI agent orchestration monorepo) would need from Weft to replace its in-memory scheduling and add durable execution. The analysis identifies integration surfaces, mapping between the two systems' abstractions, gaps that must be closed, and a concrete adoption strategy.
+
+### What Agent Bureau Is
+
+Agent Bureau is a monorepo of composable packages for building AI agents:
+
+| Package               | Role                                                                                |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| **operative**         | Agent loop orchestration — `createRun()`, `createScheduler()`, `createSupervisor()` |
+| **armorer**           | Tool declaration, execution, idempotency, caching                                   |
+| **conversationalist** | Conversation management, message types, token counting                              |
+| **lifecycle**         | `CompletableEventTarget`, async iterators, observables, hooks                       |
+| **interoperability**  | Shared tool-call/tool-result types across packages                                  |
+| **memory**            | SQLite-backed semantic memory with consolidation                                    |
+| **gateway**           | Hono HTTP + WebSocket server for remote run management                              |
+| **sentinel**          | Guardrails — input/output validators and detectors                                  |
+| **herald**            | Notification and event routing                                                      |
+| **storage**           | `KeyValueStore` interface with SQLite, memory, IndexedDB, and remote backends       |
+| **vector-frankl**     | Embedded vector database for RAG                                                    |
+
+Agent Bureau is currently **single-process, in-memory only**. Runs don't survive crashes, tasks aren't persisted, and cross-machine coordination doesn't exist.
+
+### Abstraction Mapping
+
+| Agent Bureau Concept                              | Weft Equivalent                                          | Notes                                                                                                                                                                                                       |
+| ------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createRun(options)`                              | `engine.start(workflowType, input, options)`             | A run _is_ a workflow. The agent loop becomes an async generator.                                                                                                                                           |
+| `RunOptions` (model, tools, system prompt, hooks) | `StartOptions` + registered workflow                     | RunOptions become the workflow input; hooks become interceptors.                                                                                                                                            |
+| `ActiveRun` handle                                | `WorkflowHandle`                                         | Both extend EventTarget, support cancel, and expose result promises.                                                                                                                                        |
+| `createScheduler()` with priority lanes           | `engine.start()` with search attributes + list filtering | Weft doesn't have built-in priority lanes, but `searchAttributes` + custom dispatch logic can replicate them.                                                                                               |
+| `createSupervisor()` delegation                   | `ctx.handoff()` / `ctx.supervise()` / `ctx.debate()`     | Weft's multi-agent coordination primitives replace the supervisor pattern.                                                                                                                                  |
+| `toolbox.execute(toolCalls)`                      | `ctx.run(activity, args)` per tool call                  | Each tool call becomes a durable activity with retry, timeout, and compensation.                                                                                                                            |
+| `CompletableEventTarget`                          | `EventTarget` (Engine + WorkflowHandle)                  | Weft uses platform EventTarget. Agent Bureau's typed extensions map to Weft's typed addEventListener overloads.                                                                                             |
+| `KeyValueStore`                                   | `Storage` interface                                      | Both are KV-oriented. Weft's is `Uint8Array`-valued with scan; Agent Bureau's is `unknown`-valued with namespace isolation.                                                                                 |
+| `withCache()` generate wrapper                    | `ctx.memo()` or prompt cache                             | Weft's checkpoint-level memoization replaces the response cache.                                                                                                                                            |
+| `withIdempotency()` tool wrapper                  | Activity `idempotencyKey`                                | Weft handles idempotency at the activity dispatch level.                                                                                                                                                    |
+| `RetryOptions` with mutators                      | `RetryPolicy` on activities                              | Agent Bureau mutates context between retries (temperature escalation, tool removal); Weft retries at the activity level. Context mutation requires the workflow to implement retry-with-mutation as a loop. |
+| `createSessionStore()`                            | Workflow checkpoint persistence                          | Sessions are workflows. Save/restore becomes start/resume.                                                                                                                                                  |
+| Gateway HTTP + WebSocket                          | Weft server HTTP + WebSocket                             | Same shape, different route prefix. Could share a Bun.serve instance or proxy.                                                                                                                              |
+| `BudgetThresholdEvent` / `BudgetExceededEvent`    | `AgentBudgetWarningEvent` / `AgentBudgetExceededEvent`   | Direct equivalents.                                                                                                                                                                                         |
+
+### What Weft Already Provides That Agent Bureau Needs
+
+These are capabilities Agent Bureau currently lacks that Weft delivers out of the box:
+
+1. **Durable execution.** Runs survive crashes. The agent loop checkpoints at every tool call boundary. Recovery is O(1) — no replay, no re-execution of prior steps.
+
+2. **Persistent task queue.** Tool calls and sub-agent dispatches are queued in storage with visibility timeouts, retry policies, and dead-letter semantics. No more in-memory-only scheduling.
+
+3. **Distributed workers.** Activities can execute on remote machines connected via WebSocket. Agent Bureau's single-process constraint is eliminated.
+
+4. **Multi-agent coordination primitives.** `ctx.handoff()`, `ctx.debate()`, `ctx.supervise()` replace the custom `createSupervisor()` with durable, crash-safe equivalents that support confidence-weighted voting and dynamic redundancy.
+
+5. **Cost enforcement.** Per-workflow and organization-level budget tracking with real-time enforcement, projection, and abort-on-exceed. Agent Bureau has budget events but no enforcement mechanism.
+
+6. **Human-in-the-loop review.** Structured review requests with escalation chains, partial approval, conversation threading, and webhook notifications. Agent Bureau has no equivalent.
+
+7. **Search and query.** Indexed search attributes on workflows, queryable via list API with attribute filters. Agent Bureau has no way to find or filter past runs.
+
+8. **Built-in observability.** Prometheus metrics, W3C trace propagation, event history with tamper-detection hashing. Agent Bureau emits events but doesn't aggregate or expose metrics.
+
+9. **Context window strategies.** Sliding window, summarization, and RAG-based context management built into the agent loop. Agent Bureau's `conversationalist` handles message formatting but not compaction.
+
+10. **Dashboard.** Svelte-based UI with workflow state, agent conversation display, reasoning traces, cost waterfall, and review management. Agent Bureau has no UI.
+
+### What Weft Needs to Add or Expose for Agent Bureau
+
+These are gaps or friction points that would block or complicate adoption:
+
+#### 1. Priority-Aware Scheduling
+
+**Agent Bureau has:** Four priority lanes (immediate, scheduled, background, ambient) with preemption.
+
+**Weft has:** FIFO, LIFO, or priority-based scheduling in the task queue, but priority is a `number` on `TaskDispatch`, not a named lane system.
+
+**What's needed:** Either Agent Bureau adapts to numeric priority (mapping lanes to numbers: immediate=100, scheduled=50, background=10, ambient=1), or Weft adds named-lane support. The numeric approach is simpler and sufficient — document the mapping convention.
+
+#### 2. Retry Context Mutation
+
+**Agent Bureau has:** `RetryMutator` functions that transform the generate context between retries (e.g., escalate temperature, remove the tool that caused a schema error, fix malformed JSON). This is a core pattern — retries aren't just "try again," they adapt.
+
+**Weft has:** `RetryPolicy` with exponential backoff, but retries re-execute the same activity with the same input.
+
+**What's needed:** Weft's workflow-level retry pattern already supports this — the workflow itself implements the retry loop with mutation between iterations. But this needs to be a documented pattern, not discovered by accident. Example:
+
+```typescript
+// Agent Bureau's retry-with-mutation as a Weft workflow pattern
+for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  const result = yield * ctx.run(generate, mutatedContext);
+  if (isSuccess(result)) return result;
+  mutatedContext = mutate(mutatedContext, result.error);
+}
+```
+
+#### 3. Hook System Compatibility
+
+**Agent Bureau has:** A rich hook system — `beforeGenerate`, `afterGenerate`, `beforeToolExecution`, `afterToolExecution`, `onRunStart`, `onRunComplete`, `onError` with recovery actions.
+
+**Weft has:** Interceptors that wrap context operations (tracing, validation, encryption) but not the same hook surface.
+
+**What's needed:** Weft interceptors can implement most hooks. But `onError` with `ErrorRecoveryAction` ('continue', 'retry', 'abort', 'elicit') needs special handling — the workflow itself must implement the recovery logic using try/catch around `yield*` operations. Document the pattern for mapping Agent Bureau hooks to Weft interceptors + workflow error handling.
+
+#### 4. Tool Execution Concurrency Control
+
+**Agent Bureau has:** `toolbox.execute(toolCalls, { concurrency: 3, mode: 'parallel' })` — fine-grained control over how many tools run simultaneously within a single step.
+
+**Weft has:** `ctx.all([...])` for parallel execution but no built-in concurrency limiter on parallel branches.
+
+**What's needed:** Either implement concurrency-limited `ctx.all()` (a `ctx.pool(n, [...])` primitive), or Agent Bureau manages concurrency within a single activity that wraps multiple tool calls. The latter is simpler and keeps Weft's activity model clean.
+
+#### 5. Guardrail Integration
+
+**Agent Bureau has:** `sentinel` package with input/output validators and detectors that run in parallel via `Promise.allSettled`, with session tainting on violation.
+
+**Weft has:** No guardrail concept. Interceptors could wrap operations but don't have the validator/detector taxonomy.
+
+**What's needed:** Guardrails map to workflow-level logic. Before dispatching a generate activity, the workflow runs validator activities in parallel. After receiving the result, it runs detector activities. Session tainting becomes a search attribute (`weft:tainted: true`). This is a pattern, not a Weft feature — but it should be documented.
+
+#### 6. Typed Event Parity
+
+**Agent Bureau has:** ~30 strongly-typed event classes with typed `addEventListener` overloads via `CompletableEventTarget<EventMap>`.
+
+**Weft has:** ~15 event types with typed overloads on Engine and WorkflowHandle.
+
+**What's needed:** Agent Bureau's operative-specific events (StepStartedEvent, ToolsExecutingEvent, GenerateRetryEvent, GuardrailTriggeredEvent, BackpressureAppliedEvent, etc.) need to be emitted from within the workflow and bridged to Weft's event system. The workflow dispatches custom events via the context; Weft forwards them to observers. This works today via `WorkflowEvent` with arbitrary payload — but typed event registration at the workflow level would be cleaner.
+
+#### 7. Backpressure Signal Passthrough
+
+**Agent Bureau has:** `createAdaptiveBackoff()`, `createTokenBucket()`, `createSlidingWindow()` — rate limiters applied per-step within the agent loop.
+
+**Weft has:** No backpressure concept at the workflow level. Activity-level retry backoff exists, but not step-level rate limiting.
+
+**What's needed:** Backpressure is workflow-internal logic. The agent workflow calls `yield* ctx.sleep(backoff.delay)` between steps when the rate limiter fires. Weft's durable sleep makes this crash-safe (the backoff delay survives restarts). No Weft changes needed — just document the pattern.
+
+#### 8. Storage Interface Bridging
+
+**Agent Bureau has:** `KeyValueStore<T>` with `get(key): Promise<T | undefined>`, `set(key, value): Promise<void>`, `delete(key): Promise<void>`, `has(key): Promise<boolean>`, and namespace isolation.
+
+**Weft has:** `Storage` with `get(key): Promise<Uint8Array | null>`, `put(key, value: Uint8Array): Promise<void>`, `delete(key): Promise<void>`, `scan(prefix): AsyncIterable`, and `batch()`.
+
+**What's needed:** A thin adapter that wraps Weft's `Storage` as an Agent Bureau `KeyValueStore`:
+
+```typescript
+function createWeftKeyValueStore<T>(storage: WeftStorage, namespace: string): KeyValueStore<T> {
+  const prefix = `kv:${namespace}:`;
+  return {
+    get: async (key) => {
+      /* decode from Uint8Array */
+    },
+    set: async (key, value) => {
+      /* encode to Uint8Array */
+    },
+    delete: async (key) => storage.delete(prefix + key),
+    has: async (key) => (await storage.get(prefix + key)) !== null,
+  };
+}
+```
+
+This adapter lives in Agent Bureau, not Weft. Weft's storage is the lower-level primitive; Agent Bureau wraps it.
+
+### Integration Strategy
+
+#### Phase 1: Library Mode (In-Process)
+
+Use Weft as a library inside Agent Bureau's `operative` package. No server, no remote workers, no binary.
+
+1. **Wrap the agent loop as a Weft workflow.** `createRun()` becomes `engine.start('agent-run', runOptions)`. The workflow is an async generator that implements the operative loop (generate → tool calls → check stop condition → repeat).
+
+2. **Wrap tool execution as Weft activities.** Each tool in the toolbox becomes a registered activity with retry policy, timeout, and idempotency key derived from tool name + input hash.
+
+3. **Use Weft's event system.** Map operative events to Weft events. `ActiveRun` becomes a thin wrapper around `WorkflowHandle` that re-emits events with Agent Bureau's typed event classes.
+
+4. **Use Weft's storage.** Replace Agent Bureau's `KeyValueStore` backends with the Weft storage adapter. One storage backend for everything — agent state, tool caches, session persistence, memory.
+
+5. **Keep Agent Bureau's API surface.** `createRun()`, `ActiveRun`, `RunOptions`, tool declarations — all stay the same. Weft is an implementation detail, not a new user-facing API.
+
+#### Phase 2: Server Mode (Distributed)
+
+Deploy Weft as a standalone server. Agent Bureau becomes a client.
+
+1. **Gateway delegates to Weft server.** Agent Bureau's gateway proxies to Weft's HTTP API, or Weft replaces the gateway entirely (same route shape, richer feature set).
+
+2. **Remote tool workers.** Tools that call external APIs or run expensive computation execute on dedicated worker machines connected via WebSocket.
+
+3. **Dashboard.** Weft's built-in dashboard replaces any custom Agent Bureau UI needs.
+
+4. **Multi-agent workflows.** Supervisor patterns use Weft's `ctx.handoff()` / `ctx.supervise()` / `ctx.debate()` instead of Agent Bureau's `createSupervisor()`.
+
+#### Phase 3: Full Platform
+
+1. **Browser deployment.** Agent Bureau runs in the browser via Weft's Service Worker + IndexedDB backend. Same agent code, local-first execution.
+
+2. **Human review workflows.** Agent runs that need approval pause via `ctx.humanReview()` and resume when a human responds through the dashboard or API.
+
+3. **Organization-level budgets.** `engine.setBudgetPolicy()` enforces daily/monthly cost limits across all agent runs.
+
+4. **Semantic memory as workflow.** Memory consolidation becomes a scheduled Weft workflow that periodically summarizes and compacts agent memories.
+
+### Package Dependency Impact
+
+```
+Current Agent Bureau dependency graph:
+  interoperability, lifecycle (foundation)
+  → armorer, conversationalist (layer 1)
+  → operative, memory (layer 2)
+  → herald, sentinel (layer 3)
+  → gateway (aggregator)
+
+With Weft integration:
+  interoperability, lifecycle (foundation)
+  → armorer, conversationalist (layer 1)
+  → operative + weft (layer 2) ← weft becomes a dependency of operative
+  → memory (layer 2, uses weft storage adapter)
+  → herald, sentinel (layer 3)
+  → gateway (thinner — delegates to weft server, or removed entirely)
+```
+
+Weft is a dependency of `operative`, not a replacement for it. Operative keeps its API surface, hooks, retry mutators, guardrail orchestration, and event types. Weft provides the durable execution substrate underneath.
+
+### Key Design Decisions
+
+1. **Weft is an implementation detail.** Agent Bureau users never import from `weft` directly. `operative` wraps Weft's engine and exposes the same `createRun()` / `ActiveRun` API. This means Weft can be swapped out without breaking downstream code.
+
+2. **One storage backend.** Weft's `Storage` interface becomes the single persistence layer. Agent Bureau's `KeyValueStore` is an adapter over it. No parallel storage systems.
+
+3. **Events bridge, not replace.** Agent Bureau's typed event system stays. Weft events are forwarded into Agent Bureau's `CompletableEventTarget` with the expected types. Weft's event types are internal.
+
+4. **Workflows own the control flow.** Retry mutation, backpressure, guardrails, and hook logic live in the workflow generator, not in Weft primitives. Weft provides the durable substrate (checkpoint, sleep, activity dispatch); Agent Bureau provides the agent-specific orchestration logic.
+
+5. **Progressive adoption.** Start with library mode (zero infrastructure change), graduate to server mode when distributed execution or the dashboard is needed. No big-bang migration.
