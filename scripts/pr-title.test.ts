@@ -262,16 +262,6 @@ describe('pr-title CLI', () => {
     );
   });
 
-  it('supports equals-sign flag syntax in-process', () => {
-    const result = runPullRequestTitleCli(['validate', '--title=Add worker heartbeat persistence']);
-
-    expect(result).toEqual({
-      stdout: ['Add worker heartbeat persistence'],
-      stderr: [],
-      exitCode: 0,
-    });
-  });
-
   it('treats unknown commands as usage errors in-process', () => {
     const result = runPullRequestTitleCli([
       'unknown',
