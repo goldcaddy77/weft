@@ -289,8 +289,14 @@ export class PromptCache {
       ancestors.push(node);
     }
 
-    // If this path is already a terminal, nothing to do.
-    if (node.isTerminal) return;
+    // If this path is already a terminal, refresh its sequence number so that
+    // re-accessing a cached prefix updates its LRU eviction priority. Without
+    // this, the cache would behave as FIFO: a frequently-used prefix could be
+    // evicted before a rarely-used newer one.
+    if (node.isTerminal) {
+      node.sequence = ++this.#sequence;
+      return;
+    }
 
     // Mark as a new terminal and record the insertion sequence.
     node.isTerminal = true;
@@ -327,67 +333,103 @@ export class PromptCache {
    * @internal
    */
   #evictOldest(): void {
+    // Pass 1: iterative DFS to find the terminal with the minimum sequence
+    // number. Each stack entry carries only { node, hash } — no ancestor array
+    // — so this pass is O(N) with zero intermediate array allocations.
     let oldestNode: TrieNode | null = null;
-    let oldestAncestors: TrieNode[] = [];
-    let oldestHash = '';
+    let oldestSequence = Infinity;
 
-    // DFS to find the terminal with the minimum sequence number.
-    // Carry the full ancestor path so we can recompute hasTerminalDescendant.
-    const stack: Array<{ node: TrieNode; ancestors: TrieNode[]; hash: string }> = [
-      { node: this.#root, ancestors: [], hash: '' },
-    ];
+    const stack: Array<{ node: TrieNode; hash: string }> = [{ node: this.#root, hash: '' }];
 
     while (stack.length > 0) {
       const entry = stack.pop();
       if (!entry) break;
-      const { node, ancestors, hash } = entry;
+      const { node } = entry;
 
-      if (node.isTerminal) {
-        if (oldestNode === null || node.sequence < oldestNode.sequence) {
-          oldestNode = node;
-          oldestAncestors = ancestors;
-          oldestHash = hash;
-        }
+      if (node.isTerminal && node.sequence < oldestSequence) {
+        oldestNode = node;
+        oldestSequence = node.sequence;
       }
 
       for (const [childHash, child] of node.children) {
-        stack.push({ node: child, ancestors: [...ancestors, node], hash: childHash });
+        stack.push({ node: child, hash: childHash });
       }
     }
 
-    if (oldestNode !== null) {
-      oldestNode.isTerminal = false;
-      this.#size--;
+    if (oldestNode === null) return;
 
-      // Update hasTerminalDescendant on the evicted node itself.
-      oldestNode.hasTerminalDescendant = this.#subtreeHasTerminal(oldestNode);
+    // Pass 2: recursive DFS from root to find the path to oldestNode.
+    // The recursive helper allocates O(depth) call frames and builds the
+    // ancestor list only along the successful branch — all other branches
+    // return false with zero heap allocation.
+    const oldestAncestors: TrieNode[] = [];
+    let oldestHash = '';
+    this.#findPath(this.#root, oldestNode, oldestAncestors, (h) => {
+      oldestHash = h;
+    });
 
-      // Walk ancestors bottom-up: recompute hasTerminalDescendant and prune
-      // childless non-terminal nodes to prevent memory accumulation.
-      //
-      // We maintain a "last child hash" so that each ancestor can delete the
-      // child below it if that child has become dead (no children, not terminal).
-      // Start with the evicted node as the initial "child to maybe prune".
-      let childToMaybePrune: TrieNode = oldestNode;
-      let childHash = oldestHash;
+    oldestNode.isTerminal = false;
+    this.#size--;
 
-      for (let i = oldestAncestors.length - 1; i >= 0; i--) {
-        const ancestor = oldestAncestors[i];
-        if (!ancestor) continue;
+    // Update hasTerminalDescendant on the evicted node itself.
+    oldestNode.hasTerminalDescendant = this.#subtreeHasTerminal(oldestNode);
 
-        // Prune the child if it is now dead (no children and not terminal).
-        if (childToMaybePrune.children.size === 0 && !childToMaybePrune.isTerminal) {
-          ancestor.children.delete(childHash);
-        }
+    // Walk ancestors bottom-up: recompute hasTerminalDescendant and prune
+    // childless non-terminal nodes to prevent memory accumulation.
+    //
+    // We maintain a "last child hash" so that each ancestor can delete the
+    // child below it if that child has become dead (no children, not terminal).
+    // Start with the evicted node as the initial "child to maybe prune".
+    let childToMaybePrune: TrieNode = oldestNode;
+    let childHash = oldestHash;
 
-        ancestor.hasTerminalDescendant = this.#subtreeHasTerminal(ancestor);
+    for (let i = oldestAncestors.length - 1; i >= 0; i--) {
+      const ancestor = oldestAncestors[i];
+      if (!ancestor) continue;
 
-        // This ancestor is now the child for the next iteration.
-        childToMaybePrune = ancestor;
-        const grandparent = oldestAncestors[i - 1];
-        childHash = grandparent ? this.#findChildHash(grandparent, ancestor) : '';
+      // Prune the child if it is now dead (no children and not terminal).
+      if (childToMaybePrune.children.size === 0 && !childToMaybePrune.isTerminal) {
+        ancestor.children.delete(childHash);
       }
+
+      ancestor.hasTerminalDescendant = this.#subtreeHasTerminal(ancestor);
+
+      // This ancestor is now the child for the next iteration.
+      childToMaybePrune = ancestor;
+      const grandparent = oldestAncestors[i - 1];
+      childHash = grandparent ? this.#findChildHash(grandparent, ancestor) : '';
     }
+  }
+
+  /**
+   * Recursive DFS helper that locates `target` in the subtree rooted at
+   * `node`, building the ancestor list in `ancestors` along the successful
+   * branch only. Failed branches unwind with no allocation.
+   *
+   * When `target` is found, `onFound` is called with the hash key used to
+   * reach it from its parent, and the method returns `true`.
+   *
+   * @internal
+   */
+  #findPath(
+    node: TrieNode,
+    target: TrieNode,
+    ancestors: TrieNode[],
+    onFound: (hash: string) => void,
+  ): boolean {
+    for (const [childHash, child] of node.children) {
+      if (child === target) {
+        ancestors.push(node);
+        onFound(childHash);
+        return true;
+      }
+      ancestors.push(node);
+      if (this.#findPath(child, target, ancestors, onFound)) {
+        return true;
+      }
+      ancestors.pop();
+    }
+    return false;
   }
 
   /**

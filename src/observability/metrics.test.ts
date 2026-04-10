@@ -2,10 +2,11 @@ import { describe, expect, it } from 'bun:test';
 
 import type { MetricDefinition, PrometheusExporter } from './metrics';
 import {
-  METRICS,
-  MetricsCollector,
+  CircularBuffer,
   createMetricsCollectorExporter,
   createOtelMetrics,
+  METRICS,
+  MetricsCollector,
   serializeMetricsSnapshotForPrometheus,
 } from './metrics';
 import type { OtelMeter } from './no-op-telemetry';
@@ -124,6 +125,73 @@ describe('MetricsCollector', () => {
         expect(metric!.p50).toBe(42);
         expect(metric!.p99).toBe(42);
       }
+    });
+  });
+
+  describe('circular buffer eviction', () => {
+    it('evicts the oldest value once capacity is exceeded', () => {
+      const capacity = 4;
+      const buffer = new CircularBuffer(capacity);
+
+      // Fill to capacity with values 1–4
+      for (let value = 1; value <= capacity; value++) {
+        buffer.push(value);
+      }
+      expect(buffer.length).toBe(capacity);
+      expect(buffer.min()).toBe(1);
+      expect(buffer.max()).toBe(4);
+
+      // Push a fifth value — oldest (1) is evicted
+      buffer.push(10);
+      expect(buffer.length).toBe(capacity); // still capped
+      expect(buffer.min()).toBe(2); // 1 is gone
+      expect(buffer.max()).toBe(10);
+    });
+
+    it('reports the correct count via MetricsCollector after overflow', () => {
+      const collector = new MetricsCollector();
+      // Record more values than the default 4096 capacity
+      const overflowCount = 4096 + 100;
+      for (let index = 0; index < overflowCount; index++) {
+        collector.record('weft.workflow.duration', index);
+      }
+
+      const snapshot = collector.snapshot();
+      const metric = snapshot['weft.workflow.duration'];
+      expect(metric?.type).toBe('histogram');
+      if (metric?.type === 'histogram') {
+        // Buffer is capped at 4096; the 100 newest values displaced the 100 oldest
+        expect(metric.count).toBe(4096);
+      }
+    });
+  });
+
+  describe('circular buffer percentile accuracy', () => {
+    it('computes p50 and p99 correctly from sorted live values', () => {
+      const buffer = new CircularBuffer(100);
+      // Push 100 values 1–100
+      for (let value = 1; value <= 100; value++) {
+        buffer.push(value);
+      }
+
+      // p50 → index 50 of a 100-element sorted array → value 51
+      expect(buffer.percentile(0.5)).toBe(51);
+      // p99 → index 99 of a 100-element sorted array → value 100
+      expect(buffer.percentile(0.99)).toBe(100);
+    });
+
+    it('returns 0 for percentile when the buffer is empty', () => {
+      const buffer = new CircularBuffer(16);
+      expect(buffer.percentile(0.5)).toBe(0);
+      expect(buffer.percentile(0.99)).toBe(0);
+    });
+
+    it('handles a single-element buffer at any percentile', () => {
+      const buffer = new CircularBuffer(16);
+      buffer.push(42);
+      expect(buffer.percentile(0)).toBe(42);
+      expect(buffer.percentile(0.5)).toBe(42);
+      expect(buffer.percentile(0.99)).toBe(42);
     });
   });
 

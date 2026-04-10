@@ -145,6 +145,38 @@ describe('PromptCache', () => {
       expect(hit).toBe(false);
     });
 
+    it('LRU: re-accessing an entry refreshes its eviction priority', () => {
+      // Scenario: insert A (seq=1), insert B (seq=2), re-access A (seq→3).
+      // Insert C to trigger eviction. B has the smallest sequence (2) so B
+      // must be evicted, not A.
+      const cache = new PromptCache({ maxEntries: 2 });
+
+      const seqA = [SYSTEM, TURN_1_USER];
+      const seqB = [SYSTEM, TURN_2_USER];
+      const seqC = [msg('user', 'unique C1'), msg('assistant', 'unique C2')];
+
+      cache.annotate(seqA); // miss — inserts A (sequence=1)
+      cache.annotate(seqB); // miss — inserts B (sequence=2)
+      cache.annotate(seqA); // hit  — refreshes A's sequence to 3
+
+      // Insert C: triggers eviction. B (sequence=2) is the oldest; it evicts.
+      cache.annotate(seqC); // miss — inserts C (sequence=4), evicts B
+
+      expect(cache.size).toBeLessThanOrEqual(2);
+
+      // A must still be live: second call is a hit.
+      const { hit: aHit } = cache.annotate(seqA);
+      expect(aHit).toBe(true);
+
+      // B was evicted: first call after eviction is a miss.
+      const { hit: bFirstHit } = cache.annotate(seqB);
+      expect(bFirstHit).toBe(false);
+
+      // After re-inserting B above, a second call for B must hit.
+      const { hit: bSecondHit } = cache.annotate(seqB);
+      expect(bSecondHit).toBe(true);
+    });
+
     it('evicted ancestors are pruned — size reflects only live sequences', () => {
       // Regression: after eviction, orphaned ancestor nodes must be removed
       // so trie memory doesn't grow without bound.

@@ -684,6 +684,88 @@ describe('supervise', () => {
     expect(capturedSignal).toBeDefined();
     expect(capturedSignal!.aborted).toBe(true);
   });
+
+  it("does not overwrite a concurrent supervise call's abort controller on shared BudgetTracker", async () => {
+    // Regression: the finally block previously called budget.setAbortController(new AbortController())
+    // unconditionally. When two supervise() calls share a BudgetTracker, the first to finish
+    // would replace the controller the second call was still using, severing budget enforcement
+    // for the second call.
+    const budget = new BudgetTracker({
+      maxTokens: 10_000,
+      models: { 'test-model': { inputCostPer1K: 0.001, outputCostPer1K: 0.002 } },
+    });
+
+    // Capture the signal installed by the second supervise call so we can
+    // verify it remains intact after the first call completes.
+    let secondCallSignal: AbortSignal | undefined;
+
+    // The first call resolves immediately; the second stalls until we release it.
+    let releaseSecondCall!: () => void;
+    const secondCallGate = new Promise<void>((resolve) => {
+      releaseSecondCall = resolve;
+    });
+
+    let callCount = 0;
+    const provider: LLMProvider = {
+      name: 'mock',
+      async chat(_messages, options): Promise<ChatResponse> {
+        callCount++;
+        if (callCount === 1) {
+          // First supervise call's worker — return quickly.
+          return createChatResponse('same');
+        }
+        // Second supervise call's worker — stall until we release it.
+        secondCallSignal = options?.signal;
+        await secondCallGate;
+        return createChatResponse('same');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const firstSupervisePromise = supervise({
+      workers: [createAgentDefinition({ name: 'worker-1' })],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go first',
+      strategy: 'consensus',
+      provider,
+      budget,
+    });
+
+    const secondSupervisePromise = supervise({
+      workers: [createAgentDefinition({ name: 'worker-2' })],
+      supervisor: createAgentDefinition({ name: 'supervisor' }),
+      input: 'Go second',
+      strategy: 'consensus',
+      provider,
+      budget,
+    });
+
+    // Let the microtask queue advance so both calls have set their controllers
+    // and the first call's provider has returned.
+    await Bun.sleep(0);
+
+    // The second call installed its controller after the first, so the budget
+    // now holds the second call's signal.
+    expect(secondCallSignal).toBeDefined();
+    const secondCallSignalBeforeFirstFinishes = secondCallSignal!;
+
+    // Let the first supervise call finish — in the buggy version this would
+    // overwrite the budget's controller with a fresh one, silently detaching
+    // the second call's budget enforcement.
+    await firstSupervisePromise;
+
+    // The budget's signal must still be the second call's signal — not a new one.
+    expect(budget.signal).toBe(secondCallSignalBeforeFirstFinishes);
+
+    // Unblock and finish the second call cleanly.
+    releaseSecondCall();
+    await secondSupervisePromise;
+  });
 });
 
 // ---------------------------------------------------------------------------

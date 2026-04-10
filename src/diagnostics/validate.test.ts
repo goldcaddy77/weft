@@ -182,6 +182,35 @@ describe('validateRegistrations', () => {
     expect(report.workflowCount).toBe(0);
     expect(report.issues).toHaveLength(0);
   });
+
+  // ---------------------------------------------------------------------------
+  // 6. Standalone activity label
+  // ---------------------------------------------------------------------------
+
+  it('labels issues from standalone activities with "(standalone)" as the workflowType', () => {
+    // Standalone activities are passed via the activities parameter without any
+    // workflow registration context. The label must be '(standalone)', not the
+    // name of an unrelated workflow.
+    const report = validateRegistrations({ someWorkflow: makeRegistration('someWorkflow') }, [
+      makeActivity('chargeCard', {
+        idempotent: false, // triggers stateful-without-compensator
+      }),
+      makeActivity('sendNotification', {
+        idempotent: true,
+        retry: {
+          maxAttempts: Infinity,
+          initialBackoff: '1s',
+          backoffMultiplier: 2,
+          maxBackoff: '30s',
+        },
+      }),
+    ]);
+
+    expect(report.valid).toBe(false);
+    for (const issue of report.issues) {
+      expect(issue.workflowType).toBe('(standalone)');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -29,6 +29,94 @@ export interface MetricDefinition {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Circular buffer for bounded histogram storage
+// ---------------------------------------------------------------------------
+
+const DEFAULT_CIRCULAR_BUFFER_CAPACITY = 4096;
+
+/**
+ * A fixed-capacity ring buffer backed by a `Float64Array`.
+ *
+ * Once the buffer is full, new values overwrite the oldest entry so memory
+ * usage stays bounded regardless of observation volume. Percentile queries
+ * sort only the live portion of the backing array, avoiding a full-capacity
+ * copy when the buffer is not yet saturated.
+ */
+export class CircularBuffer {
+  readonly #capacity: number;
+  #storage: Float64Array;
+  #cursor: number;
+  #count: number;
+
+  constructor(capacity: number = DEFAULT_CIRCULAR_BUFFER_CAPACITY) {
+    this.#capacity = capacity;
+    this.#storage = new Float64Array(capacity);
+    this.#cursor = 0;
+    this.#count = 0;
+  }
+
+  /** Number of live values currently held in the buffer. */
+  get length(): number {
+    return this.#count;
+  }
+
+  /** Insert a value, overwriting the oldest entry when the buffer is full. */
+  push(value: number): void {
+    this.#storage[this.#cursor] = value;
+    this.#cursor = (this.#cursor + 1) % this.#capacity;
+    if (this.#count < this.#capacity) {
+      this.#count++;
+    }
+  }
+
+  /**
+   * Compute the p-th percentile (0–1) of all live values.
+   *
+   * Sorts a temporary copy of the live portion only — never the full capacity
+   * array. Returns 0 when the buffer is empty.
+   */
+  percentile(p: number): number {
+    if (this.#count === 0) return 0;
+    const live = Array.from(this.#storage.subarray(0, this.#count)).toSorted(
+      (left, right) => left - right,
+    );
+    const index = Math.floor(live.length * p);
+    return live[index] ?? live[live.length - 1] ?? 0;
+  }
+
+  /** Sum of all live values. */
+  sum(): number {
+    let total = 0;
+    for (let index = 0; index < this.#count; index++) {
+      total += this.#storage[index] ?? 0;
+    }
+    return total;
+  }
+
+  /** Minimum live value, or 0 if the buffer is empty. */
+  min(): number {
+    if (this.#count === 0) return 0;
+    let minimum = this.#storage[0] ?? 0;
+    for (let index = 1; index < this.#count; index++) {
+      const value = this.#storage[index] ?? 0;
+      if (value < minimum) minimum = value;
+    }
+    return minimum;
+  }
+
+  /** Maximum live value, or 0 if the buffer is empty. */
+  max(): number {
+    if (this.#count === 0) return 0;
+    let maximum = this.#storage[0] ?? 0;
+    for (let index = 1; index < this.#count; index++) {
+      const value = this.#storage[index] ?? 0;
+      if (value > maximum) maximum = value;
+    }
+    return maximum;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Metrics collector
 // ---------------------------------------------------------------------------
 
@@ -56,7 +144,7 @@ export type MetricsSnapshot = Record<string, CounterMetric | HistogramMetric | G
  */
 export class MetricsCollector {
   #counters: Map<string, number>;
-  #histograms: Map<string, number[]>;
+  #histograms: Map<string, CircularBuffer>;
   #gauges: Map<string, number>;
 
   constructor() {
@@ -70,11 +158,14 @@ export class MetricsCollector {
     this.#counters.set(name, (this.#counters.get(name) ?? 0) + value);
   }
 
-  /** Record a histogram observation. */
+  /** Record a histogram observation. Memory usage is bounded by the circular buffer capacity. */
   record(name: string, value: number): void {
-    const values = this.#histograms.get(name) ?? [];
-    values.push(value);
-    this.#histograms.set(name, values);
+    let buffer = this.#histograms.get(name);
+    if (!buffer) {
+      buffer = new CircularBuffer();
+      this.#histograms.set(name, buffer);
+    }
+    buffer.push(value);
   }
 
   /** Set an absolute gauge value. */
@@ -90,16 +181,15 @@ export class MetricsCollector {
       result[name] = { type: 'counter', value: count };
     }
 
-    for (const [name, values] of this.#histograms) {
-      const sorted = sortNumbersAscending(values);
+    for (const [name, buffer] of this.#histograms) {
       result[name] = {
         type: 'histogram',
-        count: values.length,
-        sum: sumNumbers(values),
-        p50: sorted[Math.floor(sorted.length * 0.5)] ?? 0,
-        p99: sorted[Math.floor(sorted.length * 0.99)] ?? 0,
-        min: sorted[0] ?? 0,
-        max: sorted[sorted.length - 1] ?? 0,
+        count: buffer.length,
+        sum: buffer.sum(),
+        p50: buffer.percentile(0.5),
+        p99: buffer.percentile(0.99),
+        min: buffer.min(),
+        max: buffer.max(),
       };
     }
 
@@ -161,21 +251,6 @@ export function createOtelMetrics(meterOrName?: OtelMeter | string): OtelMetrics
     activityAttempts: meter.createCounter('weft.activity.attempts'),
     activeWorkflows: meter.createUpDownCounter('weft.workflow.active'),
   };
-}
-
-function sortNumbersAscending(values: number[]): number[] {
-  const sorted = [...values];
-  /* c8 ignore next -- the comparator is exercised by histogram tests, but Bun does not attribute it as a separate function hit */
-  sorted.sort((left, right) => left - right);
-  return sorted;
-}
-
-function sumNumbers(values: number[]): number {
-  let total = 0;
-  for (const value of values) {
-    total += value;
-  }
-  return total;
 }
 
 // ---------------------------------------------------------------------------
