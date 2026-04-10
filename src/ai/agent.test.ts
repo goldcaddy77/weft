@@ -24,7 +24,7 @@ import type { MCPRequest, MCPResponse, MCPTransport } from './mcp/transport';
 import type { ModelRouter, RoutingContext } from './model-router';
 import type { CacheEntry } from './tool-cache';
 import { setToolCacheEntry } from './tool-cache';
-import type { EffectRecord, ToolEffectLog } from './tool-effect-log';
+import type { EffectRecord, ToolEffectLogLike } from './tool-effect-log';
 import { ToolCallReplayConflictError } from './tool-effect-log';
 
 // ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ function createFakeToolEffectLog(
     abort: (semanticHash: string, toolName: string, reason: string) => Promise<void>;
     duplicatesPrevented: number;
   }> = {},
-): ToolEffectLog {
+): ToolEffectLogLike {
   return {
     lookup: async () => null,
     recordReplay: () => {},
@@ -90,7 +90,7 @@ function createFakeToolEffectLog(
     abort: async () => {},
     duplicatesPrevented: 0,
     ...overrides,
-  } as unknown as ToolEffectLog;
+  };
 }
 
 // ---------------------------------------------------------------------------
