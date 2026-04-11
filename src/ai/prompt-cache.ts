@@ -117,6 +117,23 @@ function hashMessage(message: Message): string {
   return hashString(payload);
 }
 
+/**
+ * Check whether `target` is reachable from `from` via children edges.
+ *
+ * Used by {@link PromptCache.#evictOldest} to trace a root→target path without
+ * materializing ancestor arrays during the initial DFS. Defined at module scope
+ * so it is allocated once rather than on every eviction call.
+ *
+ * @internal
+ */
+function subtreeContains(from: TrieNode, target: TrieNode): boolean {
+  if (from === target) return true;
+  for (const [, child] of from.children) {
+    if (subtreeContains(child, target)) return true;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // PromptCache
 // ---------------------------------------------------------------------------
@@ -289,8 +306,11 @@ export class PromptCache {
       ancestors.push(node);
     }
 
-    // If this path is already a terminal, nothing to do.
-    if (node.isTerminal) return;
+    // If this path is already a terminal, refresh its sequence for LRU semantics.
+    if (node.isTerminal) {
+      node.sequence = ++this.#sequence;
+      return;
+    }
 
     // Mark as a new terminal and record the insertion sequence.
     node.isTerminal = true;
@@ -328,30 +348,56 @@ export class PromptCache {
    */
   #evictOldest(): void {
     let oldestNode: TrieNode | null = null;
-    let oldestAncestors: TrieNode[] = [];
     let oldestHash = '';
 
-    // DFS to find the terminal with the minimum sequence number.
-    // Carry the full ancestor path so we can recompute hasTerminalDescendant.
-    const stack: Array<{ node: TrieNode; ancestors: TrieNode[]; hash: string }> = [
-      { node: this.#root, ancestors: [], hash: '' },
-    ];
+    // Pass 1: DFS to find the terminal with the minimum sequence number.
+    // Uses a mutable path array with push/pop instead of spreading a new
+    // ancestor array per stack entry, avoiding O(B^D × D) intermediate arrays.
+    const findStack: Array<{ node: TrieNode; hash: string }> = [{ node: this.#root, hash: '' }];
 
-    while (stack.length > 0) {
-      const entry = stack.pop();
+    while (findStack.length > 0) {
+      const entry = findStack.pop();
       if (!entry) break;
-      const { node, ancestors, hash } = entry;
+      const { node, hash } = entry;
 
       if (node.isTerminal) {
         if (oldestNode === null || node.sequence < oldestNode.sequence) {
           oldestNode = node;
-          oldestAncestors = ancestors;
           oldestHash = hash;
         }
       }
 
       for (const [childHash, child] of node.children) {
-        stack.push({ node: child, ancestors: [...ancestors, node], hash: childHash });
+        findStack.push({ node: child, hash: childHash });
+      }
+    }
+
+    // Pass 2: Walk from the root to the eviction target to build the ancestor
+    // path. This is O(D) for a single path rather than O(B^D × D) arrays.
+    const oldestAncestors: TrieNode[] = [];
+    if (oldestNode !== null && oldestNode !== this.#root) {
+      let current = this.#root;
+      oldestAncestors.push(current);
+      // Walk trie edges that lead toward the oldest node. Each level has a
+      // unique child that is either the target or an ancestor of it. We
+      // identify the correct child by recursively checking whether it contains
+      // the target, which is still cheaper than materializing ancestor arrays
+      // for every node in the full DFS.
+      while (current !== oldestNode) {
+        let stepped = false;
+        for (const [, child] of current.children) {
+          if (subtreeContains(child, oldestNode)) {
+            oldestAncestors.push(child);
+            current = child;
+            stepped = true;
+            break;
+          }
+        }
+        if (!stepped) break; // shouldn't happen — defensive
+      }
+      // The ancestor list should not include the target node itself.
+      if (oldestAncestors[oldestAncestors.length - 1] === oldestNode) {
+        oldestAncestors.pop();
       }
     }
 
