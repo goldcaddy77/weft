@@ -7,6 +7,7 @@ import {
   type Storage,
 } from './interface';
 import { assertReadOnlyQuery } from './read-only-query';
+import { scopedStorage } from './scoped-storage';
 
 /**
  * Runtime-neutral alias for the Bun SQLite adapter. Consumers that import
@@ -201,6 +202,10 @@ export class BunSQLiteStorage implements Storage {
   async count(prefix: string): Promise<number> {
     const prefixEnd = resolvePrefixRangeEnd(prefix);
     return this.#countStatement.get(prefix, prefixEnd)?.count ?? 0;
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
   }
 
   async batch(operations: BatchOperation[]): Promise<void> {

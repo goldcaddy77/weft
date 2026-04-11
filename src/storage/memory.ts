@@ -5,6 +5,7 @@ import {
   type ScanOptions,
   type Storage,
 } from './interface';
+import { scopedStorage } from './scoped-storage';
 
 export class MemoryStorage implements Storage {
   #data: Map<string, Uint8Array>;
@@ -110,6 +111,10 @@ export class MemoryStorage implements Storage {
   async count(prefix: string): Promise<number> {
     const prefixEnd = resolvePrefixRangeEnd(prefix);
     return this.#collectSortedKeys(prefix, prefixEnd).length;
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
   }
 
   get size(): number {

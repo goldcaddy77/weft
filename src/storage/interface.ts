@@ -24,6 +24,7 @@ export interface Storage extends Disposable {
   deletePrefix?(prefix: string): Promise<number>;
   keys?(prefix: string, options?: ScanOptions): AsyncIterable<string>;
   count?(prefix: string): Promise<number>;
+  scoped?(prefix: string): Storage;
 
   /** Optional SQL passthrough for dashboard/debugging (SQLite only). */
   query?<T>(sql: string, params?: unknown[]): Promise<T[]>;

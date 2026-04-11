@@ -7,6 +7,7 @@ import {
   type ScanOptions,
   type Storage,
 } from './interface';
+import { scopedStorage } from './scoped-storage';
 
 /**
  * LMDB-backed storage adapter. Reads are synchronous zero-copy via
@@ -140,6 +141,10 @@ export class LMDBStorage implements Storage {
   async count(prefix: string): Promise<number> {
     const prefixEnd = resolvePrefixRangeEnd(prefix);
     return this.#database.getKeysCount({ start: prefix, end: prefixEnd });
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
   }
 
   async batch(operations: BatchOperation[]): Promise<void> {

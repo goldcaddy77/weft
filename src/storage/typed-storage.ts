@@ -1,4 +1,8 @@
-import { decode as decodeMessagePack, encode as encodeMessagePack } from '../core/codec.ts';
+import {
+  decode as decodeMessagePack,
+  encode as encodeMessagePack,
+  validateCloneable,
+} from '../core/codec.ts';
 
 import {
   storageCount,
@@ -16,6 +20,21 @@ export interface StorageCodec<Value> {
 }
 
 export type StorageValueParser<Value> = (value: unknown) => Value;
+
+export type JsonPrimitive = boolean | null | number | string;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type MessagePackPrimitive = bigint | boolean | null | number | string | undefined;
+export type MessagePackValue =
+  | ArrayBuffer
+  | Date
+  | Error
+  | Map<MessagePackValue, MessagePackValue>
+  | MessagePackPrimitive
+  | MessagePackValue[]
+  | RegExp
+  | Set<MessagePackValue>
+  | Uint8Array
+  | { [key: string]: MessagePackValue };
 
 export type TypedBatchOperation<Value> =
   | { type: 'put'; key: string; value: Value }
@@ -105,33 +124,81 @@ export function withCodec<Value>(
   return new CodecStorage(storage, codec);
 }
 
-export function jsonCodec(): StorageCodec<unknown>;
-export function jsonCodec<Value>(parse: StorageValueParser<Value>): StorageCodec<Value>;
-export function jsonCodec<Value>(
+function encodeJsonValue(value: JsonValue): Uint8Array {
+  try {
+    const serializedValue = JSON.stringify(value);
+    if (serializedValue === undefined) {
+      throw new TypeError('jsonCodec only supports JSON-serializable values.');
+    }
+
+    return new TextEncoder().encode(serializedValue);
+  } catch (error) {
+    throw new TypeError('jsonCodec only supports JSON-serializable values.', {
+      cause: error,
+    });
+  }
+}
+
+function encodeMessagePackValue(value: MessagePackValue): Uint8Array {
+  const validationResult = validateCloneable(value);
+  if (!validationResult.valid) {
+    throw new TypeError(
+      `msgpackCodec only supports structuredClone-compatible values. ${validationResult.errors[0]?.reason ?? ''}`.trim(),
+    );
+  }
+
+  return encodeMessagePack(value);
+}
+
+function decodeJsonValue(bytes: Uint8Array): JsonValue {
+  const decodedValue = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+  // JSON.parse only produces JSON-compatible primitives, arrays, and plain objects.
+  return decodedValue as JsonValue;
+}
+
+function decodeMessagePackValue(bytes: Uint8Array): MessagePackValue {
+  const decodedValue = decodeMessagePack(bytes);
+  const validationResult = validateCloneable(decodedValue);
+  if (!validationResult.valid) {
+    throw new TypeError(
+      `msgpackCodec decoded a non-cloneable value. ${validationResult.errors[0]?.reason ?? ''}`.trim(),
+    );
+  }
+
+  return decodedValue as MessagePackValue;
+}
+
+export function jsonCodec(): StorageCodec<JsonValue>;
+export function jsonCodec<Value extends JsonValue>(
+  parse: StorageValueParser<Value>,
+): StorageCodec<Value>;
+export function jsonCodec<Value extends JsonValue>(
   parse?: StorageValueParser<Value>,
-): StorageCodec<unknown> | StorageCodec<Value> {
+): StorageCodec<JsonValue> | StorageCodec<Value> {
   return {
-    encode(value: unknown): Uint8Array {
-      return new TextEncoder().encode(JSON.stringify(value));
+    encode(value: JsonValue): Uint8Array {
+      return encodeJsonValue(value);
     },
-    decode(bytes: Uint8Array): unknown {
-      const decodedValue = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    decode(bytes: Uint8Array): JsonValue | Value {
+      const decodedValue = decodeJsonValue(bytes);
       return parse ? parse(decodedValue) : decodedValue;
     },
   };
 }
 
-export function msgpackCodec(): StorageCodec<unknown>;
-export function msgpackCodec<Value>(parse: StorageValueParser<Value>): StorageCodec<Value>;
-export function msgpackCodec<Value>(
+export function msgpackCodec(): StorageCodec<MessagePackValue>;
+export function msgpackCodec<Value extends MessagePackValue>(
+  parse: StorageValueParser<Value>,
+): StorageCodec<Value>;
+export function msgpackCodec<Value extends MessagePackValue>(
   parse?: StorageValueParser<Value>,
-): StorageCodec<unknown> | StorageCodec<Value> {
+): StorageCodec<MessagePackValue> | StorageCodec<Value> {
   return {
-    encode(value: unknown): Uint8Array {
-      return encodeMessagePack(value);
+    encode(value: MessagePackValue): Uint8Array {
+      return encodeMessagePackValue(value);
     },
-    decode(bytes: Uint8Array): unknown {
-      const decodedValue = decodeMessagePack(bytes);
+    decode(bytes: Uint8Array): MessagePackValue | Value {
+      const decodedValue = decodeMessagePackValue(bytes);
       return parse ? parse(decodedValue) : decodedValue;
     },
   };

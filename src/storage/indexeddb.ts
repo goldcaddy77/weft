@@ -5,6 +5,7 @@ import {
   type ScanOptions,
   type Storage,
 } from './interface';
+import { scopedStorage } from './scoped-storage';
 
 const STORE_NAME = 'kv';
 
@@ -261,6 +262,10 @@ export class IndexedDBStorage implements Storage {
     const transaction = database.transaction(STORE_NAME, 'readonly');
     const store = transaction.objectStore(STORE_NAME);
     return promisify(store.count(IDBKeyRange.bound(prefix, prefixEnd, false, true)));
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
   }
 
   [Symbol.dispose](): void {

@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
+import type { Storage } from './interface.ts';
 import { MemoryStorage } from './memory.ts';
-import { jsonCodec, msgpackCodec, withCodec } from './typed-storage.ts';
+import {
+  type JsonValue,
+  type MessagePackValue,
+  jsonCodec,
+  msgpackCodec,
+  withCodec,
+} from './typed-storage.ts';
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];
@@ -10,6 +17,19 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
     values.push(value);
   }
   return values;
+}
+
+function createCoreStorageAdapter(): Storage {
+  const storage = new MemoryStorage();
+
+  return {
+    get: storage.get.bind(storage),
+    put: storage.put.bind(storage),
+    delete: storage.delete.bind(storage),
+    scan: storage.scan.bind(storage),
+    batch: storage.batch.bind(storage),
+    [Symbol.dispose]: storage[Symbol.dispose].bind(storage),
+  };
 }
 
 describe('withCodec', () => {
@@ -53,7 +73,7 @@ describe('withCodec', () => {
 
   it('withCodec(storage, codec) forwards batch, scan, keys, count, and deletePrefix through the codec wrapper', async () => {
     const storage = withCodec(
-      new MemoryStorage(),
+      createCoreStorageAdapter(),
       jsonCodec(
         z.object({
           value: z.string(),
@@ -75,6 +95,24 @@ describe('withCodec', () => {
     ]);
     expect(await storage.deletePrefix('items:')).toBe(2);
     expect(await storage.count('items:')).toBe(0);
+  });
+
+  it('jsonCodec without a parser rejects unsupported values before serialization', () => {
+    const codec = jsonCodec();
+
+    expect(() => codec.encode(undefined as unknown as JsonValue)).toThrow(
+      'jsonCodec only supports JSON-serializable values.',
+    );
+  });
+
+  it('msgpackCodec without a parser rejects non-cloneable values before serialization', () => {
+    const codec = msgpackCodec();
+
+    expect(() =>
+      codec.encode({
+        handler: () => 'nope',
+      } as unknown as MessagePackValue),
+    ).toThrow('msgpackCodec only supports structuredClone-compatible values.');
   });
 
   it('jsonCodec requires validation before typed data crosses the storage boundary', async () => {

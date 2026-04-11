@@ -345,4 +345,14 @@ describe('BunSQLiteStorage', () => {
 
     storage[Symbol.dispose]();
   });
+
+  it('query rejects write PRAGMA statements', async () => {
+    const storage = new BunSQLiteStorage(':memory:');
+
+    await expect(storage.query('PRAGMA journal_mode = WAL')).rejects.toThrow(
+      'Storage query only supports read-only SELECT and PRAGMA statements.',
+    );
+
+    storage[Symbol.dispose]();
+  });
 });

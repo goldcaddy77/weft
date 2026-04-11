@@ -7,6 +7,7 @@ import {
   type Storage,
 } from './interface';
 import { assertReadOnlyQuery } from './read-only-query';
+import { scopedStorage } from './scoped-storage';
 
 /** Configuration for connecting to a Turso/libSQL database. */
 export type TursoStorageOptions = {
@@ -184,6 +185,10 @@ export class TursoStorage implements Storage {
     });
 
     return Number(result.rows[0]?.['count'] ?? 0);
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
   }
 
   async batch(operations: BatchOperation[]): Promise<void> {
