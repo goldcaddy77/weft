@@ -886,6 +886,7 @@ export async function handleRequest(
 
   try {
     const executor = ROUTE_EXECUTORS[route.handler];
+    /* c8 ignore next 3 -- ROUTE_EXECUTORS is exhaustive for the static route model; this is a defensive fallback */
     if (!executor) {
       return errorResponse(`No handler for route: ${routeDescription}`, 501);
     }
