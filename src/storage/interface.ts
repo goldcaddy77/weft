@@ -20,9 +20,100 @@ export interface Storage extends Disposable {
   delete(key: string): Promise<void>;
   scan(prefix: string, options?: ScanOptions): AsyncIterable<[string, Uint8Array]>;
   batch(operations: BatchOperation[]): Promise<void>;
+  has?(key: string): Promise<boolean>;
+  deletePrefix?(prefix: string): Promise<number>;
+  keys?(prefix: string, options?: ScanOptions): AsyncIterable<string>;
+  count?(prefix: string): Promise<number>;
 
   /** Optional SQL passthrough for dashboard/debugging (SQLite only). */
   query?<T>(sql: string, params?: unknown[]): Promise<T[]>;
+}
+
+/** Resolve the exclusive upper bound for a lexicographic prefix scan. */
+export function resolvePrefixRangeEnd(prefix: string): string {
+  return prefix.length > 0
+    ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
+    : '\xff';
+}
+
+/** Apply gt/gte/lt/lte scan bounds to a single key. */
+export function matchesScanOptions(key: string, options: ScanOptions = {}): boolean {
+  if (options.gt !== undefined && key <= options.gt) {
+    return false;
+  }
+
+  if (options.gte !== undefined && key < options.gte) {
+    return false;
+  }
+
+  if (options.lt !== undefined && key >= options.lt) {
+    return false;
+  }
+
+  if (options.lte !== undefined && key > options.lte) {
+    return false;
+  }
+
+  return true;
+}
+
+/** Check key existence using the adapter method when available or a core fallback otherwise. */
+export async function storageHas(storage: Storage, key: string): Promise<boolean> {
+  if (storage.has) {
+    return storage.has(key);
+  }
+
+  return (await storage.get(key)) !== null;
+}
+
+/** Iterate keys only, using the adapter shortcut when available or `scan()` as a fallback. */
+export function storageKeys(
+  storage: Storage,
+  prefix: string,
+  options?: ScanOptions,
+): AsyncIterable<string> {
+  if (storage.keys) {
+    return storage.keys(prefix, options);
+  }
+
+  return (async function* (): AsyncIterable<string> {
+    for await (const [key] of storage.scan(prefix, options)) {
+      yield key;
+    }
+  })();
+}
+
+/** Count keys for a prefix using the adapter method when available or iteration otherwise. */
+export async function storageCount(storage: Storage, prefix: string): Promise<number> {
+  if (storage.count) {
+    return storage.count(prefix);
+  }
+
+  let count = 0;
+  for await (const _key of storageKeys(storage, prefix)) {
+    count++;
+  }
+  return count;
+}
+
+/** Delete a whole prefix using the adapter method when available or a batched fallback otherwise. */
+export async function storageDeletePrefix(storage: Storage, prefix: string): Promise<number> {
+  if (storage.deletePrefix) {
+    return storage.deletePrefix(prefix);
+  }
+
+  const operations: BatchOperation[] = [];
+
+  for await (const key of storageKeys(storage, prefix)) {
+    operations.push({ type: 'delete', key });
+  }
+
+  if (operations.length === 0) {
+    return 0;
+  }
+
+  await storage.batch(operations);
+  return operations.length;
 }
 
 /**

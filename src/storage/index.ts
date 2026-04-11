@@ -18,6 +18,22 @@
  *
  * @module weft/storage
  */
-export { KEYS } from './interface';
+export {
+  KEYS,
+  matchesScanOptions,
+  resolvePrefixRangeEnd,
+  storageCount,
+  storageDeletePrefix,
+  storageHas,
+  storageKeys,
+} from './interface';
 export type { BatchOperation, ScanOptions, Storage } from './interface';
 export { MemoryStorage } from './memory';
+export { ScopedStorage, scopedStorage } from './scoped-storage';
+export { jsonCodec, msgpackCodec, withCodec } from './typed-storage';
+export type {
+  StorageCodec,
+  StorageValueParser,
+  TypedBatchOperation,
+  TypedStorage,
+} from './typed-storage';

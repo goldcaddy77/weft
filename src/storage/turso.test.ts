@@ -232,6 +232,26 @@ describe('TursoStorage', () => {
     storage[Symbol.dispose]();
   });
 
+  it('query rejects non-read-only SQL statements', async () => {
+    const storage = new TursoStorage({ url: 'file::memory:' });
+
+    await expect(storage.query('DELETE FROM kv')).rejects.toThrow(
+      'Storage query only supports read-only SELECT and PRAGMA statements.',
+    );
+
+    storage[Symbol.dispose]();
+  });
+
+  it('query rejects multiple SQL statements', async () => {
+    const storage = new TursoStorage({ url: 'file::memory:' });
+
+    await expect(storage.query('SELECT key FROM kv; DELETE FROM kv')).rejects.toThrow(
+      'Storage query must contain exactly one read-only statement.',
+    );
+
+    storage[Symbol.dispose]();
+  });
+
   it('accepts authToken in configuration', () => {
     const storage = new TursoStorage({
       url: 'file::memory:',

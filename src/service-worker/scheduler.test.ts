@@ -39,6 +39,14 @@ describe('ServiceWorkerScheduler', () => {
     };
   }
 
+  async function collectStorageKeys(): Promise<string[]> {
+    const keys: string[] = [];
+    for await (const key of storage.keys('')) {
+      keys.push(key);
+    }
+    return keys;
+  }
+
   // -------------------------------------------------------------------------
   // schedule()
   // -------------------------------------------------------------------------
@@ -47,7 +55,7 @@ describe('ServiceWorkerScheduler', () => {
     const entry = makeTimer();
     await scheduler.schedule(entry);
 
-    const keys = storage.keys();
+    const keys = await collectStorageKeys();
     expect(keys.some((key) => key.startsWith('wf-deadline:'))).toBe(true);
     expect(keys.some((key) => key.startsWith('timer-idx:'))).toBe(true);
   });
@@ -56,7 +64,7 @@ describe('ServiceWorkerScheduler', () => {
     const entry = makeTimer({ fireAt: 1005000 });
     await scheduler.schedule(entry);
 
-    const keys = storage.keys();
+    const keys = await collectStorageKeys();
     const deadlineKey = keys.find((key) => key.startsWith('wf-deadline:'));
     expect(deadlineKey).toBe('wf-deadline:0000000001005000:timer-1');
   });
@@ -71,7 +79,7 @@ describe('ServiceWorkerScheduler', () => {
 
     await scheduler.cancel(entry.id);
 
-    const keys = storage.keys();
+    const keys = await collectStorageKeys();
     expect(keys.some((key) => key.startsWith('wf-deadline:'))).toBe(false);
     expect(keys.some((key) => key.startsWith('timer-idx:'))).toBe(false);
   });
@@ -138,8 +146,9 @@ describe('ServiceWorkerScheduler', () => {
 
     await scheduler.tick(currentTime);
 
-    const deadlineKeys = storage.keys().filter((key) => key.startsWith('wf-deadline:'));
-    const indexKeys = storage.keys().filter((key) => key.startsWith('timer-idx:'));
+    const keys = await collectStorageKeys();
+    const deadlineKeys = keys.filter((key) => key.startsWith('wf-deadline:'));
+    const indexKeys = keys.filter((key) => key.startsWith('timer-idx:'));
     expect(deadlineKeys).toHaveLength(0);
     expect(indexKeys).toHaveLength(0);
   });
@@ -409,7 +418,8 @@ describe('ServiceWorkerScheduler', () => {
     expect(firedEntries[0]!.id).toBe('timer-1');
     expect(firedEntries[0]!.workflowId).toBe('workflow-1');
 
-    const deadlineKeys = storage.keys().filter((key) => key.startsWith('wf-deadline:'));
+    const keys = await collectStorageKeys();
+    const deadlineKeys = keys.filter((key) => key.startsWith('wf-deadline:'));
     expect(deadlineKeys).toHaveLength(0);
   });
 

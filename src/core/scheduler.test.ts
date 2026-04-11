@@ -161,12 +161,20 @@ describe('Scheduler', () => {
     };
   }
 
+  async function collectStorageKeys(): Promise<string[]> {
+    const keys: string[] = [];
+    for await (const key of storage.keys('')) {
+      keys.push(key);
+    }
+    return keys;
+  }
+
   it('writes a timer entry to storage on schedule', async () => {
     const entry = makeTimer();
     await scheduler.schedule(entry);
 
     // Verify something was written to storage
-    const keys = storage.keys();
+    const keys = await collectStorageKeys();
     expect(keys.some((key) => key.startsWith('wf-deadline:'))).toBe(true);
 
     // Verify the index key was also written
@@ -339,7 +347,7 @@ describe('Scheduler', () => {
     expect(firedEntries[1]!.id).toBe('timer-ok');
 
     // Both deadline keys and index keys were cleaned up
-    const remainingKeys = storage.keys();
+    const remainingKeys = await collectStorageKeys();
     expect(remainingKeys.some((key) => key.startsWith('wf-deadline:'))).toBe(false);
     expect(remainingKeys.some((key) => key.startsWith('timer-idx:'))).toBe(false);
   });
@@ -435,7 +443,8 @@ describe('Scheduler', () => {
     expect(firedEntries[0]!.workflowId).toBe('workflow-1');
 
     // Verify the timer was cleaned up from storage (deadline key removed)
-    const deadlineKeys = storage.keys().filter((key) => key.startsWith('wf-deadline:'));
+    const keys = await collectStorageKeys();
+    const deadlineKeys = keys.filter((key) => key.startsWith('wf-deadline:'));
     expect(deadlineKeys).toHaveLength(0);
   });
 });

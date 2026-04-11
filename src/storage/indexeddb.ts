@@ -1,4 +1,10 @@
-import type { BatchOperation, ScanOptions, Storage } from './interface';
+import {
+  matchesScanOptions,
+  resolvePrefixRangeEnd,
+  type BatchOperation,
+  type ScanOptions,
+  type Storage,
+} from './interface';
 
 const STORE_NAME = 'kv';
 
@@ -59,17 +65,40 @@ export class IndexedDBStorage implements Storage {
     await promisify(store.delete(key));
   }
 
+  async has(key: string): Promise<boolean> {
+    const database = await this.#databasePromise;
+    const transaction = database.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    return (await promisify(store.count(key))) > 0;
+  }
+
+  async deletePrefix(prefix: string): Promise<number> {
+    const database = await this.#databasePromise;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const range = IDBKeyRange.bound(prefix, prefixEnd, false, true);
+
+    return new Promise<number>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      let deletedCount = 0;
+
+      const countRequest = store.count(range);
+      countRequest.onsuccess = () => {
+        deletedCount = countRequest.result;
+        store.delete(range);
+      };
+
+      transaction.oncomplete = () => resolve(deletedCount);
+      /* c8 ignore next -- transaction failure requires injected IndexedDB write faults */
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }
+
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     const { limit, reverse, gt, lt, gte, lte } = options;
     const database = await this.#databasePromise;
 
-    // Compute the exclusive upper bound for the prefix range.
-    // When prefix is empty, use '\xff' to match all keys since all valid string keys sort before it.
-    const prefixEnd =
-      prefix.length > 0
-        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
-        : '\xff';
-
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
     const range = IDBKeyRange.bound(prefix, prefixEnd, false, true);
     const direction: IDBCursorDirection = reverse ? 'prev' : 'next';
 
@@ -161,6 +190,77 @@ export class IndexedDBStorage implements Storage {
       /* c8 ignore next -- transaction failure requires injected IndexedDB write faults */
       transaction.onerror = () => reject(transaction.error);
     });
+  }
+
+  async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
+    const { limit, reverse } = options;
+    const database = await this.#databasePromise;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const range = IDBKeyRange.bound(prefix, prefixEnd, false, true);
+    const direction: IDBCursorDirection = reverse ? 'prev' : 'next';
+
+    const transaction = database.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.openKeyCursor(range, direction);
+
+    let count = 0;
+    let resolveCurrent: ((value: IDBCursor | null) => void) | null = null;
+
+    request.onsuccess = () => {
+      if (resolveCurrent) {
+        resolveCurrent(request.result);
+      }
+    };
+
+    const nextCursor = (): Promise<IDBCursor | null> => {
+      return new Promise<IDBCursor | null>((resolve) => {
+        resolveCurrent = resolve;
+        if (request.readyState === 'done') {
+          resolve(request.result);
+        }
+      });
+    };
+
+    let completed = false;
+    try {
+      let cursor = await nextCursor();
+
+      while (cursor) {
+        if (limit !== undefined && count >= limit) {
+          break;
+        }
+
+        const key = cursor.key as string;
+
+        if (matchesScanOptions(key, options)) {
+          yield key;
+          count++;
+        }
+
+        cursor.continue();
+        cursor = await new Promise<IDBCursor | null>((resolve) => {
+          resolveCurrent = resolve;
+        });
+      }
+
+      completed = true;
+    } finally {
+      if (!completed) {
+        try {
+          transaction.abort();
+        } catch {
+          // Transaction may already be finished
+        }
+      }
+    }
+  }
+
+  async count(prefix: string): Promise<number> {
+    const database = await this.#databasePromise;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const transaction = database.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    return promisify(store.count(IDBKeyRange.bound(prefix, prefixEnd, false, true)));
   }
 
   [Symbol.dispose](): void {
