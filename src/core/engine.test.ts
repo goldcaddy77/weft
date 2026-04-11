@@ -4309,21 +4309,16 @@ describe('Engine speculative execution', () => {
 
     engine.register('speculate-parallel-success', async function* (ctx: WorkflowContext) {
       const context = ctx as Context;
-      const result = yield* context.speculate(async function* (branch) {
-        const [doubled, incremented] = (yield* branch.all([
-          branch.run(double, 5),
-          branch.run(increment, 5),
-        ])) as [number, number];
-
-        return doubled + incremented;
-      });
+      const result = (yield* context.speculate(async function* (branch) {
+        return yield* branch.all([branch.run(double, 5), branch.run(increment, 5)]);
+      })) as [number, number];
 
       return result;
     });
 
     const handle = await engine.start('speculate-parallel-success', null);
 
-    await expect(handle.result()).resolves.toBe(16);
+    await expect(handle.result()).resolves.toEqual([10, 6]);
 
     engine[Symbol.dispose]();
   });
@@ -4331,14 +4326,33 @@ describe('Engine speculative execution', () => {
   it('swallows speculative race loser rejections after the winner settles', async () => {
     const engine = new Engine();
 
-    const { promise: losingPromise, reject: rejectLosingPromise } = Promise.withResolvers<never>();
+    const loserStarted = Promise.withResolvers<void>();
+    const losingActivity = activity({
+      name: 'abort-aware-loser',
+      execute: async (_input: unknown, context?: { signal: AbortSignal }) => {
+        loserStarted.resolve();
+
+        return new Promise<never>((_resolve, reject) => {
+          context?.signal.addEventListener(
+            'abort',
+            () => {
+              reject(new Error('late loser rejection'));
+            },
+            { once: true },
+          );
+        });
+      },
+    });
 
     engine.register('speculate-race-abort-workflow', async function* (ctx: WorkflowContext) {
       const context = ctx as Context;
       return yield* context.speculate(async function* (branch) {
         return yield* branch.race([
-          branch.memo('winner', () => 'winner'),
-          branch.memo('late-loser', () => losingPromise),
+          branch.memo('winner', async () => {
+            await loserStarted.promise;
+            return 'winner';
+          }),
+          branch.run(losingActivity, null),
         ]);
       });
     });
@@ -4346,7 +4360,6 @@ describe('Engine speculative execution', () => {
     const handle = await engine.start('speculate-race-abort-workflow', null);
 
     await expect(handle.result()).resolves.toBe('winner');
-    rejectLosingPromise(new Error('late loser rejection'));
     await flush();
 
     engine[Symbol.dispose]();
