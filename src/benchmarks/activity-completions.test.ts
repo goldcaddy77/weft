@@ -11,13 +11,14 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
  * Registers a workflow that calls one trivial activity, starts many
  * workflows, waits for all to complete, and measures completions/sec.
  *
- * Architecture target: 30K/sec. Measured 2026-04-07: ~14K/sec on Apple
- * Silicon (up from ~9K/sec — same prepared-statement, dedup-skip, and
- * completion-state-merge optimizations as the workflow-start benchmark).
- * The remaining gap to spec is dominated by the per-workflow scheduler
- * cancel and `#cleanupTerminalWorkflow` deletes; further work would need
- * to coalesce these into the completion batch. Tracked in
- * `reference/IMPORTANT.md`.
+ * Architecture target: 30K/sec. Measured 2026-04-11: ~10K/sec on Apple
+ * Silicon (up from ~9K/sec baseline). Optimizations applied: completion
+ * state write and attribute cleanup batched into a single storage
+ * transaction, scheduler cancel made fire-and-forget for terminal
+ * workflows, `#cleanupWorkflowStorage` and `#cleanupReviews` now use
+ * `deletePrefix` instead of scan-then-delete loops. The remaining gap
+ * requires coalescing terminal cleanup across workflow batches or
+ * deferring it to a background queue. Tracked in `reference/IMPORTANT.md`.
  *
  * Previous threshold: 3_000 (5_000 on CI), relaxed because ~9K/sec was
  * the prior measured ceiling. New thresholds enforce the post-optimization

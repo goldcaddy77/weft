@@ -7,10 +7,24 @@
  * @module scheduler
  */
 
-import type { Storage } from '../storage/interface';
+import type { BatchOperation, Storage } from '../storage/interface';
 import { KEYS } from '../storage/interface';
 import { decode, encode } from './codec';
 import type { Duration, RetryPolicy, TimerEntry } from './types';
+
+/**
+ * Build the batch operations needed to persist a durable timer entry.
+ * Shared between `Scheduler.schedule()` and `Engine.#buildStartBatchOperations()`
+ * so the key format stays in one place.
+ */
+export function buildTimerBatchOperations(entry: TimerEntry): BatchOperation[] {
+  const deadlineKey = KEYS.deadline(entry.fireAt, entry.id);
+  const indexKey = `timer-idx:${entry.id}`;
+  return [
+    { type: 'put', key: deadlineKey, value: encode(entry) },
+    { type: 'put', key: indexKey, value: encode(deadlineKey) },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Duration parsing
@@ -122,13 +136,7 @@ export class Scheduler implements Disposable {
 
   /** Schedule a durable timer (writes to storage). */
   async schedule(entry: TimerEntry): Promise<void> {
-    const deadlineKey = KEYS.deadline(entry.fireAt, entry.id);
-    const indexKey = `timer-idx:${entry.id}`;
-
-    await this.#storage.batch([
-      { type: 'put', key: deadlineKey, value: encode(entry) },
-      { type: 'put', key: indexKey, value: encode(deadlineKey) },
-    ]);
+    await this.#storage.batch(buildTimerBatchOperations(entry));
   }
 
   /** Cancel a timer (removes from storage). */
