@@ -70,10 +70,6 @@ class CircularBuffer {
     }
     return result;
   }
-
-  get length(): number {
-    return this.#size;
-  }
 }
 
 // ---------------------------------------------------------------------------
