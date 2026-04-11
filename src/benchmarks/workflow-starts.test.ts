@@ -10,14 +10,15 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
  * Measures how many workflows the engine can start per second using an
  * in-memory SQLite backend.
  *
- * Architecture target: 50K/sec. Measured 2026-04-07: ~20K/sec on Apple
- * Silicon (up from ~13K/sec — prepared-statement caching in
- * `BunSQLiteStorage`, the auto-id dedup-skip in `Engine.start`, and the
- * nesting-depth-map allocation skip in `#startWorkflowExecution` closed
- * roughly half the gap to spec). The remaining gap is dominated by the
- * single SQLite WAL fsync per `start()` and the inline strategy's
- * generator drive on the main thread; closing it further requires
- * pipelining or a binary checkpoint format. Tracked in
+ * Architecture target: 50K/sec. Measured 2026-04-11: ~19K/sec on Apple
+ * Silicon (up from ~13K/sec baseline). Optimizations applied: prepared-
+ * statement caching in `BunSQLiteStorage`, auto-id dedup-skip in
+ * `Engine.start`, nesting-depth-map allocation skip, deadline timer
+ * operations folded into the start batch (eliminating a separate storage
+ * transaction), and checkpoint history pruning made non-blocking. The
+ * remaining gap is dominated by the per-start SQLite WAL fsync and the
+ * inline strategy's generator drive on the main thread; closing it
+ * further requires pipelining or a binary checkpoint format. Tracked in
  * `reference/IMPORTANT.md`.
  *
  * Previous threshold: 5_000 (10_000 on CI), relaxed because ~13K/sec was

@@ -76,7 +76,7 @@ import type {
   WorkflowInterceptor,
 } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
-import { Scheduler, parseDuration } from './scheduler.ts';
+import { Scheduler, buildTimerBatchOperations, parseDuration } from './scheduler.ts';
 import {
   buildIndexOperations,
   encodeAttributeValue,
@@ -1410,9 +1410,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       await this.#storage.batch(
-        this.#buildStartBatchOperations(workflowId, state, checkpoint, registration, options),
+        this.#buildStartBatchOperations(
+          workflowId,
+          state,
+          checkpoint,
+          registration,
+          options,
+          state.executionDeadline,
+        ),
       );
-      await this.#scheduleExecutionDeadlineIfNeeded(workflowId, state.executionDeadline);
+      // Deadline timer operations are now folded into the start batch above,
+      // eliminating a separate storage transaction on the hot start path.
       this.#runWorkflowStartInterceptor(workflowId, type, input, parentHeaders);
 
       // Pre-warm LLM connection after the batch write (fire-and-forget).
@@ -1768,8 +1776,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     checkpoint: Checkpoint,
     registration: RegistrationEntry,
     options?: StartOptions,
+    executionDeadline?: number,
   ): import('../storage/interface.ts').BatchOperation[] {
-    return [
+    const operations: import('../storage/interface.ts').BatchOperation[] = [
       { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
       {
         type: 'put',
@@ -1782,6 +1791,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         options?.searchAttributes,
       ),
     ];
+
+    // Fold deadline timer operations into the same batch so workflows with
+    // an execution timeout don't pay for a second storage transaction.
+    // Uses the shared helper so key format stays in sync with Scheduler.
+    if (executionDeadline !== undefined) {
+      operations.push(
+        ...buildTimerBatchOperations({
+          id: `deadline:${workflowId}`,
+          workflowId,
+          fireAt: executionDeadline,
+          kind: 'execution-deadline',
+        }),
+      );
+    }
+
+    return operations;
   }
 
   #buildInitialSearchAttributeOperations(
@@ -1823,22 +1848,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
       validateAttributeType(key, value, schema[key]!);
     }
-  }
-
-  async #scheduleExecutionDeadlineIfNeeded(
-    workflowId: string,
-    executionDeadline: number | undefined,
-  ): Promise<void> {
-    if (executionDeadline === undefined) {
-      return;
-    }
-
-    await this.#scheduler.schedule({
-      id: `deadline:${workflowId}`,
-      workflowId,
-      fireAt: executionDeadline,
-      kind: 'execution-deadline',
-    });
   }
 
   #runWorkflowStartInterceptor(
@@ -2436,12 +2445,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#strategy.cancelWorkflow(workflowId);
 
     const state = await this.#loadWorkflowState(workflowId);
-    if (!state) return;
+    // Guard: if the workflow is already terminal (completed, failed, cancelled,
+    // timed-out), a stale deadline timer firing should be a no-op. This is
+    // critical now that scheduler.cancel is fire-and-forget on terminal paths.
+    if (!state || state.status !== 'running') return;
     const elapsed = this.#options.getNow() - state.createdAt;
 
     await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
-    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+    void this.#swallowPromiseRejection(
+      this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
+    );
 
     // Drop in-memory state, release charged operations, and delete durable
     // workflow-keyed records (reviews, offload, blob, shared, signal).
@@ -2909,7 +2923,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       await this.#storage.batch(operations);
       this.#checkpoints.set(workflowId, advanced);
       this.#eventLogHeads.set(workflowId, newHead);
-      await this.#pruneCheckpointHistory(workflowId, advanced.step);
+      // Fire-and-forget: pruning is idempotent and non-critical, so deferring
+      // it avoids blocking the checkpoint persist path.
+      void this.#swallowPromiseRejection(this.#pruneCheckpointHistory(workflowId, advanced.step));
 
       if (hasPendingAttributeChanges) {
         this.dispatchEvent(
@@ -2952,7 +2968,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       await this.#storage.batch(operations);
       this.#checkpoints.set(workflowId, checkpoint);
       this.#eventLogHeads.set(workflowId, newHead);
-      await this.#pruneCheckpointHistory(workflowId, checkpoint.step);
+      void this.#swallowPromiseRejection(this.#pruneCheckpointHistory(workflowId, checkpoint.step));
     }
   }
 
@@ -4447,6 +4463,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   /** Remove all pending review entries from storage for a given workflow. */
   async #cleanupReviews(workflowId: string): Promise<void> {
     const prefix = `review:${workflowId}:`;
+    if (this.#storage.deletePrefix) {
+      await this.#storage.deletePrefix(prefix);
+      return;
+    }
     const deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
     for await (const [key] of this.#storage.scan(prefix)) {
       deleteOperations.push({ type: 'delete', key });
@@ -4505,6 +4525,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       prefixes.push(`offload:${workflowId}:`, `blob:${workflowId}:`, `shared:${workflowId}:`);
     }
 
+    // Use the storage adapter's native prefix deletion when available
+    // (e.g., BunSQLiteStorage's prepared DELETE...WHERE key >= ? AND key < ?).
+    // This replaces per-key scan-then-delete loops with a single SQL statement
+    // per prefix — a significant win on the activity-completion hot path.
+    // Deletions are sequential to avoid multiplying memory pressure on adapters
+    // that materialize matching keys before deleting.
+    if (this.#storage.deletePrefix) {
+      for (const prefix of prefixes) {
+        await this.#storage.deletePrefix(prefix);
+      }
+      return;
+    }
+
+    // Fallback for storage adapters without deletePrefix: scan and batch-delete.
     const CLEANUP_BATCH_SIZE = 500;
     let deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
     const flush = async (): Promise<void> => {
@@ -4774,21 +4808,34 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const now = this.#options.getNow();
     const duration = now - state.createdAt;
 
-    // Avoid re-reading the workflow state — we already have it from the
-    // load above. Mutating in place + a single put cuts one storage round
-    // trip per completion, which is the dominant cost in the activity-
-    // completions throughput benchmark.
+    // Batch the completion state write with attribute index cleanup into a
+    // single storage transaction to reduce round-trips on the hot path.
     const updatedState = {
       ...state,
       status: 'completed' as const,
       result,
       updatedAt: now,
     };
-    await this.#storage.put(KEYS.workflow(workflowId), encode(updatedState));
+    const completionOperations: import('../storage/interface.ts').BatchOperation[] = [
+      { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
+    ];
 
-    // Clean up attribute indexes and deadline timer
-    await this.#cleanupAttributeIndex(workflowId);
-    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+    // Inline attribute cleanup into the same batch instead of a separate
+    // storage.get() + storage.batch() round-trip.
+    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+    if (attributeBytes) {
+      const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+      completionOperations.push(...buildIndexOperations(workflowId, currentAttributes, {}));
+      completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
+    }
+
+    await this.#storage.batch(completionOperations);
+
+    // Cancel deadline timer — fire-and-forget since the workflow is already
+    // terminal and a stale timer firing will see the terminal state and no-op.
+    void this.#swallowPromiseRejection(
+      this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
+    );
 
     // Drop in-memory state, release charged operations, and delete durable
     // workflow-keyed records (reviews, pending signals, per-workflow dedup).
@@ -4824,9 +4871,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     await this.#updateWorkflowState(workflowId, stateUpdate);
 
-    // Clean up user-set attribute indexes and deadline timer
+    // Clean up user-set attribute indexes; fire-and-forget the deadline
+    // timer cancel since the workflow is terminal.
     await this.#cleanupAttributeIndex(workflowId);
-    await this.#scheduler.cancel(`deadline:${workflowId}`, workflowId);
+    void this.#swallowPromiseRejection(
+      this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
+    );
 
     // Write the failureCategory search attribute so it is queryable via
     // engine.list({ attributes: [{ key: 'failureCategory', value: '...' }] }).
