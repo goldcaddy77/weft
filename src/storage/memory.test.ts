@@ -225,8 +225,8 @@ describe('MemoryStorage', () => {
   it('has returns true for existing keys, false otherwise', async () => {
     const storage = new MemoryStorage();
     await storage.put('exists', encode('value'));
-    expect(storage.has('exists')).toBe(true);
-    expect(storage.has('missing')).toBe(false);
+    expect(await storage.has('exists')).toBe(true);
+    expect(await storage.has('missing')).toBe(false);
   });
 
   it('keys returns all key names sorted', async () => {
@@ -235,7 +235,7 @@ describe('MemoryStorage', () => {
     await storage.put('a', encode('1'));
     await storage.put('b', encode('2'));
 
-    expect(storage.keys()).toEqual(['a', 'b', 'c']);
+    expect(await collect(storage.keys(''))).toEqual(['a', 'b', 'c']);
   });
 
   it('clear removes all entries', async () => {

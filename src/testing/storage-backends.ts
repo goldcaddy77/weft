@@ -7,7 +7,11 @@ import { join } from 'node:path';
 import type { Engine } from '../core/engine.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 import { IndexedDBStorage } from '../storage/indexeddb.ts';
-import type { Storage } from '../storage/interface.ts';
+import {
+  storageHas as storageHasFallback,
+  storageKeys,
+  type Storage,
+} from '../storage/interface.ts';
 import { LMDBStorage } from '../storage/lmdb.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { TursoStorage } from '../storage/turso.ts';
@@ -110,7 +114,7 @@ export const storageBackends: StorageBackendDescriptor[] = [
  */
 export async function collectKeys(storage: Storage, prefix: string): Promise<string[]> {
   const keys: string[] = [];
-  for await (const [key] of storage.scan(prefix)) {
+  for await (const key of storageKeys(storage, prefix)) {
     keys.push(key);
   }
   return keys;
@@ -121,7 +125,7 @@ export async function collectKeys(storage: Storage, prefix: string): Promise<str
  * Works with any backend (unlike MemoryStorage-specific `.has()`).
  */
 export async function storageHas(storage: Storage, key: string): Promise<boolean> {
-  return (await storage.get(key)) !== null;
+  return storageHasFallback(storage, key);
 }
 
 /** Drain microtasks so fire-and-forget work completes. */

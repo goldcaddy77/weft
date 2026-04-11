@@ -21,3 +21,13 @@
 export { KEYS } from './interface';
 export type { BatchOperation, ScanOptions, Storage } from './interface';
 export { MemoryStorage } from './memory';
+export { ScopedStorage, scopedStorage } from './scoped-storage';
+export { jsonCodec, msgpackCodec, withCodec } from './typed-storage';
+export type {
+  JsonValue,
+  MessagePackValue,
+  StorageCodec,
+  StorageValueParser,
+  TypedBatchOperation,
+  TypedStorage,
+} from './typed-storage';
