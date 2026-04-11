@@ -132,7 +132,7 @@ const TIMEOUT_FAULT_MS = 25;
  */
 async function raiseTimeoutFault(timeoutMilliseconds: number): Promise<never> {
   const signal = AbortSignal.timeout(timeoutMilliseconds);
-  await new Promise<void>((_resolve, reject) => {
+  return new Promise<never>((_resolve, reject) => {
     if (signal.aborted) {
       reject(new ChaosTimeoutError(timeoutMilliseconds));
       return;
@@ -141,10 +141,6 @@ async function raiseTimeoutFault(timeoutMilliseconds: number): Promise<never> {
       once: true,
     });
   });
-  // `await` above either rejects or hangs forever — this line is unreachable,
-  // but satisfies TypeScript's `Promise<never>` return contract.
-  /* c8 ignore next */
-  throw new ChaosTimeoutError(timeoutMilliseconds);
 }
 
 /**

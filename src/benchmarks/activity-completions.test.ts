@@ -24,7 +24,21 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
  * floor with headroom for machine variance.
  */
 
-const TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 5_000 : 10_000;
+const BASELINE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 5_000 : 10_000;
+const COVERAGE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 3_000 : 5_000;
+
+function isCoverageInstrumentationEnabled(): boolean {
+  if (Bun.env['WEFT_COVERAGE_MODE'] === '1') {
+    return true;
+  }
+
+  if (process.execArgv.includes('--coverage')) {
+    return true;
+  }
+
+  const coverageDirectory = Bun.env['NODE_V8_COVERAGE'];
+  return typeof coverageDirectory === 'string' && coverageDirectory.length > 0;
+}
 
 describe('Activity completion throughput', () => {
   let storage: BunSQLiteStorage;
@@ -35,7 +49,14 @@ describe('Activity completion throughput', () => {
     storage[Symbol.dispose]();
   });
 
-  it(`completions exceed ${TARGET_COMPLETIONS_PER_SECOND.toLocaleString()}/sec`, async () => {
+  it(`completions exceed ${(isCoverageInstrumentationEnabled()
+    ? COVERAGE_TARGET_COMPLETIONS_PER_SECOND
+    : BASELINE_TARGET_COMPLETIONS_PER_SECOND
+  ).toLocaleString()}/sec`, async () => {
+    const targetCompletionsPerSecond = isCoverageInstrumentationEnabled()
+      ? COVERAGE_TARGET_COMPLETIONS_PER_SECOND
+      : BASELINE_TARGET_COMPLETIONS_PER_SECOND;
+
     storage = new BunSQLiteStorage(':memory:');
     engine = new Engine({ storage });
 
@@ -80,11 +101,12 @@ describe('Activity completion throughput', () => {
         `    Total workflows: ${totalWorkflows.toLocaleString()}`,
         `    Elapsed:         ${elapsed.toFixed(1)}ms`,
         `    Completions/sec: ${completionsPerSecond.toLocaleString()}`,
-        `    Target:          ${TARGET_COMPLETIONS_PER_SECOND.toLocaleString()}`,
-        `    Headroom:        ${((completionsPerSecond / TARGET_COMPLETIONS_PER_SECOND) * 100 - 100).toFixed(0)}%\n`,
+        `    Target:          ${targetCompletionsPerSecond.toLocaleString()}`,
+        `    Coverage mode:   ${isCoverageInstrumentationEnabled() ? 'yes' : 'no'}`,
+        `    Headroom:        ${((completionsPerSecond / targetCompletionsPerSecond) * 100 - 100).toFixed(0)}%\n`,
       ].join('\n'),
     );
 
-    expect(completionsPerSecond).toBeGreaterThanOrEqual(TARGET_COMPLETIONS_PER_SECOND);
+    expect(completionsPerSecond).toBeGreaterThanOrEqual(targetCompletionsPerSecond);
   }, 60_000);
 });

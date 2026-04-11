@@ -65,7 +65,7 @@ export async function checkCoverage(): Promise<boolean> {
 
   // .nothrow() prevents throwing when tests fail — we still want the coverage report.
   const result =
-    await $`bun test --timeout 15000 --coverage --coverage-reporter=lcov --coverage-dir=coverage`
+    await $`WEFT_COVERAGE_MODE=1 bun test --timeout 15000 --coverage --coverage-reporter=lcov --coverage-dir=coverage`
       .quiet()
       .nothrow();
 

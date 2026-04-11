@@ -6,7 +6,6 @@ const STORE_NAME = 'kv';
 function promisify<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    /* c8 ignore next -- IndexedDB request failures require injected browser storage faults */
     request.onerror = () => reject(request.error);
   });
 }
@@ -158,7 +157,6 @@ export class IndexedDBStorage implements Storage {
       }
 
       transaction.oncomplete = () => resolve();
-      /* c8 ignore next -- transaction failure requires injected IndexedDB write faults */
       transaction.onerror = () => reject(transaction.error);
     });
   }

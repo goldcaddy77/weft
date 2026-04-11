@@ -82,7 +82,6 @@ export class RemoteWorker implements Disposable {
     this.#shuttingDown = false;
     this.#taskAbortControllers = new Map();
     this.#composedInterceptor = buildComposedInterceptor(options.interceptors);
-    /* c8 ignore next 3 -- heartbeat timer execution is covered by integration behavior rather than constructor attribution */
     this.#heartbeat = new HeartbeatManager(() => {
       this.#sendMessage({ type: 'heartbeat', workerId: this.#options.workerId });
     }, HEARTBEAT_INTERVAL_MS);

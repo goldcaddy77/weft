@@ -34,6 +34,14 @@ const BASELINE_TARGET_BYTES_PER_WORKFLOW = 14_336;
 const COVERAGE_TARGET_BYTES_PER_WORKFLOW = 20_480;
 
 function isCoverageInstrumentationEnabled(): boolean {
+  if (Bun.env['WEFT_COVERAGE_MODE'] === '1') {
+    return true;
+  }
+
+  if (process.execArgv.includes('--coverage')) {
+    return true;
+  }
+
   const coverageDirectory = Bun.env['NODE_V8_COVERAGE'];
   return typeof coverageDirectory === 'string' && coverageDirectory.length > 0;
 }
