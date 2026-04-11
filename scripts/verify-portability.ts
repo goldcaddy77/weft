@@ -35,19 +35,32 @@ const PORTABLE_ENTRIES: PortableEntry[] = [
  * bundle in an unguarded way.
  *
  * The portable runtime layer (`src/runtime/portable.ts`) intentionally
- * references `Bun.*` behind `IS_BUN` guards — these are dead code in
- * browsers and are not flagged. Similarly, `StdioTransport` uses `Bun.spawn`
- * behind a dynamic `import()` in the transport factory, which is only
- * reachable when `kind === 'stdio'`.
+ * references `Bun.*` behind `IS_BUN` guards, and uses `process.getBuiltinModule`
+ * for Node-side fallbacks. These are dead code in browsers and are not
+ * flagged by static-import checks. Similarly, `StdioTransport` uses
+ * `Bun.spawn` behind a dynamic `import()` in the transport factory, which
+ * is only reachable when `kind === 'stdio'`.
  *
  * What IS forbidden:
- * - `bun:sqlite` — means a storage backend leaked into the portable surface
- * - `bun:test` — means test infrastructure leaked into production code
+ * - `bun:sqlite` — a storage backend leaked into the portable surface
+ * - `bun:test` — test infrastructure leaked into production code
+ * - `node:crypto` / `node:zlib` / `node:fs` — Node built-ins that browser
+ *   bundlers cannot resolve, imported statically (runtime-loaded via
+ *   `process.getBuiltinModule` is fine — it appears as a dynamic lookup)
+ * - `Bun.spawn` — process-spawn API leaked into the portable surface
  */
 const FORBIDDEN_STATIC_IMPORTS = [
   { pattern: /\bfrom\s*["']bun:sqlite["']/g, label: 'bun:sqlite import' },
   { pattern: /\brequire\(["']bun:sqlite["']\)/g, label: 'bun:sqlite require' },
   { pattern: /\bfrom\s*["']bun:test["']/g, label: 'bun:test import' },
+  { pattern: /\brequire\(["']bun:test["']\)/g, label: 'bun:test require' },
+  { pattern: /\bfrom\s*["']node:crypto["']/g, label: 'node:crypto import' },
+  { pattern: /\brequire\(["']node:crypto["']\)/g, label: 'node:crypto require' },
+  { pattern: /\bfrom\s*["']node:zlib["']/g, label: 'node:zlib import' },
+  { pattern: /\brequire\(["']node:zlib["']\)/g, label: 'node:zlib require' },
+  { pattern: /\bfrom\s*["']node:fs["']/g, label: 'node:fs import' },
+  { pattern: /\brequire\(["']node:fs["']\)/g, label: 'node:fs require' },
+  { pattern: /\bBun\.spawn\b/g, label: 'Bun.spawn usage' },
 ] as const;
 
 const tempDir = mkdtempSync(join(tmpdir(), 'weft-portability-'));

@@ -13,6 +13,13 @@ export interface MCPTransportSource {
   transport?: TransportKind | undefined;
 }
 
+/**
+ * Dynamic import specifier split across a variable so Bun's bundler cannot
+ * statically resolve it. This keeps `transport-stdio` (which uses `Bun.spawn`)
+ * out of browser bundles while still loading on-demand in Bun.
+ */
+const STDIO_TRANSPORT_MODULE = './transport-stdio.ts';
+
 /** Build the appropriate transport for an MCP source based on its URL and options. */
 export async function createTransportForSource(source: MCPTransportSource): Promise<MCPTransport> {
   const kind = inferTransportKind(source.mcp, source.transport);
@@ -24,9 +31,12 @@ export async function createTransportForSource(source: MCPTransportSource): Prom
       );
     }
 
-    // Dynamic import: StdioTransport uses Bun.spawn which is Bun-only.
-    // Lazy loading prevents the bundler from pulling it into browser bundles.
-    const { StdioTransport } = await import('./transport-stdio.ts');
+    // Dynamic import with a variable specifier — Bun's bundler cannot
+    // statically inline this, so `transport-stdio` stays out of browser bundles.
+    const stdioModule = (await import(
+      STDIO_TRANSPORT_MODULE
+    )) as typeof import('./transport-stdio.ts');
+    const { StdioTransport } = stdioModule;
     const target = parseStdioUrl(source.mcp);
     return new StdioTransport({
       command: target.command,

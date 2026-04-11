@@ -7,22 +7,30 @@
  * @module core/compression
  */
 
-import { gunzipSync, gzipSync } from '../runtime/portable.ts';
+import { gunzipSync, gzipSync, tryLoadNodeZlib } from '../runtime/portable.ts';
 
 // ---------------------------------------------------------------------------
-// Brotli — lazy-loaded from node:zlib (available in Bun and Node, not browsers)
+// Brotli — lazy-loaded from node:zlib via the portable runtime layer.
+// Available in Bun and Node 22.5+; not available in browsers (throws).
 // ---------------------------------------------------------------------------
+
+function getBrotliZlib(): typeof import('node:zlib') {
+  const zlib = tryLoadNodeZlib();
+  if (!zlib) {
+    throw new Error(
+      'Brotli compression requires Bun or Node 22.5+ with process.getBuiltinModule support. ' +
+        'Use gzip compression for browser/edge runtimes.',
+    );
+  }
+  return zlib;
+}
 
 function brotliCompressSync(data: Uint8Array): Uint8Array {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const zlib = require('node:zlib') as typeof import('node:zlib');
-  return new Uint8Array(zlib.brotliCompressSync(data));
+  return new Uint8Array(getBrotliZlib().brotliCompressSync(data));
 }
 
 function brotliDecompressSync(data: Uint8Array): Uint8Array {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const zlib = require('node:zlib') as typeof import('node:zlib');
-  return new Uint8Array(zlib.brotliDecompressSync(data));
+  return new Uint8Array(getBrotliZlib().brotliDecompressSync(data));
 }
 
 // ---------------------------------------------------------------------------

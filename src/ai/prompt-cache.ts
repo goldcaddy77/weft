@@ -101,7 +101,7 @@ interface TrieNode {
 /**
  * Hash the content-relevant fields of a single message to a compact key.
  *
- * Uses `hashString` (wyhash on Bun, FNV-1a elsewhere) — fast and good enough for a cache key. Two
+ * Uses `hashString` (stable FNV-1a across runtimes) — fast and good enough for a cache key. Two
  * messages with identical role + content + tool data produce identical keys.
  *
  * @internal

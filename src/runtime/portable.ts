@@ -96,53 +96,119 @@ export function hashString(data: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Node built-in module loader — ESM-safe via process.getBuiltinModule
+// ---------------------------------------------------------------------------
+
+type ProcessWithBuiltinModule = NodeJS.Process & {
+  getBuiltinModule?: (id: string) => unknown;
+};
+
+/**
+ * Load a Node.js built-in module without using `require()`.
+ *
+ * This package is ESM (`"type": "module"` in package.json), so `require`
+ * is not defined in Node runtime. `process.getBuiltinModule` (Node 22.5+)
+ * is the correct way to load Node built-ins from ESM code without needing
+ * `createRequire`. Returns `undefined` in non-Node runtimes.
+ */
+function loadNodeBuiltin<T>(id: string): T | undefined {
+  const nodeProcess = globalThis.process as ProcessWithBuiltinModule | undefined;
+  const getBuiltinModule = nodeProcess?.getBuiltinModule;
+  if (typeof getBuiltinModule !== 'function') {
+    return undefined;
+  }
+  return getBuiltinModule(id) as T;
+}
+
+// ---------------------------------------------------------------------------
 // File size
 // ---------------------------------------------------------------------------
 
 /**
  * Return the byte size of a file at the given path.
  *
- * Bun: `Bun.file(path).size`. Fallback: lazy `node:fs` `statSync`.
+ * - Bun: `Bun.file(path).size`
+ * - Node 22.5+: `node:fs` `statSync` loaded via `process.getBuiltinModule`
+ * - Missing files return `0` to match Bun's behavior (important for WAL
+ *   probing in the diagnostics module).
+ *
  * Not available in browser/edge runtimes — throws if called there.
  */
 export function fileSize(path: string): number {
   if (IS_BUN) {
     return Bun.file(path).size;
   }
-  // Lazy import to avoid pulling node:fs into browser bundles.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { statSync } = require('node:fs') as typeof import('node:fs');
-  return statSync(path).size;
+
+  const fs = loadNodeBuiltin<typeof import('node:fs')>('node:fs');
+  if (!fs) {
+    throw new Error(
+      'fileSize() requires Bun or Node 22.5+ (process.getBuiltinModule). ' +
+        'Not available in browser or edge runtimes.',
+    );
+  }
+
+  try {
+    return fs.statSync(path).size;
+  } catch (error) {
+    // Match Bun.file().size behavior: return 0 for missing files.
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code: unknown }).code === 'ENOENT'
+    ) {
+      return 0;
+    }
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Compression — synchronous gzip
 // ---------------------------------------------------------------------------
 
+function loadNodeZlib(): typeof import('node:zlib') {
+  const zlib = loadNodeBuiltin<typeof import('node:zlib')>('node:zlib');
+  if (!zlib) {
+    throw new Error(
+      'gzip/gunzip require Bun or Node 22.5+ (process.getBuiltinModule). ' +
+        'Not available in browser or edge runtimes — use CompressionStream directly.',
+    );
+  }
+  return zlib;
+}
+
 /**
  * Gzip-compress a byte buffer synchronously.
  *
- * Bun: `Bun.gzipSync`. Fallback: lazy `node:zlib` `gzipSync`.
+ * - Bun: `Bun.gzipSync`
+ * - Node 22.5+: `node:zlib` via `process.getBuiltinModule`
  */
 export function gzipSync(data: Uint8Array): Uint8Array {
   if (IS_BUN) {
     return new Uint8Array(Bun.gzipSync(new Uint8Array(data)));
   }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const zlib = require('node:zlib') as typeof import('node:zlib');
-  return new Uint8Array(zlib.gzipSync(data));
+  return new Uint8Array(loadNodeZlib().gzipSync(data));
 }
 
 /**
  * Gunzip-decompress a byte buffer synchronously.
  *
- * Bun: `Bun.gunzipSync`. Fallback: lazy `node:zlib` `gunzipSync`.
+ * - Bun: `Bun.gunzipSync`
+ * - Node 22.5+: `node:zlib` via `process.getBuiltinModule`
  */
 export function gunzipSync(data: Uint8Array): Uint8Array {
   if (IS_BUN) {
     return new Uint8Array(Bun.gunzipSync(new Uint8Array(data)));
   }
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const zlib = require('node:zlib') as typeof import('node:zlib');
-  return new Uint8Array(zlib.gunzipSync(data));
+  return new Uint8Array(loadNodeZlib().gunzipSync(data));
+}
+
+/**
+ * Load `node:zlib` if available for Node-side callers (used by compression.ts
+ * for brotli). Returns `undefined` in browsers so they can degrade cleanly.
+ * @internal
+ */
+export function tryLoadNodeZlib(): typeof import('node:zlib') | undefined {
+  return loadNodeBuiltin<typeof import('node:zlib')>('node:zlib');
 }

@@ -60,10 +60,14 @@
       "default": "./dist/storage/compressed-storage.js"
     },
     "./storage/sqlite": {
-      "types": "./dist/storage/bun-sql.d.ts",
-      "bun": "./dist/storage/bun-sql.js",
-      "node": "./dist/storage/node-sqlite.js",
-      "default": "./dist/storage/node-sqlite.js"
+      "bun": {
+        "types": "./dist/storage/bun-sql.d.ts",
+        "default": "./dist/storage/bun-sql.js"
+      },
+      "node": {
+        "types": "./dist/storage/node-sqlite.d.ts",
+        "default": "./dist/storage/node-sqlite.js"
+      }
     },
     "./storage/sqlite/bun": {
       "types": "./dist/storage/bun-sql.d.ts",
@@ -71,9 +75,7 @@
     },
     "./storage/sqlite/node": {
       "types": "./dist/storage/node-sqlite.d.ts",
-      "node": "./dist/storage/node-sqlite.js",
-      "import": "./dist/storage/node-sqlite.js",
-      "default": "./dist/storage/node-sqlite.js"
+      "node": "./dist/storage/node-sqlite.js"
     },
     "./storage/bun-sqlite": {
       "types": "./dist/storage/bun-sql.d.ts",
@@ -98,8 +100,7 @@
     },
     "./server": {
       "types": "./dist/server/index.d.ts",
-      "bun": "./dist/server/index.js",
-      "default": "./dist/server/index.js"
+      "bun": "./dist/server/index.js"
     },
     "./server/handler": {
       "types": "./dist/server/handler.d.ts",
@@ -108,8 +109,7 @@
     },
     "./mcp/stdio": {
       "types": "./dist/ai/mcp/transport-stdio.d.ts",
-      "bun": "./dist/ai/mcp/transport-stdio.js",
-      "default": "./dist/ai/mcp/transport-stdio.js"
+      "bun": "./dist/ai/mcp/transport-stdio.js"
     },
     "./client": {
       "types": "./dist/client/index.d.ts",

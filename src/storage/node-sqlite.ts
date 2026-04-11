@@ -3,13 +3,15 @@
  *
  * Implements the same `Storage` interface and SQL schema as `BunSQLiteStorage`
  * but uses `better-sqlite3` instead of `bun:sqlite`, enabling the same
- * storage layer to run on Node.js 18+.
+ * storage layer to run on Node.js 22+.
  *
  * `better-sqlite3` is a peer dependency — it must be installed separately by
  * consumers who import `weft/storage/sqlite/node`.
  *
  * @module storage/node-sqlite
  */
+
+import { createRequire } from 'node:module';
 
 import type { BatchOperation, ScanOptions, Storage } from './interface.ts';
 
@@ -42,20 +44,33 @@ let DatabaseConstructor: BetterSqliteConstructor | undefined;
 function loadBetterSqlite3(): BetterSqliteConstructor {
   if (DatabaseConstructor) return DatabaseConstructor;
 
+  // This package is ESM (`type: module` in package.json), so the global
+  // `require` is not defined. Use `createRequire` from `node:module` to get
+  // a CommonJS require for loading the native better-sqlite3 binding.
+  const requireFromHere = createRequire(import.meta.url);
+
+  let mod: { default?: BetterSqliteConstructor } & BetterSqliteConstructor;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require('better-sqlite3') as {
+    mod = requireFromHere('better-sqlite3') as {
       default?: BetterSqliteConstructor;
     } & BetterSqliteConstructor;
-    DatabaseConstructor = typeof mod.default === 'function' ? mod.default : mod;
-    return DatabaseConstructor;
-  } catch {
+  } catch (error) {
     throw new Error(
       'NodeSQLiteStorage requires the "better-sqlite3" package. ' +
-        'Install it with: bun add better-sqlite3 (or npm install better-sqlite3)',
+        'Install it with: bun add better-sqlite3 (or npm install better-sqlite3).',
+      { cause: error },
     );
   }
+
+  DatabaseConstructor = typeof mod.default === 'function' ? mod.default : mod;
+  return DatabaseConstructor;
 }
+
+/**
+ * Runtime-neutral alias for the Node SQLite adapter. Consumers that import
+ * from `weft/storage/sqlite` get this class under Node.
+ */
+export { NodeSQLiteStorage as SQLiteStorage };
 
 export class NodeSQLiteStorage implements Storage {
   #database: BetterSqliteDatabase;

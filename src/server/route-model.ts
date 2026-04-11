@@ -40,8 +40,12 @@ export type RouteDefinition = {
 /**
  * All REST API routes. Each entry is the single source of truth for the
  * route's method, path, parameters, and documentation.
+ *
+ * `as const` preserves the literal types of `handler` so consumers can
+ * derive a string-literal union (see `HandlerName` in handler.ts) for
+ * compile-time exhaustiveness on route executors.
  */
-export const ROUTES: readonly RouteDefinition[] = [
+export const ROUTES = [
   {
     method: 'GET',
     path: '/v1/health',
@@ -258,7 +262,7 @@ export const ROUTES: readonly RouteDefinition[] = [
     summary: 'OpenAPI 3.1 specification',
     tags: ['System'],
   },
-] as const;
+] as const satisfies readonly RouteDefinition[];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -272,12 +276,31 @@ export function toOpenApiPath(path: string): string {
   return path.replace(/:([^/]+)/g, '{$1}');
 }
 
+/** Escape regex metacharacters in a literal path segment. */
+function escapeRegexLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Convert an Express-style path to a regex pattern for route matching.
- * Parameter segments (`:name`) become named capture groups `([^/]+)`.
- * The `:step` parameter in checkpoint routes uses `(\\d+)` for numeric-only.
+ *
+ * Each segment is either a literal (with regex metacharacters escaped) or a
+ * parameter placeholder:
+ * - `:step` becomes `(\\d+)` for numeric-only matching (checkpoint routes)
+ * - `:name` becomes `([^/]+)` for any non-slash token
+ *
+ * Escaping the literal segments prevents characters like `.` in paths such as
+ * `/openapi.json` from being treated as wildcards (which would match
+ * `/openapiXjson`).
  */
 export function toRegex(path: string): RegExp {
-  const regexStr = path.replace(/:step\b/, '(\\d+)').replace(/:([^/]+)/g, '([^/]+)');
+  const regexStr = path
+    .split('/')
+    .map((segment) => {
+      if (segment === ':step') return '(\\d+)';
+      if (segment.startsWith(':')) return '([^/]+)';
+      return escapeRegexLiteral(segment);
+    })
+    .join('/');
   return new RegExp(`^${regexStr}$`);
 }
