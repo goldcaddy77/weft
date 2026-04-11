@@ -79,8 +79,8 @@ The narrative architecture material, examples, and long-form rationale now live 
 - [x] **All storage adapters implement `Disposable`.** `using storage = new XStorage(...)` works.
 - [x] **50K+ writes/sec on SQLite.** Benchmarked on commodity hardware (M1 MacBook or equivalent).
 - [x] **Batch operations are atomic.** All-or-nothing semantics verified by crash injection tests.
-- [ ] **`has`, `deletePrefix`, `keys`, `count` convenience methods.** See Track 6 for full acceptance criteria.
-- [ ] **`scoped()` namespace utility and `withCodec()` typed wrapper.** See Track 6 for full acceptance criteria.
+- [x] **`has`, `deletePrefix`, `keys`, `count` convenience methods.** See Track 6 for full acceptance criteria.
+- [x] **`scoped()` namespace utility and `withCodec()` typed wrapper.** See Track 6 for full acceptance criteria.
 
 ### Web Workers
 
@@ -585,15 +585,15 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 
 The `Storage` interface is the right primitive for Weft internals (binary KV with range scans and atomic batch). But consumers building higher-level abstractions on top — application state, caches, session stores, configuration — hit friction that should be smoothed out at the Weft level rather than reimplemented by every consumer.
 
-- [ ] **`has(key)` method on `Storage`.** Returns `Promise<boolean>`. Adapters implement efficiently: SQLite uses `SELECT 1 … LIMIT 1`, LMDB checks key existence without value copy, Memory checks `Map.has()`. Avoids deserializing the full value just to check existence. Default implementation falls back to `get(key) !== null` so existing adapters aren't broken.
-- [ ] **`deletePrefix(prefix)` method on `Storage`.** Returns `Promise<number>` (count of deleted keys). SQLite uses `DELETE FROM kv WHERE key >= ? AND key < ?` in one statement. LMDB uses range delete. Memory iterates and deletes. Avoids the `scan()` → collect all keys → `batch(deletes)` round-trip that forces holding all keys in memory.
-- [ ] **`keys(prefix, options?)` method on `Storage`.** Returns `AsyncIterable<string>` (keys only, no values). Same signature as `scan()` minus the value in the tuple. SQLite uses `SELECT key FROM kv WHERE …` (no blob read). LMDB iterates keys without value materialization. Useful when consumers only need to list or count entries without reading payloads.
-- [ ] **`count(prefix)` method on `Storage`.** Returns `Promise<number>`. SQLite uses `SELECT COUNT(*) FROM kv WHERE …`. Avoids streaming every entry through an async iterator just to count. Useful for dashboards, health checks, and queue depth monitoring.
-- [ ] **`storage.scoped(prefix)` namespace utility.** Returns a `Storage` instance where all operations are transparently prefixed with `${prefix}:` and `scan()`/`keys()` results have the prefix stripped. Composes: `storage.scoped('a').scoped('b')` produces keys under `a:b:`. Shipped as a utility alongside `CompressedStorage`, not baked into the interface — adapters don't need to implement it.
-- [ ] **`TypedStorage<T>` codec wrapper.** `withCodec(storage, codec)` returns a higher-level interface: `get(key): Promise<T | null>`, `put(key, value: T): Promise<void>`, with `scan`, `batch`, etc. forwarding through the codec. Ships with `jsonCodec` (JSON string round-trip) and `msgpackCodec` (MessagePack round-trip via the existing codec module). Eliminates `TextEncoder`/`TextDecoder` boilerplate for every consumer that stores structured data.
-- [ ] **All new methods are optional on the `Storage` interface.** Marked with `?` so existing third-party adapters aren't broken. Weft's built-in adapters (BunSQLite, LMDB, Memory, IndexedDB, Turso) implement all of them. The `scoped()` and `withCodec()` utilities work with any `Storage` that implements the core five methods.
-- [ ] **Tests cover all new methods across all built-in adapters.** The existing parametrized storage test factory (`src/testing/storage-backends.ts`) is extended with cases for `has`, `deletePrefix`, `keys`, and `count`. The `scoped()` and `withCodec()` utilities have dedicated test files.
-- [ ] `bun typecheck` and `bun test` both exit 0 after Track 6 lands.
+- [x] **`has(key)` method on `Storage`.** Returns `Promise<boolean>`. Adapters implement efficiently: SQLite uses `SELECT 1 … LIMIT 1`, LMDB checks key existence without value copy, Memory checks `Map.has()`. Avoids deserializing the full value just to check existence. Default implementation falls back to `get(key) !== null` so existing adapters aren't broken.
+- [x] **`deletePrefix(prefix)` method on `Storage`.** Returns `Promise<number>` (count of deleted keys). SQLite uses `DELETE FROM kv WHERE key >= ? AND key < ?` in one statement. LMDB uses range delete. Memory iterates and deletes. Avoids the `scan()` → collect all keys → `batch(deletes)` round-trip that forces holding all keys in memory.
+- [x] **`keys(prefix, options?)` method on `Storage`.** Returns `AsyncIterable<string>` (keys only, no values). Same signature as `scan()` minus the value in the tuple. SQLite uses `SELECT key FROM kv WHERE …` (no blob read). LMDB iterates keys without value materialization. Useful when consumers only need to list or count entries without reading payloads.
+- [x] **`count(prefix)` method on `Storage`.** Returns `Promise<number>`. SQLite uses `SELECT COUNT(*) FROM kv WHERE …`. Avoids streaming every entry through an async iterator just to count. Useful for dashboards, health checks, and queue depth monitoring.
+- [x] **`storage.scoped(prefix)` namespace utility.** Returns a `Storage` instance where all operations are transparently prefixed with `${prefix}:` and `scan()`/`keys()` results have the prefix stripped. Composes: `storage.scoped('a').scoped('b')` produces keys under `a:b:`. Shipped as a utility alongside `CompressedStorage`, with optional `storage.scoped(prefix)` support on Weft's built-in adapters and `ScopedStorage` itself, so third-party adapters are not required to implement it.
+- [x] **`TypedStorage<T>` codec wrapper.** `withCodec(storage, codec)` returns a higher-level interface: `get(key): Promise<T | null>`, `put(key, value: T): Promise<void>`, with `scan`, `batch`, etc. forwarding through the codec. Ships with `jsonCodec` (JSON string round-trip) and `msgpackCodec` (MessagePack round-trip via the existing codec module). Eliminates `TextEncoder`/`TextDecoder` boilerplate for every consumer that stores structured data.
+- [x] **All new methods are optional on the `Storage` interface.** Marked with `?` so existing third-party adapters aren't broken. Weft's built-in adapters (BunSQLite, LMDB, Memory, IndexedDB, Turso) implement all of them. The `scoped()` and `withCodec()` utilities work with any `Storage` that implements the core five methods.
+- [x] **Tests cover all new methods across all built-in adapters.** The existing parametrized storage test factory (`src/testing/storage-backends.ts`) is extended with cases for `has`, `deletePrefix`, `keys`, and `count`. The `scoped()` and `withCodec()` utilities have dedicated test files.
+- [x] `bun typecheck` and `bun test` both exit 0 after Track 6 lands.
 
 ### Track 7 — Platform completeness
 
@@ -695,10 +695,10 @@ Weft streams tokens over WebSocket with a reconnection buffer, but if the buffer
 
 ### Final verification
 
-- [ ] `bun test` passes across the whole repo.
-- [ ] `bun typecheck` exits 0.
-- [ ] `bun run lint` (oxlint) exits 0.
-- [ ] `bun run build` succeeds.
+- [x] `bun test` passes across the whole repo.
+- [x] `bun typecheck` exits 0.
+- [x] `bun run lint` (oxlint) exits 0.
+- [x] `bun run build` succeeds.
 - [ ] `bun build --compile src/cli-main.ts --outfile weft` produces a working binary.
 - [ ] `bunx playwright test` exits 0 against the built-in dashboard and covers the documented workflow, review, and agent-state matrix.
 - [ ] `curl http://127.0.0.1:$PORT/openapi.json` returns a valid OpenAPI 3.1 document whose paths include the documented REST endpoints and whose security schemes match the configured auth modes.

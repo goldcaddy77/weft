@@ -1,6 +1,13 @@
 import { createClient, type Client, type InValue } from '@libsql/client';
 
-import type { BatchOperation, ScanOptions, Storage } from './interface';
+import {
+  resolvePrefixRangeEnd,
+  type BatchOperation,
+  type ScanOptions,
+  type Storage,
+} from './interface';
+import { assertReadOnlyQuery } from './read-only-query';
+import { scopedStorage } from './scoped-storage';
 
 /** Configuration for connecting to a Turso/libSQL database. */
 export type TursoStorageOptions = {
@@ -72,15 +79,38 @@ export class TursoStorage implements Storage {
     });
   }
 
-  async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
+  async has(key: string): Promise<boolean> {
     await this.#ensureTable();
 
-    const { limit, reverse, gt, lt, gte, lte } = options;
+    const result = await this.#client.execute({
+      sql: 'SELECT 1 AS present FROM kv WHERE key = ? LIMIT 1',
+      args: [key],
+    });
 
-    const prefixEnd =
-      prefix.length > 0
-        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
-        : '\xff';
+    return result.rows.length > 0;
+  }
+
+  async deletePrefix(prefix: string): Promise<number> {
+    await this.#ensureTable();
+
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const result = await this.#client.execute({
+      sql: 'DELETE FROM kv WHERE key >= ? AND key < ?',
+      args: [prefix, prefixEnd],
+    });
+
+    return result.rowsAffected;
+  }
+
+  #buildRangeQuery(
+    prefix: string,
+    options: ScanOptions = {},
+  ): {
+    parameters: InValue[];
+    sqlSuffix: string;
+  } {
+    const { limit, reverse, gt, lt, gte, lte } = options;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
 
     const conditions: string[] = ['key >= ? AND key < ?'];
     const parameters: InValue[] = [prefix, prefixEnd];
@@ -103,11 +133,25 @@ export class TursoStorage implements Storage {
     }
 
     const direction = reverse ? 'DESC' : 'ASC';
-    const limitClause = limit !== undefined ? `LIMIT ${limit}` : '';
+    const limitClause = limit !== undefined ? ' LIMIT ?' : '';
+    if (limit !== undefined) {
+      parameters.push(limit);
+    }
 
-    const sql = `SELECT key, value FROM kv WHERE ${conditions.join(' AND ')} ORDER BY key ${direction} ${limitClause}`;
+    return {
+      parameters,
+      sqlSuffix: `WHERE ${conditions.join(' AND ')} ORDER BY key ${direction}${limitClause}`,
+    };
+  }
 
-    const result = await this.#client.execute({ sql, args: parameters });
+  async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
+    await this.#ensureTable();
+
+    const { parameters, sqlSuffix } = this.#buildRangeQuery(prefix, options);
+    const result = await this.#client.execute({
+      sql: `SELECT key, value FROM kv ${sqlSuffix}`,
+      args: parameters,
+    });
 
     for (const row of result.rows) {
       const key = row['key'] as string;
@@ -115,6 +159,36 @@ export class TursoStorage implements Storage {
       const value = new Uint8Array(raw as ArrayBuffer);
       yield [key, value];
     }
+  }
+
+  async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
+    await this.#ensureTable();
+
+    const { parameters, sqlSuffix } = this.#buildRangeQuery(prefix, options);
+    const result = await this.#client.execute({
+      sql: `SELECT key FROM kv ${sqlSuffix}`,
+      args: parameters,
+    });
+
+    for (const row of result.rows) {
+      yield row['key'] as string;
+    }
+  }
+
+  async count(prefix: string): Promise<number> {
+    await this.#ensureTable();
+
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const result = await this.#client.execute({
+      sql: 'SELECT COUNT(*) AS count FROM kv WHERE key >= ? AND key < ?',
+      args: [prefix, prefixEnd],
+    });
+
+    return Number(result.rows[0]?.['count'] ?? 0);
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
   }
 
   async batch(operations: BatchOperation[]): Promise<void> {
@@ -140,6 +214,7 @@ export class TursoStorage implements Storage {
 
   async query<T>(sql: string, parameters?: unknown[]): Promise<T[]> {
     await this.#ensureTable();
+    assertReadOnlyQuery(sql);
 
     const result = await this.#client.execute({
       sql,

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 
 import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
@@ -27,30 +27,24 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
  * isolated from host noise.
  */
 
+const SAMPLES = 5;
 const BASELINE_TARGET_COMPLETIONS_PER_SECOND = 5_000;
 const COVERAGE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 3_000 : 5_000;
 
-describe('Activity completion throughput', () => {
-  let storage: BunSQLiteStorage;
-  let engine: Engine;
+function percentile(sorted: number[], fraction: number): number {
+  if (sorted.length === 0) {
+    return 0;
+  }
 
-  afterEach(() => {
-    engine[Symbol.dispose]();
-    storage[Symbol.dispose]();
-  });
+  const index = Math.min(sorted.length - 1, Math.floor(sorted.length * fraction));
+  return sorted[index]!;
+}
 
-  it(`completions exceed ${(isCoverageInstrumentationEnabled()
-    ? COVERAGE_TARGET_COMPLETIONS_PER_SECOND
-    : BASELINE_TARGET_COMPLETIONS_PER_SECOND
-  ).toLocaleString()}/sec`, async () => {
-    const targetCompletionsPerSecond = isCoverageInstrumentationEnabled()
-      ? COVERAGE_TARGET_COMPLETIONS_PER_SECOND
-      : BASELINE_TARGET_COMPLETIONS_PER_SECOND;
+async function measureCompletionsPerSecond(totalWorkflows: number): Promise<number> {
+  const storage = new BunSQLiteStorage(':memory:');
+  const engine = new Engine({ storage });
 
-    storage = new BunSQLiteStorage(':memory:');
-    engine = new Engine({ storage });
-
-    // A trivial activity that returns its input.
+  try {
     function echo(value: unknown): unknown {
       return value;
     }
@@ -62,42 +56,62 @@ describe('Activity completion throughput', () => {
       return result;
     });
 
-    const totalWorkflows = 5_000;
-
     // Warm up enough workflows to prime prepared statements, caches, and the
     // completion path before the timed section starts.
-    for (let i = 0; i < 50; i++) {
-      const handle = await engine.start('with-activity', i);
+    for (let index = 0; index < 50; index += 1) {
+      const handle = await engine.start('with-activity', index);
       await handle.result();
     }
 
     const handles: Array<{ result: () => Promise<unknown> }> = [];
-
     const start = performance.now();
 
-    for (let i = 0; i < totalWorkflows; i++) {
-      const handle = await engine.start('with-activity', i);
+    for (let index = 0; index < totalWorkflows; index += 1) {
+      const handle = await engine.start('with-activity', index);
       handles.push(handle);
     }
 
-    // Wait for all workflows to complete
     await Promise.all(handles.map((handle) => handle.result()));
 
     const elapsed = performance.now() - start;
-    const completionsPerSecond = Math.round((totalWorkflows / elapsed) * 1000);
+    return Math.round((totalWorkflows / elapsed) * 1000);
+  } finally {
+    engine[Symbol.dispose]();
+    storage[Symbol.dispose]();
+  }
+}
+
+describe('Activity completion throughput', () => {
+  it(`completions exceed ${(isCoverageInstrumentationEnabled()
+    ? COVERAGE_TARGET_COMPLETIONS_PER_SECOND
+    : BASELINE_TARGET_COMPLETIONS_PER_SECOND
+  ).toLocaleString()}/sec`, async () => {
+    const totalWorkflows = 5_000;
+    const targetCompletionsPerSecond = isCoverageInstrumentationEnabled()
+      ? COVERAGE_TARGET_COMPLETIONS_PER_SECOND
+      : BASELINE_TARGET_COMPLETIONS_PER_SECOND;
+    const samples: number[] = [];
+
+    for (let sample = 0; sample < SAMPLES; sample += 1) {
+      samples.push(await measureCompletionsPerSecond(totalWorkflows));
+    }
+
+    samples.sort((left, right) => left - right);
+    const medianCompletionsPerSecond = percentile(samples, 0.5);
 
     console.log(
       [
         `\n  Activity completion throughput benchmark:`,
         `    Total workflows: ${totalWorkflows.toLocaleString()}`,
-        `    Elapsed:         ${elapsed.toFixed(1)}ms`,
-        `    Completions/sec: ${completionsPerSecond.toLocaleString()}`,
+        `    Samples:         ${samples.map((sample) => sample.toLocaleString()).join(', ')}`,
+        `    Median/sec:      ${medianCompletionsPerSecond.toLocaleString()}`,
         `    Target:          ${targetCompletionsPerSecond.toLocaleString()}`,
         `    Coverage mode:   ${isCoverageInstrumentationEnabled() ? 'yes' : 'no'}`,
-        `    Headroom:        ${((completionsPerSecond / targetCompletionsPerSecond) * 100 - 100).toFixed(0)}%\n`,
+        `    Spec target:     30,000`,
+        `    Headroom:        ${((medianCompletionsPerSecond / targetCompletionsPerSecond) * 100 - 100).toFixed(0)}%\n`,
       ].join('\n'),
     );
 
-    expect(completionsPerSecond).toBeGreaterThanOrEqual(targetCompletionsPerSecond);
-  }, 60_000);
+    expect(medianCompletionsPerSecond).toBeGreaterThanOrEqual(targetCompletionsPerSecond);
+  }, 120_000);
 });

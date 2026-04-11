@@ -1,6 +1,13 @@
 import * as lmdb from 'lmdb';
 
-import type { BatchOperation, ScanOptions, Storage } from './interface';
+import {
+  matchesScanOptions,
+  resolvePrefixRangeEnd,
+  type BatchOperation,
+  type ScanOptions,
+  type Storage,
+} from './interface';
+import { scopedStorage } from './scoped-storage';
 
 /**
  * LMDB-backed storage adapter. Reads are synchronous zero-copy via
@@ -32,15 +39,33 @@ export class LMDBStorage implements Storage {
     await this.#database.remove(key);
   }
 
+  async has(key: string): Promise<boolean> {
+    return this.#database.doesExist(key);
+  }
+
+  async deletePrefix(prefix: string): Promise<number> {
+    const keys: string[] = [];
+    for await (const key of this.keys(prefix)) {
+      keys.push(key);
+    }
+
+    if (keys.length === 0) {
+      return 0;
+    }
+
+    await this.#database.batch(() => {
+      for (const key of keys) {
+        void this.#database.remove(key);
+      }
+    });
+
+    return keys.length;
+  }
+
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     const { limit, reverse, gt, lt, gte, lte } = options;
 
-    // Compute the exclusive upper bound for the prefix range, matching
-    // MemoryStorage and BunSQLiteStorage.
-    const prefixEnd =
-      prefix.length > 0
-        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
-        : '\xff';
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
 
     // In lmdb-js, reverse iteration requires start > end: start is the
     // upper bound to iterate backwards from, end is the lower bound to stop at.
@@ -74,6 +99,52 @@ export class LMDBStorage implements Storage {
       yield [key, new Uint8Array(value)];
       count++;
     }
+  }
+
+  async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
+    const { limit, reverse } = options;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+
+    const range = reverse
+      ? this.#database.getKeys({
+          start: prefixEnd,
+          end: prefix,
+          reverse: true,
+        })
+      : this.#database.getKeys({ start: prefix, end: prefixEnd });
+
+    let count = 0;
+    let enteredPrefix = false;
+    for (const key of range) {
+      if (!key.startsWith(prefix)) {
+        if (reverse && !enteredPrefix) {
+          continue;
+        }
+        break;
+      }
+
+      enteredPrefix = true;
+
+      if (!matchesScanOptions(key, options)) {
+        continue;
+      }
+
+      if (limit !== undefined && count >= limit) {
+        break;
+      }
+
+      yield key;
+      count++;
+    }
+  }
+
+  async count(prefix: string): Promise<number> {
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    return this.#database.getKeysCount({ start: prefix, end: prefixEnd });
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
   }
 
   async batch(operations: BatchOperation[]): Promise<void> {

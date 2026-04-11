@@ -1,4 +1,11 @@
-import type { BatchOperation, ScanOptions, Storage } from './interface';
+import {
+  matchesScanOptions,
+  resolvePrefixRangeEnd,
+  type BatchOperation,
+  type ScanOptions,
+  type Storage,
+} from './interface';
+import { scopedStorage } from './scoped-storage';
 
 const STORE_NAME = 'kv';
 
@@ -8,6 +15,77 @@ function promisify<T>(request: IDBRequest<T>): Promise<T> {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+}
+
+/** Convert cursor request callbacks into awaited iteration steps that reject on request or transaction failure. */
+function createCursorRequestAwaiter<TCursor extends IDBCursor | IDBCursorWithValue>(
+  request: IDBRequest<TCursor | null>,
+  transaction: IDBTransaction,
+): () => Promise<TCursor | null> {
+  let resolveCurrent: ((value: TCursor | null) => void) | null = null;
+  let rejectCurrent: ((reason?: unknown) => void) | null = null;
+  let pendingError: DOMException | Error | null = null;
+
+  const rejectPendingCursor = (
+    error: DOMException | null | undefined,
+    fallbackMessage: string,
+  ): void => {
+    const reason = error ?? new Error(fallbackMessage);
+
+    if (rejectCurrent) {
+      const reject = rejectCurrent;
+      resolveCurrent = null;
+      rejectCurrent = null;
+      reject(reason);
+      return;
+    }
+
+    pendingError = reason;
+  };
+
+  request.onsuccess = () => {
+    if (!resolveCurrent) {
+      return;
+    }
+
+    const resolve = resolveCurrent;
+    resolveCurrent = null;
+    rejectCurrent = null;
+    resolve(request.result);
+  };
+
+  request.onerror = () => {
+    rejectPendingCursor(request.error, 'IndexedDB cursor request failed.');
+  };
+
+  transaction.onerror = () => {
+    rejectPendingCursor(transaction.error, 'IndexedDB transaction failed.');
+  };
+
+  transaction.onabort = () => {
+    rejectPendingCursor(transaction.error, 'IndexedDB transaction aborted.');
+  };
+
+  return (): Promise<TCursor | null> => {
+    return new Promise<TCursor | null>((resolve, reject) => {
+      if (pendingError) {
+        const error = pendingError;
+        pendingError = null;
+        reject(error);
+        return;
+      }
+
+      resolveCurrent = resolve;
+      rejectCurrent = reject;
+
+      if (request.readyState === 'done') {
+        const resolveReady = resolveCurrent;
+        resolveCurrent = null;
+        rejectCurrent = null;
+        resolveReady?.(request.result);
+      }
+    });
+  };
 }
 
 export class IndexedDBStorage implements Storage {
@@ -58,17 +136,40 @@ export class IndexedDBStorage implements Storage {
     await promisify(store.delete(key));
   }
 
+  async has(key: string): Promise<boolean> {
+    const database = await this.#databasePromise;
+    const transaction = database.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    return (await promisify(store.count(key))) > 0;
+  }
+
+  async deletePrefix(prefix: string): Promise<number> {
+    const database = await this.#databasePromise;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const range = IDBKeyRange.bound(prefix, prefixEnd, false, true);
+
+    return new Promise<number>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      let deletedCount = 0;
+
+      const countRequest = store.count(range);
+      countRequest.onsuccess = () => {
+        deletedCount = countRequest.result;
+        store.delete(range);
+      };
+
+      transaction.oncomplete = () => resolve(deletedCount);
+      /* c8 ignore next -- transaction failure requires injected IndexedDB write faults */
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }
+
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     const { limit, reverse, gt, lt, gte, lte } = options;
     const database = await this.#databasePromise;
 
-    // Compute the exclusive upper bound for the prefix range.
-    // When prefix is empty, use '\xff' to match all keys since all valid string keys sort before it.
-    const prefixEnd =
-      prefix.length > 0
-        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
-        : '\xff';
-
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
     const range = IDBKeyRange.bound(prefix, prefixEnd, false, true);
     const direction: IDBCursorDirection = reverse ? 'prev' : 'next';
 
@@ -77,25 +178,7 @@ export class IndexedDBStorage implements Storage {
     const request = store.openCursor(range, direction);
 
     let count = 0;
-
-    // Pull-based async cursor iteration: each step resolves a promise.
-    let resolveCurrent: ((value: IDBCursorWithValue | null) => void) | null = null;
-
-    request.onsuccess = () => {
-      if (resolveCurrent) {
-        resolveCurrent(request.result);
-      }
-    };
-
-    const nextCursor = (): Promise<IDBCursorWithValue | null> => {
-      return new Promise<IDBCursorWithValue | null>((resolve) => {
-        resolveCurrent = resolve;
-        // The initial onsuccess may have already fired before we attached resolveCurrent.
-        if (request.readyState === 'done') {
-          resolve(request.result);
-        }
-      });
-    };
+    const nextCursor = createCursorRequestAwaiter(request, transaction);
 
     // Track whether iteration ran to completion so we can abort the transaction
     // on early termination (e.g., consumer breaks out of the loop), releasing the cursor.
@@ -123,9 +206,7 @@ export class IndexedDBStorage implements Storage {
 
         // Advance the cursor
         cursor.continue();
-        cursor = await new Promise<IDBCursorWithValue | null>((resolve) => {
-          resolveCurrent = resolve;
-        });
+        cursor = await nextCursor();
       }
 
       completed = true;
@@ -159,6 +240,64 @@ export class IndexedDBStorage implements Storage {
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
     });
+  }
+
+  async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
+    const { limit, reverse } = options;
+    const database = await this.#databasePromise;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const range = IDBKeyRange.bound(prefix, prefixEnd, false, true);
+    const direction: IDBCursorDirection = reverse ? 'prev' : 'next';
+
+    const transaction = database.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.openKeyCursor(range, direction);
+
+    let count = 0;
+    const nextCursor = createCursorRequestAwaiter(request, transaction);
+
+    let completed = false;
+    try {
+      let cursor = await nextCursor();
+
+      while (cursor) {
+        if (limit !== undefined && count >= limit) {
+          break;
+        }
+
+        const key = cursor.key as string;
+
+        if (matchesScanOptions(key, options)) {
+          yield key;
+          count++;
+        }
+
+        cursor.continue();
+        cursor = await nextCursor();
+      }
+
+      completed = true;
+    } finally {
+      if (!completed) {
+        try {
+          transaction.abort();
+        } catch {
+          // Transaction may already be finished
+        }
+      }
+    }
+  }
+
+  async count(prefix: string): Promise<number> {
+    const database = await this.#databasePromise;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const transaction = database.transaction(STORE_NAME, 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    return promisify(store.count(IDBKeyRange.bound(prefix, prefixEnd, false, true)));
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
   }
 
   [Symbol.dispose](): void {

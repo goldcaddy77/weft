@@ -137,6 +137,16 @@ export { CompressedStorage } from './storage/compressed-storage';
 export { KEYS } from './storage/interface';
 export type { BatchOperation, ScanOptions, Storage } from './storage/interface';
 export { MemoryStorage } from './storage/memory';
+export { ScopedStorage, scopedStorage } from './storage/scoped-storage';
+export { jsonCodec, msgpackCodec, withCodec } from './storage/typed-storage';
+export type {
+  JsonValue,
+  MessagePackValue,
+  StorageCodec,
+  StorageValueParser,
+  TypedBatchOperation,
+  TypedStorage,
+} from './storage/typed-storage';
 
 // Codec
 export { decode, encode, validateCloneable } from './core/codec';

@@ -247,6 +247,75 @@ describe('IndexedDBStorage', () => {
     }
   });
 
+  it('keys rejects when the IndexedDB cursor request errors', async () => {
+    const originalOpen = indexedDB.open.bind(indexedDB);
+    const cursorError = new Error('cursor failed');
+
+    try {
+      indexedDB.open = (() => {
+        const cursorRequest = {
+          result: null,
+          error: cursorError,
+          onsuccess: null,
+          onerror: null,
+          readyState: 'pending',
+        } as unknown as IDBRequest<IDBCursor | null>;
+
+        const transaction = {
+          error: null,
+          oncomplete: null,
+          onerror: null,
+          onabort: null,
+          objectStore() {
+            return {
+              openKeyCursor() {
+                queueMicrotask(() => {
+                  cursorRequest.onerror?.(new Event('error'));
+                });
+                return cursorRequest;
+              },
+            };
+          },
+          abort() {},
+        } as unknown as IDBTransaction;
+
+        const database = {
+          objectStoreNames: {
+            contains() {
+              return true;
+            },
+          },
+          createObjectStore() {},
+          transaction() {
+            return transaction;
+          },
+          close() {},
+        } as unknown as IDBDatabase;
+
+        const request = {
+          result: database,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          onupgradeneeded: null,
+          readyState: 'pending',
+        } as unknown as IDBOpenDBRequest;
+
+        queueMicrotask(() => {
+          request.onsuccess?.(new Event('success'));
+        });
+
+        return request;
+      }) as typeof indexedDB.open;
+
+      const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+
+      await expect(collect(storage.keys('key:'))).rejects.toBe(cursorError);
+    } finally {
+      indexedDB.open = originalOpen;
+    }
+  });
+
   it('[Symbol.dispose] closes database', async () => {
     const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
     await storage.put('key', encode('value'));

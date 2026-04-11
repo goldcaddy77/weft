@@ -1,4 +1,11 @@
-import type { BatchOperation, ScanOptions, Storage } from './interface';
+import {
+  matchesScanOptions,
+  resolvePrefixRangeEnd,
+  type BatchOperation,
+  type ScanOptions,
+  type Storage,
+} from './interface';
+import { scopedStorage } from './scoped-storage';
 
 export class MemoryStorage implements Storage {
   #data: Map<string, Uint8Array>;
@@ -11,12 +18,6 @@ export class MemoryStorage implements Storage {
     return key >= prefix && key < prefixEnd;
   }
 
-  #resolvePrefixEnd(prefix: string): string {
-    return prefix.length > 0
-      ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
-      : '\xff';
-  }
-
   #collectSortedKeys(prefix: string, prefixEnd: string): string[] {
     const keys: string[] = [];
     for (const key of this.#data.keys()) {
@@ -25,24 +26,6 @@ export class MemoryStorage implements Storage {
       }
     }
     return keys.toSorted();
-  }
-
-  #applyBound(
-    keys: string[],
-    bound: string | undefined,
-    predicate: (key: string, boundary: string) => boolean,
-  ): string[] {
-    if (bound === undefined) {
-      return keys;
-    }
-
-    const filtered: string[] = [];
-    for (const key of keys) {
-      if (predicate(key, bound)) {
-        filtered.push(key);
-      }
-    }
-    return filtered;
   }
 
   async get(key: string): Promise<Uint8Array | null> {
@@ -58,14 +41,11 @@ export class MemoryStorage implements Storage {
   }
 
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
-    const { limit, reverse, gt, lt, gte, lte } = options;
+    const { limit, reverse } = options;
 
-    const prefixEnd = this.#resolvePrefixEnd(prefix);
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
     let keys = this.#collectSortedKeys(prefix, prefixEnd);
-    keys = this.#applyBound(keys, gt, (key, boundary) => key > boundary);
-    keys = this.#applyBound(keys, gte, (key, boundary) => key >= boundary);
-    keys = this.#applyBound(keys, lt, (key, boundary) => key < boundary);
-    keys = this.#applyBound(keys, lte, (key, boundary) => key <= boundary);
+    keys = keys.filter((key) => matchesScanOptions(key, options));
 
     if (reverse) {
       keys.reverse();
@@ -92,20 +72,57 @@ export class MemoryStorage implements Storage {
     }
   }
 
+  async has(key: string): Promise<boolean> {
+    return this.#data.has(key);
+  }
+
+  async deletePrefix(prefix: string): Promise<number> {
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    const keys = this.#collectSortedKeys(prefix, prefixEnd);
+
+    for (const key of keys) {
+      this.#data.delete(key);
+    }
+
+    return keys.length;
+  }
+
+  async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
+    const { limit, reverse } = options;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    let keys = this.#collectSortedKeys(prefix, prefixEnd);
+    keys = keys.filter((key) => matchesScanOptions(key, options));
+
+    if (reverse) {
+      keys.reverse();
+    }
+
+    let count = 0;
+    for (const key of keys) {
+      if (limit !== undefined && count >= limit) {
+        break;
+      }
+
+      yield key;
+      count++;
+    }
+  }
+
+  async count(prefix: string): Promise<number> {
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    return this.#collectSortedKeys(prefix, prefixEnd).length;
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
+  }
+
   get size(): number {
     return this.#data.size;
   }
 
   clear(): void {
     this.#data.clear();
-  }
-
-  has(key: string): boolean {
-    return this.#data.has(key);
-  }
-
-  keys(): string[] {
-    return [...this.#data.keys()].toSorted();
   }
 
   snapshot(): Map<string, Uint8Array> {

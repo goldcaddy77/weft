@@ -1,6 +1,13 @@
 import { Database, Statement, type SQLQueryBindings } from 'bun:sqlite';
 
-import type { BatchOperation, ScanOptions, Storage } from './interface';
+import {
+  resolvePrefixRangeEnd,
+  type BatchOperation,
+  type ScanOptions,
+  type Storage,
+} from './interface';
+import { assertReadOnlyQuery } from './read-only-query';
+import { scopedStorage } from './scoped-storage';
 
 /**
  * Runtime-neutral alias for the Bun SQLite adapter. Consumers that import
@@ -17,6 +24,9 @@ export class BunSQLiteStorage implements Storage {
   #getStatement: Statement<{ value: Uint8Array }, [string]>;
   #putStatement: Statement<unknown, [string, Uint8Array]>;
   #deleteStatement: Statement<unknown, [string]>;
+  #hasStatement: Statement<{ present: number }, [string]>;
+  #countStatement: Statement<{ count: number }, [string, string]>;
+  #deletePrefixStatement: Statement<unknown, [string, string]>;
   #batchTransaction: (entries: BatchOperation[]) => void;
   // Cache prepared statements for scan() keyed by the fully-built SQL string.
   // The set of SQL variants is bounded by the structural shape of the scan
@@ -29,6 +39,7 @@ export class BunSQLiteStorage implements Storage {
   // entry in [Symbol.dispose].
   #scanStatements: Map<string, Statement<{ key: string; value: Uint8Array }, SQLQueryBindings[]>> =
     new Map();
+  #keyStatements: Map<string, Statement<{ key: string }, SQLQueryBindings[]>> = new Map();
 
   /**
    * Number of distinct prepared-statement cache entries for scan().
@@ -65,6 +76,15 @@ export class BunSQLiteStorage implements Storage {
     this.#deleteStatement = this.#database.prepare<unknown, [string]>(
       'DELETE FROM kv WHERE key = ?',
     );
+    this.#hasStatement = this.#database.prepare<{ present: number }, [string]>(
+      'SELECT 1 AS present FROM kv WHERE key = ? LIMIT 1',
+    );
+    this.#countStatement = this.#database.prepare<{ count: number }, [string, string]>(
+      'SELECT COUNT(*) AS count FROM kv WHERE key >= ? AND key < ?',
+    );
+    this.#deletePrefixStatement = this.#database.prepare<unknown, [string, string]>(
+      'DELETE FROM kv WHERE key >= ? AND key < ?',
+    );
     // Build the transaction wrapper once; bun:sqlite memoizes the compiled
     // transaction so subsequent calls just run the prepared statements.
     this.#batchTransaction = this.#database.transaction((entries: BatchOperation[]) => {
@@ -93,15 +113,24 @@ export class BunSQLiteStorage implements Storage {
     this.#deleteStatement.run(key);
   }
 
-  async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
-    const { limit, reverse, gt, lt, gte, lte } = options;
+  async has(key: string): Promise<boolean> {
+    return this.#hasStatement.get(key) != null;
+  }
 
-    // Compute the exclusive upper bound for the prefix range, same as MemoryStorage.
-    // When prefix is empty, use '\xff' to match all keys since all valid string keys sort before it.
-    const prefixEnd =
-      prefix.length > 0
-        ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
-        : '\xff';
+  async deletePrefix(prefix: string): Promise<number> {
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    return this.#deletePrefixStatement.run(prefix, prefixEnd).changes;
+  }
+
+  #buildRangeQuery(
+    prefix: string,
+    options: ScanOptions = {},
+  ): {
+    parameters: SQLQueryBindings[];
+    sqlSuffix: string;
+  } {
+    const { limit, reverse, gt, lt, gte, lte } = options;
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
 
     const conditions: string[] = ['key >= ? AND key < ?'];
     const parameters: SQLQueryBindings[] = [prefix, prefixEnd];
@@ -124,17 +153,21 @@ export class BunSQLiteStorage implements Storage {
     }
 
     const direction = reverse ? 'DESC' : 'ASC';
-    // Use a bound parameter for LIMIT rather than interpolating the value
-    // into the SQL string. If `limit` were interpolated, every distinct
-    // numeric value would be a separate cache key, letting the statement
-    // cache grow without bound for callers that use varying pagination
-    // sizes — exactly the leak the cache was meant to prevent.
-    const limitClause = limit !== undefined ? 'LIMIT ?' : '';
+    const limitClause = limit !== undefined ? ' LIMIT ?' : '';
+
     if (limit !== undefined) {
       parameters.push(limit);
     }
 
-    const sql = `SELECT key, value FROM kv WHERE ${conditions.join(' AND ')} ORDER BY key ${direction} ${limitClause}`;
+    return {
+      parameters,
+      sqlSuffix: `WHERE ${conditions.join(' AND ')} ORDER BY key ${direction}${limitClause}`,
+    };
+  }
+
+  async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
+    const { parameters, sqlSuffix } = this.#buildRangeQuery(prefix, options);
+    const sql = `SELECT key, value FROM kv ${sqlSuffix}`;
 
     let statement = this.#scanStatements.get(sql);
     if (!statement) {
@@ -151,12 +184,38 @@ export class BunSQLiteStorage implements Storage {
     }
   }
 
+  async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
+    const { parameters, sqlSuffix } = this.#buildRangeQuery(prefix, options);
+    const sql = `SELECT key FROM kv ${sqlSuffix}`;
+
+    let statement = this.#keyStatements.get(sql);
+    if (!statement) {
+      statement = this.#database.prepare<{ key: string }, SQLQueryBindings[]>(sql);
+      this.#keyStatements.set(sql, statement);
+    }
+
+    for (const row of statement.all(...parameters)) {
+      yield row.key;
+    }
+  }
+
+  async count(prefix: string): Promise<number> {
+    const prefixEnd = resolvePrefixRangeEnd(prefix);
+    return this.#countStatement.get(prefix, prefixEnd)?.count ?? 0;
+  }
+
+  scoped(prefix: string): Storage {
+    return scopedStorage(this, prefix);
+  }
+
   async batch(operations: BatchOperation[]): Promise<void> {
     if (operations.length === 0) return;
     this.#batchTransaction(operations);
   }
 
   async query<T>(sql: string, parameters?: SQLQueryBindings[]): Promise<T[]> {
+    assertReadOnlyQuery(sql);
+
     // query() accepts arbitrary caller-supplied SQL, so caching is not safe
     // (the set of distinct strings is unbounded). Finalize the statement
     // explicitly — bun:sqlite tracks live statements on the database handle
@@ -177,10 +236,17 @@ export class BunSQLiteStorage implements Storage {
     this.#getStatement.finalize();
     this.#putStatement.finalize();
     this.#deleteStatement.finalize();
+    this.#hasStatement.finalize();
+    this.#countStatement.finalize();
+    this.#deletePrefixStatement.finalize();
     for (const statement of this.#scanStatements.values()) {
       statement.finalize();
     }
     this.#scanStatements.clear();
+    for (const statement of this.#keyStatements.values()) {
+      statement.finalize();
+    }
+    this.#keyStatements.clear();
     // database.close() finalizes any remaining compiled statements including the
     // internal BEGIN/COMMIT/ROLLBACK statements created by database.transaction().
     // We close after finalizing named statements so their handles are released
