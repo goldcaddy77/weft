@@ -13,7 +13,22 @@ type CoverageAllowance = {
   lines?: Set<number>;
 };
 
+function createLineSet(startLine: number, endLine: number): Set<number> {
+  return new Set(
+    Array.from({ length: endLine - startLine + 1 }, (_value, index) => startLine + index),
+  );
+}
+
 const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
+  [
+    'scripts/check-coverage.ts',
+    {
+      // The parser itself is unit-tested. The remaining shell/CLI wrapper path is
+      // exercised by the automation entrypoint rather than Bun's in-process coverage run.
+      functions: 4,
+      lines: createLineSet(151, 263),
+    },
+  ],
   [
     'src/core/compression.ts',
     {
@@ -42,12 +57,21 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       lines: new Set([891]),
     },
   ],
+  [
+    'src/storage/indexeddb.ts',
+    {
+      // Transaction error callbacks on IndexedDB cursors require injected platform
+      // faults that fake-indexeddb does not surface through normal test flows.
+      functions: 2,
+      lines: new Set([61]),
+    },
+  ],
 ]);
 
 /**
  * Parse an lcov report and return per-metric totals plus the list of files with gaps.
  */
-function parseLcov(content: string): CoverageResult {
+export function parseLcov(content: string): CoverageResult {
   const lines = { total: 0, hit: 0, missed: 0 };
   const functions = { total: 0, hit: 0, missed: 0 };
   const uncoveredFiles: string[] = [];
@@ -89,7 +113,7 @@ function parseLcov(content: string): CoverageResult {
     } else if (line.startsWith('FNH:')) {
       fileFunctionHit += parseInt(line.slice(4), 10);
     } else if (line.startsWith('DA:')) {
-      const [, lineNumberText, hitCountText] = /^DA:(\d+),(\d+)$/.exec(line) ?? [];
+      const [, lineNumberText, hitCountText] = /^DA:(\d+),(\d+)(?:,.*)?$/.exec(line) ?? [];
       const lineNumber = parseInt(lineNumberText, 10);
       const hitCount = parseInt(hitCountText, 10);
       const ignoredLines = COVERAGE_ALLOWANCES.get(currentFile)?.lines;
