@@ -58,6 +58,8 @@ type RouteHandlerName =
   | 'submitReviewDecision'
   | 'getReview'
   | 'streamSSE'
+  | 'listCheckpoints'
+  | 'getCheckpointAt'
   | 'getWorkflow'
   | 'cancelWorkflow';
 
@@ -198,6 +200,18 @@ const ROUTE_PATTERNS: Array<{
     pattern: /^\/v1\/workflows\/([^/]+)\/sse$/,
     handler: 'streamSSE',
     paramNames: ['id'],
+  },
+  {
+    method: 'GET',
+    pattern: /^\/v1\/workflows\/([^/]+)\/checkpoints$/,
+    handler: 'listCheckpoints',
+    paramNames: ['id'],
+  },
+  {
+    method: 'GET',
+    pattern: /^\/v1\/workflows\/([^/]+)\/checkpoints\/(\d+)$/,
+    handler: 'getCheckpointAt',
+    paramNames: ['id', 'step'],
   },
   {
     method: 'GET',
@@ -899,6 +913,38 @@ async function handleStreamSSE(
 }
 
 // ---------------------------------------------------------------------------
+// Checkpoint history routes
+// ---------------------------------------------------------------------------
+
+async function handleListCheckpoints(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+): Promise<Response> {
+  const summaries = await engine.listCheckpoints(workflowId);
+  return negotiatedResponse(request, summaries);
+}
+
+async function handleGetCheckpointAt(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+  stepParam: string,
+): Promise<Response> {
+  const step = Number(stepParam);
+  if (!Number.isSafeInteger(step) || step < 0) {
+    return errorResponse(`Invalid step: ${stepParam}`, 400);
+  }
+
+  const state = await engine.getCheckpointAt(workflowId, step);
+  if (!state) {
+    return errorResponse(`Checkpoint not found at step ${step} for workflow ${workflowId}`, 404);
+  }
+
+  return negotiatedResponse(request, state);
+}
+
+// ---------------------------------------------------------------------------
 // Metrics route
 // ---------------------------------------------------------------------------
 
@@ -964,6 +1010,10 @@ const ROUTE_EXECUTORS: Record<RouteHandlerName, RouteExecutor> = {
     handleSubmitReviewDecision(request, engine, param('reviewId')),
   getReview: async ({ engine, param }) => handleGetReview(engine, param('id'), param('reviewId')),
   streamSSE: async ({ request, engine, param }) => handleStreamSSE(request, engine, param('id')),
+  listCheckpoints: async ({ request, engine, param }) =>
+    handleListCheckpoints(request, engine, param('id')),
+  getCheckpointAt: async ({ request, engine, param }) =>
+    handleGetCheckpointAt(request, engine, param('id'), param('step')),
   getWorkflow: async ({ engine, param }) => handleGetWorkflow(engine, param('id')),
   cancelWorkflow: async ({ engine, param }) => handleCancelWorkflow(engine, param('id')),
 };
