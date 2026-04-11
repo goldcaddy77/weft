@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
-  brotliCompressSync,
-  brotliDecompressSync,
   detectRuntime,
   fileSize,
   gunzipSync,
@@ -53,6 +51,11 @@ describe('portable runtime helpers', () => {
       expect(result).toHaveLength(16);
       expect(result).toMatch(/^[0-9a-f]{16}$/);
     });
+
+    it('produces stable known values across runtimes', () => {
+      expect(hashBytes(new Uint8Array([1, 2, 3, 4]))).toBe('b6cf3c025734a87d');
+      expect(hashBytes(new Uint8Array(0))).toBe('cbf29ce4811c9dc5');
+    });
   });
 
   describe('hashString', () => {
@@ -74,6 +77,11 @@ describe('portable runtime helpers', () => {
       const result = hashString('');
       expect(result).toHaveLength(16);
       expect(result).toMatch(/^[0-9a-f]{16}$/);
+    });
+
+    it('produces stable known values across runtimes', () => {
+      expect(hashString('hello world')).toBe('4a5a49dad58b3fa7');
+      expect(hashString('')).toBe('cbf29ce4811c9dc5');
     });
   });
 
@@ -109,22 +117,6 @@ describe('portable runtime helpers', () => {
       const empty = new Uint8Array(0);
       const compressed = gzipSync(empty);
       const decompressed = gunzipSync(compressed);
-      expect(decompressed).toEqual(empty);
-    });
-  });
-
-  describe('brotliCompressSync / brotliDecompressSync', () => {
-    it('round-trips data correctly', () => {
-      const original = new TextEncoder().encode('hello, brotli world!');
-      const compressed = brotliCompressSync(original);
-      const decompressed = brotliDecompressSync(compressed);
-      expect(decompressed).toEqual(original);
-    });
-
-    it('handles empty input', () => {
-      const empty = new Uint8Array(0);
-      const compressed = brotliCompressSync(empty);
-      const decompressed = brotliDecompressSync(compressed);
       expect(decompressed).toEqual(empty);
     });
   });

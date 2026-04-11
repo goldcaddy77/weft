@@ -52,7 +52,7 @@ function loadBetterSqlite3(): BetterSqliteConstructor {
   } catch {
     throw new Error(
       'NodeSQLiteStorage requires the "better-sqlite3" package. ' +
-        'Install it with: npm install better-sqlite3 (or bun add better-sqlite3)',
+        'Install it with: bun add better-sqlite3 (or npm install better-sqlite3)',
     );
   }
 }

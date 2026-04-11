@@ -44,15 +44,15 @@ export const sleep: (ms: number) => Promise<void> = IS_BUN
 // ---------------------------------------------------------------------------
 
 /**
- * FNV-1a 64-bit hash returning a 16-character hex string.
+ * Non-cryptographic 64-bit hash returning a 16-character hex string.
  *
- * Used as the non-Bun fallback for `hashBytes` and `hashString`. The output
- * only needs to be a consistent, collision-resistant cache key — it is never
- * used for security purposes.
+ * Uses FNV-1a implemented via two chained 32-bit halves to avoid BigInt
+ * (which is slow in some runtimes). The output is runtime-stable — Bun and
+ * Node produce identical hashes for the same input, which is critical for
+ * data that may be persisted and read across runtimes (event-log chain
+ * hashes, tool-effect dedup keys, prompt-cache keys).
  */
 function fnv1a64(data: Uint8Array): string {
-  // FNV-1a with 64-bit offset basis and prime, implemented via two 32-bit
-  // halves to avoid BigInt (which is slow in some runtimes).
   let h0 = 0x811c9dc5; // lower 32 bits of FNV offset basis
   let h1 = 0xcbf29ce4; // upper 32 bits
 
@@ -60,9 +60,11 @@ function fnv1a64(data: Uint8Array): string {
 
   for (let i = 0; i < data.length; i++) {
     h0 ^= data[i]!;
-    // Multiply lower half by prime, propagate carry into upper half.
+    const prevH0 = h0 >>> 0;
     const product = Math.imul(h0, FNV_PRIME_LOW);
-    h1 = (Math.imul(h1, FNV_PRIME_LOW) + (product >>> 0 > h0 >>> 0 ? 1 : 0)) | 0;
+    // Carry: unsigned multiplication wrapped if product < the pre-multiply value.
+    const carry = product >>> 0 < prevH0 ? 1 : 0;
+    h1 = (Math.imul(h1, FNV_PRIME_LOW) + carry) | 0;
     h0 = product;
   }
 
@@ -76,21 +78,22 @@ const textEncoder = new TextEncoder();
 /**
  * Hash a byte buffer to a 16-character hex string.
  *
- * Bun: `Bun.hash.wyhash`. Fallback: FNV-1a 64-bit.
+ * Uses FNV-1a unconditionally across all runtimes for stable output.
+ * Hashes may be persisted to durable storage (event-log chains, tool-effect
+ * dedup), so runtime-specific algorithms would break cross-runtime reads.
  */
-export const hashBytes: (data: Uint8Array) => string = IS_BUN
-  ? (data: Uint8Array) => Bun.hash.wyhash(data).toString(16).padStart(16, '0')
-  : (data: Uint8Array) => fnv1a64(data);
+export function hashBytes(data: Uint8Array): string {
+  return fnv1a64(data);
+}
 
 /**
  * Hash a string to a 16-character hex string.
  *
- * Bun: `Bun.hash` (wyhash on string input). Fallback: FNV-1a 64-bit via
- * `TextEncoder`.
+ * Uses FNV-1a unconditionally across all runtimes for stable output.
  */
-export const hashString: (data: string) => string = IS_BUN
-  ? (data: string) => Bun.hash(data).toString(16).padStart(16, '0')
-  : (data: string) => fnv1a64(textEncoder.encode(data));
+export function hashString(data: string): string {
+  return fnv1a64(textEncoder.encode(data));
+}
 
 // ---------------------------------------------------------------------------
 // File size
@@ -142,32 +145,4 @@ export function gunzipSync(data: Uint8Array): Uint8Array {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const zlib = require('node:zlib') as typeof import('node:zlib');
   return new Uint8Array(zlib.gunzipSync(data));
-}
-
-// ---------------------------------------------------------------------------
-// Brotli — synchronous, Node-only (not available in browsers)
-// ---------------------------------------------------------------------------
-
-/**
- * Brotli-compress a byte buffer synchronously.
- *
- * Uses `node:zlib` (available in both Bun and Node). Not available in
- * browser/edge runtimes — throws if called there.
- */
-export function brotliCompressSync(data: Uint8Array): Uint8Array {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const zlib = require('node:zlib') as typeof import('node:zlib');
-  return new Uint8Array(zlib.brotliCompressSync(data));
-}
-
-/**
- * Brotli-decompress a byte buffer synchronously.
- *
- * Uses `node:zlib` (available in both Bun and Node). Not available in
- * browser/edge runtimes — throws if called there.
- */
-export function brotliDecompressSync(data: Uint8Array): Uint8Array {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const zlib = require('node:zlib') as typeof import('node:zlib');
-  return new Uint8Array(zlib.brotliDecompressSync(data));
 }

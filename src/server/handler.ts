@@ -32,8 +32,11 @@ import { ROUTES, toRegex } from './route-model.ts';
 // Route matching
 // ---------------------------------------------------------------------------
 
+/** Union of all handler names derived from the shared route model. */
+type HandlerName = (typeof ROUTES)[number]['handler'];
+
 interface RouteMatch {
-  handler: string;
+  handler: HandlerName;
   params: Record<string, string>;
 }
 
@@ -801,7 +804,7 @@ type RouteExecutionContext = {
 
 type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
 
-const ROUTE_EXECUTORS: Record<string, RouteExecutor> = {
+const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
   listWorkflows: async ({ request, engine }) => handleListWorkflows(request, engine),

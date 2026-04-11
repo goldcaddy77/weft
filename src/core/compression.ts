@@ -7,12 +7,23 @@
  * @module core/compression
  */
 
-import {
-  brotliCompressSync,
-  brotliDecompressSync,
-  gunzipSync,
-  gzipSync,
-} from '../runtime/portable.ts';
+import { gunzipSync, gzipSync } from '../runtime/portable.ts';
+
+// ---------------------------------------------------------------------------
+// Brotli — lazy-loaded from node:zlib (available in Bun and Node, not browsers)
+// ---------------------------------------------------------------------------
+
+function brotliCompressSync(data: Uint8Array): Uint8Array {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const zlib = require('node:zlib') as typeof import('node:zlib');
+  return new Uint8Array(zlib.brotliCompressSync(data));
+}
+
+function brotliDecompressSync(data: Uint8Array): Uint8Array {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const zlib = require('node:zlib') as typeof import('node:zlib');
+  return new Uint8Array(zlib.brotliDecompressSync(data));
+}
 
 // ---------------------------------------------------------------------------
 // Types
