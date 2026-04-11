@@ -501,8 +501,11 @@ export async function supervise(options: SuperviseOptions): Promise<SuperviseRes
     if (parentSignal && onParentAbort) {
       parentSignal.removeEventListener('abort', onParentAbort);
     }
-    // Detach so a shared BudgetTracker isn't left with a stale controller.
-    if (budget) {
+    // Detach only if the budget's current signal is the one this call installed.
+    // Without this check, two concurrent supervise() calls sharing the same
+    // budget would race: the first to finish would overwrite the controller
+    // the second is still using.
+    if (budget && budget.signal === controller.signal) {
       budget.setAbortController(new AbortController());
     }
   }

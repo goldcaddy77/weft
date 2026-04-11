@@ -29,6 +29,54 @@ export interface MetricDefinition {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Circular buffer for bounded histogram storage
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum number of samples retained per histogram name. Once exceeded, the
+ * oldest sample is silently overwritten. This caps per-histogram memory at
+ * ~80KB (10 000 × 8 bytes) regardless of load.
+ */
+const MAX_HISTOGRAM_SAMPLES = 10_000;
+
+/**
+ * Fixed-capacity circular buffer backed by a `Float64Array`. Overwrites the
+ * oldest entry when full, keeping memory bounded under sustained load.
+ */
+class CircularBuffer {
+  #buffer: Float64Array;
+  #head = 0;
+  #size = 0;
+
+  constructor(capacity: number) {
+    this.#buffer = new Float64Array(capacity);
+  }
+
+  push(value: number): void {
+    this.#buffer[this.#head] = value;
+    this.#head = (this.#head + 1) % this.#buffer.length;
+    if (this.#size < this.#buffer.length) this.#size++;
+  }
+
+  /** Return all stored values in insertion order (oldest first). */
+  toArray(): number[] {
+    if (this.#size < this.#buffer.length) {
+      return Array.from(this.#buffer.subarray(0, this.#size));
+    }
+    // Buffer is full — oldest entry is at #head, newest at #head - 1.
+    const result = Array.from<number>({ length: this.#size });
+    for (let i = 0; i < this.#size; i++) {
+      result[i] = this.#buffer[(this.#head + i) % this.#buffer.length]!;
+    }
+    return result;
+  }
+
+  get length(): number {
+    return this.#size;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Metrics collector
 // ---------------------------------------------------------------------------
 
@@ -56,7 +104,7 @@ export type MetricsSnapshot = Record<string, CounterMetric | HistogramMetric | G
  */
 export class MetricsCollector {
   #counters: Map<string, number>;
-  #histograms: Map<string, number[]>;
+  #histograms: Map<string, CircularBuffer>;
   #gauges: Map<string, number>;
 
   constructor() {
@@ -70,11 +118,14 @@ export class MetricsCollector {
     this.#counters.set(name, (this.#counters.get(name) ?? 0) + value);
   }
 
-  /** Record a histogram observation. */
+  /** Record a histogram observation. Values are kept in a circular buffer capped at {@link MAX_HISTOGRAM_SAMPLES}. */
   record(name: string, value: number): void {
-    const values = this.#histograms.get(name) ?? [];
-    values.push(value);
-    this.#histograms.set(name, values);
+    let buffer = this.#histograms.get(name);
+    if (!buffer) {
+      buffer = new CircularBuffer(MAX_HISTOGRAM_SAMPLES);
+      this.#histograms.set(name, buffer);
+    }
+    buffer.push(value);
   }
 
   /** Set an absolute gauge value. */
@@ -90,7 +141,8 @@ export class MetricsCollector {
       result[name] = { type: 'counter', value: count };
     }
 
-    for (const [name, values] of this.#histograms) {
+    for (const [name, buffer] of this.#histograms) {
+      const values = buffer.toArray();
       const sorted = sortNumbersAscending(values);
       result[name] = {
         type: 'histogram',
