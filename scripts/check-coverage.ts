@@ -26,7 +26,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // The parser itself is unit-tested. The remaining shell/CLI wrapper path is
       // exercised by the automation entrypoint rather than Bun's in-process coverage run.
       functions: 4,
-      lines: createLineSet(151, 263),
+      lines: createLineSet(153, 265),
     },
   ],
   [
@@ -54,7 +54,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // Defensive fallback for a route/executor mismatch. The static route model
       // keeps this unreachable in normal builds, so Bun coverage cannot drive it.
       functions: 1,
-      lines: new Set([891]),
+      lines: new Set([890]),
     },
   ],
   [
