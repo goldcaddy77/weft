@@ -482,7 +482,7 @@ The research synthesis that informs the roadmap below lives in [Research Gap Ana
 
 ## Prioritized roadmap
 
-If I were sequencing this, I would do it in five tracks that can partially parallelize once Track 1 lands.
+If I were sequencing this, I would do it in seven tracks that can partially parallelize once Track 1 lands.
 
 **Track 1 — Foundations (blocking for everything else).** Effect logs at the tool-call boundary, a storage-backed event log with hash-chained writes, and compensation handlers on activities plus `ctx.saga()`. These three interlock; do them in one sprint or you'll do them twice.
 

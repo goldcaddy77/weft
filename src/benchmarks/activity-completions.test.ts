@@ -4,6 +4,7 @@ import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
+import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
 
 /**
  * K2b: Activity completion throughput benchmark.
@@ -26,19 +27,6 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
 const BASELINE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 5_000 : 10_000;
 const COVERAGE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 3_000 : 5_000;
-
-function isCoverageInstrumentationEnabled(): boolean {
-  if (Bun.env['WEFT_COVERAGE_MODE'] === '1') {
-    return true;
-  }
-
-  if (process.execArgv.includes('--coverage')) {
-    return true;
-  }
-
-  const coverageDirectory = Bun.env['NODE_V8_COVERAGE'];
-  return typeof coverageDirectory === 'string' && coverageDirectory.length > 0;
-}
 
 describe('Activity completion throughput', () => {
   let storage: BunSQLiteStorage;
