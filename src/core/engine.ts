@@ -92,6 +92,8 @@ import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   AttributeFilter,
   Checkpoint,
+  CheckpointState,
+  CheckpointSummary,
   CoordinatedUpdateResult,
   EngineOptions,
   FailureCategory,
@@ -2556,6 +2558,53 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return events;
   }
 
+  // -------------------------------------------------------------------------
+  // Public: checkpoint history (time-travel debugging)
+  // -------------------------------------------------------------------------
+
+  /**
+   * List checkpoint history entries for a workflow, newest first.
+   * Returns summary metadata only — use {@link getCheckpointAt} for full state.
+   */
+  async listCheckpoints(workflowId: string): Promise<CheckpointSummary[]> {
+    if (this.#options.checkpointHistory <= 0) return [];
+
+    const prefix = `wf:${workflowId}:ckpt:`;
+    const summaries: CheckpointSummary[] = [];
+
+    for await (const [, value] of this.#storage.scan(prefix, {
+      reverse: true,
+      limit: this.#options.checkpointHistory,
+    })) {
+      const checkpoint = deserializeCheckpoint(value);
+      summaries.push({
+        step: checkpoint.step,
+        timestamp: checkpoint.createdAt,
+        sizeBytes: value.byteLength,
+      });
+    }
+
+    return summaries;
+  }
+
+  /**
+   * Retrieve the full deserialized checkpoint state at a specific step.
+   * Returns `null` if the step has no stored history entry.
+   */
+  async getCheckpointAt(workflowId: string, step: number): Promise<CheckpointState | null> {
+    const bytes = await this.#storage.get(KEYS.checkpointHistory(workflowId, step));
+    if (!bytes) return null;
+
+    const checkpoint = deserializeCheckpoint(bytes);
+    return {
+      step: checkpoint.step,
+      locals: checkpoint.locals,
+      searchAttributes: checkpoint.searchAttributes,
+      version: checkpoint.version,
+      createdAt: checkpoint.createdAt,
+    };
+  }
+
   /** List all pending reviews. */
   async listReviews(): Promise<Array<Record<string, unknown>>> {
     const reviews: Array<Record<string, unknown>> = [];
@@ -2860,6 +2909,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       await this.#storage.batch(operations);
       this.#checkpoints.set(workflowId, advanced);
       this.#eventLogHeads.set(workflowId, newHead);
+      await this.#pruneCheckpointHistory(workflowId, advanced.step);
 
       if (hasPendingAttributeChanges) {
         this.dispatchEvent(
@@ -2902,7 +2952,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       await this.#storage.batch(operations);
       this.#checkpoints.set(workflowId, checkpoint);
       this.#eventLogHeads.set(workflowId, newHead);
+      await this.#pruneCheckpointHistory(workflowId, checkpoint.step);
     }
+  }
+
+  /**
+   * Delete the single checkpoint history entry that overflows the retention
+   * limit. Since steps are monotonic and increment by one, writing step `s`
+   * means step `s - limit` is now the first entry beyond the window.
+   * O(1) per persist instead of O(retention-window).
+   */
+  async #pruneCheckpointHistory(workflowId: string, currentStep: number): Promise<void> {
+    const limit = this.#options.checkpointHistory;
+    if (limit <= 0) return;
+
+    const overflowStep = currentStep - limit;
+    if (overflowStep < 1) return;
+
+    const key = KEYS.checkpointHistory(workflowId, overflowStep);
+    await this.#storage.delete(key);
   }
 
   // -------------------------------------------------------------------------
@@ -4423,7 +4491,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // and the tool-effect log holds per-tool-call dedup records that have no
     // consumers after the workflow terminates — leaving them behind would
     // leak linearly with tool-call volume across the engine's lifetime.
-    const prefixes: string[] = [`sig:${workflowId}:`, `tool-effect:${workflowId}:`];
+    const prefixes: string[] = [
+      `sig:${workflowId}:`,
+      `tool-effect:${workflowId}:`,
+      `wf:${workflowId}:ckpt:`,
+    ];
 
     if (includeOutputArtifacts) {
       // Terminated workflows have no waiting consumers, so drop the output

@@ -17,11 +17,27 @@ await Bun.build({
     './src/storage/bun-sql.ts',
     './src/storage/lmdb.ts',
     './src/storage/turso.ts',
+    './src/storage/node-sqlite.ts',
+    // Bun-only server subpath (weft/server)
+    './src/server/index.ts',
   ],
   outdir: './dist',
   target: 'bun',
   format: 'esm',
+  root: './src',
   naming: '[dir]/[name].js',
+  sourcemap: 'external',
+  minify: true,
+  external: ['lmdb', '@libsql/client', '@opentelemetry/api', 'bun:sqlite', 'better-sqlite3'],
+});
+
+// Runtime-specific subpath entrypoints (separate build to preserve dist layout)
+await Bun.build({
+  entrypoints: ['./src/ai/mcp/transport-stdio.ts'],
+  outdir: './dist/ai/mcp',
+  target: 'bun',
+  format: 'esm',
+  naming: '[name].js',
   sourcemap: 'external',
   minify: true,
   external: ['lmdb', '@libsql/client', '@opentelemetry/api', 'bun:sqlite'],

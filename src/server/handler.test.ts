@@ -2234,4 +2234,114 @@ describe('handleRequest', () => {
 
     engine.list = originalList;
   });
+
+  // -------------------------------------------------------------------------
+  // Checkpoint history endpoints
+  // -------------------------------------------------------------------------
+
+  it('GET /v1/workflows/:id/checkpoints returns checkpoint list', async () => {
+    const storage = new MemoryStorage();
+    engine = new Engine({ storage, checkpointHistory: 10 });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    // Pre-seed checkpoint history entries
+    const { serializeCheckpoint } = await import('../core/checkpoint.ts');
+    for (const step of [1, 2, 3]) {
+      const checkpoint = {
+        workflowId: 'test-wf',
+        step,
+        locals: {},
+        accumulatedResults: [] as Array<[number, unknown]>,
+        pendingSignals: [] as string[],
+        searchAttributes: {},
+        version: '1.0.0',
+        createdAt: 1000 + step * 100,
+      };
+      await storage.put(KEYS.checkpointHistory('test-wf', step), serializeCheckpoint(checkpoint));
+    }
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/test-wf/checkpoints'),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as Array<{ step: number }>;
+    expect(body).toHaveLength(3);
+    expect(body[0]!.step).toBe(3);
+    expect(body[1]!.step).toBe(2);
+    expect(body[2]!.step).toBe(1);
+  });
+
+  it('GET /v1/workflows/:id/checkpoints returns empty array when no history', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/nonexistent/checkpoints'),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual([]);
+  });
+
+  it('GET /v1/workflows/:id/checkpoints/:step returns checkpoint state', async () => {
+    const storage = new MemoryStorage();
+    engine = new Engine({ storage, checkpointHistory: 10 });
+    engine.register('noop', async function* () {
+      return null;
+    });
+
+    const { serializeCheckpoint } = await import('../core/checkpoint.ts');
+    const checkpoint = {
+      workflowId: 'test-wf',
+      step: 5,
+      locals: { greeting: 'hello' },
+      accumulatedResults: [] as Array<[number, unknown]>,
+      pendingSignals: [] as string[],
+      searchAttributes: {
+        tag: 'test' as unknown as import('../core/types.ts').SearchAttributeValue,
+      },
+      version: '2.0.0',
+      createdAt: 9999,
+    };
+    await storage.put(KEYS.checkpointHistory('test-wf', 5), serializeCheckpoint(checkpoint));
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/test-wf/checkpoints/5'),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as Record<string, unknown>;
+    expect(body['step']).toBe(5);
+    expect(body['locals']).toEqual({ greeting: 'hello' });
+    expect(body['version']).toBe('2.0.0');
+    expect(body['createdAt']).toBe(9999);
+  });
+
+  it('GET /v1/workflows/:id/checkpoints/:step returns 404 for missing step', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/test-wf/checkpoints/99'),
+      engine,
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it('GET /v1/workflows/:id/checkpoints/:step returns 404 for non-numeric step', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/test-wf/checkpoints/abc'),
+      engine,
+    );
+
+    // Route pattern only matches digits, so this is a 404 (not found)
+    expect(response.status).toBe(404);
+  });
 });

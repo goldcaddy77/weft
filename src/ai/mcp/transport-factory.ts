@@ -3,7 +3,6 @@ import { buildAuthHeaders } from './authentication.ts';
 import { createOAuth2TokenManager } from './oauth2-token-manager.ts';
 import { HttpSseTransport } from './transport-http-sse.ts';
 import { HttpTransport } from './transport-http.ts';
-import { StdioTransport } from './transport-stdio.ts';
 import type { MCPTransport, TransportKind } from './transport.ts';
 import { inferTransportKind, parseStdioUrl } from './transport.ts';
 
@@ -14,8 +13,15 @@ export interface MCPTransportSource {
   transport?: TransportKind | undefined;
 }
 
+/**
+ * Dynamic import specifier split across a variable so Bun's bundler cannot
+ * statically resolve it. This keeps `transport-stdio` (which uses `Bun.spawn`)
+ * out of browser bundles while still loading on-demand in Bun.
+ */
+const STDIO_TRANSPORT_MODULE = './transport-stdio.ts';
+
 /** Build the appropriate transport for an MCP source based on its URL and options. */
-export function createTransportForSource(source: MCPTransportSource): MCPTransport {
+export async function createTransportForSource(source: MCPTransportSource): Promise<MCPTransport> {
   const kind = inferTransportKind(source.mcp, source.transport);
 
   if (kind === 'stdio') {
@@ -25,6 +31,12 @@ export function createTransportForSource(source: MCPTransportSource): MCPTranspo
       );
     }
 
+    // Dynamic import with a variable specifier — Bun's bundler cannot
+    // statically inline this, so `transport-stdio` stays out of browser bundles.
+    const stdioModule = (await import(
+      STDIO_TRANSPORT_MODULE
+    )) as typeof import('./transport-stdio.ts');
+    const { StdioTransport } = stdioModule;
     const target = parseStdioUrl(source.mcp);
     return new StdioTransport({
       command: target.command,

@@ -1,3 +1,4 @@
+import { sleep as portableSleep } from '../runtime/portable.ts';
 import type { BatchOperation, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { decode, encode } from './codec.ts';
@@ -12,7 +13,7 @@ export interface SharedStateOptions {
   /** Maximum number of CAS attempts before giving up. Defaults to 10. */
   maxRetries?: number;
   /**
-   * Sleep function used between retry attempts. Defaults to `Bun.sleep`.
+   * Sleep function used between retry attempts. Defaults to portable `sleep`.
    * Injection point for tests that need to observe backoff without paying
    * real time costs.
    */
@@ -60,7 +61,7 @@ export class SharedState<T> {
     this.#workflowId = workflowId;
     this.#stateKey = stateKey;
     this.#maxRetries = options?.maxRetries ?? 10;
-    this.#sleep = options?.sleep ?? Bun.sleep;
+    this.#sleep = options?.sleep ?? portableSleep;
   }
 
   /** Read the current value. Returns initial value if no state written yet. */

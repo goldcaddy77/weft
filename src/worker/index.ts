@@ -2,6 +2,7 @@
 // Remote worker client — connects to the server via WebSocket
 // ---------------------------------------------------------------------------
 
+import { sleep } from '../runtime/portable.ts';
 import {
   buildComposedInterceptor,
   executeWithInterceptors,
@@ -212,7 +213,7 @@ export class RemoteWorker implements Disposable {
         this.#abortAllTasks();
         break;
       }
-      await Bun.sleep(50);
+      await sleep(50);
     }
 
     // Always abort the old controller to detach event listeners, even if the

@@ -58,6 +58,8 @@ export type {
   ActivityDefinition,
   ActivityFunction,
   Checkpoint,
+  CheckpointState,
+  CheckpointSummary,
   CoordinatedUpdateResult,
   Duration,
   EngineOptions,
@@ -120,8 +122,12 @@ export {
 } from './core/events';
 export type { TypedEventTarget, WeftEventMap } from './core/events';
 
+// Runtime — portable helpers for cross-runtime code
+export { detectRuntime, hashBytes, hashString, sleep } from './runtime/portable';
+export type { RuntimeKind } from './runtime/portable';
+
 // Compression
-export { createBunCompressor } from './core/compression';
+export { createBunCompressor, createCompressor } from './core/compression';
 export type { CompressionAlgorithm, CompressionOptions, Compressor } from './core/compression';
 export { CompressedStorage } from './storage/compressed-storage';
 
@@ -231,8 +237,6 @@ export { SharedState, SharedStateConflictError } from './core/shared-state';
 // Server
 export type { PrometheusExporter } from './observability/metrics';
 export { handleRequest } from './server/handler';
-export { serve } from './server/index';
-export type { ServeOptions, WeftServer } from './server/index';
 export type { SchedulingPolicy } from './server/task-queue';
 export type { RoutingPolicy } from './worker/registry';
 
@@ -357,8 +361,6 @@ export { HttpTransport } from './ai/mcp/transport-http';
 export type { HeaderSource, HttpTransportOptions } from './ai/mcp/transport-http';
 export { HttpSseTransport } from './ai/mcp/transport-http-sse';
 export type { HttpSseTransportOptions } from './ai/mcp/transport-http-sse';
-export { StdioTransport } from './ai/mcp/transport-stdio';
-export type { StdioTransportOptions } from './ai/mcp/transport-stdio';
 
 // Observability
 export { createObservabilityInterceptors } from './observability/index';
