@@ -7,6 +7,7 @@
  * @module updates
  */
 
+import { sleep } from '../runtime/portable.ts';
 import type { BatchOperation, Storage } from '../storage/interface';
 import { KEYS } from '../storage/interface';
 import { decode, encode } from './codec';
@@ -189,7 +190,7 @@ export class UpdateCoordinator {
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
 
-      await Bun.sleep(Math.min(POLL_INTERVAL_MS, remaining));
+      await sleep(Math.min(POLL_INTERVAL_MS, remaining));
     }
 
     throw new UpdateTimeoutError(updateId, timeout);

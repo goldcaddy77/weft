@@ -1,3 +1,5 @@
+import { hashString } from '../runtime/portable.ts';
+
 /**
  * Durable tool effect log for agent tool-call deduplication.
  *
@@ -100,8 +102,7 @@ export class ToolCallReplayConflictError extends Error {
  */
 export function computeSemanticHash(input: unknown): string {
   const canonical = canonicalize(input);
-  const raw = Bun.hash.wyhash(canonical);
-  return raw.toString(16).padStart(16, '0');
+  return hashString(canonical);
 }
 
 /**

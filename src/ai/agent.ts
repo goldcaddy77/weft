@@ -299,10 +299,10 @@ type InitializeToolsResult = {
  *
  * @internal
  */
-export type MCPClientFactory = (source: MCPToolSource) => MCPClient;
+export type MCPClientFactory = (source: MCPToolSource) => MCPClient | Promise<MCPClient>;
 
-const defaultMCPClientFactory: MCPClientFactory = (source) => {
-  const transport = createTransportForSource(source);
+const defaultMCPClientFactory: MCPClientFactory = async (source) => {
+  const transport = await createTransportForSource(source);
   return new MCPClient({ transport, timeout: source.timeout });
 };
 
@@ -327,7 +327,7 @@ export async function initializeTools(
     for (const entry of tools) {
       signal?.throwIfAborted();
       if (isMCPToolSource(entry)) {
-        const client = createClient(entry);
+        const client = await createClient(entry);
         clients.push(client);
 
         // Health check — fail fast if the server is unreachable

@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ActivityInterceptor } from '../core/interceptor.ts';
+import { sleep } from '../runtime/portable.ts';
 import {
   buildComposedInterceptor,
   executeWithInterceptors,
@@ -69,7 +70,7 @@ export class LongPollWorker implements Disposable {
 
     // Wait for in-flight tasks to complete
     while (this.#inFlight > 0) {
-      await Bun.sleep(50);
+      await sleep(50);
     }
   }
 
@@ -114,7 +115,7 @@ export class LongPollWorker implements Disposable {
     while (this.#running && !this.#abortController.signal.aborted) {
       // Only poll when we have capacity
       if (this.#inFlight >= (this.#options.concurrency ?? DEFAULT_CONCURRENCY)) {
-        await Bun.sleep(100);
+        await sleep(100);
         continue;
       }
 
@@ -129,7 +130,7 @@ export class LongPollWorker implements Disposable {
         }
 
         if (!response.ok) {
-          await Bun.sleep(1000);
+          await sleep(1000);
           continue;
         }
 
@@ -145,7 +146,7 @@ export class LongPollWorker implements Disposable {
       } catch {
         // Abort errors are expected during shutdown; network errors trigger a backoff
         if (this.#running) {
-          await Bun.sleep(1000);
+          await sleep(1000);
         }
       }
     }

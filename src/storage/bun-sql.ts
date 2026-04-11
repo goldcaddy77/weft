@@ -2,6 +2,12 @@ import { Database, Statement, type SQLQueryBindings } from 'bun:sqlite';
 
 import type { BatchOperation, ScanOptions, Storage } from './interface';
 
+/**
+ * Runtime-neutral alias for the Bun SQLite adapter. Consumers that import
+ * from `weft/storage/sqlite` get this class under Bun.
+ */
+export { BunSQLiteStorage as SQLiteStorage };
+
 export class BunSQLiteStorage implements Storage {
   #database: Database;
   // Prepared statements are cached on the instance so the hot paths (get,

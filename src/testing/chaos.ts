@@ -8,6 +8,8 @@
  * @module testing/chaos
  */
 
+import { sleep } from '../runtime/portable.ts';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -195,7 +197,7 @@ export function withChaos<TInput, TOutput>(
           throw new ChaosNonRetryableError();
 
         case 'delay':
-          await Bun.sleep(DELAY_FAULT_MS);
+          await sleep(DELAY_FAULT_MS);
           return mock(input) as Promise<TOutput>;
       }
     }

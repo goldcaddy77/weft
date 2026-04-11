@@ -17,11 +17,11 @@ afterEach(() => {
 });
 
 describe('createTransportForSource', () => {
-  it('creates a stdio transport and warns when HTTP auth is configured', () => {
+  it('creates a stdio transport and warns when HTTP auth is configured', async () => {
     const warningSpy = spyOn(console, 'warn').mockImplementation(() => {});
 
     try {
-      const transport = createTransportForSource({
+      const transport = await createTransportForSource({
         mcp: 'stdio:///bin/tool?mode=read',
         auth: { type: 'bearer', token: 'secret-token' },
       });
@@ -37,16 +37,16 @@ describe('createTransportForSource', () => {
     }
   });
 
-  it('creates an HTTP transport for default HTTP sources', () => {
-    const transport = createTransportForSource({ mcp: 'https://mcp.example.com' });
+  it('creates an HTTP transport for default HTTP sources', async () => {
+    const transport = await createTransportForSource({ mcp: 'https://mcp.example.com' });
 
     expect(transport).toBeInstanceOf(HttpTransport);
 
     transport[Symbol.dispose]();
   });
 
-  it('creates an SSE transport when requested explicitly', () => {
-    const transport = createTransportForSource({
+  it('creates an SSE transport when requested explicitly', async () => {
+    const transport = await createTransportForSource({
       mcp: 'https://mcp.example.com',
       transport: 'sse',
       timeout: 1234,
@@ -80,7 +80,7 @@ describe('createTransportForSource', () => {
       return new Response('Not Found', { status: 404 });
     });
 
-    const transport = createTransportForSource({
+    const transport = await createTransportForSource({
       mcp: 'https://mcp.example.com',
       auth: {
         type: 'oauth2',

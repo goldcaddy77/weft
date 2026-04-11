@@ -8,7 +8,15 @@
  * @module propagation
  */
 
-import { randomBytes } from 'node:crypto';
+// ---------------------------------------------------------------------------
+// Portable random hex generation (Web Crypto API, available in all runtimes)
+// ---------------------------------------------------------------------------
+
+function randomHex(byteCount: number): string {
+  const bytes = new Uint8Array(byteCount);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -81,10 +89,10 @@ export function injectTraceParent(headers: Map<string, string>, context: TraceCo
 
 /** Generate a random trace ID (32 hex chars / 16 bytes). */
 export function generateTraceId(): string {
-  return randomBytes(16).toString('hex');
+  return randomHex(16);
 }
 
 /** Generate a random span ID (16 hex chars / 8 bytes). */
 export function generateSpanId(): string {
-  return randomBytes(8).toString('hex');
+  return randomHex(8);
 }

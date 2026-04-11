@@ -59,6 +59,24 @@
       "import": "./dist/storage/compressed-storage.js",
       "default": "./dist/storage/compressed-storage.js"
     },
+    "./storage/sqlite": {
+      "bun": {
+        "types": "./dist/storage/bun-sql.d.ts",
+        "default": "./dist/storage/bun-sql.js"
+      },
+      "node": {
+        "types": "./dist/storage/node-sqlite.d.ts",
+        "default": "./dist/storage/node-sqlite.js"
+      }
+    },
+    "./storage/sqlite/bun": {
+      "types": "./dist/storage/bun-sql.d.ts",
+      "bun": "./dist/storage/bun-sql.js"
+    },
+    "./storage/sqlite/node": {
+      "types": "./dist/storage/node-sqlite.d.ts",
+      "node": "./dist/storage/node-sqlite.js"
+    },
     "./storage/bun-sqlite": {
       "types": "./dist/storage/bun-sql.d.ts",
       "bun": "./dist/storage/bun-sql.js"
@@ -80,10 +98,18 @@
       "import": "./dist/storage/indexeddb.js",
       "default": "./dist/storage/indexeddb.js"
     },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "bun": "./dist/server/index.js"
+    },
     "./server/handler": {
       "types": "./dist/server/handler.d.ts",
       "import": "./dist/server/handler.js",
       "default": "./dist/server/handler.js"
+    },
+    "./mcp/stdio": {
+      "types": "./dist/ai/mcp/transport-stdio.d.ts",
+      "bun": "./dist/ai/mcp/transport-stdio.js"
     },
     "./client": {
       "types": "./dist/client/index.d.ts",
@@ -114,7 +140,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "lint": "oxlint --type-aware --tsconfig ./tsconfig.json",
     "lint:fix": "oxlint --fix --type-aware --tsconfig ./tsconfig.json",
-    "prepack": "bun run build && bun run verify:exports",
+    "prepack": "bun run build && bun run verify:exports && bun run verify:portability",
     "pr:title": "bun run scripts/pr-title.ts",
     "prepare": "husky",
     "prepublishOnly": "bun run validate",
@@ -124,6 +150,7 @@
     "typecheck": "tsc --noEmit",
     "validate": "bun run lint && bun run typecheck && bun run test",
     "verify:exports": "bun run scripts/verify-tree-shaking.ts",
+    "verify:portability": "bun run scripts/verify-portability.ts",
     "verify:release-version": "bun run scripts/verify-release-version.ts"
   },
   "lint-staged": {
@@ -150,6 +177,7 @@
   "devDependencies": {
     "@libsql/client": "^0.17.2",
     "@types/bun": "^1.3.11",
+    "better-sqlite3": "^12.8.0",
     "bun-plugin-svelte": "^0.0.6",
     "chalk": "^5.6.2",
     "fake-indexeddb": "^6.2.5",
