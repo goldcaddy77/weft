@@ -1,3 +1,7 @@
+const pragmaStatementPattern = /^PRAGMA\b/iu;
+const readOnlyPragmaPattern = /^PRAGMA\s+(?:[A-Z_][A-Z0-9_]*\.)?[A-Z_][A-Z0-9_]*\s*$/iu;
+const selectStatementPattern = /^SELECT\b/iu;
+
 function normalizeSql(sql: string): string {
   return sql
     .trim()
@@ -6,9 +10,10 @@ function normalizeSql(sql: string): string {
 }
 
 function isReadOnlyPragma(sql: string): boolean {
-  return !sql.includes('=');
+  return readOnlyPragmaPattern.test(sql);
 }
 
+/** Validate that a storage query contains exactly one read-only SELECT or bare PRAGMA statement. */
 export function assertReadOnlyQuery(sql: string): void {
   const normalizedSql = normalizeSql(sql);
 
@@ -20,13 +25,11 @@ export function assertReadOnlyQuery(sql: string): void {
     throw new Error('Storage query must contain exactly one read-only statement.');
   }
 
-  const uppercaseSql = normalizedSql.toUpperCase();
-
-  if (uppercaseSql.startsWith('SELECT ')) {
+  if (selectStatementPattern.test(normalizedSql)) {
     return;
   }
 
-  if (uppercaseSql.startsWith('PRAGMA ') && isReadOnlyPragma(normalizedSql)) {
+  if (pragmaStatementPattern.test(normalizedSql) && isReadOnlyPragma(normalizedSql)) {
     return;
   }
 

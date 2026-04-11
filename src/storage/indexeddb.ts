@@ -18,6 +18,77 @@ function promisify<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
+/** Convert cursor request callbacks into awaited iteration steps that reject on request or transaction failure. */
+function createCursorRequestAwaiter<TCursor extends IDBCursor | IDBCursorWithValue>(
+  request: IDBRequest<TCursor | null>,
+  transaction: IDBTransaction,
+): () => Promise<TCursor | null> {
+  let resolveCurrent: ((value: TCursor | null) => void) | null = null;
+  let rejectCurrent: ((reason?: unknown) => void) | null = null;
+  let pendingError: DOMException | Error | null = null;
+
+  const rejectPendingCursor = (
+    error: DOMException | null | undefined,
+    fallbackMessage: string,
+  ): void => {
+    const reason = error ?? new Error(fallbackMessage);
+
+    if (rejectCurrent) {
+      const reject = rejectCurrent;
+      resolveCurrent = null;
+      rejectCurrent = null;
+      reject(reason);
+      return;
+    }
+
+    pendingError = reason;
+  };
+
+  request.onsuccess = () => {
+    if (!resolveCurrent) {
+      return;
+    }
+
+    const resolve = resolveCurrent;
+    resolveCurrent = null;
+    rejectCurrent = null;
+    resolve(request.result);
+  };
+
+  request.onerror = () => {
+    rejectPendingCursor(request.error, 'IndexedDB cursor request failed.');
+  };
+
+  transaction.onerror = () => {
+    rejectPendingCursor(transaction.error, 'IndexedDB transaction failed.');
+  };
+
+  transaction.onabort = () => {
+    rejectPendingCursor(transaction.error, 'IndexedDB transaction aborted.');
+  };
+
+  return (): Promise<TCursor | null> => {
+    return new Promise<TCursor | null>((resolve, reject) => {
+      if (pendingError) {
+        const error = pendingError;
+        pendingError = null;
+        reject(error);
+        return;
+      }
+
+      resolveCurrent = resolve;
+      rejectCurrent = reject;
+
+      if (request.readyState === 'done') {
+        const resolveReady = resolveCurrent;
+        resolveCurrent = null;
+        rejectCurrent = null;
+        resolveReady?.(request.result);
+      }
+    });
+  };
+}
+
 export class IndexedDBStorage implements Storage {
   #databaseName: string;
   #database: IDBDatabase | null = null;
@@ -108,25 +179,7 @@ export class IndexedDBStorage implements Storage {
     const request = store.openCursor(range, direction);
 
     let count = 0;
-
-    // Pull-based async cursor iteration: each step resolves a promise.
-    let resolveCurrent: ((value: IDBCursorWithValue | null) => void) | null = null;
-
-    request.onsuccess = () => {
-      if (resolveCurrent) {
-        resolveCurrent(request.result);
-      }
-    };
-
-    const nextCursor = (): Promise<IDBCursorWithValue | null> => {
-      return new Promise<IDBCursorWithValue | null>((resolve) => {
-        resolveCurrent = resolve;
-        // The initial onsuccess may have already fired before we attached resolveCurrent.
-        if (request.readyState === 'done') {
-          resolve(request.result);
-        }
-      });
-    };
+    const nextCursor = createCursorRequestAwaiter(request, transaction);
 
     // Track whether iteration ran to completion so we can abort the transaction
     // on early termination (e.g., consumer breaks out of the loop), releasing the cursor.
@@ -154,9 +207,7 @@ export class IndexedDBStorage implements Storage {
 
         // Advance the cursor
         cursor.continue();
-        cursor = await new Promise<IDBCursorWithValue | null>((resolve) => {
-          resolveCurrent = resolve;
-        });
+        cursor = await nextCursor();
       }
 
       completed = true;
@@ -205,22 +256,7 @@ export class IndexedDBStorage implements Storage {
     const request = store.openKeyCursor(range, direction);
 
     let count = 0;
-    let resolveCurrent: ((value: IDBCursor | null) => void) | null = null;
-
-    request.onsuccess = () => {
-      if (resolveCurrent) {
-        resolveCurrent(request.result);
-      }
-    };
-
-    const nextCursor = (): Promise<IDBCursor | null> => {
-      return new Promise<IDBCursor | null>((resolve) => {
-        resolveCurrent = resolve;
-        if (request.readyState === 'done') {
-          resolve(request.result);
-        }
-      });
-    };
+    const nextCursor = createCursorRequestAwaiter(request, transaction);
 
     let completed = false;
     try {
@@ -239,9 +275,7 @@ export class IndexedDBStorage implements Storage {
         }
 
         cursor.continue();
-        cursor = await new Promise<IDBCursor | null>((resolve) => {
-          resolveCurrent = resolve;
-        });
+        cursor = await nextCursor();
       }
 
       completed = true;
