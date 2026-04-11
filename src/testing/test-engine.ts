@@ -11,6 +11,7 @@
 import { Engine } from '../core/engine.ts';
 import { parseDuration } from '../core/scheduler.ts';
 import type { Duration } from '../core/types.ts';
+import { sleep } from '../runtime/portable.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { ChaosScenario, FailureCategory } from './chaos.ts';
 import { withChaos } from './chaos.ts';
@@ -88,7 +89,7 @@ export class TestEngine extends Engine {
     await this.scheduler.tick(target);
 
     // Allow microtasks to settle
-    await Bun.sleep(1);
+    await sleep(1);
   }
 
   /** Current virtual time in milliseconds since epoch. */

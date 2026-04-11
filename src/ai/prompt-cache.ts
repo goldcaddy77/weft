@@ -11,7 +11,7 @@
  * last message of that prefix with an Anthropic `cache_control: ephemeral`
  * marker so the provider knows to cache up to that point.
  *
- * The trie is keyed by per-message `Bun.hash` values (64-bit wyhash),
+ * The trie is keyed by per-message hash values (64-bit, via `hashString`),
  * represented as 16-hex-char strings. Two arrays share a prefix when their
  * first N messages hash identically. A hit requires at least two matching
  * messages (a single-message prefix is too short to be worth caching).
@@ -22,6 +22,7 @@
  */
 
 import type { MetricsCollector } from '../observability/metrics';
+import { hashString } from '../runtime/portable.ts';
 import type { Message } from './providers/types';
 
 // ---------------------------------------------------------------------------
@@ -100,7 +101,7 @@ interface TrieNode {
 /**
  * Hash the content-relevant fields of a single message to a compact key.
  *
- * Uses `Bun.hash` (wyhash) — fast and good enough for a cache key. Two
+ * Uses `hashString` (wyhash on Bun, FNV-1a elsewhere) — fast and good enough for a cache key. Two
  * messages with identical role + content + tool data produce identical keys.
  *
  * @internal
@@ -113,8 +114,7 @@ function hashMessage(message: Message): string {
     toolResults: message.toolResults,
     name: message.name,
   });
-  // Bun.hash returns a bigint; convert to a fixed-width hex string.
-  return Bun.hash(payload).toString(16).padStart(16, '0');
+  return hashString(payload);
 }
 
 // ---------------------------------------------------------------------------

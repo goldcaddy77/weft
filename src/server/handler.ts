@@ -25,207 +25,28 @@ import {
   type MetricsCollector,
   type PrometheusExporter,
 } from '../observability/metrics.ts';
+import { generateOpenApiDocument } from './openapi.ts';
+import { ROUTES, toRegex } from './route-model.ts';
 
 // ---------------------------------------------------------------------------
 // Route matching
 // ---------------------------------------------------------------------------
 
 interface RouteMatch {
-  handler: RouteHandlerName;
+  handler: string;
   params: Record<string, string>;
 }
 
-type RouteHandlerName =
-  | 'healthCheck'
-  | 'startWorkflow'
-  | 'listWorkflows'
-  | 'recoverAll'
-  | 'setBudgetPolicy'
-  | 'getBudgetPolicy'
-  | 'getStreamChunks'
-  | 'queryWorkflow'
-  | 'resumeWorkflow'
-  | 'timeoutWorkflow'
-  | 'getWorkflowResult'
-  | 'signalWorkflow'
-  | 'updateWorkflow'
-  | 'getUpdateResult'
-  | 'getAttributes'
-  | 'setAttributes'
-  | 'getMetrics'
-  | 'getWorkflowEvents'
-  | 'listReviews'
-  | 'submitReviewDecision'
-  | 'getReview'
-  | 'streamSSE'
-  | 'listCheckpoints'
-  | 'getCheckpointAt'
-  | 'getWorkflow'
-  | 'cancelWorkflow';
-
-const ROUTE_PATTERNS: Array<{
-  method: string;
-  pattern: RegExp;
-  handler: RouteHandlerName;
-  paramNames: string[];
-}> = [
-  {
-    method: 'GET',
-    pattern: /^\/v1\/health$/,
-    handler: 'healthCheck',
-    paramNames: [],
-  },
-  {
-    method: 'POST',
-    pattern: /^\/v1\/workflows$/,
-    handler: 'startWorkflow',
-    paramNames: [],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows$/,
-    handler: 'listWorkflows',
-    paramNames: [],
-  },
-  {
-    method: 'POST',
-    pattern: /^\/v1\/recover$/,
-    handler: 'recoverAll',
-    paramNames: [],
-  },
-  {
-    method: 'PUT',
-    pattern: /^\/v1\/budget-policy$/,
-    handler: 'setBudgetPolicy',
-    paramNames: [],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/budget-policy\/([^/]+)$/,
-    handler: 'getBudgetPolicy',
-    paramNames: ['namespace'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)\/streams\/([^/]+)$/,
-    handler: 'getStreamChunks',
-    paramNames: ['id', 'key'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)\/query\/([^/]+)$/,
-    handler: 'queryWorkflow',
-    paramNames: ['id', 'name'],
-  },
-  {
-    method: 'POST',
-    pattern: /^\/v1\/workflows\/([^/]+)\/resume$/,
-    handler: 'resumeWorkflow',
-    paramNames: ['id'],
-  },
-  {
-    method: 'POST',
-    pattern: /^\/v1\/workflows\/([^/]+)\/timeout$/,
-    handler: 'timeoutWorkflow',
-    paramNames: ['id'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)\/result$/,
-    handler: 'getWorkflowResult',
-    paramNames: ['id'],
-  },
-  {
-    method: 'POST',
-    pattern: /^\/v1\/workflows\/([^/]+)\/signal\/([^/]+)$/,
-    handler: 'signalWorkflow',
-    paramNames: ['id', 'name'],
-  },
-  {
-    method: 'POST',
-    pattern: /^\/v1\/workflows\/([^/]+)\/update\/([^/]+)$/,
-    handler: 'updateWorkflow',
-    paramNames: ['id', 'name'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/updates\/([^/]+)$/,
-    handler: 'getUpdateResult',
-    paramNames: ['updateId'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)\/attributes$/,
-    handler: 'getAttributes',
-    paramNames: ['id'],
-  },
-  {
-    method: 'PATCH',
-    pattern: /^\/v1\/workflows\/([^/]+)\/attributes$/,
-    handler: 'setAttributes',
-    paramNames: ['id'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/metrics$/,
-    handler: 'getMetrics',
-    paramNames: [],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)\/events$/,
-    handler: 'getWorkflowEvents',
-    paramNames: ['id'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/reviews$/,
-    handler: 'listReviews',
-    paramNames: [],
-  },
-  {
-    method: 'POST',
-    pattern: /^\/v1\/reviews\/([^/]+)\/decision$/,
-    handler: 'submitReviewDecision',
-    paramNames: ['reviewId'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)\/review\/([^/]+)$/,
-    handler: 'getReview',
-    paramNames: ['id', 'reviewId'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)\/sse$/,
-    handler: 'streamSSE',
-    paramNames: ['id'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)\/checkpoints$/,
-    handler: 'listCheckpoints',
-    paramNames: ['id'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)\/checkpoints\/(\d+)$/,
-    handler: 'getCheckpointAt',
-    paramNames: ['id', 'step'],
-  },
-  {
-    method: 'GET',
-    pattern: /^\/v1\/workflows\/([^/]+)$/,
-    handler: 'getWorkflow',
-    paramNames: ['id'],
-  },
-  {
-    method: 'DELETE',
-    pattern: /^\/v1\/workflows\/([^/]+)$/,
-    handler: 'cancelWorkflow',
-    paramNames: ['id'],
-  },
-];
+/**
+ * Route patterns derived from the shared route model. The regex is computed
+ * once at module load time for the hot path.
+ */
+const ROUTE_PATTERNS = ROUTES.map((route) => ({
+  method: route.method,
+  pattern: toRegex(route.path),
+  handler: route.handler,
+  paramNames: route.paramNames,
+}));
 
 function matchRoute(method: string, pathname: string): RouteMatch | null {
   for (const route of ROUTE_PATTERNS) {
@@ -980,7 +801,7 @@ type RouteExecutionContext = {
 
 type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
 
-const ROUTE_EXECUTORS: Record<RouteHandlerName, RouteExecutor> = {
+const ROUTE_EXECUTORS: Record<string, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
   listWorkflows: async ({ request, engine }) => handleListWorkflows(request, engine),
@@ -1016,6 +837,7 @@ const ROUTE_EXECUTORS: Record<RouteHandlerName, RouteExecutor> = {
     handleGetCheckpointAt(request, engine, param('id'), param('step')),
   getWorkflow: async ({ engine, param }) => handleGetWorkflow(engine, param('id')),
   cancelWorkflow: async ({ engine, param }) => handleCancelWorkflow(engine, param('id')),
+  openApiDocument: async () => jsonResponse(generateOpenApiDocument()),
 };
 
 // ---------------------------------------------------------------------------
@@ -1060,7 +882,11 @@ export async function handleRequest(
     getRequiredRouteParameter(route.params, name, routeDescription);
 
   try {
-    return await ROUTE_EXECUTORS[route.handler]({ request, engine, options, param });
+    const executor = ROUTE_EXECUTORS[route.handler];
+    if (!executor) {
+      return errorResponse(`No handler for route: ${routeDescription}`, 501);
+    }
+    return await executor({ request, engine, options, param });
   } catch (error) {
     console.error('Unhandled error in handleRequest', {
       method: request.method,

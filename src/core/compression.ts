@@ -7,7 +7,12 @@
  * @module core/compression
  */
 
-import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
+import {
+  brotliCompressSync,
+  brotliDecompressSync,
+  gunzipSync,
+  gzipSync,
+} from '../runtime/portable.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,19 +61,27 @@ const HEADER_SIZE = 2;
 // ---------------------------------------------------------------------------
 
 /**
- * Create a compressor backed by Bun's native gzip or Node's brotli.
+ * Create a compressor backed by the portable runtime layer.
  *
- * - `gzip`: uses `Bun.gzipSync` / `Bun.gunzipSync`
- * - `brotli`: uses `node:zlib` `brotliCompressSync` / `brotliDecompressSync`
+ * - `gzip`: uses Bun's native gzip when available, otherwise `node:zlib`
+ * - `brotli`: uses `node:zlib` brotli (available in both Bun and Node)
  * - `none`: pass-through (no compression)
  */
 export function createBunCompressor(algorithm: CompressionAlgorithm): Compressor {
+  return createCompressor(algorithm);
+}
+
+/**
+ * Create a compressor. Preferred portable factory — delegates to the runtime
+ * abstraction layer for gzip and brotli implementations.
+ */
+export function createCompressor(algorithm: CompressionAlgorithm): Compressor {
   switch (algorithm) {
     case 'gzip':
       return {
         algorithm: 'gzip',
         compress(data: Uint8Array): Uint8Array {
-          return new Uint8Array(Bun.gzipSync(new Uint8Array(data)));
+          return gzipSync(data);
         },
       };
 
@@ -76,7 +89,7 @@ export function createBunCompressor(algorithm: CompressionAlgorithm): Compressor
       return {
         algorithm: 'brotli',
         compress(data: Uint8Array): Uint8Array {
-          return new Uint8Array(brotliCompressSync(data));
+          return brotliCompressSync(data);
         },
       };
 
@@ -140,8 +153,8 @@ export async function compressPayload(
  * Decompress a payload by reading the 2-byte header (magic + algorithm).
  *
  * - `[0xC1, 0x00]` → uncompressed, return the rest as-is
- * - `[0xC1, 0x01]` → gzip-compressed, decompress with `Bun.gunzipSync`
- * - `[0xC1, 0x02]` → brotli-compressed, decompress with `brotliDecompressSync`
+ * - `[0xC1, 0x01]` → gzip-compressed, decompress
+ * - `[0xC1, 0x02]` → brotli-compressed, decompress
  * - Any other first byte → legacy data without header, return as-is
  *   (backward compatible with pre-compression storage)
  */
@@ -164,10 +177,10 @@ export async function decompressPayload(data: Uint8Array): Promise<Uint8Array> {
       return body;
 
     case ALGORITHM_GZIP:
-      return new Uint8Array(Bun.gunzipSync(new Uint8Array(body)));
+      return gunzipSync(body);
 
     case ALGORITHM_BROTLI:
-      return new Uint8Array(brotliDecompressSync(body));
+      return brotliDecompressSync(body);
 
     default:
       // Unrecognized algorithm byte after magic — return as-is for safety.

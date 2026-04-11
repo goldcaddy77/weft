@@ -1,0 +1,109 @@
+/**
+ * Build-time portability gate.
+ *
+ * Bundles the portable entry points for the `browser` target and asserts
+ * that no platform-locked *static* imports leak into the output. Runtime-
+ * guarded `require()` calls (behind `IS_BUN` / `typeof Bun` checks in the
+ * portable runtime layer) are acceptable — the bundler preserves both
+ * branches but the browser path never executes them.
+ *
+ * The key assertion: the bundle must *build successfully* for the browser
+ * target, meaning the bundler can resolve all static imports. Unresolvable
+ * `node:*` or `bun:*` static imports cause the build to fail, which is the
+ * real portability check.
+ */
+
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+type PortableEntry = {
+  name: string;
+  entrypoint: string;
+};
+
+const PORTABLE_ENTRIES: PortableEntry[] = [
+  { name: 'weft (root)', entrypoint: './src/index.ts' },
+  { name: 'weft/client', entrypoint: './src/client/index.ts' },
+  { name: 'weft/service-worker', entrypoint: './src/service-worker/index.ts' },
+  { name: 'weft/storage/indexeddb', entrypoint: './src/storage/indexeddb.ts' },
+  { name: 'weft/server/handler', entrypoint: './src/server/handler.ts' },
+];
+
+/**
+ * Patterns that indicate a platform-locked module leaked into the portable
+ * bundle in an unguarded way.
+ *
+ * The portable runtime layer (`src/runtime/portable.ts`) intentionally
+ * references `Bun.*` behind `IS_BUN` guards — these are dead code in
+ * browsers and are not flagged. Similarly, `StdioTransport` uses `Bun.spawn`
+ * behind a dynamic `import()` in the transport factory, which is only
+ * reachable when `kind === 'stdio'`.
+ *
+ * What IS forbidden:
+ * - `bun:sqlite` — means a storage backend leaked into the portable surface
+ * - `bun:test` — means test infrastructure leaked into production code
+ */
+const FORBIDDEN_STATIC_IMPORTS = [
+  { pattern: /\bfrom\s*["']bun:sqlite["']/g, label: 'bun:sqlite import' },
+  { pattern: /\brequire\(["']bun:sqlite["']\)/g, label: 'bun:sqlite require' },
+  { pattern: /\bfrom\s*["']bun:test["']/g, label: 'bun:test import' },
+] as const;
+
+const tempDir = mkdtempSync(join(tmpdir(), 'weft-portability-'));
+let failures = 0;
+
+try {
+  for (const entry of PORTABLE_ENTRIES) {
+    let entryFailures = 0;
+
+    const result = await Bun.build({
+      entrypoints: [entry.entrypoint],
+      target: 'browser',
+      format: 'esm',
+      outdir: tempDir,
+      minify: false,
+      // Heavy optional dependencies — not part of the portable surface.
+      external: ['@opentelemetry/api', 'lmdb', '@libsql/client'],
+    });
+
+    if (!result.success) {
+      console.error(`  FAIL  ${entry.name} — browser build failed:`);
+      for (const log of result.logs) {
+        console.error('        ', log);
+      }
+      entryFailures++;
+      failures++;
+      continue;
+    }
+
+    // Check bundled output for forbidden static imports.
+    for (const output of result.outputs) {
+      const text = await output.text();
+      for (const { pattern, label } of FORBIDDEN_STATIC_IMPORTS) {
+        pattern.lastIndex = 0;
+        const matches = text.match(pattern);
+        if (matches && matches.length > 0) {
+          console.error(
+            `  FAIL  ${entry.name} — found ${String(matches.length)} occurrence(s) of ${label}`,
+          );
+          entryFailures++;
+          failures++;
+        }
+      }
+    }
+
+    if (entryFailures === 0) {
+      console.log(`  PASS  ${entry.name}`);
+    }
+  }
+} finally {
+  rmSync(tempDir, { recursive: true, force: true });
+}
+
+if (failures > 0) {
+  console.error(`\n${String(failures)} portability check(s) failed.`);
+  process.exit(1);
+} else {
+  console.log('\nAll portability checks passed.');
+}

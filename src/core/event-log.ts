@@ -17,6 +17,7 @@
  * @module core/event-log
  */
 
+import { hashBytes as portableHashBytes } from '../runtime/portable.ts';
 import type { BatchOperation, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { decode, encode } from './codec.ts';
@@ -82,9 +83,9 @@ export const EMPTY_EVENT_HEAD: Readonly<EventHeadRecord> = Object.freeze({
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Compute a 16-character hex wyhash of an arbitrary byte buffer. */
+/** Compute a 16-character hex hash of an arbitrary byte buffer. */
 function hashBytes(bytes: Uint8Array): string {
-  return Bun.hash.wyhash(bytes).toString(16).padStart(16, '0');
+  return portableHashBytes(bytes);
 }
 
 /** Narrow an unknown decoded value to {@link WorkflowLogEntry}. */

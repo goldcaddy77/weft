@@ -9,6 +9,7 @@
 
 import { decode } from '../core/codec.ts';
 import type { Checkpoint, WorkflowState } from '../core/types.ts';
+import { fileSize } from '../runtime/portable.ts';
 import type { Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { generateRecommendations } from './recommendations.ts';
@@ -106,11 +107,11 @@ async function collectDatabaseHealth(
 
   const fragmentationPercent = pageCount > 0 ? (freelistCount / pageCount) * 100 : 0;
 
-  const sizeBytes = databasePath === ':memory:' ? 0 : Bun.file(databasePath).size;
+  const sizeBytes = databasePath === ':memory:' ? 0 : fileSize(databasePath);
 
   let walSizeBytes: number | null = null;
   if (databasePath !== ':memory:') {
-    const walSize = Bun.file(databasePath + '-wal').size;
+    const walSize = fileSize(databasePath + '-wal');
     walSizeBytes = walSize > 0 ? walSize : null;
   }
 

@@ -3,7 +3,6 @@ import { buildAuthHeaders } from './authentication.ts';
 import { createOAuth2TokenManager } from './oauth2-token-manager.ts';
 import { HttpSseTransport } from './transport-http-sse.ts';
 import { HttpTransport } from './transport-http.ts';
-import { StdioTransport } from './transport-stdio.ts';
 import type { MCPTransport, TransportKind } from './transport.ts';
 import { inferTransportKind, parseStdioUrl } from './transport.ts';
 
@@ -15,7 +14,7 @@ export interface MCPTransportSource {
 }
 
 /** Build the appropriate transport for an MCP source based on its URL and options. */
-export function createTransportForSource(source: MCPTransportSource): MCPTransport {
+export async function createTransportForSource(source: MCPTransportSource): Promise<MCPTransport> {
   const kind = inferTransportKind(source.mcp, source.transport);
 
   if (kind === 'stdio') {
@@ -25,6 +24,9 @@ export function createTransportForSource(source: MCPTransportSource): MCPTranspo
       );
     }
 
+    // Dynamic import: StdioTransport uses Bun.spawn which is Bun-only.
+    // Lazy loading prevents the bundler from pulling it into browser bundles.
+    const { StdioTransport } = await import('./transport-stdio.ts');
     const target = parseStdioUrl(source.mcp);
     return new StdioTransport({
       command: target.command,
