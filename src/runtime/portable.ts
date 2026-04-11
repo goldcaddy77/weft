@@ -44,33 +44,27 @@ export const sleep: (ms: number) => Promise<void> = IS_BUN
 // ---------------------------------------------------------------------------
 
 /**
- * Non-cryptographic 64-bit hash returning a 16-character hex string.
+ * FNV-1a 64-bit hash returning a 16-character hex string.
  *
- * Uses FNV-1a implemented via two chained 32-bit halves to avoid BigInt
- * (which is slow in some runtimes). The output is runtime-stable — Bun and
- * Node produce identical hashes for the same input, which is critical for
- * data that may be persisted and read across runtimes (event-log chain
+ * Implemented with `BigInt` for correctness with the true 64-bit FNV
+ * offset basis (`0xcbf29ce484222325`) and prime (`0x00000100000001b3`).
+ * BigInt is slow relative to `Math.imul`, but correctness matters more
+ * than microseconds here — these hashes are cache keys, not hot-path
+ * operations, and the 64-bit output must be deterministic across
+ * runtimes because it is persisted to durable storage (event-log chain
  * hashes, tool-effect dedup keys, prompt-cache keys).
  */
+const FNV_OFFSET_BASIS_64 = 0xcbf29ce484222325n;
+const FNV_PRIME_64 = 0x00000100000001b3n;
+const MASK_64 = 0xffffffffffffffffn;
+
 function fnv1a64(data: Uint8Array): string {
-  let h0 = 0x811c9dc5; // lower 32 bits of FNV offset basis
-  let h1 = 0xcbf29ce4; // upper 32 bits
-
-  const FNV_PRIME_LOW = 0x01000193;
-
+  let hash = FNV_OFFSET_BASIS_64;
   for (let i = 0; i < data.length; i++) {
-    h0 ^= data[i]!;
-    const prevH0 = h0 >>> 0;
-    const product = Math.imul(h0, FNV_PRIME_LOW);
-    // Carry: unsigned multiplication wrapped if product < the pre-multiply value.
-    const carry = product >>> 0 < prevH0 ? 1 : 0;
-    h1 = (Math.imul(h1, FNV_PRIME_LOW) + carry) | 0;
-    h0 = product;
+    hash ^= BigInt(data[i]!);
+    hash = (hash * FNV_PRIME_64) & MASK_64;
   }
-
-  const hi = (h1 >>> 0).toString(16).padStart(8, '0');
-  const lo = (h0 >>> 0).toString(16).padStart(8, '0');
-  return hi + lo;
+  return hash.toString(16).padStart(16, '0');
 }
 
 const textEncoder = new TextEncoder();

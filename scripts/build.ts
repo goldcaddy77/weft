@@ -18,6 +18,8 @@ await Bun.build({
     './src/storage/lmdb.ts',
     './src/storage/turso.ts',
     './src/storage/node-sqlite.ts',
+    // Bun-only server subpath (weft/server)
+    './src/server/index.ts',
   ],
   outdir: './dist',
   target: 'bun',

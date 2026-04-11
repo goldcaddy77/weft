@@ -52,9 +52,11 @@ describe('portable runtime helpers', () => {
       expect(result).toMatch(/^[0-9a-f]{16}$/);
     });
 
-    it('produces stable known values across runtimes', () => {
-      expect(hashBytes(new Uint8Array([1, 2, 3, 4]))).toBe('b6cf3c025734a87d');
-      expect(hashBytes(new Uint8Array(0))).toBe('cbf29ce4811c9dc5');
+    it('produces stable known values matching FNV-1a 64-bit reference', () => {
+      // Pinned values from reference FNV-1a 64-bit implementation.
+      expect(hashBytes(new Uint8Array([1, 2, 3, 4]))).toBe('be7a5e775165785d');
+      // The empty input produces the FNV offset basis.
+      expect(hashBytes(new Uint8Array(0))).toBe('cbf29ce484222325');
     });
   });
 
@@ -79,9 +81,13 @@ describe('portable runtime helpers', () => {
       expect(result).toMatch(/^[0-9a-f]{16}$/);
     });
 
-    it('produces stable known values across runtimes', () => {
-      expect(hashString('hello world')).toBe('4a5a49dad58b3fa7');
-      expect(hashString('')).toBe('cbf29ce4811c9dc5');
+    it('produces stable known values matching FNV-1a 64-bit reference', () => {
+      expect(hashString('hello world')).toBe('779a65e7023cd2e7');
+      // Empty input produces the FNV-1a 64-bit offset basis.
+      expect(hashString('')).toBe('cbf29ce484222325');
+      // Additional reference values from canonical FNV-1a 64-bit test vectors.
+      expect(hashString('a')).toBe('af63dc4c8601ec8c');
+      expect(hashString('foobar')).toBe('85944171f73967e8');
     });
   });
 
