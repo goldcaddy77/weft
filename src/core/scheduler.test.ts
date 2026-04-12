@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { MemoryStorage } from '../storage/memory';
+import { decode } from './codec';
 import { calculateBackoff, parseDuration, Scheduler } from './scheduler';
 import type { TimerEntry } from './types';
 
@@ -61,28 +62,24 @@ describe('parseDuration', () => {
     expect(parseDuration(0)).toBe(0);
   });
 
-  it('throws for a fractional numeric duration', () => {
-    expect(() => parseDuration(1.5)).toThrow(
-      'Duration must resolve to a finite, non-negative integer number of milliseconds',
-    );
+  it('passes through a fractional numeric duration as milliseconds', () => {
+    expect(parseDuration(1.5)).toBe(1.5);
   });
 
   it('throws for a negative numeric duration', () => {
     expect(() => parseDuration(-1)).toThrow(
-      'Duration must resolve to a finite, non-negative integer number of milliseconds',
+      'Duration must resolve to a finite, non-negative number of milliseconds',
     );
   });
 
   it('throws for a non-finite numeric duration', () => {
     expect(() => parseDuration(Number.POSITIVE_INFINITY)).toThrow(
-      'Duration must resolve to a finite, non-negative integer number of milliseconds',
+      'Duration must resolve to a finite, non-negative number of milliseconds',
     );
   });
 
-  it('throws when a duration string resolves to fractional milliseconds', () => {
-    expect(() => parseDuration('0.1ms')).toThrow(
-      'Duration must resolve to a finite, non-negative integer number of milliseconds',
-    );
+  it('parses a duration string that resolves to fractional milliseconds', () => {
+    expect(parseDuration('0.1ms')).toBe(0.1);
   });
 
   it('throws for an unparseable string', () => {
@@ -144,6 +141,18 @@ describe('calculateBackoff', () => {
     });
     expect(result).toBe(2000);
   });
+
+  it('preserves fractional backoff results for callers that sleep on them', () => {
+    const result = calculateBackoff(5, {
+      maxAttempts: 5,
+      initialBackoff: 1000,
+      backoffMultiplier: 1.5,
+      maxBackoff: 30_000,
+    });
+
+    expect(result).toBe(5062.5);
+    expect(parseDuration(result)).toBe(result);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -203,6 +212,17 @@ describe('Scheduler', () => {
 
     // Verify the index key was also written
     expect(keys.some((key) => key.startsWith('timer-idx:'))).toBe(true);
+  });
+
+  it('rounds fractional timer fireAt values up before persisting them', async () => {
+    const entry = makeTimer({ fireAt: 1_000_000.1 });
+    await scheduler.schedule(entry);
+
+    const storedValue = await storage.get('wf-deadline:0000000001000001:timer-1');
+    expect(storedValue).not.toBeNull();
+
+    const storedEntry = decode(storedValue!) as TimerEntry;
+    expect(storedEntry.fireAt).toBe(1_000_001);
   });
 
   it('fires callback for expired timers when tick is called', async () => {

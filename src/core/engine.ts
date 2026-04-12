@@ -80,7 +80,7 @@ import type {
   WorkflowInterceptor,
 } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
-import { Scheduler, buildTimerBatchOperations } from './scheduler.ts';
+import { Scheduler, buildTimerBatchOperations, normalizeStorageTimestamp } from './scheduler.ts';
 import {
   buildIndexOperations,
   encodeAttributeValue,
@@ -1520,14 +1520,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     if (options?.startAfter !== undefined) {
-      const scheduledStartAt =
-        submissionTime + this.#parseStartOptionDuration(options.startAfter, 'options.startAfter');
-      if (!Number.isFinite(scheduledStartAt) || scheduledStartAt < 0) {
+      const startAfterMilliseconds = this.#parseStartOptionDuration(
+        options.startAfter,
+        'options.startAfter',
+      );
+      try {
+        return normalizeStorageTimestamp(
+          submissionTime + startAfterMilliseconds,
+          'options.startAfter',
+        );
+      } catch {
         throw new StartWorkflowValidationError(
           'options.startAfter must resolve to a finite, non-negative start time',
         );
       }
-      return scheduledStartAt;
     }
 
     return undefined;
@@ -1871,8 +1877,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         options.executionTimeout,
         'options.executionTimeout',
       );
-      const executionDeadline = now + executionTimeoutMilliseconds;
-      if (!Number.isFinite(executionDeadline) || executionDeadline < 0) {
+      let executionDeadline: number;
+      try {
+        executionDeadline = normalizeStorageTimestamp(
+          now + executionTimeoutMilliseconds,
+          'options.executionTimeout',
+        );
+      } catch {
         throw new StartWorkflowValidationError(
           'options.executionTimeout must resolve to a finite, non-negative deadline',
         );
@@ -4722,8 +4733,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return;
       }
 
-      executionDeadline = now + entry.executionTimeoutMs;
-      if (!Number.isFinite(executionDeadline) || executionDeadline < 0) {
+      try {
+        executionDeadline = normalizeStorageTimestamp(
+          now + entry.executionTimeoutMs,
+          `Delayed execution timeout for workflow "${entry.workflowId}"`,
+        );
+      } catch {
         await this.#failWorkflow(
           entry.workflowId,
           new Error(`Invalid delayed execution timeout for workflow "${entry.workflowId}"`),

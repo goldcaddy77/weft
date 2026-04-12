@@ -18,13 +18,17 @@ import type { Duration, RetryPolicy, TimerEntry } from './types';
  * so the key format stays in one place.
  */
 export function buildTimerBatchOperations(entry: TimerEntry): BatchOperation[] {
+  const normalizedEntry: TimerEntry = {
+    ...entry,
+    fireAt: normalizeStorageTimestamp(entry.fireAt, 'Timer fireAt'),
+  };
   const deadlineKey =
-    entry.kind === 'delayed-start'
-      ? KEYS.delayedStart(entry.fireAt, entry.workflowId)
-      : KEYS.deadline(entry.fireAt, entry.id);
-  const indexKey = `timer-idx:${entry.id}`;
+    normalizedEntry.kind === 'delayed-start'
+      ? KEYS.delayedStart(normalizedEntry.fireAt, normalizedEntry.workflowId)
+      : KEYS.deadline(normalizedEntry.fireAt, normalizedEntry.id);
+  const indexKey = `timer-idx:${normalizedEntry.id}`;
   return [
-    { type: 'put', key: deadlineKey, value: encode(entry) },
+    { type: 'put', key: deadlineKey, value: encode(normalizedEntry) },
     { type: 'put', key: indexKey, value: encode(deadlineKey) },
   ];
 }
@@ -55,11 +59,29 @@ const UNIT_TO_MILLISECONDS: Record<string, number> = {
 };
 
 function assertValidDurationMilliseconds(milliseconds: number, source: Duration): void {
-  if (!Number.isFinite(milliseconds) || milliseconds < 0 || !Number.isSafeInteger(milliseconds)) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
     throw new RangeError(
-      `Duration must resolve to a finite, non-negative integer number of milliseconds, got: ${String(source)}`,
+      `Duration must resolve to a finite, non-negative number of milliseconds, got: ${String(source)}`,
     );
   }
+}
+
+export function normalizeStorageTimestamp(timestamp: number, fieldName: string): number {
+  if (!Number.isFinite(timestamp) || timestamp < 0) {
+    throw new RangeError(
+      `${fieldName} must resolve to a finite, non-negative millisecond timestamp, got: ${String(timestamp)}`,
+    );
+  }
+
+  const normalizedTimestamp = Math.ceil(timestamp);
+
+  if (!Number.isSafeInteger(normalizedTimestamp)) {
+    throw new RangeError(
+      `${fieldName} must resolve to a safe integer millisecond timestamp, got: ${String(timestamp)}`,
+    );
+  }
+
+  return normalizedTimestamp;
 }
 
 /** Parse a human-readable duration string or number to milliseconds. */

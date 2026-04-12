@@ -144,7 +144,7 @@ describe('delayed workflow start', () => {
     engine[Symbol.dispose]();
   });
 
-  it('rejects startAfter values that are not finite, non-negative integer-millisecond durations', async () => {
+  it('rejects startAfter values that are not finite or non-negative durations', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
     engine.register('delayed', async function* () {
@@ -159,13 +159,34 @@ describe('delayed workflow start', () => {
       'options.startAfter must be a finite, non-negative number or a valid duration string',
     );
 
-    await expect(
-      engine.start('delayed', null, {
-        startAfter: '0.1ms',
-      }),
-    ).rejects.toThrow(
-      'options.startAfter must be a finite, non-negative number or a valid duration string',
-    );
+    engine[Symbol.dispose]();
+  });
+
+  it('rounds fractional startAfter durations up before persisting delayed starts', async () => {
+    const engine = new TestEngine({ startTime: 1_000 });
+
+    engine.register('delayed', async function* () {
+      return 'done';
+    });
+
+    await engine.start('delayed', null, {
+      id: 'wf-fractional-start-after',
+      startAfter: '0.1ms',
+    });
+
+    const entries = await collectDelayedEntries(engine.storage);
+
+    expect(entries).toEqual([
+      {
+        key: KEYS.delayedStart(1_001, 'wf-fractional-start-after'),
+        entry: {
+          id: 'delayed-start:wf-fractional-start-after',
+          workflowId: 'wf-fractional-start-after',
+          fireAt: 1_001,
+          kind: 'delayed-start',
+        },
+      },
+    ]);
 
     engine[Symbol.dispose]();
   });
