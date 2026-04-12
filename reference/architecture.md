@@ -5540,7 +5540,7 @@ The roadmap below carries forward the implementation work derived from that rese
 - [x] `src/core/activity.ts` supports `{ run, compensate, resourceScope, idempotencyKey }` activity definitions; `compensate` is optional but, if present, is registered.
 - [x] `src/core/context.ts` exposes `ctx.saga(steps)` that runs activities in order and, on failure, runs `compensate` in reverse for every successfully-completed step.
 - [x] `bun test src/core/__tests__/saga.test.ts` passes a 3-step saga test where step 3 fails and compensators for step 1 and step 2 run exactly once each, verified across an engine restart.
-- [x] `bun typecheck` and `bun test` both exit 0 after Track 1 lands.
+- [x] `bun run typecheck` and `bun test` both exit 0 after Track 1 lands.
 
 ### Track 2 — Testing and diagnosis
 
@@ -5564,7 +5564,7 @@ The roadmap below carries forward the implementation work derived from that rese
 - [x] `src/benchmarks/prompt-cache.test.ts` shows ≥49% hit rate on a realistic workload and <1ms per-call overhead.
 - [ ] Activity completions benchmark: `benchmarks/throughput.bench.ts` reports ≥20K/sec (up from ~9K/sec; spec is >30K/sec).
 - [ ] Memory per workflow: `benchmarks/memory.bench.ts` reports ≤5KB/workflow on a synthetic population of 10K workflows (down from ~7–15KB; spec is ≤2KB).
-- [ ] `bun typecheck` and `bun test` both exit 0 after Track 3 lands.
+- [ ] `bun run typecheck` and `bun test` both exit 0 after Track 3 lands.
 
 ### Track 4 — Multi-agent reliability
 
@@ -5590,7 +5590,7 @@ The `Storage` interface is the right primitive for Weft internals (binary KV wit
 - [x] **`TypedStorage<T>` codec wrapper.** `withCodec(storage, codec)` returns a higher-level interface: `get(key): Promise<T | null>`, `put(key, value: T): Promise<void>`, with `scan`, `batch`, etc. forwarding through the codec. Ships with `jsonCodec` (JSON string round-trip) and `msgpackCodec` (MessagePack round-trip via the existing codec module). Eliminates `TextEncoder`/`TextDecoder` boilerplate for every consumer that stores structured data.
 - [x] **All new methods are optional on the `Storage` interface.** Marked with `?` so existing third-party adapters aren't broken. Weft's built-in adapters (BunSQLite, LMDB, Memory, IndexedDB, Turso) implement all of them. The `scoped()` and `withCodec()` utilities work with any `Storage` that implements the core five methods.
 - [x] **Tests cover all new methods across all built-in adapters.** The existing parametrized storage test factory (`src/testing/storage-backends.ts`) is extended with cases for `has`, `deletePrefix`, `keys`, and `count`. The `scoped()` and `withCodec()` utilities have dedicated test files.
-- [x] `bun typecheck` and `bun test` both exit 0 after Track 6 lands.
+- [x] `bun run typecheck` and `bun test` both exit 0 after Track 6 lands.
 
 ### Track 7 — Platform completeness
 
@@ -5688,7 +5688,7 @@ Weft streams tokens over WebSocket with a reconnection buffer, but if the buffer
 
 #### Final
 
-- [ ] `bun typecheck` and `bun test` both exit 0 after Track 7 lands.
+- [ ] `bun run typecheck` and `bun test` both exit 0 after Track 7 lands.
 
 ### Track 8 — Transport parity, shared contracts, and authorization
 
@@ -5709,12 +5709,12 @@ Track 8 extends the runtime surface without creating a second execution system. 
 - [ ] **`BroadcastChannel` remains the internal cross-worker coordination primitive.** Transport-specific publish-subscribe machinery does not replace the current internal coordination model.
 - [ ] **Worker `postMessage` remains the internal worker execution protocol.** `WorkerInboundMessage` and `WorkerOutboundMessage` stay internal runtime messages; external JSON-RPC does not become a second worker protocol.
 - [ ] **One server-side event projection layer feeds every live transport.** WebSocket watch and token messages, SSE responses, JSON-RPC subscription notifications, and cursor-based replay all project from the same event stream model.
-- [ ] **All live views share the same sequence and cursor semantics.** Replay, resume, and ordering rules are identical across HTTP, WebSocket, and stdio JSON-RPC transports.
+- [ ] **All live views share the same sequence and cursor semantics.** Replay, resume, and ordering rules are identical across HTTP, WebSocket, and the Track 8 runtime stdio JSON-RPC transport.
 
 #### 8b. JSON-RPC transport surface
 
-- [ ] **JSON-RPC 2.0 is supported over three transports.** `POST /jsonrpc`, WebSocket upgrade on `/jsonrpc`, and newline-delimited JSON over stdio.
-- [ ] **JSON-RPC methods use stable namespaced names.** Examples: `weft.workflows.start`, `weft.workflows.get`, `weft.workflows.signal`.
+- [ ] **JSON-RPC 2.0 is supported over three runtime transports.** `POST /jsonrpc`, WebSocket upgrade on `/jsonrpc`, and newline-delimited JSON over a dedicated stdio runtime entrypoint. This stdio runtime surface is distinct from the existing MCP stdio JSON-RPC transport in `weft/mcp/stdio`; they may share framing or codec helpers if useful, but they are different protocol surfaces with different method namespaces and semantics.
+- [ ] **Runtime JSON-RPC methods use stable namespaced names.** Examples: `weft.workflows.start`, `weft.workflows.get`, `weft.workflows.signal`. These names belong to the runtime API surface and are not MCP method names.
 - [ ] **JSON-RPC uses named params only.** The OpenRPC contract documents `paramStructure: "by-name"` so generated clients and manual callers converge on one request shape.
 - [ ] **Batch requests are supported.** The shared dispatcher validates and executes JSON-RPC batches without inventing transport-specific behavior.
 - [ ] **Notifications are opt-in per method.** Mutating operations default to request-response so callers do not silently lose errors or authorization failures.
@@ -5738,7 +5738,7 @@ Track 8 extends the runtime surface without creating a second execution system. 
 ### Final verification
 
 - [ ] `bun test` passes across the whole repo.
-- [ ] `bun typecheck` exits 0.
+- [ ] `bun run typecheck` exits 0.
 - [ ] `bun run lint` (oxlint) exits 0.
 - [ ] `bun run build` succeeds.
 - [ ] `bun build --compile src/cli-main.ts --outfile weft` produces a working binary.
