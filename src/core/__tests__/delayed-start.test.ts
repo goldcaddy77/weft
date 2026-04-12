@@ -116,7 +116,7 @@ describe('delayed workflow start', () => {
     engine[Symbol.dispose]();
   });
 
-  it('rejects startAt values that are negative or non-finite', async () => {
+  it('rejects startAt values that are negative, non-finite, or fractional', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
     engine.register('delayed', async function* () {
@@ -127,18 +127,24 @@ describe('delayed workflow start', () => {
       engine.start('delayed', null, {
         startAt: -1,
       }),
-    ).rejects.toThrow('options.startAt must be a finite, non-negative timestamp');
+    ).rejects.toThrow('options.startAt must be a non-negative integer millisecond timestamp');
 
     await expect(
       engine.start('delayed', null, {
         startAt: Number.POSITIVE_INFINITY,
       }),
-    ).rejects.toThrow('options.startAt must be a finite, non-negative timestamp');
+    ).rejects.toThrow('options.startAt must be a non-negative integer millisecond timestamp');
+
+    await expect(
+      engine.start('delayed', null, {
+        startAt: 1_500.5,
+      }),
+    ).rejects.toThrow('options.startAt must be a non-negative integer millisecond timestamp');
 
     engine[Symbol.dispose]();
   });
 
-  it('rejects startAfter values that are not finite, non-negative durations', async () => {
+  it('rejects startAfter values that are not finite, non-negative integer-millisecond durations', async () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
     engine.register('delayed', async function* () {
@@ -148,6 +154,14 @@ describe('delayed workflow start', () => {
     await expect(
       engine.start('delayed', null, {
         startAfter: -1,
+      }),
+    ).rejects.toThrow(
+      'options.startAfter must be a finite, non-negative number or a valid duration string',
+    );
+
+    await expect(
+      engine.start('delayed', null, {
+        startAfter: '0.1ms',
       }),
     ).rejects.toThrow(
       'options.startAfter must be a finite, non-negative number or a valid duration string',

@@ -41,8 +41,10 @@ export function coerceStartWorkflowId(value: unknown, fieldName: string): string
 }
 
 export function coerceStartWorkflowTimestamp(value: unknown, fieldName: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    throw new StartWorkflowValidationError(`${fieldName} must be a finite, non-negative timestamp`);
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new StartWorkflowValidationError(
+      `${fieldName} must be a non-negative integer millisecond timestamp`,
+    );
   }
 
   return value;

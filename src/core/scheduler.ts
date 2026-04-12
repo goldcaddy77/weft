@@ -55,11 +55,9 @@ const UNIT_TO_MILLISECONDS: Record<string, number> = {
 };
 
 function assertValidDurationMilliseconds(milliseconds: number, source: Duration): void {
-  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0 || !Number.isSafeInteger(milliseconds)) {
     throw new RangeError(
-      `Duration must resolve to a finite, non-negative number of milliseconds, got: ${String(
-        source,
-      )}`,
+      `Duration must resolve to a finite, non-negative integer number of milliseconds, got: ${String(source)}`,
     );
   }
 }

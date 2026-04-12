@@ -61,15 +61,27 @@ describe('parseDuration', () => {
     expect(parseDuration(0)).toBe(0);
   });
 
+  it('throws for a fractional numeric duration', () => {
+    expect(() => parseDuration(1.5)).toThrow(
+      'Duration must resolve to a finite, non-negative integer number of milliseconds',
+    );
+  });
+
   it('throws for a negative numeric duration', () => {
     expect(() => parseDuration(-1)).toThrow(
-      'Duration must resolve to a finite, non-negative number of milliseconds',
+      'Duration must resolve to a finite, non-negative integer number of milliseconds',
     );
   });
 
   it('throws for a non-finite numeric duration', () => {
     expect(() => parseDuration(Number.POSITIVE_INFINITY)).toThrow(
-      'Duration must resolve to a finite, non-negative number of milliseconds',
+      'Duration must resolve to a finite, non-negative integer number of milliseconds',
+    );
+  });
+
+  it('throws when a duration string resolves to fractional milliseconds', () => {
+    expect(() => parseDuration('0.1ms')).toThrow(
+      'Duration must resolve to a finite, non-negative integer number of milliseconds',
     );
   });
 

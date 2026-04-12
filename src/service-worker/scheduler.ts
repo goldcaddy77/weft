@@ -8,7 +8,8 @@
  * @module service-worker/scheduler
  */
 
-import { decode, encode } from '../core/codec';
+import { decode } from '../core/codec';
+import { buildTimerBatchOperations } from '../core/scheduler';
 import type { TimerEntry } from '../core/types';
 import type { Storage } from '../storage/interface';
 import { KEYS, resolvePrefixRangeEnd } from '../storage/interface';
@@ -74,13 +75,7 @@ export class ServiceWorkerScheduler implements Disposable {
 
   /** Schedule a durable timer (writes to storage). */
   async schedule(entry: TimerEntry): Promise<void> {
-    const deadlineKey = KEYS.deadline(entry.fireAt, entry.id);
-    const indexKey = `timer-idx:${entry.id}`;
-
-    await this.#storage.batch([
-      { type: 'put', key: deadlineKey, value: encode(entry) },
-      { type: 'put', key: indexKey, value: encode(deadlineKey) },
-    ]);
+    await this.#storage.batch(buildTimerBatchOperations(entry));
   }
 
   /** Cancel a timer (removes from storage). */
@@ -110,6 +105,21 @@ export class ServiceWorkerScheduler implements Disposable {
       const entry = decode(value) as TimerEntry;
       expired.push({ key, entry });
     }
+
+    for await (const [key, value] of this.#storage.scan('wf-delayed:', {
+      lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
+    })) {
+      const entry = decode(value) as TimerEntry;
+      expired.push({ key, entry });
+    }
+
+    expired.sort((left, right) => {
+      if (left.entry.fireAt !== right.entry.fireAt) {
+        return left.entry.fireAt - right.entry.fireAt;
+      }
+
+      return left.key.localeCompare(right.key);
+    });
 
     for (const { key, entry } of expired) {
       try {
