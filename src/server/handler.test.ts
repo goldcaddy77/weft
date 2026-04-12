@@ -2374,7 +2374,7 @@ describe('handleRequest', () => {
     expect(response.status).toBe(404);
   });
 
-  it('GET /v1/workflows/:id/checkpoints/:step returns 400 for unsafe integer steps', async () => {
+  it('GET /v1/workflows/:id/checkpoints/:step returns 400 for a numeric step outside the safe integer range', async () => {
     engine = createEngine();
 
     const response = await handleRequest(
@@ -2383,6 +2383,8 @@ describe('handleRequest', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await json(response)).toEqual({ error: 'Invalid step: 9007199254740992' });
+    expect(await json(response)).toEqual({
+      error: 'Invalid step: 9007199254740992',
+    });
   });
 });

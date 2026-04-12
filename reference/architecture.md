@@ -5525,7 +5525,7 @@ A synthesis of 30 research papers on durable execution, checkpoint-restore, tran
 
 The goal is not a wishlist. The goal is to point at the specific places where Weft's architecture is ahead of the academic literature, the specific places where it is vulnerable or underspecified, and the specific places where a bounded amount of engineering work would convert a research insight into a durable, verifiable Weft primitive.
 
----
+If I were sequencing this, I would do it in seven tracks that can partially parallelize once Track 1 lands.
 
 ## 1. What Weft already gets right
 
@@ -5821,6 +5821,118 @@ Each track produces verifiable artifacts. Each item below is a checkbox a review
 - [x] Event log entries (Track 1) record `(workflowVersion, agentVersion, toolVersions[])` on every event.
 - [x] Resuming a workflow whose recorded version tuple is incompatible with the currently-registered versions, with no migration hook provided, throws `VersionMismatchError` with a structured breakdown of which component mismatched.
 - [x] `bun test src/core/__tests__/workflow-version-resume.test.ts` passes a test that resumes a mid-flight workflow across a tool-schema version bump, with and without a migration hook.
+
+### Track 6 — Storage ergonomics
+
+The `Storage` interface is the right primitive for Weft internals (binary KV with range scans and atomic batch). But consumers building higher-level abstractions on top — application state, caches, session stores, configuration — hit friction that should be smoothed out at the Weft level rather than reimplemented by every consumer.
+
+- [x] **`has(key)` method on `Storage`.** Returns `Promise<boolean>`. Adapters implement efficiently: SQLite uses `SELECT 1 … LIMIT 1`, LMDB checks key existence without value copy, Memory checks `Map.has()`. Avoids deserializing the full value just to check existence. Default implementation falls back to `get(key) !== null` so existing adapters aren't broken.
+- [x] **`deletePrefix(prefix)` method on `Storage`.** Returns `Promise<number>` (count of deleted keys). SQLite uses `DELETE FROM kv WHERE key >= ? AND key < ?` in one statement. LMDB uses range delete. Memory iterates and deletes. Avoids the `scan()` → collect all keys → `batch(deletes)` round-trip that forces holding all keys in memory.
+- [x] **`keys(prefix, options?)` method on `Storage`.** Returns `AsyncIterable<string>` (keys only, no values). Same signature as `scan()` minus the value in the tuple. SQLite uses `SELECT key FROM kv WHERE …` (no blob read). LMDB iterates keys without value materialization. Useful when consumers only need to list or count entries without reading payloads.
+- [x] **`count(prefix)` method on `Storage`.** Returns `Promise<number>`. SQLite uses `SELECT COUNT(*) FROM kv WHERE …`. Avoids streaming every entry through an async iterator just to count. Useful for dashboards, health checks, and queue depth monitoring.
+- [x] **`storage.scoped(prefix)` namespace utility.** Returns a `Storage` instance where all operations are transparently prefixed with `${prefix}:` and `scan()`/`keys()` results have the prefix stripped. Composes: `storage.scoped('a').scoped('b')` produces keys under `a:b:`. Shipped as a utility alongside `CompressedStorage`, with optional `storage.scoped(prefix)` support on Weft's built-in adapters and `ScopedStorage` itself, so third-party adapters are not required to implement it.
+- [x] **`TypedStorage<T>` codec wrapper.** `withCodec(storage, codec)` returns a higher-level interface: `get(key): Promise<T | null>`, `put(key, value: T): Promise<void>`, with `scan`, `batch`, etc. forwarding through the codec. Ships with `jsonCodec` (JSON string round-trip) and `msgpackCodec` (MessagePack round-trip via the existing codec module). Eliminates `TextEncoder`/`TextDecoder` boilerplate for every consumer that stores structured data.
+- [x] **All new methods are optional on the `Storage` interface.** Marked with `?` so existing third-party adapters aren't broken. Weft's built-in adapters (BunSQLite, LMDB, Memory, IndexedDB, Turso) implement all of them. The `scoped()` and `withCodec()` utilities work with any `Storage` that implements the core five methods.
+- [x] **Tests cover all new methods across all built-in adapters.** The existing parametrized storage test factory (`src/testing/storage-backends.ts`) is extended with cases for `has`, `deletePrefix`, `keys`, and `count`. The `scoped()` and `withCodec()` utilities have dedicated test files.
+- [x] `bun typecheck` and `bun test` both exit 0 after Track 6 lands.
+
+### Track 7 — Platform completeness
+
+#### 7a. Scheduled and recurring workflows
+
+Weft has durable `ctx.sleep()` for delays within a running workflow, but no way to express "run this workflow every hour" or "start this workflow at 3am on Tuesdays." Every durable execution platform eventually needs cron — Temporal has it, and consumers who don't get it from the engine build it themselves on top (usually badly).
+
+- [ ] **`engine.schedule(type, input, cronExpression, options?)` registers a recurring workflow.** Accepts a standard cron expression (5-field or 6-field with seconds). Returns a `ScheduleHandle` with `pause()`, `resume()`, `cancel()`, `update(newCron)`, and `describe()`.
+- [ ] **Schedules are durable.** Stored in storage under `schedule:{id}`. Survive process restarts. The scheduler scans for due schedules on startup and resumes ticking.
+- [ ] **Overlap policy is configurable.** `{ overlap: 'skip' | 'queue' | 'cancel-running' | 'allow' }`. Default: `'skip'` (if the previous run is still executing, don't start another). `'queue'` waits for the previous run to complete before starting. `'cancel-running'` cancels the previous run. `'allow'` starts regardless.
+- [ ] **Schedules support backfill.** If the engine was down and missed 3 ticks, `{ backfill: true }` runs them all on recovery. `{ backfill: false }` (default) skips missed ticks and resumes from the next future tick.
+- [ ] **Schedules are listable and queryable.** `engine.listSchedules(filter?)` returns all active schedules with their next fire time, last fire time, and status.
+- [ ] **`GET /v1/schedules` and `POST /v1/schedules` HTTP endpoints.** Full CRUD via REST. Dashboard shows schedule state, history, and next fire time.
+- [ ] **`weft schedule` CLI subcommand.** `weft schedule list`, `weft schedule create`, `weft schedule pause <id>`, `weft schedule cancel <id>`.
+- [ ] Tests cover: create/fire/cancel cycle, overlap policies, backfill after downtime, cron edge cases (Feb 29, DST transitions), multi-tenant schedule isolation.
+
+#### 7b. Delayed start
+
+- [ ] **`engine.start(type, input, { startAt: timestamp })` defers execution to a future time.** Workflow enters `'pending'` status immediately, transitions to `'running'` at the specified time. The pending workflow is visible via `engine.get()` and `engine.list()` before it starts.
+- [ ] **`engine.start(type, input, { startAfter: duration })` accepts a relative delay.** Converted to absolute timestamp at submission time. Uses the same `Duration` type as `ctx.sleep()` (number or string like `'30m'`).
+- [ ] **Delayed starts survive restarts.** Stored as `wf-delayed:{startAt}:{id}` in storage. Scheduler picks them up on recovery.
+- [ ] **Delayed starts are cancellable before execution.** `handle.cancel()` on a pending-but-not-yet-started workflow cancels without ever running.
+
+#### 7c. Workflow composition operators
+
+Child workflows exist, but composing them into pipelines, fan-out/fan-in DAGs, or conditional branches requires manual boilerplate.
+
+- [ ] **`ctx.pipe(stages)` runs a sequence of workflows where each stage's output is the next stage's input.** `stages` is an array of `{ type, options? }` or workflow functions. Returns the final stage's output. Each stage is independently checkpointed as a child workflow. If the pipeline fails at stage 3, recovery skips stages 1–2.
+- [ ] **`ctx.map(items, workflowType, options?)` runs a workflow for each item in parallel.** Like `ctx.all()` but parameterized over a collection. Supports `{ concurrency: number }` to limit parallelism. Returns results in input order.
+- [ ] **`ctx.reduce(items, workflowType, initialValue, options?)` sequentially folds items through a workflow.** Each invocation receives `{ accumulator, item, index }`. Returns the final accumulator. Checkpointed after each fold step.
+- [ ] Tests cover: 3-stage pipeline, pipeline failure at middle stage with compensation, map with concurrency limit, reduce over empty array, nested composition (pipe inside map).
+
+#### 7d. Workflow garbage collection and TTL
+
+- [ ] **`EngineOptions.retention` configures automatic cleanup of terminal workflows.** Accepts `{ completed?: Duration, failed?: Duration, cancelled?: Duration, timedOut?: Duration }`. Default: no retention (keep forever). When set, a background sweep deletes workflows whose `updatedAt + TTL < now`.
+- [ ] **Retention sweep runs on a configurable interval.** Default: every 5 minutes. Deletes in batches (default 1000 per sweep) to avoid blocking storage.
+- [ ] **Retention is per-workflow-type overridable.** `engine.register(type, { handler, retention: { completed: '7d' } })` overrides the engine-level default for that type.
+- [ ] **Retention deletes all associated data.** Workflow state, checkpoints, checkpoint history, events, search attribute indexes, offloaded data, archived data, and stream chunks. One `batch()` call per workflow.
+- [ ] **`engine.purge(filter)` manually triggers cleanup.** For one-off housekeeping outside the automatic sweep.
+- [ ] Dashboard shows retention policy per workflow type and next scheduled sweep.
+
+#### 7e. Per-tenant resource quotas
+
+- [ ] **`EngineOptions.quotas` configures per-tenant limits.** Accepts `{ maxConcurrentWorkflows?: number, maxWorkflowCreationRate?: { count: number, window: Duration }, maxStorageBytes?: number }`.
+- [ ] **Quota violations throw `QuotaExceededError`.** Error includes: which quota was violated, current usage, and the limit. Callers can catch and decide whether to queue, reject, or wait.
+- [ ] **Quotas are enforced at `engine.start()` time.** Concurrent workflow count checked atomically with workflow creation. Rate limit uses a sliding window counter stored at `quota:{tenant}:rate:{window}`.
+- [ ] **Quotas are queryable.** `engine.getQuotaUsage(tenantId)` returns current usage vs. limits. Exposed via `GET /v1/tenants/:id/quota`.
+- [ ] **Quota usage visible in dashboard.** Per-tenant usage gauges with warning thresholds.
+
+#### 7f. Lightweight tagging
+
+- [ ] **`StartOptions.tags` accepts `string[]`.** Tags are stored alongside workflow state and indexed for filtering. Unlike search attributes, tags require no schema declaration — they're free-form labels.
+- [ ] **`handle.addTags(...tags)` and `handle.removeTags(...tags)` mutate tags on a running workflow.** Changes are durable (written in the next checkpoint batch).
+- [ ] **`engine.list({ tags: ['nightly', 'v2'] })` filters by tag intersection.** A workflow matches if it has all specified tags.
+- [ ] **Tags are distinct from search attributes.** Search attributes are typed, schema-declared, and support range queries. Tags are untyped, schema-free, and support only equality/intersection. Both are useful; neither replaces the other.
+- [ ] Tags visible in dashboard workflow list as badges. Filterable via tag chips in the UI.
+
+#### 7g. Bulk operations
+
+- [ ] **`engine.cancelAll(filter)` cancels all workflows matching a filter.** Returns `{ cancelled: number, failed: number, errors: Array<{ id, error }> }`. Filter supports the same shape as `engine.list()` (type, status, attributes, tags).
+- [ ] **`engine.signalAll(filter, name, payload?)` sends a signal to all matching workflows.** Returns `{ signalled: number, failed: number }`.
+- [ ] **`engine.deleteAll(filter)` permanently removes all matching terminal workflows.** Only operates on terminal statuses (completed, failed, cancelled, timed-out). Returns `{ deleted: number }`. Rejects if filter would match running workflows.
+- [ ] **`engine.tagAll(filter, tags)` and `engine.untagAll(filter, tags)` bulk-modify tags.** Returns `{ modified: number }`.
+- [ ] **All bulk operations have HTTP equivalents.** `POST /v1/workflows/bulk/cancel`, `POST /v1/workflows/bulk/signal`, `DELETE /v1/workflows/bulk`, `PATCH /v1/workflows/bulk/tags`.
+- [ ] **Bulk operations are batched internally.** Process in chunks of 1000 to avoid holding storage locks. Progress is observable via returned counts.
+
+#### 7h. Workflow forking
+
+- [ ] **`engine.fork(workflowId, options?)` creates a new workflow from an existing workflow's checkpoint.** The forked workflow starts from the same step with the same accumulated results, but gets a new ID and can diverge from that point. Original workflow is unaffected.
+- [ ] **Fork options include `{ fromStep?: number }`.** Default: fork from the latest checkpoint. `fromStep` allows forking from a historical checkpoint (if checkpoint history is retained).
+- [ ] **Fork records lineage.** Forked workflow state includes `forkedFrom: { workflowId, step }`. Queryable via search attribute `weft:forkedFrom`.
+- [ ] **`POST /v1/workflows/:id/fork` HTTP endpoint.** Returns the new workflow handle.
+- [ ] Tests cover: fork and diverge, fork from historical step, fork a completed workflow (starts from last checkpoint, re-runs terminal step), fork lineage chain (A → B → C).
+
+#### 7i. Event replay and time-travel debugging
+
+Weft already has a hash-chained event log — the data is there, but there's no query interface for inspecting or replaying it.
+
+- [ ] **`engine.getTimeline(workflowId)` returns a structured timeline.** Each entry includes: step number, operation type, input summary, output summary, duration, timestamp, and version tuple. This is a high-level view — not raw events, but a human-readable execution trace.
+- [ ] **`engine.replayTo(workflowId, step)` reconstructs workflow state at a historical step.** Returns the checkpoint, accumulated results, and event log up to that point. Read-only — does not modify the workflow.
+- [ ] **Dashboard timeline view.** Visual execution trace showing each step as a node: what operation ran, what it returned, how long it took, and what the checkpoint looked like at that point. Clicking a step shows the full checkpoint state (locals, accumulated results, search attributes).
+- [ ] **Dashboard diff view.** Select two steps and see what changed between them: new locals, changed search attributes, budget consumption delta, conversation growth.
+- [ ] **`GET /v1/workflows/:id/timeline` HTTP endpoint.** Returns the structured timeline as JSON.
+- [ ] **`weft timeline <workflowId>` CLI subcommand.** Prints the execution trace to stdout. `--step N` shows checkpoint state at step N. `--diff N M` shows the delta between two steps.
+
+#### 7j. Streaming resumption tokens
+
+Weft streams tokens over WebSocket with a reconnection buffer, but if the buffer has been flushed before the client reconnects, there's a gap.
+
+- [ ] **Every streamed chunk includes a monotonic `sequence: number`.** The sequence is persisted alongside the chunk in storage (`blob:{workflowId}:{key}:chunk:{sequence}`).
+- [ ] **Client reconnection accepts `{ resumeFrom: sequence }`.** Server replays all chunks with `sequence > resumeFrom` from storage, then switches to live streaming. No gaps, no duplicates.
+- [ ] **`GET /v1/workflows/:id/streams/:key?after=N` HTTP endpoint.** Returns chunks after sequence N as a JSON array (for non-WebSocket clients) or SSE stream.
+- [ ] **Resumption works across server restarts.** Since chunks are in storage, a client can reconnect to a different server instance and resume without loss.
+- [ ] Tests cover: disconnect and resume mid-stream, resume after server restart, resume with sequence=0 (replay all), resume after stream completion (returns all chunks immediately).
+
+#### Final
+
+- [ ] `bun typecheck` and `bun test` both exit 0 after Track 7 lands.
 
 ### Final verification
 

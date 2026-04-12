@@ -4,6 +4,7 @@ import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
+import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
 
 /**
  * K2d: Memory per workflow benchmark.
@@ -32,26 +33,6 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
 const BASELINE_TARGET_BYTES_PER_WORKFLOW = 14_336;
 const COVERAGE_TARGET_BYTES_PER_WORKFLOW = 20_480;
-
-function isCoverageInstrumentationEnabled(): boolean {
-  const coverageDirectory = Bun.env['NODE_V8_COVERAGE'];
-  if (typeof coverageDirectory === 'string' && coverageDirectory.length > 0) {
-    return true;
-  }
-
-  const coverageCommandResult = Bun.spawnSync(['ps', '-o', 'command=', '-p', String(process.pid)], {
-    cwd: process.cwd(),
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  if (coverageCommandResult.exitCode !== 0) {
-    return false;
-  }
-
-  const command = new TextDecoder().decode(coverageCommandResult.stdout).trim();
-  return command.includes('bun test --coverage');
-}
-
 describe('Memory per workflow', () => {
   let storage: BunSQLiteStorage;
   let engine: Engine;

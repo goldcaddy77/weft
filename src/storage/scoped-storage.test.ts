@@ -166,6 +166,27 @@ describe('scopedStorage', () => {
     expect(await storage.get('other:item:3')).toEqual(encode('3'));
   });
 
+  it('scopedStorage(storage, prefix) forwards put, delete, batch, count, and dispose for core adapters', async () => {
+    const storage = createCoreStorageAdapter();
+    const scoped = scopedStorage(storage, 'tenant');
+
+    await scoped.put('single', encode('one'));
+    expect(decode((await storage.get('tenant:single'))!)).toBe('one');
+
+    await scoped.delete('single');
+    expect(await storage.get('tenant:single')).toBeNull();
+
+    await scoped.batch([
+      { type: 'put', key: 'batch:a', value: encode('a') },
+      { type: 'delete', key: 'batch:missing' },
+    ]);
+
+    expect(await storage.get('tenant:batch:a')).toEqual(encode('a'));
+    expect(await scoped.count('batch:')).toBe(1);
+
+    expect(() => scoped[Symbol.dispose]()).not.toThrow();
+  });
+
   it('forwards delete, batch key rewriting, and dispose through a full adapter', async () => {
     const adapter = createFullStorageAdapter();
     const scoped = scopedStorage(adapter.storage, 'tenant');

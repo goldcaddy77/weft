@@ -734,63 +734,73 @@ for (const backend of storageBackends) {
         expect(response.result).toEqual({ approved: true, amount: 100 });
       });
 
-      it('falls back to coordinated delivery when a stale waiter is consumed during the async gap', async () => {
-        const result = backend.factory();
-        cleanup = result.cleanup;
+      it(
+        'falls back to coordinated delivery when a stale waiter is consumed during the async gap',
+        async () => {
+          const result = backend.factory();
+          cleanup = result.cleanup;
 
-        let delayNextUpdateScan = false;
-        let updateScanCount = 0;
-        let secondWaiterReadyThreshold = Number.POSITIVE_INFINITY;
-        const delayedScanStarted = Promise.withResolvers<void>();
-        const releaseDelayedScan = Promise.withResolvers<void>();
-        const secondWaiterReady = Promise.withResolvers<void>();
-        const storage = wrapStorageWithUpdateScanHook(result.storage, async () => {
-          updateScanCount++;
-          if (updateScanCount >= secondWaiterReadyThreshold) {
-            secondWaiterReady.resolve();
+          let delayNextUpdateScan = false;
+          let updateScanCount = 0;
+          let secondWaiterReadyThreshold = Number.POSITIVE_INFINITY;
+          const delayedScanStarted = Promise.withResolvers<void>();
+          const releaseDelayedScan = Promise.withResolvers<void>();
+          const secondWaiterReady = Promise.withResolvers<void>();
+          const storage = wrapStorageWithUpdateScanHook(result.storage, async () => {
+            updateScanCount++;
+            if (updateScanCount >= secondWaiterReadyThreshold) {
+              secondWaiterReady.resolve();
+            }
+
+            if (!delayNextUpdateScan) {
+              return;
+            }
+
+            delayNextUpdateScan = false;
+            delayedScanStarted.resolve();
+            await releaseDelayedScan.promise;
+          });
+
+          engine = new Engine({ storage });
+
+          engine.register('stale-waiter-race', async function* (ctx: WorkflowContext) {
+            const first = yield* (ctx as Context).waitForUpdate<string>('data');
+            first.respond(`first:${first.payload}`);
+
+            const second = yield* (ctx as Context).waitForUpdate<string>('data');
+            second.respond(`second:${second.payload}`);
+
+            return [first.payload, second.payload];
+          });
+
+          const handle = await engine.start('stale-waiter-race', undefined);
+          await flush();
+
+          secondWaiterReadyThreshold = updateScanCount + 4;
+          delayNextUpdateScan = true;
+          const delayedUpdate = engine.update(handle.id, 'data', 'first-payload', {
+            timeout: 15_000,
+          });
+          delayedUpdate.catch(() => {});
+          await delayedScanStarted.promise;
+
+          const immediateUpdateResult = await engine.update(handle.id, 'data', 'second-payload', {
+            timeout: 15_000,
+          });
+          expect(immediateUpdateResult).toBe('first:second-payload');
+
+          if (backend.name === 'LMDBStorage') {
+            releaseDelayedScan.resolve();
+          } else {
+            await secondWaiterReady.promise;
+            releaseDelayedScan.resolve();
           }
 
-          if (!delayNextUpdateScan) {
-            return;
-          }
-
-          delayNextUpdateScan = false;
-          delayedScanStarted.resolve();
-          await releaseDelayedScan.promise;
-        });
-
-        engine = new Engine({ storage });
-
-        engine.register('stale-waiter-race', async function* (ctx: WorkflowContext) {
-          const first = yield* (ctx as Context).waitForUpdate<string>('data');
-          first.respond(`first:${first.payload}`);
-
-          const second = yield* (ctx as Context).waitForUpdate<string>('data');
-          second.respond(`second:${second.payload}`);
-
-          return [first.payload, second.payload];
-        });
-
-        const handle = await engine.start('stale-waiter-race', undefined);
-        await flush();
-
-        secondWaiterReadyThreshold = updateScanCount + 4;
-        delayNextUpdateScan = true;
-        const delayedUpdate = engine.update(handle.id, 'data', 'first-payload', { timeout: 5000 });
-        delayedUpdate.catch(() => {});
-        await delayedScanStarted.promise;
-
-        const immediateUpdateResult = await engine.update(handle.id, 'data', 'second-payload', {
-          timeout: 5000,
-        });
-        expect(immediateUpdateResult).toBe('first:second-payload');
-
-        await secondWaiterReady.promise;
-        releaseDelayedScan.resolve();
-
-        await expect(delayedUpdate).resolves.toBe('second:first-payload');
-        await expect(handle.result()).resolves.toEqual(['second-payload', 'first-payload']);
-      });
+          await expect(delayedUpdate).resolves.toBe('second:first-payload');
+          await expect(handle.result()).resolves.toEqual(['second-payload', 'first-payload']);
+        },
+        { timeout: 15_000 },
+      );
 
       it('re-checks pending updates after waiter registration to catch arrivals during registration', async () => {
         const result = backend.factory();

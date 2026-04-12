@@ -121,6 +121,26 @@ describe('withCodec', () => {
     expect(await storage.count('items:')).toBe(0);
   });
 
+  it('withCodec(storage, codec) forwards put, delete, has, and dispose through the codec wrapper', async () => {
+    const underlyingStorage = createCoreStorageAdapter();
+    const storage = withCodec(
+      underlyingStorage,
+      jsonCodec(
+        z.object({
+          value: z.string(),
+        }).parse,
+      ),
+    );
+
+    await storage.put('item', { value: 'present' });
+    expect(await storage.has('item')).toBe(true);
+
+    await storage.delete('item');
+    expect(await storage.has('item')).toBe(false);
+
+    expect(() => storage[Symbol.dispose]()).not.toThrow();
+  });
+
   it('jsonCodec without a parser rejects unsupported values before serialization', () => {
     const codec = jsonCodec();
 
