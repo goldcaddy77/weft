@@ -69,6 +69,20 @@ describe('ServiceWorkerScheduler', () => {
     expect(deadlineKey).toBe('wf-deadline:0000000001005000:timer-1');
   });
 
+  it('writes delayed-start timers under the delayed-start key prefix', async () => {
+    const entry = makeTimer({
+      id: 'delayed-start:workflow-1',
+      workflowId: 'workflow-1',
+      fireAt: 1005000,
+      kind: 'delayed-start',
+    });
+    await scheduler.schedule(entry);
+
+    const keys = await collectStorageKeys();
+    const delayedStartKey = keys.find((key) => key.startsWith('wf-delayed:'));
+    expect(delayedStartKey).toBe('wf-delayed:0000000001005000:workflow-1');
+  });
+
   // -------------------------------------------------------------------------
   // cancel()
   // -------------------------------------------------------------------------
@@ -112,6 +126,24 @@ describe('ServiceWorkerScheduler', () => {
 
     expect(firedEntries).toHaveLength(1);
     expect(firedEntries[0]!.id).toBe('timer-1');
+  });
+
+  it('fires expired delayed-start timers when tick is called', async () => {
+    const entry = makeTimer({
+      id: 'delayed-start:workflow-1',
+      workflowId: 'workflow-1',
+      fireAt: currentTime - 1000,
+      kind: 'delayed-start',
+    });
+    await scheduler.schedule(entry);
+
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe('delayed-start:workflow-1');
+
+    const keys = await collectStorageKeys();
+    expect(keys.some((key) => key.startsWith('wf-delayed:'))).toBe(false);
   });
 
   it('does NOT fire callback for future timers', async () => {

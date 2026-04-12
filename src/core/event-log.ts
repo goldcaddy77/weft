@@ -213,7 +213,7 @@ export class EventLog {
    */
   async *scan(options?: { fromSequence?: number }): AsyncIterable<WorkflowLogEntry> {
     const from = options?.fromSequence ?? 0;
-    const prefix = `ev:${this.#workflowId}:`;
+    const prefix = KEYS.eventPrefix(this.#workflowId);
     const gte = KEYS.event(this.#workflowId, from);
 
     for await (const [, bytes] of this.#storage.scan(prefix, { gte })) {
@@ -258,7 +258,7 @@ export class EventLog {
     let previousHash: string = GENESIS_HASH;
     let isFirst = true;
 
-    const prefix = `ev:${this.#workflowId}:`;
+    const prefix = KEYS.eventPrefix(this.#workflowId);
 
     for await (const [, bytes] of this.#storage.scan(prefix)) {
       const decoded = decode(bytes);

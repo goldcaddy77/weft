@@ -8,9 +8,9 @@
  */
 
 import type { BatchOperation, Storage } from '../storage/interface';
-import { KEYS } from '../storage/interface';
+import { KEYS, resolvePrefixRangeEnd } from '../storage/interface';
 import { decode, encode } from './codec';
-import { parseDuration } from './scheduler';
+import { normalizeStorageTimestamp, parseDuration } from './scheduler';
 import type { Duration, WorkflowId } from './types';
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,10 @@ export function createDeadlineOperations(
   executionTimeout: Duration,
 ): BatchOperation[] {
   const timeoutMilliseconds = parseDuration(executionTimeout);
-  const deadline = startedAt + timeoutMilliseconds;
+  const deadline = normalizeStorageTimestamp(
+    startedAt + timeoutMilliseconds,
+    'Workflow execution deadline',
+  );
   const key = KEYS.deadline(deadline, workflowId);
 
   return [{ type: 'put', key, value: encode({ workflowId, deadline }) }];
@@ -57,10 +60,11 @@ export async function checkExpiredDeadlines(
   storage: Storage,
   now: number,
 ): Promise<ExpiredDeadline[]> {
-  const upperBound = KEYS.deadline(now, '\xff');
   const expired: ExpiredDeadline[] = [];
 
-  for await (const [, value] of storage.scan('wf-deadline:', { lte: upperBound })) {
+  for await (const [, value] of storage.scan('wf-deadline:', {
+    lt: resolvePrefixRangeEnd(KEYS.deadline(now, '')),
+  })) {
     const entry = decode(value) as { workflowId: string; deadline: number };
     expired.push({ workflowId: entry.workflowId, deadline: entry.deadline });
   }

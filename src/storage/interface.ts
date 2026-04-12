@@ -117,44 +117,79 @@ export async function storageDeletePrefix(storage: Storage, prefix: string): Pro
   return operations.length;
 }
 
+/** Encode an untrusted string so it is safe to embed in a colon-delimited storage key. */
+export function encodeStorageKeyComponent(value: string): string {
+  return encodeURIComponent(value);
+}
+
+/** Decode a storage-key component produced by {@link encodeStorageKeyComponent}. */
+export function decodeStorageKeyComponent(value: string): string {
+  return decodeURIComponent(value);
+}
+
+/**
+ * Decode a storage-key component produced by {@link encodeStorageKeyComponent}.
+ * Returns `null` when the component is malformed instead of throwing.
+ */
+export function tryDecodeStorageKeyComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Key layout constants for hierarchical key encoding.
  * All timestamps are zero-padded to 16 digits for correct lexicographic ordering.
  */
 export const KEYS = {
-  workflow: (id: string) => `wf:${id}`,
-  checkpoint: (id: string) => `wf:${id}:ckpt`,
+  workflow: (id: string) => `wf:${encodeStorageKeyComponent(id)}`,
+  checkpoint: (id: string) => `wf:${encodeStorageKeyComponent(id)}:ckpt`,
   checkpointHistory: (id: string, step: number) =>
-    `wf:${id}:ckpt:${String(step).padStart(10, '0')}`,
+    `wf:${encodeStorageKeyComponent(id)}:ckpt:${String(step).padStart(10, '0')}`,
   operation: (queue: string, scheduledAt: number, id: string) =>
     `op:${queue}:${String(scheduledAt).padStart(16, '0')}:${id}`,
   operationInflight: (id: string) => `op:inflight:${id}`,
   operationQueued: (id: string) => `op:queued:${id}`,
   operationResolved: (id: string) => `op:resolved:${id}`,
+  eventPrefix: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:`,
   event: (workflowId: string, sequence: number) =>
-    `ev:${workflowId}:${String(sequence).padStart(10, '0')}`,
-  eventHead: (workflowId: string) => `ev:${workflowId}:head`,
-  signal: (workflowId: string, name: string, id: string) => `sig:${workflowId}:${name}:${id}`,
+    `ev:${encodeStorageKeyComponent(workflowId)}:${String(sequence).padStart(10, '0')}`,
+  eventHead: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:head`,
+  signal: (workflowId: string, name: string, id: string) =>
+    `sig:${encodeStorageKeyComponent(workflowId)}:${name}:${id}`,
   deadline: (deadline: number, workflowId: string) =>
-    `wf-deadline:${String(deadline).padStart(16, '0')}:${workflowId}`,
-  attribute: (workflowId: string) => `attr:${workflowId}`,
+    `wf-deadline:${String(deadline).padStart(16, '0')}:${encodeStorageKeyComponent(workflowId)}`,
+  delayedStart: (startAt: number, workflowId: string) =>
+    `wf-delayed:${String(startAt).padStart(16, '0')}:${encodeStorageKeyComponent(workflowId)}`,
+  attribute: (workflowId: string) => `attr:${encodeStorageKeyComponent(workflowId)}`,
   attributeIndex: (attributeName: string, encodedValue: string, workflowId: string) =>
-    `idx:${attributeName}:${encodedValue}:${workflowId}`,
-  update: (workflowId: string, updateId: string) => `upd:${workflowId}:${updateId}`,
+    `idx:${attributeName}:${encodedValue}:${encodeStorageKeyComponent(workflowId)}`,
+  updatePrefix: (workflowId: string) => `upd:${encodeStorageKeyComponent(workflowId)}:`,
+  update: (workflowId: string, updateId: string) =>
+    `upd:${encodeStorageKeyComponent(workflowId)}:${updateId}`,
   updateResponse: (updateId: string) => `upr:${updateId}`,
-  updateIdempotency: (workflowId: string, key: string) => `upk:${workflowId}:${key}`,
+  updateIdempotency: (workflowId: string, key: string) =>
+    `upk:${encodeStorageKeyComponent(workflowId)}:${key}`,
   budget: (namespace: string, period: string, date: string) =>
     `budget:${namespace}:${period}:${date}`,
-  review: (workflowId: string, reviewId: string) => `review:${workflowId}:${reviewId}`,
-  offload: (workflowId: string, key: string) => `offload:${workflowId}:${key}`,
-  archive: (workflowId: string, key: string) => `archive:${workflowId}:${key}`,
-  sharedState: (workflowId: string, stateKey: string) => `shared:${workflowId}:${stateKey}`,
+  review: (workflowId: string, reviewId: string) =>
+    `review:${encodeStorageKeyComponent(workflowId)}:${reviewId}`,
+  workflowHeaders: (workflowId: string) => `wf-headers:${encodeStorageKeyComponent(workflowId)}`,
+  offload: (workflowId: string, key: string) =>
+    `offload:${encodeStorageKeyComponent(workflowId)}:${key}`,
+  archive: (workflowId: string, key: string) =>
+    `archive:${encodeStorageKeyComponent(workflowId)}:${key}`,
+  sharedState: (workflowId: string, stateKey: string) =>
+    `shared:${encodeStorageKeyComponent(workflowId)}:${stateKey}`,
   sharedStateVersion: (workflowId: string, stateKey: string) =>
-    `shared:${workflowId}:${stateKey}:version`,
+    `shared:${encodeStorageKeyComponent(workflowId)}:${stateKey}:version`,
   streamChunk: (workflowId: string, key: string, chunkIndex: number) =>
-    `blob:${workflowId}:${key}:chunk:${String(chunkIndex).padStart(10, '0')}`,
-  streamMetadata: (workflowId: string, key: string) => `blob:${workflowId}:${key}:meta`,
+    `blob:${encodeStorageKeyComponent(workflowId)}:${key}:chunk:${String(chunkIndex).padStart(10, '0')}`,
+  streamMetadata: (workflowId: string, key: string) =>
+    `blob:${encodeStorageKeyComponent(workflowId)}:${key}:meta`,
   budgetCharged: (operationId: string) => `budget-charged:${operationId}`,
   toolEffect: (workflowId: string, agentId: string, semanticHash: string) =>
-    `tool-effect:${workflowId}:${agentId}:${semanticHash}`,
+    `tool-effect:${encodeStorageKeyComponent(workflowId)}:${agentId}:${semanticHash}`,
 } as const;

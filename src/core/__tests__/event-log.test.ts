@@ -4,6 +4,7 @@
 
 import { describe, expect, it, mock } from 'bun:test';
 
+import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import type { WorkflowLogEntry } from '../event-log.ts';
 import { EMPTY_EVENT_HEAD, EventLog } from '../event-log.ts';
@@ -172,6 +173,20 @@ describe('EventLog.scan()', () => {
     const entries = await collectScan(log, { fromSequence: 99 });
     expect(entries).toHaveLength(0);
   });
+
+  it('reads entries for workflow ids that require key encoding', async () => {
+    const storage = makeStorage();
+    const workflowId = 'wf:events/with spaces';
+    const log = makeLog(storage, workflowId);
+
+    await log.append({ type: 'encoded', payload: { ok: true } });
+
+    const entries = await collectScan(log);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.workflowId).toBe(workflowId);
+    expect(await storage.get(KEYS.event(workflowId, 0))).not.toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -262,6 +277,18 @@ describe('EventLog.verify()', () => {
     expect(result.valid).toBe(true);
   });
 
+  it('verifies logs for workflow ids that require key encoding', async () => {
+    const storage = makeStorage();
+    const log = makeLog(storage, 'wf:verify/with spaces');
+
+    await log.append({ type: 'encoded', payload: 1 });
+    await log.append({ type: 'encoded', payload: 2 });
+
+    const result = await log.verify();
+
+    expect(result).toEqual({ valid: true });
+  });
+
   it('detects tampering and returns { valid: false, firstInvalidSequence: N }', async () => {
     const storage = makeStorage();
     const log = makeLog(storage);
@@ -272,7 +299,6 @@ describe('EventLog.verify()', () => {
 
     // Tamper: overwrite entry at sequence 1 with different content.
     const { encode } = await import('../codec.ts');
-    const { KEYS } = await import('../../storage/interface.ts');
 
     const tamperedEntry = {
       type: 'tampered',
@@ -300,7 +326,6 @@ describe('EventLog.appendToBatch()', () => {
   it('synchronously pushes entry and head writes onto the batch, returning the new head', async () => {
     const storage = makeStorage();
     const log = makeLog(storage);
-    const { KEYS } = await import('../../storage/interface.ts');
 
     const operations: import('../../storage/interface.ts').BatchOperation[] = [];
     const newHead = log.appendToBatch(
@@ -377,7 +402,6 @@ describe('EventLog atomicity', () => {
     // Simulate what the engine does: synchronously build a batch that includes
     // both the checkpoint write and the event log write, then flush once.
     const { encode: encodeValue } = await import('../codec.ts');
-    const { KEYS } = await import('../../storage/interface.ts');
 
     const operations: import('../../storage/interface.ts').BatchOperation[] = [
       {

@@ -41,6 +41,17 @@ describe('createDeadlineOperations', () => {
     // Lexicographic comparison should match numeric comparison
     expect(earlyKey < lateKey).toBe(true);
   });
+
+  it('rounds fractional deadlines up before encoding the key and payload', () => {
+    const operations = createDeadlineOperations('wf-fractional', 1_000, '0.1ms');
+    const putOperation = operations[0] as { type: 'put'; key: string; value: Uint8Array };
+
+    expect(putOperation.key).toBe('wf-deadline:0000000000001001:wf-fractional');
+
+    const decoded = decode(putOperation.value) as { workflowId: string; deadline: number };
+    expect(decoded.workflowId).toBe('wf-fractional');
+    expect(decoded.deadline).toBe(1_001);
+  });
 });
 
 // ---------------------------------------------------------------------------

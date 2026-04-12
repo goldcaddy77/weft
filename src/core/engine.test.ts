@@ -514,6 +514,30 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('throws when options.id exceeds the maximum length', async () => {
+    const engine = new Engine();
+    engine.register('long-id', async function* () {
+      return 'ok';
+    });
+
+    await expect(engine.start('long-id', null, { id: 'a'.repeat(129) })).rejects.toThrow(
+      'options.id must be at most 128 characters',
+    );
+    engine[Symbol.dispose]();
+  });
+
+  it('allows options.id to contain storage key separators', async () => {
+    const engine = new Engine();
+    engine.register('separator-id', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('separator-id', null, { id: 'wf:ckpt/with spaces' });
+    await expect(handle.result()).resolves.toBe('ok');
+    expect(await engine.get(handle.id)).toMatchObject({ id: 'wf:ckpt/with spaces' });
+    engine[Symbol.dispose]();
+  });
+
   it('does not hit storage for dedup when starting without a caller-provided id', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
@@ -1025,6 +1049,32 @@ describe('Engine', () => {
     expect(getSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
 
     getSpy.mockRestore();
+    engine[Symbol.dispose]();
+  });
+
+  it('list with attribute filter skips malformed encoded workflow identifiers in index keys', async () => {
+    const engine = new Engine();
+    engine.register('attr-listable', {
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('block');
+        return 'ok';
+      },
+      version: '1',
+      searchAttributes: { customerId: { type: 'string' } },
+    });
+
+    await engine.start('attr-listable', null, {
+      id: 'alpha-valid',
+      searchAttributes: { customerId: 'alpha' },
+    });
+    await engine.storage.put('idx:customerId:s:alpha:bad%ZZ', new Uint8Array([1]));
+
+    const matched = await engine.list({
+      attributes: [{ key: 'customerId', value: 'alpha' }],
+    });
+
+    expect(matched.items.map((item) => item.id)).toEqual(['alpha-valid']);
+
     engine[Symbol.dispose]();
   });
 
