@@ -393,6 +393,52 @@ describe('HttpClient request surface', () => {
     expect(fetchCalls[24]?.url).toContain('/streams/stream%2Fkey');
   });
 
+  it('serializes startAt in the workflow start payload', async () => {
+    const fetchCalls: Array<{ url: string; init: RequestInit | undefined }> = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: requestInputToUrl(input), init });
+      return jsonResponse({ id: 'wf-start-at' });
+    }) as unknown as typeof fetch;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+    await httpClient.start('echo', 'hello', { startAt: 12_345 });
+
+    const startBody = fetchCalls[0]?.init?.body;
+    expect(typeof startBody).toBe('string');
+    if (typeof startBody !== 'string') {
+      throw new Error('Expected start request body to be a string');
+    }
+    expect(JSON.parse(startBody)).toEqual({
+      type: 'echo',
+      input: 'hello',
+      startAt: 12_345,
+    });
+  });
+
+  it('serializes startAfter in the workflow start payload', async () => {
+    const fetchCalls: Array<{ url: string; init: RequestInit | undefined }> = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: requestInputToUrl(input), init });
+      return jsonResponse({ id: 'wf-start-after' });
+    }) as unknown as typeof fetch;
+
+    const httpClient = new HttpClient({ baseUrl: 'http://example.test' });
+    await httpClient.start('echo', 'hello', { startAfter: '5m' });
+
+    const startBody = fetchCalls[0]?.init?.body;
+    expect(typeof startBody).toBe('string');
+    if (typeof startBody !== 'string') {
+      throw new Error('Expected start request body to be a string');
+    }
+    expect(JSON.parse(startBody)).toEqual({
+      type: 'echo',
+      input: 'hello',
+      startAfter: '5m',
+    });
+  });
+
   it('returns null or empty collections for missing GET resources', async () => {
     const responses = [
       new Response(JSON.stringify({ error: 'missing' }), { status: 404 }),

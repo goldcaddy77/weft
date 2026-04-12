@@ -12,14 +12,18 @@ import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import { createSSEStream } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
+import { parseDuration } from '../core/scheduler.ts';
 import type {
   AttributeFilter,
+  Duration,
   ListFilter,
   ReviewDecision,
   SearchAttributeValue,
+  StartOptions,
   WorkflowStatus,
 } from '../core/types.ts';
 import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
+import { assertValidWorkflowId } from '../core/workflow-identifiers.ts';
 import {
   createMetricsCollectorExporter,
   type MetricsCollector,
@@ -115,6 +119,64 @@ export function getRequiredRouteParameter(
   return value;
 }
 
+function parseStartWorkflowDurationField(value: unknown, fieldName: string): Duration {
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    throw new Error(
+      `Field "${fieldName}" must be a finite, non-negative number or valid duration string`,
+    );
+  }
+
+  try {
+    parseDuration(value);
+  } catch {
+    throw new Error(
+      `Field "${fieldName}" must be a finite, non-negative number or valid duration string`,
+    );
+  }
+
+  return value;
+}
+
+function validateStartWorkflowOptions(body: Record<string, unknown>): StartOptions {
+  const options: StartOptions = {};
+
+  const id = body['id'];
+  if (id !== undefined) {
+    if (typeof id !== 'string') {
+      throw new Error('Field "id" must be a string');
+    }
+    assertValidWorkflowId(id, 'Field "id"');
+    options.id = id;
+  }
+
+  const executionTimeout = body['executionTimeout'];
+  if (executionTimeout !== undefined) {
+    options.executionTimeout = parseStartWorkflowDurationField(
+      executionTimeout,
+      'executionTimeout',
+    );
+  }
+
+  const startAt = body['startAt'];
+  if (startAt !== undefined) {
+    if (typeof startAt !== 'number' || !Number.isFinite(startAt) || startAt < 0) {
+      throw new Error('Field "startAt" must be a finite, non-negative timestamp');
+    }
+    options.startAt = startAt;
+  }
+
+  const startAfter = body['startAfter'];
+  if (startAfter !== undefined) {
+    options.startAfter = parseStartWorkflowDurationField(startAfter, 'startAfter');
+  }
+
+  if (options.startAt !== undefined && options.startAfter !== undefined) {
+    throw new Error('Provide only one of startAt or startAfter');
+  }
+
+  return options;
+}
+
 // ---------------------------------------------------------------------------
 // Route handlers — each delegates to an Engine method
 // ---------------------------------------------------------------------------
@@ -131,21 +193,29 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
     return errorResponse('Request body must be a JSON object', 400);
   }
 
-  const { type, input, id, executionTimeout } = body as Record<string, unknown>;
+  const { type, input, id, executionTimeout, startAt, startAfter } = body as Record<
+    string,
+    unknown
+  >;
 
   if (typeof type !== 'string' || type.length === 0) {
     return errorResponse('Missing required field: type', 400);
   }
 
+  let options: StartOptions;
   try {
-    const options: Record<string, unknown> = {};
-    if (id !== undefined) {
-      options['id'] = id;
-    }
-    if (executionTimeout !== undefined) {
-      options['executionTimeout'] = executionTimeout;
-    }
+    options = validateStartWorkflowOptions({
+      id,
+      executionTimeout,
+      startAt,
+      startAfter,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
 
+  try {
     const handle = await engine.start(type, input, options);
     return jsonResponse({ id: handle.id }, 201);
   } catch (error) {
@@ -156,6 +226,26 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
     }
     if (message.includes('already exists')) {
       return errorResponse(message, 409);
+    }
+    if (
+      message.includes('Provide only one of startAt or startAfter') ||
+      message.includes('options.startAt must be a finite, non-negative timestamp') ||
+      message.includes(
+        'options.startAfter must be a finite, non-negative number or a valid duration string',
+      ) ||
+      message.includes('options.startAfter must resolve to a finite, non-negative start time') ||
+      message.includes(
+        'options.executionTimeout must be a finite, non-negative number or a valid duration string',
+      ) ||
+      message.includes(
+        'options.executionTimeout must resolve to a finite, non-negative deadline',
+      ) ||
+      message.includes('options.id must not be an empty string') ||
+      message.includes(
+        'options.id must contain only letters, numbers, dots, underscores, and hyphens',
+      )
+    ) {
+      return errorResponse(message, 400);
     }
 
     return errorResponse(message, 500);

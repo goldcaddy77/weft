@@ -61,6 +61,18 @@ describe('parseDuration', () => {
     expect(parseDuration(0)).toBe(0);
   });
 
+  it('throws for a negative numeric duration', () => {
+    expect(() => parseDuration(-1)).toThrow(
+      'Duration must resolve to a finite, non-negative number of milliseconds',
+    );
+  });
+
+  it('throws for a non-finite numeric duration', () => {
+    expect(() => parseDuration(Number.POSITIVE_INFINITY)).toThrow(
+      'Duration must resolve to a finite, non-negative number of milliseconds',
+    );
+  });
+
   it('throws for an unparseable string', () => {
     expect(() => parseDuration('invalid')).toThrow();
   });
