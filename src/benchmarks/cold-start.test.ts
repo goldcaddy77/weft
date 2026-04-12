@@ -22,7 +22,7 @@ import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 // ---------------------------------------------------------------------------
 
 const LIBRARY_TARGET_MS = process.env['CI'] ? 200 : 100;
-const BINARY_WARM_CACHE_TARGET_MS = process.env['CI'] ? 150 : 150;
+const BINARY_WARM_CACHE_TARGET_MS = 150;
 
 describe('Library cold start', () => {
   it(`new Engine() to first workflow start completes in <${LIBRARY_TARGET_MS}ms`, async () => {
