@@ -125,6 +125,29 @@ describe('MetricsCollector', () => {
         expect(metric!.p99).toBe(42);
       }
     });
+
+    it('keeps only the newest histogram samples once the circular buffer is full', () => {
+      const collector = new MetricsCollector();
+
+      for (let value = 1; value <= 10_005; value++) {
+        collector.record('weft.activity.duration', value);
+      }
+
+      const snapshot = collector.snapshot();
+      const metric = snapshot['weft.activity.duration'];
+
+      expect(metric).toBeDefined();
+      expect(metric!.type).toBe('histogram');
+
+      if (!metric || metric.type !== 'histogram') {
+        throw new Error('expected histogram metric');
+      }
+
+      expect(metric.count).toBe(10_000);
+      expect(metric.min).toBe(6);
+      expect(metric.max).toBe(10_005);
+      expect(metric.sum).toBe(50_055_000);
+    });
   });
 
   describe('gauges', () => {

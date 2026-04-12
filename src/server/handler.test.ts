@@ -2470,4 +2470,18 @@ describe('handleRequest', () => {
     // Route pattern only matches digits, so this is a 404 (not found)
     expect(response.status).toBe(404);
   });
+
+  it('GET /v1/workflows/:id/checkpoints/:step returns 400 for a numeric step outside the safe integer range', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/test-wf/checkpoints/9007199254740992'),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Invalid step: 9007199254740992',
+    });
+  });
 });

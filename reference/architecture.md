@@ -5525,7 +5525,7 @@ A synthesis of 30 research papers on durable execution, checkpoint-restore, tran
 
 The goal is not a wishlist. The goal is to point at the specific places where Weft's architecture is ahead of the academic literature, the specific places where it is vulnerable or underspecified, and the specific places where a bounded amount of engineering work would convert a research insight into a durable, verifiable Weft primitive.
 
----
+If I were sequencing this, I would do it in seven tracks that can partially parallelize once Track 1 lands.
 
 ## 1. What Weft already gets right
 
