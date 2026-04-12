@@ -205,7 +205,8 @@ export class BunSQLiteStorage implements Storage {
   }
 
   scoped(prefix: string): Storage {
-    return scopedStorage(this, prefix);
+    const scoped = scopedStorage(this, prefix);
+    return scoped;
   }
 
   async batch(operations: BatchOperation[]): Promise<void> {

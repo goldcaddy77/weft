@@ -258,7 +258,11 @@ class SpeculativeExecutionState implements VerificationRecorder {
 
   async rollback(): Promise<void> {
     for (let index = this.#compensations.length - 1; index >= 0; index--) {
-      await this.#compensations[index]!().catch(() => {});
+      try {
+        await this.#compensations[index]!();
+      } catch {
+        // Best-effort rollback continues through failed compensations.
+      }
     }
     await Promise.all(this.#verifications);
   }
@@ -3890,9 +3894,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // AbortError after the controller fires in the finally block, and
       // without a handler those would surface as unhandled promise
       // rejections.
-      for (const promise of subOperations) {
-        promise.catch(() => {});
-      }
+      void Promise.allSettled(subOperations);
       try {
         return await Promise.race(subOperations);
       } finally {
@@ -4570,11 +4572,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return callMemoFunction(operation.fn);
       case 'parallel':
         signal?.throwIfAborted();
-        return Promise.all(
-          operation.operations.map((subOperation) =>
+        const subOperationPromises: Array<Promise<unknown>> = [];
+        for (const subOperation of operation.operations) {
+          subOperationPromises.push(
             this.#executeSubOperation(workflowId, subOperation, signal, speculativeState),
-          ),
-        );
+          );
+        }
+        return Promise.all(subOperationPromises);
       case 'race': {
         signal?.throwIfAborted();
         const controller = new AbortController();
@@ -4582,12 +4586,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           controller.abort(signal?.reason);
         };
         signal?.addEventListener('abort', abortNestedRace, { once: true });
-        const subOperations = operation.operations.map((subOperation) =>
-          this.#executeSubOperation(workflowId, subOperation, controller.signal, speculativeState),
-        );
-        for (const promise of subOperations) {
-          promise.catch(() => {});
+        const subOperations: Array<Promise<unknown>> = [];
+        for (const subOperation of operation.operations) {
+          subOperations.push(
+            this.#executeSubOperation(
+              workflowId,
+              subOperation,
+              controller.signal,
+              speculativeState,
+            ),
+          );
         }
+        void Promise.allSettled(subOperations);
         try {
           return await Promise.race(subOperations);
         } finally {

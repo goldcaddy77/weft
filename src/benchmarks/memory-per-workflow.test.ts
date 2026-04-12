@@ -33,7 +33,6 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
 
 const BASELINE_TARGET_BYTES_PER_WORKFLOW = 14_336;
 const COVERAGE_TARGET_BYTES_PER_WORKFLOW = 20_480;
-
 describe('Memory per workflow', () => {
   let storage: BunSQLiteStorage;
   let engine: Engine;

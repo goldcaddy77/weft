@@ -160,7 +160,6 @@ export class IndexedDBStorage implements Storage {
       };
 
       transaction.oncomplete = () => resolve(deletedCount);
-      /* c8 ignore next -- transaction failure requires injected IndexedDB write faults */
       transaction.onerror = () => reject(transaction.error);
     });
   }
@@ -297,7 +296,8 @@ export class IndexedDBStorage implements Storage {
   }
 
   scoped(prefix: string): Storage {
-    return scopedStorage(this, prefix);
+    const scoped = scopedStorage(this, prefix);
+    return scoped;
   }
 
   [Symbol.dispose](): void {

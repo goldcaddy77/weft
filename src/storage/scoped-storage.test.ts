@@ -33,6 +33,31 @@ function createCoreStorageAdapter(): Storage {
   };
 }
 
+function createFullStorageAdapter() {
+  const storage = new MemoryStorage();
+  let disposed = false;
+
+  return {
+    storage: {
+      get: storage.get.bind(storage),
+      put: storage.put.bind(storage),
+      delete: storage.delete.bind(storage),
+      scan: storage.scan.bind(storage),
+      batch: storage.batch.bind(storage),
+      has: storage.has?.bind(storage),
+      deletePrefix: storage.deletePrefix?.bind(storage),
+      keys: storage.keys?.bind(storage),
+      count: storage.count?.bind(storage),
+      [Symbol.dispose]: () => {
+        disposed = true;
+        storage[Symbol.dispose]();
+      },
+    } satisfies Storage,
+    inner: storage,
+    wasDisposed: () => disposed,
+  };
+}
+
 async function writeEntries(storage: Storage, operations: BatchOperation[]): Promise<void> {
   await storage.batch(operations);
 }
@@ -160,5 +185,24 @@ describe('scopedStorage', () => {
     expect(await scoped.count('batch:')).toBe(1);
 
     expect(() => scoped[Symbol.dispose]()).not.toThrow();
+  });
+
+  it('forwards delete, batch key rewriting, and dispose through a full adapter', async () => {
+    const adapter = createFullStorageAdapter();
+    const scoped = scopedStorage(adapter.storage, 'tenant');
+
+    await scoped.batch([
+      { type: 'put', key: 'item:1', value: encode('1') },
+      { type: 'put', key: 'item:2', value: encode('2') },
+    ]);
+
+    expect(await adapter.inner.get('tenant:item:1')).toEqual(encode('1'));
+    expect(await adapter.inner.get('tenant:item:2')).toEqual(encode('2'));
+
+    await scoped.delete('item:1');
+    expect(await adapter.inner.get('tenant:item:1')).toBeNull();
+
+    scoped[Symbol.dispose]();
+    expect(adapter.wasDisposed()).toBe(true);
   });
 });

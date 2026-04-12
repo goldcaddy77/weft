@@ -106,11 +106,14 @@ for (const backend of storageBackends) {
         }
 
         await scoped.put('profile', encode('alice'));
+        await scoped.put('scoped:item', encode('value'));
         await storage.put('outside', encode('global'));
 
-        expect(await collect(scoped.keys(''))).toEqual(['profile']);
+        expect(await collect(scoped.keys(''))).toEqual(['profile', 'scoped:item']);
         expect(await scoped.get('profile')).toEqual(encode('alice'));
+        expect(await scoped.get('scoped:item')).toEqual(encode('value'));
         expect(await storage.get('tenant:profile')).toEqual(encode('alice'));
+        expect(await storage.get('tenant:scoped:item')).toEqual(encode('value'));
       } finally {
         cleanup();
       }

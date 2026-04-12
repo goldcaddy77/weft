@@ -11,15 +11,17 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
  * Measures how many workflows the engine can start per second using an
  * in-memory SQLite backend.
  *
- * Architecture target: 50K/sec. Measured 2026-04-11: ~19K/sec on Apple
- * Silicon (up from ~13K/sec baseline). Optimizations applied: prepared-
- * statement caching in `BunSQLiteStorage`, auto-id dedup-skip in
- * `Engine.start`, nesting-depth-map allocation skip, deadline timer
- * operations folded into the start batch (eliminating a separate storage
- * transaction), and checkpoint history pruning made non-blocking. The
- * remaining gap is dominated by the per-start SQLite WAL fsync and the
- * inline strategy's generator drive on the main thread; closing it
- * further requires pipelining or a binary checkpoint format. Tracked in
+ * Architecture target: 50K/sec. Measured 2026-04-12: ~17.4-18.6K/sec in
+ * direct runs on this machine and ~16.2-17.8K/sec in isolated
+ * `bun test --coverage` runs, still far above the pre-optimization ~13K/sec
+ * baseline. Optimizations applied: prepared-statement caching in
+ * `BunSQLiteStorage`, auto-id dedup-skip in `Engine.start`,
+ * nesting-depth-map allocation skip, deadline timer operations folded
+ * into the start batch (eliminating a separate storage transaction), and
+ * checkpoint history pruning made non-blocking. The remaining gap is
+ * dominated by the per-start SQLite WAL fsync and the inline strategy's
+ * generator drive on the main thread; closing it further requires
+ * pipelining or a binary checkpoint format. Tracked in
  * `reference/IMPORTANT.md`.
  *
  * Previous threshold: 5_000 (10_000 on CI), relaxed because ~13K/sec was
@@ -45,7 +47,6 @@ function percentile(sorted: number[], fraction: number): number {
 async function measureStartsPerSecond(totalStarts: number): Promise<number> {
   const storage = new BunSQLiteStorage(':memory:');
   const engine = new Engine({ storage });
-
   try {
     engine.register('noop', async function* (_ctx: WorkflowContext) {
       return 'done';

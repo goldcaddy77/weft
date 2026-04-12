@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'bun:test';
 
+import { setPortableRuntimeTestOverridesForTesting } from '../runtime/portable.ts';
 import {
   compressPayload,
   createBunCompressor,
   decompressPayload,
   resolveCompressionOptions,
 } from './compression';
+
+async function withRuntimeOverrides(
+  overrides: Parameters<typeof setPortableRuntimeTestOverridesForTesting>[0],
+  callback: () => void | Promise<void>,
+): Promise<void> {
+  setPortableRuntimeTestOverridesForTesting(overrides);
+
+  try {
+    await callback();
+  } finally {
+    setPortableRuntimeTestOverridesForTesting(undefined);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // resolveCompressionOptions
@@ -32,6 +46,22 @@ describe('resolveCompressionOptions', () => {
     const resolved = resolveCompressionOptions({ algorithm: 'brotli' });
     expect(resolved.algorithm).toBe('brotli');
     expect(resolved.threshold).toBe(4096);
+  });
+
+  it('throws a clear error when brotli is requested without Bun or Node built-ins', async () => {
+    const processStub = {
+      versions: { node: '22.5.0' },
+      getBuiltinModule() {
+        return undefined;
+      },
+    } as unknown as typeof globalThis.process;
+
+    await withRuntimeOverrides({ bun: undefined, process: processStub }, async () => {
+      const compressor = createBunCompressor('brotli');
+      expect(() => compressor.compress(new Uint8Array([1, 2, 3]))).toThrow(
+        'Brotli compression requires Bun or Node 22.5+ with process.getBuiltinModule support. Use gzip compression for browser/edge runtimes.',
+      );
+    });
   });
 });
 

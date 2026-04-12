@@ -213,7 +213,6 @@ export function createOtelMetrics(meterOrName?: OtelMeter | string): OtelMetrics
 
 function sortNumbersAscending(values: number[]): number[] {
   const sorted = [...values];
-  /* c8 ignore next -- the comparator is exercised by histogram tests, but Bun does not attribute it as a separate function hit */
   sorted.sort((left, right) => left - right);
   return sorted;
 }

@@ -2484,6 +2484,41 @@ describe('executeAgentLoop', () => {
     });
   });
 
+  it('records tool verifications through verificationRecorder when provided', async () => {
+    const provider = createMockProvider([
+      createToolCallResponse([{ id: 'call-1', name: 'lookup', input: { key: 'a' } }]),
+      createChatResponse('Done'),
+    ]);
+
+    const recorded: Promise<void>[] = [];
+    const lookupTool: AgentTool = {
+      definition: {
+        name: 'lookup',
+        description: 'Lookup a key',
+        inputSchema: { type: 'object' },
+      },
+      execute: async () => ({ value: 'safe-result' }),
+      verify: async () => true,
+    };
+
+    await executeAgentLoop(
+      {
+        model: 'test-model',
+        provider,
+        tools: [lookupTool],
+        verificationRecorder: {
+          recordVerification(verification: Promise<void>) {
+            recorded.push(verification);
+          },
+        },
+      },
+      'Lookup a key',
+    );
+
+    expect(recorded).toHaveLength(1);
+    await expect(Promise.all(recorded)).resolves.toEqual([undefined]);
+  });
+
   it('throws when the effect log reports an in-flight record for the same tool', async () => {
     const effectLog = createFakeToolEffectLog({
       lookup: async () => ({

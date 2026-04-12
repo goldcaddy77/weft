@@ -32,6 +32,30 @@ function createCoreStorageAdapter(): Storage {
   };
 }
 
+function createFullStorageAdapter() {
+  const storage = new MemoryStorage();
+  let disposed = false;
+
+  return {
+    storage: {
+      get: storage.get.bind(storage),
+      put: storage.put.bind(storage),
+      delete: storage.delete.bind(storage),
+      scan: storage.scan.bind(storage),
+      batch: storage.batch.bind(storage),
+      has: storage.has?.bind(storage),
+      deletePrefix: storage.deletePrefix?.bind(storage),
+      keys: storage.keys?.bind(storage),
+      count: storage.count?.bind(storage),
+      [Symbol.dispose]: () => {
+        disposed = true;
+        storage[Symbol.dispose]();
+      },
+    } satisfies Storage,
+    wasDisposed: () => disposed,
+  };
+}
+
 describe('withCodec', () => {
   it('withCodec(storage, jsonCodec) round-trips structured values without TextEncoder boilerplate', async () => {
     const storage = withCodec(
@@ -153,5 +177,26 @@ describe('withCodec', () => {
     );
 
     await expect(typedStorage.get('profile')).rejects.toThrow();
+  });
+
+  it('forwards put, delete, has, and dispose through the codec wrapper', async () => {
+    const adapter = createFullStorageAdapter();
+    const storage = withCodec(
+      adapter.storage,
+      jsonCodec(
+        z.object({
+          value: z.string(),
+        }).parse,
+      ),
+    );
+
+    await storage.put('item', { value: 'a' });
+    expect(await storage.has?.('item')).toBe(true);
+
+    await storage.delete('item');
+    expect(await storage.has?.('item')).toBe(false);
+
+    storage[Symbol.dispose]();
+    expect(adapter.wasDisposed()).toBe(true);
   });
 });

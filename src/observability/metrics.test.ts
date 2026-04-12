@@ -129,12 +129,12 @@ describe('MetricsCollector', () => {
     it('keeps only the newest histogram samples once the circular buffer is full', () => {
       const collector = new MetricsCollector();
 
-      for (let value = 1; value <= 10_005; value++) {
-        collector.record('weft.activity.duration', value);
+      for (let value = 1; value <= 10_005; value += 1) {
+        collector.record('weft.workflow.duration', value);
       }
 
       const snapshot = collector.snapshot();
-      const metric = snapshot['weft.activity.duration'];
+      const metric = snapshot['weft.workflow.duration'];
 
       expect(metric).toBeDefined();
       expect(metric!.type).toBe('histogram');
