@@ -1529,6 +1529,18 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     return ws;
   }
 
+  async function connectWatch(wsServer: WeftServer, workflowId: string): Promise<WebSocket> {
+    const wsUrl = wsServer.url.replace('http://', 'ws://');
+    const ws = new WebSocket(`${wsUrl}/v1/workflows/${encodeURIComponent(workflowId)}/watch`);
+
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('WebSocket connection failed')));
+    });
+
+    return ws;
+  }
+
   /** Collect messages received on a WebSocket. */
   function collectMessages(ws: WebSocket): Array<{ type: string; [key: string]: unknown }> {
     const messages: Array<{ type: string; [key: string]: unknown }> = [];
@@ -1576,6 +1588,51 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(tokenMessages.length).toBe(2);
     expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'Hello', model: 'gpt-4' });
     expect(tokenMessages[1]?.['data']).toMatchObject({ token: ' world', model: 'gpt-4' });
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('receives live token events through the stream connection for workflow ids that require encoding', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const workflowId = 'wf:stream/with spaces';
+    const ws = await connectStream(server, workflowId);
+    const messages = collectMessages(ws);
+    await Bun.sleep(50);
+
+    engine.dispatchEvent(new TokenEvent(workflowId, 'encoded-live', 'gpt-4'));
+    await Bun.sleep(200);
+
+    const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
+    expect(tokenMessages).toHaveLength(1);
+    expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'encoded-live', model: 'gpt-4' });
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('receives live watch events for workflow ids that require encoding', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const workflowId = 'wf:watch/with spaces';
+    const ws = await connectWatch(server, workflowId);
+    const messages = collectMessages(ws);
+    await Bun.sleep(50);
+
+    engine.dispatchEvent(new WorkflowCompletedEvent(workflowId, 'encoded-watch', 1));
+    await Bun.sleep(200);
+
+    const completionMessages = messages.filter(
+      (message) => message.type === WorkflowCompletedEvent.type,
+    );
+    expect(completionMessages).toHaveLength(1);
+    expect(completionMessages[0]?.['data']).toMatchObject({
+      workflowId,
+      result: 'encoded-watch',
+    });
 
     ws.close();
     await Bun.sleep(50);
@@ -1652,6 +1709,34 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     ws.close();
     await Bun.sleep(50);
+  });
+
+  it('rejects malformed encoded workflow stream paths without crashing the server', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const wsUrl = server.url.replace('http://', 'ws://');
+    const failed = await new Promise<boolean>((resolve, reject) => {
+      const ws = new WebSocket(`${wsUrl}/v1/workflows/%E0%A4%A/stream`);
+      const timeout = setTimeout(() => reject(new Error('Expected WebSocket failure')), 1_000);
+      const finish = (): void => {
+        clearTimeout(timeout);
+        resolve(true);
+      };
+
+      ws.addEventListener('open', () => {
+        clearTimeout(timeout);
+        ws.close();
+        reject(new Error('Malformed workflow stream path unexpectedly connected'));
+      });
+      ws.addEventListener('error', finish, { once: true });
+      ws.addEventListener('close', finish, { once: true });
+    });
+
+    expect(failed).toBe(true);
+
+    const healthResponse = await fetch(`${server.url}/v1/health`);
+    expect(healthResponse.status).toBe(200);
   });
 
   it('continues event persistence from the highest stored sequence number', async () => {

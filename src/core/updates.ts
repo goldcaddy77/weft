@@ -122,7 +122,7 @@ export class UpdateCoordinator {
 
   /** Get pending update requests for a workflow, sorted FIFO by creation time. */
   async getPendingUpdates(workflowId: string): Promise<UpdateRequest[]> {
-    const prefix = `upd:${workflowId}:`;
+    const prefix = KEYS.updatePrefix(workflowId);
     const results: UpdateRequest[] = [];
 
     for await (const [, value] of this.#storage.scan(prefix)) {

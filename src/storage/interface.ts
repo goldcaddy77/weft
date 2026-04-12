@@ -153,6 +153,7 @@ export const KEYS = {
   operationInflight: (id: string) => `op:inflight:${id}`,
   operationQueued: (id: string) => `op:queued:${id}`,
   operationResolved: (id: string) => `op:resolved:${id}`,
+  eventPrefix: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:`,
   event: (workflowId: string, sequence: number) =>
     `ev:${encodeStorageKeyComponent(workflowId)}:${String(sequence).padStart(10, '0')}`,
   eventHead: (workflowId: string) => `ev:${encodeStorageKeyComponent(workflowId)}:head`,
@@ -165,6 +166,7 @@ export const KEYS = {
   attribute: (workflowId: string) => `attr:${encodeStorageKeyComponent(workflowId)}`,
   attributeIndex: (attributeName: string, encodedValue: string, workflowId: string) =>
     `idx:${attributeName}:${encodedValue}:${encodeStorageKeyComponent(workflowId)}`,
+  updatePrefix: (workflowId: string) => `upd:${encodeStorageKeyComponent(workflowId)}:`,
   update: (workflowId: string, updateId: string) =>
     `upd:${encodeStorageKeyComponent(workflowId)}:${updateId}`,
   updateResponse: (updateId: string) => `upr:${updateId}`,

@@ -27,7 +27,7 @@ import {
 import { calculateBackoff } from '../core/scheduler.ts';
 import type { RetryPolicy } from '../core/types.ts';
 import type { MetricsCollector, PrometheusExporter } from '../observability/metrics.ts';
-import { KEYS, encodeStorageKeyComponent } from '../storage/interface.ts';
+import { KEYS } from '../storage/interface.ts';
 import type { RoutingOptions, RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, Authenticator } from './authentication.ts';
@@ -249,6 +249,14 @@ function isWorkerConnection(pathname: string): boolean {
   return WORKER_STREAM_RE.test(pathname);
 }
 
+function tryDecodePathComponent(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
 async function parseTaskResultBody(request: Request): Promise<Record<string, unknown> | null> {
   try {
     return (await request.json()) as Record<string, unknown>;
@@ -260,23 +268,30 @@ async function parseTaskResultBody(request: Request): Promise<Record<string, unk
 /** Classify a WebSocket pathname and extract relevant parameters. */
 function classifyConnection(
   pathname: string,
-): Pick<WebSocketData, 'connectionType' | 'workflowId' | 'queue'> {
+): Pick<WebSocketData, 'connectionType' | 'workflowId' | 'queue'> | null {
   const streamMatch = WORKFLOW_STREAM_RE.exec(pathname);
   if (streamMatch?.[1]) {
-    return { connectionType: 'stream', workflowId: decodeURIComponent(streamMatch[1]) };
+    const workflowId = tryDecodePathComponent(streamMatch[1]);
+    return workflowId === null ? null : { connectionType: 'stream', workflowId };
   }
 
   const watchMatch = WORKFLOW_WATCH_RE.exec(pathname);
   if (watchMatch?.[1]) {
-    return { connectionType: 'watch', workflowId: decodeURIComponent(watchMatch[1]) };
+    const workflowId = tryDecodePathComponent(watchMatch[1]);
+    return workflowId === null ? null : { connectionType: 'watch', workflowId };
   }
 
   const workerMatch = WORKER_STREAM_RE.exec(pathname);
   if (workerMatch?.[1]) {
-    return { connectionType: 'worker', queue: decodeURIComponent(workerMatch[1]) };
+    const queue = tryDecodePathComponent(workerMatch[1]);
+    return queue === null ? null : { connectionType: 'worker', queue };
   }
 
   return { connectionType: 'generic' };
+}
+
+function workflowChannelPath(workflowId: string, connectionType: 'watch' | 'stream'): string {
+  return `/v1/workflows/${encodeURIComponent(workflowId)}/${connectionType}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -375,7 +390,7 @@ export function wireEventBroadcasting(
     if (existing) return existing;
 
     const promise = (async () => {
-      const prefix = `ev:${encodeStorageKeyComponent(workflowId)}:`;
+      const prefix = KEYS.eventPrefix(workflowId);
       let highestSequence = -1;
 
       /* c8 ignore start -- existing-event replay and rejected-scan recovery are defensive */
@@ -428,12 +443,12 @@ export function wireEventBroadcasting(
     );
 
     // Publish to the workflow's watch channel
-    const watchChannel = `/v1/workflows/${workflowId}/watch`;
+    const watchChannel = workflowChannelPath(workflowId, 'watch');
     server.publish(watchChannel, message);
 
     // For token events, also publish to the stream channel
     if (eventType === TokenEvent.type) {
-      const streamChannel = `/v1/workflows/${workflowId}/stream`;
+      const streamChannel = workflowChannelPath(workflowId, 'stream');
       server.publish(streamChannel, message);
     }
   }
@@ -606,7 +621,7 @@ export function serve(options: ServeOptions): WeftServer {
     ws: ServerWebSocket<WebSocketData>,
     workflowId: string,
   ): Promise<void> {
-    const prefix = `ev:${encodeStorageKeyComponent(workflowId)}:`;
+    const prefix = KEYS.eventPrefix(workflowId);
     try {
       for await (const [, value] of options.engine.storage.scan(prefix)) {
         const event = decode(value);
@@ -761,6 +776,10 @@ export function serve(options: ServeOptions): WeftServer {
     }
 
     const classification = classifyConnection(pathname);
+    if (classification === null) {
+      return new Response('Invalid encoded WebSocket path', { status: 400 });
+    }
+
     const upgraded = server.upgrade(request, {
       data: { pathname, ...classification },
     });
