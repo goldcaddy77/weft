@@ -125,6 +125,25 @@ describe('MetricsCollector', () => {
         expect(metric!.p99).toBe(42);
       }
     });
+
+    it('keeps histogram insertion order correct after the circular buffer wraps', () => {
+      const collector = new MetricsCollector();
+
+      for (let value = 1; value <= 10_005; value++) {
+        collector.record('weft.workflow.duration', value);
+      }
+
+      const snapshot = collector.snapshot();
+      const metric = snapshot['weft.workflow.duration'];
+      expect(metric).toBeDefined();
+
+      if (metric?.type === 'histogram') {
+        expect(metric.count).toBe(10_000);
+        expect(metric.min).toBe(6);
+        expect(metric.max).toBe(10_005);
+        expect(metric.sum).toBe(((6 + 10_005) * 10_000) / 2);
+      }
+    });
   });
 
   describe('gauges', () => {

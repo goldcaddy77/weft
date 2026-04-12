@@ -14,14 +14,50 @@
 /** Identifies the JavaScript runtime hosting this process. */
 export type RuntimeKind = 'bun' | 'node' | 'browser' | 'edge';
 
-const IS_BUN = typeof globalThis.Bun !== 'undefined';
+type PortableRuntimeTestOverrides = {
+  bun?: typeof globalThis.Bun | undefined;
+  process?: typeof globalThis.process | undefined;
+  window?: typeof globalThis.window | undefined;
+  document?: typeof globalThis.document | undefined;
+};
+
+let portableRuntimeTestOverrides: PortableRuntimeTestOverrides | undefined;
+
+export function setPortableRuntimeTestOverridesForTesting(
+  overrides?: PortableRuntimeTestOverrides,
+): void {
+  portableRuntimeTestOverrides = overrides;
+}
+
+function isBunRuntime(): boolean {
+  const bun =
+    portableRuntimeTestOverrides && 'bun' in portableRuntimeTestOverrides
+      ? portableRuntimeTestOverrides.bun
+      : globalThis.Bun;
+  return typeof bun !== 'undefined';
+}
+
+function getProcess(): typeof globalThis.process | undefined {
+  if (portableRuntimeTestOverrides && 'process' in portableRuntimeTestOverrides) {
+    return portableRuntimeTestOverrides.process;
+  }
+  return globalThis.process;
+}
 
 /** Detect the current JavaScript runtime. */
 export function detectRuntime(): RuntimeKind {
-  if (IS_BUN) return 'bun';
-  if (typeof globalThis.process !== 'undefined' && globalThis.process.versions?.node) return 'node';
-  if (typeof globalThis.window !== 'undefined' || typeof globalThis.document !== 'undefined')
-    return 'browser';
+  if (isBunRuntime()) return 'bun';
+  const process = getProcess();
+  if (process?.versions?.node) return 'node';
+  const windowValue =
+    portableRuntimeTestOverrides && 'window' in portableRuntimeTestOverrides
+      ? portableRuntimeTestOverrides.window
+      : globalThis.window;
+  const documentValue =
+    portableRuntimeTestOverrides && 'document' in portableRuntimeTestOverrides
+      ? portableRuntimeTestOverrides.document
+      : globalThis.document;
+  if (typeof windowValue !== 'undefined' || typeof documentValue !== 'undefined') return 'browser';
   return 'edge';
 }
 
@@ -35,9 +71,11 @@ export function detectRuntime(): RuntimeKind {
  * Uses `Bun.sleep` when available (microtask-friendly), otherwise wraps
  * `setTimeout` in a `Promise`.
  */
-export const sleep: (ms: number) => Promise<void> = IS_BUN
-  ? (ms: number) => Bun.sleep(ms)
-  : (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export function sleep(ms: number): Promise<void> {
+  if (isBunRuntime()) return Bun.sleep(ms);
+
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // ---------------------------------------------------------------------------
 // Hashing — non-cryptographic, cache-key-quality
@@ -106,7 +144,7 @@ type ProcessWithBuiltinModule = NodeJS.Process & {
  * `createRequire`. Returns `undefined` in non-Node runtimes.
  */
 function loadNodeBuiltin<T>(id: string): T | undefined {
-  const nodeProcess = globalThis.process as ProcessWithBuiltinModule | undefined;
+  const nodeProcess = getProcess() as ProcessWithBuiltinModule | undefined;
   const getBuiltinModule = nodeProcess?.getBuiltinModule;
   if (typeof getBuiltinModule !== 'function') {
     return undefined;
@@ -129,7 +167,7 @@ function loadNodeBuiltin<T>(id: string): T | undefined {
  * Not available in browser/edge runtimes — throws if called there.
  */
 export function fileSize(path: string): number {
-  if (IS_BUN) {
+  if (isBunRuntime()) {
     return Bun.file(path).size;
   }
 
@@ -179,7 +217,7 @@ function loadNodeZlib(): typeof import('node:zlib') {
  * - Node 22.5+: `node:zlib` via `process.getBuiltinModule`
  */
 export function gzipSync(data: Uint8Array): Uint8Array {
-  if (IS_BUN) {
+  if (isBunRuntime()) {
     return new Uint8Array(Bun.gzipSync(new Uint8Array(data)));
   }
   return new Uint8Array(loadNodeZlib().gzipSync(data));
@@ -192,7 +230,7 @@ export function gzipSync(data: Uint8Array): Uint8Array {
  * - Node 22.5+: `node:zlib` via `process.getBuiltinModule`
  */
 export function gunzipSync(data: Uint8Array): Uint8Array {
-  if (IS_BUN) {
+  if (isBunRuntime()) {
     return new Uint8Array(Bun.gunzipSync(new Uint8Array(data)));
   }
   return new Uint8Array(loadNodeZlib().gunzipSync(data));

@@ -962,8 +962,9 @@ async function resolveToolExecutionInner(
           }
         })();
 
-        if (runtime.options.verificationRecorder) {
-          runtime.options.verificationRecorder.recordVerification(verification);
+        const verificationRecorder = runtime.options.verificationRecorder;
+        if (verificationRecorder) {
+          verificationRecorder.recordVerification(verification);
         } else {
           await verification;
         }

@@ -59,6 +59,69 @@ describe('IndexedDBStorage', () => {
     expect(result).toBeNull();
   });
 
+  it('rejects when an IndexedDB request errors during get', async () => {
+    const originalOpen = indexedDB.open.bind(indexedDB);
+    const requestError = new Error('get failed');
+
+    try {
+      indexedDB.open = (() => {
+        const getRequest = {
+          result: undefined,
+          error: requestError,
+          onsuccess: null,
+          onerror: null,
+          readyState: 'pending',
+        } as unknown as IDBRequest<Uint8Array | undefined>;
+
+        const transaction = {
+          objectStore() {
+            return {
+              get() {
+                queueMicrotask(() => {
+                  getRequest.onerror?.(new Event('error'));
+                });
+                return getRequest;
+              },
+            };
+          },
+        } as unknown as IDBTransaction;
+
+        const database = {
+          objectStoreNames: {
+            contains() {
+              return true;
+            },
+          },
+          createObjectStore() {},
+          transaction() {
+            return transaction;
+          },
+          close() {},
+        } as unknown as IDBDatabase;
+
+        const request = {
+          result: database,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          onupgradeneeded: null,
+          readyState: 'pending',
+        } as unknown as IDBOpenDBRequest;
+
+        queueMicrotask(() => {
+          request.onsuccess?.(new Event('success'));
+        });
+
+        return request;
+      }) as typeof indexedDB.open;
+
+      const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+      await expect(storage.get('key')).rejects.toBe(requestError);
+    } finally {
+      indexedDB.open = originalOpen;
+    }
+  });
+
   it('put then get returns same bytes', async () => {
     const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
     const value = encode('hello');
@@ -187,6 +250,77 @@ describe('IndexedDBStorage', () => {
     expect(await storage.get('key')).toEqual(encode('value'));
   });
 
+  it('deletePrefix rejects when the IndexedDB transaction errors', async () => {
+    const originalOpen = indexedDB.open.bind(indexedDB);
+    const transactionError = new Error('deletePrefix failed');
+
+    try {
+      indexedDB.open = (() => {
+        const countRequest = {
+          result: 2,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          readyState: 'pending',
+        } as unknown as IDBRequest<number>;
+
+        const transaction = {
+          error: transactionError,
+          oncomplete: null,
+          onerror: null,
+          objectStore() {
+            return {
+              count() {
+                queueMicrotask(() => {
+                  countRequest.onsuccess?.(new Event('success'));
+                });
+                return countRequest;
+              },
+              delete() {
+                queueMicrotask(() => {
+                  transaction.onerror?.(new Event('error'));
+                });
+              },
+            };
+          },
+        } as unknown as IDBTransaction;
+
+        const database = {
+          objectStoreNames: {
+            contains() {
+              return true;
+            },
+          },
+          createObjectStore() {},
+          transaction() {
+            return transaction;
+          },
+          close() {},
+        } as unknown as IDBDatabase;
+
+        const request = {
+          result: database,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          onupgradeneeded: null,
+          readyState: 'pending',
+        } as unknown as IDBOpenDBRequest;
+
+        queueMicrotask(() => {
+          request.onsuccess?.(new Event('success'));
+        });
+
+        return request;
+      }) as typeof indexedDB.open;
+
+      const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+      await expect(storage.deletePrefix('key:')).rejects.toBe(transactionError);
+    } finally {
+      indexedDB.open = originalOpen;
+    }
+  });
+
   it('batch rejects when the IndexedDB transaction errors', async () => {
     const originalOpen = indexedDB.open.bind(indexedDB);
     const transactionError = new Error('transaction failed');
@@ -311,6 +445,142 @@ describe('IndexedDBStorage', () => {
       const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
 
       await expect(collect(storage.keys('key:'))).rejects.toBe(cursorError);
+    } finally {
+      indexedDB.open = originalOpen;
+    }
+  });
+
+  it('scan rejects when the IndexedDB transaction errors mid-cursor iteration', async () => {
+    const originalOpen = indexedDB.open.bind(indexedDB);
+    const transactionError = new Error('transaction failed');
+
+    try {
+      indexedDB.open = (() => {
+        const cursorRequest = {
+          result: null,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          readyState: 'pending',
+        } as unknown as IDBRequest<IDBCursorWithValue | null>;
+
+        const transaction = {
+          error: transactionError,
+          oncomplete: null,
+          onerror: null,
+          onabort: null,
+          objectStore() {
+            return {
+              openCursor() {
+                queueMicrotask(() => {
+                  transaction.onerror?.(new Event('error'));
+                });
+                return cursorRequest;
+              },
+            };
+          },
+          abort() {},
+        } as unknown as IDBTransaction;
+
+        const database = {
+          objectStoreNames: {
+            contains() {
+              return true;
+            },
+          },
+          createObjectStore() {},
+          transaction() {
+            return transaction;
+          },
+          close() {},
+        } as unknown as IDBDatabase;
+
+        const request = {
+          result: database,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          onupgradeneeded: null,
+          readyState: 'pending',
+        } as unknown as IDBOpenDBRequest;
+
+        queueMicrotask(() => {
+          request.onsuccess?.(new Event('success'));
+        });
+
+        return request;
+      }) as typeof indexedDB.open;
+
+      const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+      await expect(collect(storage.scan('key:'))).rejects.toBe(transactionError);
+    } finally {
+      indexedDB.open = originalOpen;
+    }
+  });
+
+  it('keys rejects when the IndexedDB transaction aborts mid-cursor iteration', async () => {
+    const originalOpen = indexedDB.open.bind(indexedDB);
+    const transactionError = new Error('transaction aborted');
+
+    try {
+      indexedDB.open = (() => {
+        const cursorRequest = {
+          result: null,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          readyState: 'pending',
+        } as unknown as IDBRequest<IDBCursor | null>;
+
+        const transaction = {
+          error: transactionError,
+          oncomplete: null,
+          onerror: null,
+          onabort: null,
+          objectStore() {
+            return {
+              openKeyCursor() {
+                queueMicrotask(() => {
+                  transaction.onabort?.(new Event('abort'));
+                });
+                return cursorRequest;
+              },
+            };
+          },
+          abort() {},
+        } as unknown as IDBTransaction;
+
+        const database = {
+          objectStoreNames: {
+            contains() {
+              return true;
+            },
+          },
+          createObjectStore() {},
+          transaction() {
+            return transaction;
+          },
+          close() {},
+        } as unknown as IDBDatabase;
+
+        const request = {
+          result: database,
+          error: null,
+          onsuccess: null,
+          onerror: null,
+          onupgradeneeded: null,
+          readyState: 'pending',
+        } as unknown as IDBOpenDBRequest;
+
+        queueMicrotask(() => {
+          request.onsuccess?.(new Event('success'));
+        });
+
+        return request;
+      }) as typeof indexedDB.open;
+
+      const storage = new IndexedDBStorage(`test-${crypto.randomUUID()}`);
+      await expect(collect(storage.keys('key:'))).rejects.toBe(transactionError);
     } finally {
       indexedDB.open = originalOpen;
     }

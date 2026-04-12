@@ -61,6 +61,16 @@ describe('handleRequest', () => {
     expect(await json(response)).toEqual({ status: 'ok' });
   });
 
+  it('GET /openapi.json returns the OpenAPI document', async () => {
+    engine = createEngine();
+    const response = await handleRequest(request('GET', '/openapi.json'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { openapi: string; paths: Record<string, unknown> };
+    expect(body.openapi).toBe('3.1.0');
+    expect(body.paths['/v1/workflows']).toBeDefined();
+  });
+
   // 2. Start workflow with valid body
   it('POST /v1/workflows with valid body returns 201 with id', async () => {
     engine = createEngine();
@@ -2099,6 +2109,25 @@ describe('handleRequest', () => {
     });
   });
 
+  it('GET /v1/workflows/:id/streams/:key returns stored stream chunks', async () => {
+    engine = createEngine();
+
+    const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
+    engine.getStreamChunks = async () => ['alpha', { token: 'beta' }];
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-stream/streams/tokens'),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual({
+      chunks: ['alpha', { token: 'beta' }],
+    });
+
+    engine.getStreamChunks = originalGetStreamChunks;
+  });
+
   // SSE streaming endpoint
   describe('GET /v1/workflows/:id/sse', () => {
     it('returns 406 when Accept header does not include text/event-stream', async () => {
@@ -2343,5 +2372,17 @@ describe('handleRequest', () => {
 
     // Route pattern only matches digits, so this is a 404 (not found)
     expect(response.status).toBe(404);
+  });
+
+  it('GET /v1/workflows/:id/checkpoints/:step returns 400 for unsafe integer steps', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/test-wf/checkpoints/9007199254740992'),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Invalid step: 9007199254740992' });
   });
 });

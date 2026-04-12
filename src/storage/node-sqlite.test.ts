@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
+import type { BatchOperation } from './interface.ts';
 import { NodeSQLiteStorage } from './node-sqlite.ts';
 
 // better-sqlite3 uses native bindings that aren't supported in Bun.
@@ -19,6 +20,136 @@ function canLoadBetterSqlite3(): boolean {
 
 const AVAILABLE = !IS_BUN && canLoadBetterSqlite3();
 const describeIfAvailable = AVAILABLE ? describe : describe.skip;
+
+type FakeRow = { key: string; value: Uint8Array };
+
+function compareKeys(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function createFakeDatabaseConstructor() {
+  let closed = false;
+  const values = new Map<string, Uint8Array>();
+  const preparedSql = new Set<string>();
+  const pragmas: string[] = [];
+
+  class FakeDatabase {
+    pragma(source: string): void {
+      pragmas.push(source);
+    }
+
+    exec(): void {}
+
+    prepare(source: string) {
+      preparedSql.add(source);
+
+      if (source === 'SELECT value FROM kv WHERE key = ?') {
+        return {
+          get(key: string) {
+            const value = values.get(key);
+            return value ? { value } : undefined;
+          },
+          run() {},
+          all() {
+            return [];
+          },
+        };
+      }
+
+      if (
+        source ===
+        'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+      ) {
+        return {
+          run(key: string, value: Uint8Array) {
+            values.set(key, new Uint8Array(value));
+          },
+          get() {
+            return undefined;
+          },
+          all() {
+            return [];
+          },
+        };
+      }
+
+      if (source === 'DELETE FROM kv WHERE key = ?') {
+        return {
+          run(key: string) {
+            values.delete(key);
+          },
+          get() {
+            return undefined;
+          },
+          all() {
+            return [];
+          },
+        };
+      }
+
+      if (source.startsWith('SELECT key, value FROM kv WHERE ')) {
+        return {
+          run() {},
+          get() {
+            return undefined;
+          },
+          all(...parameters: unknown[]): FakeRow[] {
+            let index = 0;
+            const prefix = parameters[index++] as string;
+            const prefixEnd = parameters[index++] as string;
+            const gt = source.includes('key > ?') ? (parameters[index++] as string) : undefined;
+            const gte = source.includes('key >= ? AND key < ? AND key >= ?')
+              ? (parameters[index++] as string)
+              : undefined;
+            const lt = source.includes('key < ? AND key < ? ORDER')
+              ? (parameters[index++] as string)
+              : undefined;
+            const lte = source.includes('key <= ?') ? (parameters[index++] as string) : undefined;
+            const limit = source.includes('LIMIT ?') ? (parameters[index++] as number) : undefined;
+
+            let rows = [...values.entries()]
+              .filter(([key]) => key >= prefix && key < prefixEnd)
+              .filter(([key]) => (gt === undefined ? true : key > gt))
+              .filter(([key]) => (gte === undefined ? true : key >= gte))
+              .filter(([key]) => (lt === undefined ? true : key < lt))
+              .filter(([key]) => (lte === undefined ? true : key <= lte))
+              .toSorted(([left], [right]) => compareKeys(left, right))
+              .map(([key, value]) => ({ key, value: new Uint8Array(value) }));
+
+            if (source.includes('ORDER BY key DESC')) {
+              rows = rows.toReversed();
+            }
+
+            if (limit !== undefined) {
+              rows = rows.slice(0, limit);
+            }
+
+            return rows;
+          },
+        };
+      }
+
+      throw new Error(`Unexpected SQL in fake database: ${source}`);
+    }
+
+    transaction(fn: (entries: BatchOperation[]) => void) {
+      return (entries: BatchOperation[]) => fn(entries);
+    }
+
+    close(): void {
+      closed = true;
+    }
+  }
+
+  return {
+    Database: FakeDatabase as unknown as new (path: string) => FakeDatabase,
+    isClosed: () => closed,
+    preparedSql,
+    pragmas,
+  };
+}
 
 describe('NodeSQLiteStorage', () => {
   if (IS_BUN) {
@@ -205,4 +336,55 @@ describeIfAvailable('NodeSQLiteStorage (integration)', () => {
       instance[Symbol.dispose]();
     });
   });
+});
+
+it('supports the adapter behavior under Bun when a database constructor is injected', async () => {
+  const fake = createFakeDatabaseConstructor();
+  const storage = new NodeSQLiteStorage(
+    ':memory:',
+    fake.Database as unknown as ConstructorParameters<typeof NodeSQLiteStorage>[1],
+  );
+
+  await storage.put('a:1', new Uint8Array([1]));
+  await storage.put('a:2', new Uint8Array([2]));
+  await storage.put('b:1', new Uint8Array([3]));
+
+  expect(await storage.get('a:1')).toEqual(new Uint8Array([1]));
+  expect(await storage.get('missing')).toBeNull();
+
+  const forward: [string, Uint8Array][] = [];
+  for await (const entry of storage.scan('a:')) {
+    forward.push(entry);
+  }
+  expect(forward.map(([key]) => key)).toEqual(['a:1', 'a:2']);
+
+  const reverse: string[] = [];
+  for await (const [key] of storage.scan('a:', { reverse: true, limit: 1 })) {
+    reverse.push(key);
+  }
+  expect(reverse).toEqual(['a:2']);
+
+  await storage.batch([
+    { type: 'put', key: 'a:3', value: new Uint8Array([4]) },
+    { type: 'delete', key: 'b:1' },
+  ]);
+
+  expect(storage.scanStatementCacheSize).toBeGreaterThan(0);
+  expect(await storage.get('a:3')).toEqual(new Uint8Array([4]));
+  expect(await storage.get('b:1')).toBeNull();
+  await storage.delete('a:2');
+  expect(await storage.get('a:2')).toBeNull();
+
+  storage[Symbol.dispose]();
+
+  expect(fake.isClosed()).toBe(true);
+  expect(fake.pragmas).toEqual([
+    'journal_mode = WAL',
+    'synchronous = NORMAL',
+    'cache_size = -64000',
+    'mmap_size = 268435456',
+    'temp_store = MEMORY',
+    'wal_autocheckpoint = 10000',
+  ]);
+  expect([...fake.preparedSql]).toContain('SELECT value FROM kv WHERE key = ?');
 });

@@ -88,8 +88,11 @@ export class NodeSQLiteStorage implements Storage {
     return this.#scanStatements.size;
   }
 
-  constructor(path: string = ':memory:') {
-    const Database = loadBetterSqlite3();
+  constructor(
+    path: string = ':memory:',
+    databaseConstructor: BetterSqliteConstructor = loadBetterSqlite3(),
+  ) {
+    const Database = databaseConstructor;
     this.#database = new Database(path);
 
     this.#database.pragma('journal_mode = WAL');

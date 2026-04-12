@@ -3,6 +3,10 @@ import { describe, expect, it } from 'bun:test';
 import { assertReadOnlyQuery } from './read-only-query';
 
 describe('assertReadOnlyQuery', () => {
+  it('rejects an empty query', () => {
+    expect(() => assertReadOnlyQuery('   \n\t  ')).toThrow('Storage query must not be empty.');
+  });
+
   it('allows SELECT statements with non-space word boundaries', () => {
     expect(() => assertReadOnlyQuery('SELECT\nkey FROM kv')).not.toThrow();
     expect(() => assertReadOnlyQuery('SELECT\tkey FROM kv')).not.toThrow();

@@ -93,5 +93,25 @@ for (const backend of storageBackends) {
         cleanup();
       }
     });
+
+    it('Storage.scoped(prefix) rewrites keys for built-in adapters', async () => {
+      const { storage, cleanup } = backend.factory();
+
+      try {
+        expect(storage.scoped).toBeDefined();
+
+        const scoped = storage.scoped?.('tenant');
+        if (!scoped) {
+          throw new Error('Built-in storage adapter should expose storage.scoped(prefix).');
+        }
+
+        await scoped.put('scoped:item', encode('value'));
+
+        expect(await scoped.get('scoped:item')).toEqual(encode('value'));
+        expect(await storage.get('tenant:scoped:item')).toEqual(encode('value'));
+      } finally {
+        cleanup();
+      }
+    });
   });
 }

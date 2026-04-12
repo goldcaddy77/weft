@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'bun:test';
 
-import { KEYS } from './interface';
+import { KEYS, storageDeletePrefix } from './interface';
+import { MemoryStorage } from './memory.ts';
+
+function createCoreStorageAdapter() {
+  const storage = new MemoryStorage();
+
+  return {
+    storage: {
+      get: storage.get.bind(storage),
+      put: storage.put.bind(storage),
+      delete: storage.delete.bind(storage),
+      scan: storage.scan.bind(storage),
+      batch: storage.batch.bind(storage),
+      [Symbol.dispose]: storage[Symbol.dispose].bind(storage),
+    },
+    inner: storage,
+  };
+}
 
 describe('KEYS', () => {
   it('workflow key has correct format', () => {
@@ -94,5 +111,11 @@ describe('KEYS', () => {
     // Verify the padded portion is exactly 16 characters
     const parts = key.split(':');
     expect(parts[2]).toHaveLength(16);
+  });
+
+  it('storageDeletePrefix returns 0 when no matching keys exist', async () => {
+    const { storage } = createCoreStorageAdapter();
+
+    expect(await storageDeletePrefix(storage, 'missing:')).toBe(0);
   });
 });

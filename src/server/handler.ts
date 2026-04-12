@@ -44,12 +44,21 @@ interface RouteMatch {
  * Route patterns derived from the shared route model. The regex is computed
  * once at module load time for the hot path.
  */
-const ROUTE_PATTERNS = ROUTES.map((route) => ({
-  method: route.method,
-  pattern: toRegex(route.path),
-  handler: route.handler,
-  paramNames: route.paramNames,
-}));
+const ROUTE_PATTERNS: Array<{
+  method: (typeof ROUTES)[number]['method'];
+  pattern: RegExp;
+  handler: HandlerName;
+  paramNames: readonly string[];
+}> = [];
+
+for (const route of ROUTES) {
+  ROUTE_PATTERNS.push({
+    method: route.method,
+    pattern: toRegex(route.path),
+    handler: route.handler,
+    paramNames: route.paramNames,
+  });
+}
 
 function matchRoute(method: string, pathname: string): RouteMatch | null {
   for (const route of ROUTE_PATTERNS) {
@@ -759,7 +768,6 @@ async function handleGetCheckpointAt(
   if (!Number.isSafeInteger(step) || step < 0) {
     return errorResponse(`Invalid step: ${stepParam}`, 400);
   }
-
   const state = await engine.getCheckpointAt(workflowId, step);
   if (!state) {
     return errorResponse(`Checkpoint not found at step ${step} for workflow ${workflowId}`, 404);
@@ -886,9 +894,6 @@ export async function handleRequest(
 
   try {
     const executor = ROUTE_EXECUTORS[route.handler];
-    if (!executor) {
-      return errorResponse(`No handler for route: ${routeDescription}`, 501);
-    }
     return await executor({ request, engine, options, param });
   } catch (error) {
     console.error('Unhandled error in handleRequest', {
