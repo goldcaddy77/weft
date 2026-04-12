@@ -346,10 +346,13 @@ describe('Scheduler', () => {
     expect(firedEntries[0]!.id).toBe('timer-throw');
     expect(firedEntries[1]!.id).toBe('timer-ok');
 
-    // Both deadline keys and index keys were cleaned up
+    // The successful timer was cleaned up; the failed timer is retained for retry
     const remainingKeys = await collectStorageKeys();
-    expect(remainingKeys.some((key) => key.startsWith('wf-deadline:'))).toBe(false);
-    expect(remainingKeys.some((key) => key.startsWith('timer-idx:'))).toBe(false);
+    const remainingDeadlines = remainingKeys.filter((key) => key.startsWith('wf-deadline:'));
+    const remainingIndexes = remainingKeys.filter((key) => key.startsWith('timer-idx:'));
+    expect(remainingDeadlines).toHaveLength(1);
+    expect(remainingIndexes).toHaveLength(1);
+    expect(remainingIndexes[0]).toBe('timer-idx:timer-throw');
   });
 
   it('tick is a no-op after stop, preventing callbacks on disposed scheduler', async () => {

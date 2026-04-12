@@ -835,7 +835,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #finalizationRegistry: FinalizationRegistry<string>;
   #resultResolvers: Map<string, WorkflowResultResolver>;
   #signalWaiters: Map<string, () => void>;
+  #signalWaitersByWorkflow: Map<string, Set<string>>;
   #updateWaiters: Map<string, (payload: unknown) => void>;
+  #updateWaitersByWorkflow: Map<string, Set<string>>;
   #sleepResolvers: Map<string, () => void>;
   #sleepResolversByWorkflow: Map<string, Set<string>>;
   #interceptors: WorkflowInterceptor[];
@@ -874,6 +876,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #defaultModelRouter: import('../ai/model-router.ts').ModelRouter | undefined;
   #reviewCoordinator: ReviewCoordinator;
   #reviewWaiters: Map<string, (decision: HumanReviewResult) => void>;
+  #reviewWaitersByWorkflow: Map<string, Set<string>>;
   #reviewEscalationHandlers: Map<
     string,
     (entry: { id: string; workflowId: string }) => Promise<boolean>
@@ -921,7 +924,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#handleCache = new Map();
     this.#resultResolvers = new Map();
     this.#signalWaiters = new Map();
+    this.#signalWaitersByWorkflow = new Map();
     this.#updateWaiters = new Map();
+    this.#updateWaitersByWorkflow = new Map();
     this.#sleepResolvers = new Map();
     this.#sleepResolversByWorkflow = new Map();
     this.#interceptors = [];
@@ -959,6 +964,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#chargedAgentOperationsByWorkflow = new Map();
     this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
     this.#reviewWaiters = new Map();
+    this.#reviewWaitersByWorkflow = new Map();
     this.#reviewEscalationHandlers = new Map();
     this.#workflowReviewIds = new Map();
     this.#reviewTimerIds = new Map();
@@ -1056,6 +1062,33 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     resolve({ ok: true, value: decision });
   }
 
+  /** Register a waiter key in a workflow-keyed reverse index. */
+  #trackWaiterKey(
+    reverseIndex: Map<string, Set<string>>,
+    workflowId: string,
+    waiterKey: string,
+  ): void {
+    let keys = reverseIndex.get(workflowId);
+    if (!keys) {
+      keys = new Set();
+      reverseIndex.set(workflowId, keys);
+    }
+    keys.add(waiterKey);
+  }
+
+  /** Remove a waiter key from a workflow-keyed reverse index. */
+  #untrackWaiterKey(
+    reverseIndex: Map<string, Set<string>>,
+    workflowId: string,
+    waiterKey: string,
+  ): void {
+    const keys = reverseIndex.get(workflowId);
+    if (keys) {
+      keys.delete(waiterKey);
+      if (keys.size === 0) reverseIndex.delete(workflowId);
+    }
+  }
+
   #captureWorkflowStartHeaders(
     workflowId: string,
     interception: { headers: Map<string, string> },
@@ -1081,6 +1114,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     if (entry.id === `review-timeout:${reviewId}`) {
       this.#reviewWaiters.delete(waiterKey);
+      this.#untrackWaiterKey(this.#reviewWaitersByWorkflow, workflowId, waiterKey);
       const elapsed = this.#options.getNow() - reviewRequest.createdAt;
       await this.#storage.delete(KEYS.review(workflowId, reviewId));
 
@@ -1110,6 +1144,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     this.#reviewWaiters.delete(waiterKey);
+    this.#untrackWaiterKey(this.#reviewWaitersByWorkflow, workflowId, waiterKey);
     const autoResult: HumanReviewResult = {
       reviewId,
       decision: action.decision,
@@ -1448,8 +1483,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return handle;
     } finally {
       this.#pendingStarts.delete(workflowId);
-      if (!startSucceeded && registration.isAgent) {
-        this.#agentWorkflowIds.delete(workflowId);
+      if (!startSucceeded) {
+        this.#checkpoints.delete(workflowId);
+        this.#workflowVersionTuples.delete(workflowId);
+        if (registration.isAgent) {
+          this.#agentWorkflowIds.delete(workflowId);
+        }
       }
     }
   }
@@ -2064,6 +2103,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const waiter = this.#signalWaiters.get(waiterKey);
       if (waiter) {
         this.#signalWaiters.delete(waiterKey);
+        this.#untrackWaiterKey(this.#signalWaitersByWorkflow, targetWorkflowId, waiterKey);
         waiter();
       }
     };
@@ -2158,6 +2198,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const currentWaiter = updateWaiter ? this.#updateWaiters.get(waiterKey) : undefined;
     if (updateWaiter && currentWaiter === updateWaiter && !existingPendingUpdate) {
       this.#updateWaiters.delete(waiterKey);
+      this.#untrackWaiterKey(this.#updateWaitersByWorkflow, workflowId, waiterKey);
       const updateId = crypto.randomUUID();
       this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
 
@@ -2707,8 +2748,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Wake the waiting workflow by resolving its review waiter
     const waiterKey = `${resolvedWorkflowId}:${reviewId}`;
     const waiter = this.#reviewWaiters.get(waiterKey);
-    if (waiter) {
+    if (waiter && resolvedWorkflowId) {
       this.#reviewWaiters.delete(waiterKey);
+      this.#untrackWaiterKey(this.#reviewWaitersByWorkflow, resolvedWorkflowId, waiterKey);
       waiter(decisionResult);
     }
   }
@@ -2802,8 +2844,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#handleCache.clear();
     this.#resultResolvers.clear();
     this.#signalWaiters.clear();
+    this.#signalWaitersByWorkflow.clear();
     this.#updateWaiters.clear();
+    this.#updateWaitersByWorkflow.clear();
     this.#reviewWaiters.clear();
+    this.#reviewWaitersByWorkflow.clear();
     this.#reviewEscalationHandlers.clear();
     this.#workflowReviewIds.clear();
     this.#reviewTimerIds.clear();
@@ -3441,9 +3486,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       const { promise, resolve } = Promise.withResolvers<void>();
       this.#signalWaiters.set(waiterKey, resolve);
+      this.#trackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
 
       if (abortSignal.aborted) {
         this.#signalWaiters.delete(waiterKey);
+        this.#untrackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
         return;
       }
 
@@ -3451,6 +3498,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (bufferedPayload.found) {
         if (this.#signalWaiters.get(waiterKey) === resolve) {
           this.#signalWaiters.delete(waiterKey);
+          this.#untrackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
         }
         this.#completeOperation(workflowId, bufferedPayload.payload);
         return;
@@ -3486,6 +3534,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const { promise, resolve } = Promise.withResolvers<unknown>();
     this.#updateWaiters.set(waiterKey, resolve);
+    this.#trackWaiterKey(this.#updateWaitersByWorkflow, workflowId, waiterKey);
 
     const pendingUpdateAfterRegistration = await this.#findPendingUpdateByName(
       workflowId,
@@ -3494,6 +3543,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (pendingUpdateAfterRegistration) {
       if (this.#updateWaiters.get(waiterKey) === resolve) {
         this.#updateWaiters.delete(waiterKey);
+        this.#untrackWaiterKey(this.#updateWaitersByWorkflow, workflowId, waiterKey);
       }
 
       this.#dispatchPendingUpdateReceived(
@@ -3563,6 +3613,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     this.#updateWaiters.delete(waiterKey);
+    this.#untrackWaiterKey(this.#updateWaitersByWorkflow, workflowId, waiterKey);
     if (dispatchReceivedEvent) {
       this.#dispatchPendingUpdateReceived(workflowId, update.name, update);
     }
@@ -4688,6 +4739,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     >();
     const waiterKey = `${workflowId}:${reviewId}`;
     this.#reviewWaiters.set(waiterKey, this.#resolveReviewDecision.bind(this, resolve));
+    this.#trackWaiterKey(this.#reviewWaitersByWorkflow, workflowId, waiterKey);
 
     // Register the escalation handler and track the reviewId → workflowId association
     this.#reviewEscalationHandlers.set(
@@ -4757,15 +4809,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * cannot accept new signals, updates, or resolve orphaned sleep timers.
    */
   #cleanupWaiters(workflowId: string): void {
-    const prefix = `${workflowId}:`;
-    for (const key of this.#signalWaiters.keys()) {
-      if (key.startsWith(prefix)) this.#signalWaiters.delete(key);
+    const signalKeys = this.#signalWaitersByWorkflow.get(workflowId);
+    if (signalKeys) {
+      for (const key of signalKeys) this.#signalWaiters.delete(key);
+      this.#signalWaitersByWorkflow.delete(workflowId);
     }
-    for (const key of this.#updateWaiters.keys()) {
-      if (key.startsWith(prefix)) this.#updateWaiters.delete(key);
+    const updateKeys = this.#updateWaitersByWorkflow.get(workflowId);
+    if (updateKeys) {
+      for (const key of updateKeys) this.#updateWaiters.delete(key);
+      this.#updateWaitersByWorkflow.delete(workflowId);
     }
-    for (const key of this.#reviewWaiters.keys()) {
-      if (key.startsWith(prefix)) this.#reviewWaiters.delete(key);
+    const reviewKeys = this.#reviewWaitersByWorkflow.get(workflowId);
+    if (reviewKeys) {
+      for (const key of reviewKeys) this.#reviewWaiters.delete(key);
+      this.#reviewWaitersByWorkflow.delete(workflowId);
     }
     const sleepOps = this.#sleepResolversByWorkflow.get(workflowId);
     if (sleepOps) {
@@ -4841,17 +4898,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // workflow-keyed records (reviews, pending signals, per-workflow dedup).
     // Output artifacts (offload, blob, shared, events) are preserved so
     // consumers can still read them after `handle.result()` resolves.
-    await this.#cleanupTerminalWorkflow(workflowId, false);
+    try {
+      await this.#cleanupTerminalWorkflow(workflowId, false);
 
-    const event = new WorkflowCompletedEvent(workflowId, result, duration);
-    this.dispatchEvent(event);
-    this.#forwardEventToHandle(workflowId, event);
+      const event = new WorkflowCompletedEvent(workflowId, result, duration);
+      this.dispatchEvent(event);
+      this.#forwardEventToHandle(workflowId, event);
 
-    this.#broadcast({ type: 'workflow:completed', workflowId });
+      this.#broadcast({ type: 'workflow:completed', workflowId });
 
-    const resolver = this.#resultResolvers.get(workflowId);
-    if (resolver) {
-      resolver.resolve(result);
+      const resolver = this.#resultResolvers.get(workflowId);
+      if (resolver) {
+        resolver.resolve(result);
+      }
+    } finally {
       this.#resultResolvers.delete(workflowId);
     }
   }
@@ -4887,15 +4947,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // workflow-keyed records (reviews, pending signals, per-workflow dedup).
     // Output artifacts (offload, blob, shared, events) are preserved so
     // consumers can still read them after `handle.result()` rejects.
-    await this.#cleanupTerminalWorkflow(workflowId, false);
+    try {
+      await this.#cleanupTerminalWorkflow(workflowId, false);
 
-    const event = new WorkflowFailedEvent(workflowId, error);
-    this.dispatchEvent(event);
-    this.#forwardEventToHandle(workflowId, event);
+      const event = new WorkflowFailedEvent(workflowId, error);
+      this.dispatchEvent(event);
+      this.#forwardEventToHandle(workflowId, event);
 
-    const resolver = this.#resultResolvers.get(workflowId);
-    if (resolver) {
-      resolver.reject(error);
+      const resolver = this.#resultResolvers.get(workflowId);
+      if (resolver) {
+        resolver.reject(error);
+      }
+    } finally {
       this.#resultResolvers.delete(workflowId);
     }
   }

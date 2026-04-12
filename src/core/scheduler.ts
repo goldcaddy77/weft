@@ -146,7 +146,12 @@ export class Scheduler implements Disposable {
 
     if (indexValue === null) return;
 
-    const deadlineKey = decode(indexValue) as string;
+    const decoded = decode(indexValue);
+    if (typeof decoded !== 'string') {
+      console.error(`Corrupted timer index for ${id}: expected string, got ${typeof decoded}`);
+      return;
+    }
+    const deadlineKey = decoded;
 
     await this.#storage.batch([
       { type: 'delete', key: deadlineKey },
@@ -186,7 +191,18 @@ export class Scheduler implements Disposable {
     const expired: Array<{ key: string; entry: TimerEntry }> = [];
 
     for await (const [key, value] of this.#storage.scan('wf-deadline:', { lte: upperBound })) {
-      const entry = decode(value) as TimerEntry;
+      const decoded = decode(value);
+      if (
+        typeof decoded !== 'object' ||
+        decoded === null ||
+        typeof (decoded as Record<string, unknown>)['id'] !== 'string' ||
+        typeof (decoded as Record<string, unknown>)['workflowId'] !== 'string' ||
+        typeof (decoded as Record<string, unknown>)['fireAt'] !== 'number'
+      ) {
+        console.error(`Corrupted timer entry at ${key}: skipping`);
+        continue;
+      }
+      const entry = decoded as TimerEntry;
       expired.push({ key, entry });
     }
 
@@ -199,15 +215,14 @@ export class Scheduler implements Disposable {
 
       try {
         await this.#onTimerFired(entry);
+        const indexKey = `timer-idx:${entry.id}`;
+        await this.#storage.batch([
+          { type: 'delete', key },
+          { type: 'delete', key: indexKey },
+        ]);
       } catch (error) {
         console.error(`Timer callback failed for timer ${entry.id}:`, error);
       }
-
-      const indexKey = `timer-idx:${entry.id}`;
-      await this.#storage.batch([
-        { type: 'delete', key },
-        { type: 'delete', key: indexKey },
-      ]);
     }
   }
 
