@@ -242,16 +242,14 @@ export class Scheduler implements Disposable {
     { respectStopped }: { respectStopped: boolean },
   ): Promise<void> {
     const currentTime = now ?? this.#getNow();
-    const deadlineIterator = this.#storage
-      .scan('wf-deadline:', {
-        lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
-      })
-      [Symbol.asyncIterator]();
-    const delayedStartIterator = this.#storage
-      .scan('wf-delayed:', {
-        lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
-      })
-      [Symbol.asyncIterator]();
+    const deadlineScan = this.#storage.scan('wf-deadline:', {
+      lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
+    });
+    const deadlineIterator = deadlineScan[Symbol.asyncIterator]();
+    const delayedStartScan = this.#storage.scan('wf-delayed:', {
+      lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
+    });
+    const delayedStartIterator = delayedStartScan[Symbol.asyncIterator]();
 
     let nextDeadline = await readNextScannedTimerEntry(deadlineIterator);
     let nextDelayedStart = await readNextScannedTimerEntry(delayedStartIterator);
