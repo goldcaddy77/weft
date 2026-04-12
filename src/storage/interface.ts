@@ -137,6 +137,8 @@ export const KEYS = {
   signal: (workflowId: string, name: string, id: string) => `sig:${workflowId}:${name}:${id}`,
   deadline: (deadline: number, workflowId: string) =>
     `wf-deadline:${String(deadline).padStart(16, '0')}:${workflowId}`,
+  delayedStart: (startAt: number, workflowId: string) =>
+    `wf-delayed:${String(startAt).padStart(16, '0')}:${workflowId}`,
   attribute: (workflowId: string) => `attr:${workflowId}`,
   attributeIndex: (attributeName: string, encodedValue: string, workflowId: string) =>
     `idx:${attributeName}:${encodedValue}:${workflowId}`,

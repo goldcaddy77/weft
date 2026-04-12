@@ -514,6 +514,18 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('throws when options.id contains reserved key separators', async () => {
+    const engine = new Engine();
+    engine.register('invalid-id', async function* () {
+      return 'ok';
+    });
+
+    await expect(engine.start('invalid-id', null, { id: 'wf:ckpt' })).rejects.toThrow(
+      'options.id must contain only letters, numbers, dots, underscores, and hyphens',
+    );
+    engine[Symbol.dispose]();
+  });
+
   it('does not hit storage for dedup when starting without a caller-provided id', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });

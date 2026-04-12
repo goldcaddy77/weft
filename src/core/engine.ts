@@ -105,6 +105,7 @@ import type {
   StartOptions,
   StepWorkflowFunction,
   SubmitReviewOptions,
+  TimerEntry,
   WorkerOutboundMessage,
   WorkflowEvent,
   WorkflowFunction,
@@ -126,6 +127,7 @@ import {
   migrateCheckpoint,
 } from './versioning.ts';
 import { WorkerExecutionStrategy } from './worker-execution-strategy.ts';
+import { assertValidWorkflowId } from './workflow-identifiers.ts';
 import {
   collectToolVersions,
   diffWorkflowVersionTuples,
@@ -318,6 +320,12 @@ function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
   return state;
 }
 
+function getWorkflowExecutionStartedAt(
+  state: Pick<WorkflowState, 'createdAt' | 'startedAt'>,
+): number {
+  return state.startedAt ?? state.createdAt;
+}
+
 function enqueueWorkflowHandleEvent(queue: WorkflowHandleEventQueue, event: Event): void {
   queue.events.push(event);
   queue.resolver?.();
@@ -353,7 +361,7 @@ function finishWorkflowHandleIteration(
 function synthesizeTerminalEventFromState(state: WorkflowState): Event | null {
   switch (state.status) {
     case 'completed': {
-      const duration = state.updatedAt - state.createdAt;
+      const duration = state.updatedAt - getWorkflowExecutionStartedAt(state);
       return new WorkflowCompletedEvent(state.id, state.result, duration);
     }
     case 'failed': {
@@ -371,7 +379,7 @@ function synthesizeTerminalEventFromState(state: WorkflowState): Event | null {
       // carried; `executionDeadline` would be the configured timeout budget
       // instead of the actual elapsed, which is a subtly different number
       // when the scheduler ticks past the deadline.
-      const elapsed = state.updatedAt - state.createdAt;
+      const elapsed = state.updatedAt - getWorkflowExecutionStartedAt(state);
       return new WorkflowTimedOutEvent(state.id, 'execution', elapsed);
     }
     default:
@@ -1348,8 +1356,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`No workflow registered with name "${type}"`);
     }
 
-    if (options?.id !== undefined && options.id.length === 0) {
-      throw new Error('options.id must not be an empty string');
+    if (options?.id !== undefined) {
+      assertValidWorkflowId(options.id);
     }
     const callerProvidedId = options?.id !== undefined;
     const workflowId = options?.id ?? crypto.randomUUID();
@@ -1358,6 +1366,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // work, to prevent a concurrent child-workflow start from overwriting them.
     const parentHeaders = this.#pendingParentHeaders;
     this.#pendingParentHeaders = undefined;
+    const submissionTime = this.#options.getNow();
+    const scheduledStartAt = this.#resolveScheduledStartAt(options, submissionTime);
+    const delayedStartTimer =
+      scheduledStartAt !== undefined && scheduledStartAt > submissionTime
+        ? this.#createDelayedStartTimerEntry(workflowId, scheduledStartAt, options)
+        : undefined;
 
     // Atomic check-and-reserve: prevent two concurrent start() calls with the
     // same ID from both passing the storage check before either writes state.
@@ -1392,6 +1406,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         versionTuple,
         options,
         tenant,
+        delayedStartTimer,
       );
       const checkpoint = this.#createInitialCheckpoint(
         workflowId,
@@ -1417,33 +1432,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           registration,
           options,
           state.executionDeadline,
+          delayedStartTimer,
         ),
       );
       // Deadline timer operations are now folded into the start batch above,
       // eliminating a separate storage transaction on the hot start path.
       this.#runWorkflowStartInterceptor(workflowId, type, input, parentHeaders);
 
-      // Pre-warm LLM connection after the batch write (fire-and-forget).
-      if (registration.isAgent) {
-        try {
-          const warmupResult = registration.provider?.warmup?.();
-          void this.#swallowPromiseRejection(warmupResult);
-        } catch {
-          // Warmup is best-effort; ignore synchronous failures.
-        }
-      }
-
-      this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
-
       const handle = this.#createWorkflowHandle(workflowId);
-      this.#startWorkflowExecution(
-        workflowId,
-        type,
-        input,
-        checkpoint,
-        state.executionDeadline,
-        tenant,
-      );
+      if (!delayedStartTimer) {
+        this.#beginWorkflowExecution(
+          workflowId,
+          type,
+          input,
+          checkpoint,
+          state.executionDeadline,
+          tenant,
+          registration,
+        );
+      }
       startSucceeded = true;
       return handle;
     } finally {
@@ -1452,6 +1459,94 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.#agentWorkflowIds.delete(workflowId);
       }
     }
+  }
+
+  #resolveScheduledStartAt(
+    options: StartOptions | undefined,
+    submissionTime: number,
+  ): number | undefined {
+    if (options?.startAt !== undefined && options?.startAfter !== undefined) {
+      throw new Error('Provide only one of startAt or startAfter');
+    }
+
+    if (options?.startAt !== undefined) {
+      if (!Number.isFinite(options.startAt) || options.startAt < 0) {
+        throw new Error('options.startAt must be a finite, non-negative timestamp');
+      }
+      return options.startAt;
+    }
+
+    if (options?.startAfter !== undefined) {
+      const scheduledStartAt =
+        submissionTime + this.#parseStartOptionDuration(options.startAfter, 'options.startAfter');
+      if (!Number.isFinite(scheduledStartAt) || scheduledStartAt < 0) {
+        throw new Error('options.startAfter must resolve to a finite, non-negative start time');
+      }
+      return scheduledStartAt;
+    }
+
+    return undefined;
+  }
+
+  #parseStartOptionDuration(
+    duration: import('./types.ts').Duration,
+    fieldName: 'options.executionTimeout' | 'options.startAfter',
+  ): number {
+    try {
+      return parseDuration(duration);
+    } catch {
+      throw new Error(
+        `${fieldName} must be a finite, non-negative number or a valid duration string`,
+      );
+    }
+  }
+
+  #createDelayedStartTimerEntry(
+    workflowId: string,
+    scheduledStartAt: number,
+    options: StartOptions | undefined,
+  ): TimerEntry {
+    return {
+      id: `delayed-start:${workflowId}`,
+      workflowId,
+      fireAt: scheduledStartAt,
+      kind: 'delayed-start',
+      ...(options?.executionTimeout !== undefined && {
+        executionTimeoutMs: this.#parseStartOptionDuration(
+          options.executionTimeout,
+          'options.executionTimeout',
+        ),
+      }),
+    };
+  }
+
+  #beginWorkflowExecution(
+    workflowId: string,
+    workflowType: string,
+    input: unknown,
+    checkpoint: Checkpoint,
+    executionDeadline: number | undefined,
+    tenant: import('./tenant.ts').TenantContext | undefined,
+    registration: RegistrationEntry,
+  ): void {
+    if (registration.isAgent) {
+      try {
+        const warmupResult = registration.provider?.warmup?.();
+        void this.#swallowPromiseRejection(warmupResult);
+      } catch {
+        // Warmup is best-effort; ignore synchronous failures.
+      }
+    }
+
+    this.dispatchEvent(new WorkflowStartedEvent(workflowId, workflowType, input));
+    this.#startWorkflowExecution(
+      workflowId,
+      workflowType,
+      input,
+      checkpoint,
+      executionDeadline,
+      tenant,
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1712,15 +1807,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     versionTuple: WorkflowVersionTuple,
     options?: StartOptions,
     tenant?: import('./tenant.ts').TenantContext,
+    delayedStartTimer?: TimerEntry,
   ): WorkflowState {
     const now = this.#options.getNow();
     const state: WorkflowState = {
       id: workflowId,
       type,
-      status: 'running',
+      status: delayedStartTimer ? 'pending' : 'running',
       input,
       version: versionTuple.workflowVersion,
       createdAt: now,
+      ...(!delayedStartTimer && { startedAt: now }),
       updatedAt: now,
       ...(versionTuple.agentVersion !== undefined && {
         agentVersion: versionTuple.agentVersion,
@@ -1730,8 +1827,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }),
     };
 
-    if (options?.executionTimeout !== undefined) {
-      state.executionDeadline = now + parseDuration(options.executionTimeout);
+    if (options?.executionTimeout !== undefined && !delayedStartTimer) {
+      const executionTimeoutMilliseconds = this.#parseStartOptionDuration(
+        options.executionTimeout,
+        'options.executionTimeout',
+      );
+      const executionDeadline = now + executionTimeoutMilliseconds;
+      if (!Number.isFinite(executionDeadline) || executionDeadline < 0) {
+        throw new Error('options.executionTimeout must resolve to a finite, non-negative deadline');
+      }
+      state.executionDeadline = executionDeadline;
     }
 
     if (tenant !== undefined) {
@@ -1777,6 +1882,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     registration: RegistrationEntry,
     options?: StartOptions,
     executionDeadline?: number,
+    delayedStartTimer?: TimerEntry,
   ): import('../storage/interface.ts').BatchOperation[] {
     const operations: import('../storage/interface.ts').BatchOperation[] = [
       { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
@@ -1804,6 +1910,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           kind: 'execution-deadline',
         }),
       );
+    }
+
+    if (delayedStartTimer) {
+      operations.push(...buildTimerBatchOperations(delayedStartTimer));
     }
 
     return operations;
@@ -2355,7 +2465,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const context = new Context({
         workflowId,
         workflowType: state.type,
-        startedAt: state.createdAt,
+        startedAt: getWorkflowExecutionStartedAt(state),
         abortController: workflowAbort,
         getNow: this.#options.getNow,
         accumulatedResults,
@@ -2448,14 +2558,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Guard: if the workflow is already terminal (completed, failed, cancelled,
     // timed-out), a stale deadline timer firing should be a no-op. This is
     // critical now that scheduler.cancel is fire-and-forget on terminal paths.
-    if (!state || state.status !== 'running') return;
-    const elapsed = this.#options.getNow() - state.createdAt;
+    if (!state || (state.status !== 'running' && state.status !== 'pending')) return;
+    const elapsed = this.#options.getNow() - getWorkflowExecutionStartedAt(state);
 
     await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
     void this.#swallowPromiseRejection(
       this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
     );
+    if (state.status === 'pending') {
+      void this.#swallowPromiseRejection(
+        this.#scheduler.cancel(`delayed-start:${workflowId}`, workflowId),
+      );
+    }
 
     // Drop in-memory state, release charged operations, and delete durable
     // workflow-keyed records (reviews, offload, blob, shared, signal).
@@ -4425,7 +4540,95 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
   }
 
-  async #handleTimerFired(entry: { id: string; workflowId: string; kind: string }): Promise<void> {
+  async #startDelayedWorkflow(entry: TimerEntry): Promise<void> {
+    const state = await this.#loadWorkflowState(entry.workflowId);
+    if (!state || state.status !== 'pending') {
+      return;
+    }
+
+    const checkpointBytes = await this.#storage.get(KEYS.checkpoint(entry.workflowId));
+    if (!checkpointBytes) {
+      await this.#failWorkflow(
+        entry.workflowId,
+        new Error(`Checkpoint not found for delayed workflow "${entry.workflowId}"`),
+      );
+      return;
+    }
+    const checkpoint = deserializeCheckpoint(checkpointBytes);
+
+    const registration = this.#registrations.get(state.type);
+    if (!registration) {
+      await this.#failWorkflow(
+        entry.workflowId,
+        new Error(`No workflow registered with name "${state.type}"`),
+      );
+      return;
+    }
+
+    const now = this.#options.getNow();
+    let executionDeadline: number | undefined;
+    if (entry.executionTimeoutMs !== undefined) {
+      if (!Number.isFinite(entry.executionTimeoutMs) || entry.executionTimeoutMs < 0) {
+        await this.#failWorkflow(
+          entry.workflowId,
+          new Error(`Invalid delayed execution timeout for workflow "${entry.workflowId}"`),
+        );
+        return;
+      }
+
+      executionDeadline = now + entry.executionTimeoutMs;
+      if (!Number.isFinite(executionDeadline) || executionDeadline < 0) {
+        await this.#failWorkflow(
+          entry.workflowId,
+          new Error(`Invalid delayed execution timeout for workflow "${entry.workflowId}"`),
+        );
+        return;
+      }
+    }
+    const runningState: WorkflowState = {
+      ...state,
+      status: 'running',
+      startedAt: now,
+      updatedAt: now,
+      ...(executionDeadline !== undefined && { executionDeadline }),
+    };
+
+    const operations: import('../storage/interface.ts').BatchOperation[] = [
+      { type: 'put', key: KEYS.workflow(entry.workflowId), value: encode(runningState) },
+    ];
+    if (executionDeadline !== undefined) {
+      operations.push(
+        ...buildTimerBatchOperations({
+          id: `deadline:${entry.workflowId}`,
+          workflowId: entry.workflowId,
+          fireAt: executionDeadline,
+          kind: 'execution-deadline',
+        }),
+      );
+    }
+
+    await this.#storage.batch(operations);
+    this.#checkpoints.set(entry.workflowId, checkpoint);
+    this.#workflowVersionTuples.set(
+      entry.workflowId,
+      this.#workflowVersionTupleFromState(runningState),
+    );
+    if (registration.isAgent) {
+      this.#agentWorkflowIds.add(entry.workflowId);
+    }
+
+    this.#beginWorkflowExecution(
+      entry.workflowId,
+      state.type,
+      state.input,
+      checkpoint,
+      executionDeadline,
+      state.tenant,
+      registration,
+    );
+  }
+
+  async #handleTimerFired(entry: TimerEntry): Promise<void> {
     // Check if this timer is for a review escalation/timeout
     if (entry.id.startsWith('review-escalation:') || entry.id.startsWith('review-timeout:')) {
       // Extract reviewId from the timer ID
@@ -4438,6 +4641,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         if (!state || state.status !== 'running') return;
         await handler(entry);
       }
+      return;
+    }
+
+    if (entry.kind === 'delayed-start') {
+      await this.#startDelayedWorkflow(entry);
       return;
     }
 
@@ -4806,7 +5014,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (!state || state.status !== 'running') return;
 
     const now = this.#options.getNow();
-    const duration = now - state.createdAt;
+    const duration = now - getWorkflowExecutionStartedAt(state);
 
     // Batch the completion state write with attribute index cleanup into a
     // single storage transaction to reduce round-trips on the hot path.
@@ -4949,7 +5157,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     if (state.status === 'cancelled') throw new Error('Workflow cancelled');
     if (state.status === 'timed-out') {
-      const elapsed = state.executionDeadline ? state.executionDeadline - state.createdAt : 0;
+      const elapsed = state.executionDeadline
+        ? state.executionDeadline - getWorkflowExecutionStartedAt(state)
+        : 0;
       throw new WorkflowTimeoutError(workflowId, 'execution', elapsed);
     }
     throw new Error(`Workflow "${workflowId}" is still ${state.status}`);

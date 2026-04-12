@@ -18,7 +18,10 @@ import type { Duration, RetryPolicy, TimerEntry } from './types';
  * so the key format stays in one place.
  */
 export function buildTimerBatchOperations(entry: TimerEntry): BatchOperation[] {
-  const deadlineKey = KEYS.deadline(entry.fireAt, entry.id);
+  const deadlineKey =
+    entry.kind === 'delayed-start'
+      ? KEYS.delayedStart(entry.fireAt, entry.workflowId)
+      : KEYS.deadline(entry.fireAt, entry.id);
   const indexKey = `timer-idx:${entry.id}`;
   return [
     { type: 'put', key: deadlineKey, value: encode(entry) },
@@ -51,9 +54,20 @@ const UNIT_TO_MILLISECONDS: Record<string, number> = {
   days: 86_400_000,
 };
 
+function assertValidDurationMilliseconds(milliseconds: number, source: Duration): void {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+    throw new RangeError(
+      `Duration must resolve to a finite, non-negative number of milliseconds, got: ${String(
+        source,
+      )}`,
+    );
+  }
+}
+
 /** Parse a human-readable duration string or number to milliseconds. */
 export function parseDuration(duration: Duration): number {
   if (typeof duration === 'number') {
+    assertValidDurationMilliseconds(duration, duration);
     return duration;
   }
 
@@ -73,7 +87,9 @@ export function parseDuration(duration: Duration): number {
     throw new Error(`Unknown duration unit: "${unit}"`);
   }
 
-  return value * multiplier;
+  const milliseconds = value * multiplier;
+  assertValidDurationMilliseconds(milliseconds, duration);
+  return milliseconds;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,14 +197,28 @@ export class Scheduler implements Disposable {
     { respectStopped }: { respectStopped: boolean },
   ): Promise<void> {
     const currentTime = now ?? this.#getNow();
-    const upperBound = KEYS.deadline(currentTime, '\xff');
-
     const expired: Array<{ key: string; entry: TimerEntry }> = [];
+    const deadlineUpperBound = KEYS.deadline(currentTime, '\xff');
+    const delayedUpperBound = KEYS.delayedStart(currentTime, '\xff');
 
-    for await (const [key, value] of this.#storage.scan('wf-deadline:', { lte: upperBound })) {
-      const entry = decode(value) as TimerEntry;
-      expired.push({ key, entry });
+    for await (const [key, value] of this.#storage.scan('wf-deadline:', {
+      lte: deadlineUpperBound,
+    })) {
+      expired.push({ key, entry: decode(value) as TimerEntry });
     }
+
+    for await (const [key, value] of this.#storage.scan('wf-delayed:', {
+      lte: delayedUpperBound,
+    })) {
+      expired.push({ key, entry: decode(value) as TimerEntry });
+    }
+
+    expired.sort((left, right) => {
+      if (left.entry.fireAt !== right.entry.fireAt) {
+        return left.entry.fireAt - right.entry.fireAt;
+      }
+      return left.key.localeCompare(right.key);
+    });
 
     // Fire callbacks and delete keys in chronological order (already sorted by scan).
     for (const { key, entry } of expired) {

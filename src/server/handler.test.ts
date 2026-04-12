@@ -241,6 +241,114 @@ describe('handleRequest', () => {
     expect(state.executionDeadline).toBeDefined();
   });
 
+  it('POST /v1/workflows with an invalid id returns 400', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        id: 'wf:ckpt',
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Field "id"');
+  });
+
+  it('POST /v1/workflows with startAt keeps the workflow pending until it is due', async () => {
+    engine = createEngine();
+    const startAt = Date.now() + 60_000;
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        startAt,
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(201);
+    const { id } = (await json(response)) as { id: string };
+
+    const stateResponse = await handleRequest(request('GET', `/v1/workflows/${id}`), engine);
+    expect(stateResponse.status).toBe(200);
+    const state = (await json(stateResponse)) as { status: string };
+    expect(state.status).toBe('pending');
+  });
+
+  it('POST /v1/workflows with both startAt and startAfter returns 400', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        startAt: Date.now() + 60_000,
+        startAfter: '1m',
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Provide only one of startAt or startAfter');
+  });
+
+  it('POST /v1/workflows with a negative startAt returns 400', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        startAt: -1,
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Field "startAt"');
+  });
+
+  it('POST /v1/workflows with a negative startAfter returns 400', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        startAfter: -1,
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Field "startAfter"');
+  });
+
+  it('POST /v1/workflows with a negative executionTimeout returns 400', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        executionTimeout: -1,
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Field "executionTimeout"');
+  });
+
   // Additional edge cases
   it('POST /v1/workflows with invalid JSON returns 400', async () => {
     engine = createEngine();
