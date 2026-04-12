@@ -2,6 +2,8 @@
 
 This companion document was split out of [../architecture.md](../architecture.md) so the roadmap can stay checklist-first. It covers storage, binary distribution, browser/service-worker runtime, HTTP and WebSocket serving, and remote-worker execution.
 
+The long-form research write-up now lives in [./research.md](./research.md). The transport roadmap described in [../architecture.md](../architecture.md) must continue to treat HTTP, WebSocket, SSE, and future JSON-RPC surfaces as adapters over the same engine execution and messaging primitives rather than alternate runtime systems.
+
 ### 7. The Database Decision: SQLite (via Bun.SQL) + LMDB Option
 
 **The question was: SQLite vs LevelDB vs LMDB?**
@@ -436,6 +438,8 @@ self.addEventListener('periodicsync', (event: PeriodicSyncEvent) => {
 > **Limitation:** Service Workers don't have unlimited background execution time. Browsers limit how long a Service Worker can run after the page is closed. For truly long-running workflows, you'd still need a server. The Service Worker is ideal for: queuing work, short workflows, offline caching, and syncing state with a remote server.
 
 ### 10. HTTP + WebSocket — No gRPC, No Protobuf
+
+The current implementation is already HTTP-first and authenticates the incoming `Request` before accepting a WebSocket upgrade. Track 8 extends this section with a shared runtime operation catalog that generates OpenAPI for REST-ish HTTP routes and OpenRPC for JSON-RPC over HTTP, WebSocket, and opt-in stdio. That work does not replace the existing `Engine`, `EventTarget`, `BroadcastChannel`, or Worker `postMessage` internals; it exposes them through machine-readable contracts and a transport-neutral authorization layer.
 
 Bun 1.3 introduced route-based `Bun.serve()` which is the most idiomatic way to define an HTTP API:
 

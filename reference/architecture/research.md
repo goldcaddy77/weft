@@ -231,3 +231,17 @@ Before adding anything from the research, the measured vs. spec gaps in `referen
 Helium's prompt caching and libDSE's speculative commit both improve throughput, so §5 pulls double duty here. The memory gap is more concerning — `structuredClone` + MessagePack is not cheap, and the 7–15KB per workflow is going to be load-bearing at scale. A profiling pass on `Checkpoint` serialization is probably the highest-ROI work item in the whole repo right now.
 
 ---
+
+## 12. Prioritized roadmap
+
+If I were sequencing this, I would do it in four tracks that can partially parallelize once Track 1 lands.
+
+**Track 1 — Foundations:** Effect logs at the tool-call boundary (§2 ACRFence). Storage-backed event log with hash-chained writes (§4 ESAA). Compensation handlers on activities + `ctx.saga()` (§3 SagaLLM/Atomix). These three interlock; do them in one sprint or you'll do them twice.
+
+**Track 2 — Testing and diagnosis:** Chaos primitives in `TestEngine` (§6 ReliabilityBench). Failure categorization enum (§6 AgentDebug). `weft validate` design-time linter (§6 Cemri). Constraint primitive with `onViolation` semantics (§7 AgentRx).
+
+**Track 3 — Latency and throughput:** Speculative execution with verifiers (§5 Sherlock/libDSE). Prompt prefix caching (§10 Helium). Close the measured-vs-spec performance gaps (§11).
+
+**Track 4 — Multi-agent reliability:** Confidence-weighted voting in `supervise` (§8 CP-WBFT). Dynamic n-sizing (§8 Six Sigma). DPMO metric in the collector. Tool/agent/provider versioning (§9 AgentOrchestra).
+
+The detailed implementation checklist for these tracks lives in [../architecture.md](../architecture.md).
