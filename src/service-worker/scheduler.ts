@@ -11,7 +11,7 @@
 import { decode, encode } from '../core/codec';
 import type { TimerEntry } from '../core/types';
 import type { Storage } from '../storage/interface';
-import { KEYS } from '../storage/interface';
+import { KEYS, resolvePrefixRangeEnd } from '../storage/interface';
 
 // ---------------------------------------------------------------------------
 // Periodic sync type (not in default lib but used at runtime in browsers)
@@ -101,11 +101,12 @@ export class ServiceWorkerScheduler implements Disposable {
   /** Scan for expired timers, fire callbacks, and clean up. */
   async tick(now?: number): Promise<void> {
     const currentTime = now ?? this.#getNow();
-    const upperBound = KEYS.deadline(currentTime, '\xff');
 
     const expired: Array<{ key: string; entry: TimerEntry }> = [];
 
-    for await (const [key, value] of this.#storage.scan('wf-deadline:', { lte: upperBound })) {
+    for await (const [key, value] of this.#storage.scan('wf-deadline:', {
+      lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
+    })) {
       const entry = decode(value) as TimerEntry;
       expired.push({ key, entry });
     }

@@ -12,10 +12,15 @@ import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import { createSSEStream } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
-import { parseDuration } from '../core/scheduler.ts';
+import {
+  StartWorkflowValidationError,
+  assertExclusiveStartWorkflowOptions,
+  coerceStartWorkflowDuration,
+  coerceStartWorkflowId,
+  coerceStartWorkflowTimestamp,
+} from '../core/start-workflow-validation.ts';
 import type {
   AttributeFilter,
-  Duration,
   ListFilter,
   ReviewDecision,
   SearchAttributeValue,
@@ -23,7 +28,6 @@ import type {
   WorkflowStatus,
 } from '../core/types.ts';
 import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
-import { assertValidWorkflowId } from '../core/workflow-identifiers.ts';
 import {
   createMetricsCollectorExporter,
   type MetricsCollector,
@@ -119,60 +123,33 @@ export function getRequiredRouteParameter(
   return value;
 }
 
-function parseStartWorkflowDurationField(value: unknown, fieldName: string): Duration {
-  if (typeof value !== 'number' && typeof value !== 'string') {
-    throw new Error(
-      `Field "${fieldName}" must be a finite, non-negative number or valid duration string`,
-    );
-  }
-
-  try {
-    parseDuration(value);
-  } catch {
-    throw new Error(
-      `Field "${fieldName}" must be a finite, non-negative number or valid duration string`,
-    );
-  }
-
-  return value;
-}
-
 function validateStartWorkflowOptions(body: Record<string, unknown>): StartOptions {
   const options: StartOptions = {};
 
   const id = body['id'];
   if (id !== undefined) {
-    if (typeof id !== 'string') {
-      throw new Error('Field "id" must be a string');
-    }
-    assertValidWorkflowId(id, 'Field "id"');
-    options.id = id;
+    options.id = coerceStartWorkflowId(id, 'Field "id"');
   }
 
   const executionTimeout = body['executionTimeout'];
   if (executionTimeout !== undefined) {
-    options.executionTimeout = parseStartWorkflowDurationField(
+    options.executionTimeout = coerceStartWorkflowDuration(
       executionTimeout,
-      'executionTimeout',
+      'Field "executionTimeout"',
     );
   }
 
   const startAt = body['startAt'];
   if (startAt !== undefined) {
-    if (typeof startAt !== 'number' || !Number.isFinite(startAt) || startAt < 0) {
-      throw new Error('Field "startAt" must be a finite, non-negative timestamp');
-    }
-    options.startAt = startAt;
+    options.startAt = coerceStartWorkflowTimestamp(startAt, 'Field "startAt"');
   }
 
   const startAfter = body['startAfter'];
   if (startAfter !== undefined) {
-    options.startAfter = parseStartWorkflowDurationField(startAfter, 'startAfter');
+    options.startAfter = coerceStartWorkflowDuration(startAfter, 'Field "startAfter"');
   }
 
-  if (options.startAt !== undefined && options.startAfter !== undefined) {
-    throw new Error('Provide only one of startAt or startAfter');
-  }
+  assertExclusiveStartWorkflowOptions(options.startAt, options.startAfter);
 
   return options;
 }
@@ -221,31 +198,14 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
+    if (error instanceof StartWorkflowValidationError) {
+      return errorResponse(message, 400);
+    }
     if (message.includes('No workflow registered')) {
       return errorResponse(message, 400);
     }
     if (message.includes('already exists')) {
       return errorResponse(message, 409);
-    }
-    if (
-      message.includes('Provide only one of startAt or startAfter') ||
-      message.includes('options.startAt must be a finite, non-negative timestamp') ||
-      message.includes(
-        'options.startAfter must be a finite, non-negative number or a valid duration string',
-      ) ||
-      message.includes('options.startAfter must resolve to a finite, non-negative start time') ||
-      message.includes(
-        'options.executionTimeout must be a finite, non-negative number or a valid duration string',
-      ) ||
-      message.includes(
-        'options.executionTimeout must resolve to a finite, non-negative deadline',
-      ) ||
-      message.includes('options.id must not be an empty string') ||
-      message.includes(
-        'options.id must contain only letters, numbers, dots, underscores, and hyphens',
-      )
-    ) {
-      return errorResponse(message, 400);
     }
 
     return errorResponse(message, 500);

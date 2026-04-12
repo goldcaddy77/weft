@@ -3,13 +3,10 @@ import { describe, expect, it } from 'bun:test';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
-import { decode } from '../codec.ts';
+import { decode, encode } from '../codec.ts';
+import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import type { TimerEntry, WorkflowContext, WorkflowState } from '../types.ts';
-
-async function flush(): Promise<void> {
-  await Bun.sleep(10);
-}
 
 async function collectDelayedEntries(
   storage: MemoryStorage,
@@ -45,6 +42,14 @@ describe('delayed workflow start', () => {
       id: handle.id,
       status: 'pending',
       type: 'delayed',
+    });
+    expect(await engine.list()).toMatchObject({
+      total: 1,
+      items: [expect.objectContaining({ id: handle.id, status: 'pending', type: 'delayed' })],
+    });
+    expect(await engine.list({ status: 'pending' })).toMatchObject({
+      total: 1,
+      items: [expect.objectContaining({ id: handle.id, status: 'pending' })],
     });
     expect(executions).toBe(0);
 
@@ -204,14 +209,117 @@ describe('delayed workflow start', () => {
     registerDelayedWorkflow(secondEngine);
 
     now += 5_000;
+    const recoveredHandle = secondEngine.getHandle('wf-restart');
     await secondEngine.scheduler.tick(now);
-    await flush();
 
-    expect(await secondEngine.get('wf-restart')).toMatchObject({
-      status: 'completed',
-      result: 'done:work',
-    });
+    await expect(recoveredHandle.result()).resolves.toBe('done:work');
     expect(executions).toBe(1);
+
+    secondEngine[Symbol.dispose]();
+  });
+
+  it('restores only persistable workflow start headers after restart before launching child workflows', async () => {
+    let now = 1_000;
+    const storage = new MemoryStorage();
+    const capturedParentHeaders: Map<string, string>[] = [];
+
+    const registerWorkflows = (engine: Engine) => {
+      engine.addInterceptor({
+        workflowStart(interception, next) {
+          interception.headers.set(
+            'traceparent',
+            '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01',
+          );
+          interception.headers.set('tracestate', 'vendor=value');
+          interception.headers.set('x-auth', 'secret-token');
+          next(interception);
+        },
+        async childWorkflow(interception, next) {
+          capturedParentHeaders.push(new Map(interception.parentHeaders));
+          return next(interception);
+        },
+      });
+
+      engine.register('child', async function* () {
+        return 'child-complete';
+      });
+
+      engine.register('parent', async function* (ctx: WorkflowContext) {
+        return yield* (ctx as Context).startChild<string>('child', null);
+      });
+    };
+
+    const firstEngine = new Engine({
+      storage,
+      getNow: () => now,
+    });
+    registerWorkflows(firstEngine);
+
+    await firstEngine.start('parent', null, {
+      id: 'wf-restart-headers',
+      startAt: now + 5_000,
+    });
+
+    firstEngine[Symbol.dispose]();
+
+    const secondEngine = new Engine({
+      storage,
+      getNow: () => now,
+    });
+    registerWorkflows(secondEngine);
+
+    now += 5_000;
+    await secondEngine.scheduler.tick(now);
+
+    await expect(secondEngine.getHandle('wf-restart-headers').result()).resolves.toBe(
+      'child-complete',
+    );
+    expect(capturedParentHeaders).toHaveLength(1);
+    expect(capturedParentHeaders[0]?.get('traceparent')).toBe(
+      '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01',
+    );
+    expect(capturedParentHeaders[0]?.get('tracestate')).toBe('vendor=value');
+    expect(capturedParentHeaders[0]?.has('x-auth')).toBe(false);
+
+    secondEngine[Symbol.dispose]();
+  });
+
+  it('recoverAll includes pending delayed workflows after restart', async () => {
+    let now = 1_000;
+    const storage = new MemoryStorage();
+
+    const registerDelayedWorkflow = (engine: Engine) => {
+      engine.register('delayed', async function* (_ctx: WorkflowContext, input: unknown) {
+        return `done:${input as string}`;
+      });
+    };
+
+    const firstEngine = new Engine({
+      storage,
+      getNow: () => now,
+    });
+    registerDelayedWorkflow(firstEngine);
+
+    await firstEngine.start('delayed', 'recover-all', {
+      id: 'wf-recover-all',
+      startAfter: '5s',
+    });
+
+    firstEngine[Symbol.dispose]();
+
+    const secondEngine = new Engine({
+      storage,
+      getNow: () => now,
+    });
+    registerDelayedWorkflow(secondEngine);
+
+    const recoveredHandles = await secondEngine.recoverAll();
+    expect(recoveredHandles.map((handle) => handle.id)).toEqual(['wf-recover-all']);
+
+    now += 5_000;
+    await secondEngine.scheduler.tick(now);
+
+    await expect(recoveredHandles[0]!.result()).resolves.toBe('done:recover-all');
 
     secondEngine[Symbol.dispose]();
   });
@@ -230,7 +338,7 @@ describe('delayed workflow start', () => {
       startAfter: '5s',
     });
 
-    await engine.cancel(handle.id);
+    await handle.cancel();
 
     await expect(handle.result()).rejects.toThrow('Workflow cancelled');
     expect(await engine.get(handle.id)).toMatchObject({ status: 'cancelled' });
@@ -238,6 +346,31 @@ describe('delayed workflow start', () => {
 
     await engine.advanceTime('5s');
     expect(executions).toBe(0);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('cleans up pending reviews for delayed workflows with encoded workflow ids when cancelled', async () => {
+    const engine = new TestEngine({ startTime: 1_000 });
+    const workflowId = 'wf:review/cleanup';
+
+    engine.register('delayed', async function* () {
+      return 'done';
+    });
+
+    const handle = await engine.start('delayed', null, {
+      id: workflowId,
+      startAfter: '5s',
+    });
+    await engine.storage.put(
+      KEYS.review(workflowId, 'review-1'),
+      encode({ workflowId, reviewId: 'review-1' }),
+    );
+
+    await handle.cancel();
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+
+    expect(await engine.storage.get(KEYS.review(workflowId, 'review-1'))).toBeNull();
 
     engine[Symbol.dispose]();
   });

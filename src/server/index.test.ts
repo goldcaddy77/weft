@@ -1519,7 +1519,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
   /** Open a WebSocket to the token stream endpoint and wait for the connection. */
   async function connectStream(wsServer: WeftServer, workflowId: string): Promise<WebSocket> {
     const wsUrl = wsServer.url.replace('http://', 'ws://');
-    const ws = new WebSocket(`${wsUrl}/v1/workflows/${workflowId}/stream`);
+    const ws = new WebSocket(`${wsUrl}/v1/workflows/${encodeURIComponent(workflowId)}/stream`);
 
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener('open', () => resolve());
@@ -1626,6 +1626,29 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     );
     expect(replayedTokens).toContain('first');
     expect(replayedTokens).toContain('second');
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('replays existing token events on connect for workflow ids that require encoding', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const workflowId = 'wf:replay/with spaces';
+    engine.dispatchEvent(new TokenEvent(workflowId, 'encoded', 'gpt-4'));
+    await Bun.sleep(200);
+
+    const ws = await connectStream(server, workflowId);
+    const messages = collectMessages(ws);
+    await Bun.sleep(200);
+
+    const replayMessages = messages.filter((message) => message.type === 'replay');
+    const replayedTokens = replayMessages.map(
+      (message) => (message['data'] as Record<string, unknown>)?.['token'],
+    );
+
+    expect(replayedTokens).toContain('encoded');
 
     ws.close();
     await Bun.sleep(50);

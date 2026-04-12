@@ -27,7 +27,7 @@ import {
 import { calculateBackoff } from '../core/scheduler.ts';
 import type { RetryPolicy } from '../core/types.ts';
 import type { MetricsCollector, PrometheusExporter } from '../observability/metrics.ts';
-import { KEYS } from '../storage/interface.ts';
+import { KEYS, encodeStorageKeyComponent } from '../storage/interface.ts';
 import type { RoutingOptions, RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, Authenticator } from './authentication.ts';
@@ -185,8 +185,8 @@ interface WebSocketData {
 // ---------------------------------------------------------------------------
 
 const WORKER_STREAM_RE = /^\/v1\/tasks\/([\w-]+)\/stream$/;
-const WORKFLOW_STREAM_RE = /^\/v1\/workflows\/([\w-]+)\/stream$/;
-const WORKFLOW_WATCH_RE = /^\/v1\/workflows\/([\w-]+)\/watch$/;
+const WORKFLOW_STREAM_RE = /^\/v1\/workflows\/([^/]+)\/stream$/;
+const WORKFLOW_WATCH_RE = /^\/v1\/workflows\/([^/]+)\/watch$/;
 const TASK_POLL_RE = /^\/v1\/tasks\/([\w-]+)$/;
 const TASK_RESULT_RE = /^\/v1\/tasks\/([\w-]+)\/result$/;
 
@@ -375,7 +375,7 @@ export function wireEventBroadcasting(
     if (existing) return existing;
 
     const promise = (async () => {
-      const prefix = `ev:${workflowId}:`;
+      const prefix = `ev:${encodeStorageKeyComponent(workflowId)}:`;
       let highestSequence = -1;
 
       /* c8 ignore start -- existing-event replay and rejected-scan recovery are defensive */
@@ -606,7 +606,7 @@ export function serve(options: ServeOptions): WeftServer {
     ws: ServerWebSocket<WebSocketData>,
     workflowId: string,
   ): Promise<void> {
-    const prefix = `ev:${workflowId}:`;
+    const prefix = `ev:${encodeStorageKeyComponent(workflowId)}:`;
     try {
       for await (const [, value] of options.engine.storage.scan(prefix)) {
         const event = decode(value);

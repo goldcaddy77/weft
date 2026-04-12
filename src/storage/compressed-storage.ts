@@ -18,7 +18,12 @@ import {
   resolveCompressionOptions,
 } from '../core/compression.ts';
 
-import type { BatchOperation, ScanOptions, Storage } from './interface.ts';
+import {
+  type BatchOperation,
+  type ScanOptions,
+  type Storage,
+  tryDecodeStorageKeyComponent,
+} from './interface.ts';
 
 /** Options for agent-aware compression in {@link CompressedStorage}. */
 export type AgentCompressionOptions = {
@@ -141,8 +146,8 @@ function extractWorkflowIdFromKey(key: string): string | null {
   const secondColon = key.indexOf(':', 3);
   if (secondColon === -1) {
     // Key is of the form `wf:{workflowId}`
-    return key.slice(3);
+    return tryDecodeStorageKeyComponent(key.slice(3));
   }
   // Key is of the form `wf:{workflowId}:*`
-  return key.slice(3, secondColon);
+  return tryDecodeStorageKeyComponent(key.slice(3, secondColon));
 }

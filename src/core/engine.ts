@@ -24,7 +24,11 @@ import type { LLMProvider } from '../ai/providers/interface.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
-import { KEYS } from '../storage/interface.ts';
+import {
+  KEYS,
+  encodeStorageKeyComponent,
+  tryDecodeStorageKeyComponent,
+} from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../workers/pool.ts';
@@ -76,13 +80,20 @@ import type {
   WorkflowInterceptor,
 } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
-import { Scheduler, buildTimerBatchOperations, parseDuration } from './scheduler.ts';
+import { Scheduler, buildTimerBatchOperations } from './scheduler.ts';
 import {
   buildIndexOperations,
   encodeAttributeValue,
   validateAttributeType,
   validateEncodedValueSize,
 } from './search-attributes.ts';
+import {
+  StartWorkflowValidationError,
+  assertExclusiveStartWorkflowOptions,
+  coerceStartWorkflowId,
+  coerceStartWorkflowTimestamp,
+  parseStartWorkflowDuration,
+} from './start-workflow-validation.ts';
 import {
   compileStepWorkflow,
   isAsyncGeneratorFunction,
@@ -127,7 +138,6 @@ import {
   migrateCheckpoint,
 } from './versioning.ts';
 import { WorkerExecutionStrategy } from './worker-execution-strategy.ts';
-import { assertValidWorkflowId } from './workflow-identifiers.ts';
 import {
   collectToolVersions,
   diffWorkflowVersionTuples,
@@ -407,6 +417,37 @@ function resolveEngineStorage(
         }
       : {}),
   });
+}
+
+function encodeWorkflowStartHeaders(headers: Map<string, string>): Uint8Array {
+  return encode([...headers.entries()]);
+}
+
+function decodeWorkflowStartHeaders(bytes: Uint8Array): Map<string, string> {
+  const entries = decode(bytes) as Array<[string, string]>;
+  return new Map(entries);
+}
+
+const PERSISTED_WORKFLOW_START_HEADER_NAMES = new Set(['traceparent', 'tracestate']);
+
+function selectPersistedWorkflowStartHeaders(
+  headers: Map<string, string> | undefined,
+): Map<string, string> | undefined {
+  if (!headers || headers.size === 0) {
+    return undefined;
+  }
+
+  const persistedHeaders = new Map<string, string>();
+
+  for (const [name, value] of headers) {
+    const normalizedName = name.toLowerCase();
+    if (!PERSISTED_WORKFLOW_START_HEADER_NAMES.has(normalizedName)) {
+      continue;
+    }
+    persistedHeaders.set(normalizedName, value);
+  }
+
+  return persistedHeaders.size > 0 ? persistedHeaders : undefined;
 }
 
 function resolveEngineOptions(
@@ -1064,13 +1105,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     resolve({ ok: true, value: decision });
   }
 
-  #captureWorkflowStartHeaders(
-    workflowId: string,
-    interception: { headers: Map<string, string> },
-  ): void {
-    this.#workflowHeaders.set(workflowId, interception.headers);
-  }
-
   async #handleReviewEscalationTimer(
     workflowId: string,
     reviewId: string,
@@ -1356,11 +1390,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`No workflow registered with name "${type}"`);
     }
 
-    if (options?.id !== undefined) {
-      assertValidWorkflowId(options.id);
-    }
     const callerProvidedId = options?.id !== undefined;
-    const workflowId = options?.id ?? crypto.randomUUID();
+    const workflowId =
+      options?.id !== undefined
+        ? coerceStartWorkflowId(options.id, 'options.id')
+        : crypto.randomUUID();
 
     // Capture and clear pending parent headers immediately, before any async
     // work, to prevent a concurrent child-workflow start from overwriting them.
@@ -1413,7 +1447,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         versionTuple.workflowVersion,
         options,
       );
+      const workflowStartHeaders = this.#runWorkflowStartInterceptor(
+        workflowId,
+        type,
+        input,
+        parentHeaders,
+      );
+      const persistedWorkflowStartHeaders =
+        selectPersistedWorkflowStartHeaders(workflowStartHeaders);
       this.#checkpoints.set(workflowId, checkpoint);
+      this.#setWorkflowStartHeaders(workflowId, workflowStartHeaders);
 
       // Cache the workflow version tuple for forwarding to event-log entries.
       this.#workflowVersionTuples.set(workflowId, versionTuple);
@@ -1433,11 +1476,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           options,
           state.executionDeadline,
           delayedStartTimer,
+          persistedWorkflowStartHeaders,
         ),
       );
       // Deadline timer operations are now folded into the start batch above,
       // eliminating a separate storage transaction on the hot start path.
-      this.#runWorkflowStartInterceptor(workflowId, type, input, parentHeaders);
 
       const handle = this.#createWorkflowHandle(workflowId);
       if (!delayedStartTimer) {
@@ -1458,6 +1501,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (!startSucceeded && registration.isAgent) {
         this.#agentWorkflowIds.delete(workflowId);
       }
+      if (!startSucceeded) {
+        this.#checkpoints.delete(workflowId);
+        this.#workflowHeaders.delete(workflowId);
+        this.#workflowVersionTuples.delete(workflowId);
+      }
     }
   }
 
@@ -1465,22 +1513,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     options: StartOptions | undefined,
     submissionTime: number,
   ): number | undefined {
-    if (options?.startAt !== undefined && options?.startAfter !== undefined) {
-      throw new Error('Provide only one of startAt or startAfter');
-    }
+    assertExclusiveStartWorkflowOptions(options?.startAt, options?.startAfter);
 
     if (options?.startAt !== undefined) {
-      if (!Number.isFinite(options.startAt) || options.startAt < 0) {
-        throw new Error('options.startAt must be a finite, non-negative timestamp');
-      }
-      return options.startAt;
+      return coerceStartWorkflowTimestamp(options.startAt, 'options.startAt');
     }
 
     if (options?.startAfter !== undefined) {
       const scheduledStartAt =
         submissionTime + this.#parseStartOptionDuration(options.startAfter, 'options.startAfter');
       if (!Number.isFinite(scheduledStartAt) || scheduledStartAt < 0) {
-        throw new Error('options.startAfter must resolve to a finite, non-negative start time');
+        throw new StartWorkflowValidationError(
+          'options.startAfter must resolve to a finite, non-negative start time',
+        );
       }
       return scheduledStartAt;
     }
@@ -1492,13 +1537,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     duration: import('./types.ts').Duration,
     fieldName: 'options.executionTimeout' | 'options.startAfter',
   ): number {
-    try {
-      return parseDuration(duration);
-    } catch {
-      throw new Error(
-        `${fieldName} must be a finite, non-negative number or a valid duration string`,
-      );
-    }
+    return parseStartWorkflowDuration(duration, fieldName);
   }
 
   #createDelayedStartTimerEntry(
@@ -1574,13 +1613,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       existingResolver.reject = this.#rejectChainedResult.bind(this, originalReject, reject);
       resultPromise = promise;
     } else {
-      // Workflow may already be complete; load from storage
-      resultPromise = this.#loadWorkflowResult(workflowId);
+      // The workflow may be terminal, actively running, or still pending.
+      // Bootstrap a durable resolver from persisted state so handles created
+      // after a restart can still wait for future completion.
+      resultPromise = this.#createDeferredWorkflowResultPromise(workflowId);
     }
 
-    const handle = new WorkflowHandle(workflowId, this, resultPromise);
-    this.#cacheHandle(workflowId, handle);
-    return handle;
+    return this.#createWorkflowHandleWithResultPromise(workflowId, resultPromise);
   }
 
   // -------------------------------------------------------------------------
@@ -1834,7 +1873,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
       const executionDeadline = now + executionTimeoutMilliseconds;
       if (!Number.isFinite(executionDeadline) || executionDeadline < 0) {
-        throw new Error('options.executionTimeout must resolve to a finite, non-negative deadline');
+        throw new StartWorkflowValidationError(
+          'options.executionTimeout must resolve to a finite, non-negative deadline',
+        );
       }
       state.executionDeadline = executionDeadline;
     }
@@ -1883,6 +1924,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     options?: StartOptions,
     executionDeadline?: number,
     delayedStartTimer?: TimerEntry,
+    workflowStartHeaders?: Map<string, string>,
   ): import('../storage/interface.ts').BatchOperation[] {
     const operations: import('../storage/interface.ts').BatchOperation[] = [
       { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
@@ -1896,6 +1938,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         registration,
         options?.searchAttributes,
       ),
+      ...(workflowStartHeaders && workflowStartHeaders.size > 0
+        ? [
+            {
+              type: 'put' as const,
+              key: KEYS.workflowHeaders(workflowId),
+              value: encodeWorkflowStartHeaders(workflowStartHeaders),
+            },
+          ]
+        : []),
     ];
 
     // Fold deadline timer operations into the same batch so workflows with
@@ -1965,10 +2016,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowType: string,
     input: unknown,
     parentHeaders: Map<string, string> | undefined,
-  ): void {
+  ): Map<string, string> | undefined {
     const composedInterceptor = this.#getComposedWorkflowInterceptor();
     if (!composedInterceptor) {
-      return;
+      return undefined;
     }
 
     const headers = new Map<string, string>();
@@ -1978,6 +2029,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
     }
 
+    let capturedHeaders: Map<string, string> | undefined;
     composedInterceptor.workflowStart(
       {
         workflowId,
@@ -1985,17 +2037,100 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         input,
         headers,
       },
-      this.#captureWorkflowStartHeaders.bind(this, workflowId),
+      (interception) => {
+        capturedHeaders = new Map(interception.headers);
+      },
     );
+
+    return capturedHeaders;
   }
 
   #createWorkflowHandle(workflowId: string): WorkflowHandle {
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    this.#resultResolvers.set(workflowId, { resolve, reject });
+    return this.#createWorkflowHandleWithResultPromise(
+      workflowId,
+      this.#createWorkflowResultPromise(workflowId),
+    );
+  }
 
-    const handle = new WorkflowHandle(workflowId, this, promise);
+  #createWorkflowHandleWithResultPromise(
+    workflowId: string,
+    resultPromise: Promise<unknown>,
+  ): WorkflowHandle {
+    const handle = new WorkflowHandle(workflowId, this, resultPromise);
     this.#cacheHandle(workflowId, handle);
     return handle;
+  }
+
+  #createWorkflowResultPromise(workflowId: string): Promise<unknown> {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    this.#resultResolvers.set(workflowId, { resolve, reject });
+    return promise;
+  }
+
+  #createDeferredWorkflowResultPromise(workflowId: string): Promise<unknown> {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    const resolver = { resolve, reject };
+    this.#resultResolvers.set(workflowId, resolver);
+    void this.#bootstrapWorkflowResultResolver(workflowId, resolver);
+    return promise;
+  }
+
+  async #bootstrapWorkflowResultResolver(
+    workflowId: string,
+    resolver: WorkflowResultResolver,
+  ): Promise<void> {
+    try {
+      const state = await this.#loadWorkflowState(workflowId);
+      if (this.#resultResolvers.get(workflowId) !== resolver) {
+        return;
+      }
+
+      if (!state) {
+        this.#resultResolvers.delete(workflowId);
+        resolver.reject(new Error(`Workflow "${workflowId}" not found in storage`));
+        return;
+      }
+
+      if (state.status === 'running' || state.status === 'pending') {
+        return;
+      }
+
+      try {
+        const result = await this.#loadWorkflowResult(workflowId);
+        if (this.#resultResolvers.get(workflowId) === resolver) {
+          this.#resultResolvers.delete(workflowId);
+        }
+        resolver.resolve(result);
+      } catch (error) {
+        if (this.#resultResolvers.get(workflowId) === resolver) {
+          this.#resultResolvers.delete(workflowId);
+        }
+        resolver.reject(error);
+      }
+    } catch (error) {
+      if (this.#resultResolvers.get(workflowId) === resolver) {
+        this.#resultResolvers.delete(workflowId);
+      }
+      resolver.reject(error);
+    }
+  }
+
+  #setWorkflowStartHeaders(workflowId: string, headers: Map<string, string> | undefined): void {
+    if (!headers || headers.size === 0) {
+      this.#workflowHeaders.delete(workflowId);
+      return;
+    }
+
+    this.#workflowHeaders.set(workflowId, new Map(headers));
+  }
+
+  async #loadWorkflowStartHeaders(workflowId: string): Promise<Map<string, string> | undefined> {
+    const bytes = await this.#storage.get(KEYS.workflowHeaders(workflowId));
+    if (!bytes) {
+      return undefined;
+    }
+
+    return decodeWorkflowStartHeaders(bytes);
   }
 
   /**
@@ -2039,6 +2174,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       checkpoint: serializeCheckpoint(checkpoint),
       nestingDepth,
       ...(executionDeadline !== undefined && { deadline: executionDeadline }),
+      ...(this.#workflowHeaders.has(workflowId) && {
+        headers: [...this.#workflowHeaders.get(workflowId)!],
+      }),
       ...(tenant !== undefined && { tenant }),
     });
   }
@@ -2096,8 +2234,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const exactPrefix = `idx:${filter.key}:${encodedValue}:`;
       for await (const [key] of this.#storage.scan(exactPrefix)) {
         // Key format: idx:{name}:{encodedValue}:{workflowId}
-        const workflowId = key.slice(exactPrefix.length);
-        ids.add(workflowId);
+        const workflowId = tryDecodeStorageKeyComponent(key.slice(exactPrefix.length));
+        if (workflowId !== null) {
+          ids.add(workflowId);
+        }
       }
     } else {
       // Range scan with gte/lte/gt/lt boundaries
@@ -2124,7 +2264,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         const afterPrefix = key.slice(prefix.length);
         const lastColon = afterPrefix.lastIndexOf(':');
         if (lastColon >= 0) {
-          ids.add(afterPrefix.slice(lastColon + 1));
+          const workflowId = tryDecodeStorageKeyComponent(afterPrefix.slice(lastColon + 1));
+          if (workflowId !== null) {
+            ids.add(workflowId);
+          }
         }
       }
     }
@@ -2443,13 +2586,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const eventLog = new EventLog(this.#storage, workflowId);
     const restoredHead = await eventLog.loadHead();
     this.#eventLogHeads.set(workflowId, restoredHead);
+    this.#setWorkflowStartHeaders(workflowId, await this.#loadWorkflowStartHeaders(workflowId));
 
-    // Create result promise and handle
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    this.#resultResolvers.set(workflowId, { resolve, reject });
-
-    const handle = new WorkflowHandle(workflowId, this, promise);
-    this.#cacheHandle(workflowId, handle);
+    const handle = this.#createWorkflowHandle(workflowId);
 
     // Dispatch resumed event
     this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
@@ -2502,6 +2641,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         checkpoint: serialized,
         nestingDepth: this.#workflowNestingDepths.get(workflowId) ?? 0,
         ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+        ...(this.#workflowHeaders.has(workflowId) && {
+          headers: [...this.#workflowHeaders.get(workflowId)!],
+        }),
         ...(state.tenant !== undefined && { tenant: state.tenant }),
       });
     }
@@ -2517,6 +2659,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (key.includes(':ckpt') || key.includes(':offload') || key.includes(':archive')) continue;
 
       const state = decodeWorkflowState(value);
+      if (state.status === 'pending') {
+        handles.push(this.getHandle(state.id));
+        continue;
+      }
       if (state.status !== 'running') continue;
 
       const registration = this.#registrations.get(state.type);
@@ -2698,7 +2844,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async listCheckpoints(workflowId: string): Promise<CheckpointSummary[]> {
     if (this.#options.checkpointHistory <= 0) return [];
 
-    const prefix = `wf:${workflowId}:ckpt:`;
+    const prefix = `${KEYS.checkpoint(workflowId)}:`;
     const summaries: CheckpointSummary[] = [];
 
     for await (const [, value] of this.#storage.scan(prefix, {
@@ -4613,6 +4759,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       entry.workflowId,
       this.#workflowVersionTupleFromState(runningState),
     );
+    this.#setWorkflowStartHeaders(
+      entry.workflowId,
+      await this.#loadWorkflowStartHeaders(entry.workflowId),
+    );
     if (registration.isAgent) {
       this.#agentWorkflowIds.add(entry.workflowId);
     }
@@ -4670,7 +4820,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   /** Remove all pending review entries from storage for a given workflow. */
   async #cleanupReviews(workflowId: string): Promise<void> {
-    const prefix = `review:${workflowId}:`;
+    const prefix = `review:${encodeStorageKeyComponent(workflowId)}:`;
     if (this.#storage.deletePrefix) {
       await this.#storage.deletePrefix(prefix);
       return;
@@ -4715,14 +4865,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     includeOutputArtifacts: boolean,
   ): Promise<void> {
+    const encodedWorkflowId = encodeStorageKeyComponent(workflowId);
+
     // Always sweep internal state. Signals are workflow-scoped scratch space,
     // and the tool-effect log holds per-tool-call dedup records that have no
     // consumers after the workflow terminates — leaving them behind would
     // leak linearly with tool-call volume across the engine's lifetime.
     const prefixes: string[] = [
-      `sig:${workflowId}:`,
-      `tool-effect:${workflowId}:`,
-      `wf:${workflowId}:ckpt:`,
+      `sig:${encodedWorkflowId}:`,
+      `tool-effect:${encodedWorkflowId}:`,
+      `wf:${encodedWorkflowId}:ckpt:`,
     ];
 
     if (includeOutputArtifacts) {
@@ -4730,8 +4882,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // artifacts too. Event history is still preserved via the omission of
       // the `ev:` prefix — callers that want it gone should use a storage
       // TTL or explicit pruning.
-      prefixes.push(`offload:${workflowId}:`, `blob:${workflowId}:`, `shared:${workflowId}:`);
+      prefixes.push(
+        `offload:${encodedWorkflowId}:`,
+        `blob:${encodedWorkflowId}:`,
+        `shared:${encodedWorkflowId}:`,
+      );
     }
+
+    await this.#storage.delete(KEYS.workflowHeaders(workflowId));
 
     // Use the storage adapter's native prefix deletion when available
     // (e.g., BunSQLiteStorage's prepared DELETE...WHERE key >= ? AND key < ?).
@@ -4951,7 +5109,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #consumeSignal(workflowId: string, signalName: string): Promise<ConsumedSignalResult> {
-    const prefix = `sig:${workflowId}:${signalName}:`;
+    const prefix = `sig:${encodeStorageKeyComponent(workflowId)}:${signalName}:`;
     for await (const [key, value] of this.#storage.scan(prefix, { limit: 1 })) {
       await this.#storage.delete(key);
       return { found: true, payload: decode(value) };

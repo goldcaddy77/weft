@@ -230,6 +230,31 @@ describe('Scheduler', () => {
     expect(firedEntries[2]!.id).toBe('timer-2');
   });
 
+  it('preserves stable ordering when expired deadline and delayed-start timers share a fireAt', async () => {
+    const deadlineEntry = makeTimer({
+      id: 'deadline-workflow-1',
+      workflowId: 'workflow-1',
+      fireAt: currentTime - 1000,
+      kind: 'execution-deadline',
+    });
+    const delayedStartEntry = makeTimer({
+      id: 'delayed-start:workflow-2',
+      workflowId: 'workflow-2',
+      fireAt: currentTime - 1000,
+      kind: 'delayed-start',
+    });
+
+    await scheduler.schedule(delayedStartEntry);
+    await scheduler.schedule(deadlineEntry);
+
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries.map((entry) => entry.id)).toEqual([
+      'deadline-workflow-1',
+      'delayed-start:workflow-2',
+    ]);
+  });
+
   it('cancel is a no-op for a timer that was never scheduled', async () => {
     await scheduler.cancel('nonexistent-timer', 'some-workflow');
     // Should not throw and no entries should fire

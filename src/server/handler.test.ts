@@ -241,21 +241,39 @@ describe('handleRequest', () => {
     expect(state.executionDeadline).toBeDefined();
   });
 
-  it('POST /v1/workflows with an invalid id returns 400', async () => {
+  it('POST /v1/workflows accepts a custom id with storage key separators', async () => {
     engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/workflows', {
         type: 'echo',
         input: 'data',
-        id: 'wf:ckpt',
+        id: 'wf:ckpt/with spaces',
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(201);
+    const body = (await json(response)) as { id: string };
+    expect(body.id).toBe('wf:ckpt/with spaces');
+  });
+
+  it('POST /v1/workflows rejects custom ids with control characters', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        id: 'wf-control\nid',
       }),
       engine,
     );
 
     expect(response.status).toBe(400);
-    const body = (await json(response)) as { error: string };
-    expect(body.error).toContain('Field "id"');
+    expect(await json(response)).toMatchObject({
+      error: 'Field "id" must not contain control characters',
+    });
   });
 
   it('POST /v1/workflows with startAt keeps the workflow pending until it is due', async () => {

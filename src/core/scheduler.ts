@@ -8,7 +8,7 @@
  */
 
 import type { BatchOperation, Storage } from '../storage/interface';
-import { KEYS } from '../storage/interface';
+import { KEYS, resolvePrefixRangeEnd } from '../storage/interface';
 import { decode, encode } from './codec';
 import type { Duration, RetryPolicy, TimerEntry } from './types';
 
@@ -115,6 +115,31 @@ export interface SchedulerOptions {
   getNow?: () => number;
 }
 
+type ScannedTimerEntry = {
+  key: string;
+  entry: TimerEntry;
+};
+
+function compareScannedTimerEntries(left: ScannedTimerEntry, right: ScannedTimerEntry): number {
+  if (left.entry.fireAt !== right.entry.fireAt) {
+    return left.entry.fireAt - right.entry.fireAt;
+  }
+
+  return left.key.localeCompare(right.key);
+}
+
+async function readNextScannedTimerEntry(
+  iterator: AsyncIterator<[string, Uint8Array]>,
+): Promise<ScannedTimerEntry | null> {
+  const next = await iterator.next();
+  if (next.done) {
+    return null;
+  }
+
+  const [key, value] = next.value;
+  return { key, entry: decode(value) as TimerEntry };
+}
+
 /** Scheduler manages durable timers and polls for expired deadlines. */
 export class Scheduler implements Disposable {
   readonly #storage: Storage;
@@ -197,47 +222,50 @@ export class Scheduler implements Disposable {
     { respectStopped }: { respectStopped: boolean },
   ): Promise<void> {
     const currentTime = now ?? this.#getNow();
-    const expired: Array<{ key: string; entry: TimerEntry }> = [];
-    const deadlineUpperBound = KEYS.deadline(currentTime, '\xff');
-    const delayedUpperBound = KEYS.delayedStart(currentTime, '\xff');
+    const deadlineIterator = this.#storage
+      .scan('wf-deadline:', {
+        lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
+      })
+      [Symbol.asyncIterator]();
+    const delayedStartIterator = this.#storage
+      .scan('wf-delayed:', {
+        lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
+      })
+      [Symbol.asyncIterator]();
 
-    for await (const [key, value] of this.#storage.scan('wf-deadline:', {
-      lte: deadlineUpperBound,
-    })) {
-      expired.push({ key, entry: decode(value) as TimerEntry });
-    }
+    let nextDeadline = await readNextScannedTimerEntry(deadlineIterator);
+    let nextDelayedStart = await readNextScannedTimerEntry(delayedStartIterator);
 
-    for await (const [key, value] of this.#storage.scan('wf-delayed:', {
-      lte: delayedUpperBound,
-    })) {
-      expired.push({ key, entry: decode(value) as TimerEntry });
-    }
+    while (nextDeadline || nextDelayedStart) {
+      const nextEntry =
+        nextDeadline && nextDelayedStart
+          ? compareScannedTimerEntries(nextDeadline, nextDelayedStart) <= 0
+            ? nextDeadline
+            : nextDelayedStart
+          : (nextDeadline ?? nextDelayedStart!);
 
-    expired.sort((left, right) => {
-      if (left.entry.fireAt !== right.entry.fireAt) {
-        return left.entry.fireAt - right.entry.fireAt;
-      }
-      return left.key.localeCompare(right.key);
-    });
-
-    // Fire callbacks and delete keys in chronological order (already sorted by scan).
-    for (const { key, entry } of expired) {
       // Re-check #stopped before each callback so an interval-dispatched tick
       // terminates early when stop() or dispose is called concurrently. flush()
       // skips this check because its purpose is to drain remaining timers.
       if (respectStopped && this.#stopped) return;
 
       try {
-        await this.#onTimerFired(entry);
+        await this.#onTimerFired(nextEntry.entry);
       } catch (error) {
-        console.error(`Timer callback failed for timer ${entry.id}:`, error);
+        console.error(`Timer callback failed for timer ${nextEntry.entry.id}:`, error);
       }
 
-      const indexKey = `timer-idx:${entry.id}`;
+      const indexKey = `timer-idx:${nextEntry.entry.id}`;
       await this.#storage.batch([
-        { type: 'delete', key },
+        { type: 'delete', key: nextEntry.key },
         { type: 'delete', key: indexKey },
       ]);
+
+      if (nextEntry === nextDeadline) {
+        nextDeadline = await readNextScannedTimerEntry(deadlineIterator);
+      } else {
+        nextDelayedStart = await readNextScannedTimerEntry(delayedStartIterator);
+      }
     }
   }
 

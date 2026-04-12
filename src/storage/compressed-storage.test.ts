@@ -185,6 +185,27 @@ describe('algorithm switching', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Agent-aware compression
+// ---------------------------------------------------------------------------
+
+describe('agent-aware compression', () => {
+  it('ignores malformed encoded workflow ids when selecting a compressor', async () => {
+    const inner = new MemoryStorage();
+    const storage = new CompressedStorage(inner, {
+      algorithm: 'gzip',
+      threshold: 64,
+      agentAlgorithm: 'brotli',
+      agentThreshold: 32,
+      agentWorkflowIds: () => new Set(['agent-workflow']),
+    });
+    const value = new Uint8Array(128).fill(7);
+
+    await expect(storage.put('wf:%E0%A4%A:ckpt', value)).resolves.toBeUndefined();
+    await expect(storage.get('wf:%E0%A4%A:ckpt')).resolves.toEqual(value);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Delete
 // ---------------------------------------------------------------------------
 
