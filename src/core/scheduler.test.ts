@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
+import { KEYS } from '../storage/interface';
 import { MemoryStorage } from '../storage/memory';
+import { encode } from './codec';
 import { calculateBackoff, parseDuration, Scheduler } from './scheduler';
 import type { TimerEntry } from './types';
 
@@ -315,6 +317,34 @@ describe('Scheduler', () => {
     expect(firedEntries[0]!.id).toBe('timer-1');
 
     scheduler.stop();
+  });
+
+  it('removes corrupted timer entries from storage and processes valid timers', async () => {
+    // Write a garbage value directly under a wf-deadline: key to simulate corruption.
+    // The encoded value is a plain string, which isTimerEntry() will reject.
+    const corruptedFireAt = currentTime - 2000;
+    const corruptedKey = KEYS.deadline(corruptedFireAt, 'corrupted-id');
+    await storage.put(corruptedKey, encode('this is not a TimerEntry'));
+
+    // Schedule a real timer that expires before now.
+    const validEntry = makeTimer({ id: 'timer-valid', fireAt: currentTime - 1000 });
+    await scheduler.schedule(validEntry);
+
+    await scheduler.tick(currentTime);
+
+    // The valid timer must have fired.
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe('timer-valid');
+
+    // After tick(), no wf-deadline: keys should remain — both the corrupted key
+    // and the valid timer's deadline key must have been deleted.
+    const remainingKeys = await collectStorageKeys();
+    const remainingDeadlines = remainingKeys.filter((key) => key.startsWith('wf-deadline:'));
+    expect(remainingDeadlines).toHaveLength(0);
+
+    // The valid timer's index key must also have been cleaned up.
+    const remainingIndexes = remainingKeys.filter((key) => key.startsWith('timer-idx:'));
+    expect(remainingIndexes).toHaveLength(0);
   });
 
   it('continues processing remaining timers when a callback throws on one', async () => {

@@ -12,6 +12,20 @@ import { KEYS } from '../storage/interface';
 import { decode, encode } from './codec';
 import type { Duration, RetryPolicy, TimerEntry } from './types';
 
+/** Runtime type guard for decoded timer entries. */
+export function isTimerEntry(value: unknown): value is TimerEntry {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'id' in value &&
+    typeof value.id === 'string' &&
+    'workflowId' in value &&
+    typeof value.workflowId === 'string' &&
+    'fireAt' in value &&
+    typeof value.fireAt === 'number'
+  );
+}
+
 /**
  * Build the batch operations needed to persist a durable timer entry.
  * Shared between `Scheduler.schedule()` and `Engine.#buildStartBatchOperations()`
@@ -149,6 +163,8 @@ export class Scheduler implements Disposable {
     const decoded = decode(indexValue);
     if (typeof decoded !== 'string') {
       console.error(`Corrupted timer index for ${id}: expected string, got ${typeof decoded}`);
+      // Delete the corrupted index key so it does not cause permanent log spam.
+      await this.#storage.delete(indexKey);
       return;
     }
     const deadlineKey = decoded;
@@ -192,18 +208,14 @@ export class Scheduler implements Disposable {
 
     for await (const [key, value] of this.#storage.scan('wf-deadline:', { lte: upperBound })) {
       const decoded = decode(value);
-      if (
-        typeof decoded !== 'object' ||
-        decoded === null ||
-        typeof (decoded as Record<string, unknown>)['id'] !== 'string' ||
-        typeof (decoded as Record<string, unknown>)['workflowId'] !== 'string' ||
-        typeof (decoded as Record<string, unknown>)['fireAt'] !== 'number'
-      ) {
-        console.error(`Corrupted timer entry at ${key}: skipping`);
+      if (!isTimerEntry(decoded)) {
+        console.error(`Corrupted timer entry at ${key}: removing`);
+        // Delete corrupted keys so they do not cause permanent log spam on
+        // every subsequent tick.
+        await this.#storage.delete(key);
         continue;
       }
-      const entry = decoded as TimerEntry;
-      expired.push({ key, entry });
+      expired.push({ key, entry: decoded });
     }
 
     // Fire callbacks and delete keys in chronological order (already sorted by scan).
@@ -215,13 +227,24 @@ export class Scheduler implements Disposable {
 
       try {
         await this.#onTimerFired(entry);
+      } catch (error) {
+        // Callback failed — leave the timer in storage so it retries on the
+        // next tick. Do not fall through to the delete below.
+        console.error(`Timer callback failed for timer ${entry.id}:`, error);
+        continue;
+      }
+
+      // Callback succeeded — clean up the timer keys. If this delete fails,
+      // the timer will re-fire on the next tick (duplicate execution), but we
+      // surface the error rather than silently swallowing it.
+      try {
         const indexKey = `timer-idx:${entry.id}`;
         await this.#storage.batch([
           { type: 'delete', key },
           { type: 'delete', key: indexKey },
         ]);
-      } catch (error) {
-        console.error(`Timer callback failed for timer ${entry.id}:`, error);
+      } catch (deleteError) {
+        console.error(`Failed to delete timer keys for ${entry.id}:`, deleteError);
       }
     }
   }

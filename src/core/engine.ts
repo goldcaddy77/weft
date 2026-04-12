@@ -2746,12 +2746,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
 
     // Wake the waiting workflow by resolving its review waiter
-    const waiterKey = `${resolvedWorkflowId}:${reviewId}`;
-    const waiter = this.#reviewWaiters.get(waiterKey);
-    if (waiter && resolvedWorkflowId) {
-      this.#reviewWaiters.delete(waiterKey);
-      this.#untrackWaiterKey(this.#reviewWaitersByWorkflow, resolvedWorkflowId, waiterKey);
-      waiter(decisionResult);
+    if (resolvedWorkflowId) {
+      const waiterKey = `${resolvedWorkflowId}:${reviewId}`;
+      const waiter = this.#reviewWaiters.get(waiterKey);
+      if (waiter) {
+        this.#reviewWaiters.delete(waiterKey);
+        this.#untrackWaiterKey(this.#reviewWaitersByWorkflow, resolvedWorkflowId, waiterKey);
+        waiter(decisionResult);
+      }
     }
   }
 
@@ -4898,6 +4900,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // workflow-keyed records (reviews, pending signals, per-workflow dedup).
     // Output artifacts (offload, blob, shared, events) are preserved so
     // consumers can still read them after `handle.result()` resolves.
+    const resolver = this.#resultResolvers.get(workflowId);
     try {
       await this.#cleanupTerminalWorkflow(workflowId, false);
 
@@ -4907,10 +4910,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       this.#broadcast({ type: 'workflow:completed', workflowId });
 
-      const resolver = this.#resultResolvers.get(workflowId);
-      if (resolver) {
-        resolver.resolve(result);
-      }
+      if (resolver) resolver.resolve(result);
+    } catch (cleanupError) {
+      // Settle the resolver so handle.result() callers are not stranded.
+      if (resolver) resolver.resolve(result);
+      throw cleanupError;
     } finally {
       this.#resultResolvers.delete(workflowId);
     }
@@ -4947,6 +4951,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // workflow-keyed records (reviews, pending signals, per-workflow dedup).
     // Output artifacts (offload, blob, shared, events) are preserved so
     // consumers can still read them after `handle.result()` rejects.
+    const resolver = this.#resultResolvers.get(workflowId);
     try {
       await this.#cleanupTerminalWorkflow(workflowId, false);
 
@@ -4954,10 +4959,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.dispatchEvent(event);
       this.#forwardEventToHandle(workflowId, event);
 
-      const resolver = this.#resultResolvers.get(workflowId);
-      if (resolver) {
-        resolver.reject(error);
-      }
+      if (resolver) resolver.reject(error);
+    } catch (cleanupError) {
+      // Settle the resolver so handle.result() callers are not stranded.
+      if (resolver) resolver.reject(error);
+      throw cleanupError;
     } finally {
       this.#resultResolvers.delete(workflowId);
     }
