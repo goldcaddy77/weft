@@ -310,10 +310,25 @@ export class Scheduler implements Disposable {
       }
 
       const indexKey = `timer-idx:${nextEntry.entry.id}`;
-      await this.#storage.batch([
-        { type: 'delete', key: nextEntry.key },
-        { type: 'delete', key: indexKey },
-      ]);
+
+      const cleanupOperations: BatchOperation[] = [{ type: 'delete', key: nextEntry.key }];
+      if (nextEntry.entry.kind !== 'schedule') {
+        cleanupOperations.push({ type: 'delete', key: indexKey });
+      } else {
+        const indexValue = await this.#storage.get(indexKey);
+        if (indexValue !== null) {
+          const decodedIndexValue = decode(indexValue);
+
+          // Schedule callbacks re-arm the next tick with the same timer id.
+          // Only remove the index when it still points at the timer that just
+          // fired; otherwise we would delete the freshly-registered next tick.
+          if (typeof decodedIndexValue !== 'string' || decodedIndexValue === nextEntry.key) {
+            cleanupOperations.push({ type: 'delete', key: indexKey });
+          }
+        }
+      }
+
+      await this.#storage.batch(cleanupOperations);
       selectedSource.next = await readNextScannedTimerEntry(selectedSource.iterator);
     }
   }

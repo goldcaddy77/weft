@@ -333,6 +333,48 @@ describe('recurring schedules', () => {
     engine[Symbol.dispose]();
   });
 
+  it('Retains the re-armed schedule timer index until schedule.cancel removes the next tick.', async () => {
+    const storage = new MemoryStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock, storage);
+    const executions: string[] = [];
+
+    registerWorkflow(
+      engine,
+      'cancellable-schedule-workflow',
+      async function* (_ctx: WorkflowContext, input: string) {
+        executions.push(input);
+        return input;
+      },
+    );
+
+    const schedule = await engine.schedule(
+      'cancellable-schedule-workflow',
+      'run-once',
+      '* * * * *',
+      { id: 'cancellable-schedule' },
+    );
+    const firstDescription = await schedule.describe();
+
+    await tickEngine(engine, clock, requireNextFireAt(firstDescription));
+
+    expect(executions).toEqual(['run-once']);
+
+    const rearmedSchedule = await schedule.describe();
+    const nextFireAt = requireNextFireAt(rearmedSchedule);
+    const indexKey = 'timer-idx:schedule:cancellable-schedule';
+
+    expect(await storage.get(indexKey)).not.toBeNull();
+    expect(await storage.get(KEYS.scheduleTick(nextFireAt, 'cancellable-schedule'))).not.toBeNull();
+
+    await schedule.cancel();
+
+    expect(await storage.get(indexKey)).toBeNull();
+    expect(await storage.get(KEYS.scheduleTick(nextFireAt, 'cancellable-schedule'))).toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
   it('Schedules are listable and queryable. engine.listSchedules(filter?) returns next fire time, last fire time, and status.', async () => {
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
     const engine = createEngine(clock);
