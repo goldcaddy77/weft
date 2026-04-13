@@ -3556,6 +3556,56 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
+    it('cleans up agent start bookkeeping after a failed start batch', async () => {
+      const storage = new MemoryStorage();
+      const originalBatch = storage.batch.bind(storage);
+      let failStartBatch = true;
+      storage.batch = async (operations) => {
+        if (failStartBatch) {
+          failStartBatch = false;
+          throw new Error('simulated start batch failure');
+        }
+        return await originalBatch(operations);
+      };
+
+      const engine = new Engine({ storage });
+      const provider: LLMProvider = {
+        name: 'cleanup-agent-provider',
+        async chat(): Promise<ChatResponse> {
+          return {
+            content: 'cleaned',
+            toolCalls: [],
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 1;
+        },
+      };
+
+      const workflowId = 'cleanup-agent-workflow-id';
+      const agent = defineAgent({ name: 'cleanup-agent-workflow', model: 'test-model' });
+      engine.register(agent, { provider });
+
+      // The failing batch happens after in-memory start bookkeeping is populated,
+      // so the retry proves the finally-path cleanup removed that transient state.
+      await expect(
+        engine.start('cleanup-agent-workflow', null, { id: workflowId }),
+      ).rejects.toThrow('simulated start batch failure');
+      expect(engine.agentWorkflowIds.has(workflowId)).toBe(false);
+
+      const handle = await engine.start('cleanup-agent-workflow', null, { id: workflowId });
+      expect(await handle.result()).toBe('cleaned');
+      expect(engine.agentWorkflowIds.has(workflowId)).toBe(false);
+
+      engine[Symbol.dispose]();
+    });
+
     it('runs agent workflows with compression-enabled engine storage', async () => {
       const engine = new Engine({
         storage: new MemoryStorage(),

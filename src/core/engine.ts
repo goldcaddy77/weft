@@ -1539,15 +1539,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#pendingStarts.delete(workflowId);
       if (!startSucceeded) {
         this.#checkpoints.delete(workflowId);
+        this.#workflowHeaders.delete(workflowId);
         this.#workflowVersionTuples.delete(workflowId);
         if (registration.isAgent) {
           this.#agentWorkflowIds.delete(workflowId);
         }
-      }
-      if (!startSucceeded) {
-        this.#checkpoints.delete(workflowId);
-        this.#workflowHeaders.delete(workflowId);
-        this.#workflowVersionTuples.delete(workflowId);
       }
     }
   }
