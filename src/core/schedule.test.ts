@@ -395,6 +395,39 @@ describe('recurring schedules', () => {
     engine[Symbol.dispose]();
   });
 
+  it('Schedule summaries omit stored workflow input from describe, getSchedule, and listSchedules.', async () => {
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock);
+
+    registerWorkflow(engine, 'summary-redaction-workflow', async function* () {
+      return 'done';
+    });
+
+    const schedule = await engine.schedule(
+      'summary-redaction-workflow',
+      { secret: 'top-secret' },
+      '* * * * *',
+      { id: 'redacted-summary' },
+    );
+
+    const describedSchedule = await schedule.describe();
+    const loadedSchedule = await engine.getSchedule('redacted-summary');
+    const listedSchedules = await engine.listSchedules();
+    const listedSchedule = listedSchedules.items.find(
+      (summary) => summary.id === 'redacted-summary',
+    );
+
+    expect(loadedSchedule).not.toBeNull();
+    expect(listedSchedule).toBeDefined();
+
+    for (const summary of [describedSchedule, loadedSchedule, listedSchedule]) {
+      expect(summary).toBeDefined();
+      expect(Object.keys(summary as ScheduleSummary).includes('input')).toBe(false);
+    }
+
+    engine[Symbol.dispose]();
+  });
+
   it('Rejects malformed persisted schedules and validates runtime schedule inputs.', async () => {
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
     const storage = new MemoryStorage();

@@ -3352,7 +3352,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   #toScheduleSummary(state: ScheduleState): ScheduleSummary {
-    const { tenant: _tenant, ...summary } = state;
+    const { tenant: _tenant, input: _input, ...summary } = state;
     return summary;
   }
 
