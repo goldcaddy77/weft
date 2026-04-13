@@ -1,5 +1,7 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 
+import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
+
 import { BudgetPolicyEnforcer } from '../ai/budget-policy.ts';
 import { defineAgent } from '../ai/declaration.ts';
 import { AgentBudgetExceededEvent, AgentBudgetWarningEvent } from '../ai/events.ts';
@@ -142,6 +144,75 @@ describe('Engine', () => {
     expect(events[0]!.workflowId).toBe(handle.id);
     expect(events[0]!.result).toBe('completed');
     expect(events[0]!.duration).toBeGreaterThanOrEqual(0);
+    engine[Symbol.dispose]();
+  });
+
+  it('resolves handle.result() even when terminal cleanup throws', async () => {
+    const storage = new MemoryStorage();
+
+    // The InlineExecutionStrategy's #emit calls the message handler
+    // synchronously without awaiting the returned promise. When
+    // #completeWorkflow's catch block re-throws cleanupError, that promise
+    // rejects unhandled. We intercept at the onMessage registration point to
+    // wrap the handler so the async error is captured rather than becoming an
+    // unhandled rejection that would fail the test.
+    const capturedCleanupErrors: unknown[] = [];
+    const onMessageSpy = spyOn(InlineExecutionStrategy.prototype, 'onMessage').mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test mock needs flexible handler type
+      function (this: InlineExecutionStrategy, handler: any) {
+        // Restore so subsequent engine creation is not affected.
+        onMessageSpy.mockRestore();
+        // Wrap the handler: let the promise resolve/reject naturally but absorb
+        // any rejection that matches the expected cleanup error.
+        const wrappedHandler = (message: unknown): void => {
+          const result = handler(message);
+          if (result instanceof Promise) {
+            result.catch((error: unknown) => {
+              capturedCleanupErrors.push(error);
+            });
+          }
+        };
+        // Call the original to store the wrapped handler in the strategy.
+        InlineExecutionStrategy.prototype.onMessage.call(this, wrappedHandler);
+      },
+    );
+
+    const engine = new Engine({ storage });
+
+    engine.register('cleanup-throw', async function* () {
+      return 'expected-result';
+    });
+
+    // Patch deletePrefix to throw on the first call, which occurs inside
+    // #cleanupTerminalWorkflow → #cleanupReviews. The completion state write
+    // (storage.batch with a 'put' op) runs before cleanup, so the workflow
+    // is durably recorded as terminal before the error fires.
+    const originalDeletePrefix = storage.deletePrefix.bind(storage);
+    let deletePrefixCallCount = 0;
+    storage.deletePrefix = async (prefix: string): Promise<number> => {
+      deletePrefixCallCount++;
+      if (deletePrefixCallCount === 1) {
+        throw new Error('simulated cleanup failure');
+      }
+      return originalDeletePrefix(prefix);
+    };
+
+    const handle = await engine.start('cleanup-throw', null);
+
+    // handle.result() must resolve — the resolver must not be stranded even
+    // though #cleanupTerminalWorkflow throws internally.
+    const result = await handle.result();
+    expect(result).toBe('expected-result');
+
+    // Allow the microtask queue to drain so the cleanup error propagates
+    // through the wrapped handler and into capturedCleanupErrors.
+    await flush();
+
+    // Confirm that cleanup did in fact throw — guards against the test
+    // passing vacuously if the deletePrefix patch was never exercised.
+    expect(capturedCleanupErrors).toHaveLength(1);
+    expect((capturedCleanupErrors[0] as Error).message).toBe('simulated cleanup failure');
+
     engine[Symbol.dispose]();
   });
 
@@ -3482,6 +3553,56 @@ describe('Engine', () => {
       await handle.result();
 
       expect(engine.agentWorkflowIds.has(handle.id)).toBe(false);
+      engine[Symbol.dispose]();
+    });
+
+    it('cleans up agent start bookkeeping after a failed start batch', async () => {
+      const storage = new MemoryStorage();
+      const originalBatch = storage.batch.bind(storage);
+      let failStartBatch = true;
+      storage.batch = async (operations) => {
+        if (failStartBatch) {
+          failStartBatch = false;
+          throw new Error('simulated start batch failure');
+        }
+        return await originalBatch(operations);
+      };
+
+      const engine = new Engine({ storage });
+      const provider: LLMProvider = {
+        name: 'cleanup-agent-provider',
+        async chat(): Promise<ChatResponse> {
+          return {
+            content: 'cleaned',
+            toolCalls: [],
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            model: 'test-model',
+            stopReason: 'end_turn',
+          };
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 1;
+        },
+      };
+
+      const workflowId = 'cleanup-agent-workflow-id';
+      const agent = defineAgent({ name: 'cleanup-agent-workflow', model: 'test-model' });
+      engine.register(agent, { provider });
+
+      // The failing batch happens after in-memory start bookkeeping is populated,
+      // so the retry proves the finally-path cleanup removed that transient state.
+      await expect(
+        engine.start('cleanup-agent-workflow', null, { id: workflowId }),
+      ).rejects.toThrow('simulated start batch failure');
+      expect(engine.agentWorkflowIds.has(workflowId)).toBe(false);
+
+      const handle = await engine.start('cleanup-agent-workflow', null, { id: workflowId });
+      expect(await handle.result()).toBe('cleaned');
+      expect(engine.agentWorkflowIds.has(workflowId)).toBe(false);
+
       engine[Symbol.dispose]();
     });
 

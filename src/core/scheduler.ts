@@ -12,6 +12,32 @@ import { KEYS, resolvePrefixRangeEnd } from '../storage/interface';
 import { decode, encode } from './codec';
 import type { Duration, RetryPolicy, TimerEntry } from './types';
 
+function isTimerEntryKind(value: unknown): value is TimerEntry['kind'] {
+  return (
+    value === 'sleep' ||
+    value === 'visibility-timeout' ||
+    value === 'execution-deadline' ||
+    value === 'delayed-start'
+  );
+}
+
+/** Runtime type guard for decoded timer entries. */
+export function isTimerEntry(value: unknown): value is TimerEntry {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'id' in value &&
+    typeof value.id === 'string' &&
+    'workflowId' in value &&
+    typeof value.workflowId === 'string' &&
+    'fireAt' in value &&
+    typeof value.fireAt === 'number' &&
+    Number.isFinite(value.fireAt) &&
+    'kind' in value &&
+    isTimerEntryKind(value.kind)
+  );
+}
+
 /**
  * Build the batch operations needed to persist a durable timer entry.
  * Shared between `Scheduler.schedule()` and `Engine.#buildStartBatchOperations()`
@@ -150,14 +176,24 @@ function compareScannedTimerEntries(left: ScannedTimerEntry, right: ScannedTimer
 
 async function readNextScannedTimerEntry(
   iterator: AsyncIterator<[string, Uint8Array]>,
+  storage: Storage,
 ): Promise<ScannedTimerEntry | null> {
-  const next = await iterator.next();
-  if (next.done) {
-    return null;
-  }
+  while (true) {
+    const next = await iterator.next();
+    if (next.done) {
+      return null;
+    }
 
-  const [key, value] = next.value;
-  return { key, entry: decode(value) as TimerEntry };
+    const [key, value] = next.value;
+    const decoded = decode(value);
+    if (!isTimerEntry(decoded)) {
+      console.error(`Corrupted timer entry at ${key}: removing`);
+      await storage.delete(key);
+      continue;
+    }
+
+    return { key, entry: decoded };
+  }
 }
 
 /** Scheduler manages durable timers and polls for expired deadlines. */
@@ -207,7 +243,14 @@ export class Scheduler implements Disposable {
 
     if (indexValue === null) return;
 
-    const deadlineKey = decode(indexValue) as string;
+    const decoded = decode(indexValue);
+    if (typeof decoded !== 'string') {
+      console.error(`Corrupted timer index for ${id}: expected string, got ${typeof decoded}`);
+      // Delete the corrupted index key so it does not cause permanent log spam.
+      await this.#storage.delete(indexKey);
+      return;
+    }
+    const deadlineKey = decoded;
 
     await this.#storage.batch([
       { type: 'delete', key: deadlineKey },
@@ -251,16 +294,25 @@ export class Scheduler implements Disposable {
     });
     const delayedStartIterator = delayedStartScan[Symbol.asyncIterator]();
 
-    let nextDeadline = await readNextScannedTimerEntry(deadlineIterator);
-    let nextDelayedStart = await readNextScannedTimerEntry(delayedStartIterator);
+    const deadlineSource = {
+      iterator: deadlineIterator,
+      next: await readNextScannedTimerEntry(deadlineIterator, this.#storage),
+    };
+    const delayedStartSource = {
+      iterator: delayedStartIterator,
+      next: await readNextScannedTimerEntry(delayedStartIterator, this.#storage),
+    };
 
-    while (nextDeadline || nextDelayedStart) {
-      const nextEntry =
-        nextDeadline && nextDelayedStart
-          ? compareScannedTimerEntries(nextDeadline, nextDelayedStart) <= 0
-            ? nextDeadline
-            : nextDelayedStart
-          : (nextDeadline ?? nextDelayedStart!);
+    while (deadlineSource.next || delayedStartSource.next) {
+      const selectedSource =
+        deadlineSource.next && delayedStartSource.next
+          ? compareScannedTimerEntries(deadlineSource.next, delayedStartSource.next) <= 0
+            ? deadlineSource
+            : delayedStartSource
+          : deadlineSource.next
+            ? deadlineSource
+            : delayedStartSource;
+      const nextEntry = selectedSource.next!;
 
       // Re-check #stopped before each callback so an interval-dispatched tick
       // terminates early when stop() or dispose is called concurrently. flush()
@@ -270,20 +322,30 @@ export class Scheduler implements Disposable {
       try {
         await this.#onTimerFired(nextEntry.entry);
       } catch (error) {
+        // Callback failed — leave the timer in storage so it retries on the
+        // next tick. Do not fall through to the delete below.
         console.error(`Timer callback failed for timer ${nextEntry.entry.id}:`, error);
+        selectedSource.next = await readNextScannedTimerEntry(
+          selectedSource.iterator,
+          this.#storage,
+        );
+        continue;
       }
 
-      const indexKey = `timer-idx:${nextEntry.entry.id}`;
-      await this.#storage.batch([
-        { type: 'delete', key: nextEntry.key },
-        { type: 'delete', key: indexKey },
-      ]);
-
-      if (nextEntry === nextDeadline) {
-        nextDeadline = await readNextScannedTimerEntry(deadlineIterator);
-      } else {
-        nextDelayedStart = await readNextScannedTimerEntry(delayedStartIterator);
+      // Callback succeeded — clean up the timer keys. If this delete fails,
+      // the timer will re-fire on the next tick (duplicate execution), but we
+      // surface the error rather than silently swallowing it.
+      try {
+        const indexKey = `timer-idx:${nextEntry.entry.id}`;
+        await this.#storage.batch([
+          { type: 'delete', key: nextEntry.key },
+          { type: 'delete', key: indexKey },
+        ]);
+      } catch (deleteError) {
+        console.error(`Failed to delete timer keys for ${nextEntry.entry.id}:`, deleteError);
       }
+
+      selectedSource.next = await readNextScannedTimerEntry(selectedSource.iterator, this.#storage);
     }
   }
 

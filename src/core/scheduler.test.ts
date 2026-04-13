@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
+import { KEYS } from '../storage/interface';
 import { MemoryStorage } from '../storage/memory';
-import { decode } from './codec';
+import { decode, encode } from './codec';
 import { calculateBackoff, parseDuration, Scheduler } from './scheduler';
 import type { TimerEntry } from './types';
 
@@ -386,6 +387,58 @@ describe('Scheduler', () => {
     scheduler.stop();
   });
 
+  it('removes corrupted timer entries from storage and processes valid timers', async () => {
+    // Write a garbage value directly under a wf-deadline: key to simulate corruption.
+    // The encoded value is a plain string, which isTimerEntry() will reject.
+    const corruptedFireAt = currentTime - 2000;
+    const corruptedKey = KEYS.deadline(corruptedFireAt, 'corrupted-id');
+    await storage.put(corruptedKey, encode('this is not a TimerEntry'));
+
+    // Schedule a real timer that expires before now.
+    const validEntry = makeTimer({ id: 'timer-valid', fireAt: currentTime - 1000 });
+    await scheduler.schedule(validEntry);
+
+    await scheduler.tick(currentTime);
+
+    // The valid timer must have fired.
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe('timer-valid');
+
+    // After tick(), no wf-deadline: keys should remain — both the corrupted key
+    // and the valid timer's deadline key must have been deleted.
+    const remainingKeys = await collectStorageKeys();
+    const remainingDeadlines = remainingKeys.filter((key) => key.startsWith('wf-deadline:'));
+    expect(remainingDeadlines).toHaveLength(0);
+
+    // The valid timer's index key must also have been cleaned up.
+    const remainingIndexes = remainingKeys.filter((key) => key.startsWith('timer-idx:'));
+    expect(remainingIndexes).toHaveLength(0);
+  });
+
+  it('removes timer entries with invalid kinds before they can fire', async () => {
+    const invalidKey = KEYS.deadline(currentTime - 2000, 'invalid-kind');
+    await storage.put(
+      invalidKey,
+      encode({
+        id: 'invalid-kind',
+        workflowId: 'workflow-1',
+        fireAt: currentTime - 2000,
+        kind: 'definitely-not-a-real-kind',
+      }),
+    );
+
+    const validEntry = makeTimer({ id: 'timer-valid', fireAt: currentTime - 1000 });
+    await scheduler.schedule(validEntry);
+
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries.map((entry) => entry.id)).toEqual(['timer-valid']);
+
+    const remainingKeys = await collectStorageKeys();
+    const remainingDeadlines = remainingKeys.filter((key) => key.startsWith('wf-deadline:'));
+    expect(remainingDeadlines).toHaveLength(0);
+  });
+
   it('continues processing remaining timers when a callback throws on one', async () => {
     let callCount = 0;
     scheduler[Symbol.dispose]();
@@ -415,10 +468,13 @@ describe('Scheduler', () => {
     expect(firedEntries[0]!.id).toBe('timer-throw');
     expect(firedEntries[1]!.id).toBe('timer-ok');
 
-    // Both deadline keys and index keys were cleaned up
+    // The successful timer was cleaned up; the failed timer is retained for retry
     const remainingKeys = await collectStorageKeys();
-    expect(remainingKeys.some((key) => key.startsWith('wf-deadline:'))).toBe(false);
-    expect(remainingKeys.some((key) => key.startsWith('timer-idx:'))).toBe(false);
+    const remainingDeadlines = remainingKeys.filter((key) => key.startsWith('wf-deadline:'));
+    const remainingIndexes = remainingKeys.filter((key) => key.startsWith('timer-idx:'));
+    expect(remainingDeadlines).toHaveLength(1);
+    expect(remainingIndexes).toHaveLength(1);
+    expect(remainingIndexes[0]).toBe('timer-idx:timer-throw');
   });
 
   it('tick is a no-op after stop, preventing callbacks on disposed scheduler', async () => {
