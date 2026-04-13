@@ -80,6 +80,11 @@ import type {
   WorkflowInterceptor,
 } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
+import {
+  collectDueCronOccurrences,
+  getNextCronOccurrence,
+  parseCronExpression,
+} from './schedule.ts';
 import { Scheduler, buildTimerBatchOperations, normalizeStorageTimestamp } from './scheduler.ts';
 import {
   buildIndexOperations,
@@ -111,6 +116,13 @@ import type {
   ListFilter,
   OperationOutcome,
   PaginatedResult,
+  ScheduleAccessOptions,
+  ScheduleFilter,
+  ScheduleOptions,
+  ScheduleOverlapPolicy,
+  ScheduleState,
+  ScheduleStatus,
+  ScheduleSummary,
   SearchAttributeSchema,
   SearchAttributeValue,
   StartOptions,
@@ -287,6 +299,151 @@ function callMemoFunction(fn: Function): unknown {
   return (fn as () => unknown)();
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function isValidScheduleTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isValidScheduleStatus(value: unknown): value is ScheduleStatus {
+  return typeof value === 'string' && SCHEDULE_STATUSES.has(value as ScheduleStatus);
+}
+
+function isValidScheduleOverlapPolicy(value: unknown): value is ScheduleOverlapPolicy {
+  return typeof value === 'string' && SCHEDULE_OVERLAP_POLICIES.has(value as ScheduleOverlapPolicy);
+}
+
+function isValidScheduleIdentifier(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  try {
+    coerceStartWorkflowId(value, 'schedule id');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function coerceScheduleId(scheduleId: string, fieldName: string): string {
+  return coerceStartWorkflowId(scheduleId, fieldName);
+}
+
+function coerceScheduleTenantId(tenantId: string, fieldName: string): string {
+  if (typeof tenantId !== 'string' || tenantId.length === 0) {
+    throw new Error(`${fieldName} must be a non-empty string`);
+  }
+
+  return tenantId;
+}
+
+function normalizeScheduleOptions(
+  options: ScheduleOptions | undefined,
+): Required<Pick<ScheduleOptions, 'overlap' | 'backfill'>> & { id?: string } {
+  if (options === undefined) {
+    return { overlap: 'skip', backfill: false };
+  }
+
+  if (typeof options !== 'object' || options === null) {
+    throw new Error('options must be an object when provided');
+  }
+
+  const { id, overlap, backfill } = options;
+  const normalizedOptions: Required<Pick<ScheduleOptions, 'overlap' | 'backfill'>> & {
+    id?: string;
+  } = {
+    overlap: 'skip',
+    backfill: false,
+  };
+
+  if (id !== undefined) {
+    normalizedOptions.id = coerceScheduleId(id, 'options.id');
+  }
+
+  if (overlap !== undefined) {
+    if (!SCHEDULE_OVERLAP_POLICIES.has(overlap)) {
+      throw new Error(
+        `options.overlap must be one of ${[...SCHEDULE_OVERLAP_POLICIES].join(', ')}`,
+      );
+    }
+    normalizedOptions.overlap = overlap;
+  }
+
+  if (backfill !== undefined) {
+    if (typeof backfill !== 'boolean') {
+      throw new Error('options.backfill must be a boolean when provided');
+    }
+    normalizedOptions.backfill = backfill;
+  }
+
+  return normalizedOptions;
+}
+
+function normalizeScheduleAccessOptions(
+  accessOptions: ScheduleAccessOptions | undefined,
+): ScheduleAccessOptions | undefined {
+  if (accessOptions === undefined) {
+    return undefined;
+  }
+
+  if (typeof accessOptions !== 'object' || accessOptions === null) {
+    throw new Error('accessOptions must be an object when provided');
+  }
+
+  const { tenantId } = accessOptions;
+  if (tenantId === undefined) {
+    return {};
+  }
+
+  return {
+    tenantId: coerceScheduleTenantId(tenantId, 'accessOptions.tenantId'),
+  };
+}
+
+function normalizeScheduleFilter(filter: ScheduleFilter | undefined): ScheduleFilter | undefined {
+  if (filter === undefined) {
+    return undefined;
+  }
+
+  if (typeof filter !== 'object' || filter === null) {
+    throw new Error('filter must be an object when provided');
+  }
+
+  const { status, workflowType, tenantId, limit, offset } = filter;
+
+  if (status !== undefined) {
+    const statuses = Array.isArray(status) ? status : [status];
+    for (const candidateStatus of statuses) {
+      if (!SCHEDULE_STATUSES.has(candidateStatus)) {
+        throw new Error(`filter.status must be one of ${[...SCHEDULE_STATUSES].join(', ')}`);
+      }
+    }
+  }
+
+  if (workflowType !== undefined) {
+    if (typeof workflowType !== 'string' || workflowType.length === 0) {
+      throw new Error('filter.workflowType must be a non-empty string when provided');
+    }
+  }
+
+  if (tenantId !== undefined) {
+    coerceScheduleTenantId(tenantId, 'filter.tenantId');
+  }
+
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
+    throw new Error('filter.limit must be a non-negative safe integer when provided');
+  }
+
+  if (offset !== undefined && (!Number.isSafeInteger(offset) || offset < 0)) {
+    throw new Error('filter.offset must be a non-negative safe integer when provided');
+  }
+
+  return filter;
+}
+
 /**
  * Type predicate that validates a decoded `tenant` field is shaped like a
  * {@link import('./tenant.ts').TenantContext}. Returns true only when `tenant`
@@ -332,6 +489,143 @@ function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
     delete state.tenant;
   }
   return state;
+}
+
+function rejectInvalidScheduleRecord(scheduleId: string | undefined, message: string): null {
+  const prefix =
+    scheduleId === undefined
+      ? '[weft] Ignoring malformed schedule record'
+      : `[weft] Ignoring malformed schedule "${scheduleId}"`;
+  console.warn(`${prefix} ${message}.`);
+  return null;
+}
+
+function decodeScheduleIdentityFields(
+  decoded: Record<string, unknown>,
+): Pick<ScheduleState, 'id' | 'workflowType' | 'cronExpression' | 'status' | 'overlap'> | null {
+  const id = decoded['id'];
+  if (!isValidScheduleIdentifier(id)) {
+    return rejectInvalidScheduleRecord(undefined, 'with invalid id');
+  }
+
+  const workflowType = decoded['workflowType'];
+  if (typeof workflowType !== 'string' || workflowType.length === 0) {
+    return rejectInvalidScheduleRecord(id, 'with invalid workflowType');
+  }
+
+  const cronExpression = decoded['cronExpression'];
+  if (typeof cronExpression !== 'string') {
+    return rejectInvalidScheduleRecord(id, 'with invalid cronExpression');
+  }
+  try {
+    parseCronExpression(cronExpression);
+  } catch {
+    return rejectInvalidScheduleRecord(id, 'with invalid cronExpression');
+  }
+
+  const status = decoded['status'];
+  if (!isValidScheduleStatus(status)) {
+    return rejectInvalidScheduleRecord(id, 'with invalid status');
+  }
+
+  const overlap = decoded['overlap'];
+  if (!isValidScheduleOverlapPolicy(overlap)) {
+    return rejectInvalidScheduleRecord(id, 'with invalid overlap policy');
+  }
+
+  return {
+    id,
+    workflowType,
+    cronExpression,
+    status,
+    overlap,
+  };
+}
+
+function decodeScheduleRuntimeFields(
+  decoded: Record<string, unknown>,
+  scheduleId: string,
+): Pick<
+  ScheduleState,
+  | 'backfill'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'lastFireAt'
+  | 'nextFireAt'
+  | 'currentWorkflowId'
+  | 'queuedRuns'
+  | 'tenant'
+> | null {
+  const backfill = decoded['backfill'];
+  if (typeof backfill !== 'boolean') {
+    return rejectInvalidScheduleRecord(scheduleId, 'with invalid backfill flag');
+  }
+
+  const createdAt = decoded['createdAt'];
+  const updatedAt = decoded['updatedAt'];
+  if (!isValidScheduleTimestamp(createdAt) || !isValidScheduleTimestamp(updatedAt)) {
+    return rejectInvalidScheduleRecord(scheduleId, 'with invalid timestamps');
+  }
+
+  const lastFireAt = decoded['lastFireAt'];
+  if (lastFireAt !== undefined && !isValidScheduleTimestamp(lastFireAt)) {
+    return rejectInvalidScheduleRecord(scheduleId, 'with invalid lastFireAt');
+  }
+
+  const nextFireAt = decoded['nextFireAt'];
+  if (nextFireAt !== null && !isValidScheduleTimestamp(nextFireAt)) {
+    return rejectInvalidScheduleRecord(scheduleId, 'with invalid nextFireAt');
+  }
+
+  const currentWorkflowId = decoded['currentWorkflowId'];
+  if (currentWorkflowId !== undefined && !isValidScheduleIdentifier(currentWorkflowId)) {
+    return rejectInvalidScheduleRecord(scheduleId, 'with invalid currentWorkflowId');
+  }
+
+  const queuedRuns = decoded['queuedRuns'];
+  if (typeof queuedRuns !== 'number' || !Number.isSafeInteger(queuedRuns) || queuedRuns < 0) {
+    return rejectInvalidScheduleRecord(scheduleId, 'with invalid queuedRuns');
+  }
+
+  const tenant = decoded['tenant'];
+  if (!isValidDecodedTenant(tenant)) {
+    return rejectInvalidScheduleRecord(scheduleId, 'with invalid tenant');
+  }
+
+  return {
+    backfill,
+    createdAt,
+    updatedAt,
+    ...(lastFireAt !== undefined && { lastFireAt }),
+    nextFireAt,
+    ...(currentWorkflowId !== undefined && { currentWorkflowId }),
+    queuedRuns,
+    ...(tenant !== undefined && { tenant }),
+  };
+}
+
+function decodeScheduleState(bytes: Uint8Array): ScheduleState | null {
+  const decoded = decode(bytes);
+  if (!isObjectRecord(decoded)) {
+    console.warn('[weft] Ignoring malformed schedule record with non-object payload.');
+    return null;
+  }
+
+  const identity = decodeScheduleIdentityFields(decoded);
+  if (!identity) {
+    return null;
+  }
+
+  const runtime = decodeScheduleRuntimeFields(decoded, identity.id);
+  if (!runtime) {
+    return null;
+  }
+
+  return {
+    ...identity,
+    input: decoded['input'],
+    ...runtime,
+  };
 }
 
 function getWorkflowExecutionStartedAt(
@@ -536,6 +830,15 @@ function createAlertManagerForEngine(
  * `engine.list()` call. Bounds fan-out on connection-limited storage backends.
  */
 const ATTRIBUTE_SCAN_CONCURRENCY = 8;
+const SCHEDULE_LATE_GRACE_MILLISECONDS = 1000;
+const MAX_SCHEDULE_BACKFILL_OCCURRENCES_PER_TICK = 256;
+const SCHEDULE_STATUSES = new Set<ScheduleStatus>(['active', 'paused', 'cancelled']);
+const SCHEDULE_OVERLAP_POLICIES = new Set<ScheduleOverlapPolicy>([
+  'skip',
+  'queue',
+  'cancel-running',
+  'allow',
+]);
 
 function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | null {
   const [firstSet, ...remainingSets] = idSets;
@@ -597,6 +900,62 @@ function paginateWorkflowSummaries(
     offset,
     limit,
   };
+}
+
+function matchesScheduleFilter(state: ScheduleState, filter: ScheduleFilter | undefined): boolean {
+  if (state.tenant?.id !== undefined) {
+    if (filter?.tenantId === undefined) {
+      return false;
+    }
+    if (state.tenant.id !== filter.tenantId) {
+      return false;
+    }
+  } else if (filter?.tenantId !== undefined) {
+    return false;
+  }
+
+  if (filter?.status !== undefined) {
+    const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+    if (!statuses.includes(state.status)) {
+      return false;
+    }
+  }
+
+  return filter?.workflowType === undefined || state.workflowType === filter.workflowType;
+}
+
+function paginateScheduleSummaries(
+  items: ScheduleSummary[],
+  filter?: ScheduleFilter,
+): PaginatedResult<ScheduleSummary> {
+  const offset = filter?.offset ?? 0;
+  const limit = filter?.limit ?? items.length;
+  return {
+    items: items.slice(offset, offset + limit),
+    total: items.length,
+    offset,
+    limit,
+  };
+}
+
+function createScheduleTimerId(scheduleId: string): string {
+  return `schedule:${scheduleId}`;
+}
+
+function canAccessSchedule(
+  state: ScheduleState,
+  accessOptions: ScheduleAccessOptions | undefined,
+): boolean {
+  if (state.tenant?.id === undefined) {
+    return accessOptions?.tenantId === undefined;
+  }
+
+  return accessOptions?.tenantId === state.tenant.id;
+}
+
+function clearScheduleCurrentWorkflow(state: ScheduleState): ScheduleState {
+  const { currentWorkflowId: _currentWorkflowId, ...rest } = state;
+  return rest;
 }
 
 // ---------------------------------------------------------------------------
@@ -830,6 +1189,42 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
 
   async [Symbol.asyncDispose](): Promise<void> {
     // No-op for now; handles are lightweight
+  }
+}
+
+export class ScheduleHandle {
+  readonly id: string;
+  readonly #engine: Engine;
+  readonly #accessOptions: ScheduleAccessOptions | undefined;
+
+  constructor(id: string, engine: Engine, accessOptions?: ScheduleAccessOptions) {
+    this.id = id;
+    this.#engine = engine;
+    this.#accessOptions = accessOptions;
+  }
+
+  async pause(): Promise<void> {
+    await this.#engine.pauseSchedule(this.id, this.#accessOptions);
+  }
+
+  async resume(): Promise<void> {
+    await this.#engine.resumeSchedule(this.id, this.#accessOptions);
+  }
+
+  async cancel(): Promise<void> {
+    await this.#engine.cancelSchedule(this.id, this.#accessOptions);
+  }
+
+  async update(newCronExpression: string): Promise<void> {
+    await this.#engine.updateSchedule(this.id, newCronExpression, this.#accessOptions);
+  }
+
+  async describe(): Promise<ScheduleSummary> {
+    const schedule = await this.#engine.getSchedule(this.id, this.#accessOptions);
+    if (!schedule) {
+      throw new Error(`Schedule "${this.id}" not found`);
+    }
+    return schedule;
   }
 }
 
@@ -1389,6 +1784,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async start(type: string, input: unknown, options?: StartOptions): Promise<WorkflowHandle> {
+    return this.#startWorkflow(type, input, options);
+  }
+
+  async #startWorkflow(
+    type: string,
+    input: unknown,
+    options?: StartOptions,
+    tenantOverride?: { resolved: import('./tenant.ts').TenantContext | undefined },
+  ): Promise<WorkflowHandle> {
     const registration = this.#registrations.get(type);
     if (!registration) {
       throw new Error(`No workflow registered with name "${type}"`);
@@ -1434,7 +1838,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       // Resolve the tenant context before the first checkpoint is written so
       // it gets persisted as part of the initial state blob.
-      const tenant = await this.#resolveTenantForStart(workflowId, type, input);
+      const tenant = tenantOverride
+        ? tenantOverride.resolved
+        : await this.#resolveTenantForStart(workflowId, type, input);
       const versionTuple = this.#createWorkflowVersionTuple(registration, tenant);
 
       const state = this.#createInitialWorkflowState(
@@ -1694,6 +2100,168 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     return paginateWorkflowSummaries(items, filter);
+  }
+
+  async schedule(
+    type: string,
+    input: unknown,
+    cronExpression: string,
+    options?: ScheduleOptions,
+  ): Promise<ScheduleHandle> {
+    if (!this.#registrations.has(type)) {
+      throw new Error(`No workflow registered with name "${type}"`);
+    }
+
+    if (typeof cronExpression !== 'string') {
+      throw new Error('cronExpression must be a string');
+    }
+
+    const normalizedOptions = normalizeScheduleOptions(options);
+    parseCronExpression(cronExpression);
+    const scheduleId = normalizedOptions.id ?? crypto.randomUUID();
+    if (await this.#storage.get(KEYS.schedule(scheduleId))) {
+      throw new Error(`Schedule with id "${scheduleId}" already exists`);
+    }
+
+    const now = this.#options.getNow();
+    const tenant = await this.#resolveTenantForStart(scheduleId, type, input);
+    const state: ScheduleState = {
+      id: scheduleId,
+      workflowType: type,
+      input,
+      cronExpression,
+      status: 'active',
+      overlap: normalizedOptions.overlap,
+      backfill: normalizedOptions.backfill,
+      createdAt: now,
+      updatedAt: now,
+      nextFireAt: getNextCronOccurrence(cronExpression, now),
+      queuedRuns: 0,
+      ...(tenant !== undefined && { tenant }),
+    };
+
+    await this.#writeScheduleState(state);
+    return new ScheduleHandle(scheduleId, this, tenant ? { tenantId: tenant.id } : undefined);
+  }
+
+  async getSchedule(
+    scheduleId: string,
+    accessOptions?: ScheduleAccessOptions,
+  ): Promise<ScheduleSummary | null> {
+    const normalizedScheduleId = coerceScheduleId(scheduleId, 'scheduleId');
+    const normalizedAccessOptions = normalizeScheduleAccessOptions(accessOptions);
+    const state = await this.#loadScheduleState(normalizedScheduleId);
+    return state && canAccessSchedule(state, normalizedAccessOptions)
+      ? this.#toScheduleSummary(state)
+      : null;
+  }
+
+  async listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>> {
+    const normalizedFilter = normalizeScheduleFilter(filter);
+    const items: ScheduleSummary[] = [];
+
+    for await (const [key, value] of this.#storage.scan('schedule:')) {
+      const scheduleKeySuffix = key.slice('schedule:'.length);
+      if (scheduleKeySuffix.includes(':')) continue;
+
+      const state = decodeScheduleState(value);
+      if (!state || !matchesScheduleFilter(state, normalizedFilter)) continue;
+      items.push(this.#toScheduleSummary(state));
+    }
+
+    return paginateScheduleSummaries(items, normalizedFilter);
+  }
+
+  async pauseSchedule(scheduleId: string, accessOptions?: ScheduleAccessOptions): Promise<void> {
+    const normalizedScheduleId = coerceScheduleId(scheduleId, 'scheduleId');
+    const normalizedAccessOptions = normalizeScheduleAccessOptions(accessOptions);
+    const state = await this.#requireScheduleState(normalizedScheduleId, normalizedAccessOptions);
+    if (state.status !== 'active') return;
+
+    await this.#scheduler.cancel(createScheduleTimerId(normalizedScheduleId), normalizedScheduleId);
+
+    const now = this.#options.getNow();
+    const updatedState: ScheduleState = {
+      ...state,
+      status: 'paused',
+      updatedAt: now,
+      nextFireAt: getNextCronOccurrence(state.cronExpression, now),
+      queuedRuns: 0,
+    };
+    await this.#writeScheduleState(updatedState, { includeTimer: false });
+  }
+
+  async resumeSchedule(scheduleId: string, accessOptions?: ScheduleAccessOptions): Promise<void> {
+    const normalizedScheduleId = coerceScheduleId(scheduleId, 'scheduleId');
+    const normalizedAccessOptions = normalizeScheduleAccessOptions(accessOptions);
+    const state = await this.#requireScheduleState(normalizedScheduleId, normalizedAccessOptions);
+    if (state.status === 'cancelled') {
+      throw new Error(
+        `Schedule "${normalizedScheduleId}" has been cancelled and cannot be resumed`,
+      );
+    }
+    if (state.status === 'active') return;
+
+    const now = this.#options.getNow();
+    const updatedState: ScheduleState = {
+      ...state,
+      status: 'active',
+      updatedAt: now,
+      nextFireAt: getNextCronOccurrence(state.cronExpression, now),
+    };
+    await this.#writeScheduleState(updatedState);
+  }
+
+  async cancelSchedule(scheduleId: string, accessOptions?: ScheduleAccessOptions): Promise<void> {
+    const normalizedScheduleId = coerceScheduleId(scheduleId, 'scheduleId');
+    const normalizedAccessOptions = normalizeScheduleAccessOptions(accessOptions);
+    const state = await this.#requireScheduleState(normalizedScheduleId, normalizedAccessOptions);
+    if (state.status === 'active') {
+      await this.#scheduler.cancel(
+        createScheduleTimerId(normalizedScheduleId),
+        normalizedScheduleId,
+      );
+    }
+
+    const updatedState: ScheduleState = {
+      ...state,
+      status: 'cancelled',
+      updatedAt: this.#options.getNow(),
+      nextFireAt: null,
+      queuedRuns: 0,
+    };
+    await this.#writeScheduleState(updatedState, { includeTimer: false });
+  }
+
+  async updateSchedule(
+    scheduleId: string,
+    newCronExpression: string,
+    accessOptions?: ScheduleAccessOptions,
+  ): Promise<void> {
+    const normalizedScheduleId = coerceScheduleId(scheduleId, 'scheduleId');
+    const normalizedAccessOptions = normalizeScheduleAccessOptions(accessOptions);
+    if (typeof newCronExpression !== 'string') {
+      throw new Error('newCronExpression must be a string');
+    }
+    parseCronExpression(newCronExpression);
+
+    const state = await this.#requireScheduleState(normalizedScheduleId, normalizedAccessOptions);
+    if (state.status === 'active') {
+      await this.#scheduler.cancel(
+        createScheduleTimerId(normalizedScheduleId),
+        normalizedScheduleId,
+      );
+    }
+
+    const now = this.#options.getNow();
+    const updatedState: ScheduleState = {
+      ...state,
+      cronExpression: newCronExpression,
+      updatedAt: now,
+      nextFireAt:
+        state.status === 'cancelled' ? null : getNextCronOccurrence(newCronExpression, now),
+    };
+    await this.#writeScheduleState(updatedState, { includeTimer: state.status === 'active' });
   }
 
   /** Build a {@link WorkflowVersionTuple} from a {@link RegistrationEntry}. */
@@ -2738,6 +3306,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Cancelled/timed-out workflows have no consumers waiting on output
     // artifacts, so drop them alongside the internal bookkeeping.
     await this.#cleanupTerminalWorkflow(workflowId, true);
+    await this.#handleScheduledWorkflowTerminal(workflowId);
 
     const event =
       status === 'timed-out'
@@ -2764,6 +3333,50 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   /** Retrieve the current state of a workflow by ID. */
   async get(workflowId: string): Promise<WorkflowState | null> {
     return this.#loadWorkflowState(workflowId);
+  }
+
+  async #loadScheduleState(scheduleId: string): Promise<ScheduleState | null> {
+    const bytes = await this.#storage.get(KEYS.schedule(scheduleId));
+    return bytes ? decodeScheduleState(bytes) : null;
+  }
+
+  async #requireScheduleState(
+    scheduleId: string,
+    accessOptions?: ScheduleAccessOptions,
+  ): Promise<ScheduleState> {
+    const state = await this.#loadScheduleState(scheduleId);
+    if (!state || !canAccessSchedule(state, accessOptions)) {
+      throw new Error(`Schedule "${scheduleId}" not found`);
+    }
+    return state;
+  }
+
+  #toScheduleSummary(state: ScheduleState): ScheduleSummary {
+    const { tenant: _tenant, ...summary } = state;
+    return summary;
+  }
+
+  async #writeScheduleState(
+    state: ScheduleState,
+    options?: { includeTimer?: boolean },
+  ): Promise<void> {
+    const operations: import('../storage/interface.ts').BatchOperation[] = [
+      { type: 'put', key: KEYS.schedule(state.id), value: encode(state) },
+    ];
+
+    const includeTimer = options?.includeTimer ?? state.status === 'active';
+    if (includeTimer && state.status === 'active' && state.nextFireAt !== null) {
+      operations.push(
+        ...buildTimerBatchOperations({
+          id: createScheduleTimerId(state.id),
+          workflowId: state.id,
+          fireAt: state.nextFireAt,
+          kind: 'schedule',
+        }),
+      );
+    }
+
+    await this.#storage.batch(operations);
   }
 
   /** Retrieve search attributes for a workflow. */
@@ -4803,6 +5416,177 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
   }
 
+  async #refreshScheduledWorkflowState(state: ScheduleState): Promise<ScheduleState> {
+    if (!state.currentWorkflowId) {
+      return state;
+    }
+
+    const currentWorkflowState = await this.#loadWorkflowState(state.currentWorkflowId);
+    if (currentWorkflowState?.status === 'running' || currentWorkflowState?.status === 'pending') {
+      return state;
+    }
+
+    await this.#storage.delete(KEYS.scheduleRun(state.currentWorkflowId));
+    return clearScheduleCurrentWorkflow(state);
+  }
+
+  async #startScheduledRun(state: ScheduleState): Promise<string> {
+    const workflowId = crypto.randomUUID();
+    const handle = await this.#startWorkflow(
+      state.workflowType,
+      state.input,
+      { id: workflowId },
+      { resolved: state.tenant },
+    );
+
+    if (state.overlap !== 'allow') {
+      await this.#storage.put(KEYS.scheduleRun(handle.id), encode(state.id));
+    }
+
+    return handle.id;
+  }
+
+  async #applyScheduleOccurrence(state: ScheduleState): Promise<ScheduleState> {
+    const refreshedState = await this.#refreshScheduledWorkflowState(state);
+    const currentWorkflowState = refreshedState.currentWorkflowId
+      ? await this.#loadWorkflowState(refreshedState.currentWorkflowId)
+      : null;
+    const hasActiveWorkflow =
+      currentWorkflowState?.status === 'running' || currentWorkflowState?.status === 'pending';
+
+    switch (refreshedState.overlap) {
+      case 'allow':
+        await this.#startScheduledRun(refreshedState);
+        return refreshedState;
+
+      case 'cancel-running':
+        if (hasActiveWorkflow && refreshedState.currentWorkflowId) {
+          void this.getHandle(refreshedState.currentWorkflowId)
+            .result()
+            .catch(() => {});
+          await this.cancel(refreshedState.currentWorkflowId);
+        }
+        return {
+          ...refreshedState,
+          currentWorkflowId: await this.#startScheduledRun(
+            clearScheduleCurrentWorkflow(refreshedState),
+          ),
+        };
+
+      case 'queue':
+        if (hasActiveWorkflow) {
+          return {
+            ...refreshedState,
+            queuedRuns: refreshedState.queuedRuns + 1,
+          };
+        }
+        return {
+          ...refreshedState,
+          currentWorkflowId: await this.#startScheduledRun(refreshedState),
+        };
+
+      case 'skip':
+      default:
+        if (hasActiveWorkflow) {
+          return refreshedState;
+        }
+        return {
+          ...refreshedState,
+          currentWorkflowId: await this.#startScheduledRun(refreshedState),
+        };
+    }
+  }
+
+  async #handleScheduleTimer(entry: TimerEntry): Promise<void> {
+    const state = await this.#loadScheduleState(entry.workflowId);
+    if (!state || state.status !== 'active' || state.nextFireAt === null) {
+      return;
+    }
+    if (state.nextFireAt !== entry.fireAt) {
+      return;
+    }
+
+    const now = this.#options.getNow();
+    const dueOccurrences = collectDueCronOccurrences(state.cronExpression, state.nextFireAt, now, {
+      maxOccurrences: state.backfill ? MAX_SCHEDULE_BACKFILL_OCCURRENCES_PER_TICK : 2,
+    });
+    if (dueOccurrences.length === 0) {
+      return;
+    }
+
+    const isLate = now - state.nextFireAt > SCHEDULE_LATE_GRACE_MILLISECONDS;
+    const shouldSkipMissedOccurrences = !state.backfill && isLate && dueOccurrences.length > 1;
+    const occurrencesToProcess = shouldSkipMissedOccurrences
+      ? []
+      : state.backfill
+        ? dueOccurrences
+        : dueOccurrences.slice(0, 1);
+
+    let nextState = state;
+    for (const _occurrence of occurrencesToProcess) {
+      nextState = await this.#applyScheduleOccurrence(nextState);
+    }
+
+    nextState = {
+      ...nextState,
+      updatedAt: now,
+      ...(occurrencesToProcess.length > 0 && { lastFireAt: occurrencesToProcess.at(-1)! }),
+      nextFireAt: shouldSkipMissedOccurrences
+        ? getNextCronOccurrence(nextState.cronExpression, now)
+        : getNextCronOccurrence(
+            nextState.cronExpression,
+            occurrencesToProcess.at(-1) ?? dueOccurrences.at(-1)!,
+          ),
+    };
+
+    await this.#writeScheduleState(nextState);
+  }
+
+  async #handleScheduledWorkflowTerminal(workflowId: string): Promise<void> {
+    const scheduleRunBytes = await this.#storage.get(KEYS.scheduleRun(workflowId));
+    if (!scheduleRunBytes) {
+      return;
+    }
+
+    await this.#storage.delete(KEYS.scheduleRun(workflowId));
+    const decodedScheduleId = decode(scheduleRunBytes);
+    if (!isValidScheduleIdentifier(decodedScheduleId)) {
+      return;
+    }
+
+    const scheduleId = decodedScheduleId;
+    const state = await this.#loadScheduleState(scheduleId);
+    if (!state || state.currentWorkflowId !== workflowId) {
+      return;
+    }
+
+    const now = this.#options.getNow();
+    const clearedState: ScheduleState = {
+      ...clearScheduleCurrentWorkflow(state),
+      updatedAt: now,
+    };
+
+    if (
+      clearedState.status === 'active' &&
+      clearedState.overlap === 'queue' &&
+      clearedState.queuedRuns > 0
+    ) {
+      const nextWorkflowId = await this.#startScheduledRun(clearedState);
+      await this.#writeScheduleState(
+        {
+          ...clearedState,
+          currentWorkflowId: nextWorkflowId,
+          queuedRuns: clearedState.queuedRuns - 1,
+          updatedAt: now,
+        },
+        { includeTimer: false },
+      );
+      return;
+    }
+
+    await this.#writeScheduleState(clearedState, { includeTimer: false });
+  }
+
   async #handleTimerFired(entry: TimerEntry): Promise<void> {
     // Check if this timer is for a review escalation/timeout
     if (entry.id.startsWith('review-escalation:') || entry.id.startsWith('review-timeout:')) {
@@ -4821,6 +5605,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     if (entry.kind === 'delayed-start') {
       await this.#startDelayedWorkflow(entry);
+      return;
+    }
+
+    if (entry.kind === 'schedule') {
+      await this.#handleScheduleTimer(entry);
       return;
     }
 
@@ -5233,6 +6022,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Output artifacts (offload, blob, shared, events) are preserved so
     // consumers can still read them after `handle.result()` resolves.
     await this.#cleanupTerminalWorkflow(workflowId, false);
+    await this.#handleScheduledWorkflowTerminal(workflowId);
 
     const event = new WorkflowCompletedEvent(workflowId, result, duration);
     this.dispatchEvent(event);
@@ -5279,6 +6069,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Output artifacts (offload, blob, shared, events) are preserved so
     // consumers can still read them after `handle.result()` rejects.
     await this.#cleanupTerminalWorkflow(workflowId, false);
+    await this.#handleScheduledWorkflowTerminal(workflowId);
 
     const event = new WorkflowFailedEvent(workflowId, error);
     this.dispatchEvent(event);
