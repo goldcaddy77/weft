@@ -375,6 +375,56 @@ describe('recurring schedules', () => {
     engine[Symbol.dispose]();
   });
 
+  it('Persists the schedule-run mapping in the same batch that starts a queued schedule workflow.', async () => {
+    const storage = new MemoryStorage();
+    const recordedBatchKeys: string[][] = [];
+    const originalBatch = storage.batch.bind(storage);
+    storage.batch = async (operations) => {
+      recordedBatchKeys.push(
+        operations
+          .filter((operation) => operation.type === 'put')
+          .map((operation) => operation.key),
+      );
+      return await originalBatch(operations);
+    };
+
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock, storage);
+
+    registerWorkflow(
+      engine,
+      'batched-schedule-run-workflow',
+      async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('release');
+        return 'released';
+      },
+    );
+
+    const schedule = await engine.schedule('batched-schedule-run-workflow', null, '* * * * *', {
+      id: 'batched-schedule-run',
+      overlap: 'queue',
+    });
+    const description = await schedule.describe();
+
+    await tickEngine(engine, clock, requireNextFireAt(description));
+
+    const startedSchedule = await schedule.describe();
+    const currentWorkflowId = startedSchedule.currentWorkflowId;
+
+    expect(currentWorkflowId).toBeDefined();
+    expect(recordedBatchKeys).toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining([
+          KEYS.workflow(currentWorkflowId!),
+          KEYS.scheduleRun(currentWorkflowId!),
+        ]),
+      ]),
+    );
+
+    await releaseRunningWorkflows(engine);
+    engine[Symbol.dispose]();
+  });
+
   it('Schedules are listable and queryable. engine.listSchedules(filter?) returns next fire time, last fire time, and status.', async () => {
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
     const engine = createEngine(clock);

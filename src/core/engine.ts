@@ -892,6 +892,15 @@ function paginateWorkflowSummaries(
   items: WorkflowSummary[],
   filter?: ListFilter,
 ): PaginatedResult<WorkflowSummary> {
+  return paginateItems(items, filter);
+}
+
+type PaginationFilter = {
+  limit?: number;
+  offset?: number;
+};
+
+function paginateItems<T>(items: T[], filter: PaginationFilter | undefined): PaginatedResult<T> {
   const offset = filter?.offset ?? 0;
   const limit = filter?.limit ?? items.length;
   return {
@@ -928,14 +937,7 @@ function paginateScheduleSummaries(
   items: ScheduleSummary[],
   filter?: ScheduleFilter,
 ): PaginatedResult<ScheduleSummary> {
-  const offset = filter?.offset ?? 0;
-  const limit = filter?.limit ?? items.length;
-  return {
-    items: items.slice(offset, offset + limit),
-    total: items.length,
-    offset,
-    limit,
-  };
+  return paginateItems(items, filter);
 }
 
 function createScheduleTimerId(scheduleId: string): string {
@@ -1792,6 +1794,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     input: unknown,
     options?: StartOptions,
     tenantOverride?: { resolved: import('./tenant.ts').TenantContext | undefined },
+    additionalStartOperations?: import('../storage/interface.ts').BatchOperation[],
   ): Promise<WorkflowHandle> {
     const registration = this.#registrations.get(type);
     if (!registration) {
@@ -1887,6 +1890,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           state.executionDeadline,
           delayedStartTimer,
           persistedWorkflowStartHeaders,
+          additionalStartOperations,
         ),
       );
       // Deadline timer operations are now folded into the start batch above,
@@ -2508,6 +2512,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     executionDeadline?: number,
     delayedStartTimer?: TimerEntry,
     workflowStartHeaders?: Map<string, string>,
+    additionalOperations?: import('../storage/interface.ts').BatchOperation[],
   ): import('../storage/interface.ts').BatchOperation[] {
     const operations: import('../storage/interface.ts').BatchOperation[] = [
       { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
@@ -2530,6 +2535,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             },
           ]
         : []),
+      ...(additionalOperations ?? []),
     ];
 
     // Fold deadline timer operations into the same batch so workflows with
@@ -5432,18 +5438,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   async #startScheduledRun(state: ScheduleState): Promise<string> {
     const workflowId = crypto.randomUUID();
-    const handle = await this.#startWorkflow(
+    await this.#startWorkflow(
       state.workflowType,
       state.input,
       { id: workflowId },
       { resolved: state.tenant },
+      state.overlap === 'allow'
+        ? undefined
+        : [{ type: 'put', key: KEYS.scheduleRun(workflowId), value: encode(state.id) }],
     );
-
-    if (state.overlap !== 'allow') {
-      await this.#storage.put(KEYS.scheduleRun(handle.id), encode(state.id));
-    }
-
-    return handle.id;
+    return workflowId;
   }
 
   async #applyScheduleOccurrence(state: ScheduleState): Promise<ScheduleState> {

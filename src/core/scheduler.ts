@@ -244,29 +244,32 @@ export class Scheduler implements Disposable {
     { respectStopped }: { respectStopped: boolean },
   ): Promise<void> {
     const currentTime = now ?? this.#getNow();
+    const deadlineIterator = this.#storage
+      .scan('wf-deadline:', {
+        lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
+      })
+      [Symbol.asyncIterator]();
+    const delayedStartIterator = this.#storage
+      .scan('wf-delayed:', {
+        lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
+      })
+      [Symbol.asyncIterator]();
+    const scheduleIterator = this.#storage
+      .scan('schedule-due:', {
+        lt: resolvePrefixRangeEnd(KEYS.scheduleTick(currentTime, '')),
+      })
+      [Symbol.asyncIterator]();
     const timerSources = [
       {
-        iterator: this.#storage
-          .scan('wf-deadline:', {
-            lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
-          })
-          [Symbol.asyncIterator](),
+        iterator: deadlineIterator,
         next: null as ScannedTimerEntry | null,
       },
       {
-        iterator: this.#storage
-          .scan('wf-delayed:', {
-            lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
-          })
-          [Symbol.asyncIterator](),
+        iterator: delayedStartIterator,
         next: null as ScannedTimerEntry | null,
       },
       {
-        iterator: this.#storage
-          .scan('schedule-due:', {
-            lt: resolvePrefixRangeEnd(KEYS.scheduleTick(currentTime, '')),
-          })
-          [Symbol.asyncIterator](),
+        iterator: scheduleIterator,
         next: null as ScannedTimerEntry | null,
       },
     ];
