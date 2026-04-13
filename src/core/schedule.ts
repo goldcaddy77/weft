@@ -78,7 +78,7 @@ const WEEKDAY_FROM_PART = new Map([
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function getDefaultTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  return 'UTC';
 }
 
 function getFormatter(timeZone: string): Intl.DateTimeFormat {

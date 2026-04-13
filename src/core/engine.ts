@@ -5578,7 +5578,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       const isLate = now - state.nextFireAt > SCHEDULE_LATE_GRACE_MILLISECONDS;
-      const shouldSkipMissedOccurrences = !state.backfill && isLate && dueOccurrences.length > 1;
+      const shouldSkipMissedOccurrences = !state.backfill && isLate;
       const occurrencesToProcess = shouldSkipMissedOccurrences
         ? []
         : state.backfill

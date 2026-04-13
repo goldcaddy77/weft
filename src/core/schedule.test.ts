@@ -353,6 +353,38 @@ describe('recurring schedules', () => {
     secondEngine[Symbol.dispose]();
   });
 
+  it('Non-backfill schedules skip a single late missed tick and resume from the next future occurrence.', async () => {
+    const storage = new MemoryStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const executions: Array<string> = [];
+    const engine = createEngine(clock, storage);
+
+    registerWorkflow(
+      engine,
+      'single-missed-tick-workflow',
+      async function* (_ctx: WorkflowContext) {
+        executions.push('fired');
+        return 'fired';
+      },
+    );
+
+    const schedule = await engine.schedule('single-missed-tick-workflow', null, '* * * * *', {
+      id: 'single-missed-tick',
+      backfill: false,
+    });
+    const description = await schedule.describe();
+
+    await tickEngine(engine, clock, Date.UTC(2026, 0, 1, 0, 1, 2));
+
+    expect(executions).toEqual([]);
+
+    const updatedSchedule = await engine.getSchedule(description.id);
+    expect(updatedSchedule?.lastFireAt).toBeUndefined();
+    expect(updatedSchedule?.nextFireAt).toBe(Date.UTC(2026, 0, 1, 0, 2, 0));
+
+    engine[Symbol.dispose]();
+  });
+
   it('Caps backfill catch-up work per scheduler tick when many cron occurrences were missed.', async () => {
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
     const engine = createEngine(clock);
@@ -608,6 +640,12 @@ describe('recurring schedules', () => {
     });
 
     expect(nextFireAt).toBe(Date.UTC(2028, 1, 29, 0, 0, 0));
+  });
+
+  it('Cron scheduling defaults to UTC so persisted schedules do not drift with the host time zone.', () => {
+    const nextFireAt = getNextCronOccurrence('0 0 * * * *', Date.UTC(2026, 0, 1, 12, 34, 56));
+
+    expect(nextFireAt).toBe(Date.UTC(2026, 0, 1, 13, 0, 0));
   });
 
   it('Tests cover: cron edge cases (DST transitions) by skipping nonexistent spring-forward wall-clock times.', () => {
