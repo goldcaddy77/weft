@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -138,6 +138,57 @@ describe('recurring schedules', () => {
     expect(executions).toEqual(['recovered-run']);
 
     secondEngine[Symbol.dispose]();
+  });
+
+  it('Pauses a schedule and clears the fired timer when the workflow registration is missing after restart.', async () => {
+    const storage = new MemoryStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+
+    const firstEngine = createEngine(clock, storage);
+    registerWorkflow(
+      firstEngine,
+      'restart-sensitive-schedule',
+      async function* (_ctx: WorkflowContext, input: string) {
+        return input;
+      },
+    );
+
+    const schedule = await firstEngine.schedule(
+      'restart-sensitive-schedule',
+      'recovered-run',
+      '*/15 * * * * *',
+      { id: 'restart-sensitive-schedule' },
+    );
+    const firstDescription = await schedule.describe();
+    const firstFireAt = requireNextFireAt(firstDescription);
+
+    firstEngine[Symbol.dispose]();
+
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    let secondEngine: Engine | undefined;
+
+    try {
+      secondEngine = createEngine(clock, storage);
+
+      await tickEngine(secondEngine, clock, firstFireAt);
+
+      const pausedSchedule = await secondEngine.getSchedule('restart-sensitive-schedule');
+
+      expect(pausedSchedule).not.toBeNull();
+      expect(pausedSchedule).toMatchObject({
+        id: 'restart-sensitive-schedule',
+        status: 'paused',
+        nextFireAt: getNextCronOccurrence('*/15 * * * * *', firstFireAt),
+      });
+      expect(await listRunningWorkflowIds(secondEngine)).toEqual([]);
+      expect(
+        await storage.get(KEYS.scheduleTick(firstFireAt, 'restart-sensitive-schedule')),
+      ).toBeNull();
+      expect(await storage.get('timer-idx:schedule:restart-sensitive-schedule')).toBeNull();
+    } finally {
+      secondEngine?.[Symbol.dispose]();
+      errorSpy.mockRestore();
+    }
   });
 
   it("Overlap policy is configurable. { overlap: 'skip' } does not start a new run while the previous run is still executing.", async () => {

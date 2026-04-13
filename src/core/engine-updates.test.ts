@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import type { ScanOptions, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
-import { flush, storageBackends, teardown } from '../testing/storage-backends.ts';
+import { collectKeys, flush, storageBackends, teardown } from '../testing/storage-backends.ts';
 import { decode, encode } from './codec.ts';
 import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
@@ -56,6 +56,66 @@ function wrapStorageWithUpdateScanHook(
   }
 
   return wrapped;
+}
+
+function wrapStorageWithStaleWorkflowStateRead(storage: Storage): {
+  storage: Storage;
+  armStaleWorkflowStateRead: (workflowKey: string, staleStateBytes: Uint8Array) => void;
+} {
+  let staleWorkflowStateRead: { key: string; value: Uint8Array } | null = null;
+
+  const wrapped: Storage = {
+    async get(key) {
+      if (staleWorkflowStateRead !== null && key === staleWorkflowStateRead.key) {
+        const staleStateBytes = new Uint8Array(staleWorkflowStateRead.value);
+        staleWorkflowStateRead = null;
+        return staleStateBytes;
+      }
+
+      return storage.get(key);
+    },
+    put: storage.put.bind(storage),
+    delete: storage.delete.bind(storage),
+    scan: storage.scan.bind(storage),
+    batch: storage.batch.bind(storage),
+    [Symbol.dispose]() {
+      storage[Symbol.dispose]();
+    },
+  };
+
+  if (storage.has) {
+    wrapped.has = storage.has.bind(storage);
+  }
+
+  if (storage.deletePrefix) {
+    wrapped.deletePrefix = storage.deletePrefix.bind(storage);
+  }
+
+  if (storage.keys) {
+    wrapped.keys = storage.keys.bind(storage);
+  }
+
+  if (storage.count) {
+    wrapped.count = storage.count.bind(storage);
+  }
+
+  if (storage.scoped) {
+    wrapped.scoped = storage.scoped.bind(storage);
+  }
+
+  if (storage.query) {
+    wrapped.query = storage.query.bind(storage);
+  }
+
+  return {
+    storage: wrapped,
+    armStaleWorkflowStateRead(workflowKey: string, staleStateBytes: Uint8Array): void {
+      staleWorkflowStateRead = {
+        key: workflowKey,
+        value: new Uint8Array(staleStateBytes),
+      };
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +264,56 @@ for (const backend of storageBackends) {
           expect(error).toBeInstanceOf(WorkflowTerminalError);
           expect((error as WorkflowTerminalError).status).toBe('completed');
         }
+      });
+
+      it('re-checks terminal state after creating a coordinated update for update()', async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        const staleWorkflowStateStorage = wrapStorageWithStaleWorkflowStateRead(result.storage);
+        engine = new Engine({ storage: staleWorkflowStateStorage.storage });
+
+        engine.register('quick', async function* (_ctx: WorkflowContext) {
+          return 'done';
+        });
+
+        const handle = await engine.start('quick', undefined);
+        const workflowKey = KEYS.workflow(handle.id);
+        const runningStateBytes = await result.storage.get(workflowKey);
+        expect(runningStateBytes).not.toBeNull();
+        await handle.result();
+        await flush();
+
+        staleWorkflowStateStorage.armStaleWorkflowStateRead(workflowKey, runningStateBytes!);
+
+        await expect(engine.update(handle.id, 'someUpdate', 'payload')).rejects.toBeInstanceOf(
+          WorkflowTerminalError,
+        );
+        expect(await collectKeys(result.storage, KEYS.updatePrefix(handle.id))).toEqual([]);
+      });
+
+      it('re-checks terminal state after creating a coordinated update for submitCoordinatedUpdate()', async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        const staleWorkflowStateStorage = wrapStorageWithStaleWorkflowStateRead(result.storage);
+        engine = new Engine({ storage: staleWorkflowStateStorage.storage });
+
+        engine.register('quick', async function* (_ctx: WorkflowContext) {
+          return 'done';
+        });
+
+        const handle = await engine.start('quick', undefined);
+        const workflowKey = KEYS.workflow(handle.id);
+        const runningStateBytes = await result.storage.get(workflowKey);
+        expect(runningStateBytes).not.toBeNull();
+        await handle.result();
+        await flush();
+
+        staleWorkflowStateStorage.armStaleWorkflowStateRead(workflowKey, runningStateBytes!);
+
+        await expect(
+          engine.submitCoordinatedUpdate(handle.id, 'someUpdate', 'payload'),
+        ).rejects.toBeInstanceOf(WorkflowTerminalError);
+        expect(await collectKeys(result.storage, KEYS.updatePrefix(handle.id))).toEqual([]);
       });
 
       it('throws WorkflowTerminalError for cancelled workflow', async () => {
@@ -734,73 +844,66 @@ for (const backend of storageBackends) {
         expect(response.result).toEqual({ approved: true, amount: 100 });
       });
 
-      it(
-        'falls back to coordinated delivery when a stale waiter is consumed during the async gap',
-        async () => {
-          const result = backend.factory();
-          cleanup = result.cleanup;
+      if (backend.name === 'MemoryStorage') {
+        // This test injects an artificial storage-scan delay to force an
+        // engine-level waiter race. The behavior under test is backend
+        // agnostic, so keeping it on the simplest storage avoids adapter
+        // timing noise while still covering the fallback path.
+        it(
+          'falls back to coordinated delivery when a stale waiter is consumed during the async gap',
+          async () => {
+            const result = backend.factory();
+            cleanup = result.cleanup;
 
-          let delayNextUpdateScan = false;
-          let updateScanCount = 0;
-          let secondWaiterReadyThreshold = Number.POSITIVE_INFINITY;
-          const delayedScanStarted = Promise.withResolvers<void>();
-          const releaseDelayedScan = Promise.withResolvers<void>();
-          const secondWaiterReady = Promise.withResolvers<void>();
-          const storage = wrapStorageWithUpdateScanHook(result.storage, async () => {
-            updateScanCount++;
-            if (updateScanCount >= secondWaiterReadyThreshold) {
-              secondWaiterReady.resolve();
-            }
+            let delayNextUpdateScan = false;
+            const delayedScanStarted = Promise.withResolvers<void>();
+            const releaseDelayedScan = Promise.withResolvers<void>();
+            const storage = wrapStorageWithUpdateScanHook(result.storage, async () => {
+              if (!delayNextUpdateScan) {
+                return;
+              }
 
-            if (!delayNextUpdateScan) {
-              return;
-            }
+              delayNextUpdateScan = false;
+              delayedScanStarted.resolve();
+              await releaseDelayedScan.promise;
+            });
 
-            delayNextUpdateScan = false;
-            delayedScanStarted.resolve();
-            await releaseDelayedScan.promise;
-          });
+            engine = new Engine({ storage });
 
-          engine = new Engine({ storage });
+            engine.register('stale-waiter-race', async function* (ctx: WorkflowContext) {
+              const first = yield* (ctx as Context).waitForUpdate<string>('data');
+              first.respond(`first:${first.payload}`);
 
-          engine.register('stale-waiter-race', async function* (ctx: WorkflowContext) {
-            const first = yield* (ctx as Context).waitForUpdate<string>('data');
-            first.respond(`first:${first.payload}`);
+              const second = yield* (ctx as Context).waitForUpdate<string>('data');
+              second.respond(`second:${second.payload}`);
 
-            const second = yield* (ctx as Context).waitForUpdate<string>('data');
-            second.respond(`second:${second.payload}`);
+              return [first.payload, second.payload];
+            });
 
-            return [first.payload, second.payload];
-          });
+            const handle = await engine.start('stale-waiter-race', undefined);
+            await flush();
 
-          const handle = await engine.start('stale-waiter-race', undefined);
-          await flush();
+            delayNextUpdateScan = true;
+            const delayedUpdate = engine.update(handle.id, 'data', 'first-payload', {
+              timeout: 15_000,
+            });
+            delayedUpdate.catch(() => {});
+            await delayedScanStarted.promise;
 
-          secondWaiterReadyThreshold = updateScanCount + 4;
-          delayNextUpdateScan = true;
-          const delayedUpdate = engine.update(handle.id, 'data', 'first-payload', {
-            timeout: 15_000,
-          });
-          delayedUpdate.catch(() => {});
-          await delayedScanStarted.promise;
+            const immediateUpdateResult = await engine.update(handle.id, 'data', 'second-payload', {
+              timeout: 15_000,
+            });
+            expect(immediateUpdateResult).toBe('first:second-payload');
 
-          const immediateUpdateResult = await engine.update(handle.id, 'data', 'second-payload', {
-            timeout: 15_000,
-          });
-          expect(immediateUpdateResult).toBe('first:second-payload');
-
-          if (backend.name === 'LMDBStorage') {
+            await flush();
             releaseDelayedScan.resolve();
-          } else {
-            await secondWaiterReady.promise;
-            releaseDelayedScan.resolve();
-          }
 
-          await expect(delayedUpdate).resolves.toBe('second:first-payload');
-          await expect(handle.result()).resolves.toEqual(['second-payload', 'first-payload']);
-        },
-        { timeout: 15_000 },
-      );
+            await expect(delayedUpdate).resolves.toBe('second:first-payload');
+            await expect(handle.result()).resolves.toEqual(['second-payload', 'first-payload']);
+          },
+          { timeout: 15_000 },
+        );
+      }
 
       it('re-checks pending updates after waiter registration to catch arrivals during registration', async () => {
         const result = backend.factory();

@@ -3076,6 +3076,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // If no active handler, use the UpdateCoordinator with polling
     const updateId = await this.#updateCoordinator.createRequest(workflowId, name, payload);
+    await this.#guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
     this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
 
     await this.#deliverCoordinatedUpdateToWaiterIfAvailable(workflowId, {
@@ -3689,6 +3690,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       payload,
       requestOptions,
     );
+    await this.#guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
 
     await this.#deliverCoordinatedUpdateToWaiterIfAvailable(
       workflowId,
@@ -5559,40 +5561,69 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return;
     }
 
-    const now = this.#options.getNow();
-    const dueOccurrences = collectDueCronOccurrences(state.cronExpression, state.nextFireAt, now, {
-      maxOccurrences: state.backfill ? MAX_SCHEDULE_BACKFILL_OCCURRENCES_PER_TICK : 2,
-    });
-    if (dueOccurrences.length === 0) {
-      return;
-    }
-
-    const isLate = now - state.nextFireAt > SCHEDULE_LATE_GRACE_MILLISECONDS;
-    const shouldSkipMissedOccurrences = !state.backfill && isLate && dueOccurrences.length > 1;
-    const occurrencesToProcess = shouldSkipMissedOccurrences
-      ? []
-      : state.backfill
-        ? dueOccurrences
-        : dueOccurrences.slice(0, 1);
-
     let nextState = state;
-    for (const _occurrence of occurrencesToProcess) {
-      nextState = await this.#applyScheduleOccurrence(nextState);
+
+    try {
+      const now = this.#options.getNow();
+      const dueOccurrences = collectDueCronOccurrences(
+        state.cronExpression,
+        state.nextFireAt,
+        now,
+        {
+          maxOccurrences: state.backfill ? MAX_SCHEDULE_BACKFILL_OCCURRENCES_PER_TICK : 2,
+        },
+      );
+      if (dueOccurrences.length === 0) {
+        return;
+      }
+
+      const isLate = now - state.nextFireAt > SCHEDULE_LATE_GRACE_MILLISECONDS;
+      const shouldSkipMissedOccurrences = !state.backfill && isLate && dueOccurrences.length > 1;
+      const occurrencesToProcess = shouldSkipMissedOccurrences
+        ? []
+        : state.backfill
+          ? dueOccurrences
+          : dueOccurrences.slice(0, 1);
+
+      for (const occurrence of occurrencesToProcess) {
+        nextState = {
+          ...(await this.#applyScheduleOccurrence(nextState)),
+          lastFireAt: occurrence,
+          updatedAt: now,
+        };
+
+        // Persist overlap bookkeeping before computing the next tick so a later
+        // failure can safely pause the schedule without replaying the same
+        // occurrence or losing the active workflow linkage.
+        await this.#writeScheduleState(nextState, { includeTimer: false });
+      }
+
+      nextState = {
+        ...nextState,
+        updatedAt: now,
+        nextFireAt: shouldSkipMissedOccurrences
+          ? getNextCronOccurrence(nextState.cronExpression, now)
+          : getNextCronOccurrence(
+              nextState.cronExpression,
+              occurrencesToProcess.at(-1) ?? dueOccurrences.at(-1)!,
+            ),
+      };
+
+      await this.#writeScheduleState(nextState);
+    } catch (error) {
+      const pausedState: ScheduleState = {
+        ...nextState,
+        status: 'paused',
+        updatedAt: this.#options.getNow(),
+        nextFireAt: getNextCronOccurrence(nextState.cronExpression, this.#options.getNow()),
+      };
+
+      await this.#writeScheduleState(pausedState, { includeTimer: false });
+      console.error(
+        `[weft] Paused schedule "${pausedState.id}" after timer processing failed:`,
+        error,
+      );
     }
-
-    nextState = {
-      ...nextState,
-      updatedAt: now,
-      ...(occurrencesToProcess.length > 0 && { lastFireAt: occurrencesToProcess.at(-1)! }),
-      nextFireAt: shouldSkipMissedOccurrences
-        ? getNextCronOccurrence(nextState.cronExpression, now)
-        : getNextCronOccurrence(
-            nextState.cronExpression,
-            occurrencesToProcess.at(-1) ?? dueOccurrences.at(-1)!,
-          ),
-    };
-
-    await this.#writeScheduleState(nextState);
   }
 
   async #handleScheduledWorkflowTerminal(workflowId: string): Promise<void> {
@@ -6463,6 +6494,27 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const state = decodeWorkflowState(stateBytes);
     if (Engine.#TERMINAL_STATUSES.has(state.status)) {
       throw new WorkflowTerminalError(workflowId, state.status);
+    }
+  }
+
+  /**
+   * Re-check terminal state after persisting a coordinated update request.
+   * This closes the race where the workflow completes between the preflight
+   * guard and request creation, which would otherwise leave the caller
+   * waiting for a response that can never arrive.
+   */
+  async #guardTerminalWorkflowAfterCoordinatedRequest(
+    workflowId: string,
+    updateId: string,
+  ): Promise<void> {
+    try {
+      await this.#guardTerminalWorkflow(workflowId);
+    } catch (error) {
+      if (error instanceof WorkflowTerminalError) {
+        await this.#updateCoordinator.deleteRequest(workflowId, updateId);
+      }
+
+      throw error;
     }
   }
 
