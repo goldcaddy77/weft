@@ -364,14 +364,6 @@ function matchesDay(parts: ZonedParts, expression: ParsedCronExpression): boolea
   return matchesDayOfMonth || matchesDayOfWeek;
 }
 
-function candidateFromParts(
-  parts: LocalDateTime,
-  timeZone: string,
-  minimumTimestamp: number,
-): number | null {
-  return localDateTimeToTimestamp(parts, timeZone, minimumTimestamp);
-}
-
 export function getNextCronOccurrence(
   expression: string | ParsedCronExpression,
   afterTimestamp: number,
@@ -390,7 +382,7 @@ export function getNextCronOccurrence(
 
     if (!parsedExpression.months.values.includes(parts.month)) {
       const nextMonth = selectNextValue(parsedExpression.months.values, parts.month);
-      const monthCandidate = candidateFromParts(
+      const monthCandidate = localDateTimeToTimestamp(
         {
           year: parts.year + (nextMonth.wrapped ? 1 : 0),
           month: nextMonth.value,
@@ -407,7 +399,7 @@ export function getNextCronOccurrence(
     }
 
     if (!matchesDay(parts, parsedExpression)) {
-      const nextDayCandidate = candidateFromParts(
+      const nextDayCandidate = localDateTimeToTimestamp(
         shiftLocalDateTime(
           {
             year: parts.year,
@@ -428,7 +420,7 @@ export function getNextCronOccurrence(
 
     if (!parsedExpression.hours.values.includes(parts.hour)) {
       const nextHour = selectNextValue(parsedExpression.hours.values, parts.hour);
-      const hourCandidate = candidateFromParts(
+      const hourCandidate = localDateTimeToTimestamp(
         {
           year: parts.year,
           month: parts.month,
@@ -445,7 +437,7 @@ export function getNextCronOccurrence(
         continue;
       }
 
-      const nextDayCandidate = candidateFromParts(
+      const nextDayCandidate = localDateTimeToTimestamp(
         shiftLocalDateTime(
           {
             year: parts.year,
@@ -466,7 +458,7 @@ export function getNextCronOccurrence(
 
     if (!parsedExpression.minutes.values.includes(parts.minute)) {
       const nextMinute = selectNextValue(parsedExpression.minutes.values, parts.minute);
-      const minuteCandidate = candidateFromParts(
+      const minuteCandidate = localDateTimeToTimestamp(
         {
           year: parts.year,
           month: parts.month,
@@ -483,7 +475,7 @@ export function getNextCronOccurrence(
         continue;
       }
 
-      const nextHourBoundary = candidateFromParts(
+      const nextHourBoundary = localDateTimeToTimestamp(
         shiftLocalDateTime(
           {
             year: parts.year,
@@ -504,7 +496,7 @@ export function getNextCronOccurrence(
 
     if (!parsedExpression.seconds.values.includes(parts.second)) {
       const nextSecond = selectNextValue(parsedExpression.seconds.values, parts.second);
-      const secondCandidate = candidateFromParts(
+      const secondCandidate = localDateTimeToTimestamp(
         {
           year: parts.year,
           month: parts.month,
@@ -521,7 +513,7 @@ export function getNextCronOccurrence(
         continue;
       }
 
-      const nextMinuteBoundary = candidateFromParts(
+      const nextMinuteBoundary = localDateTimeToTimestamp(
         shiftLocalDateTime(
           {
             year: parts.year,
