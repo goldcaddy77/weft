@@ -4,6 +4,8 @@
 
 ---
 
+Long-form research now lives in [./research.md](./research.md). This document keeps the overview, problem framing, and architectural context that feed the checklist-first roadmap in [../architecture.md](../architecture.md).
+
 ## Before We Start: What Problem Are We Solving?
 
 Imagine you're building an e-commerce checkout:
@@ -37,7 +39,7 @@ The design constraints, in priority order:
 
 5. **Agent-native.** The engine is designed around agent workloads: dynamic execution graphs, durable streaming, cost enforcement, human oversight, multi-agent coordination, context window management, and model routing are built into the core — not bolted on as wrappers around generic activities.
 
-6. **Library/server parity.** Every capability exposed by the server's HTTP and WebSocket API is also available through the library's in-process `Engine` API — and vice versa. A developer who starts with `bun add weft` and later moves to the standalone server (or the reverse) should not lose features or change workflow code. The server is a deployment wrapper around the engine, not a superset of it.
+6. **Library/server parity.** Every capability exposed by the server's HTTP and WebSocket API is also available through the library's in-process `Engine` API — and vice versa. A developer who starts with `bun add weft` and later moves to the standalone server (or the reverse) should not lose features or change workflow code. The server is a deployment wrapper around the engine, not a superset of it. Track 8 extends that parity model with shared REST/OpenAPI and JSON-RPC/OpenRPC contracts generated from one runtime operation catalog, but those transports remain adapters over the same `Engine`, `EventTarget`, `BroadcastChannel`, and Worker messaging primitives rather than a separate system.
 
 ---
 

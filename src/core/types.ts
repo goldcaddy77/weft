@@ -75,6 +75,7 @@ export interface WorkflowState {
    */
   toolVersions?: string[];
   createdAt: number;
+  startedAt?: number;
   updatedAt: number;
   executionDeadline?: number;
   /**
@@ -182,6 +183,8 @@ export interface StartOptions {
   id?: string;
   idempotencyKey?: string;
   executionTimeout?: Duration;
+  startAt?: number;
+  startAfter?: Duration;
   searchAttributes?: Record<string, SearchAttributeValue>;
 }
 
@@ -343,7 +346,8 @@ export interface TimerEntry {
   id: string;
   workflowId: WorkflowId;
   fireAt: number;
-  kind: 'sleep' | 'visibility-timeout' | 'execution-deadline';
+  kind: 'sleep' | 'visibility-timeout' | 'execution-deadline' | 'delayed-start';
+  executionTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------

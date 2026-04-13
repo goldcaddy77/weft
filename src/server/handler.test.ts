@@ -61,6 +61,16 @@ describe('handleRequest', () => {
     expect(await json(response)).toEqual({ status: 'ok' });
   });
 
+  it('GET /openapi.json returns the OpenAPI document', async () => {
+    engine = createEngine();
+    const response = await handleRequest(request('GET', '/openapi.json'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { openapi: string; paths: Record<string, unknown> };
+    expect(body.openapi).toBe('3.1.0');
+    expect(body.paths['/v1/workflows']).toBeDefined();
+  });
+
   // 2. Start workflow with valid body
   it('POST /v1/workflows with valid body returns 201 with id', async () => {
     engine = createEngine();
@@ -239,6 +249,132 @@ describe('handleRequest', () => {
     expect(stateResponse.status).toBe(200);
     const state = (await json(stateResponse)) as { executionDeadline?: number };
     expect(state.executionDeadline).toBeDefined();
+  });
+
+  it('POST /v1/workflows accepts a custom id with storage key separators', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        id: 'wf:ckpt/with spaces',
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(201);
+    const body = (await json(response)) as { id: string };
+    expect(body.id).toBe('wf:ckpt/with spaces');
+  });
+
+  it('POST /v1/workflows rejects custom ids with control characters', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        id: 'wf-control\nid',
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toMatchObject({
+      error: 'Field "id" must not contain control characters',
+    });
+  });
+
+  it('POST /v1/workflows with startAt keeps the workflow pending until it is due', async () => {
+    engine = createEngine();
+    const startAt = Date.now() + 60_000;
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        startAt,
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(201);
+    const { id } = (await json(response)) as { id: string };
+
+    const stateResponse = await handleRequest(request('GET', `/v1/workflows/${id}`), engine);
+    expect(stateResponse.status).toBe(200);
+    const state = (await json(stateResponse)) as { status: string };
+    expect(state.status).toBe('pending');
+  });
+
+  it('POST /v1/workflows with both startAt and startAfter returns 400', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        startAt: Date.now() + 60_000,
+        startAfter: '1m',
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Provide only one of startAt or startAfter');
+  });
+
+  it('POST /v1/workflows with a negative startAt returns 400', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        startAt: -1,
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Field "startAt"');
+  });
+
+  it('POST /v1/workflows with a negative startAfter returns 400', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        startAfter: -1,
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Field "startAfter"');
+  });
+
+  it('POST /v1/workflows with a negative executionTimeout returns 400', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', {
+        type: 'echo',
+        input: 'data',
+        executionTimeout: -1,
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Field "executionTimeout"');
   });
 
   // Additional edge cases
@@ -2099,6 +2235,25 @@ describe('handleRequest', () => {
     });
   });
 
+  it('GET /v1/workflows/:id/streams/:key returns stored stream chunks', async () => {
+    engine = createEngine();
+
+    const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
+    engine.getStreamChunks = async () => ['alpha', { token: 'beta' }];
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-stream/streams/tokens'),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual({
+      chunks: ['alpha', { token: 'beta' }],
+    });
+
+    engine.getStreamChunks = originalGetStreamChunks;
+  });
+
   // SSE streaming endpoint
   describe('GET /v1/workflows/:id/sse', () => {
     it('returns 406 when Accept header does not include text/event-stream', async () => {
@@ -2343,5 +2498,19 @@ describe('handleRequest', () => {
 
     // Route pattern only matches digits, so this is a 404 (not found)
     expect(response.status).toBe(404);
+  });
+
+  it('GET /v1/workflows/:id/checkpoints/:step returns 400 for a numeric step outside the safe integer range', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/test-wf/checkpoints/9007199254740992'),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Invalid step: 9007199254740992',
+    });
   });
 });

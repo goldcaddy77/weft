@@ -12,11 +12,19 @@ import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import { createSSEStream } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
+import {
+  StartWorkflowValidationError,
+  assertExclusiveStartWorkflowOptions,
+  coerceStartWorkflowDuration,
+  coerceStartWorkflowId,
+  coerceStartWorkflowTimestamp,
+} from '../core/start-workflow-validation.ts';
 import type {
   AttributeFilter,
   ListFilter,
   ReviewDecision,
   SearchAttributeValue,
+  StartOptions,
   WorkflowStatus,
 } from '../core/types.ts';
 import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
@@ -44,12 +52,21 @@ interface RouteMatch {
  * Route patterns derived from the shared route model. The regex is computed
  * once at module load time for the hot path.
  */
-const ROUTE_PATTERNS = ROUTES.map((route) => ({
-  method: route.method,
-  pattern: toRegex(route.path),
-  handler: route.handler,
-  paramNames: route.paramNames,
-}));
+const ROUTE_PATTERNS: Array<{
+  method: (typeof ROUTES)[number]['method'];
+  pattern: RegExp;
+  handler: HandlerName;
+  paramNames: readonly string[];
+}> = [];
+
+for (const route of ROUTES) {
+  ROUTE_PATTERNS.push({
+    method: route.method,
+    pattern: toRegex(route.path),
+    handler: route.handler,
+    paramNames: route.paramNames,
+  });
+}
 
 function matchRoute(method: string, pathname: string): RouteMatch | null {
   for (const route of ROUTE_PATTERNS) {
@@ -115,6 +132,37 @@ export function getRequiredRouteParameter(
   return value;
 }
 
+function validateStartWorkflowOptions(body: Record<string, unknown>): StartOptions {
+  const options: StartOptions = {};
+
+  const id = body['id'];
+  if (id !== undefined) {
+    options.id = coerceStartWorkflowId(id, 'Field "id"');
+  }
+
+  const executionTimeout = body['executionTimeout'];
+  if (executionTimeout !== undefined) {
+    options.executionTimeout = coerceStartWorkflowDuration(
+      executionTimeout,
+      'Field "executionTimeout"',
+    );
+  }
+
+  const startAt = body['startAt'];
+  if (startAt !== undefined) {
+    options.startAt = coerceStartWorkflowTimestamp(startAt, 'Field "startAt"');
+  }
+
+  const startAfter = body['startAfter'];
+  if (startAfter !== undefined) {
+    options.startAfter = coerceStartWorkflowDuration(startAfter, 'Field "startAfter"');
+  }
+
+  assertExclusiveStartWorkflowOptions(options.startAt, options.startAfter);
+
+  return options;
+}
+
 // ---------------------------------------------------------------------------
 // Route handlers — each delegates to an Engine method
 // ---------------------------------------------------------------------------
@@ -131,26 +179,37 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
     return errorResponse('Request body must be a JSON object', 400);
   }
 
-  const { type, input, id, executionTimeout } = body as Record<string, unknown>;
+  const { type, input, id, executionTimeout, startAt, startAfter } = body as Record<
+    string,
+    unknown
+  >;
 
   if (typeof type !== 'string' || type.length === 0) {
     return errorResponse('Missing required field: type', 400);
   }
 
+  let options: StartOptions;
   try {
-    const options: Record<string, unknown> = {};
-    if (id !== undefined) {
-      options['id'] = id;
-    }
-    if (executionTimeout !== undefined) {
-      options['executionTimeout'] = executionTimeout;
-    }
+    options = validateStartWorkflowOptions({
+      id,
+      executionTimeout,
+      startAt,
+      startAfter,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
 
+  try {
     const handle = await engine.start(type, input, options);
     return jsonResponse({ id: handle.id }, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
+    if (error instanceof StartWorkflowValidationError) {
+      return errorResponse(message, 400);
+    }
     if (message.includes('No workflow registered')) {
       return errorResponse(message, 400);
     }
@@ -759,7 +818,6 @@ async function handleGetCheckpointAt(
   if (!Number.isSafeInteger(step) || step < 0) {
     return errorResponse(`Invalid step: ${stepParam}`, 400);
   }
-
   const state = await engine.getCheckpointAt(workflowId, step);
   if (!state) {
     return errorResponse(`Checkpoint not found at step ${step} for workflow ${workflowId}`, 404);
@@ -886,9 +944,6 @@ export async function handleRequest(
 
   try {
     const executor = ROUTE_EXECUTORS[route.handler];
-    if (!executor) {
-      return errorResponse(`No handler for route: ${routeDescription}`, 501);
-    }
     return await executor({ request, engine, options, param });
   } catch (error) {
     console.error('Unhandled error in handleRequest', {

@@ -256,6 +256,8 @@ export class HttpClient implements WeftClient {
     if (options?.id !== undefined) body['id'] = options.id;
     if (options?.executionTimeout !== undefined)
       body['executionTimeout'] = options.executionTimeout;
+    if (options?.startAt !== undefined) body['startAt'] = options.startAt;
+    if (options?.startAfter !== undefined) body['startAfter'] = options.startAfter;
     // searchAttributes and idempotencyKey are not yet forwarded by the server's
     // POST /v1/workflows handler — omit them from the HTTP payload to avoid
     // silent divergence between LocalClient and HttpClient.

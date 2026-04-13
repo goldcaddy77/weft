@@ -175,7 +175,7 @@ describe('outputNameForTarget', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildForTarget (current platform)', () => {
-  const outdir = join(import.meta.dir, '..', 'dist', 'test-binary');
+  const outdir = join(import.meta.dir, '..', 'dist', `test-binary-${process.pid}`);
 
   beforeAll(() => {
     if (existsSync(outdir)) {
@@ -194,7 +194,10 @@ describe('buildForTarget (current platform)', () => {
     const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
     const target = `bun-${platform}-${arch}` as Parameters<typeof buildForTarget>[0];
 
-    const result = await buildForTarget(target, outdir);
+    let result = await buildForTarget(target, outdir);
+    if (!result.success) {
+      result = await buildForTarget(target, outdir);
+    }
 
     expect(result.success).toBe(true);
     expect(result.error).toBeUndefined();

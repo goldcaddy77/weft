@@ -2,6 +2,8 @@
 
 This companion document was split out of [../architecture.md](../architecture.md) so the roadmap can stay checklist-first. It preserves the architectural rationale, platform philosophy, vocabulary, web-standards foundation, and the early core design decisions.
 
+The research source of truth now lives in [./research.md](./research.md). Track 8 should follow the same platform rule as every earlier decision in this document: transport parity is an adapter layer over the existing `Engine`, typed `EventTarget` events, `BroadcastChannel` coordination, and Worker `postMessage` protocols, not a second orchestration stack.
+
 ## Design Philosophy: No Userland Where Platform Exists
 
 Weft eliminates every userland pattern that has a platform-native equivalent:

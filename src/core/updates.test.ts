@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
+import { KEYS } from '../storage/interface';
 import { MemoryStorage } from '../storage/memory';
 import { decode, encode } from './codec';
 import { UpdateCoordinator, UpdateTimeoutError } from './updates';
@@ -60,6 +61,18 @@ describe('UpdateCoordinator', () => {
     it('returns empty array when none exist', async () => {
       const pending = await coordinator.getPendingUpdates('wf-nonexistent');
       expect(pending).toEqual([]);
+    });
+
+    it('returns pending requests for workflow ids that require key encoding', async () => {
+      const workflowId = 'wf:updates/with spaces';
+      await coordinator.createRequest(workflowId, 'update-a', 'payload-a');
+      await coordinator.createRequest(workflowId, 'update-b', 'payload-b');
+
+      const pending = await coordinator.getPendingUpdates(workflowId);
+
+      expect(pending).toHaveLength(2);
+      expect(await storage.get(KEYS.update(workflowId, pending[0]!.updateId))).not.toBeNull();
+      expect(await storage.get(KEYS.update(workflowId, pending[1]!.updateId))).not.toBeNull();
     });
   });
 

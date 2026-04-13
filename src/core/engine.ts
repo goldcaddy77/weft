@@ -24,7 +24,11 @@ import type { LLMProvider } from '../ai/providers/interface.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
-import { KEYS } from '../storage/interface.ts';
+import {
+  KEYS,
+  encodeStorageKeyComponent,
+  tryDecodeStorageKeyComponent,
+} from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { ActivityWorkerDispatcher } from '../workers/activity-worker-dispatcher.ts';
 import { WorkerPool } from '../workers/pool.ts';
@@ -76,13 +80,20 @@ import type {
   WorkflowInterceptor,
 } from './interceptor.ts';
 import { composeActivityInterceptors, composeWorkflowInterceptors } from './interceptor.ts';
-import { Scheduler, buildTimerBatchOperations, parseDuration } from './scheduler.ts';
+import { Scheduler, buildTimerBatchOperations, normalizeStorageTimestamp } from './scheduler.ts';
 import {
   buildIndexOperations,
   encodeAttributeValue,
   validateAttributeType,
   validateEncodedValueSize,
 } from './search-attributes.ts';
+import {
+  StartWorkflowValidationError,
+  assertExclusiveStartWorkflowOptions,
+  coerceStartWorkflowId,
+  coerceStartWorkflowTimestamp,
+  parseStartWorkflowDuration,
+} from './start-workflow-validation.ts';
 import {
   compileStepWorkflow,
   isAsyncGeneratorFunction,
@@ -105,6 +116,7 @@ import type {
   StartOptions,
   StepWorkflowFunction,
   SubmitReviewOptions,
+  TimerEntry,
   WorkerOutboundMessage,
   WorkflowEvent,
   WorkflowFunction,
@@ -246,7 +258,11 @@ class SpeculativeExecutionState implements VerificationRecorder {
 
   async rollback(): Promise<void> {
     for (let index = this.#compensations.length - 1; index >= 0; index--) {
-      await this.#compensations[index]!().catch(() => {});
+      try {
+        await this.#compensations[index]!();
+      } catch {
+        // Best-effort rollback continues through failed compensations.
+      }
     }
     await Promise.all(this.#verifications);
   }
@@ -318,6 +334,12 @@ function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
   return state;
 }
 
+function getWorkflowExecutionStartedAt(
+  state: Pick<WorkflowState, 'createdAt' | 'startedAt'>,
+): number {
+  return state.startedAt ?? state.createdAt;
+}
+
 function enqueueWorkflowHandleEvent(queue: WorkflowHandleEventQueue, event: Event): void {
   queue.events.push(event);
   queue.resolver?.();
@@ -353,7 +375,7 @@ function finishWorkflowHandleIteration(
 function synthesizeTerminalEventFromState(state: WorkflowState): Event | null {
   switch (state.status) {
     case 'completed': {
-      const duration = state.updatedAt - state.createdAt;
+      const duration = state.updatedAt - getWorkflowExecutionStartedAt(state);
       return new WorkflowCompletedEvent(state.id, state.result, duration);
     }
     case 'failed': {
@@ -371,7 +393,7 @@ function synthesizeTerminalEventFromState(state: WorkflowState): Event | null {
       // carried; `executionDeadline` would be the configured timeout budget
       // instead of the actual elapsed, which is a subtly different number
       // when the scheduler ticks past the deadline.
-      const elapsed = state.updatedAt - state.createdAt;
+      const elapsed = state.updatedAt - getWorkflowExecutionStartedAt(state);
       return new WorkflowTimedOutEvent(state.id, 'execution', elapsed);
     }
     default:
@@ -399,6 +421,37 @@ function resolveEngineStorage(
         }
       : {}),
   });
+}
+
+function encodeWorkflowStartHeaders(headers: Map<string, string>): Uint8Array {
+  return encode([...headers.entries()]);
+}
+
+function decodeWorkflowStartHeaders(bytes: Uint8Array): Map<string, string> {
+  const entries = decode(bytes) as Array<[string, string]>;
+  return new Map(entries);
+}
+
+const PERSISTED_WORKFLOW_START_HEADER_NAMES = new Set(['traceparent', 'tracestate']);
+
+function selectPersistedWorkflowStartHeaders(
+  headers: Map<string, string> | undefined,
+): Map<string, string> | undefined {
+  if (!headers || headers.size === 0) {
+    return undefined;
+  }
+
+  const persistedHeaders = new Map<string, string>();
+
+  for (const [name, value] of headers) {
+    const normalizedName = name.toLowerCase();
+    if (!PERSISTED_WORKFLOW_START_HEADER_NAMES.has(normalizedName)) {
+      continue;
+    }
+    persistedHeaders.set(normalizedName, value);
+  }
+
+  return persistedHeaders.size > 0 ? persistedHeaders : undefined;
 }
 
 function resolveEngineOptions(
@@ -1089,13 +1142,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
-  #captureWorkflowStartHeaders(
-    workflowId: string,
-    interception: { headers: Map<string, string> },
-  ): void {
-    this.#workflowHeaders.set(workflowId, interception.headers);
-  }
-
   async #handleReviewEscalationTimer(
     workflowId: string,
     reviewId: string,
@@ -1383,16 +1429,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`No workflow registered with name "${type}"`);
     }
 
-    if (options?.id !== undefined && options.id.length === 0) {
-      throw new Error('options.id must not be an empty string');
-    }
     const callerProvidedId = options?.id !== undefined;
-    const workflowId = options?.id ?? crypto.randomUUID();
+    const workflowId =
+      options?.id !== undefined
+        ? coerceStartWorkflowId(options.id, 'options.id')
+        : crypto.randomUUID();
 
     // Capture and clear pending parent headers immediately, before any async
     // work, to prevent a concurrent child-workflow start from overwriting them.
     const parentHeaders = this.#pendingParentHeaders;
     this.#pendingParentHeaders = undefined;
+    const submissionTime = this.#options.getNow();
+    const scheduledStartAt = this.#resolveScheduledStartAt(options, submissionTime);
+    const delayedStartTimer =
+      scheduledStartAt !== undefined && scheduledStartAt > submissionTime
+        ? this.#createDelayedStartTimerEntry(workflowId, scheduledStartAt, options)
+        : undefined;
 
     // Atomic check-and-reserve: prevent two concurrent start() calls with the
     // same ID from both passing the storage check before either writes state.
@@ -1427,13 +1479,23 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         versionTuple,
         options,
         tenant,
+        delayedStartTimer,
       );
       const checkpoint = this.#createInitialCheckpoint(
         workflowId,
         versionTuple.workflowVersion,
         options,
       );
+      const workflowStartHeaders = this.#runWorkflowStartInterceptor(
+        workflowId,
+        type,
+        input,
+        parentHeaders,
+      );
+      const persistedWorkflowStartHeaders =
+        selectPersistedWorkflowStartHeaders(workflowStartHeaders);
       this.#checkpoints.set(workflowId, checkpoint);
+      this.#setWorkflowStartHeaders(workflowId, workflowStartHeaders);
 
       // Cache the workflow version tuple for forwarding to event-log entries.
       this.#workflowVersionTuples.set(workflowId, versionTuple);
@@ -1452,33 +1514,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           registration,
           options,
           state.executionDeadline,
+          delayedStartTimer,
+          persistedWorkflowStartHeaders,
         ),
       );
       // Deadline timer operations are now folded into the start batch above,
       // eliminating a separate storage transaction on the hot start path.
-      this.#runWorkflowStartInterceptor(workflowId, type, input, parentHeaders);
-
-      // Pre-warm LLM connection after the batch write (fire-and-forget).
-      if (registration.isAgent) {
-        try {
-          const warmupResult = registration.provider?.warmup?.();
-          void this.#swallowPromiseRejection(warmupResult);
-        } catch {
-          // Warmup is best-effort; ignore synchronous failures.
-        }
-      }
-
-      this.dispatchEvent(new WorkflowStartedEvent(workflowId, type, input));
 
       const handle = this.#createWorkflowHandle(workflowId);
-      this.#startWorkflowExecution(
-        workflowId,
-        type,
-        input,
-        checkpoint,
-        state.executionDeadline,
-        tenant,
-      );
+      if (!delayedStartTimer) {
+        this.#beginWorkflowExecution(
+          workflowId,
+          type,
+          input,
+          checkpoint,
+          state.executionDeadline,
+          tenant,
+          registration,
+        );
+      }
       startSucceeded = true;
       return handle;
     } finally {
@@ -1490,7 +1544,97 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           this.#agentWorkflowIds.delete(workflowId);
         }
       }
+      if (!startSucceeded) {
+        this.#checkpoints.delete(workflowId);
+        this.#workflowHeaders.delete(workflowId);
+        this.#workflowVersionTuples.delete(workflowId);
+      }
     }
+  }
+
+  #resolveScheduledStartAt(
+    options: StartOptions | undefined,
+    submissionTime: number,
+  ): number | undefined {
+    assertExclusiveStartWorkflowOptions(options?.startAt, options?.startAfter);
+
+    if (options?.startAt !== undefined) {
+      return coerceStartWorkflowTimestamp(options.startAt, 'options.startAt');
+    }
+
+    if (options?.startAfter !== undefined) {
+      const startAfterMilliseconds = this.#parseStartOptionDuration(
+        options.startAfter,
+        'options.startAfter',
+      );
+      try {
+        return normalizeStorageTimestamp(
+          submissionTime + startAfterMilliseconds,
+          'options.startAfter',
+        );
+      } catch {
+        throw new StartWorkflowValidationError(
+          'options.startAfter must resolve to a finite, non-negative start time',
+        );
+      }
+    }
+
+    return undefined;
+  }
+
+  #parseStartOptionDuration(
+    duration: import('./types.ts').Duration,
+    fieldName: 'options.executionTimeout' | 'options.startAfter',
+  ): number {
+    return parseStartWorkflowDuration(duration, fieldName);
+  }
+
+  #createDelayedStartTimerEntry(
+    workflowId: string,
+    scheduledStartAt: number,
+    options: StartOptions | undefined,
+  ): TimerEntry {
+    return {
+      id: `delayed-start:${workflowId}`,
+      workflowId,
+      fireAt: scheduledStartAt,
+      kind: 'delayed-start',
+      ...(options?.executionTimeout !== undefined && {
+        executionTimeoutMs: this.#parseStartOptionDuration(
+          options.executionTimeout,
+          'options.executionTimeout',
+        ),
+      }),
+    };
+  }
+
+  #beginWorkflowExecution(
+    workflowId: string,
+    workflowType: string,
+    input: unknown,
+    checkpoint: Checkpoint,
+    executionDeadline: number | undefined,
+    tenant: import('./tenant.ts').TenantContext | undefined,
+    registration: RegistrationEntry,
+  ): void {
+    if (registration.isAgent) {
+      try {
+        const warmupResult = registration.provider?.warmup?.();
+        void this.#swallowPromiseRejection(warmupResult);
+      } catch {
+        // Warmup is best-effort; ignore synchronous failures.
+      }
+    }
+
+    this.dispatchEvent(new WorkflowStartedEvent(workflowId, workflowType, input));
+    this.#startWorkflowExecution(
+      workflowId,
+      workflowType,
+      input,
+      checkpoint,
+      executionDeadline,
+      tenant,
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1518,13 +1662,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       existingResolver.reject = this.#rejectChainedResult.bind(this, originalReject, reject);
       resultPromise = promise;
     } else {
-      // Workflow may already be complete; load from storage
-      resultPromise = this.#loadWorkflowResult(workflowId);
+      // The workflow may be terminal, actively running, or still pending.
+      // Bootstrap a durable resolver from persisted state so handles created
+      // after a restart can still wait for future completion.
+      resultPromise = this.#createDeferredWorkflowResultPromise(workflowId);
     }
 
-    const handle = new WorkflowHandle(workflowId, this, resultPromise);
-    this.#cacheHandle(workflowId, handle);
-    return handle;
+    return this.#createWorkflowHandleWithResultPromise(workflowId, resultPromise);
   }
 
   // -------------------------------------------------------------------------
@@ -1751,15 +1895,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     versionTuple: WorkflowVersionTuple,
     options?: StartOptions,
     tenant?: import('./tenant.ts').TenantContext,
+    delayedStartTimer?: TimerEntry,
   ): WorkflowState {
     const now = this.#options.getNow();
     const state: WorkflowState = {
       id: workflowId,
       type,
-      status: 'running',
+      status: delayedStartTimer ? 'pending' : 'running',
       input,
       version: versionTuple.workflowVersion,
       createdAt: now,
+      ...(!delayedStartTimer && { startedAt: now }),
       updatedAt: now,
       ...(versionTuple.agentVersion !== undefined && {
         agentVersion: versionTuple.agentVersion,
@@ -1769,8 +1915,23 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }),
     };
 
-    if (options?.executionTimeout !== undefined) {
-      state.executionDeadline = now + parseDuration(options.executionTimeout);
+    if (options?.executionTimeout !== undefined && !delayedStartTimer) {
+      const executionTimeoutMilliseconds = this.#parseStartOptionDuration(
+        options.executionTimeout,
+        'options.executionTimeout',
+      );
+      let executionDeadline: number;
+      try {
+        executionDeadline = normalizeStorageTimestamp(
+          now + executionTimeoutMilliseconds,
+          'options.executionTimeout',
+        );
+      } catch {
+        throw new StartWorkflowValidationError(
+          'options.executionTimeout must resolve to a finite, non-negative deadline',
+        );
+      }
+      state.executionDeadline = executionDeadline;
     }
 
     if (tenant !== undefined) {
@@ -1816,6 +1977,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     registration: RegistrationEntry,
     options?: StartOptions,
     executionDeadline?: number,
+    delayedStartTimer?: TimerEntry,
+    workflowStartHeaders?: Map<string, string>,
   ): import('../storage/interface.ts').BatchOperation[] {
     const operations: import('../storage/interface.ts').BatchOperation[] = [
       { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
@@ -1829,6 +1992,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         registration,
         options?.searchAttributes,
       ),
+      ...(workflowStartHeaders && workflowStartHeaders.size > 0
+        ? [
+            {
+              type: 'put' as const,
+              key: KEYS.workflowHeaders(workflowId),
+              value: encodeWorkflowStartHeaders(workflowStartHeaders),
+            },
+          ]
+        : []),
     ];
 
     // Fold deadline timer operations into the same batch so workflows with
@@ -1843,6 +2015,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           kind: 'execution-deadline',
         }),
       );
+    }
+
+    if (delayedStartTimer) {
+      operations.push(...buildTimerBatchOperations(delayedStartTimer));
     }
 
     return operations;
@@ -1894,10 +2070,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowType: string,
     input: unknown,
     parentHeaders: Map<string, string> | undefined,
-  ): void {
+  ): Map<string, string> | undefined {
     const composedInterceptor = this.#getComposedWorkflowInterceptor();
     if (!composedInterceptor) {
-      return;
+      return undefined;
     }
 
     const headers = new Map<string, string>();
@@ -1907,6 +2083,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
     }
 
+    let capturedHeaders: Map<string, string> | undefined;
     composedInterceptor.workflowStart(
       {
         workflowId,
@@ -1914,17 +2091,100 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         input,
         headers,
       },
-      this.#captureWorkflowStartHeaders.bind(this, workflowId),
+      (interception) => {
+        capturedHeaders = new Map(interception.headers);
+      },
     );
+
+    return capturedHeaders;
   }
 
   #createWorkflowHandle(workflowId: string): WorkflowHandle {
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    this.#resultResolvers.set(workflowId, { resolve, reject });
+    return this.#createWorkflowHandleWithResultPromise(
+      workflowId,
+      this.#createWorkflowResultPromise(workflowId),
+    );
+  }
 
-    const handle = new WorkflowHandle(workflowId, this, promise);
+  #createWorkflowHandleWithResultPromise(
+    workflowId: string,
+    resultPromise: Promise<unknown>,
+  ): WorkflowHandle {
+    const handle = new WorkflowHandle(workflowId, this, resultPromise);
     this.#cacheHandle(workflowId, handle);
     return handle;
+  }
+
+  #createWorkflowResultPromise(workflowId: string): Promise<unknown> {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    this.#resultResolvers.set(workflowId, { resolve, reject });
+    return promise;
+  }
+
+  #createDeferredWorkflowResultPromise(workflowId: string): Promise<unknown> {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    const resolver = { resolve, reject };
+    this.#resultResolvers.set(workflowId, resolver);
+    void this.#bootstrapWorkflowResultResolver(workflowId, resolver);
+    return promise;
+  }
+
+  async #bootstrapWorkflowResultResolver(
+    workflowId: string,
+    resolver: WorkflowResultResolver,
+  ): Promise<void> {
+    try {
+      const state = await this.#loadWorkflowState(workflowId);
+      if (this.#resultResolvers.get(workflowId) !== resolver) {
+        return;
+      }
+
+      if (!state) {
+        this.#resultResolvers.delete(workflowId);
+        resolver.reject(new Error(`Workflow "${workflowId}" not found in storage`));
+        return;
+      }
+
+      if (state.status === 'running' || state.status === 'pending') {
+        return;
+      }
+
+      try {
+        const result = await this.#loadWorkflowResult(workflowId);
+        if (this.#resultResolvers.get(workflowId) === resolver) {
+          this.#resultResolvers.delete(workflowId);
+        }
+        resolver.resolve(result);
+      } catch (error) {
+        if (this.#resultResolvers.get(workflowId) === resolver) {
+          this.#resultResolvers.delete(workflowId);
+        }
+        resolver.reject(error);
+      }
+    } catch (error) {
+      if (this.#resultResolvers.get(workflowId) === resolver) {
+        this.#resultResolvers.delete(workflowId);
+      }
+      resolver.reject(error);
+    }
+  }
+
+  #setWorkflowStartHeaders(workflowId: string, headers: Map<string, string> | undefined): void {
+    if (!headers || headers.size === 0) {
+      this.#workflowHeaders.delete(workflowId);
+      return;
+    }
+
+    this.#workflowHeaders.set(workflowId, new Map(headers));
+  }
+
+  async #loadWorkflowStartHeaders(workflowId: string): Promise<Map<string, string> | undefined> {
+    const bytes = await this.#storage.get(KEYS.workflowHeaders(workflowId));
+    if (!bytes) {
+      return undefined;
+    }
+
+    return decodeWorkflowStartHeaders(bytes);
   }
 
   /**
@@ -1968,6 +2228,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       checkpoint: serializeCheckpoint(checkpoint),
       nestingDepth,
       ...(executionDeadline !== undefined && { deadline: executionDeadline }),
+      ...(this.#workflowHeaders.has(workflowId) && {
+        headers: [...this.#workflowHeaders.get(workflowId)!],
+      }),
       ...(tenant !== undefined && { tenant }),
     });
   }
@@ -2025,8 +2288,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const exactPrefix = `idx:${filter.key}:${encodedValue}:`;
       for await (const [key] of this.#storage.scan(exactPrefix)) {
         // Key format: idx:{name}:{encodedValue}:{workflowId}
-        const workflowId = key.slice(exactPrefix.length);
-        ids.add(workflowId);
+        const workflowId = tryDecodeStorageKeyComponent(key.slice(exactPrefix.length));
+        if (workflowId !== null) {
+          ids.add(workflowId);
+        }
       }
     } else {
       // Range scan with gte/lte/gt/lt boundaries
@@ -2053,7 +2318,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         const afterPrefix = key.slice(prefix.length);
         const lastColon = afterPrefix.lastIndexOf(':');
         if (lastColon >= 0) {
-          ids.add(afterPrefix.slice(lastColon + 1));
+          const workflowId = tryDecodeStorageKeyComponent(afterPrefix.slice(lastColon + 1));
+          if (workflowId !== null) {
+            ids.add(workflowId);
+          }
         }
       }
     }
@@ -2374,13 +2642,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const eventLog = new EventLog(this.#storage, workflowId);
     const restoredHead = await eventLog.loadHead();
     this.#eventLogHeads.set(workflowId, restoredHead);
+    this.#setWorkflowStartHeaders(workflowId, await this.#loadWorkflowStartHeaders(workflowId));
 
-    // Create result promise and handle
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    this.#resultResolvers.set(workflowId, { resolve, reject });
-
-    const handle = new WorkflowHandle(workflowId, this, promise);
-    this.#cacheHandle(workflowId, handle);
+    const handle = this.#createWorkflowHandle(workflowId);
 
     // Dispatch resumed event
     this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
@@ -2396,7 +2660,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const context = new Context({
         workflowId,
         workflowType: state.type,
-        startedAt: state.createdAt,
+        startedAt: getWorkflowExecutionStartedAt(state),
         abortController: workflowAbort,
         getNow: this.#options.getNow,
         accumulatedResults,
@@ -2433,6 +2697,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         checkpoint: serialized,
         nestingDepth: this.#workflowNestingDepths.get(workflowId) ?? 0,
         ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+        ...(this.#workflowHeaders.has(workflowId) && {
+          headers: [...this.#workflowHeaders.get(workflowId)!],
+        }),
         ...(state.tenant !== undefined && { tenant: state.tenant }),
       });
     }
@@ -2448,6 +2715,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (key.includes(':ckpt') || key.includes(':offload') || key.includes(':archive')) continue;
 
       const state = decodeWorkflowState(value);
+      if (state.status === 'pending') {
+        handles.push(this.getHandle(state.id));
+        continue;
+      }
       if (state.status !== 'running') continue;
 
       const registration = this.#registrations.get(state.type);
@@ -2489,14 +2760,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Guard: if the workflow is already terminal (completed, failed, cancelled,
     // timed-out), a stale deadline timer firing should be a no-op. This is
     // critical now that scheduler.cancel is fire-and-forget on terminal paths.
-    if (!state || state.status !== 'running') return;
-    const elapsed = this.#options.getNow() - state.createdAt;
+    if (!state || (state.status !== 'running' && state.status !== 'pending')) return;
+    const elapsed = this.#options.getNow() - getWorkflowExecutionStartedAt(state);
 
     await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
     void this.#swallowPromiseRejection(
       this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
     );
+    if (state.status === 'pending') {
+      void this.#swallowPromiseRejection(
+        this.#scheduler.cancel(`delayed-start:${workflowId}`, workflowId),
+      );
+    }
 
     // Drop in-memory state, release charged operations, and delete durable
     // workflow-keyed records (reviews, offload, blob, shared, signal).
@@ -2624,7 +2900,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async listCheckpoints(workflowId: string): Promise<CheckpointSummary[]> {
     if (this.#options.checkpointHistory <= 0) return [];
 
-    const prefix = `wf:${workflowId}:ckpt:`;
+    const prefix = `${KEYS.checkpoint(workflowId)}:`;
     const summaries: CheckpointSummary[] = [];
 
     for await (const [, value] of this.#storage.scan(prefix, {
@@ -3671,9 +3947,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // AbortError after the controller fires in the finally block, and
       // without a handler those would surface as unhandled promise
       // rejections.
-      for (const promise of subOperations) {
-        promise.catch(() => {});
-      }
+      void Promise.allSettled(subOperations);
       try {
         return await Promise.race(subOperations);
       } finally {
@@ -4351,11 +4625,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return callMemoFunction(operation.fn);
       case 'parallel':
         signal?.throwIfAborted();
-        return Promise.all(
-          operation.operations.map((subOperation) =>
+        const subOperationPromises: Array<Promise<unknown>> = [];
+        for (const subOperation of operation.operations) {
+          subOperationPromises.push(
             this.#executeSubOperation(workflowId, subOperation, signal, speculativeState),
-          ),
-        );
+          );
+        }
+        return Promise.all(subOperationPromises);
       case 'race': {
         signal?.throwIfAborted();
         const controller = new AbortController();
@@ -4363,12 +4639,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           controller.abort(signal?.reason);
         };
         signal?.addEventListener('abort', abortNestedRace, { once: true });
-        const subOperations = operation.operations.map((subOperation) =>
-          this.#executeSubOperation(workflowId, subOperation, controller.signal, speculativeState),
-        );
-        for (const promise of subOperations) {
-          promise.catch(() => {});
+        const subOperations: Array<Promise<unknown>> = [];
+        for (const subOperation of operation.operations) {
+          subOperations.push(
+            this.#executeSubOperation(
+              workflowId,
+              subOperation,
+              controller.signal,
+              speculativeState,
+            ),
+          );
         }
+        void Promise.allSettled(subOperations);
         try {
           return await Promise.race(subOperations);
         } finally {
@@ -4478,7 +4760,103 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
   }
 
-  async #handleTimerFired(entry: { id: string; workflowId: string; kind: string }): Promise<void> {
+  async #startDelayedWorkflow(entry: TimerEntry): Promise<void> {
+    const state = await this.#loadWorkflowState(entry.workflowId);
+    if (!state || state.status !== 'pending') {
+      return;
+    }
+
+    const checkpointBytes = await this.#storage.get(KEYS.checkpoint(entry.workflowId));
+    if (!checkpointBytes) {
+      await this.#failWorkflow(
+        entry.workflowId,
+        new Error(`Checkpoint not found for delayed workflow "${entry.workflowId}"`),
+      );
+      return;
+    }
+    const checkpoint = deserializeCheckpoint(checkpointBytes);
+
+    const registration = this.#registrations.get(state.type);
+    if (!registration) {
+      await this.#failWorkflow(
+        entry.workflowId,
+        new Error(`No workflow registered with name "${state.type}"`),
+      );
+      return;
+    }
+
+    const now = this.#options.getNow();
+    let executionDeadline: number | undefined;
+    if (entry.executionTimeoutMs !== undefined) {
+      if (!Number.isFinite(entry.executionTimeoutMs) || entry.executionTimeoutMs < 0) {
+        await this.#failWorkflow(
+          entry.workflowId,
+          new Error(`Invalid delayed execution timeout for workflow "${entry.workflowId}"`),
+        );
+        return;
+      }
+
+      try {
+        executionDeadline = normalizeStorageTimestamp(
+          now + entry.executionTimeoutMs,
+          `Delayed execution timeout for workflow "${entry.workflowId}"`,
+        );
+      } catch {
+        await this.#failWorkflow(
+          entry.workflowId,
+          new Error(`Invalid delayed execution timeout for workflow "${entry.workflowId}"`),
+        );
+        return;
+      }
+    }
+    const runningState: WorkflowState = {
+      ...state,
+      status: 'running',
+      startedAt: now,
+      updatedAt: now,
+      ...(executionDeadline !== undefined && { executionDeadline }),
+    };
+
+    const operations: import('../storage/interface.ts').BatchOperation[] = [
+      { type: 'put', key: KEYS.workflow(entry.workflowId), value: encode(runningState) },
+    ];
+    if (executionDeadline !== undefined) {
+      operations.push(
+        ...buildTimerBatchOperations({
+          id: `deadline:${entry.workflowId}`,
+          workflowId: entry.workflowId,
+          fireAt: executionDeadline,
+          kind: 'execution-deadline',
+        }),
+      );
+    }
+
+    await this.#storage.batch(operations);
+    this.#checkpoints.set(entry.workflowId, checkpoint);
+    this.#workflowVersionTuples.set(
+      entry.workflowId,
+      this.#workflowVersionTupleFromState(runningState),
+    );
+    this.#setWorkflowStartHeaders(
+      entry.workflowId,
+      await this.#loadWorkflowStartHeaders(entry.workflowId),
+    );
+    if (registration.isAgent) {
+      this.#agentWorkflowIds.add(entry.workflowId);
+    }
+
+    this.#beginWorkflowExecution(
+      entry.workflowId,
+      state.type,
+      state.input,
+      checkpoint,
+      executionDeadline,
+      state.tenant,
+      registration,
+    );
+  }
+
+  async #handleTimerFired(entry: TimerEntry): Promise<void> {
     // Check if this timer is for a review escalation/timeout
     if (entry.id.startsWith('review-escalation:') || entry.id.startsWith('review-timeout:')) {
       // Extract reviewId from the timer ID
@@ -4491,6 +4869,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         if (!state || state.status !== 'running') return;
         await handler(entry);
       }
+      return;
+    }
+
+    if (entry.kind === 'delayed-start') {
+      await this.#startDelayedWorkflow(entry);
       return;
     }
 
@@ -4515,7 +4898,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   /** Remove all pending review entries from storage for a given workflow. */
   async #cleanupReviews(workflowId: string): Promise<void> {
-    const prefix = `review:${workflowId}:`;
+    const prefix = `review:${encodeStorageKeyComponent(workflowId)}:`;
     if (this.#storage.deletePrefix) {
       await this.#storage.deletePrefix(prefix);
       return;
@@ -4560,14 +4943,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     includeOutputArtifacts: boolean,
   ): Promise<void> {
+    const encodedWorkflowId = encodeStorageKeyComponent(workflowId);
+
     // Always sweep internal state. Signals are workflow-scoped scratch space,
     // and the tool-effect log holds per-tool-call dedup records that have no
     // consumers after the workflow terminates — leaving them behind would
     // leak linearly with tool-call volume across the engine's lifetime.
     const prefixes: string[] = [
-      `sig:${workflowId}:`,
-      `tool-effect:${workflowId}:`,
-      `wf:${workflowId}:ckpt:`,
+      `sig:${encodedWorkflowId}:`,
+      `tool-effect:${encodedWorkflowId}:`,
+      `wf:${encodedWorkflowId}:ckpt:`,
     ];
 
     if (includeOutputArtifacts) {
@@ -4575,8 +4960,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // artifacts too. Event history is still preserved via the omission of
       // the `ev:` prefix — callers that want it gone should use a storage
       // TTL or explicit pruning.
-      prefixes.push(`offload:${workflowId}:`, `blob:${workflowId}:`, `shared:${workflowId}:`);
+      prefixes.push(
+        `offload:${encodedWorkflowId}:`,
+        `blob:${encodedWorkflowId}:`,
+        `shared:${encodedWorkflowId}:`,
+      );
     }
+
+    await this.#storage.delete(KEYS.workflowHeaders(workflowId));
 
     // Use the storage adapter's native prefix deletion when available
     // (e.g., BunSQLiteStorage's prepared DELETE...WHERE key >= ? AND key < ?).
@@ -4797,7 +5188,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #consumeSignal(workflowId: string, signalName: string): Promise<ConsumedSignalResult> {
-    const prefix = `sig:${workflowId}:${signalName}:`;
+    const prefix = `sig:${encodeStorageKeyComponent(workflowId)}:${signalName}:`;
     for await (const [key, value] of this.#storage.scan(prefix, { limit: 1 })) {
       await this.#storage.delete(key);
       return { found: true, payload: decode(value) };
@@ -4865,7 +5256,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (!state || state.status !== 'running') return;
 
     const now = this.#options.getNow();
-    const duration = now - state.createdAt;
+    const duration = now - getWorkflowExecutionStartedAt(state);
 
     // Batch the completion state write with attribute index cleanup into a
     // single storage transaction to reduce round-trips on the hot path.
@@ -5018,7 +5409,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     if (state.status === 'cancelled') throw new Error('Workflow cancelled');
     if (state.status === 'timed-out') {
-      const elapsed = state.executionDeadline ? state.executionDeadline - state.createdAt : 0;
+      const elapsed = state.executionDeadline
+        ? state.executionDeadline - getWorkflowExecutionStartedAt(state)
+        : 0;
       throw new WorkflowTimeoutError(workflowId, 'execution', elapsed);
     }
     throw new Error(`Workflow "${workflowId}" is still ${state.status}`);

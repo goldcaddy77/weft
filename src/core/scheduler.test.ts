@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { KEYS } from '../storage/interface';
 import { MemoryStorage } from '../storage/memory';
-import { encode } from './codec';
+import { decode, encode } from './codec';
 import { calculateBackoff, parseDuration, Scheduler } from './scheduler';
 import type { TimerEntry } from './types';
 
@@ -63,6 +63,26 @@ describe('parseDuration', () => {
     expect(parseDuration(0)).toBe(0);
   });
 
+  it('passes through a fractional numeric duration as milliseconds', () => {
+    expect(parseDuration(1.5)).toBe(1.5);
+  });
+
+  it('throws for a negative numeric duration', () => {
+    expect(() => parseDuration(-1)).toThrow(
+      'Duration must resolve to a finite, non-negative number of milliseconds',
+    );
+  });
+
+  it('throws for a non-finite numeric duration', () => {
+    expect(() => parseDuration(Number.POSITIVE_INFINITY)).toThrow(
+      'Duration must resolve to a finite, non-negative number of milliseconds',
+    );
+  });
+
+  it('parses a duration string that resolves to fractional milliseconds', () => {
+    expect(parseDuration('0.1ms')).toBe(0.1);
+  });
+
   it('throws for an unparseable string', () => {
     expect(() => parseDuration('invalid')).toThrow();
   });
@@ -121,6 +141,18 @@ describe('calculateBackoff', () => {
       maxBackoff: '1 minute',
     });
     expect(result).toBe(2000);
+  });
+
+  it('preserves fractional backoff results for callers that sleep on them', () => {
+    const result = calculateBackoff(5, {
+      maxAttempts: 5,
+      initialBackoff: 1000,
+      backoffMultiplier: 1.5,
+      maxBackoff: 30_000,
+    });
+
+    expect(result).toBe(5062.5);
+    expect(parseDuration(result)).toBe(result);
   });
 });
 
@@ -183,6 +215,17 @@ describe('Scheduler', () => {
     expect(keys.some((key) => key.startsWith('timer-idx:'))).toBe(true);
   });
 
+  it('rounds fractional timer fireAt values up before persisting them', async () => {
+    const entry = makeTimer({ fireAt: 1_000_000.1 });
+    await scheduler.schedule(entry);
+
+    const storedValue = await storage.get('wf-deadline:0000000001000001:timer-1');
+    expect(storedValue).not.toBeNull();
+
+    const storedEntry = decode(storedValue!) as TimerEntry;
+    expect(storedEntry.fireAt).toBe(1_000_001);
+  });
+
   it('fires callback for expired timers when tick is called', async () => {
     const entry = makeTimer({ fireAt: currentTime - 1000 });
     await scheduler.schedule(entry);
@@ -218,6 +261,31 @@ describe('Scheduler', () => {
     expect(firedEntries[0]!.id).toBe('timer-1');
     expect(firedEntries[1]!.id).toBe('timer-3');
     expect(firedEntries[2]!.id).toBe('timer-2');
+  });
+
+  it('preserves stable ordering when expired deadline and delayed-start timers share a fireAt', async () => {
+    const deadlineEntry = makeTimer({
+      id: 'deadline-workflow-1',
+      workflowId: 'workflow-1',
+      fireAt: currentTime - 1000,
+      kind: 'execution-deadline',
+    });
+    const delayedStartEntry = makeTimer({
+      id: 'delayed-start:workflow-2',
+      workflowId: 'workflow-2',
+      fireAt: currentTime - 1000,
+      kind: 'delayed-start',
+    });
+
+    await scheduler.schedule(delayedStartEntry);
+    await scheduler.schedule(deadlineEntry);
+
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries.map((entry) => entry.id)).toEqual([
+      'deadline-workflow-1',
+      'delayed-start:workflow-2',
+    ]);
   });
 
   it('cancel is a no-op for a timer that was never scheduled', async () => {
@@ -345,6 +413,30 @@ describe('Scheduler', () => {
     // The valid timer's index key must also have been cleaned up.
     const remainingIndexes = remainingKeys.filter((key) => key.startsWith('timer-idx:'));
     expect(remainingIndexes).toHaveLength(0);
+  });
+
+  it('removes timer entries with invalid kinds before they can fire', async () => {
+    const invalidKey = KEYS.deadline(currentTime - 2000, 'invalid-kind');
+    await storage.put(
+      invalidKey,
+      encode({
+        id: 'invalid-kind',
+        workflowId: 'workflow-1',
+        fireAt: currentTime - 2000,
+        kind: 'definitely-not-a-real-kind',
+      }),
+    );
+
+    const validEntry = makeTimer({ id: 'timer-valid', fireAt: currentTime - 1000 });
+    await scheduler.schedule(validEntry);
+
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries.map((entry) => entry.id)).toEqual(['timer-valid']);
+
+    const remainingKeys = await collectStorageKeys();
+    const remainingDeadlines = remainingKeys.filter((key) => key.startsWith('wf-deadline:'));
+    expect(remainingDeadlines).toHaveLength(0);
   });
 
   it('continues processing remaining timers when a callback throws on one', async () => {

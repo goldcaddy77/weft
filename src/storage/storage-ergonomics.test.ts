@@ -93,5 +93,30 @@ for (const backend of storageBackends) {
         cleanup();
       }
     });
+
+    it('Storage.scoped(prefix) isolates keys across built-in adapters', async () => {
+      const { storage, cleanup } = backend.factory();
+
+      try {
+        expect(storage.scoped).toBeDefined();
+
+        const scoped = storage.scoped?.('tenant');
+        if (!scoped?.keys) {
+          throw new Error('Scoped storage should expose keys(prefix, options?).');
+        }
+
+        await scoped.put('profile', encode('alice'));
+        await scoped.put('scoped:item', encode('value'));
+        await storage.put('outside', encode('global'));
+
+        expect(await collect(scoped.keys(''))).toEqual(['profile', 'scoped:item']);
+        expect(await scoped.get('profile')).toEqual(encode('alice'));
+        expect(await scoped.get('scoped:item')).toEqual(encode('value'));
+        expect(await storage.get('tenant:profile')).toEqual(encode('alice'));
+        expect(await storage.get('tenant:scoped:item')).toEqual(encode('value'));
+      } finally {
+        cleanup();
+      }
+    });
   });
 }

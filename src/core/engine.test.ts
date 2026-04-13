@@ -585,6 +585,30 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('throws when options.id exceeds the maximum length', async () => {
+    const engine = new Engine();
+    engine.register('long-id', async function* () {
+      return 'ok';
+    });
+
+    await expect(engine.start('long-id', null, { id: 'a'.repeat(129) })).rejects.toThrow(
+      'options.id must be at most 128 characters',
+    );
+    engine[Symbol.dispose]();
+  });
+
+  it('allows options.id to contain storage key separators', async () => {
+    const engine = new Engine();
+    engine.register('separator-id', async function* () {
+      return 'ok';
+    });
+
+    const handle = await engine.start('separator-id', null, { id: 'wf:ckpt/with spaces' });
+    await expect(handle.result()).resolves.toBe('ok');
+    expect(await engine.get(handle.id)).toMatchObject({ id: 'wf:ckpt/with spaces' });
+    engine[Symbol.dispose]();
+  });
+
   it('does not hit storage for dedup when starting without a caller-provided id', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
@@ -1096,6 +1120,32 @@ describe('Engine', () => {
     expect(getSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
 
     getSpy.mockRestore();
+    engine[Symbol.dispose]();
+  });
+
+  it('list with attribute filter skips malformed encoded workflow identifiers in index keys', async () => {
+    const engine = new Engine();
+    engine.register('attr-listable', {
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('block');
+        return 'ok';
+      },
+      version: '1',
+      searchAttributes: { customerId: { type: 'string' } },
+    });
+
+    await engine.start('attr-listable', null, {
+      id: 'alpha-valid',
+      searchAttributes: { customerId: 'alpha' },
+    });
+    await engine.storage.put('idx:customerId:s:alpha:bad%ZZ', new Uint8Array([1]));
+
+    const matched = await engine.list({
+      attributes: [{ key: 'customerId', value: 'alpha' }],
+    });
+
+    expect(matched.items.map((item) => item.id)).toEqual(['alpha-valid']);
+
     engine[Symbol.dispose]();
   });
 
@@ -4307,6 +4357,171 @@ describe('Engine speculative execution', () => {
       'compensate:second:result:second',
       'compensate:first:result:first',
     ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('continues speculative rollback when a compensation rejects', async () => {
+    const engine = new Engine();
+    const events: string[] = [];
+
+    const first = activity({
+      name: 'rejecting-compensation-first',
+      execute: async (input: unknown) => {
+        events.push(`execute:first:${String(input)}`);
+        return `result:${String(input)}`;
+      },
+      verify: async () => false,
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:first:${String(input)}:${output}`);
+        throw new Error('compensation failed');
+      },
+    });
+
+    const second = activity({
+      name: 'rejecting-compensation-second',
+      execute: async (input: unknown) => {
+        events.push(`execute:second:${String(input)}`);
+        return `result:${String(input)}`;
+      },
+      compensate: async (input: unknown, output: string) => {
+        events.push(`compensate:second:${String(input)}:${output}`);
+      },
+    });
+
+    engine.register('speculate-compensation-rejection', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+
+      try {
+        yield* context.speculate(async function* (branch) {
+          yield* branch.run(first, 'first');
+          yield* branch.run(second, 'second');
+          return 'unreachable';
+        });
+      } catch (error) {
+        return { phase: String(context.getAttribute('phase') ?? 'root'), error: String(error) };
+      }
+
+      return { phase: String(context.getAttribute('phase') ?? 'root'), error: 'no-error' };
+    });
+
+    const handle = await engine.start('speculate-compensation-rejection', null);
+    const result = (await handle.result()) as { phase: string; error: string };
+
+    expect(result.phase).toBe('root');
+    expect(result.error).toContain(
+      'Verification failed for activity "rejecting-compensation-first"',
+    );
+    expect(events).toEqual([
+      'execute:first:first',
+      'execute:second:second',
+      'compensate:second:second:result:second',
+      'compensate:first:first:result:first',
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('executes speculative ctx.all() branches in parallel and commits their result', async () => {
+    const engine = new Engine();
+
+    const double = async (value: unknown) => (value as number) * 2;
+    const increment = async (value: unknown) => (value as number) + 1;
+
+    engine.register('speculate-parallel-success', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      const result = (yield* context.speculate(async function* (branch) {
+        return yield* branch.all([branch.run(double, 5), branch.run(increment, 5)]);
+      })) as [number, number];
+
+      return result;
+    });
+
+    const handle = await engine.start('speculate-parallel-success', null);
+
+    await expect(handle.result()).resolves.toEqual([10, 6]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('swallows speculative race loser rejections after the winner settles', async () => {
+    const engine = new Engine();
+
+    const loserStarted = Promise.withResolvers<void>();
+    const losingActivity = activity({
+      name: 'abort-aware-loser',
+      execute: async (_input: unknown, context?: { signal: AbortSignal }) => {
+        loserStarted.resolve();
+
+        return new Promise<never>((_resolve, reject) => {
+          context?.signal.addEventListener(
+            'abort',
+            () => {
+              reject(new Error('late loser rejection'));
+            },
+            { once: true },
+          );
+        });
+      },
+    });
+
+    engine.register('speculate-race-abort-workflow', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      return yield* context.speculate(async function* (branch) {
+        return yield* branch.race([
+          branch.memo('winner', async () => {
+            await loserStarted.promise;
+            return 'winner';
+          }),
+          branch.run(losingActivity, null),
+        ]);
+      });
+    });
+
+    const handle = await engine.start('speculate-race-abort-workflow', null);
+
+    await expect(handle.result()).resolves.toBe('winner');
+    await flush();
+
+    engine[Symbol.dispose]();
+  });
+
+  it('swallows speculative compensation failures and preserves the verification error', async () => {
+    const engine = new Engine();
+    const events: string[] = [];
+
+    const unstable = activity({
+      name: 'speculative-compensation-failure',
+      execute: async (input: unknown) => {
+        events.push(`execute:${String(input)}`);
+        return `result:${String(input)}`;
+      },
+      verify: async () => false,
+      compensate: async (_input: unknown, output: string) => {
+        events.push(`compensate:${output}`);
+        throw new Error('compensator exploded');
+      },
+    });
+
+    engine.register('speculate-compensation-failure', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+
+      try {
+        yield* context.speculate(async function* (branch) {
+          return yield* branch.run(unstable, 'value');
+        });
+        return 'unexpected-success';
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+
+    const handle = await engine.start('speculate-compensation-failure', null);
+
+    await expect(handle.result()).resolves.toContain(
+      'Verification failed for activity "speculative-compensation-failure"',
+    );
+    expect(events).toEqual(['execute:value', 'compensate:result:value']);
 
     engine[Symbol.dispose]();
   });

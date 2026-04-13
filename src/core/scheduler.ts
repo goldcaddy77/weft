@@ -8,9 +8,18 @@
  */
 
 import type { BatchOperation, Storage } from '../storage/interface';
-import { KEYS } from '../storage/interface';
+import { KEYS, resolvePrefixRangeEnd } from '../storage/interface';
 import { decode, encode } from './codec';
 import type { Duration, RetryPolicy, TimerEntry } from './types';
+
+function isTimerEntryKind(value: unknown): value is TimerEntry['kind'] {
+  return (
+    value === 'sleep' ||
+    value === 'visibility-timeout' ||
+    value === 'execution-deadline' ||
+    value === 'delayed-start'
+  );
+}
 
 /** Runtime type guard for decoded timer entries. */
 export function isTimerEntry(value: unknown): value is TimerEntry {
@@ -22,7 +31,10 @@ export function isTimerEntry(value: unknown): value is TimerEntry {
     'workflowId' in value &&
     typeof value.workflowId === 'string' &&
     'fireAt' in value &&
-    typeof value.fireAt === 'number'
+    typeof value.fireAt === 'number' &&
+    Number.isFinite(value.fireAt) &&
+    'kind' in value &&
+    isTimerEntryKind(value.kind)
   );
 }
 
@@ -32,10 +44,17 @@ export function isTimerEntry(value: unknown): value is TimerEntry {
  * so the key format stays in one place.
  */
 export function buildTimerBatchOperations(entry: TimerEntry): BatchOperation[] {
-  const deadlineKey = KEYS.deadline(entry.fireAt, entry.id);
-  const indexKey = `timer-idx:${entry.id}`;
+  const normalizedEntry: TimerEntry = {
+    ...entry,
+    fireAt: normalizeStorageTimestamp(entry.fireAt, 'Timer fireAt'),
+  };
+  const deadlineKey =
+    normalizedEntry.kind === 'delayed-start'
+      ? KEYS.delayedStart(normalizedEntry.fireAt, normalizedEntry.workflowId)
+      : KEYS.deadline(normalizedEntry.fireAt, normalizedEntry.id);
+  const indexKey = `timer-idx:${normalizedEntry.id}`;
   return [
-    { type: 'put', key: deadlineKey, value: encode(entry) },
+    { type: 'put', key: deadlineKey, value: encode(normalizedEntry) },
     { type: 'put', key: indexKey, value: encode(deadlineKey) },
   ];
 }
@@ -65,9 +84,36 @@ const UNIT_TO_MILLISECONDS: Record<string, number> = {
   days: 86_400_000,
 };
 
+function assertValidDurationMilliseconds(milliseconds: number, source: Duration): void {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+    throw new RangeError(
+      `Duration must resolve to a finite, non-negative number of milliseconds, got: ${String(source)}`,
+    );
+  }
+}
+
+export function normalizeStorageTimestamp(timestamp: number, fieldName: string): number {
+  if (!Number.isFinite(timestamp) || timestamp < 0) {
+    throw new RangeError(
+      `${fieldName} must resolve to a finite, non-negative millisecond timestamp, got: ${String(timestamp)}`,
+    );
+  }
+
+  const normalizedTimestamp = Math.ceil(timestamp);
+
+  if (!Number.isSafeInteger(normalizedTimestamp)) {
+    throw new RangeError(
+      `${fieldName} must resolve to a safe integer millisecond timestamp, got: ${String(timestamp)}`,
+    );
+  }
+
+  return normalizedTimestamp;
+}
+
 /** Parse a human-readable duration string or number to milliseconds. */
 export function parseDuration(duration: Duration): number {
   if (typeof duration === 'number') {
+    assertValidDurationMilliseconds(duration, duration);
     return duration;
   }
 
@@ -87,7 +133,9 @@ export function parseDuration(duration: Duration): number {
     throw new Error(`Unknown duration unit: "${unit}"`);
   }
 
-  return value * multiplier;
+  const milliseconds = value * multiplier;
+  assertValidDurationMilliseconds(milliseconds, duration);
+  return milliseconds;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,6 +159,41 @@ export interface SchedulerOptions {
   onTimerFired: (entry: TimerEntry) => void | Promise<void>;
   pollIntervalMs?: number;
   getNow?: () => number;
+}
+
+type ScannedTimerEntry = {
+  key: string;
+  entry: TimerEntry;
+};
+
+function compareScannedTimerEntries(left: ScannedTimerEntry, right: ScannedTimerEntry): number {
+  if (left.entry.fireAt !== right.entry.fireAt) {
+    return left.entry.fireAt - right.entry.fireAt;
+  }
+
+  return left.key.localeCompare(right.key);
+}
+
+async function readNextScannedTimerEntry(
+  iterator: AsyncIterator<[string, Uint8Array]>,
+  storage: Storage,
+): Promise<ScannedTimerEntry | null> {
+  while (true) {
+    const next = await iterator.next();
+    if (next.done) {
+      return null;
+    }
+
+    const [key, value] = next.value;
+    const decoded = decode(value);
+    if (!isTimerEntry(decoded)) {
+      console.error(`Corrupted timer entry at ${key}: removing`);
+      await storage.delete(key);
+      continue;
+    }
+
+    return { key, entry: decoded };
+  }
 }
 
 /** Scheduler manages durable timers and polls for expired deadlines. */
@@ -202,35 +285,50 @@ export class Scheduler implements Disposable {
     { respectStopped }: { respectStopped: boolean },
   ): Promise<void> {
     const currentTime = now ?? this.#getNow();
-    const upperBound = KEYS.deadline(currentTime, '\xff');
+    const deadlineScan = this.#storage.scan('wf-deadline:', {
+      lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
+    });
+    const deadlineIterator = deadlineScan[Symbol.asyncIterator]();
+    const delayedStartScan = this.#storage.scan('wf-delayed:', {
+      lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
+    });
+    const delayedStartIterator = delayedStartScan[Symbol.asyncIterator]();
 
-    const expired: Array<{ key: string; entry: TimerEntry }> = [];
+    const deadlineSource = {
+      iterator: deadlineIterator,
+      next: await readNextScannedTimerEntry(deadlineIterator, this.#storage),
+    };
+    const delayedStartSource = {
+      iterator: delayedStartIterator,
+      next: await readNextScannedTimerEntry(delayedStartIterator, this.#storage),
+    };
 
-    for await (const [key, value] of this.#storage.scan('wf-deadline:', { lte: upperBound })) {
-      const decoded = decode(value);
-      if (!isTimerEntry(decoded)) {
-        console.error(`Corrupted timer entry at ${key}: removing`);
-        // Delete corrupted keys so they do not cause permanent log spam on
-        // every subsequent tick.
-        await this.#storage.delete(key);
-        continue;
-      }
-      expired.push({ key, entry: decoded });
-    }
+    while (deadlineSource.next || delayedStartSource.next) {
+      const selectedSource =
+        deadlineSource.next && delayedStartSource.next
+          ? compareScannedTimerEntries(deadlineSource.next, delayedStartSource.next) <= 0
+            ? deadlineSource
+            : delayedStartSource
+          : deadlineSource.next
+            ? deadlineSource
+            : delayedStartSource;
+      const nextEntry = selectedSource.next!;
 
-    // Fire callbacks and delete keys in chronological order (already sorted by scan).
-    for (const { key, entry } of expired) {
       // Re-check #stopped before each callback so an interval-dispatched tick
       // terminates early when stop() or dispose is called concurrently. flush()
       // skips this check because its purpose is to drain remaining timers.
       if (respectStopped && this.#stopped) return;
 
       try {
-        await this.#onTimerFired(entry);
+        await this.#onTimerFired(nextEntry.entry);
       } catch (error) {
         // Callback failed — leave the timer in storage so it retries on the
         // next tick. Do not fall through to the delete below.
-        console.error(`Timer callback failed for timer ${entry.id}:`, error);
+        console.error(`Timer callback failed for timer ${nextEntry.entry.id}:`, error);
+        selectedSource.next = await readNextScannedTimerEntry(
+          selectedSource.iterator,
+          this.#storage,
+        );
         continue;
       }
 
@@ -238,14 +336,16 @@ export class Scheduler implements Disposable {
       // the timer will re-fire on the next tick (duplicate execution), but we
       // surface the error rather than silently swallowing it.
       try {
-        const indexKey = `timer-idx:${entry.id}`;
+        const indexKey = `timer-idx:${nextEntry.entry.id}`;
         await this.#storage.batch([
-          { type: 'delete', key },
+          { type: 'delete', key: nextEntry.key },
           { type: 'delete', key: indexKey },
         ]);
       } catch (deleteError) {
-        console.error(`Failed to delete timer keys for ${entry.id}:`, deleteError);
+        console.error(`Failed to delete timer keys for ${nextEntry.entry.id}:`, deleteError);
       }
+
+      selectedSource.next = await readNextScannedTimerEntry(selectedSource.iterator, this.#storage);
     }
   }
 
