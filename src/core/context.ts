@@ -730,17 +730,10 @@ export class Context implements WorkflowContext {
     operations: Generator<ContextOperationRequest, unknown, unknown>[],
   ): Generator<ContextOperationRequest, unknown[], unknown> {
     const step = this.#stepIndex++;
+    const subOperations = this.#primeParallelOperations(operations);
 
     if (this.#accumulatedResults.has(step)) {
       return this.#accumulatedResults.get(step) as unknown[];
-    }
-
-    const subOperations: ContextOperationRequest[] = [];
-    for (const generator of operations) {
-      const yielded = generator.next();
-      if (!yielded.done) {
-        subOperations.push(yielded.value);
-      }
     }
 
     const operationId = crypto.randomUUID();
@@ -760,17 +753,10 @@ export class Context implements WorkflowContext {
     operations: Generator<ContextOperationRequest, unknown, unknown>[],
   ): Generator<ContextOperationRequest, unknown, unknown> {
     const step = this.#stepIndex++;
+    const subOperations = this.#primeParallelOperations(operations);
 
     if (this.#accumulatedResults.has(step)) {
       return this.#accumulatedResults.get(step);
-    }
-
-    const subOperations: ContextOperationRequest[] = [];
-    for (const generator of operations) {
-      const yielded = generator.next();
-      if (!yielded.done) {
-        subOperations.push(yielded.value);
-      }
     }
 
     const operationId = crypto.randomUUID();
@@ -1295,6 +1281,21 @@ export class Context implements WorkflowContext {
           }
         : childWorkflowOptions,
     );
+  }
+
+  #primeParallelOperations(
+    operations: Generator<ContextOperationRequest, unknown, unknown>[],
+  ): ContextOperationRequest[] {
+    const subOperations: ContextOperationRequest[] = [];
+
+    for (const generator of operations) {
+      const yielded = generator.next();
+      if (!yielded.done) {
+        subOperations.push(yielded.value);
+      }
+    }
+
+    return subOperations;
   }
 
   // -------------------------------------------------------------------------

@@ -206,6 +206,49 @@ describe('workflow composition operators', () => {
     expect(maxActiveChildren).toBe(2);
   });
 
+  it('Track 7c: ctx.map recovery preserves later step indices when batching by concurrency', async () => {
+    const engine = new TestEngine({ startTime: 0 });
+
+    const childRuns: number[] = [];
+
+    async function* delayedStage(ctx: WorkflowContext, input: unknown) {
+      childRuns.push(Number(input));
+      yield* (ctx as Context).sleep('1s');
+      return Number(input) * 10;
+    }
+
+    engine.register('delayed-stage', delayedStage);
+    engine.register('map-recovery-parent', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      const mapped = yield* ctx.map([1, 2, 3], 'delayed-stage', { concurrency: 1 });
+      yield* context.sleep('1s');
+      return mapped;
+    });
+
+    const originalHandle = await engine.start('map-recovery-parent', null);
+
+    await engine.advanceTime(0);
+    await engine.advanceTime('1s');
+    await engine.advanceTime('1s');
+    await engine.advanceTime('1s');
+
+    const recovered = engine.recover();
+    recovered.register('delayed-stage', delayedStage);
+    recovered.register('map-recovery-parent', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      const mapped = yield* ctx.map([1, 2, 3], 'delayed-stage', { concurrency: 1 });
+      yield* context.sleep('1s');
+      return mapped;
+    });
+
+    await recovered.recoverAll();
+    const resumedHandle = recovered.getHandle(originalHandle.id);
+    await recovered.advanceTime('1s');
+
+    await expect(resumedHandle.result()).resolves.toEqual([10, 20, 30]);
+    expect(childRuns).toEqual([1, 2, 3]);
+  });
+
   it('Track 7c: ctx.map still enforces child-workflow nesting depth inside parallel sub-operations', async () => {
     const engine = new Engine({ maxNestingDepth: 2 });
 
