@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
+import { StartWorkflowValidationError } from '../core/start-workflow-validation.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -662,6 +663,25 @@ describe('handleRequest', () => {
     expect(body.error).toContain('unexpected engine error');
 
     // Restore original
+    engine.start = originalStart;
+  });
+
+  it('POST /v1/workflows returns 400 when engine.start throws a validation error', async () => {
+    engine = createEngine();
+
+    const originalStart = engine.start.bind(engine);
+    engine.start = async () => {
+      throw new StartWorkflowValidationError('Field "id" must be a string');
+    };
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'data' }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Field "id" must be a string' });
+
     engine.start = originalStart;
   });
 
