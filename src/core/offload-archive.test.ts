@@ -58,7 +58,7 @@ describe('offload, load, and archive', () => {
       const c = ctx as Context;
       const fakeReference: OffloadReference = {
         key: 'nonexistent-key',
-        workflowId: 'some-workflow',
+        workflowId: ctx.workflowId,
         sizeBytes: 0,
       };
       const loaded = yield* c.load(fakeReference);
@@ -67,6 +67,31 @@ describe('offload, load, and archive', () => {
 
     const handle = await engine.start('test', {});
     await expect(handle.result()).rejects.toThrow('Offloaded data not found');
+  });
+
+  it('rejects forged cross-workflow offload references', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    let trustedReference: OffloadReference | undefined;
+
+    engine.register('producer', async function* (ctx: WorkflowContext) {
+      const c = ctx as Context;
+      trustedReference = yield* c.offload('cross-workflow', async () => ({ ok: true }));
+      return trustedReference;
+    });
+
+    engine.register('consumer', async function* (ctx: WorkflowContext) {
+      const c = ctx as Context;
+      return yield* c.load(trustedReference!);
+    });
+
+    await engine.start('producer', {}).then((handle) => handle.result());
+    const consumerHandle = await engine.start('consumer', {});
+
+    await expect(consumerHandle.result()).rejects.toThrow(
+      'ctx.load() can only read offloaded data from the current workflow',
+    );
   });
 
   it('persists archived data to storage', async () => {
@@ -96,35 +121,33 @@ describe('offload, load, and archive', () => {
     const engine = new TestEngine();
 
     const payload = { large: 'data', count: 42 };
-    let offloadedReference: OffloadReference | undefined;
 
     engine.register('offload-step', async function* (ctx: WorkflowContext) {
       const c = ctx as Context;
       const reference = yield* c.offload('recovery-data', async () => payload);
-      offloadedReference = reference;
       // Signal to pause so we can recover
       yield* c.waitForSignal('continue');
-      return reference;
+      return yield* c.load<typeof payload>(reference);
     });
 
-    await engine.start('offload-step', {});
+    const handle = await engine.start('offload-step', {});
     // Let the offload complete and the workflow pause at waitForSignal
     await Bun.sleep(10);
-
-    expect(offloadedReference).toBeDefined();
 
     // Recover engine (simulates process restart)
     const recovered = engine.recover();
 
     // Register same workflow on recovered engine
-    recovered.register('load-step', async function* (ctx: WorkflowContext) {
+    recovered.register('offload-step', async function* (ctx: WorkflowContext) {
       const c = ctx as Context;
-      const loaded = yield* c.load<typeof payload>(offloadedReference!);
-      return loaded;
+      const reference = yield* c.offload('recovery-data', async () => payload);
+      yield* c.waitForSignal('continue');
+      return yield* c.load<typeof payload>(reference);
     });
 
-    const handle2 = await recovered.start('load-step', {});
-    const result = await handle2.result();
+    const resumedHandle = await recovered.resume(handle.id);
+    await resumedHandle.signal('continue');
+    const result = await resumedHandle.result();
     expect(result).toEqual(payload);
   });
 

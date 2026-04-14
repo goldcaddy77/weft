@@ -36,7 +36,9 @@ import type {
   Duration,
   SearchAttributeSchema,
   SearchAttributeValue,
+  StepWorkflowFunction,
   WorkflowContext,
+  WorkflowFunction,
 } from './types.ts';
 
 // ---------------------------------------------------------------------------
@@ -107,6 +109,24 @@ export interface StreamReference {
 
 export interface StreamSink {
   heartbeat(details?: unknown): void;
+}
+
+export type ChildWorkflowTarget<TInput = unknown, TOutput = unknown> =
+  | string
+  | WorkflowFunction<TInput, TOutput>
+  | StepWorkflowFunction<TInput, TOutput>;
+
+export interface ChildWorkflowOptions {
+  id?: string;
+}
+
+export interface WorkflowPipeStage<TInput = unknown, TOutput = unknown> {
+  type: ChildWorkflowTarget<TInput, TOutput>;
+  options?: ChildWorkflowOptions;
+}
+
+export interface WorkflowMapOptions {
+  concurrency?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +208,7 @@ export type ContextOperationRequest =
       workflowType: string;
       input: unknown;
       callerStack?: string;
-      options?: Record<string, unknown>;
+      options?: ChildWorkflowOptions;
     }
   | {
       type: 'offload';
@@ -339,6 +359,7 @@ export interface ContextOptions {
    * so that expired sleeps resolve immediately via the engine's fast path.
    */
   sleepReferenceTime?: number;
+  resolveWorkflowType?: (target: ChildWorkflowTarget) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +388,7 @@ export class Context implements WorkflowContext {
   #budgetTracker: BudgetTracker | undefined;
   #nestingDepth: number;
   #tenant: import('./tenant.ts').TenantContext | undefined;
+  #resolveWorkflowType: ((target: ChildWorkflowTarget) => string) | undefined;
 
   #captureCallerStack(): string {
     const error = new Error();
@@ -395,6 +417,7 @@ export class Context implements WorkflowContext {
     this.#budgetTracker = undefined;
     this.#nestingDepth = options.nestingDepth ?? 0;
     this.#tenant = options.tenant;
+    this.#resolveWorkflowType = options.resolveWorkflowType;
   }
 
   /**
@@ -462,6 +485,9 @@ export class Context implements WorkflowContext {
       ...(this.#tenant !== undefined ? { tenant: this.#tenant } : {}),
       ...(this.#sleepReferenceTime !== undefined
         ? { sleepReferenceTime: this.#sleepReferenceTime }
+        : {}),
+      ...(this.#resolveWorkflowType !== undefined
+        ? { resolveWorkflowType: this.#resolveWorkflowType }
         : {}),
     };
     const child = new Context(childOptions);
@@ -1052,7 +1078,7 @@ export class Context implements WorkflowContext {
   *startChild<TResult = unknown>(
     workflowType: string,
     input: unknown,
-    options?: Record<string, unknown>,
+    options?: ChildWorkflowOptions,
   ): Generator<ContextOperationRequest, TResult, unknown> {
     const step = this.#stepIndex++;
 
@@ -1085,6 +1111,153 @@ export class Context implements WorkflowContext {
 
     this.#accumulatedResults.set(step, result);
     return result as TResult;
+  }
+
+  *pipe<TResult = unknown>(
+    stages: Array<WorkflowPipeStage | ChildWorkflowTarget>,
+    input: unknown,
+  ): Generator<ContextOperationRequest, TResult, unknown> {
+    const pipelineToken = this.#createCompositionToken('pipe');
+    let currentInput = input;
+
+    for (const [index, stage] of stages.entries()) {
+      const resolvedStage = this.#normalizePipeStage(stage);
+      currentInput = yield* this.startChild(
+        resolvedStage.workflowType,
+        currentInput,
+        this.#createCompositionChildWorkflowOptions(pipelineToken, index, resolvedStage.options),
+      );
+    }
+
+    return currentInput as TResult;
+  }
+
+  *map<TResult = unknown>(
+    items: readonly unknown[],
+    workflowType: ChildWorkflowTarget,
+    options?: WorkflowMapOptions,
+  ): Generator<ContextOperationRequest, TResult[], unknown> {
+    if (items.length === 0) {
+      return [];
+    }
+
+    const mapToken = this.#createCompositionToken('map');
+    const concurrency = this.#resolveMapConcurrency(items.length, options?.concurrency);
+    const resolvedWorkflowType = this.#resolveChildWorkflowTarget(workflowType);
+    const results: TResult[] = [];
+
+    for (let startIndex = 0; startIndex < items.length; startIndex += concurrency) {
+      const batchItems = items.slice(startIndex, startIndex + concurrency);
+      const batchResults = (yield* this.all(
+        batchItems.map((item, batchIndex) =>
+          this.startChild<TResult>(
+            resolvedWorkflowType,
+            item,
+            this.#createCompositionChildWorkflowOptions(mapToken, startIndex + batchIndex),
+          ),
+        ),
+      )) as TResult[];
+
+      for (let batchIndex = 0; batchIndex < batchResults.length; batchIndex++) {
+        results[startIndex + batchIndex] = batchResults[batchIndex]!;
+      }
+    }
+
+    return results;
+  }
+
+  *reduce<TAccumulator>(
+    items: readonly unknown[],
+    workflowType: ChildWorkflowTarget,
+    initialValue: TAccumulator,
+  ): Generator<ContextOperationRequest, TAccumulator, unknown> {
+    const reduceToken = this.#createCompositionToken('reduce');
+    const resolvedWorkflowType = this.#resolveChildWorkflowTarget(workflowType);
+    let accumulator = initialValue;
+
+    for (const [index, item] of items.entries()) {
+      accumulator = yield* this.startChild<TAccumulator>(
+        resolvedWorkflowType,
+        {
+          accumulator,
+          item,
+          index,
+        },
+        this.#createCompositionChildWorkflowOptions(reduceToken, index),
+      );
+    }
+
+    return accumulator;
+  }
+
+  #normalizePipeStage(stage: WorkflowPipeStage | ChildWorkflowTarget): {
+    workflowType: string;
+    options: ChildWorkflowOptions | undefined;
+  } {
+    if (typeof stage === 'object' && stage !== null && 'type' in stage) {
+      return {
+        workflowType: this.#resolveChildWorkflowTarget(stage.type),
+        options: stage.options,
+      };
+    }
+
+    return {
+      workflowType: this.#resolveChildWorkflowTarget(stage),
+      options: undefined,
+    };
+  }
+
+  #resolveChildWorkflowTarget(target: ChildWorkflowTarget): string {
+    if (typeof target === 'string') {
+      return target;
+    }
+
+    if (this.#resolveWorkflowType) {
+      return this.#resolveWorkflowType(target);
+    }
+
+    if (typeof target.name === 'string' && target.name.length > 0) {
+      return target.name;
+    }
+
+    throw new Error(
+      'Workflow functions must either be named or started via a string workflow type.',
+    );
+  }
+
+  #resolveMapConcurrency(totalItems: number, requestedConcurrency: number | undefined): number {
+    if (requestedConcurrency === undefined) {
+      return totalItems;
+    }
+
+    if (
+      !Number.isFinite(requestedConcurrency) ||
+      !Number.isInteger(requestedConcurrency) ||
+      requestedConcurrency < 1
+    ) {
+      throw new Error('ctx.map concurrency must be a positive integer');
+    }
+
+    return Math.min(requestedConcurrency, totalItems);
+  }
+
+  #createCompositionToken(kind: 'map' | 'pipe' | 'reduce'): string {
+    return `${kind}:${this.#stepIndex}`;
+  }
+
+  #createCompositionChildWorkflowOptions(
+    token: string,
+    index: number,
+    options: ChildWorkflowOptions | undefined = undefined,
+  ): ChildWorkflowOptions {
+    if (options?.id !== undefined) {
+      return options;
+    }
+
+    return {
+      ...options,
+      id: `${this.workflowId}:${token}:${index}`,
+    };
   }
 
   // -------------------------------------------------------------------------

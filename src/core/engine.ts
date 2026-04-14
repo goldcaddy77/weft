@@ -478,9 +478,17 @@ function createExecutionStrategyBundle(parameters: {
   development: boolean;
   broadcastEvents: boolean;
   getRegistration: (workflowType: string) => RegistrationEntry | undefined;
+  resolveWorkflowType: (target: string | Function) => string;
 }): ExecutionStrategyBundle {
-  const { options, getNow, maxNestingDepth, development, broadcastEvents, getRegistration } =
-    parameters;
+  const {
+    options,
+    getNow,
+    maxNestingDepth,
+    development,
+    broadcastEvents,
+    getRegistration,
+    resolveWorkflowType,
+  } = parameters;
 
   if (options?.workerExecution) {
     const pool = new WorkerPool({
@@ -500,6 +508,7 @@ function createExecutionStrategyBundle(parameters: {
     getNow,
     maxNestingDepth,
     development,
+    resolveWorkflowType,
   });
 
   return {
@@ -597,6 +606,23 @@ function paginateWorkflowSummaries(
     offset,
     limit,
   };
+}
+
+function encodedValuesEqual(left: unknown, right: unknown): boolean {
+  const leftEncoded = encode(left);
+  const rightEncoded = encode(right);
+
+  if (leftEncoded.byteLength !== rightEncoded.byteLength) {
+    return false;
+  }
+
+  for (let index = 0; index < leftEncoded.byteLength; index++) {
+    if (leftEncoded[index] !== rightEncoded[index]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -879,6 +905,7 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
 export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #storage: WeftStorage;
   #registrations: Map<string, RegistrationEntry>;
+  #workflowTypesByHandler: WeakMap<Function, string>;
   #abortController: AbortController;
   #scheduler: Scheduler;
   #options: ResolvedOptions;
@@ -959,6 +986,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     super();
 
     this.#registrations = new Map();
+    this.#workflowTypesByHandler = new WeakMap();
 
     const storage = resolveEngineStorage(options, this.#getAgentWorkflowIds.bind(this));
     const getNow = options?.getNow ?? Date.now;
@@ -970,6 +998,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       development: resolvedOptions.development,
       broadcastEvents: resolvedOptions.broadcastEvents,
       getRegistration: this.#registrations.get.bind(this.#registrations),
+      resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
     });
 
     this.#storage = storage;
@@ -1312,6 +1341,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       };
 
       this.#registrations.set(agentDef.name, agentRegistrationEntry);
+      this.#workflowTypesByHandler.set(handler, agentDef.name);
       return;
     }
 
@@ -1357,8 +1387,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         entry.constraints = registration.constraints;
       }
       this.#registrations.set(name, entry);
+      this.#workflowTypesByHandler.set(registration.handler, name);
     } else {
       // Auto-detect step-based (non-generator) workflow functions and compile them
+      const originalHandler = handlerOrRegistration;
       let handler = handlerOrRegistration;
       if (typeof handler === 'function' && !isAsyncGeneratorFunction(handler)) {
         handler = compileStepWorkflow(handler as StepWorkflowFunction);
@@ -1368,7 +1400,33 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         handler: handler as WorkflowFunction,
         version: '1',
       });
+      if (typeof originalHandler === 'function') {
+        this.#workflowTypesByHandler.set(originalHandler, name);
+      }
+      if (typeof handler === 'function') {
+        this.#workflowTypesByHandler.set(handler, name);
+      }
     }
+  }
+
+  #resolveWorkflowTypeTarget(target: string | Function): string {
+    if (typeof target === 'string') {
+      return target;
+    }
+
+    const registeredType = this.#workflowTypesByHandler.get(target);
+    if (registeredType) {
+      return registeredType;
+    }
+
+    if (target.name.length > 0 && this.#registrations.has(target.name)) {
+      return target.name;
+    }
+
+    throw new Error(
+      'Workflow functions used in composition operators must be registered before use. ' +
+        'Pass the registered workflow type string or register the function on the engine first.',
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -2640,7 +2698,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#eventLogHeads.set(workflowId, restoredHead);
     this.#setWorkflowStartHeaders(workflowId, await this.#loadWorkflowStartHeaders(workflowId));
 
-    const handle = this.#createWorkflowHandle(workflowId);
+    const handle = this.getHandle(workflowId);
 
     // Dispatch resumed event
     this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
@@ -2659,6 +2717,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         startedAt: getWorkflowExecutionStartedAt(state),
         abortController: workflowAbort,
         getNow: this.#options.getNow,
+        resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
         accumulatedResults,
         searchAttributes: resumeCheckpoint.searchAttributes,
         ...(registration.searchAttributes && {
@@ -3982,6 +4041,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     operation: Extract<ContextOperationRequest, { type: 'load' }>,
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, async () => {
+      if (operation.reference.workflowId !== workflowId) {
+        throw new Error('ctx.load() can only read offloaded data from the current workflow');
+      }
+      if (operation.reference.key.length === 0) {
+        throw new Error('ctx.load() requires a non-empty offload reference key');
+      }
+      if (!Number.isFinite(operation.reference.sizeBytes) || operation.reference.sizeBytes < 0) {
+        throw new Error('ctx.load() requires a valid offload reference size');
+      }
+
       const raw = await this.#storage.get(
         KEYS.offload(operation.reference.workflowId, operation.reference.key),
       );
@@ -4536,9 +4605,51 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const executeChild = async () => {
       this.#pendingNestingDepth = currentDepth + 1;
       this.#pendingParentHeaders = this.#workflowHeaders.get(workflowId);
-      const childHandle = await this.start(operation.workflowType, operation.input, {
-        id: childWorkflowId,
-      });
+      let childHandle: WorkflowHandle;
+
+      try {
+        childHandle = await this.start(operation.workflowType, operation.input, {
+          id: childWorkflowId,
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === `Workflow with id "${childWorkflowId}" already exists`
+        ) {
+          const [existingState, parentState] = await Promise.all([
+            this.#loadWorkflowState(childWorkflowId),
+            this.#loadWorkflowState(workflowId),
+          ]);
+
+          if (!existingState) {
+            throw new Error(
+              `Child workflow "${childWorkflowId}" already exists but could not be loaded for reuse`,
+              { cause: error },
+            );
+          }
+
+          const tenantMatches =
+            existingState.tenant?.id === undefined ||
+            parentState?.tenant?.id === undefined ||
+            existingState.tenant.id === parentState.tenant.id;
+
+          if (
+            existingState.type !== operation.workflowType ||
+            !encodedValuesEqual(existingState.input, operation.input) ||
+            !tenantMatches
+          ) {
+            throw new Error(
+              `Child workflow id collision for "${childWorkflowId}" does not match the requested child workflow`,
+              { cause: error },
+            );
+          }
+
+          childHandle = this.getHandle(childWorkflowId);
+        } else {
+          throw error;
+        }
+      }
+
       return childHandle.result();
     };
 
@@ -4616,6 +4727,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'activity':
         signal?.throwIfAborted();
         return this.#executeActivityOperationResult(workflowId, operation, speculativeState);
+      case 'child-workflow':
+        signal?.throwIfAborted();
+        return this.#executeChildWorkflow(
+          workflowId,
+          operation,
+          this.#getWorkflowNestingDepth(workflowId),
+        );
       case 'memo':
         signal?.throwIfAborted();
         return callMemoFunction(operation.fn);
