@@ -33,12 +33,17 @@ import type {
   ActivityCallOptions,
   ActivityContext,
   ActivityDefinition,
+  ChildWorkflowOptions,
+  ChildWorkflowTarget,
   Duration,
   SearchAttributeSchema,
   SearchAttributeValue,
-  StepWorkflowFunction,
   WorkflowContext,
-  WorkflowFunction,
+  WorkflowMapOptions,
+  WorkflowPipeStage,
+  WorkflowPipeStageDefinition,
+  WorkflowReduceInput,
+  WorkflowReduceOptions,
 } from './types.ts';
 
 // ---------------------------------------------------------------------------
@@ -109,24 +114,6 @@ export interface StreamReference {
 
 export interface StreamSink {
   heartbeat(details?: unknown): void;
-}
-
-export type ChildWorkflowTarget<TInput = unknown, TOutput = unknown> =
-  | string
-  | WorkflowFunction<TInput, TOutput>
-  | StepWorkflowFunction<TInput, TOutput>;
-
-export interface ChildWorkflowOptions {
-  id?: string;
-}
-
-export interface WorkflowPipeStage<TInput = unknown, TOutput = unknown> {
-  type: ChildWorkflowTarget<TInput, TOutput>;
-  options?: ChildWorkflowOptions;
-}
-
-export interface WorkflowMapOptions {
-  concurrency?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +346,7 @@ export interface ContextOptions {
    * so that expired sleeps resolve immediately via the engine's fast path.
    */
   sleepReferenceTime?: number;
-  resolveWorkflowType?: (target: ChildWorkflowTarget) => string;
+  resolveWorkflowType?: (target: string | Function) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +375,7 @@ export class Context implements WorkflowContext {
   #budgetTracker: BudgetTracker | undefined;
   #nestingDepth: number;
   #tenant: import('./tenant.ts').TenantContext | undefined;
-  #resolveWorkflowType: ((target: ChildWorkflowTarget) => string) | undefined;
+  #resolveWorkflowType: ((target: string | Function) => string) | undefined;
 
   #captureCallerStack(): string {
     const error = new Error();
@@ -1113,6 +1100,34 @@ export class Context implements WorkflowContext {
     return result as TResult;
   }
 
+  pipe<TInput, TOutput>(
+    stages: [WorkflowPipeStageDefinition<TInput, TOutput>],
+    input: TInput,
+  ): Generator<ContextOperationRequest, TOutput, unknown>;
+  pipe<TInput, TIntermediate, TOutput>(
+    stages: [
+      WorkflowPipeStageDefinition<TInput, TIntermediate>,
+      WorkflowPipeStageDefinition<TIntermediate, TOutput>,
+    ],
+    input: TInput,
+  ): Generator<ContextOperationRequest, TOutput, unknown>;
+  pipe<TInput, TFirst, TSecond, TOutput>(
+    stages: [
+      WorkflowPipeStageDefinition<TInput, TFirst>,
+      WorkflowPipeStageDefinition<TFirst, TSecond>,
+      WorkflowPipeStageDefinition<TSecond, TOutput>,
+    ],
+    input: TInput,
+  ): Generator<ContextOperationRequest, TOutput, unknown>;
+  pipe<TInput, TFirst, TSecond, TThird, TOutput>(
+    stages: [
+      WorkflowPipeStageDefinition<TInput, TFirst>,
+      WorkflowPipeStageDefinition<TFirst, TSecond>,
+      WorkflowPipeStageDefinition<TSecond, TThird>,
+      WorkflowPipeStageDefinition<TThird, TOutput>,
+    ],
+    input: TInput,
+  ): Generator<ContextOperationRequest, TOutput, unknown>;
   *pipe<TResult = unknown>(
     stages: Array<WorkflowPipeStage | ChildWorkflowTarget>,
     input: unknown,
@@ -1132,9 +1147,9 @@ export class Context implements WorkflowContext {
     return currentInput as TResult;
   }
 
-  *map<TResult = unknown>(
-    items: readonly unknown[],
-    workflowType: ChildWorkflowTarget,
+  *map<TItem, TResult>(
+    items: readonly TItem[],
+    workflowType: ChildWorkflowTarget<TItem, TResult>,
     options?: WorkflowMapOptions,
   ): Generator<ContextOperationRequest, TResult[], unknown> {
     if (items.length === 0) {
@@ -1166,10 +1181,11 @@ export class Context implements WorkflowContext {
     return results;
   }
 
-  *reduce<TAccumulator>(
-    items: readonly unknown[],
-    workflowType: ChildWorkflowTarget,
+  *reduce<TItem, TAccumulator>(
+    items: readonly TItem[],
+    workflowType: ChildWorkflowTarget<WorkflowReduceInput<TAccumulator, TItem>, TAccumulator>,
     initialValue: TAccumulator,
+    options?: WorkflowReduceOptions,
   ): Generator<ContextOperationRequest, TAccumulator, unknown> {
     const reduceToken = this.#createCompositionToken('reduce');
     const resolvedWorkflowType = this.#resolveChildWorkflowTarget(workflowType);
@@ -1183,7 +1199,7 @@ export class Context implements WorkflowContext {
           item,
           index,
         },
-        this.#createCompositionChildWorkflowOptions(reduceToken, index),
+        this.#createReduceChildWorkflowOptions(reduceToken, index, options),
       );
     }
 
@@ -1207,7 +1223,9 @@ export class Context implements WorkflowContext {
     };
   }
 
-  #resolveChildWorkflowTarget(target: ChildWorkflowTarget): string {
+  #resolveChildWorkflowTarget<TInput = unknown, TOutput = unknown>(
+    target: ChildWorkflowTarget<TInput, TOutput>,
+  ): string {
     if (typeof target === 'string') {
       return target;
     }
@@ -1216,12 +1234,9 @@ export class Context implements WorkflowContext {
       return this.#resolveWorkflowType(target);
     }
 
-    if (typeof target.name === 'string' && target.name.length > 0) {
-      return target.name;
-    }
-
     throw new Error(
-      'Workflow functions must either be named or started via a string workflow type.',
+      'Workflow functions used in composition operators must be registered before use. ' +
+        'Pass the registered workflow type string or register the function on the engine first.',
     );
   }
 
@@ -1258,6 +1273,28 @@ export class Context implements WorkflowContext {
       ...options,
       id: `${this.workflowId}:${token}:${index}`,
     };
+  }
+
+  #createReduceChildWorkflowOptions(
+    token: string,
+    index: number,
+    options: WorkflowReduceOptions | undefined,
+  ): ChildWorkflowOptions {
+    if (options === undefined) {
+      return this.#createCompositionChildWorkflowOptions(token, index);
+    }
+
+    const { idPrefix, ...childWorkflowOptions } = options;
+    return this.#createCompositionChildWorkflowOptions(
+      token,
+      index,
+      idPrefix !== undefined
+        ? {
+            ...childWorkflowOptions,
+            id: `${idPrefix}:${index}`,
+          }
+        : childWorkflowOptions,
+    );
   }
 
   // -------------------------------------------------------------------------

@@ -121,10 +121,14 @@ describe('offload, load, and archive', () => {
     const engine = new TestEngine();
 
     const payload = { large: 'data', count: 42 };
+    let offloadRuns = 0;
 
     engine.register('offload-step', async function* (ctx: WorkflowContext) {
       const c = ctx as Context;
-      const reference = yield* c.offload('recovery-data', async () => payload);
+      const reference = yield* c.offload('recovery-data', async () => {
+        offloadRuns++;
+        return payload;
+      });
       // Signal to pause so we can recover
       yield* c.waitForSignal('continue');
       return yield* c.load<typeof payload>(reference);
@@ -140,7 +144,10 @@ describe('offload, load, and archive', () => {
     // Register same workflow on recovered engine
     recovered.register('offload-step', async function* (ctx: WorkflowContext) {
       const c = ctx as Context;
-      const reference = yield* c.offload('recovery-data', async () => payload);
+      const reference = yield* c.offload('recovery-data', async () => {
+        offloadRuns++;
+        return payload;
+      });
       yield* c.waitForSignal('continue');
       return yield* c.load<typeof payload>(reference);
     });
@@ -149,6 +156,7 @@ describe('offload, load, and archive', () => {
     await resumedHandle.signal('continue');
     const result = await resumedHandle.result();
     expect(result).toEqual(payload);
+    expect(offloadRuns).toBe(1);
   });
 
   it('propagates errors from offload fn to the workflow', async () => {

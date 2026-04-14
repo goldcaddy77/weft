@@ -1419,10 +1419,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return registeredType;
     }
 
-    if (target.name.length > 0 && this.#registrations.has(target.name)) {
-      return target.name;
-    }
-
     throw new Error(
       'Workflow functions used in composition operators must be registered before use. ' +
         'Pass the registered workflow type string or register the function on the engine first.',

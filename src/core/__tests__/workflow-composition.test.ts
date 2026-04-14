@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { TestEngine } from '../../testing/test-engine.ts';
 import { Context } from '../context.ts';
-import type { WorkflowContext } from '../types.ts';
+import type { WorkflowContext, WorkflowReduceInput } from '../types.ts';
 
 async function* trimStage(_ctx: WorkflowContext, input: unknown) {
   return String(input).trim();
@@ -25,7 +25,7 @@ describe('workflow composition operators', () => {
     engine.register('exclaim-stage', exclaimStage);
 
     engine.register('pipeline-parent', async function* (ctx: WorkflowContext, input: unknown) {
-      return yield* (ctx as Context).pipe([trimStage, upperStage, exclaimStage], input);
+      return yield* ctx.pipe([trimStage, upperStage, exclaimStage], input);
     });
 
     const handle = await engine.start('pipeline-parent', '  hello world  ');
@@ -69,7 +69,7 @@ describe('workflow composition operators', () => {
         const context = ctx as Context;
 
         try {
-          return yield* context.pipe(
+          return yield* ctx.pipe(
             [{ type: firstStage }, { type: secondStage }, { type: unreachableStage }],
             input,
           );
@@ -92,7 +92,7 @@ describe('workflow composition operators', () => {
         const context = ctx as Context;
 
         try {
-          return yield* context.pipe(
+          return yield* ctx.pipe(
             [{ type: firstStage }, { type: secondStage }, { type: unreachableStage }],
             input,
           );
@@ -121,7 +121,7 @@ describe('workflow composition operators', () => {
 
     engine.register('double-stage', doubleStage);
     engine.register('map-parent', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).map([3, 1, 2], 'double-stage');
+      return yield* ctx.map([3, 1, 2], 'double-stage');
     });
 
     const handle = await engine.start('map-parent', null);
@@ -138,16 +138,10 @@ describe('workflow composition operators', () => {
 
     engine.register('echo-stage', echoStage);
     engine.register('first-parent', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).pipe(
-        [{ type: echoStage, options: { id: 'shared-child' } }],
-        'alpha',
-      );
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'alpha');
     });
     engine.register('second-parent', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).pipe(
-        [{ type: echoStage, options: { id: 'shared-child' } }],
-        'beta',
-      );
+      return yield* ctx.pipe([{ type: echoStage, options: { id: 'shared-child' } }], 'beta');
     });
 
     const firstHandle = await engine.start('first-parent', null);
@@ -175,7 +169,7 @@ describe('workflow composition operators', () => {
 
     engine.register('delayed-stage', delayedStage);
     engine.register('concurrency-parent', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).map([1, 2, 3, 4, 5], 'delayed-stage', { concurrency: 2 });
+      return yield* ctx.map([1, 2, 3, 4, 5], 'delayed-stage', { concurrency: 2 });
     });
 
     const handle = await engine.start('concurrency-parent', null);
@@ -192,20 +186,13 @@ describe('workflow composition operators', () => {
   it('Track 7c: ctx.reduce folds sequentially and handles an empty array', async () => {
     const engine = new TestEngine();
 
-    type SumInput = {
-      accumulator: number;
-      item: number;
-      index: number;
-    };
-
     engine.register('fold-stage', async function* (_ctx: WorkflowContext, input: unknown) {
-      const typedInput = input as SumInput;
+      const typedInput = input as WorkflowReduceInput<number, number>;
       return typedInput.accumulator + typedInput.item + typedInput.index;
     });
     engine.register('reduce-parent', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
-      const folded = yield* context.reduce([4, 5, 6], 'fold-stage', 1);
-      const empty = yield* context.reduce([], 'fold-stage', 99);
+      const folded = yield* ctx.reduce([4, 5, 6], 'fold-stage', 1, { idPrefix: 'fold-step' });
+      const empty = yield* ctx.reduce([], 'fold-stage', 99);
       return { folded, empty };
     });
 
@@ -231,14 +218,41 @@ describe('workflow composition operators', () => {
     engine.register('increment-stage', incrementStage);
     engine.register('wrap-stage', wrapStage);
     engine.register('pipeline-item', async function* (ctx: WorkflowContext, input: unknown) {
-      return yield* (ctx as Context).pipe([{ type: incrementStage }, { type: wrapStage }], input);
+      return yield* ctx.pipe([{ type: incrementStage }, { type: wrapStage }], input);
     });
     engine.register('nested-parent', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).map([1, 2, 3], 'pipeline-item');
+      return yield* ctx.map([1, 2, 3], 'pipeline-item');
     });
 
     const handle = await engine.start('nested-parent', null);
 
     await expect(handle.result()).resolves.toEqual(['value:2', 'value:3', 'value:4']);
+  });
+
+  it('Track 7c: ctx.pipe rejects unregistered workflow functions even when the function name matches a registered type', async () => {
+    const engine = new TestEngine();
+
+    async function* registeredStage(_ctx: WorkflowContext, input: unknown) {
+      return String(input).toUpperCase();
+    }
+
+    const imposterStage = async function* shadowStage(_ctx: WorkflowContext, input: unknown) {
+      return `imposter:${String(input)}`;
+    };
+    Object.defineProperty(imposterStage, 'name', {
+      value: 'registeredStage',
+      configurable: true,
+    });
+
+    engine.register('registered-stage', registeredStage);
+    engine.register('pipe-parent', async function* (ctx: WorkflowContext, input: unknown) {
+      return yield* ctx.pipe([imposterStage], input);
+    });
+
+    const handle = await engine.start('pipe-parent', 'hello');
+
+    await expect(handle.result()).rejects.toThrow(
+      'Workflow functions used in composition operators must be registered before use.',
+    );
   });
 });

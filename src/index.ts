@@ -186,6 +186,15 @@ export type {
   StreamReference,
   StreamSink,
 } from './core/context';
+export type {
+  ChildWorkflowOptions,
+  ChildWorkflowTarget,
+  WorkflowMapOptions,
+  WorkflowPipeStage,
+  WorkflowPipeStageDefinition,
+  WorkflowReduceInput,
+  WorkflowReduceOptions,
+} from './core/types';
 
 // Multi-tenant primitives
 export { tenantFromInputField } from './core/tenant';

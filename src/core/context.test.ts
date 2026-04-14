@@ -1160,6 +1160,24 @@ describe('Context', () => {
       expect(request.callerStack!.length).toBeGreaterThan(0);
     });
 
+    it('ctx.startChild preserves custom option keys alongside id', () => {
+      const context = createContext();
+      const generator = context.startChild(
+        'child-type',
+        { key: 'value' },
+        {
+          id: 'child-123',
+          queue: 'priority',
+        },
+      );
+      const request = expectRequest(generator.next(), 'child-workflow');
+
+      expect(request.options).toEqual({
+        id: 'child-123',
+        queue: 'priority',
+      });
+    });
+
     it('ctx.offload yields a request with callerStack', () => {
       const context = createContext();
       const fn = async () => ({ large: 'data' });

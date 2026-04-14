@@ -421,6 +421,40 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
   input: TInput,
 ) => Promise<TOutput>;
 
+export type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
+
+export type ChildWorkflowTarget<TInput = unknown, TOutput = unknown> =
+  | string
+  | WorkflowFunction<TInput, TOutput>
+  | StepWorkflowFunction<TInput, TOutput>;
+
+export type ChildWorkflowOptions = Record<string, unknown> & {
+  id?: string;
+};
+
+export interface WorkflowPipeStage<TInput = unknown, TOutput = unknown> {
+  type: ChildWorkflowTarget<TInput, TOutput>;
+  options?: ChildWorkflowOptions;
+}
+
+export type WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> =
+  | WorkflowPipeStage<TInput, TOutput>
+  | ChildWorkflowTarget<TInput, TOutput>;
+
+export interface WorkflowMapOptions {
+  concurrency?: number;
+}
+
+export interface WorkflowReduceInput<TAccumulator, TItem> {
+  accumulator: TAccumulator;
+  item: TItem;
+  index: number;
+}
+
+export interface WorkflowReduceOptions extends Record<string, unknown> {
+  idPrefix?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Forward-declared WorkflowContext interface (full implementation in context.ts)
 // ---------------------------------------------------------------------------
@@ -439,6 +473,10 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
  *   yield* (ctx as Context).suspendUntil('resume-token');
  * });
  * ```
+ *
+ * Composition operators are available directly on `WorkflowContext`, so
+ * `ctx.pipe(...)`, `ctx.map(...)`, and `ctx.reduce(...)` do not require a
+ * cast.
  *
  * `tenant` is surfaced directly on this interface (not via the cast) because
  * reading it is a common lightweight path that doesn't need the full method
@@ -462,6 +500,49 @@ export interface WorkflowContext {
    * contract that the getter can't satisfy.
    */
   readonly tenant: import('./tenant.ts').TenantContext | undefined;
+  pipe<TInput, TOutput>(
+    stages: [WorkflowPipeStageDefinition<TInput, TOutput>],
+    input: TInput,
+  ): WorkflowOperation<TOutput>;
+  pipe<TInput, TIntermediate, TOutput>(
+    stages: [
+      WorkflowPipeStageDefinition<TInput, TIntermediate>,
+      WorkflowPipeStageDefinition<TIntermediate, TOutput>,
+    ],
+    input: TInput,
+  ): WorkflowOperation<TOutput>;
+  pipe<TInput, TFirst, TSecond, TOutput>(
+    stages: [
+      WorkflowPipeStageDefinition<TInput, TFirst>,
+      WorkflowPipeStageDefinition<TFirst, TSecond>,
+      WorkflowPipeStageDefinition<TSecond, TOutput>,
+    ],
+    input: TInput,
+  ): WorkflowOperation<TOutput>;
+  pipe<TInput, TFirst, TSecond, TThird, TOutput>(
+    stages: [
+      WorkflowPipeStageDefinition<TInput, TFirst>,
+      WorkflowPipeStageDefinition<TFirst, TSecond>,
+      WorkflowPipeStageDefinition<TSecond, TThird>,
+      WorkflowPipeStageDefinition<TThird, TOutput>,
+    ],
+    input: TInput,
+  ): WorkflowOperation<TOutput>;
+  pipe<TResult = unknown>(
+    stages: Array<WorkflowPipeStage | ChildWorkflowTarget>,
+    input: unknown,
+  ): WorkflowOperation<TResult>;
+  map<TItem, TResult>(
+    items: readonly TItem[],
+    workflowType: ChildWorkflowTarget<TItem, TResult>,
+    options?: WorkflowMapOptions,
+  ): WorkflowOperation<TResult[]>;
+  reduce<TItem, TAccumulator>(
+    items: readonly TItem[],
+    workflowType: ChildWorkflowTarget<WorkflowReduceInput<TAccumulator, TItem>, TAccumulator>,
+    initialValue: TAccumulator,
+    options?: WorkflowReduceOptions,
+  ): WorkflowOperation<TAccumulator>;
 }
 
 // ---------------------------------------------------------------------------
