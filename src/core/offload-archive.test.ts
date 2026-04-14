@@ -94,6 +94,27 @@ describe('offload, load, and archive', () => {
     );
   });
 
+  it('rejects malformed offload references with deterministic validation errors', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('test', async function* (ctx: WorkflowContext) {
+      const c = ctx as Context;
+      const malformedReference = {
+        workflowId: ctx.workflowId,
+        key: 123,
+        sizeBytes: 1,
+      } as unknown as OffloadReference;
+      return yield* c.load(malformedReference);
+    });
+
+    const handle = await engine.start('test', {});
+
+    await expect(handle.result()).rejects.toThrow(
+      'ctx.load() requires a non-empty offload reference key',
+    );
+  });
+
   it('persists archived data to storage', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });

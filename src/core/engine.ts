@@ -178,6 +178,16 @@ export interface AgentRegistrationOptions {
   provider: LLMProvider;
 }
 
+class WorkflowAlreadyExistsError extends Error {
+  readonly workflowId: string;
+
+  constructor(workflowId: string) {
+    super(`Workflow with id "${workflowId}" already exists`);
+    this.name = 'WorkflowAlreadyExistsError';
+    this.workflowId = workflowId;
+  }
+}
+
 interface ResolvedOptions {
   storage: WeftStorage;
   development: boolean;
@@ -1503,7 +1513,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Atomic check-and-reserve: prevent two concurrent start() calls with the
     // same ID from both passing the storage check before either writes state.
     if (this.#pendingStarts.has(workflowId)) {
-      throw new Error(`Workflow with id "${workflowId}" already exists`);
+      throw new WorkflowAlreadyExistsError(workflowId);
     }
     this.#pendingStarts.add(workflowId);
     let startSucceeded = false;
@@ -1517,7 +1527,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (callerProvidedId) {
         const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
         if (existingBytes !== null) {
-          throw new Error(`Workflow with id "${workflowId}" already exists`);
+          throw new WorkflowAlreadyExistsError(workflowId);
         }
       }
 
@@ -4037,22 +4047,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     operation: Extract<ContextOperationRequest, { type: 'load' }>,
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, async () => {
-      if (operation.reference.workflowId !== workflowId) {
+      const { workflowId: referenceWorkflowId, key: referenceKey, sizeBytes } = operation.reference;
+
+      if (typeof referenceWorkflowId !== 'string' || referenceWorkflowId !== workflowId) {
         throw new Error('ctx.load() can only read offloaded data from the current workflow');
       }
-      if (operation.reference.key.length === 0) {
+      if (typeof referenceKey !== 'string' || referenceKey.length === 0) {
         throw new Error('ctx.load() requires a non-empty offload reference key');
       }
-      if (!Number.isFinite(operation.reference.sizeBytes) || operation.reference.sizeBytes < 0) {
+      if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes < 0) {
         throw new Error('ctx.load() requires a valid offload reference size');
       }
 
-      const raw = await this.#storage.get(
-        KEYS.offload(operation.reference.workflowId, operation.reference.key),
-      );
+      const raw = await this.#storage.get(KEYS.offload(referenceWorkflowId, referenceKey));
       if (raw === null) {
         throw new Error(
-          `Offloaded data not found for key "${operation.reference.key}" in workflow "${operation.reference.workflowId}"`,
+          `Offloaded data not found for key "${referenceKey}" in workflow "${referenceWorkflowId}"`,
         );
       }
       return decode(raw);
@@ -4613,26 +4623,23 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           id: childWorkflowId,
         });
       } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message === `Workflow with id "${childWorkflowId}" already exists`
-        ) {
+        if (error instanceof WorkflowAlreadyExistsError) {
           const [existingState, parentState] = await Promise.all([
             this.#loadWorkflowState(childWorkflowId),
             this.#loadWorkflowState(workflowId),
           ]);
 
           if (!existingState) {
-            throw new Error(
-              `Child workflow "${childWorkflowId}" already exists but could not be loaded for reuse`,
-              { cause: error },
-            );
+            throw error;
           }
 
+          const existingTenantId = existingState.tenant?.id;
+          const parentTenantId = parentState?.tenant?.id;
           const tenantMatches =
-            existingState.tenant?.id === undefined ||
-            parentState?.tenant?.id === undefined ||
-            existingState.tenant.id === parentState.tenant.id;
+            (existingTenantId === undefined && parentTenantId === undefined) ||
+            (existingTenantId !== undefined &&
+              parentTenantId !== undefined &&
+              existingTenantId === parentTenantId);
 
           if (
             existingState.type !== operation.workflowType ||
