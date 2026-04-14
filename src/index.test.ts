@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import type { WorkflowOperation } from './index';
 import { Engine, MemoryStorage, VERSION } from './index';
 
 describe('weft', () => {
@@ -13,5 +14,10 @@ describe('weft', () => {
 
   it('exports MemoryStorage class', () => {
     expect(MemoryStorage).toBeDefined();
+  });
+
+  it('exports WorkflowOperation type', () => {
+    const operation: WorkflowOperation<string> | undefined = undefined;
+    expect(operation).toBeUndefined();
   });
 });

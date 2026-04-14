@@ -190,6 +190,7 @@ export type {
   ChildWorkflowOptions,
   ChildWorkflowTarget,
   WorkflowMapOptions,
+  WorkflowOperation,
   WorkflowPipeStage,
   WorkflowPipeStageDefinition,
   WorkflowReduceInput,

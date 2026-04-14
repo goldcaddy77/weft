@@ -4569,20 +4569,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'child-workflow' }>,
   ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      this.#executeChildWorkflow(
+        workflowId,
+        operation,
+        this.#assertChildWorkflowNestingDepth(workflowId),
+      ),
+    );
+  }
+
+  #assertChildWorkflowNestingDepth(workflowId: string): number {
     const currentDepth = this.#getWorkflowNestingDepth(workflowId);
     if (currentDepth + 1 > this.#options.maxNestingDepth) {
-      this.#feedOperationResult(workflowId, {
-        status: 'failed',
-        error:
-          `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
+      throw new Error(
+        `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
           'Configure maxNestingDepth in engine options to increase the limit.',
-      });
-      return;
+      );
     }
 
-    return this.#runOperationWithResult(workflowId, operation, () =>
-      this.#executeChildWorkflow(workflowId, operation, currentDepth),
-    );
+    return currentDepth;
   }
 
   #getWorkflowNestingDepth(workflowId: string): number {
@@ -4728,7 +4733,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return this.#executeChildWorkflow(
           workflowId,
           operation,
-          this.#getWorkflowNestingDepth(workflowId),
+          this.#assertChildWorkflowNestingDepth(workflowId),
         );
       case 'memo':
         signal?.throwIfAborted();

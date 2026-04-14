@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { TestEngine } from '../../testing/test-engine.ts';
 import { Context } from '../context.ts';
+import { Engine } from '../engine.ts';
 import type { WorkflowContext, WorkflowReduceInput } from '../types.ts';
 
 async function* trimStage(_ctx: WorkflowContext, input: unknown) {
@@ -181,6 +182,23 @@ describe('workflow composition operators', () => {
 
     await expect(handle.result()).resolves.toEqual([10, 20, 30, 40, 50]);
     expect(maxActiveChildren).toBe(2);
+  });
+
+  it('Track 7c: ctx.map still enforces child-workflow nesting depth inside parallel sub-operations', async () => {
+    const engine = new Engine({ maxNestingDepth: 2 });
+
+    engine.register('recursive-map', async function* (ctx: WorkflowContext, input: unknown) {
+      const { level } = input as { level: number };
+      if (level < 3) {
+        return yield* ctx.map([{ level: level + 1 }], 'recursive-map');
+      }
+
+      return [level];
+    });
+
+    const handle = await engine.start('recursive-map', { level: 0 });
+
+    await expect(handle.result()).rejects.toThrow('nesting depth exceeded');
   });
 
   it('Track 7c: ctx.reduce folds sequentially and handles an empty array', async () => {
