@@ -960,6 +960,11 @@ function clearScheduleCurrentWorkflow(state: ScheduleState): ScheduleState {
   return rest;
 }
 
+type RefreshedScheduleState = {
+  state: ScheduleState;
+  currentWorkflowState: WorkflowState | null;
+};
+
 // ---------------------------------------------------------------------------
 // WorkflowHandle
 // ---------------------------------------------------------------------------
@@ -5473,18 +5478,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
   }
 
-  async #refreshScheduledWorkflowState(state: ScheduleState): Promise<ScheduleState> {
+  async #refreshScheduledWorkflowState(state: ScheduleState): Promise<RefreshedScheduleState> {
     if (!state.currentWorkflowId) {
-      return state;
+      return { state, currentWorkflowState: null };
     }
 
     const currentWorkflowState = await this.#loadWorkflowState(state.currentWorkflowId);
     if (currentWorkflowState?.status === 'running' || currentWorkflowState?.status === 'pending') {
-      return state;
+      return { state, currentWorkflowState };
     }
 
     await this.#storage.delete(KEYS.scheduleRun(state.currentWorkflowId));
-    return clearScheduleCurrentWorkflow(state);
+    return {
+      state: clearScheduleCurrentWorkflow(state),
+      currentWorkflowState,
+    };
   }
 
   async #startScheduledRun(state: ScheduleState): Promise<string> {
@@ -5502,10 +5510,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #applyScheduleOccurrence(state: ScheduleState): Promise<ScheduleState> {
-    const refreshedState = await this.#refreshScheduledWorkflowState(state);
-    const currentWorkflowState = refreshedState.currentWorkflowId
-      ? await this.#loadWorkflowState(refreshedState.currentWorkflowId)
-      : null;
+    const { state: refreshedState, currentWorkflowState } =
+      await this.#refreshScheduledWorkflowState(state);
     const hasActiveWorkflow =
       currentWorkflowState?.status === 'running' || currentWorkflowState?.status === 'pending';
 
@@ -5565,10 +5571,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     try {
       const now = this.#options.getNow();
+      const dueThroughTimestamp = Math.max(now, entry.fireAt);
       const dueOccurrences = collectDueCronOccurrences(
         state.cronExpression,
         state.nextFireAt,
-        now,
+        dueThroughTimestamp,
         {
           maxOccurrences: state.backfill ? MAX_SCHEDULE_BACKFILL_OCCURRENCES_PER_TICK : 2,
         },

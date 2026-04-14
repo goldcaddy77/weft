@@ -2,12 +2,12 @@ import { describe, expect, it, spyOn } from 'bun:test';
 
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { encode } from './codec.ts';
+import { decode, encode } from './codec.ts';
 import { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import { getNextCronOccurrence } from './schedule.ts';
 import { tenantFromInputField, type TenantResolver } from './tenant.ts';
-import type { ScheduleSummary, WorkflowContext, WorkflowFunction } from './types.ts';
+import type { ScheduleSummary, WorkflowContext, WorkflowFunction, WorkflowState } from './types.ts';
 
 type Clock = {
   now: number;
@@ -23,6 +23,36 @@ function createEngine(
     getNow: () => clock.now,
     ...(tenantResolver !== undefined && { tenantResolver }),
   });
+}
+
+class WorkflowStateRaceStorage extends MemoryStorage {
+  #targetWorkflowKey: string | null = null;
+  workflowStateReadCount = 0;
+
+  arm(workflowId: string): void {
+    this.#targetWorkflowKey = KEYS.workflow(workflowId);
+    this.workflowStateReadCount = 0;
+  }
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    const value = await super.get(key);
+    if (!value || key !== this.#targetWorkflowKey) {
+      return value;
+    }
+
+    this.workflowStateReadCount += 1;
+    if (this.workflowStateReadCount !== 2) {
+      return value;
+    }
+
+    const workflowState = decode(value) as WorkflowState;
+    return encode({
+      ...workflowState,
+      status: 'completed',
+      result: 'simulated-race-completion',
+      updatedAt: workflowState.updatedAt + 1,
+    });
+  }
 }
 
 async function drainEngine(): Promise<void> {
@@ -215,6 +245,45 @@ describe('recurring schedules', () => {
     engine[Symbol.dispose]();
   });
 
+  it("Overlap policy is configurable. { overlap: 'skip' } uses one workflow-state snapshot per timer tick.", async () => {
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const storage = new WorkflowStateRaceStorage();
+    const engine = createEngine(clock, storage);
+
+    registerWorkflow(
+      engine,
+      'overlap-skip-single-snapshot',
+      async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('release');
+        return 'released';
+      },
+    );
+
+    const schedule = await engine.schedule('overlap-skip-single-snapshot', null, '* * * * *', {
+      id: 'overlap-skip-single-snapshot',
+      overlap: 'skip',
+    });
+    const firstDescription = await schedule.describe();
+
+    await tickEngine(engine, clock, requireNextFireAt(firstDescription));
+    const [firstWorkflowId] = await listRunningWorkflowIds(engine);
+    expect(firstWorkflowId).toBeDefined();
+
+    storage.arm(firstWorkflowId!);
+
+    const secondDescription = await schedule.describe();
+    await tickEngine(engine, clock, requireNextFireAt(secondDescription));
+
+    expect(await listRunningWorkflowIds(engine)).toEqual([firstWorkflowId!]);
+
+    const updatedSchedule = await schedule.describe();
+    expect(updatedSchedule.currentWorkflowId).toBe(firstWorkflowId);
+    expect(storage.workflowStateReadCount).toBe(1);
+
+    await releaseRunningWorkflows(engine);
+    engine[Symbol.dispose]();
+  });
+
   it("Overlap policy is configurable. { overlap: 'allow' } starts a new run even while the previous run is still executing.", async () => {
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
     const engine = createEngine(clock);
@@ -381,6 +450,39 @@ describe('recurring schedules', () => {
     const updatedSchedule = await engine.getSchedule(description.id);
     expect(updatedSchedule?.lastFireAt).toBeUndefined();
     expect(updatedSchedule?.nextFireAt).toBe(Date.UTC(2026, 0, 1, 0, 2, 0));
+
+    engine[Symbol.dispose]();
+  });
+
+  it('Schedule timers still advance when getNow() lags behind the fired timestamp.', async () => {
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock);
+    const executions: string[] = [];
+
+    registerWorkflow(
+      engine,
+      'clock-skew-schedule-workflow',
+      async function* (_ctx: WorkflowContext) {
+        executions.push('fired');
+        return 'fired';
+      },
+    );
+
+    const schedule = await engine.schedule('clock-skew-schedule-workflow', null, '* * * * *', {
+      id: 'clock-skew-schedule',
+    });
+    const description = await schedule.describe();
+    const firstFireAt = requireNextFireAt(description);
+
+    clock.now = firstFireAt - 1_000;
+    await engine.scheduler.tick(firstFireAt);
+    await drainEngine();
+
+    expect(executions).toEqual(['fired']);
+
+    const updatedSchedule = await schedule.describe();
+    expect(updatedSchedule.lastFireAt).toBe(firstFireAt);
+    expect(updatedSchedule.nextFireAt).toBe(Date.UTC(2026, 0, 1, 0, 2, 0));
 
     engine[Symbol.dispose]();
   });
