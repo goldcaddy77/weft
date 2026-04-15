@@ -722,8 +722,24 @@ describe('recurring schedules', () => {
         cronExpression: 42,
       }),
     );
+    await engine.schedule('validated-schedule-workflow', null, '* * * * *', {
+      id: 'missing-next-fire-at',
+    });
+    const storedScheduleBytes = await storage.get(KEYS.schedule('missing-next-fire-at'));
+    expect(storedScheduleBytes).not.toBeNull();
+
+    const storedSchedule = decode(storedScheduleBytes!);
+    expect(storedSchedule).toBeObject();
+    expect(storedSchedule).not.toBeArray();
+
+    const { nextFireAt: _nextFireAt, ...corruptRuntimeSchedule } = storedSchedule as Record<
+      string,
+      unknown
+    >;
+    await storage.put(KEYS.schedule('missing-next-fire-at'), encode(corruptRuntimeSchedule));
 
     expect(await engine.getSchedule('corrupt-schedule')).toBeNull();
+    expect(await engine.getSchedule('missing-next-fire-at')).toBeNull();
     const listedSchedules = await engine.listSchedules();
     expect(listedSchedules.items).toEqual([]);
     await expect(

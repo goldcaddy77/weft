@@ -573,6 +573,9 @@ function decodeScheduleRuntimeFields(
   }
 
   const nextFireAt = decoded['nextFireAt'];
+  if (nextFireAt === undefined) {
+    return rejectInvalidScheduleRecord(scheduleId, 'with invalid nextFireAt');
+  }
   if (nextFireAt !== null && !isValidScheduleTimestamp(nextFireAt)) {
     return rejectInvalidScheduleRecord(scheduleId, 'with invalid nextFireAt');
   }
