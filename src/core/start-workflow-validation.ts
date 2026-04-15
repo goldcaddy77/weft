@@ -2,6 +2,11 @@ import { parseDuration } from './scheduler.ts';
 import type { Duration } from './types.ts';
 import { assertValidWorkflowId } from './workflow-identifiers.ts';
 
+export const MAX_WORKFLOW_TAGS = 32;
+export const MAX_WORKFLOW_TAG_BYTES = 128;
+
+const textEncoder = new TextEncoder();
+
 export class StartWorkflowValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -69,4 +74,34 @@ export function coerceStartWorkflowDuration(value: unknown, fieldName: string): 
 
   parseStartWorkflowDuration(value, fieldName);
   return value;
+}
+
+export function coerceStartWorkflowTags(value: unknown, fieldName: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new StartWorkflowValidationError(`${fieldName} must be an array of strings`);
+  }
+
+  if (value.length > MAX_WORKFLOW_TAGS) {
+    throw new StartWorkflowValidationError(
+      `${fieldName} must contain at most ${MAX_WORKFLOW_TAGS} tags`,
+    );
+  }
+
+  const tags: string[] = [];
+  for (const tag of value) {
+    if (typeof tag !== 'string') {
+      throw new StartWorkflowValidationError(`${fieldName} must contain only strings`);
+    }
+    if (tag.trim().length === 0) {
+      throw new StartWorkflowValidationError(`${fieldName} must not contain empty tags`);
+    }
+    if (textEncoder.encode(tag).byteLength > MAX_WORKFLOW_TAG_BYTES) {
+      throw new StartWorkflowValidationError(
+        `${fieldName} tags must be at most ${MAX_WORKFLOW_TAG_BYTES} UTF-8 bytes each`,
+      );
+    }
+    tags.push(tag);
+  }
+
+  return tags;
 }

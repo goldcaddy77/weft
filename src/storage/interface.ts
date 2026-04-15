@@ -166,6 +166,8 @@ export const KEYS = {
   attribute: (workflowId: string) => `attr:${encodeStorageKeyComponent(workflowId)}`,
   attributeIndex: (attributeName: string, encodedValue: string, workflowId: string) =>
     `idx:${attributeName}:${encodedValue}:${encodeStorageKeyComponent(workflowId)}`,
+  tagIndex: (tag: string, workflowId: string) =>
+    `tag:${encodeStorageKeyComponent(tag)}:${encodeStorageKeyComponent(workflowId)}`,
   updatePrefix: (workflowId: string) => `upd:${encodeStorageKeyComponent(workflowId)}:`,
   update: (workflowId: string, updateId: string) =>
     `upd:${encodeStorageKeyComponent(workflowId)}:${updateId}`,

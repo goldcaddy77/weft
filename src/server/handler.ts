@@ -17,6 +17,7 @@ import {
   assertExclusiveStartWorkflowOptions,
   coerceStartWorkflowDuration,
   coerceStartWorkflowId,
+  coerceStartWorkflowTags,
   coerceStartWorkflowTimestamp,
 } from '../core/start-workflow-validation.ts';
 import type {
@@ -158,6 +159,11 @@ function validateStartWorkflowOptions(body: Record<string, unknown>): StartOptio
     options.startAfter = coerceStartWorkflowDuration(startAfter, 'Field "startAfter"');
   }
 
+  const tags = body['tags'];
+  if (tags !== undefined) {
+    options.tags = coerceStartWorkflowTags(tags, 'Field "tags"');
+  }
+
   assertExclusiveStartWorkflowOptions(options.startAt, options.startAfter);
 
   return options;
@@ -179,7 +185,7 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
     return errorResponse('Request body must be a JSON object', 400);
   }
 
-  const { type, input, id, executionTimeout, startAt, startAfter } = body as Record<
+  const { type, input, id, executionTimeout, startAt, startAfter, tags } = body as Record<
     string,
     unknown
   >;
@@ -195,6 +201,7 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
       executionTimeout,
       startAt,
       startAfter,
+      tags,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -287,6 +294,16 @@ async function handleListWorkflows(request: Request, engine: Engine): Promise<Re
   const type = url.searchParams.get('type');
   if (type !== null) {
     filter.type = type;
+  }
+
+  const tags = url.searchParams.getAll('tag');
+  if (tags.length > 0) {
+    try {
+      filter.tags = coerceStartWorkflowTags(tags, 'Query parameter "tag"');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(message, 400);
+    }
   }
 
   const limit = url.searchParams.get('limit');
@@ -512,6 +529,64 @@ async function handleSetAttributes(
   await engine.setAttributes(workflowId, incoming as Record<string, SearchAttributeValue>);
 
   return jsonResponse({ ok: true });
+}
+
+function getWorkflowTagBodyValue(body: Record<string, unknown>): string[] {
+  return coerceStartWorkflowTags(body['tags'], 'Field "tags"');
+}
+
+async function handleAddWorkflowTags(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  try {
+    await engine.addTags(workflowId, ...getWorkflowTagBodyValue(body));
+    return jsonResponse({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('not found')) {
+      return errorResponse(message, 404);
+    }
+    if (error instanceof StartWorkflowValidationError) {
+      return errorResponse(message, 400);
+    }
+    return errorResponse(message, 500);
+  }
+}
+
+async function handleRemoveWorkflowTags(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  try {
+    await engine.removeTags(workflowId, ...getWorkflowTagBodyValue(body));
+    return jsonResponse({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('not found')) {
+      return errorResponse(message, 404);
+    }
+    if (error instanceof StartWorkflowValidationError) {
+      return errorResponse(message, 400);
+    }
+    return errorResponse(message, 500);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -884,6 +959,10 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   getAttributes: async ({ engine, param }) => handleGetAttributes(engine, param('id')),
   setAttributes: async ({ request, engine, param }) =>
     handleSetAttributes(request, engine, param('id')),
+  addWorkflowTags: async ({ request, engine, param }) =>
+    handleAddWorkflowTags(request, engine, param('id')),
+  removeWorkflowTags: async ({ request, engine, param }) =>
+    handleRemoveWorkflowTags(request, engine, param('id')),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
   getWorkflowEvents: async ({ engine, param }) => handleGetWorkflowEvents(engine, param('id')),

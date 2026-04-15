@@ -91,6 +91,7 @@ import {
   StartWorkflowValidationError,
   assertExclusiveStartWorkflowOptions,
   coerceStartWorkflowId,
+  coerceStartWorkflowTags,
   coerceStartWorkflowTimestamp,
   parseStartWorkflowDuration,
 } from './start-workflow-validation.ts';
@@ -138,6 +139,12 @@ import {
   migrateCheckpoint,
 } from './versioning.ts';
 import { WorkerExecutionStrategy } from './worker-execution-strategy.ts';
+import {
+  buildWorkflowTagIndexOperations,
+  isWorkflowTagArray,
+  matchesWorkflowTagFilter,
+  normalizeWorkflowTags,
+} from './workflow-tags.ts';
 import {
   collectToolVersions,
   diffWorkflowVersionTuples,
@@ -314,6 +321,10 @@ function isValidDecodedTenant(
   return true;
 }
 
+function isValidDecodedTags(value: unknown): value is string[] | undefined {
+  return value === undefined || isWorkflowTagArray(value);
+}
+
 function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
   // bytes were written by encode(WorkflowState) — shape is guaranteed by our own storage
   const state = decode(bytes) as WorkflowState;
@@ -330,6 +341,13 @@ function decodeWorkflowState(bytes: Uint8Array): WorkflowState {
         `the storage record.`,
     );
     delete state.tenant;
+  }
+  if (!isValidDecodedTags(state.tags)) {
+    console.warn(
+      `[weft] Decoded workflow state for "${String(state.id)}" has invalid tags; ` +
+        'dropping the malformed tag list from the decoded state.',
+    );
+    delete state.tags;
   }
   return state;
 }
@@ -571,6 +589,10 @@ function matchesListFilter(
     }
   }
 
+  if (!matchesWorkflowTagFilter(state.tags, filter?.tags)) {
+    return false;
+  }
+
   return filter?.type === undefined || state.type === filter.type;
 }
 
@@ -641,6 +663,14 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
 
   async setAttributes(attributes: Record<string, SearchAttributeValue>): Promise<void> {
     return this.#engine.setAttributes(this.id, attributes);
+  }
+
+  async addTags(...tags: string[]): Promise<void> {
+    return this.#engine.addTags(this.id, ...tags);
+  }
+
+  async removeTags(...tags: string[]): Promise<void> {
+    return this.#engine.removeTags(this.id, ...tags);
   }
 
   async *[Symbol.asyncIterator](): AsyncIterableIterator<Event> {
@@ -1441,6 +1471,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#pendingParentHeaders = undefined;
     const submissionTime = this.#options.getNow();
     const scheduledStartAt = this.#resolveScheduledStartAt(options, submissionTime);
+    const normalizedTags = this.#normalizeStartWorkflowTags(options?.tags);
     const delayedStartTimer =
       scheduledStartAt !== undefined && scheduledStartAt > submissionTime
         ? this.#createDelayedStartTimerEntry(workflowId, scheduledStartAt, options)
@@ -1478,6 +1509,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         input,
         versionTuple,
         options,
+        normalizedTags,
         tenant,
         delayedStartTimer,
       );
@@ -1704,6 +1736,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           id: state.id,
           type: state.type,
           status: state.status,
+          ...(state.tags !== undefined && { tags: state.tags }),
           version: state.version,
           createdAt: state.createdAt,
           updatedAt: state.updatedAt,
@@ -1722,6 +1755,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         id: state.id,
         type: state.type,
         status: state.status,
+        ...(state.tags !== undefined && { tags: state.tags }),
         version: state.version,
         createdAt: state.createdAt,
         updatedAt: state.updatedAt,
@@ -1890,6 +1924,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     input: unknown,
     versionTuple: WorkflowVersionTuple,
     options?: StartOptions,
+    tags?: string[],
     tenant?: import('./tenant.ts').TenantContext,
     delayedStartTimer?: TimerEntry,
   ): WorkflowState {
@@ -1903,6 +1938,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       createdAt: now,
       ...(!delayedStartTimer && { startedAt: now }),
       updatedAt: now,
+      ...(tags !== undefined && { tags }),
       ...(versionTuple.agentVersion !== undefined && {
         agentVersion: versionTuple.agentVersion,
       }),
@@ -1983,6 +2019,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         key: KEYS.checkpoint(workflowId),
         value: serializeCheckpoint(checkpoint),
       },
+      ...buildWorkflowTagIndexOperations(workflowId, undefined, state.tags),
       ...this.#buildInitialSearchAttributeOperations(
         workflowId,
         registration,
@@ -2233,7 +2270,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   async #resolveConstrainedIds(filter?: ListFilter): Promise<Set<string> | null> {
     const attributeFilters = filter?.attributes;
-    if (!attributeFilters || attributeFilters.length === 0) {
+    const tagFilters = normalizeWorkflowTags(filter?.tags);
+    const hasAttributeFilters = attributeFilters !== undefined && attributeFilters.length > 0;
+    const hasTagFilters = tagFilters !== undefined && tagFilters.length > 0;
+
+    if (!hasAttributeFilters && !hasTagFilters) {
       return null;
     }
 
@@ -2243,18 +2284,27 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // and writes the result into its original index. JavaScript is
     // single-threaded, so the `nextIndex += 1` read-modify-write is atomic
     // across event-loop yields.
-    const idSets: Array<Set<string> | undefined> = Array.from({
-      length: attributeFilters.length,
-    });
-    const workerLimit = Math.max(1, Math.min(ATTRIBUTE_SCAN_CONCURRENCY, attributeFilters.length));
+    const queries: Array<() => Promise<Set<string>>> = [];
+    if (tagFilters) {
+      for (const tag of tagFilters) {
+        queries.push(() => this.#queryTagIndex(tag));
+      }
+    }
+    if (attributeFilters) {
+      for (const attributeFilter of attributeFilters) {
+        queries.push(() => this.#queryAttributeIndex(attributeFilter));
+      }
+    }
+
+    const idSets: Array<Set<string> | undefined> = Array.from({ length: queries.length });
+    const workerLimit = Math.max(1, Math.min(ATTRIBUTE_SCAN_CONCURRENCY, queries.length));
     let nextIndex = 0;
     const runWorker = async (): Promise<void> => {
       while (true) {
         const currentIndex = nextIndex;
         nextIndex += 1;
-        if (currentIndex >= attributeFilters.length) return;
-        const attributeFilter = attributeFilters[currentIndex]!;
-        idSets[currentIndex] = await this.#queryAttributeIndex(attributeFilter);
+        if (currentIndex >= queries.length) return;
+        idSets[currentIndex] = await queries[currentIndex]!();
       }
     };
     const workers: Promise<void>[] = [];
@@ -2319,6 +2369,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
             ids.add(workflowId);
           }
         }
+      }
+    }
+
+    return ids;
+  }
+
+  async #queryTagIndex(tag: string): Promise<Set<string>> {
+    const ids = new Set<string>();
+    const prefix = `tag:${encodeStorageKeyComponent(tag)}:`;
+
+    for await (const [key] of this.#storage.scan(prefix)) {
+      const workflowId = tryDecodeStorageKeyComponent(key.slice(prefix.length));
+      if (workflowId !== null) {
+        ids.add(workflowId);
       }
     }
 
@@ -2850,6 +2914,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     ];
 
     await this.#storage.batch(operations);
+  }
+
+  /** Add one or more tags to a workflow. */
+  async addTags(workflowId: string, ...tags: string[]): Promise<void> {
+    await this.#mutateWorkflowTags(workflowId, tags, 'add');
+  }
+
+  /** Remove one or more tags from a workflow. */
+  async removeTags(workflowId: string, ...tags: string[]): Promise<void> {
+    await this.#mutateWorkflowTags(workflowId, tags, 'remove');
   }
 
   /** Validate that all attribute values in a record fit within the storage key size limit. */
@@ -5386,6 +5460,64 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     };
 
     await this.#storage.put(KEYS.workflow(workflowId), encode(updated));
+  }
+
+  #normalizeStartWorkflowTags(tags: unknown): string[] | undefined {
+    if (tags === undefined) {
+      return undefined;
+    }
+
+    return normalizeWorkflowTags(coerceStartWorkflowTags(tags, 'options.tags'));
+  }
+
+  async #mutateWorkflowTags(
+    workflowId: string,
+    tags: string[],
+    mode: 'add' | 'remove',
+  ): Promise<void> {
+    const bytes = await this.#storage.get(KEYS.workflow(workflowId));
+    if (!bytes) {
+      throw new Error(`Workflow "${workflowId}" not found`);
+    }
+
+    const state = decodeWorkflowState(bytes);
+    const currentTags = normalizeWorkflowTags(state.tags) ?? [];
+    const requestedTags = this.#normalizeStartWorkflowTags(tags) ?? [];
+    if (requestedTags.length === 0) {
+      return;
+    }
+
+    const nextTagSet = new Set(currentTags);
+    for (const tag of requestedTags) {
+      if (mode === 'add') {
+        nextTagSet.add(tag);
+      } else {
+        nextTagSet.delete(tag);
+      }
+    }
+
+    const nextTags = normalizeWorkflowTags([...nextTagSet]);
+    const unchanged =
+      currentTags.length === (nextTags?.length ?? 0) &&
+      currentTags.every((tag, index) => tag === nextTags?.[index]);
+    if (unchanged) {
+      return;
+    }
+
+    const updatedState: WorkflowState = {
+      ...state,
+      updatedAt: this.#options.getNow(),
+    };
+    if (nextTags !== undefined) {
+      updatedState.tags = nextTags;
+    } else {
+      delete updatedState.tags;
+    }
+
+    await this.#storage.batch([
+      { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
+      ...buildWorkflowTagIndexOperations(workflowId, currentTags, nextTags),
+    ]);
   }
 
   async #loadWorkflowState(workflowId: string): Promise<WorkflowState | null> {

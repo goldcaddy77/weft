@@ -94,6 +94,17 @@ describe('HttpClient', () => {
       const result = await handle.result();
       expect(result).toBe(42);
     });
+
+    it('forwards StartOptions.tags through the HTTP client', async () => {
+      const handle = await client.start('echo', 'tagged', {
+        id: 'http-client-tags',
+        tags: ['nightly', 'v2'],
+      });
+      await handle.result();
+
+      const state = await client.get('http-client-tags');
+      expect(state?.tags).toEqual(['nightly', 'v2']);
+    });
   });
 
   describe('get', () => {
@@ -124,6 +135,22 @@ describe('HttpClient', () => {
     it('filters by status', async () => {
       const result = await client.list({ status: 'completed' });
       expect(result.items.every((item) => item.status === 'completed')).toBe(true);
+    });
+
+    it('filters by repeated tag query parameters', async () => {
+      const firstHandle = await client.start('echo', 'one', {
+        id: 'http-tag-wf-1',
+        tags: ['nightly', 'v2', 'release-candidate'],
+      });
+      const secondHandle = await client.start('echo', 'two', {
+        id: 'http-tag-wf-2',
+        tags: ['nightly'],
+      });
+      await firstHandle.result();
+      await secondHandle.result();
+
+      const result = await client.list({ tags: ['nightly', 'v2', 'release-candidate'] });
+      expect(result.items.map((item) => item.id)).toEqual(['http-tag-wf-1']);
     });
   });
 
