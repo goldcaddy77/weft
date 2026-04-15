@@ -76,16 +76,20 @@ export function coerceStartWorkflowDuration(value: unknown, fieldName: string): 
   return value;
 }
 
+export function assertWorkflowTagCount(tags: readonly unknown[], fieldName: string): void {
+  if (tags.length > MAX_WORKFLOW_TAGS) {
+    throw new StartWorkflowValidationError(
+      `${fieldName} must contain at most ${MAX_WORKFLOW_TAGS} tags`,
+    );
+  }
+}
+
 export function coerceStartWorkflowTags(value: unknown, fieldName: string): string[] {
   if (!Array.isArray(value)) {
     throw new StartWorkflowValidationError(`${fieldName} must be an array of strings`);
   }
 
-  if (value.length > MAX_WORKFLOW_TAGS) {
-    throw new StartWorkflowValidationError(
-      `${fieldName} must contain at most ${MAX_WORKFLOW_TAGS} tags`,
-    );
-  }
+  assertWorkflowTagCount(value, fieldName);
 
   const tags: string[] = [];
   for (const tag of value) {

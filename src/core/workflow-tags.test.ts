@@ -84,6 +84,30 @@ describe('workflow tags', () => {
     }
   });
 
+  it('handle.addTags(...tags) enforces the total tag count after combining with existing tags', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      const handle = await engine.start('wait-for-signal', 'payload', {
+        id: 'tag-limit-after-add',
+        tags: Array.from({ length: MAX_WORKFLOW_TAGS - 1 }, (_, index) => `tag-${index}`),
+      });
+      await Bun.sleep(10);
+
+      await expect(handle.addTags('overflow-a', 'overflow-b')).rejects.toThrow(
+        `Workflow tags must contain at most ${MAX_WORKFLOW_TAGS} tags`,
+      );
+
+      const state = await engine.get('tag-limit-after-add');
+      expect(state?.tags).toHaveLength(MAX_WORKFLOW_TAGS - 1);
+      expect(state?.tags).not.toContain('overflow-a');
+      expect(state?.tags).not.toContain('overflow-b');
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
   it("engine.list({ tags: ['nightly', 'v2'] }) filters by tag intersection", async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
     engine.register('echo', echoWorkflow);
@@ -99,7 +123,7 @@ describe('workflow tags', () => {
       await secondHandle.result();
       await thirdHandle.result();
 
-      const result = await engine.list({ tags: ['nightly', 'v2'] });
+      const result = await engine.list({ tags: [' nightly ', 'v2', 'nightly'] });
 
       expect(result.total).toBe(1);
       expect(result.items.map((item) => item.id)).toEqual(['wf-1']);

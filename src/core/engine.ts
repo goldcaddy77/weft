@@ -90,6 +90,7 @@ import {
 import {
   StartWorkflowValidationError,
   assertExclusiveStartWorkflowOptions,
+  assertWorkflowTagCount,
   coerceStartWorkflowId,
   coerceStartWorkflowTags,
   coerceStartWorkflowTimestamp,
@@ -577,6 +578,7 @@ function matchesListFilter(
   state: WorkflowState,
   filter: ListFilter | undefined,
   constrainedIds: Set<string> | null,
+  normalizedTagFilters: readonly string[] | undefined,
 ): boolean {
   if (constrainedIds !== null && !constrainedIds.has(state.id)) {
     return false;
@@ -589,7 +591,7 @@ function matchesListFilter(
     }
   }
 
-  if (!matchesWorkflowTagFilter(state.tags, filter?.tags)) {
+  if (!matchesWorkflowTagFilter(state.tags, normalizedTagFilters)) {
     return false;
   }
 
@@ -1704,7 +1706,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
-    const constrainedIds = await this.#resolveConstrainedIds(filter);
+    const normalizedTagFilters = normalizeWorkflowTags(filter?.tags);
+    const constrainedIds = await this.#resolveConstrainedIds(filter, normalizedTagFilters);
 
     const items: WorkflowSummary[] = [];
 
@@ -1730,7 +1733,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         if (!stateBytes) continue;
 
         const state = decodeWorkflowState(stateBytes);
-        if (!matchesListFilter(state, filter, constrainedIds)) continue;
+        if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
 
         items.push({
           id: state.id,
@@ -1749,7 +1752,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (!this.#isTopLevelWorkflowStateKey(key)) continue;
 
       const state = decodeWorkflowState(value);
-      if (!matchesListFilter(state, filter, constrainedIds)) continue;
+      if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
 
       items.push({
         id: state.id,
@@ -2268,11 +2271,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     });
   }
 
-  async #resolveConstrainedIds(filter?: ListFilter): Promise<Set<string> | null> {
+  async #resolveConstrainedIds(
+    filter: ListFilter | undefined,
+    normalizedTagFilters: readonly string[] | undefined,
+  ): Promise<Set<string> | null> {
     const attributeFilters = filter?.attributes;
-    const tagFilters = normalizeWorkflowTags(filter?.tags);
     const hasAttributeFilters = attributeFilters !== undefined && attributeFilters.length > 0;
-    const hasTagFilters = tagFilters !== undefined && tagFilters.length > 0;
+    const hasTagFilters = normalizedTagFilters !== undefined && normalizedTagFilters.length > 0;
 
     if (!hasAttributeFilters && !hasTagFilters) {
       return null;
@@ -2285,8 +2290,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // single-threaded, so the `nextIndex += 1` read-modify-write is atomic
     // across event-loop yields.
     const queries: Array<() => Promise<Set<string>>> = [];
-    if (tagFilters) {
-      for (const tag of tagFilters) {
+    if (normalizedTagFilters) {
+      for (const tag of normalizedTagFilters) {
         queries.push(() => this.#queryTagIndex(tag));
       }
     }
@@ -5497,6 +5502,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const nextTags = normalizeWorkflowTags([...nextTagSet]);
+    if (mode === 'add' && nextTags !== undefined) {
+      assertWorkflowTagCount(nextTags, 'Workflow tags');
+    }
     const unchanged =
       currentTags.length === (nextTags?.length ?? 0) &&
       currentTags.every((tag, index) => tag === nextTags?.[index]);
