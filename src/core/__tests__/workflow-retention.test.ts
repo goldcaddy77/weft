@@ -71,6 +71,7 @@ class RecordingMemoryStorage extends MemoryStorage {
 
 class CountingWorkflowStateScanStorage extends MemoryStorage {
   topLevelWorkflowStateEntriesSeen = 0;
+  terminalWorkflowIndexEntriesSeen = 0;
 
   override async *scan(
     prefix: string,
@@ -81,12 +82,16 @@ class CountingWorkflowStateScanStorage extends MemoryStorage {
       if (prefix === 'wf:' && !key.slice(3).includes(':')) {
         this.topLevelWorkflowStateEntriesSeen += 1;
       }
+      if (prefix === KEYS.terminalWorkflowPrefix()) {
+        this.terminalWorkflowIndexEntriesSeen += 1;
+      }
       yield entry;
     }
   }
 
   resetTopLevelWorkflowStateEntriesSeen(): void {
     this.topLevelWorkflowStateEntriesSeen = 0;
+    this.terminalWorkflowIndexEntriesSeen = 0;
   }
 }
 
@@ -340,6 +345,7 @@ describe('workflow retention', () => {
     expect(await collectKeys(storage, `blob:${handle.id}:`)).toEqual([]);
     expect(await collectKeys(storage, `shared:${handle.id}:`)).toEqual([]);
     expect(await collectKeys(storage, `idx:priority:`)).toEqual([]);
+    expect(await collectKeys(storage, KEYS.terminalWorkflowPrefix())).toEqual([]);
 
     engine[Symbol.dispose]();
   });
@@ -466,9 +472,15 @@ describe('workflow retention', () => {
     const handle = await engine.start('retained', null, { id: 'retained-running' });
     await waitForRunningWorkflow(engine, handle.id);
 
+    const initialNextSweepAt = engine.getRetentionOverview().nextSweepAt;
     await waitForCondition(
-      async () => storage.topLevelWorkflowStateEntriesSeen > 0,
-      'Expected the retention sweep to scan workflow states while retention is configured',
+      async () => {
+        const nextSweepAt = engine.getRetentionOverview().nextSweepAt;
+        return (
+          initialNextSweepAt !== null && nextSweepAt !== null && nextSweepAt > initialNextSweepAt
+        );
+      },
+      'Expected the retention sweep interval to remain active while retention is configured',
       500,
     );
 
@@ -512,6 +524,46 @@ describe('workflow retention', () => {
     expect(await engine.get('purge-limit-b')).not.toBeNull();
     expect(await engine.get('purge-limit-c')).not.toBeNull();
 
+    engine[Symbol.dispose]();
+  });
+
+  it('retention sweep scans the terminal-workflow index instead of top-level workflow state rows', async () => {
+    let now = 10_000;
+    const storage = new CountingWorkflowStateScanStorage();
+    const engine = new Engine({
+      storage,
+      getNow: () => now,
+      retention: {
+        completed: '5s',
+      },
+      retentionSweepInterval: '10ms',
+      retentionSweepBatchSize: 1,
+    });
+
+    engine.register('retention-expired', async function* () {
+      return 'done';
+    });
+    engine.register('retention-running', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('continue');
+      return 'done';
+    });
+
+    await createCompletedWorkflow(engine, 'retention-expired', 'retention-expired-target');
+    const runningHandle = await engine.start('retention-running', null, {
+      id: 'retention-running-target',
+    });
+    await waitForRunningWorkflow(engine, runningHandle.id);
+
+    storage.resetTopLevelWorkflowStateEntriesSeen();
+    now += 6_000;
+
+    await waitForWorkflowPresence(engine, 'retention-expired-target', false);
+
+    expect(storage.topLevelWorkflowStateEntriesSeen).toBe(0);
+    expect(storage.terminalWorkflowIndexEntriesSeen).toBeGreaterThan(0);
+
+    await engine.cancel(runningHandle.id);
+    await runningHandle.result().catch(() => {});
     engine[Symbol.dispose]();
   });
 });
