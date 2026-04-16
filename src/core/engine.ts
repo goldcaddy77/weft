@@ -300,7 +300,7 @@ function callMemoFunction(fn: Function): unknown {
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object';
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isValidScheduleTimestamp(value: unknown): value is number {
@@ -5627,11 +5627,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       await this.#writeScheduleState(nextState);
     } catch (error) {
+      const errorNow = this.#options.getNow();
       const pausedState: ScheduleState = {
         ...nextState,
         status: 'paused',
-        updatedAt: this.#options.getNow(),
-        nextFireAt: getNextCronOccurrence(nextState.cronExpression, this.#options.getNow()),
+        updatedAt: errorNow,
+        nextFireAt: getNextCronOccurrence(nextState.cronExpression, errorNow),
       };
 
       await this.#writeScheduleState(pausedState, { includeTimer: false });

@@ -288,32 +288,26 @@ export class Scheduler implements Disposable {
     { respectStopped }: { respectStopped: boolean },
   ): Promise<void> {
     const currentTime = now ?? this.#getNow();
-    const deadlineIterator = this.#storage
-      .scan('wf-deadline:', {
-        lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
-      })
-      [Symbol.asyncIterator]();
-    const delayedStartIterator = this.#storage
-      .scan('wf-delayed:', {
-        lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
-      })
-      [Symbol.asyncIterator]();
-    const scheduleIterator = this.#storage
-      .scan('schedule-due:', {
-        lt: resolvePrefixRangeEnd(KEYS.scheduleTick(currentTime, '')),
-      })
-      [Symbol.asyncIterator]();
+    const deadlineIterator = this.#storage.scan('wf-deadline:', {
+      lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
+    });
+    const delayedStartIterator = this.#storage.scan('wf-delayed:', {
+      lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
+    });
+    const scheduleIterator = this.#storage.scan('schedule-due:', {
+      lt: resolvePrefixRangeEnd(KEYS.scheduleTick(currentTime, '')),
+    });
     const timerSources = [
       {
-        iterator: deadlineIterator,
+        iterator: deadlineIterator[Symbol.asyncIterator](),
         next: null as ScannedTimerEntry | null,
       },
       {
-        iterator: delayedStartIterator,
+        iterator: delayedStartIterator[Symbol.asyncIterator](),
         next: null as ScannedTimerEntry | null,
       },
       {
-        iterator: scheduleIterator,
+        iterator: scheduleIterator[Symbol.asyncIterator](),
         next: null as ScannedTimerEntry | null,
       },
     ];

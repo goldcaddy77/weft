@@ -58,6 +58,7 @@ class WorkflowStateRaceStorage extends MemoryStorage {
 
 class ScheduleRunStartFailureStorage extends MemoryStorage {
   failQueuedScheduleRunStart = false;
+  queuedScheduleRunStartFailed = false;
 
   override async batch(operations: BatchOperation[]): Promise<void> {
     if (
@@ -66,6 +67,7 @@ class ScheduleRunStartFailureStorage extends MemoryStorage {
         (operation) => operation.type === 'put' && operation.key.startsWith('schedule-run:'),
       )
     ) {
+      this.queuedScheduleRunStartFailed = true;
       throw new Error('simulated queued schedule start failure');
     }
 
@@ -780,6 +782,7 @@ describe('recurring schedules', () => {
         cronExpression: 42,
       }),
     );
+    await storage.put(KEYS.schedule('array-schedule'), encode([]));
     await engine.schedule('validated-schedule-workflow', null, '* * * * *', {
       id: 'missing-next-fire-at',
     });
@@ -797,6 +800,7 @@ describe('recurring schedules', () => {
     await storage.put(KEYS.schedule('missing-next-fire-at'), encode(corruptRuntimeSchedule));
 
     expect(await engine.getSchedule('corrupt-schedule')).toBeNull();
+    expect(await engine.getSchedule('array-schedule')).toBeNull();
     expect(await engine.getSchedule('missing-next-fire-at')).toBeNull();
     const listedSchedules = await engine.listSchedules();
     expect(listedSchedules.items).toEqual([]);
@@ -807,6 +811,48 @@ describe('recurring schedules', () => {
     ).rejects.toThrow('options.overlap');
     await expect(engine.getSchedule('')).rejects.toThrow('scheduleId');
 
+    engine[Symbol.dispose]();
+  });
+
+  it('Pausing a schedule after a timer failure reuses one error timestamp for updatedAt and nextFireAt.', async () => {
+    const storage = new ScheduleRunStartFailureStorage();
+    let stableNow = Date.UTC(2026, 0, 1, 0, 0, 0);
+    let errorNow = stableNow;
+    const engine = new Engine({
+      storage,
+      getNow: () => {
+        if (!storage.queuedScheduleRunStartFailed) {
+          return stableNow;
+        }
+
+        return errorNow++;
+      },
+    });
+    const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    registerWorkflow(engine, 'pause-on-start-failure-workflow', async function* () {
+      return 'done';
+    });
+
+    const schedule = await engine.schedule('pause-on-start-failure-workflow', null, '* * * * * *', {
+      id: 'pause-on-start-failure',
+    });
+    const description = await schedule.describe();
+
+    storage.failQueuedScheduleRunStart = true;
+    stableNow = requireNextFireAt(description) + 995;
+    errorNow = stableNow;
+    await engine.scheduler.tick(requireNextFireAt(description));
+    await drainEngine();
+
+    const pausedSchedule = await schedule.describe();
+    expect(pausedSchedule.status).toBe('paused');
+    expect(pausedSchedule.updatedAt).toBe(stableNow);
+    expect(pausedSchedule.nextFireAt).toBe(
+      getNextCronOccurrence(pausedSchedule.cronExpression, pausedSchedule.updatedAt),
+    );
+
+    consoleErrorSpy.mockRestore();
     engine[Symbol.dispose]();
   });
 
