@@ -462,9 +462,9 @@ async function handlePurgeWorkflows(request: Request, engine: Engine): Promise<R
   let body: unknown = undefined;
 
   try {
-    const contentLength = request.headers.get('Content-Length');
-    if (contentLength !== '0') {
-      body = await request.json();
+    const rawBody = await request.text();
+    if (rawBody.trim() !== '') {
+      body = JSON.parse(rawBody) as unknown;
     }
   } catch {
     return errorResponse('Invalid JSON body', 400);

@@ -45,7 +45,10 @@ function formatNextSweepAt(nextSweepAt: number | null): string {
     return 'Not scheduled';
   }
 
-  return new Date(nextSweepAt).toISOString().replace('T', ' ').replace('.000Z', ' UTC');
+  return new Date(nextSweepAt)
+    .toISOString()
+    .replace('T', ' ')
+    .replace(/\.\d{3}Z$/, ' UTC');
 }
 
 export function buildWorkflowRetentionRows(overview: RetentionOverview): {

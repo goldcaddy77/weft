@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import type { LLMProvider } from '../../ai/providers/interface.ts';
 import type { ChatResponse } from '../../ai/providers/types.ts';
-import type { BatchOperation } from '../../storage/interface.ts';
+import type { BatchOperation, ScanOptions } from '../../storage/interface.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import type { Context } from '../context.ts';
@@ -66,6 +66,27 @@ class RecordingMemoryStorage extends MemoryStorage {
   override async batch(operations: BatchOperation[]): Promise<void> {
     this.batchCalls.push([...operations]);
     await super.batch(operations);
+  }
+}
+
+class CountingWorkflowStateScanStorage extends MemoryStorage {
+  topLevelWorkflowStateEntriesSeen = 0;
+
+  override async *scan(
+    prefix: string,
+    options: ScanOptions = {},
+  ): AsyncIterable<[string, Uint8Array]> {
+    for await (const entry of super.scan(prefix, options)) {
+      const [key] = entry;
+      if (prefix === 'wf:' && !key.slice(3).includes(':')) {
+        this.topLevelWorkflowStateEntriesSeen += 1;
+      }
+      yield entry;
+    }
+  }
+
+  resetTopLevelWorkflowStateEntriesSeen(): void {
+    this.topLevelWorkflowStateEntriesSeen = 0;
   }
 }
 
@@ -421,6 +442,75 @@ describe('workflow retention', () => {
 
     expect(result).toEqual({ deleted: 0 });
     expect(await engine.get('purge-limit-zero')).not.toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
+  it('re-registering a workflow without retention clears the sweep interval when no other retention is configured', async () => {
+    const storage = new CountingWorkflowStateScanStorage();
+    const engine = new Engine({
+      storage,
+      retentionSweepInterval: '30ms',
+    });
+
+    engine.register('retained', {
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('continue');
+        return 'done';
+      },
+      retention: {
+        completed: '1s',
+      },
+    });
+
+    const handle = await engine.start('retained', null, { id: 'retained-running' });
+    await waitForRunningWorkflow(engine, handle.id);
+
+    await waitForCondition(
+      async () => storage.topLevelWorkflowStateEntriesSeen > 0,
+      'Expected the retention sweep to scan workflow states while retention is configured',
+      500,
+    );
+
+    engine.register('retained', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('continue');
+      return 'done';
+    });
+
+    expect(engine.getRetentionOverview().nextSweepAt).toBeNull();
+
+    await Bun.sleep(5);
+    storage.resetTopLevelWorkflowStateEntriesSeen();
+    await Bun.sleep(75);
+
+    expect(storage.topLevelWorkflowStateEntriesSeen).toBe(0);
+
+    await engine.cancel(handle.id);
+    await handle.result().catch(() => {});
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.purge(filter) stops scanning workflow state entries once the limit is reached', async () => {
+    const storage = new CountingWorkflowStateScanStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('limited-purge', async function* () {
+      return 'done';
+    });
+
+    await createCompletedWorkflow(engine, 'limited-purge', 'purge-limit-a');
+    await createCompletedWorkflow(engine, 'limited-purge', 'purge-limit-b');
+    await createCompletedWorkflow(engine, 'limited-purge', 'purge-limit-c');
+
+    storage.resetTopLevelWorkflowStateEntriesSeen();
+
+    const result = await engine.purge({ status: 'completed', limit: 1 });
+
+    expect(result).toEqual({ deleted: 1 });
+    expect(storage.topLevelWorkflowStateEntriesSeen).toBe(1);
+    expect(await engine.get('purge-limit-a')).toBeNull();
+    expect(await engine.get('purge-limit-b')).not.toBeNull();
+    expect(await engine.get('purge-limit-c')).not.toBeNull();
 
     engine[Symbol.dispose]();
   });

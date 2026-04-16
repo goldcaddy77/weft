@@ -1178,6 +1178,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   #ensureRetentionSweepInterval(): void {
     if (!this.#hasConfiguredRetention()) {
+      if (this.#retentionSweepInterval !== null) {
+        clearInterval(this.#retentionSweepInterval);
+        this.#retentionSweepInterval = null;
+      }
       this.#nextRetentionSweepAt = null;
       return;
     }
@@ -1479,6 +1483,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       };
 
       this.#registrations.set(agentDef.name, agentRegistrationEntry);
+      this.#ensureRetentionSweepInterval();
       return;
     }
 
@@ -1541,6 +1546,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         handler: handler as WorkflowFunction,
         version: '1',
       });
+      this.#ensureRetentionSweepInterval();
     }
   }
 
@@ -1904,25 +1910,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return paginateWorkflowSummaries(items, filter);
   }
 
-  async #collectWorkflowStates(filter?: ListFilter): Promise<WorkflowState[]> {
+  async *#streamWorkflowStates(filter?: ListFilter): AsyncGenerator<WorkflowState> {
     const constrainedIds = await this.#resolveConstrainedIds(filter);
-    const items: WorkflowState[] = [];
 
     if (constrainedIds !== null) {
-      const orderedIds = [...constrainedIds];
-      const stateBytesList = await Promise.all(
-        orderedIds.map((workflowId) => this.#storage.get(KEYS.workflow(workflowId))),
-      );
-
-      for (const stateBytes of stateBytesList) {
+      for (const workflowId of constrainedIds) {
+        const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
         if (!stateBytes) continue;
 
         const state = decodeWorkflowState(stateBytes);
         if (!matchesListFilter(state, filter, constrainedIds)) continue;
-        items.push(state);
+        yield state;
       }
 
-      return items;
+      return;
     }
 
     for await (const [key, value] of this.#storage.scan('wf:')) {
@@ -1930,10 +1931,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       const state = decodeWorkflowState(value);
       if (!matchesListFilter(state, filter, constrainedIds)) continue;
-      items.push(state);
+      yield state;
     }
-
-    return items;
   }
 
   #resolveWorkflowTypeRetention(type: string): WorkflowTypeRetentionPolicy {
@@ -2039,7 +2038,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       limit?: number;
     },
   ): Promise<PurgeResult> {
-    const workflowStates = await this.#collectWorkflowStates(filter);
     const { effectiveLimit, manualOffset } = this.#resolvePurgeWindow(filter, parameters.limit);
 
     if (effectiveLimit === 0) {
@@ -2049,7 +2047,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     let remainingOffset = manualOffset;
     let deleted = 0;
 
-    for (const state of workflowStates) {
+    for await (const state of this.#streamWorkflowStates(filter)) {
       if (!this.#shouldPurgeWorkflowState(state, parameters.expiredOnly, parameters.now)) {
         continue;
       }

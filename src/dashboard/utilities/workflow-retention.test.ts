@@ -15,7 +15,7 @@ describe('workflow retention utilities', () => {
     const rows = buildWorkflowRetentionRows({
       sweepIntervalMs: 300_000,
       sweepBatchSize: 1000,
-      nextSweepAt: 1_700_000_000_000,
+      nextSweepAt: 1_700_000_000_123,
       defaultRetention: { completed: 300_000 },
       workflowTypes: [
         {

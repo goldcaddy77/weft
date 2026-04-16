@@ -304,6 +304,21 @@ describe('handleRequest', () => {
     expect(await engine.get('purge-delete')).toBeNull();
   });
 
+  it('POST /v1/workflows/purge accepts an empty request body', async () => {
+    engine = createEngine();
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'delete', id: 'purge-empty-body' }),
+      engine,
+    );
+    await flush();
+
+    const response = await handleRequest(request('POST', '/v1/workflows/purge'), engine);
+
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual({ deleted: 1 });
+    expect(await engine.get('purge-empty-body')).toBeNull();
+  });
+
   it('POST /v1/workflows/purge honors attribute filters, offset, and limit', async () => {
     engine = createEngine();
     await handleRequest(
