@@ -71,6 +71,55 @@ describe('handleRequest', () => {
     expect(body.paths['/v1/workflows']).toBeDefined();
   });
 
+  it('GET /v1/retention returns the retention overview used by the dashboard', async () => {
+    engine = new Engine({
+      storage: new MemoryStorage(),
+      retention: {
+        completed: '5m',
+      },
+    });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    engine.register('slow-cleanup', {
+      handler: async function* () {
+        return 'done';
+      },
+      retention: {
+        completed: '1h',
+      },
+    });
+
+    const response = await handleRequest(request('GET', '/v1/retention'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as {
+      sweepIntervalMs: number;
+      nextSweepAt: number | null;
+      workflowTypes: Array<{
+        type: string;
+        source: string;
+        retention: { completed?: number } | null;
+      }>;
+    };
+    expect(body.sweepIntervalMs).toBe(300_000);
+    expect(body.nextSweepAt).not.toBeNull();
+    expect(body.workflowTypes).toContainEqual(
+      expect.objectContaining({
+        type: 'echo',
+        source: 'engine',
+        retention: expect.objectContaining({ completed: 300_000 }),
+      }),
+    );
+    expect(body.workflowTypes).toContainEqual(
+      expect.objectContaining({
+        type: 'slow-cleanup',
+        source: 'workflow',
+        retention: expect.objectContaining({ completed: 3_600_000 }),
+      }),
+    );
+  });
+
   // 2. Start workflow with valid body
   it('POST /v1/workflows with valid body returns 201 with id', async () => {
     engine = createEngine();
@@ -225,6 +274,34 @@ describe('handleRequest', () => {
     expect(response.status).toBe(201);
     const body = (await json(response)) as { id: string };
     expect(body.id).toBe(customId);
+  });
+
+  it('POST /v1/workflows/purge manually triggers retention cleanup for matching terminal workflows', async () => {
+    engine = createEngine();
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'keep', id: 'purge-keep' }),
+      engine,
+    );
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'delete', id: 'purge-delete' }),
+      engine,
+    );
+    await flush();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows/purge', {
+        filter: {
+          status: 'completed',
+          type: 'echo',
+        },
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual({ deleted: 2 });
+    expect(await engine.get('purge-keep')).toBeNull();
+    expect(await engine.get('purge-delete')).toBeNull();
   });
 
   // 12. Start workflow with executionTimeout passes it through

@@ -109,8 +109,12 @@ import type {
   EngineOptions,
   FailureCategory,
   ListFilter,
+  NormalizedRetentionPolicy,
   OperationOutcome,
   PaginatedResult,
+  PurgeResult,
+  RetentionOverview,
+  RetentionPolicy,
   SearchAttributeSchema,
   SearchAttributeValue,
   StartOptions,
@@ -124,6 +128,11 @@ import type {
   WorkflowState,
   WorkflowStatus,
   WorkflowSummary,
+  WorkflowTypeRetentionPolicy,
+} from './types.ts';
+import {
+  DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
+  DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
 } from './types.ts';
 import {
   UpdateCoordinator,
@@ -160,6 +169,7 @@ interface RegistrationEntry {
   version: string;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
+  retention?: NormalizedRetentionPolicy;
   /** True when this registration originated from an AgentDefinition. */
   isAgent?: boolean;
   /** LLM provider for agent-typed registrations (used for connection pre-warming). */
@@ -185,6 +195,9 @@ interface ResolvedOptions {
   checkpointSizeWarningThreshold: number;
   maxNestingDepth: number;
   broadcastEvents: boolean;
+  retention: NormalizedRetentionPolicy | null;
+  retentionSweepIntervalMs: number;
+  retentionSweepBatchSize: number;
   getNow: () => number;
   tenantResolver: import('./tenant.ts').TenantResolver | undefined;
 }
@@ -454,6 +467,98 @@ function selectPersistedWorkflowStartHeaders(
   return persistedHeaders.size > 0 ? persistedHeaders : undefined;
 }
 
+function normalizeRetentionDuration(
+  value: import('./types.ts').Duration | undefined,
+  fieldName: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const milliseconds = parseStartWorkflowDuration(value, fieldName);
+  return Math.ceil(milliseconds);
+}
+
+function normalizeRetentionPolicy(
+  policy: RetentionPolicy | undefined,
+  context: string,
+): NormalizedRetentionPolicy | null {
+  if (!policy) {
+    return null;
+  }
+
+  const normalized: NormalizedRetentionPolicy = {};
+  const completed = normalizeRetentionDuration(policy.completed, `${context}.completed`);
+  const failed = normalizeRetentionDuration(policy.failed, `${context}.failed`);
+  const cancelled = normalizeRetentionDuration(policy.cancelled, `${context}.cancelled`);
+  const timedOut = normalizeRetentionDuration(policy.timedOut, `${context}.timedOut`);
+
+  if (completed !== undefined) {
+    normalized.completed = completed;
+  }
+  if (failed !== undefined) {
+    normalized.failed = failed;
+  }
+  if (cancelled !== undefined) {
+    normalized.cancelled = cancelled;
+  }
+  if (timedOut !== undefined) {
+    normalized.timedOut = timedOut;
+  }
+
+  const isEmpty =
+    normalized.completed === undefined &&
+    normalized.failed === undefined &&
+    normalized.cancelled === undefined &&
+    normalized.timedOut === undefined;
+
+  return isEmpty ? null : normalized;
+}
+
+function resolveRetentionForStatus(
+  policy: NormalizedRetentionPolicy | null | undefined,
+  status: WorkflowStatus,
+): number | undefined {
+  switch (status) {
+    case 'completed':
+      return policy?.completed;
+    case 'failed':
+      return policy?.failed;
+    case 'cancelled':
+      return policy?.cancelled;
+    case 'timed-out':
+      return policy?.timedOut;
+    default:
+      return undefined;
+  }
+}
+
+function isTerminalWorkflowStatus(status: WorkflowStatus): boolean {
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'timed-out'
+  );
+}
+
+async function collectKeysForPrefix(storage: WeftStorage, prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+
+  if (storage.keys) {
+    for await (const key of storage.keys(prefix)) {
+      keys.push(key);
+    }
+    return keys;
+  }
+
+  for await (const [key] of storage.scan(prefix)) {
+    keys.push(key);
+  }
+
+  return keys;
+}
+
 function resolveEngineOptions(
   storage: WeftStorage,
   options: EngineConstructorOptions | undefined,
@@ -466,6 +571,16 @@ function resolveEngineOptions(
     checkpointSizeWarningThreshold: options?.checkpointSizeWarningThreshold ?? 65_536,
     maxNestingDepth: options?.maxNestingDepth ?? 10,
     broadcastEvents: options?.broadcastEvents ?? false,
+    retention: normalizeRetentionPolicy(options?.retention, 'options.retention'),
+    retentionSweepIntervalMs:
+      normalizeRetentionDuration(
+        options?.retentionSweepInterval,
+        'options.retentionSweepInterval',
+      ) ?? DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
+    retentionSweepBatchSize:
+      options?.retentionSweepBatchSize !== undefined
+        ? Math.max(1, Math.floor(options.retentionSweepBatchSize))
+        : DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
     getNow,
     tenantResolver: options?.tenantResolver,
   };
@@ -926,6 +1041,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    */
   #chargedAgentOperationsByWorkflow: Map<string, Set<string>>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
+  #retentionSweepInterval: ReturnType<typeof setInterval> | null;
+  #nextRetentionSweepAt: number | null;
   #defaultModelRouter: import('../ai/model-router.ts').ModelRouter | undefined;
   #reviewCoordinator: ReviewCoordinator;
   #reviewWaiters: Map<string, (decision: HumanReviewResult) => void>;
@@ -1029,6 +1146,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       ),
       60_000,
     );
+    this.#retentionSweepInterval = null;
+    this.#nextRetentionSweepAt = null;
 
     this.#activityWorkerDispatcher = createActivityWorkerDispatcher(options?.activityExecution);
 
@@ -1036,6 +1155,54 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#strategy.onMessage(this.#handleStrategyMessage.bind(this));
 
     this.#alertManager = createAlertManagerForEngine(this, options?.alerts, getNow);
+    this.#ensureRetentionSweepInterval();
+  }
+
+  #hasConfiguredRetention(): boolean {
+    if (this.#options.retention !== null) {
+      return true;
+    }
+
+    for (const registration of this.#registrations.values()) {
+      if (registration.retention !== undefined && registration.retention !== null) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  #setNextRetentionSweepAt(): void {
+    this.#nextRetentionSweepAt = this.#options.getNow() + this.#options.retentionSweepIntervalMs;
+  }
+
+  #ensureRetentionSweepInterval(): void {
+    if (!this.#hasConfiguredRetention()) {
+      this.#nextRetentionSweepAt = null;
+      return;
+    }
+
+    if (this.#retentionSweepInterval !== null) {
+      return;
+    }
+
+    this.#setNextRetentionSweepAt();
+    this.#retentionSweepInterval = setInterval(() => {
+      this.#setNextRetentionSweepAt();
+      void this.#runRetentionSweep();
+    }, this.#options.retentionSweepIntervalMs);
+  }
+
+  async #runRetentionSweep(): Promise<void> {
+    try {
+      await this.#purgeInternal(undefined, {
+        expiredOnly: true,
+        limit: this.#options.retentionSweepBatchSize,
+        now: this.#options.getNow(),
+      });
+    } catch (error) {
+      this.#handleCleanupError('retentionSweep', error);
+    }
   }
 
   async #swallowPromiseRejection(promise: Promise<unknown> | undefined): Promise<void> {
@@ -1329,9 +1496,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     if (isRegistration) {
       const registration = handlerOrRegistration;
+      const normalizedRetention = normalizeRetentionPolicy(
+        registration.retention,
+        `registration("${name}").retention`,
+      );
       const entry: RegistrationEntry = {
         handler: registration.handler,
         version: registration.version ?? '1',
+        ...(normalizedRetention !== null && { retention: normalizedRetention }),
       };
       if (registration.migrate) {
         entry.migrate = registration.migrate;
@@ -1357,6 +1529,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         entry.constraints = registration.constraints;
       }
       this.#registrations.set(name, entry);
+      this.#ensureRetentionSweepInterval();
     } else {
       // Auto-detect step-based (non-generator) workflow functions and compile them
       let handler = handlerOrRegistration;
@@ -1729,6 +1902,191 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     return paginateWorkflowSummaries(items, filter);
+  }
+
+  async #collectWorkflowStates(filter?: ListFilter): Promise<WorkflowState[]> {
+    const constrainedIds = await this.#resolveConstrainedIds(filter);
+    const items: WorkflowState[] = [];
+
+    if (constrainedIds !== null) {
+      const orderedIds = [...constrainedIds];
+      const stateBytesList = await Promise.all(
+        orderedIds.map((workflowId) => this.#storage.get(KEYS.workflow(workflowId))),
+      );
+
+      for (const stateBytes of stateBytesList) {
+        if (!stateBytes) continue;
+
+        const state = decodeWorkflowState(stateBytes);
+        if (!matchesListFilter(state, filter, constrainedIds)) continue;
+        items.push(state);
+      }
+
+      return items;
+    }
+
+    for await (const [key, value] of this.#storage.scan('wf:')) {
+      if (!this.#isTopLevelWorkflowStateKey(key)) continue;
+
+      const state = decodeWorkflowState(value);
+      if (!matchesListFilter(state, filter, constrainedIds)) continue;
+      items.push(state);
+    }
+
+    return items;
+  }
+
+  #resolveWorkflowTypeRetention(type: string): WorkflowTypeRetentionPolicy {
+    const registration = this.#registrations.get(type);
+    if (registration?.retention) {
+      return {
+        type,
+        source: 'workflow',
+        retention: registration.retention,
+      };
+    }
+
+    if (this.#options.retention !== null) {
+      return {
+        type,
+        source: 'engine',
+        retention: this.#options.retention,
+      };
+    }
+
+    return {
+      type,
+      source: 'none',
+      retention: null,
+    };
+  }
+
+  #getWorkflowRetentionDeadline(state: WorkflowState): number | null {
+    if (!isTerminalWorkflowStatus(state.status)) {
+      return null;
+    }
+
+    const policy = this.#resolveWorkflowTypeRetention(state.type).retention;
+    const retentionMs = resolveRetentionForStatus(policy, state.status);
+    if (retentionMs === undefined) {
+      return null;
+    }
+
+    return state.updatedAt + retentionMs;
+  }
+
+  getRetentionOverview(): RetentionOverview {
+    const workflowTypes = [...this.#registrations.keys()]
+      .toSorted()
+      .map((type) => this.#resolveWorkflowTypeRetention(type));
+
+    return {
+      defaultRetention: this.#options.retention,
+      sweepIntervalMs: this.#options.retentionSweepIntervalMs,
+      sweepBatchSize: this.#options.retentionSweepBatchSize,
+      nextSweepAt: this.#nextRetentionSweepAt,
+      workflowTypes,
+    };
+  }
+
+  async purge(filter?: ListFilter): Promise<PurgeResult> {
+    return this.#purgeInternal(filter, {
+      expiredOnly: false,
+      now: this.#options.getNow(),
+    });
+  }
+
+  async #purgeInternal(
+    filter: ListFilter | undefined,
+    parameters: {
+      expiredOnly: boolean;
+      now: number;
+      limit?: number;
+    },
+  ): Promise<PurgeResult> {
+    const workflowStates = await this.#collectWorkflowStates(filter);
+    let deleted = 0;
+
+    for (const state of workflowStates) {
+      if (!isTerminalWorkflowStatus(state.status)) {
+        continue;
+      }
+
+      if (parameters.expiredOnly) {
+        const deadline = this.#getWorkflowRetentionDeadline(state);
+        if (deadline === null || deadline > parameters.now) {
+          continue;
+        }
+      }
+
+      await this.#purgeWorkflow(state);
+      deleted += 1;
+
+      if (parameters.limit !== undefined && deleted >= parameters.limit) {
+        break;
+      }
+    }
+
+    return { deleted };
+  }
+
+  async #purgeWorkflow(state: WorkflowState): Promise<void> {
+    const workflowId = state.id;
+    const encodedWorkflowId = encodeStorageKeyComponent(workflowId);
+    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+    const deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
+    const deleteKeys = new Set<string>([
+      KEYS.workflow(workflowId),
+      KEYS.checkpoint(workflowId),
+      KEYS.workflowHeaders(workflowId),
+      KEYS.attribute(workflowId),
+    ]);
+
+    if (state.executionDeadline !== undefined) {
+      deleteKeys.add(KEYS.deadline(state.executionDeadline, workflowId));
+      deleteKeys.add(`timer-idx:deadline:${workflowId}`);
+    }
+
+    if (attributeBytes) {
+      const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+      deleteOperations.push(...buildIndexOperations(workflowId, currentAttributes, {}));
+    }
+
+    for (const prefix of [
+      `wf:${encodedWorkflowId}:ckpt:`,
+      `ev:${encodedWorkflowId}:`,
+      `sig:${encodedWorkflowId}:`,
+      `review:${encodedWorkflowId}:`,
+      `offload:${encodedWorkflowId}:`,
+      `archive:${encodedWorkflowId}:`,
+      `blob:${encodedWorkflowId}:`,
+      `shared:${encodedWorkflowId}:`,
+      `tool-effect:${encodedWorkflowId}:`,
+      `upd:${encodedWorkflowId}:`,
+      `upk:${encodedWorkflowId}:`,
+    ]) {
+      const keys = await collectKeysForPrefix(this.#storage, prefix);
+      for (const key of keys) {
+        deleteKeys.add(key);
+      }
+    }
+
+    for (const key of deleteKeys) {
+      deleteOperations.push({ type: 'delete', key });
+    }
+
+    await this.#storage.batch(deleteOperations);
+
+    this.#checkpoints.delete(workflowId);
+    this.#heartbeatDetails.delete(workflowId);
+    this.#agentWorkflowIds.delete(workflowId);
+    this.#eventLogHeads.delete(workflowId);
+    this.#workflowVersionTuples.delete(workflowId);
+    this.#handleCache.delete(workflowId);
+    this.#resultResolvers.delete(workflowId);
+    this.#workflowHeaders.delete(workflowId);
+    this.#workflowNestingDepths.delete(workflowId);
+    this.#cleanupWaiters(workflowId);
   }
 
   /** Build a {@link WorkflowVersionTuple} from a {@link RegistrationEntry}. */
@@ -3115,6 +3473,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       clearInterval(this.#cleanupInterval);
       this.#cleanupInterval = null;
     }
+    if (this.#retentionSweepInterval !== null) {
+      clearInterval(this.#retentionSweepInterval);
+      this.#retentionSweepInterval = null;
+    }
+    this.#nextRetentionSweepAt = null;
     this.#handleCache.clear();
     this.#resultResolvers.clear();
     this.#signalWaiters.clear();

@@ -73,6 +73,8 @@ describe('HttpClient', () => {
     expect(client.setBudgetPolicy).toBeFunction();
     expect(client.getBudgetPolicy).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
+    expect(client.getRetentionOverview).toBeFunction();
+    expect(client.purge).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();
     expect(client.getUpdateResult).toBeFunction();
   });
@@ -188,6 +190,54 @@ describe('HttpClient', () => {
     });
   });
 
+  describe('retention surface', () => {
+    it('returns the retention overview from the HTTP server', async () => {
+      const retentionEngine = new Engine({
+        storage: new MemoryStorage(),
+        retention: {
+          completed: '5m',
+        },
+      });
+      retentionEngine.register('retained-echo', echoWorkflow);
+
+      const retentionServer = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          return handleRequest(request, retentionEngine);
+        },
+      });
+
+      try {
+        const retentionClient = new HttpClient({
+          baseUrl: `http://localhost:${retentionServer.port}`,
+        });
+
+        const overview = await retentionClient.getRetentionOverview();
+
+        expect(overview.sweepIntervalMs).toBe(300_000);
+        expect(overview.workflowTypes).toContainEqual(
+          expect.objectContaining({
+            type: 'retained-echo',
+            source: 'engine',
+          }),
+        );
+      } finally {
+        retentionServer.stop(true);
+        await retentionEngine[Symbol.asyncDispose]();
+      }
+    });
+
+    it('purges matching terminal workflows via the HTTP client', async () => {
+      const handle = await client.start('echo', 'data', { id: 'http-purge' });
+      await handle.result();
+
+      const result = await client.purge({ status: 'completed' });
+
+      expect(result.deleted).toBeGreaterThanOrEqual(1);
+      expect(await client.get('http-purge')).toBeNull();
+    });
+  });
+
   describe('same interface as LocalClient', () => {
     it('both export WeftClient-compatible classes', async () => {
       const { LocalClient } = await import('./local.ts');
@@ -217,6 +267,8 @@ describe('HttpClient', () => {
         'setBudgetPolicy',
         'getBudgetPolicy',
         'getStreamChunks',
+        'getRetentionOverview',
+        'purge',
         'submitCoordinatedUpdate',
         'getUpdateResult',
       ] as const;

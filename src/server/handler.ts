@@ -273,6 +273,47 @@ function inferAttributeValue(raw: string): SearchAttributeValue {
   return raw;
 }
 
+function parseListFilterBody(body: unknown): ListFilter {
+  if (body === undefined) {
+    return {};
+  }
+
+  if (typeof body !== 'object' || body === null) {
+    throw new Error('Request body must be a JSON object');
+  }
+
+  const record = body as Record<string, unknown>;
+  const rawFilter = record['filter'];
+  if (rawFilter === undefined) {
+    return {};
+  }
+
+  if (typeof rawFilter !== 'object' || rawFilter === null) {
+    throw new Error('Field "filter" must be an object');
+  }
+
+  const filterRecord = rawFilter as Record<string, unknown>;
+  const filter: ListFilter = {};
+
+  const status = filterRecord['status'];
+  if (typeof status === 'string') {
+    filter.status = status as WorkflowStatus;
+  } else if (Array.isArray(status) && status.every((value) => typeof value === 'string')) {
+    filter.status = status as WorkflowStatus[];
+  } else if (status !== undefined) {
+    throw new Error('Field "filter.status" must be a string or an array of strings');
+  }
+
+  const type = filterRecord['type'];
+  if (typeof type === 'string') {
+    filter.type = type;
+  } else if (type !== undefined) {
+    throw new Error('Field "filter.type" must be a string');
+  }
+
+  return filter;
+}
+
 async function handleListWorkflows(request: Request, engine: Engine): Promise<Response> {
   const url = new URL(request.url);
   const filter: ListFilter = {};
@@ -312,6 +353,34 @@ async function handleListWorkflows(request: Request, engine: Engine): Promise<Re
   }
 
   const result = await engine.list(filter);
+  return jsonResponse(result);
+}
+
+async function handleGetRetentionOverview(engine: Engine): Promise<Response> {
+  return jsonResponse(engine.getRetentionOverview());
+}
+
+async function handlePurgeWorkflows(request: Request, engine: Engine): Promise<Response> {
+  let body: unknown = undefined;
+
+  try {
+    const contentLength = request.headers.get('Content-Length');
+    if (contentLength !== '0') {
+      body = await request.json();
+    }
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  let filter: ListFilter;
+  try {
+    filter = parseListFilterBody(body);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
+
+  const result = await engine.purge(filter);
   return jsonResponse(result);
 }
 
@@ -865,8 +934,10 @@ type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
 const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
+  purgeWorkflows: async ({ request, engine }) => handlePurgeWorkflows(request, engine),
   listWorkflows: async ({ request, engine }) => handleListWorkflows(request, engine),
   recoverAll: async ({ engine }) => handleRecoverAll(engine),
+  getRetentionOverview: async ({ engine }) => handleGetRetentionOverview(engine),
   setBudgetPolicy: async ({ request, engine }) => handleSetBudgetPolicy(request, engine),
   getBudgetPolicy: async ({ engine, param }) => handleGetBudgetPolicy(engine, param('namespace')),
   getStreamChunks: async ({ engine, param }) =>

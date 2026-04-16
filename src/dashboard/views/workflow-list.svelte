@@ -1,13 +1,16 @@
 <script lang="ts">
   import { getContext } from 'svelte';
 
-  import type { ApiClient, WorkflowStatus, WorkflowSummary } from '../api-client.ts';
+  import type { ApiClient, RetentionOverview, WorkflowStatus, WorkflowSummary } from '../api-client.ts';
   import { search, filter, refreshCw } from '../icons.ts';
   import Page from '../components/page.svelte';
   import Button from '../components/button.svelte';
+  import Card from '../components/card.svelte';
+  import DataList from '../components/data-list.svelte';
   import Skeleton from '../components/skeleton.svelte';
   import EmptyState from '../components/empty-state.svelte';
   import WorkflowTableRow from '../fragments/workflow-table-row.svelte';
+  import { buildWorkflowRetentionRows } from '../utilities/workflow-retention.ts';
 
   const apiClient = getContext<ApiClient>('api-client');
 
@@ -25,6 +28,7 @@
   // ---------------------------------------------------------------------------
 
   let workflows: WorkflowSummary[] = $state([]);
+  let retentionOverview: RetentionOverview | null = $state(null);
   let total = $state(0);
   let loading = $state(true);
   let error: string | null = $state(null);
@@ -42,15 +46,19 @@
 
   async function fetchWorkflows(generation: number, filters: FetchFilters): Promise<void> {
     try {
-      const result = await apiClient.listWorkflows({
-        status: filters.status === 'all' ? undefined : filters.status,
-        type: filters.type || undefined,
-        limit: pageSize,
-        offset: filters.offset,
-      });
+      const [result, retentionResult] = await Promise.all([
+        apiClient.listWorkflows({
+          status: filters.status === 'all' ? undefined : filters.status,
+          type: filters.type || undefined,
+          limit: pageSize,
+          offset: filters.offset,
+        }),
+        apiClient.getRetentionOverview(),
+      ]);
       if (generation !== fetchGeneration) return;
       workflows = result.items;
       total = result.total;
+      retentionOverview = retentionResult;
       error = null;
     } catch (fetchError) {
       if (generation !== fetchGeneration) return;
@@ -115,6 +123,9 @@
   const currentPage = $derived(Math.floor(currentOffset / pageSize) + 1);
   const hasPreviousPage = $derived(currentOffset > 0);
   const hasNextPage = $derived(currentOffset + pageSize < total);
+  const retentionRows = $derived(
+    retentionOverview ? buildWorkflowRetentionRows(retentionOverview) : null,
+  );
 
   function goToNextPage(): void {
     currentOffset += pageSize;
@@ -172,6 +183,29 @@
       />
     </div>
   </div>
+
+  {#if retentionRows}
+    <Card
+      title="Retention"
+      subtitle={`Next sweep ${retentionRows.nextSweepAt}`}
+    >
+      <DataList
+        variant="compact"
+        items={retentionRows.workflowTypes}
+        getKey={(item) => item.type}
+      >
+        {#snippet item(item)}
+          <div class="workflow-retention-row">
+            <div class="workflow-retention-row-header">
+              <span class="workflow-retention-type">{item.type}</span>
+              <span class="workflow-retention-source text-muted">{item.source}</span>
+            </div>
+            <div class="workflow-retention-value text-muted">{item.retention}</div>
+          </div>
+        {/snippet}
+      </DataList>
+    </Card>
+  {/if}
 
   {#if loading && workflows.length === 0}
     <div class="workflow-list-skeleton">
@@ -239,6 +273,28 @@
     display: flex;
     gap: var(--space-3, 0.75rem);
     flex-wrap: wrap;
+  }
+
+  .workflow-retention-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1, 0.25rem);
+  }
+
+  .workflow-retention-row-header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2, 0.5rem);
+    align-items: baseline;
+  }
+
+  .workflow-retention-type {
+    font-weight: 600;
+  }
+
+  .workflow-retention-source,
+  .workflow-retention-value {
+    font-size: var(--text-xs, 0.75rem);
   }
 
   .workflow-list-filter-group {

@@ -12,6 +12,8 @@ import type {
   CoordinatedUpdateResult,
   ListFilter,
   PaginatedResult,
+  PurgeResult,
+  RetentionOverview,
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
@@ -133,6 +135,12 @@ export interface WeftClient {
 
   /** Read stream chunks back from storage for a completed stream operation. */
   getStreamChunks(workflowId: string, key: string): Promise<unknown[]>;
+
+  /** Get the configured workflow retention policies and next sweep time. */
+  getRetentionOverview(): Promise<RetentionOverview>;
+
+  /** Purge matching terminal workflows. */
+  purge(filter?: ListFilter): Promise<PurgeResult>;
 
   /** Submit a coordinated update and wait for the result. */
   submitCoordinatedUpdate(
