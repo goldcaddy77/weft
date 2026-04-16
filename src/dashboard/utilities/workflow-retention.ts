@@ -8,6 +8,9 @@ const RETENTION_STATUS_LABELS: Array<keyof RetentionPolicy> = [
 ];
 
 function formatRetentionMilliseconds(milliseconds: number): string {
+  if (milliseconds === 0) {
+    return '0ms';
+  }
   if (milliseconds % 86_400_000 === 0) {
     return `${milliseconds / 86_400_000}d`;
   }

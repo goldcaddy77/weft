@@ -4,6 +4,7 @@ import { buildWorkflowRetentionRows, formatRetentionDuration } from './workflow-
 
 describe('workflow retention utilities', () => {
   it('formats retention durations for dashboard display', () => {
+    expect(formatRetentionDuration({ completed: 0 })).toBe('completed 0ms');
     expect(formatRetentionDuration({ completed: 300_000 })).toBe('completed 5m');
     expect(formatRetentionDuration({ completed: 300_000, failed: 3_600_000 })).toBe(
       'completed 5m, failed 1h',
