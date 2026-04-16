@@ -3353,27 +3353,33 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
     }
 
-    // Drop in-memory state, release charged operations, and delete durable
-    // workflow-keyed records (reviews, offload, blob, shared, signal).
-    // Cancelled/timed-out workflows have no consumers waiting on output
-    // artifacts, so drop them alongside the internal bookkeeping.
-    await this.#cleanupTerminalWorkflow(workflowId, true);
-    await this.#handleScheduledWorkflowTerminal(workflowId);
-
-    const event =
-      status === 'timed-out'
-        ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed)
-        : new WorkflowCancelledEvent(workflowId);
-    this.dispatchEvent(event);
-    this.#forwardEventToHandle(workflowId, event);
-
     const resolver = this.#resultResolvers.get(workflowId);
-    if (resolver) {
-      resolver.reject(
+    const terminalError =
+      status === 'timed-out'
+        ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
+        : new Error('Workflow cancelled');
+
+    try {
+      // Drop in-memory state, release charged operations, and delete durable
+      // workflow-keyed records (reviews, offload, blob, shared, signal).
+      // Cancelled/timed-out workflows have no consumers waiting on output
+      // artifacts, so drop them alongside the internal bookkeeping.
+      await this.#cleanupTerminalWorkflow(workflowId, true);
+      await this.#handleScheduledWorkflowTerminal(workflowId);
+
+      const event =
         status === 'timed-out'
-          ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
-          : new Error('Workflow cancelled'),
-      );
+          ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed)
+          : new WorkflowCancelledEvent(workflowId);
+      this.dispatchEvent(event);
+      this.#forwardEventToHandle(workflowId, event);
+
+      if (resolver) resolver.reject(terminalError);
+    } catch (cleanupError) {
+      // Settle the resolver so handle.result() callers are not stranded.
+      if (resolver) resolver.reject(terminalError);
+      throw cleanupError;
+    } finally {
       this.#resultResolvers.delete(workflowId);
     }
   }

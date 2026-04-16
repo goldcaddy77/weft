@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 
+import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
@@ -52,6 +53,23 @@ class WorkflowStateRaceStorage extends MemoryStorage {
       result: 'simulated-race-completion',
       updatedAt: workflowState.updatedAt + 1,
     });
+  }
+}
+
+class ScheduleRunStartFailureStorage extends MemoryStorage {
+  failQueuedScheduleRunStart = false;
+
+  override async batch(operations: BatchOperation[]): Promise<void> {
+    if (
+      this.failQueuedScheduleRunStart &&
+      operations.some(
+        (operation) => operation.type === 'put' && operation.key.startsWith('schedule-run:'),
+      )
+    ) {
+      throw new Error('simulated queued schedule start failure');
+    }
+
+    return super.batch(operations);
   }
 }
 
@@ -368,6 +386,46 @@ describe('recurring schedules', () => {
     expect(runningAfterRelease[0]).not.toBe(firstWorkflowId);
 
     await releaseRunningWorkflows(engine);
+    engine[Symbol.dispose]();
+  });
+
+  it('queue overlap still rejects the cancelled workflow result when starting the queued run fails', async () => {
+    const storage = new ScheduleRunStartFailureStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+
+    const engine = createEngine(clock, storage);
+    registerWorkflow(engine, 'queue-start-failure', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('release');
+      return 'released';
+    });
+
+    const schedule = await engine.schedule('queue-start-failure', null, '* * * * *', {
+      overlap: 'queue',
+    });
+    const firstDescription = await schedule.describe();
+
+    await tickEngine(engine, clock, requireNextFireAt(firstDescription));
+    const [firstWorkflowId] = await listRunningWorkflowIds(engine);
+    expect(firstWorkflowId).toBeDefined();
+
+    const resultPromise = engine
+      .getHandle(firstWorkflowId!)
+      .result()
+      .catch((error: Error) => error.message);
+
+    const secondDescription = await schedule.describe();
+    await tickEngine(engine, clock, requireNextFireAt(secondDescription));
+    const queuedDescription = await schedule.describe();
+    expect(queuedDescription.queuedRuns).toBe(1);
+
+    storage.failQueuedScheduleRunStart = true;
+    await expect(engine.cancel(firstWorkflowId!)).rejects.toThrow(
+      'simulated queued schedule start failure',
+    );
+    await drainEngine();
+
+    expect(await resultPromise).toBe('Workflow cancelled');
+
     engine[Symbol.dispose]();
   });
 
