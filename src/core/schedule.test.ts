@@ -190,6 +190,56 @@ describe('recurring schedules', () => {
     secondEngine[Symbol.dispose]();
   });
 
+  it('rejects a concurrent duplicate explicit schedule id before the later call can overwrite the stored schedule', async () => {
+    const storage = new MemoryStorage();
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock, storage);
+
+    registerWorkflow(
+      engine,
+      'duplicate-schedule-workflow',
+      async function* (_ctx: WorkflowContext, input: string) {
+        return input;
+      },
+    );
+
+    const firstCreation = engine.schedule(
+      'duplicate-schedule-workflow',
+      'first-input',
+      '* * * * *',
+      { id: 'duplicate-schedule-id' },
+    );
+    const secondCreation = engine.schedule(
+      'duplicate-schedule-workflow',
+      'second-input',
+      '*/2 * * * *',
+      { id: 'duplicate-schedule-id' },
+    );
+
+    const [firstResult, secondResult] = await Promise.allSettled([firstCreation, secondCreation]);
+
+    expect(firstResult.status).toBe('fulfilled');
+    expect(secondResult.status).toBe('rejected');
+    if (secondResult.status !== 'rejected') {
+      expect.unreachable('Expected the duplicate schedule creation to be rejected');
+    }
+    expect(secondResult.reason).toBeInstanceOf(Error);
+    expect((secondResult.reason as Error).message).toBe(
+      'Schedule with id "duplicate-schedule-id" already exists',
+    );
+
+    const storedScheduleBytes = await storage.get(KEYS.schedule('duplicate-schedule-id'));
+    expect(storedScheduleBytes).not.toBeNull();
+    expect(decode(storedScheduleBytes!)).toMatchObject({
+      id: 'duplicate-schedule-id',
+      cronExpression: '* * * * *',
+      input: 'first-input',
+    });
+    expect(await storage.get('timer-idx:schedule:duplicate-schedule-id')).not.toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
   it('Pauses a schedule and clears the fired timer when the workflow registration is missing after restart.', async () => {
     const storage = new MemoryStorage();
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };

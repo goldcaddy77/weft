@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Engine } from '../core/engine.ts';
+import type { WorkflowStatus } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 import { IndexedDBStorage } from '../storage/indexeddb.ts';
 import {
@@ -131,6 +132,26 @@ export async function storageHas(storage: Storage, key: string): Promise<boolean
 /** Drain microtasks so fire-and-forget work completes. */
 export async function flush(): Promise<void> {
   await Bun.sleep(10);
+}
+
+export async function waitForWorkflowStatus(
+  engine: Engine,
+  workflowId: string,
+  status: WorkflowStatus,
+  timeoutMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const state = await engine.get(workflowId);
+    if (state?.status === status) {
+      return;
+    }
+
+    await flush();
+  }
+
+  throw new Error(`Expected workflow "${workflowId}" to reach status "${status}"`);
 }
 
 /**

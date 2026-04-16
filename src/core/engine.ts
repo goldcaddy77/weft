@@ -1314,6 +1314,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
+  #pendingScheduleCreations: Set<string>;
   /**
    * Dedup set for recorded agent operation budget costs. Entries live here
    * for the lifetime of their parent workflow and are removed in
@@ -1418,6 +1419,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#budgetPolicyEnforcer = null;
     this.#heartbeatDetails = new Map();
     this.#pendingStarts = new Set();
+    this.#pendingScheduleCreations = new Set();
     this.#chargedAgentOperations = new Set();
     this.#chargedAgentOperationsByWorkflow = new Map();
     this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
@@ -2166,29 +2168,38 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const normalizedOptions = normalizeScheduleOptions(options);
     parseCronExpression(cronExpression);
     const scheduleId = normalizedOptions.id ?? crypto.randomUUID();
-    if (await this.#storage.get(KEYS.schedule(scheduleId))) {
+    if (this.#pendingScheduleCreations.has(scheduleId)) {
       throw new Error(`Schedule with id "${scheduleId}" already exists`);
     }
 
-    const now = this.#options.getNow();
-    const tenant = await this.#resolveTenantForStart(scheduleId, type, input);
-    const state: ScheduleState = {
-      id: scheduleId,
-      workflowType: type,
-      input,
-      cronExpression,
-      status: 'active',
-      overlap: normalizedOptions.overlap,
-      backfill: normalizedOptions.backfill,
-      createdAt: now,
-      updatedAt: now,
-      nextFireAt: getNextCronOccurrence(cronExpression, now),
-      queuedRuns: 0,
-      ...(tenant !== undefined && { tenant }),
-    };
+    this.#pendingScheduleCreations.add(scheduleId);
+    try {
+      if (await this.#storage.get(KEYS.schedule(scheduleId))) {
+        throw new Error(`Schedule with id "${scheduleId}" already exists`);
+      }
 
-    await this.#writeScheduleState(state);
-    return new ScheduleHandle(scheduleId, this, tenant ? { tenantId: tenant.id } : undefined);
+      const now = this.#options.getNow();
+      const tenant = await this.#resolveTenantForStart(scheduleId, type, input);
+      const state: ScheduleState = {
+        id: scheduleId,
+        workflowType: type,
+        input,
+        cronExpression,
+        status: 'active',
+        overlap: normalizedOptions.overlap,
+        backfill: normalizedOptions.backfill,
+        createdAt: now,
+        updatedAt: now,
+        nextFireAt: getNextCronOccurrence(cronExpression, now),
+        queuedRuns: 0,
+        ...(tenant !== undefined && { tenant }),
+      };
+
+      await this.#writeScheduleState(state);
+      return new ScheduleHandle(scheduleId, this, tenant ? { tenantId: tenant.id } : undefined);
+    } finally {
+      this.#pendingScheduleCreations.delete(scheduleId);
+    }
   }
 
   async getSchedule(
@@ -3771,6 +3782,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowNestingDepths.clear();
     this.#workflowHeaders.clear();
     this.#pendingStarts.clear();
+    this.#pendingScheduleCreations.clear();
     this.#chargedAgentOperations.clear();
     this.#chargedAgentOperationsByWorkflow.clear();
     this.#agentWorkflowIds.clear();

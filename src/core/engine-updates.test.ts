@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import type { ScanOptions, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
-import { collectKeys, flush, storageBackends, teardown } from '../testing/storage-backends.ts';
+import {
+  collectKeys,
+  flush,
+  storageBackends,
+  teardown,
+  waitForWorkflowStatus,
+} from '../testing/storage-backends.ts';
 import { decode, encode } from './codec.ts';
 import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
@@ -754,7 +760,7 @@ for (const backend of storageBackends) {
         });
 
         const handle = await engine.start('respond-test', undefined);
-        await flush();
+        await waitForWorkflowStatus(engine, handle.id, 'running');
 
         // engine.update() should return whatever respond() was called with
         const updateResult = await engine.update(handle.id, 'review', 'my-data');
@@ -776,7 +782,7 @@ for (const backend of storageBackends) {
         });
 
         const handle = await engine.start('missing-respond', undefined);
-        await flush();
+        await waitForWorkflowStatus(engine, handle.id, 'running');
 
         await expect(
           engine.update(handle.id, 'review', 'my-data', { timeout: 25 }),
@@ -798,7 +804,7 @@ for (const backend of storageBackends) {
         });
 
         const handle = await engine.start('idempotent-respond', undefined);
-        await flush();
+        await waitForWorkflowStatus(engine, handle.id, 'running');
 
         const updateResult = await engine.update(handle.id, 'data', 'input');
         // Only the first respond() call should matter
@@ -974,7 +980,7 @@ for (const backend of storageBackends) {
         });
 
         const handle = await engine.start('recovery-respond', undefined);
-        await flush();
+        await waitForWorkflowStatus(engine, handle.id, 'running');
 
         await engine.update(handle.id, 'data', 'test-value');
         const handleResult = await handle.result();
