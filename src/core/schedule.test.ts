@@ -6,6 +6,12 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
 import { Context } from './context.ts';
 import { Engine } from './engine.ts';
+import {
+  CleanupWarningEvent,
+  WorkflowCancelledEvent,
+  WorkflowCompletedEvent,
+  WorkflowFailedEvent,
+} from './events.ts';
 import { getNextCronOccurrence } from './schedule.ts';
 import { tenantFromInputField, type TenantResolver } from './tenant.ts';
 import type { ScheduleSummary, WorkflowContext, WorkflowFunction, WorkflowState } from './types.ts';
@@ -111,6 +117,53 @@ async function releaseRunningWorkflows(engine: Engine): Promise<void> {
     await engine.signal(workflowId, 'release');
   }
   await drainEngine();
+}
+
+function expectQueuedScheduleStartWarning(
+  warnings: CleanupWarningEvent[],
+  workflowId: string,
+): void {
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]!.source).toBe('handleScheduledWorkflowTerminal');
+  expect(warnings[0]!.workflowId).toBe(workflowId);
+  expect(warnings[0]!.error.message).toBe('simulated queued schedule start failure');
+}
+
+async function createQueuedScheduleStartFailureFixture(): Promise<{
+  engine: Engine;
+  firstWorkflowId: string;
+}> {
+  const storage = new ScheduleRunStartFailureStorage();
+  const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+  const engine = createEngine(clock, storage);
+
+  registerWorkflow(engine, 'queue-start-failure', async function* (ctx: WorkflowContext) {
+    const outcome = yield* (ctx as Context).waitForSignal('release');
+    if (outcome === 'fail') {
+      throw new Error('scheduled failure');
+    }
+
+    return typeof outcome === 'string' ? outcome : 'released';
+  });
+
+  const schedule = await engine.schedule('queue-start-failure', null, '* * * * *', {
+    overlap: 'queue',
+  });
+  const firstDescription = await schedule.describe();
+
+  await tickEngine(engine, clock, requireNextFireAt(firstDescription));
+  const [firstWorkflowId] = await listRunningWorkflowIds(engine);
+  expect(firstWorkflowId).toBeDefined();
+
+  const secondDescription = await schedule.describe();
+  await tickEngine(engine, clock, requireNextFireAt(secondDescription));
+
+  const queuedDescription = await schedule.describe();
+  expect(queuedDescription.queuedRuns).toBe(1);
+
+  storage.failQueuedScheduleRunStart = true;
+
+  return { engine, firstWorkflowId: firstWorkflowId! };
 }
 
 describe('recurring schedules', () => {
@@ -441,44 +494,98 @@ describe('recurring schedules', () => {
     engine[Symbol.dispose]();
   });
 
-  it('queue overlap still rejects the cancelled workflow result when starting the queued run fails', async () => {
-    const storage = new ScheduleRunStartFailureStorage();
-    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+  it('queue overlap still dispatches WorkflowCancelledEvent when starting the queued run fails', async () => {
+    const { engine, firstWorkflowId } = await createQueuedScheduleStartFailureFixture();
+    const warnings: CleanupWarningEvent[] = [];
+    const terminalEvents: WorkflowCancelledEvent[] = [];
 
-    const engine = createEngine(clock, storage);
-    registerWorkflow(engine, 'queue-start-failure', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('release');
-      return 'released';
+    engine.addEventListener(CleanupWarningEvent.type, (event) => {
+      warnings.push(event as CleanupWarningEvent);
+    });
+    engine.addEventListener(WorkflowCancelledEvent.type, (event) => {
+      terminalEvents.push(event as WorkflowCancelledEvent);
     });
 
-    const schedule = await engine.schedule('queue-start-failure', null, '* * * * *', {
-      overlap: 'queue',
+    try {
+      const resultPromise = engine
+        .getHandle(firstWorkflowId)
+        .result()
+        .catch((error: Error) => error.message);
+
+      await expect(engine.cancel(firstWorkflowId)).resolves.toBeUndefined();
+      expect(await resultPromise).toBe('Workflow cancelled');
+      await drainEngine();
+
+      expect(terminalEvents).toHaveLength(1);
+      expect(terminalEvents[0]!.workflowId).toBe(firstWorkflowId);
+      expectQueuedScheduleStartWarning(warnings, firstWorkflowId);
+    } finally {
+      engine[Symbol.dispose]();
+    }
+  });
+
+  it('queue overlap still dispatches WorkflowCompletedEvent when starting the queued run fails', async () => {
+    const { engine, firstWorkflowId } = await createQueuedScheduleStartFailureFixture();
+    const warnings: CleanupWarningEvent[] = [];
+    const terminalEvents: WorkflowCompletedEvent[] = [];
+
+    engine.addEventListener(CleanupWarningEvent.type, (event) => {
+      warnings.push(event as CleanupWarningEvent);
     });
-    const firstDescription = await schedule.describe();
+    engine.addEventListener(WorkflowCompletedEvent.type, (event) => {
+      terminalEvents.push(event as WorkflowCompletedEvent);
+    });
 
-    await tickEngine(engine, clock, requireNextFireAt(firstDescription));
-    const [firstWorkflowId] = await listRunningWorkflowIds(engine);
-    expect(firstWorkflowId).toBeDefined();
+    try {
+      const resultPromise = engine.getHandle(firstWorkflowId).result();
 
-    const resultPromise = engine
-      .getHandle(firstWorkflowId!)
-      .result()
-      .catch((error: Error) => error.message);
+      await engine.signal(firstWorkflowId, 'release', 'completed');
+      await expect(resultPromise).resolves.toBe('completed');
+      await drainEngine();
 
-    const secondDescription = await schedule.describe();
-    await tickEngine(engine, clock, requireNextFireAt(secondDescription));
-    const queuedDescription = await schedule.describe();
-    expect(queuedDescription.queuedRuns).toBe(1);
+      expect(terminalEvents).toHaveLength(1);
+      expect(terminalEvents[0]!.workflowId).toBe(firstWorkflowId);
+      expect(terminalEvents[0]!.result).toBe('completed');
+      expectQueuedScheduleStartWarning(warnings, firstWorkflowId);
+    } finally {
+      engine[Symbol.dispose]();
+    }
+  });
 
-    storage.failQueuedScheduleRunStart = true;
-    await expect(engine.cancel(firstWorkflowId!)).rejects.toThrow(
-      'simulated queued schedule start failure',
-    );
-    await drainEngine();
+  it('queue overlap still dispatches WorkflowFailedEvent when starting the queued run fails', async () => {
+    const { engine, firstWorkflowId } = await createQueuedScheduleStartFailureFixture();
+    const warnings: CleanupWarningEvent[] = [];
+    const terminalEvents: WorkflowFailedEvent[] = [];
 
-    expect(await resultPromise).toBe('Workflow cancelled');
+    engine.addEventListener(CleanupWarningEvent.type, (event) => {
+      warnings.push(event as CleanupWarningEvent);
+    });
+    engine.addEventListener(WorkflowFailedEvent.type, (event) => {
+      terminalEvents.push(event as WorkflowFailedEvent);
+    });
 
-    engine[Symbol.dispose]();
+    try {
+      const resultPromise = engine
+        .getHandle(firstWorkflowId)
+        .result()
+        .catch((error: Error) => error);
+
+      await engine.signal(firstWorkflowId, 'release', 'fail');
+      const result = await resultPromise;
+      await drainEngine();
+
+      expect(result).toBeInstanceOf(Error);
+      if (!(result instanceof Error)) {
+        expect.unreachable('Expected the scheduled workflow failure to produce an Error');
+      }
+      expect(result.message).toBe('scheduled failure');
+      expect(terminalEvents).toHaveLength(1);
+      expect(terminalEvents[0]!.workflowId).toBe(firstWorkflowId);
+      expect(terminalEvents[0]!.error.message).toBe('scheduled failure');
+      expectQueuedScheduleStartWarning(warnings, firstWorkflowId);
+    } finally {
+      engine[Symbol.dispose]();
+    }
   });
 
   it('Schedules support backfill. { backfill: true } runs missed ticks on recovery and { backfill: false } skips them.', async () => {

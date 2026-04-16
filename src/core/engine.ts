@@ -3376,7 +3376,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // Cancelled/timed-out workflows have no consumers waiting on output
       // artifacts, so drop them alongside the internal bookkeeping.
       await this.#cleanupTerminalWorkflow(workflowId, true);
-      await this.#handleScheduledWorkflowTerminal(workflowId);
 
       const event =
         status === 'timed-out'
@@ -3386,6 +3385,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#forwardEventToHandle(workflowId, event);
 
       if (resolver) resolver.reject(terminalError);
+      // Scheduled queue handoff is best-effort cleanup and must not block
+      // terminal delivery or handle settlement.
+      void this.#finalizeScheduledWorkflowTerminal(workflowId);
     } catch (cleanupError) {
       // Settle the resolver so handle.result() callers are not stranded.
       if (resolver) resolver.reject(terminalError);
@@ -3820,6 +3822,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #handleCleanupError(source: string, error: unknown, workflowId?: string): void {
     const normalizedError = error instanceof Error ? error : new Error(String(error));
     this.dispatchEvent(new CleanupWarningEvent(source, normalizedError, workflowId));
+  }
+
+  async #finalizeScheduledWorkflowTerminal(workflowId: string): Promise<void> {
+    try {
+      await this.#handleScheduledWorkflowTerminal(workflowId);
+    } catch (error) {
+      this.#handleCleanupError('handleScheduledWorkflowTerminal', error, workflowId);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -6143,7 +6153,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const resolver = this.#resultResolvers.get(workflowId);
     try {
       await this.#cleanupTerminalWorkflow(workflowId, false);
-      await this.#handleScheduledWorkflowTerminal(workflowId);
 
       const event = new WorkflowCompletedEvent(workflowId, result, duration);
       this.dispatchEvent(event);
@@ -6152,6 +6161,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#broadcast({ type: 'workflow:completed', workflowId });
 
       if (resolver) resolver.resolve(result);
+      // Scheduled queue handoff is best-effort cleanup and must not block
+      // terminal delivery or handle settlement.
+      void this.#finalizeScheduledWorkflowTerminal(workflowId);
     } catch (cleanupError) {
       // Settle the resolver so handle.result() callers are not stranded.
       if (resolver) resolver.resolve(result);
@@ -6195,13 +6207,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const resolver = this.#resultResolvers.get(workflowId);
     try {
       await this.#cleanupTerminalWorkflow(workflowId, false);
-      await this.#handleScheduledWorkflowTerminal(workflowId);
 
       const event = new WorkflowFailedEvent(workflowId, error);
       this.dispatchEvent(event);
       this.#forwardEventToHandle(workflowId, event);
 
       if (resolver) resolver.reject(error);
+      // Scheduled queue handoff is best-effort cleanup and must not block
+      // terminal delivery or handle settlement.
+      void this.#finalizeScheduledWorkflowTerminal(workflowId);
     } catch (cleanupError) {
       // Settle the resolver so handle.result() callers are not stranded.
       if (resolver) resolver.reject(error);
