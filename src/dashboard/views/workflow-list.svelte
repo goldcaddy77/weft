@@ -10,6 +10,7 @@
   import Skeleton from '../components/skeleton.svelte';
   import EmptyState from '../components/empty-state.svelte';
   import WorkflowTableRow from '../fragments/workflow-table-row.svelte';
+  import { loadWorkflowListData } from '../utilities/workflow-list-data.ts';
   import { buildWorkflowRetentionRows } from '../utilities/workflow-retention.ts';
 
   const apiClient = getContext<ApiClient>('api-client');
@@ -46,19 +47,11 @@
 
   async function fetchWorkflows(generation: number, filters: FetchFilters): Promise<void> {
     try {
-      const [result, retentionResult] = await Promise.all([
-        apiClient.listWorkflows({
-          status: filters.status === 'all' ? undefined : filters.status,
-          type: filters.type || undefined,
-          limit: pageSize,
-          offset: filters.offset,
-        }),
-        apiClient.getRetentionOverview(),
-      ]);
+      const result = await loadWorkflowListData(apiClient, filters, pageSize);
       if (generation !== fetchGeneration) return;
-      workflows = result.items;
+      workflows = result.workflows;
       total = result.total;
-      retentionOverview = retentionResult;
+      retentionOverview = result.retentionOverview;
       error = null;
     } catch (fetchError) {
       if (generation !== fetchGeneration) return;
@@ -167,7 +160,7 @@
         bind:value={statusFilter}
         onchange={() => { currentOffset = 0; }}
       >
-        {#each STATUS_OPTIONS as option}
+        {#each STATUS_OPTIONS as option (option.value)}
           <option value={option.value}>{option.label}</option>
         {/each}
       </select>
@@ -209,7 +202,7 @@
 
   {#if loading && workflows.length === 0}
     <div class="workflow-list-skeleton">
-      {#each Array(5) as _}
+      {#each [0, 1, 2, 3, 4] as skeletonRow (skeletonRow)}
         <Skeleton variant="text" height="2.5rem" />
       {/each}
     </div>

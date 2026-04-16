@@ -23,7 +23,7 @@ import {
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
-import type { Storage as WeftStorage } from '../storage/interface.ts';
+import type { BatchOperation, Storage as WeftStorage } from '../storage/interface.ts';
 import {
   KEYS,
   encodeStorageKeyComponent,
@@ -1996,6 +1996,41 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     });
   }
 
+  #resolvePurgeWindow(
+    filter: ListFilter | undefined,
+    fallbackLimit: number | undefined,
+  ): { effectiveLimit: number | undefined; manualOffset: number } {
+    const manualOffset =
+      filter?.offset !== undefined && Number.isFinite(filter.offset) && filter.offset > 0
+        ? Math.floor(filter.offset)
+        : 0;
+    const manualLimit =
+      filter?.limit !== undefined && Number.isFinite(filter.limit) && filter.limit >= 0
+        ? Math.floor(filter.limit)
+        : undefined;
+
+    return {
+      manualOffset,
+      effectiveLimit:
+        manualLimit !== undefined && fallbackLimit !== undefined
+          ? Math.min(manualLimit, fallbackLimit)
+          : (manualLimit ?? fallbackLimit),
+    };
+  }
+
+  #shouldPurgeWorkflowState(state: WorkflowState, expiredOnly: boolean, now: number): boolean {
+    if (!isTerminalWorkflowStatus(state.status)) {
+      return false;
+    }
+
+    if (!expiredOnly) {
+      return true;
+    }
+
+    const deadline = this.#getWorkflowRetentionDeadline(state);
+    return deadline !== null && deadline <= now;
+  }
+
   async #purgeInternal(
     filter: ListFilter | undefined,
     parameters: {
@@ -2005,24 +2040,29 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     },
   ): Promise<PurgeResult> {
     const workflowStates = await this.#collectWorkflowStates(filter);
+    const { effectiveLimit, manualOffset } = this.#resolvePurgeWindow(filter, parameters.limit);
+
+    if (effectiveLimit === 0) {
+      return { deleted: 0 };
+    }
+
+    let remainingOffset = manualOffset;
     let deleted = 0;
 
     for (const state of workflowStates) {
-      if (!isTerminalWorkflowStatus(state.status)) {
+      if (!this.#shouldPurgeWorkflowState(state, parameters.expiredOnly, parameters.now)) {
         continue;
       }
 
-      if (parameters.expiredOnly) {
-        const deadline = this.#getWorkflowRetentionDeadline(state);
-        if (deadline === null || deadline > parameters.now) {
-          continue;
-        }
+      if (remainingOffset > 0) {
+        remainingOffset -= 1;
+        continue;
       }
 
       await this.#purgeWorkflow(state);
       deleted += 1;
 
-      if (parameters.limit !== undefined && deleted >= parameters.limit) {
+      if (effectiveLimit !== undefined && deleted >= effectiveLimit) {
         break;
       }
     }
@@ -2030,11 +2070,27 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return { deleted };
   }
 
+  #releaseChargedAgentOperations(workflowId: string): BatchOperation[] {
+    const workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
+    if (!workflowOperations) {
+      return [];
+    }
+
+    const budgetChargedDeletes: BatchOperation[] = [];
+    for (const operationId of workflowOperations) {
+      this.#chargedAgentOperations.delete(operationId);
+      budgetChargedDeletes.push({ type: 'delete', key: KEYS.budgetCharged(operationId) });
+    }
+
+    this.#chargedAgentOperationsByWorkflow.delete(workflowId);
+    return budgetChargedDeletes;
+  }
+
   async #purgeWorkflow(state: WorkflowState): Promise<void> {
     const workflowId = state.id;
     const encodedWorkflowId = encodeStorageKeyComponent(workflowId);
     const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-    const deleteOperations: import('../storage/interface.ts').BatchOperation[] = [];
+    const deleteOperations: BatchOperation[] = [];
     const deleteKeys = new Set<string>([
       KEYS.workflow(workflowId),
       KEYS.checkpoint(workflowId),
@@ -2051,6 +2107,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
       deleteOperations.push(...buildIndexOperations(workflowId, currentAttributes, {}));
     }
+
+    deleteOperations.push(...this.#releaseChargedAgentOperations(workflowId));
 
     for (const prefix of [
       `wf:${encodedWorkflowId}:ckpt:`,
@@ -5396,15 +5454,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Also queue the per-operation `budget-charged:{operationId}` durable
     // keys for deletion. These are not workflow-scoped in storage, so we
     // have to build the batch from the reverse index before dropping it.
-    const workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
-    const budgetChargedDeletes: import('../storage/interface.ts').BatchOperation[] = [];
-    if (workflowOperations) {
-      for (const operationId of workflowOperations) {
-        this.#chargedAgentOperations.delete(operationId);
-        budgetChargedDeletes.push({ type: 'delete', key: KEYS.budgetCharged(operationId) });
-      }
-      this.#chargedAgentOperationsByWorkflow.delete(workflowId);
-    }
+    const budgetChargedDeletes = this.#releaseChargedAgentOperations(workflowId);
 
     // Durable records
     await this.#cleanupReviews(workflowId);

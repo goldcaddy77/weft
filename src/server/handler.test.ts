@@ -304,6 +304,44 @@ describe('handleRequest', () => {
     expect(await engine.get('purge-delete')).toBeNull();
   });
 
+  it('POST /v1/workflows/purge honors attribute filters, offset, and limit', async () => {
+    engine = createEngine();
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'one', id: 'purge-filter-1' }),
+      engine,
+    );
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'two', id: 'purge-filter-2' }),
+      engine,
+    );
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'other', id: 'purge-filter-3' }),
+      engine,
+    );
+    await flush();
+    await engine.setAttributes('purge-filter-1', { bucket: 'target' });
+    await engine.setAttributes('purge-filter-2', { bucket: 'target' });
+    await engine.setAttributes('purge-filter-3', { bucket: 'other' });
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows/purge', {
+        filter: {
+          status: 'completed',
+          attributes: [{ key: 'bucket', value: 'target' }],
+          offset: 1,
+          limit: 1,
+        },
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual({ deleted: 1 });
+    expect(await engine.get('purge-filter-1')).not.toBeNull();
+    expect(await engine.get('purge-filter-2')).toBeNull();
+    expect(await engine.get('purge-filter-3')).not.toBeNull();
+  });
+
   // 12. Start workflow with executionTimeout passes it through
   it('POST /v1/workflows with executionTimeout passes it through', async () => {
     engine = createEngine();

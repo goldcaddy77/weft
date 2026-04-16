@@ -1,14 +1,63 @@
 import { describe, expect, it } from 'bun:test';
 
+import type { LLMProvider } from '../../ai/providers/interface.ts';
+import type { ChatResponse } from '../../ai/providers/types.ts';
 import type { BatchOperation } from '../../storage/interface.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
-import type { WorkflowContext } from '../types.ts';
+import type { AttributeFilter, WorkflowContext } from '../types.ts';
 
-async function flush(): Promise<void> {
-  await Bun.sleep(25);
+const retentionBudgetProvider: LLMProvider = {
+  name: 'retention-budget-provider',
+  async chat(): Promise<ChatResponse> {
+    return {
+      content: 'budgeted artifact',
+      toolCalls: [],
+      usage: { inputTokens: 1000, outputTokens: 1000, totalTokens: 2000 },
+      model: 'test-model',
+      stopReason: 'end_turn',
+    };
+  },
+  async stream() {
+    return new ReadableStream();
+  },
+  async countTokens(): Promise<number> {
+    return 100;
+  },
+};
+
+async function waitForCondition(
+  predicate: () => Promise<boolean>,
+  message: string,
+  timeoutMs = 400,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+
+    await Bun.sleep(5);
+  }
+
+  throw new Error(message);
+}
+
+async function waitForWorkflowPresence(
+  engine: Engine,
+  workflowId: string,
+  shouldExist: boolean,
+): Promise<void> {
+  await waitForCondition(
+    async () => {
+      const exists = (await engine.get(workflowId)) !== null;
+      return exists === shouldExist;
+    },
+    `Expected workflow "${workflowId}" existence to become ${String(shouldExist)}`,
+  );
 }
 
 class RecordingMemoryStorage extends MemoryStorage {
@@ -34,34 +83,109 @@ async function* collectScanKeys(storage: MemoryStorage, prefix: string): AsyncGe
   }
 }
 
+async function createCompletedWorkflow(
+  engine: Engine,
+  workflowType: string,
+  workflowId: string,
+): Promise<void> {
+  const handle = await engine.start(workflowType, null, { id: workflowId });
+  await handle.result();
+}
+
+async function waitForRunningWorkflow(engine: Engine, workflowId: string): Promise<void> {
+  await waitForCondition(async () => {
+    const state = await engine.get(workflowId);
+    return state?.status === 'running';
+  }, `Expected workflow "${workflowId}" to reach running state`);
+}
+
 describe('workflow retention', () => {
-  it('Acceptance criteria: EngineOptions.retention cleans up terminal workflows after updatedAt + TTL', async () => {
+  it('Acceptance criteria: EngineOptions.retention cleans up completed, failed, cancelled, and timed-out workflows after updatedAt + TTL', async () => {
     let now = 1_000;
     const engine = new Engine({
       storage: new MemoryStorage(),
       getNow: () => now,
       retention: {
         completed: '5s',
+        failed: '5s',
+        cancelled: '5s',
+        timedOut: '5s',
       },
       retentionSweepInterval: '10ms',
     });
 
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-      return input;
+    engine.register('retention-completed', async function* () {
+      return 'done';
+    });
+    engine.register('retention-failed', async function* () {
+      throw new Error('boom');
+    });
+    engine.register('retention-blocked', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('continue');
+      return 'done';
     });
 
-    const handle = await engine.start('echo', 'hello', { id: 'retention-completed' });
+    const completedHandle = await engine.start('retention-completed', null, {
+      id: 'retention-completed',
+    });
+    await completedHandle.result();
+
+    const failedHandle = await engine.start('retention-failed', null, {
+      id: 'retention-failed',
+    });
+    await failedHandle.result().catch(() => {});
+
+    const cancelledHandle = await engine.start('retention-blocked', null, {
+      id: 'retention-cancelled',
+    });
+    await waitForRunningWorkflow(engine, cancelledHandle.id);
+    await engine.cancel(cancelledHandle.id);
+    await cancelledHandle.result().catch(() => {});
+
+    const timedOutHandle = await engine.start('retention-blocked', null, {
+      id: 'retention-timed-out',
+    });
+    await waitForRunningWorkflow(engine, timedOutHandle.id);
+    await engine.timeout(timedOutHandle.id);
+    await timedOutHandle.result().catch(() => {});
+
+    expect(await engine.get(completedHandle.id)).not.toBeNull();
+    expect(await engine.get(failedHandle.id)).not.toBeNull();
+    expect(await engine.get(cancelledHandle.id)).not.toBeNull();
+    expect(await engine.get(timedOutHandle.id)).not.toBeNull();
+
+    now += 5_001;
+
+    await Promise.all([
+      waitForWorkflowPresence(engine, completedHandle.id, false),
+      waitForWorkflowPresence(engine, failedHandle.id, false),
+      waitForWorkflowPresence(engine, cancelledHandle.id, false),
+      waitForWorkflowPresence(engine, timedOutHandle.id, false),
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('Acceptance criteria: the default retention policy keeps terminal workflows until cleanup is explicitly configured', async () => {
+    const engine = new Engine({
+      storage: new MemoryStorage(),
+    });
+
+    engine.register('retention-default', async function* () {
+      return 'done';
+    });
+
+    const handle = await engine.start('retention-default', null, {
+      id: 'retention-default',
+    });
     await handle.result();
 
-    expect(await engine.get(handle.id)).not.toBeNull();
+    const overview = engine.getRetentionOverview();
+    expect(overview.defaultRetention).toBeNull();
+    expect(overview.nextSweepAt).toBeNull();
 
-    now += 4_000;
-    await flush();
+    await Bun.sleep(50);
     expect(await engine.get(handle.id)).not.toBeNull();
-
-    now += 1_001;
-    await flush();
-    expect(await engine.get(handle.id)).toBeNull();
 
     engine[Symbol.dispose]();
   });
@@ -78,26 +202,23 @@ describe('workflow retention', () => {
       retentionSweepBatchSize: 1,
     });
 
-    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    engine.register('retention-batched', async function* (_ctx: WorkflowContext, input: unknown) {
       return input;
     });
 
-    const first = await engine.start('echo', 'a', { id: 'batched-a' });
-    const second = await engine.start('echo', 'b', { id: 'batched-b' });
+    const first = await engine.start('retention-batched', 'a', { id: 'batched-a' });
+    const second = await engine.start('retention-batched', 'b', { id: 'batched-b' });
     await Promise.all([first.result(), second.result()]);
 
-    await Bun.sleep(60);
+    await waitForCondition(async () => {
+      const states = await Promise.all([engine.get(first.id), engine.get(second.id)]);
+      return states.filter((state) => state !== null).length === 1;
+    }, 'Expected the first retention sweep to delete exactly one workflow');
 
-    const remainingAfterFirstSweep = [
-      await engine.get(first.id),
-      await engine.get(second.id),
-    ].filter((state) => state !== null);
-    expect(remainingAfterFirstSweep).toHaveLength(1);
-
-    await Bun.sleep(60);
-
-    expect(await engine.get(first.id)).toBeNull();
-    expect(await engine.get(second.id)).toBeNull();
+    await waitForCondition(async () => {
+      const states = await Promise.all([engine.get(first.id), engine.get(second.id)]);
+      return states.every((state) => state === null);
+    }, 'Expected the second retention sweep to delete the remaining workflow');
 
     engine[Symbol.dispose]();
   });
@@ -149,15 +270,11 @@ describe('workflow retention', () => {
     await Promise.all([shortHandle.result(), longHandle.result()]);
 
     now += 1_500;
-    await flush();
-
-    expect(await engine.get(shortHandle.id)).toBeNull();
+    await waitForWorkflowPresence(engine, shortHandle.id, false);
     expect(await engine.get(longHandle.id)).not.toBeNull();
 
     now += 9_000;
-    await flush();
-
-    expect(await engine.get(longHandle.id)).toBeNull();
+    await waitForWorkflowPresence(engine, longHandle.id, false);
 
     engine[Symbol.dispose]();
   });
@@ -206,10 +323,52 @@ describe('workflow retention', () => {
     engine[Symbol.dispose]();
   });
 
-  it('Acceptance criteria: engine.purge(filter) manually triggers cleanup for matching terminal workflows only', async () => {
+  it('retention cleanup reuses the charged agent operation cleanup path', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    await engine.setBudgetPolicy({
+      namespace: 'retention-organization',
+      daily: { maxCost: 100 },
+    });
+
+    engine.register('budget-blocked', async function* (ctx: WorkflowContext) {
+      const concreteContext = ctx as Context;
+      yield* concreteContext.agent({
+        model: 'test-model',
+        prompt: 'charge retention budget',
+        provider: retentionBudgetProvider,
+        budgetNamespace: 'retention-organization',
+        budget: {
+          maxCost: 100,
+          models: { 'test-model': { inputCostPer1K: 1, outputCostPer1K: 1 } },
+        },
+      });
+      yield* concreteContext.waitForSignal('continue');
+      return 'done';
+    });
+
+    const handle = await engine.start('budget-blocked', null, {
+      id: 'budget-cleanup-workflow',
+    });
+    await waitForCondition(async () => {
+      const state = await engine.get(handle.id);
+      const chargedKeys = await collectKeys(storage, 'budget-charged:');
+      return state?.status === 'running' && chargedKeys.length === 1;
+    }, 'Expected a running workflow with an active charged-agent budget key');
+
+    await engine.timeout(handle.id);
+    await handle.result().catch(() => {});
+
+    expect(await collectKeys(storage, 'budget-charged:')).toEqual([]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('Acceptance criteria: engine.purge(filter) manually triggers cleanup only for the matching status, attribute, offset, and limit window', async () => {
     const engine = new Engine({
       storage: new MemoryStorage(),
     });
+    const targetFilter: AttributeFilter[] = [{ key: 'bucket', value: 'target' }];
 
     engine.register('completed', async function* () {
       return 'done';
@@ -219,18 +378,50 @@ describe('workflow retention', () => {
       return 'done';
     });
 
-    const completedHandle = await engine.start('completed', null, { id: 'completed-workflow' });
-    const runningHandle = await engine.start('waiting', null, { id: 'running-workflow' });
-    await completedHandle.result();
+    await createCompletedWorkflow(engine, 'completed', 'purge-match-1');
+    await createCompletedWorkflow(engine, 'completed', 'purge-match-2');
+    await createCompletedWorkflow(engine, 'completed', 'purge-other');
+    await engine.setAttributes('purge-match-1', { bucket: 'target' });
+    await engine.setAttributes('purge-match-2', { bucket: 'target' });
+    await engine.setAttributes('purge-other', { bucket: 'other' });
 
-    const purgeResult = await engine.purge({ status: 'completed' });
+    const runningHandle = await engine.start('waiting', null, { id: 'purge-running' });
+    await waitForRunningWorkflow(engine, runningHandle.id);
+
+    const purgeResult = await engine.purge({
+      status: 'completed',
+      attributes: targetFilter,
+      offset: 1,
+      limit: 1,
+    });
 
     expect(purgeResult.deleted).toBe(1);
-    expect(await engine.get(completedHandle.id)).toBeNull();
+    expect(await engine.get('purge-match-1')).not.toBeNull();
+    expect(await engine.get('purge-match-2')).toBeNull();
+    expect(await engine.get('purge-other')).not.toBeNull();
     expect(await engine.get(runningHandle.id)).not.toBeNull();
 
-    await engine.signal(runningHandle.id, 'continue');
-    await runningHandle.result();
+    await engine.cancel(runningHandle.id);
+    await runningHandle.result().catch(() => {});
+    engine[Symbol.dispose]();
+  });
+
+  it('engine.purge(filter) treats limit 0 as a no-op', async () => {
+    const engine = new Engine({
+      storage: new MemoryStorage(),
+    });
+
+    engine.register('limit-zero', async function* () {
+      return 'done';
+    });
+
+    await createCompletedWorkflow(engine, 'limit-zero', 'purge-limit-zero');
+
+    const result = await engine.purge({ status: 'completed', limit: 0 });
+
+    expect(result).toEqual({ deleted: 0 });
+    expect(await engine.get('purge-limit-zero')).not.toBeNull();
+
     engine[Symbol.dispose]();
   });
 });

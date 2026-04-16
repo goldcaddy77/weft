@@ -273,6 +273,97 @@ function inferAttributeValue(raw: string): SearchAttributeValue {
   return raw;
 }
 
+function isJsonSearchAttributeValue(value: unknown): value is SearchAttributeValue {
+  if (typeof value === 'string' || typeof value === 'boolean') {
+    return true;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value);
+  }
+
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function parseAttributeFiltersFromBody(value: unknown): AttributeFilter[] {
+  if (!Array.isArray(value)) {
+    throw new Error('Field "filter.attributes" must be an array');
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null) {
+      throw new Error(`Field "filter.attributes[${index}]" must be an object`);
+    }
+
+    const record = entry as Record<string, unknown>;
+    const key = record['key'];
+    if (typeof key !== 'string' || key.length === 0) {
+      throw new Error(`Field "filter.attributes[${index}].key" must be a non-empty string`);
+    }
+
+    const filter: AttributeFilter = { key };
+    for (const property of ['value', 'gt', 'lt', 'gte', 'lte'] as const) {
+      const attributeValue = record[property];
+      if (attributeValue === undefined) {
+        continue;
+      }
+
+      if (!isJsonSearchAttributeValue(attributeValue)) {
+        throw new Error(
+          `Field "filter.attributes[${index}].${property}" must be a string, number, boolean, or string array`,
+        );
+      }
+
+      filter[property] = attributeValue;
+    }
+
+    return filter;
+  });
+}
+
+function parseFilterStatus(value: unknown): ListFilter['status'] {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === 'string') {
+    return value as WorkflowStatus;
+  }
+
+  if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
+    return value as WorkflowStatus[];
+  }
+
+  throw new Error('Field "filter.status" must be a string or an array of strings');
+}
+
+function parseOptionalFilterType(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  throw new Error('Field "filter.type" must be a string');
+}
+
+function parseOptionalFilterNumber(
+  value: unknown,
+  fieldName: 'limit' | 'offset',
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Field "filter.${fieldName}" must be a non-negative number`);
+  }
+
+  return Math.floor(value);
+}
+
 function parseListFilterBody(body: unknown): ListFilter {
   if (body === undefined) {
     return {};
@@ -294,21 +385,28 @@ function parseListFilterBody(body: unknown): ListFilter {
 
   const filterRecord = rawFilter as Record<string, unknown>;
   const filter: ListFilter = {};
-
-  const status = filterRecord['status'];
-  if (typeof status === 'string') {
-    filter.status = status as WorkflowStatus;
-  } else if (Array.isArray(status) && status.every((value) => typeof value === 'string')) {
-    filter.status = status as WorkflowStatus[];
-  } else if (status !== undefined) {
-    throw new Error('Field "filter.status" must be a string or an array of strings');
+  const status = parseFilterStatus(filterRecord['status']);
+  if (status !== undefined) {
+    filter.status = status;
   }
 
-  const type = filterRecord['type'];
-  if (typeof type === 'string') {
+  const type = parseOptionalFilterType(filterRecord['type']);
+  if (type !== undefined) {
     filter.type = type;
-  } else if (type !== undefined) {
-    throw new Error('Field "filter.type" must be a string');
+  }
+
+  if (filterRecord['attributes'] !== undefined) {
+    filter.attributes = parseAttributeFiltersFromBody(filterRecord['attributes']);
+  }
+
+  const limit = parseOptionalFilterNumber(filterRecord['limit'], 'limit');
+  if (limit !== undefined) {
+    filter.limit = limit;
+  }
+
+  const offset = parseOptionalFilterNumber(filterRecord['offset'], 'offset');
+  if (offset !== undefined) {
+    filter.offset = offset;
   }
 
   return filter;

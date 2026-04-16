@@ -236,6 +236,29 @@ describe('HttpClient', () => {
       expect(result.deleted).toBeGreaterThanOrEqual(1);
       expect(await client.get('http-purge')).toBeNull();
     });
+
+    it('purge honors attribute filters, offset, and limit through the HTTP server', async () => {
+      const first = await client.start('echo', 'one', { id: 'http-purge-filter-1' });
+      const second = await client.start('echo', 'two', { id: 'http-purge-filter-2' });
+      const third = await client.start('echo', 'three', { id: 'http-purge-filter-3' });
+      await Promise.all([first.result(), second.result(), third.result()]);
+
+      await client.setAttributes('http-purge-filter-1', { bucket: 'target' });
+      await client.setAttributes('http-purge-filter-2', { bucket: 'target' });
+      await client.setAttributes('http-purge-filter-3', { bucket: 'other' });
+
+      const result = await client.purge({
+        status: 'completed',
+        attributes: [{ key: 'bucket', value: 'target' }],
+        offset: 1,
+        limit: 1,
+      });
+
+      expect(result.deleted).toBe(1);
+      expect(await client.get('http-purge-filter-1')).not.toBeNull();
+      expect(await client.get('http-purge-filter-2')).toBeNull();
+      expect(await client.get('http-purge-filter-3')).not.toBeNull();
+    });
   });
 
   describe('same interface as LocalClient', () => {
