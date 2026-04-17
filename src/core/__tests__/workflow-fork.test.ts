@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 
+import { defineAgent } from '../../ai/declaration.ts';
+import type { LLMProvider } from '../../ai/providers/interface.ts';
+import type { ChatResponse } from '../../ai/providers/types.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
 import { decode } from '../codec.ts';
 import type { Context } from '../context.ts';
+import { WorkflowCompletedEvent, WorkflowStartedEvent } from '../events.ts';
 import { activity, type WorkflowContext } from '../types.ts';
 
 async function waitForCheckpointStep(
@@ -20,6 +24,16 @@ async function waitForCheckpointStep(
   }
 
   throw new Error(`Checkpoint step ${step} was not recorded for workflow "${workflowId}"`);
+}
+
+function createChatResponse(content: string): ChatResponse {
+  return {
+    content,
+    toolCalls: [],
+    usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+    model: 'test-model',
+    stopReason: 'end_turn',
+  };
 }
 
 describe('workflow forking', () => {
@@ -140,6 +154,41 @@ describe('workflow forking', () => {
     await expect(forked.result()).resolves.toBe('original:prepare-done');
     expect(executedStages).toEqual(['prepare']);
     expect(terminalSummaries).toEqual(['original', 'original']);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('dispatches workflow started before workflow completed for completed workflow forks', async () => {
+    const engine = new TestEngine();
+    const observedEvents: Array<{ type: string; workflowId: string }> = [];
+
+    engine.addEventListener(WorkflowStartedEvent.type, (event) => {
+      observedEvents.push({
+        type: event.type,
+        workflowId: (event as WorkflowStartedEvent).workflowId,
+      });
+    });
+    engine.addEventListener(WorkflowCompletedEvent.type, (event) => {
+      observedEvents.push({
+        type: event.type,
+        workflowId: (event as WorkflowCompletedEvent).workflowId,
+      });
+    });
+
+    engine.register('completed-ordering', async function* () {
+      return 'done';
+    });
+
+    const original = await engine.start('completed-ordering', null, { id: 'wf-order-root' });
+    await expect(original.result()).resolves.toBe('done');
+
+    const forked = await engine.fork(original.id);
+    await expect(forked.result()).resolves.toBe('done');
+
+    const forkedEvents = observedEvents
+      .filter((event) => event.workflowId === forked.id)
+      .map((event) => event.type);
+    expect(forkedEvents).toEqual(['workflow:started', 'workflow:completed']);
 
     engine[Symbol.dispose]();
   });
@@ -267,6 +316,40 @@ describe('workflow forking', () => {
 
     await engine.cancel(original.id);
     await expect(originalResult).rejects.toThrow('Workflow cancelled');
+    engine[Symbol.dispose]();
+  });
+
+  it('warms agent providers when forking agent workflows', async () => {
+    const engine = new TestEngine();
+    const warmupCalls: string[] = [];
+    const provider: LLMProvider = {
+      name: 'fork-warmup-provider',
+      async chat(): Promise<ChatResponse> {
+        return createChatResponse('done');
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+      async warmup() {
+        warmupCalls.push('warmed');
+      },
+    };
+
+    const agent = defineAgent({ name: 'fork-warmup-agent', model: 'test-model' });
+    engine.register(agent, { provider });
+
+    const original = await engine.start('fork-warmup-agent', 'test', { id: 'wf-agent-fork-root' });
+    await expect(original.result()).resolves.toBe('done');
+    warmupCalls.length = 0;
+
+    const forked = await engine.fork(original.id);
+    await expect(forked.result()).resolves.toBe('done');
+
+    expect(warmupCalls).toEqual(['warmed']);
+
     engine[Symbol.dispose]();
   });
 });

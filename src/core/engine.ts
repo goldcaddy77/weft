@@ -1624,14 +1624,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     tenant: import('./tenant.ts').TenantContext | undefined,
     registration: RegistrationEntry,
   ): void {
-    if (registration.isAgent) {
-      try {
-        const warmupResult = registration.provider?.warmup?.();
-        void this.#swallowPromiseRejection(warmupResult);
-      } catch {
-        // Warmup is best-effort; ignore synchronous failures.
-      }
-    }
+    this.#warmupWorkflowRegistration(registration);
 
     this.dispatchEvent(new WorkflowStartedEvent(workflowId, workflowType, input));
     this.#startWorkflowExecution(
@@ -1642,6 +1635,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       executionDeadline,
       tenant,
     );
+  }
+
+  #warmupWorkflowRegistration(registration: RegistrationEntry): void {
+    if (!registration.isAgent) {
+      return;
+    }
+
+    try {
+      const warmupResult = registration.provider?.warmup?.();
+      void this.#swallowPromiseRejection(warmupResult);
+    } catch {
+      // Warmup is best-effort; ignore synchronous failures.
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -2709,6 +2715,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const handle = this.#createWorkflowHandle(workflowId);
+    this.#warmupWorkflowRegistration(registration);
+    this.dispatchEvent(new WorkflowStartedEvent(workflowId, state.type, state.input));
 
     if (this.#inlineStrategy) {
       const accumulatedResults = new Map<number, unknown>(checkpoint.accumulatedResults);
@@ -2830,7 +2838,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         forkCheckpoint,
         registration,
       );
-      this.dispatchEvent(new WorkflowStartedEvent(workflowId, forkState.type, forkState.input));
       forkStarted = true;
       return handle;
     } finally {
