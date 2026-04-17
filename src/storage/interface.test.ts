@@ -71,9 +71,11 @@ describe('scan utilities', () => {
 
     expect(matchesScanOptions('b', { gt: 'a', lt: 'c' })).toBe(true);
     expect(matchesScanOptions('a', { gt: 'a' })).toBe(false);
+    expect(matchesScanOptions('`', { gte: 'a' })).toBe(false);
     expect(matchesScanOptions('a', { gte: 'a' })).toBe(true);
     expect(matchesScanOptions('c', { lt: 'c' })).toBe(false);
     expect(matchesScanOptions('c', { lte: 'c' })).toBe(true);
+    expect(matchesScanOptions('d', { lte: 'c' })).toBe(false);
   });
 });
 
@@ -89,6 +91,55 @@ describe('storage helper fallbacks', () => {
     expect(await storageHas(storage, 'jobs:missing')).toBe(false);
     expect(await Array.fromAsync(storageKeys(storage, 'jobs:'))).toEqual(['jobs:1', 'jobs:2']);
     expect(await storageCount(storage, 'jobs:')).toBe(2);
+  });
+
+  it('prefers adapter shortcuts when optional helper methods are present', async () => {
+    let hasCalls = 0;
+    let keysCalls = 0;
+    let countCalls = 0;
+    let deletePrefixCalls = 0;
+
+    const storage: Storage = {
+      get: async () => {
+        throw new Error('storage.get should not be used when has() is available');
+      },
+      put: async () => {},
+      delete: async () => {},
+      scan: async function* () {
+        throw new Error('storage.scan should not be used when keys() is available');
+      },
+      batch: async () => {
+        throw new Error('storage.batch should not be used when deletePrefix() is available');
+      },
+      has: async (key: string) => {
+        hasCalls++;
+        return key === 'jobs:1';
+      },
+      keys: async function* (prefix: string) {
+        keysCalls++;
+        yield `${prefix}1`;
+        yield `${prefix}2`;
+      },
+      count: async (prefix: string) => {
+        countCalls++;
+        return prefix === 'jobs:' ? 2 : 0;
+      },
+      deletePrefix: async (prefix: string) => {
+        deletePrefixCalls++;
+        return prefix === 'jobs:' ? 2 : 0;
+      },
+      [Symbol.dispose]: () => {},
+    };
+
+    expect(await storageHas(storage, 'jobs:1')).toBe(true);
+    expect(await Array.fromAsync(storageKeys(storage, 'jobs:'))).toEqual(['jobs:1', 'jobs:2']);
+    expect(await storageCount(storage, 'jobs:')).toBe(2);
+    expect(await storageDeletePrefix(storage, 'jobs:')).toBe(2);
+
+    expect(hasCalls).toBe(1);
+    expect(keysCalls).toBe(1);
+    expect(countCalls).toBe(1);
+    expect(deletePrefixCalls).toBe(1);
   });
 });
 
