@@ -206,6 +206,17 @@ describe('handleRequest', () => {
     expect(body.error).toBeDefined();
   });
 
+  it('returns 400 for malformed percent-encoding in a route parameter', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(request('GET', '/v1/workflows/%E0%A4%A/result'), engine);
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Invalid URL encoding in route parameter',
+    });
+  });
+
   it('getRequiredRouteParameter throws a descriptive error when a parameter is missing', () => {
     expect(() => getRequiredRouteParameter({}, 'id', 'GET /v1/workflows/broken-id')).toThrow(
       'Missing route parameter "id" for GET /v1/workflows/broken-id',
@@ -2512,5 +2523,23 @@ describe('handleRequest', () => {
     expect(await json(response)).toEqual({
       error: 'Invalid step: 9007199254740992',
     });
+  });
+
+  it('POST /v1/workflows/:id/fork returns 201 with the new workflow id', async () => {
+    engine = createEngine();
+
+    engine.register('forkable', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    const original = await engine.start('forkable', 'hello', { id: 'wf-source' });
+    await original.result();
+
+    const response = await handleRequest(request('POST', '/v1/workflows/wf-source/fork'), engine);
+
+    expect(response.status).toBe(201);
+    const body = (await json(response)) as { id: string };
+    expect(body.id).toBeString();
+    expect(body.id).not.toBe('wf-source');
   });
 });

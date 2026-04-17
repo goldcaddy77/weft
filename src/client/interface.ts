@@ -10,6 +10,7 @@ import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import type { TypedEventTarget, WeftEventMap } from '../core/events.ts';
 import type {
   CoordinatedUpdateResult,
+  ForkOptions,
   ListFilter,
   PaginatedResult,
   SearchAttributeValue,
@@ -133,6 +134,9 @@ export interface WeftClient {
 
   /** Read stream chunks back from storage for a completed stream operation. */
   getStreamChunks(workflowId: string, key: string): Promise<unknown[]>;
+
+  /** Fork a workflow from its latest or a historical checkpoint. */
+  fork(id: string, options?: ForkOptions): Promise<ClientHandle>;
 
   /** Submit a coordinated update and wait for the result. */
   submitCoordinatedUpdate(

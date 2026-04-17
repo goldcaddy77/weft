@@ -85,6 +85,16 @@ export interface WorkflowState {
    * configured and the resolver returned a value.
    */
   tenant?: import('./tenant.ts').TenantContext;
+  /**
+   * Lineage metadata recorded when this workflow was created by a fork from
+   * another workflow checkpoint. Absent for workflows started normally.
+   */
+  forkedFrom?: ForkLineage;
+}
+
+export interface ForkLineage {
+  workflowId: WorkflowId;
+  step: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +196,10 @@ export interface StartOptions {
   startAt?: number;
   startAfter?: Duration;
   searchAttributes?: Record<string, SearchAttributeValue>;
+}
+
+export interface ForkOptions {
+  fromStep?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -108,6 +108,8 @@ import type {
   CoordinatedUpdateResult,
   EngineOptions,
   FailureCategory,
+  ForkLineage,
+  ForkOptions,
   ListFilter,
   OperationOutcome,
   PaginatedResult,
@@ -340,6 +342,14 @@ function getWorkflowExecutionStartedAt(
   return state.startedAt ?? state.createdAt;
 }
 
+function normalizeForkStep(fromStep: number): number {
+  if (!Number.isSafeInteger(fromStep) || fromStep < 0) {
+    throw new Error('options.fromStep must be a non-negative safe integer');
+  }
+
+  return fromStep;
+}
+
 function enqueueWorkflowHandleEvent(queue: WorkflowHandleEventQueue, event: Event): void {
   queue.events.push(event);
   queue.resolver?.();
@@ -536,6 +546,7 @@ function createAlertManagerForEngine(
  * `engine.list()` call. Bounds fan-out on connection-limited storage backends.
  */
 const ATTRIBUTE_SCAN_CONCURRENCY = 8;
+const FORK_LINEAGE_ATTRIBUTE = 'weft:forkedFrom';
 
 function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | null {
   const [firstSet, ...remainingSets] = idSets;
@@ -1789,16 +1800,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
   }
 
-  async #prepareResumeState(
+  #derivePreparedExecutionState(
     workflowId: string,
     state: WorkflowState,
     checkpoint: Checkpoint,
     registration: RegistrationEntry,
-  ): Promise<{
+  ): {
     state: WorkflowState;
     checkpoint: Checkpoint;
     versionTuple: WorkflowVersionTuple;
-  }> {
+    shouldPersistPreparedState: boolean;
+  } {
     const compatibility = checkVersionCompatibility(
       checkpoint.version,
       registration.version,
@@ -1821,20 +1833,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#throwVersionMismatch(workflowId, state, registration, versionDiff);
     }
 
-    let resumeState = state;
-    let resumeCheckpoint = checkpoint;
-    if (isLegacyAgentVersionState) {
-      resumeState = this.#workflowStateWithVersionTuple(state, registeredVersionTuple);
+    let preparedState = state;
+    let preparedCheckpoint = checkpoint;
+    let shouldPersistPreparedState = false;
 
-      // Persist the backfilled version metadata atomically with the existing checkpoint.
-      await this.#storage.batch(
-        buildVersionUpdateOperations(
-          workflowId,
-          serializeCheckpoint(resumeCheckpoint),
-          registeredVersionTuple.workflowVersion,
-          encode(resumeState),
-        ),
-      );
+    if (isLegacyAgentVersionState) {
+      preparedState = this.#workflowStateWithVersionTuple(state, registeredVersionTuple);
+      shouldPersistPreparedState = true;
     } else if (
       (compatibility === 'needs-migration' || hasVersionTupleDrift) &&
       registration.migrate
@@ -1846,24 +1851,51 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         registration.migrate,
       ) as import('./types.ts').Checkpoint;
       migrated.version = registeredVersionTuple.workflowVersion;
-      resumeCheckpoint = migrated;
-      resumeState = this.#workflowStateWithVersionTuple(state, registeredVersionTuple);
+      preparedCheckpoint = migrated;
+      preparedState = this.#workflowStateWithVersionTuple(state, registeredVersionTuple);
+      shouldPersistPreparedState = true;
+    }
 
-      // Persist the migrated checkpoint and matching workflow-state metadata atomically.
+    return {
+      state: preparedState,
+      checkpoint: preparedCheckpoint,
+      versionTuple: registeredVersionTuple,
+      shouldPersistPreparedState,
+    };
+  }
+
+  async #prepareResumeState(
+    workflowId: string,
+    state: WorkflowState,
+    checkpoint: Checkpoint,
+    registration: RegistrationEntry,
+  ): Promise<{
+    state: WorkflowState;
+    checkpoint: Checkpoint;
+    versionTuple: WorkflowVersionTuple;
+  }> {
+    const preparedExecutionState = this.#derivePreparedExecutionState(
+      workflowId,
+      state,
+      checkpoint,
+      registration,
+    );
+
+    if (preparedExecutionState.shouldPersistPreparedState) {
       await this.#storage.batch(
         buildVersionUpdateOperations(
           workflowId,
-          serializeCheckpoint(resumeCheckpoint),
-          registeredVersionTuple.workflowVersion,
-          encode(resumeState),
+          serializeCheckpoint(preparedExecutionState.checkpoint),
+          preparedExecutionState.versionTuple.workflowVersion,
+          encode(preparedExecutionState.state),
         ),
       );
     }
 
     return {
-      state: resumeState,
-      checkpoint: resumeCheckpoint,
-      versionTuple: registeredVersionTuple,
+      state: preparedExecutionState.state,
+      checkpoint: preparedExecutionState.checkpoint,
+      versionTuple: preparedExecutionState.versionTuple,
     };
   }
 
@@ -2577,6 +2609,220 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return chunks;
   }
 
+  #createForkLineage(sourceWorkflowId: string, checkpoint: Checkpoint): ForkLineage {
+    return {
+      workflowId: sourceWorkflowId,
+      step: checkpoint.step,
+    };
+  }
+
+  #buildForkSearchAttributes(
+    checkpoint: Checkpoint,
+    lineage: ForkLineage,
+  ): Record<string, SearchAttributeValue> {
+    return {
+      ...checkpoint.searchAttributes,
+      [FORK_LINEAGE_ATTRIBUTE]: lineage.workflowId,
+    };
+  }
+
+  #createForkedWorkflowState(
+    workflowId: string,
+    sourceState: WorkflowState,
+    versionTuple: WorkflowVersionTuple,
+    lineage: ForkLineage,
+  ): WorkflowState {
+    const now = this.#options.getNow();
+
+    return {
+      id: workflowId,
+      type: sourceState.type,
+      status: 'running',
+      input: sourceState.input,
+      version: versionTuple.workflowVersion,
+      createdAt: now,
+      startedAt: now,
+      updatedAt: now,
+      ...(versionTuple.agentVersion !== undefined && {
+        agentVersion: versionTuple.agentVersion,
+      }),
+      ...(versionTuple.toolVersions !== undefined && {
+        toolVersions: versionTuple.toolVersions,
+      }),
+      ...(sourceState.tenant !== undefined && { tenant: sourceState.tenant }),
+      forkedFrom: lineage,
+    };
+  }
+
+  #buildForkBatchOperations(
+    workflowId: string,
+    state: WorkflowState,
+    checkpoint: Checkpoint,
+  ): import('../storage/interface.ts').BatchOperation[] {
+    const operations: import('../storage/interface.ts').BatchOperation[] = [
+      { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
+      {
+        type: 'put',
+        key: KEYS.checkpoint(workflowId),
+        value: serializeCheckpoint(checkpoint),
+      },
+    ];
+
+    if (Object.keys(checkpoint.searchAttributes).length > 0) {
+      operations.push(
+        {
+          type: 'put',
+          key: KEYS.attribute(workflowId),
+          value: encode(checkpoint.searchAttributes),
+        },
+        ...buildIndexOperations(workflowId, {}, checkpoint.searchAttributes),
+      );
+    }
+
+    return operations;
+  }
+
+  #launchWorkflowFromCheckpoint(
+    workflowId: string,
+    state: WorkflowState,
+    checkpoint: Checkpoint,
+    registration: RegistrationEntry,
+  ): WorkflowHandle {
+    // Store checkpoint for future persistence
+    this.#checkpoints.set(workflowId, checkpoint);
+    this.#workflowVersionTuples.set(
+      workflowId,
+      this.#createWorkflowVersionTuple(registration, state.tenant),
+    );
+
+    if (registration.isAgent) {
+      this.#agentWorkflowIds.add(workflowId);
+    }
+
+    const handle = this.#createWorkflowHandle(workflowId);
+
+    if (this.#inlineStrategy) {
+      const accumulatedResults = new Map<number, unknown>(checkpoint.accumulatedResults);
+      const workflowAbort = new AbortController();
+
+      const context = new Context({
+        workflowId,
+        workflowType: state.type,
+        startedAt: getWorkflowExecutionStartedAt(state),
+        abortController: workflowAbort,
+        getNow: this.#options.getNow,
+        accumulatedResults,
+        searchAttributes: checkpoint.searchAttributes,
+        ...(registration.searchAttributes && {
+          searchAttributeSchema: registration.searchAttributes,
+        }),
+        sleepReferenceTime: checkpoint.createdAt,
+        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+        ...(state.tenant !== undefined && { tenant: state.tenant }),
+      });
+
+      if (this.#options.development) {
+        context.explain(true);
+      }
+
+      const generator = registration.handler(context, state.input);
+      this.#inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
+      this.#inlineStrategy.continueWorkflow(workflowId, undefined);
+      queueMicrotask(this.#processPendingUpdatesAfterReplay.bind(this, workflowId));
+    } else {
+      const serialized = serializeCheckpoint(checkpoint);
+      this.#strategy.startWorkflow({
+        workflowId,
+        workflowType: state.type,
+        input: state.input,
+        checkpoint: serialized,
+        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
+        ...(this.#workflowHeaders.has(workflowId) && {
+          headers: [...this.#workflowHeaders.get(workflowId)!],
+        }),
+        ...(state.tenant !== undefined && { tenant: state.tenant }),
+      });
+    }
+
+    return handle;
+  }
+
+  async fork(sourceWorkflowId: string, options?: ForkOptions): Promise<WorkflowHandle> {
+    const sourceState = await this.#loadWorkflowState(sourceWorkflowId);
+    if (!sourceState) {
+      throw new Error(`Workflow "${sourceWorkflowId}" not found`);
+    }
+
+    const registration = this.#registrations.get(sourceState.type);
+    if (!registration) {
+      throw new Error(
+        `No workflow registered with name "${sourceState.type}" (needed to fork "${sourceWorkflowId}")`,
+      );
+    }
+
+    const fromStep =
+      options?.fromStep !== undefined ? normalizeForkStep(options.fromStep) : undefined;
+    const checkpointKey =
+      fromStep !== undefined
+        ? KEYS.checkpointHistory(sourceWorkflowId, fromStep)
+        : KEYS.checkpoint(sourceWorkflowId);
+    const checkpointBytes = await this.#storage.get(checkpointKey);
+    if (!checkpointBytes) {
+      if (fromStep !== undefined) {
+        throw new Error(
+          `Checkpoint not found at step ${String(fromStep)} for workflow "${sourceWorkflowId}"`,
+        );
+      }
+      throw new Error(`Checkpoint not found for workflow "${sourceWorkflowId}"`);
+    }
+
+    const sourceCheckpoint = deserializeCheckpoint(checkpointBytes);
+    const preparedExecutionState = this.#derivePreparedExecutionState(
+      sourceWorkflowId,
+      sourceState,
+      sourceCheckpoint,
+      registration,
+    );
+
+    const workflowId = crypto.randomUUID();
+    const lineage = this.#createForkLineage(sourceWorkflowId, sourceCheckpoint);
+    const forkCheckpoint: Checkpoint = {
+      ...preparedExecutionState.checkpoint,
+      workflowId,
+      searchAttributes: this.#buildForkSearchAttributes(preparedExecutionState.checkpoint, lineage),
+    };
+    const forkState = this.#createForkedWorkflowState(
+      workflowId,
+      preparedExecutionState.state,
+      preparedExecutionState.versionTuple,
+      lineage,
+    );
+
+    let forkStarted = false;
+    try {
+      await this.#storage.batch(
+        this.#buildForkBatchOperations(workflowId, forkState, forkCheckpoint),
+      );
+      this.#eventLogHeads.set(workflowId, EMPTY_EVENT_HEAD);
+      const handle = this.#launchWorkflowFromCheckpoint(
+        workflowId,
+        forkState,
+        forkCheckpoint,
+        registration,
+      );
+      this.dispatchEvent(new WorkflowStartedEvent(workflowId, forkState.type, forkState.input));
+      forkStarted = true;
+      return handle;
+    } finally {
+      if (!forkStarted) {
+        this.#checkpoints.delete(workflowId);
+        this.#workflowVersionTuples.delete(workflowId);
+        this.#eventLogHeads.delete(workflowId);
+        this.#agentWorkflowIds.delete(workflowId);
+      }
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Resume / Recovery
   // -------------------------------------------------------------------------
@@ -2758,9 +3004,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // critical now that scheduler.cancel is fire-and-forget on terminal paths.
     if (!state || (state.status !== 'running' && state.status !== 'pending')) return;
     const elapsed = this.#options.getNow() - getWorkflowExecutionStartedAt(state);
+    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+    const retainedAttributes = attributeBytes
+      ? this.#buildRetainedTerminalSearchAttributes(
+          decode(attributeBytes) as Record<string, SearchAttributeValue>,
+        )
+      : {};
 
     await this.#updateWorkflowState(workflowId, { status });
     await this.#cleanupAttributeIndex(workflowId);
+    await this.#writeRetainedTerminalSearchAttributes(workflowId, retainedAttributes);
     void this.#swallowPromiseRejection(
       this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
     );
@@ -5271,8 +5524,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
     if (attributeBytes) {
       const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
-      completionOperations.push(...buildIndexOperations(workflowId, currentAttributes, {}));
-      completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
+      const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(currentAttributes);
+
+      completionOperations.push(
+        ...buildIndexOperations(workflowId, currentAttributes, retainedAttributes),
+      );
+      if (Object.keys(retainedAttributes).length > 0) {
+        completionOperations.push({
+          type: 'put',
+          key: KEYS.attribute(workflowId),
+          value: encode(retainedAttributes),
+        });
+      } else {
+        completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
+      }
     }
 
     await this.#storage.batch(completionOperations);
@@ -5312,6 +5577,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     error: Error,
     failureCategory: FailureCategory = 'system',
   ): Promise<void> {
+    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+    const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(
+      attributeBytes ? (decode(attributeBytes) as Record<string, SearchAttributeValue>) : {},
+      { failureCategory },
+    );
+
     const stateUpdate: Partial<WorkflowState> = {
       status: 'failed',
       error: error.message,
@@ -5329,10 +5600,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
     );
 
-    // Write the failureCategory search attribute so it is queryable via
-    // engine.list({ attributes: [{ key: 'failureCategory', value: '...' }] }).
-    // This must happen AFTER #cleanupAttributeIndex so the entry survives.
-    await this.#writeFailureCategoryAttribute(workflowId, failureCategory);
+    // Re-write engine-managed terminal attributes so they remain queryable
+    // after the user-defined search attributes have been removed.
+    await this.#writeRetainedTerminalSearchAttributes(workflowId, retainedAttributes);
 
     // Drop in-memory state, release charged operations, and delete durable
     // workflow-keyed records (reviews, pending signals, per-workflow dedup).
@@ -5357,16 +5627,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   /**
-   * Write the `failureCategory` search attribute and its index entry after a
-   * workflow fails. Called after `#cleanupAttributeIndex` so this entry is not
-   * immediately swept away by the cleanup, and survives for
-   * `engine.list({ attributes: [{ key: 'failureCategory', ... }] })` queries.
+   * Keep engine-managed terminal attributes queryable after the broader
+   * attribute cleanup removes user-defined search attributes.
    */
-  async #writeFailureCategoryAttribute(
+  #buildRetainedTerminalSearchAttributes(
+    currentAttributes: Record<string, SearchAttributeValue>,
+    additionalAttributes?: Record<string, SearchAttributeValue>,
+  ): Record<string, SearchAttributeValue> {
+    const retainedAttributes = Object.fromEntries(
+      Object.entries(currentAttributes).filter(([key]) => key.startsWith('weft:')),
+    ) as Record<string, SearchAttributeValue>;
+
+    return {
+      ...retainedAttributes,
+      ...additionalAttributes,
+    };
+  }
+
+  async #writeRetainedTerminalSearchAttributes(
     workflowId: string,
-    failureCategory: FailureCategory,
+    attributes: Record<string, SearchAttributeValue>,
   ): Promise<void> {
-    const attributes: Record<string, SearchAttributeValue> = { failureCategory };
+    if (Object.keys(attributes).length === 0) {
+      return;
+    }
+
     const indexOperations = buildIndexOperations(workflowId, {}, attributes);
     await this.#storage.batch([
       { type: 'put', key: KEYS.attribute(workflowId), value: encode(attributes) },

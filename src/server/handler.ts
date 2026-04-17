@@ -21,6 +21,7 @@ import {
 } from '../core/start-workflow-validation.ts';
 import type {
   AttributeFilter,
+  ForkOptions,
   ListFilter,
   ReviewDecision,
   SearchAttributeValue,
@@ -648,6 +649,47 @@ async function handleResumeWorkflow(engine: Engine, workflowId: string): Promise
   }
 }
 
+async function handleForkWorkflow(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+): Promise<Response> {
+  let options: ForkOptions | undefined;
+
+  try {
+    const body = await request.json();
+    if (typeof body === 'object' && body !== null) {
+      const record = body as Record<string, unknown>;
+      if (record['fromStep'] !== undefined) {
+        const fromStep = record['fromStep'];
+        if (typeof fromStep !== 'number' || !Number.isSafeInteger(fromStep) || fromStep < 0) {
+          return errorResponse('Field "fromStep" must be a non-negative safe integer', 400);
+        }
+        options = { fromStep };
+      }
+    }
+  } catch {
+    // Empty body is allowed. Invalid JSON falls through to default fork options.
+  }
+
+  try {
+    const handle = await engine.fork(workflowId, options);
+    return jsonResponse({ id: handle.id }, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (message.includes('fromStep') || message.includes('Checkpoint not found at step')) {
+      return errorResponse(message, 400);
+    }
+
+    if (message.includes('not found')) {
+      return errorResponse(message, 404);
+    }
+
+    return errorResponse(message, 500);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Recover all route — engine.recoverAll()
 // ---------------------------------------------------------------------------
@@ -874,6 +916,8 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   queryWorkflow: async ({ engine, param }) =>
     handleQueryWorkflow(engine, param('id'), param('name')),
   resumeWorkflow: async ({ engine, param }) => handleResumeWorkflow(engine, param('id')),
+  forkWorkflow: async ({ request, engine, param }) =>
+    handleForkWorkflow(request, engine, param('id')),
   timeoutWorkflow: async ({ engine, param }) => handleTimeoutWorkflow(engine, param('id')),
   getWorkflowResult: async ({ engine, param }) => handleGetWorkflowResult(engine, param('id')),
   signalWorkflow: async ({ request, engine, param }) =>
@@ -932,20 +976,24 @@ export async function handleRequest(
   options?: HandlerOptions,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const route = matchRoute(request.method, url.pathname);
-
-  if (route === null) {
-    return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
-  }
-
-  const routeDescription = `${request.method} ${url.pathname}`;
-  const param = (name: string): string =>
-    getRequiredRouteParameter(route.params, name, routeDescription);
 
   try {
+    const route = matchRoute(request.method, url.pathname);
+
+    if (route === null) {
+      return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
+    }
+
+    const routeDescription = `${request.method} ${url.pathname}`;
+    const param = (name: string): string =>
+      getRequiredRouteParameter(route.params, name, routeDescription);
+
     const executor = ROUTE_EXECUTORS[route.handler];
     return await executor({ request, engine, options, param });
   } catch (error) {
+    if (error instanceof URIError) {
+      return errorResponse('Invalid URL encoding in route parameter', 400);
+    }
     console.error('Unhandled error in handleRequest', {
       method: request.method,
       path: url.pathname,

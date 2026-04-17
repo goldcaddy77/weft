@@ -12,6 +12,7 @@ import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import type { Engine, WorkflowHandle } from '../core/engine.ts';
 import type {
   CoordinatedUpdateResult,
+  ForkOptions,
   ListFilter,
   PaginatedResult,
   SearchAttributeValue,
@@ -178,6 +179,11 @@ export class LocalClient implements WeftClient {
 
   async getStreamChunks(workflowId: string, key: string): Promise<unknown[]> {
     return this.#engine.getStreamChunks(workflowId, key);
+  }
+
+  async fork(id: string, options?: ForkOptions): Promise<ClientHandle> {
+    const handle = await this.#engine.fork(id, options);
+    return new LocalHandle(handle, this);
   }
 
   async submitCoordinatedUpdate(

@@ -11,6 +11,7 @@
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import type {
   CoordinatedUpdateResult,
+  ForkOptions,
   ListFilter,
   PaginatedResult,
   SearchAttributeValue,
@@ -472,6 +473,24 @@ export class HttpClient implements WeftClient {
       this.headers,
     );
     return response.chunks;
+  }
+
+  async fork(id: string, options?: ForkOptions): Promise<ClientHandle> {
+    const body: Record<string, unknown> = {};
+    if (options?.fromStep !== undefined) {
+      body['fromStep'] = options.fromStep;
+    }
+
+    const response = await request<{ id: string }>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/fork`,
+      this.headers,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+    );
+    return new HttpHandle(response.id, this);
   }
 
   async submitCoordinatedUpdate(

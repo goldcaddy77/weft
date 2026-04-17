@@ -61,6 +61,7 @@ describe('LocalClient', () => {
     expect(client.setBudgetPolicy).toBeFunction();
     expect(client.getBudgetPolicy).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
+    expect(client.fork).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();
     expect(client.getUpdateResult).toBeFunction();
   });
@@ -334,6 +335,7 @@ describe('LocalClient delegation surface', () => {
       setBudgetPolicy: mock(async () => undefined),
       getBudgetPolicy: mock(async () => ({ namespace: 'agents', daily: { maxCost: 12 } })),
       getStreamChunks: mock(async () => ['chunk-a', 'chunk-b']),
+      fork: mock(async () => resumedHandle),
       submitCoordinatedUpdate: mock(async () => ({ updateId: 'update-1', result: 'ok' })),
       getUpdateResult: mock(async () => ({ updateId: 'update-1', result: 'done', error: 'none' })),
     } as unknown as Engine;
@@ -390,6 +392,8 @@ describe('LocalClient delegation surface', () => {
       'chunk-a',
       'chunk-b',
     ]);
+    const forkHandle = await client.fork('delegated-workflow', { fromStep: 2 });
+    expect(await forkHandle.result()).toBe('resumed-result');
     expect(
       await client.submitCoordinatedUpdate(
         'delegated-workflow',
@@ -409,6 +413,7 @@ describe('LocalClient delegation surface', () => {
 
     expect(registeredListener).toHaveBeenCalled();
     expect(removedListener).toHaveBeenCalled();
+    expect(engine.fork).toHaveBeenCalledWith('delegated-workflow', { fromStep: 2 });
   });
 
   it('returns null when the engine has no update result', async () => {
