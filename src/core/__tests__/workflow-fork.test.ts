@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 
+import { KEYS } from '../../storage/interface.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
+import { decode } from '../codec.ts';
 import type { Context } from '../context.ts';
 import { activity, type WorkflowContext } from '../types.ts';
 
@@ -182,6 +184,89 @@ describe('workflow forking', () => {
     });
     expect(secondGeneration.items.map((item) => item.id)).toContain(secondFork.id);
 
+    engine[Symbol.dispose]();
+  });
+
+  it('keeps fork lineage queryable after cancellation', async () => {
+    const engine = new TestEngine();
+
+    engine.register('cancelled-fork', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('continue');
+      return 'done';
+    });
+
+    const original = await engine.start('cancelled-fork', null, { id: 'wf-cancel-root' });
+    const forked = await engine.fork(original.id);
+    const forkedResult = forked.result();
+    const originalResult = original.result();
+
+    await engine.cancel(forked.id);
+
+    const descendants = await engine.list({
+      attributes: [{ key: 'weft:forkedFrom', value: original.id }],
+    });
+    expect(descendants.items.map((item) => item.id)).toContain(forked.id);
+
+    await engine.cancel(original.id);
+    await expect(forkedResult).rejects.toThrow('Workflow cancelled');
+    await expect(originalResult).rejects.toThrow('Workflow cancelled');
+    engine[Symbol.dispose]();
+  });
+
+  it('preserves persisted workflow start headers on forked workflows', async () => {
+    const engine = new TestEngine();
+    const capturedParentHeaders: Map<string, string>[] = [];
+
+    engine.addInterceptor({
+      workflowStart(interception, next) {
+        interception.headers.set(
+          'traceparent',
+          '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01',
+        );
+        interception.headers.set('tracestate', 'vendor=value');
+        interception.headers.set('x-auth', 'secret-token');
+        next(interception);
+      },
+      async childWorkflow(interception, next) {
+        capturedParentHeaders.push(new Map(interception.parentHeaders));
+        return next(interception);
+      },
+    });
+
+    engine.register('child', async function* () {
+      return 'child-complete';
+    });
+
+    engine.register('parent-with-headers', async function* (ctx: WorkflowContext) {
+      const durableContext = ctx as Context;
+      yield* durableContext.waitForSignal('continue');
+      return yield* durableContext.startChild<string>('child', null);
+    });
+
+    const original = await engine.start('parent-with-headers', null, { id: 'wf-header-root' });
+    const forked = await engine.fork(original.id);
+    const originalResult = original.result();
+
+    const headerBytes = await engine.storage.get(KEYS.workflowHeaders(forked.id));
+    expect(headerBytes).not.toBeNull();
+    const persistedHeaders = new Map(decode(headerBytes!) as Array<[string, string]>);
+    expect(persistedHeaders.get('traceparent')).toBe(
+      '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01',
+    );
+    expect(persistedHeaders.get('tracestate')).toBe('vendor=value');
+    expect(persistedHeaders.has('x-auth')).toBe(false);
+
+    await engine.signal(forked.id, 'continue');
+    await expect(forked.result()).resolves.toBe('child-complete');
+    expect(capturedParentHeaders).toHaveLength(1);
+    expect(capturedParentHeaders[0]?.get('traceparent')).toBe(
+      '00-abcd1234abcd1234abcd1234abcd1234-ef56ef56ef56ef56-01',
+    );
+    expect(capturedParentHeaders[0]?.get('tracestate')).toBe('vendor=value');
+    expect(capturedParentHeaders[0]?.has('x-auth')).toBe(false);
+
+    await engine.cancel(original.id);
+    await expect(originalResult).rejects.toThrow('Workflow cancelled');
     engine[Symbol.dispose]();
   });
 });

@@ -655,21 +655,28 @@ async function handleForkWorkflow(
   workflowId: string,
 ): Promise<Response> {
   let options: ForkOptions | undefined;
+  const rawBody = await request.text();
 
-  try {
-    const body = await request.json();
-    if (typeof body === 'object' && body !== null) {
-      const record = body as Record<string, unknown>;
-      if (record['fromStep'] !== undefined) {
-        const fromStep = record['fromStep'];
-        if (typeof fromStep !== 'number' || !Number.isSafeInteger(fromStep) || fromStep < 0) {
-          return errorResponse('Field "fromStep" must be a non-negative safe integer', 400);
-        }
-        options = { fromStep };
-      }
+  if (rawBody.trim().length > 0) {
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody) as unknown;
+    } catch {
+      return errorResponse('Invalid JSON body', 400);
     }
-  } catch {
-    // Empty body is allowed. Invalid JSON falls through to default fork options.
+
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      return errorResponse('Request body must be a JSON object', 400);
+    }
+
+    const record = body as Record<string, unknown>;
+    if (record['fromStep'] !== undefined) {
+      const fromStep = record['fromStep'];
+      if (typeof fromStep !== 'number' || !Number.isSafeInteger(fromStep) || fromStep < 0) {
+        return errorResponse('Field "fromStep" must be a non-negative safe integer', 400);
+      }
+      options = { fromStep };
+    }
   }
 
   try {
@@ -680,6 +687,10 @@ async function handleForkWorkflow(
 
     if (message.includes('fromStep') || message.includes('Checkpoint not found at step')) {
       return errorResponse(message, 400);
+    }
+
+    if (message.includes('Checkpoint not found')) {
+      return errorResponse(message, 404);
     }
 
     if (message.includes('not found')) {

@@ -2542,4 +2542,96 @@ describe('handleRequest', () => {
     expect(body.id).toBeString();
     expect(body.id).not.toBe('wf-source');
   });
+
+  it('POST /v1/workflows/:id/fork returns 400 for invalid JSON bodies', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/wf-source/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{',
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Invalid JSON body' });
+  });
+
+  it('POST /v1/workflows/:id/fork returns 400 for non-object JSON bodies', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows/wf-source/fork', ['x']),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Request body must be a JSON object' });
+  });
+
+  it('POST /v1/workflows/:id/fork returns 400 for invalid fromStep values', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows/wf-source/fork', { fromStep: -1 }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Field "fromStep" must be a non-negative safe integer',
+    });
+  });
+
+  it('POST /v1/workflows/:id/fork returns 400 when fromStep does not exist', async () => {
+    engine = createEngine();
+
+    engine.register('forkable', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    const original = await engine.start('forkable', 'hello', { id: 'wf-source' });
+    await original.result();
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows/wf-source/fork', { fromStep: 999 }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Checkpoint not found at step 999 for workflow "wf-source"',
+    });
+  });
+
+  it('POST /v1/workflows/:id/fork returns 404 for unknown workflow ids', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(request('POST', '/v1/workflows/missing/fork'), engine);
+
+    expect(response.status).toBe(404);
+    expect(await json(response)).toEqual({
+      error: 'Workflow "missing" not found',
+    });
+  });
+
+  it('POST /v1/workflows/:id/fork returns 404 when the current checkpoint is missing', async () => {
+    engine = createEngine();
+    const originalFork = engine.fork.bind(engine);
+
+    engine.fork = async () => {
+      throw new Error('Checkpoint not found for workflow "wf-source"');
+    };
+
+    const response = await handleRequest(request('POST', '/v1/workflows/wf-source/fork'), engine);
+
+    expect(response.status).toBe(404);
+    expect(await json(response)).toEqual({
+      error: 'Checkpoint not found for workflow "wf-source"',
+    });
+
+    engine.fork = originalFork;
+  });
 });

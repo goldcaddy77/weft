@@ -2658,6 +2658,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     state: WorkflowState,
     checkpoint: Checkpoint,
+    workflowStartHeaders?: Map<string, string>,
   ): import('../storage/interface.ts').BatchOperation[] {
     const operations: import('../storage/interface.ts').BatchOperation[] = [
       { type: 'put', key: KEYS.workflow(workflowId), value: encode(state) },
@@ -2677,6 +2678,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         },
         ...buildIndexOperations(workflowId, {}, checkpoint.searchAttributes),
       );
+    }
+
+    if (workflowStartHeaders && workflowStartHeaders.size > 0) {
+      operations.push({
+        type: 'put',
+        key: KEYS.workflowHeaders(workflowId),
+        value: encodeWorkflowStartHeaders(workflowStartHeaders),
+      });
     }
 
     return operations;
@@ -2783,6 +2792,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       sourceCheckpoint,
       registration,
     );
+    const sourceWorkflowHeaders =
+      this.#workflowHeaders.get(sourceWorkflowId) ??
+      (await this.#loadWorkflowStartHeaders(sourceWorkflowId));
+    const persistedWorkflowStartHeaders =
+      selectPersistedWorkflowStartHeaders(sourceWorkflowHeaders);
 
     const workflowId = crypto.randomUUID();
     const lineage = this.#createForkLineage(sourceWorkflowId, sourceCheckpoint);
@@ -2801,9 +2815,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     let forkStarted = false;
     try {
       await this.#storage.batch(
-        this.#buildForkBatchOperations(workflowId, forkState, forkCheckpoint),
+        this.#buildForkBatchOperations(
+          workflowId,
+          forkState,
+          forkCheckpoint,
+          persistedWorkflowStartHeaders,
+        ),
       );
       this.#eventLogHeads.set(workflowId, EMPTY_EVENT_HEAD);
+      this.#setWorkflowStartHeaders(workflowId, persistedWorkflowStartHeaders);
       const handle = this.#launchWorkflowFromCheckpoint(
         workflowId,
         forkState,
@@ -2819,6 +2839,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.#workflowVersionTuples.delete(workflowId);
         this.#eventLogHeads.delete(workflowId);
         this.#agentWorkflowIds.delete(workflowId);
+        this.#workflowHeaders.delete(workflowId);
       }
     }
   }

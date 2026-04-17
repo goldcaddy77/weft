@@ -218,6 +218,7 @@ describe('HttpClient', () => {
         'setBudgetPolicy',
         'getBudgetPolicy',
         'getStreamChunks',
+        'fork',
         'submitCoordinatedUpdate',
         'getUpdateResult',
       ] as const;
