@@ -2415,11 +2415,38 @@ describe('handleRequest', () => {
 
       const body = await response.text();
       expect(receivedAfter).toBe(2);
+      expect(body).toContain('id: 3');
+      expect(body).toContain('id: 4');
       expect(body).toContain('alpha');
       expect(body).toContain('beta');
       expect(body).not.toContain('ignored');
+      expect(body).not.toContain('id: 2\nevent: token');
 
       engine.getStreamChunks = originalGetStreamChunks;
+    });
+
+    it('returns 400 when Last-Event-ID is invalid', async () => {
+      engine = createEngine();
+
+      const startResponse = await handleRequest(
+        request('POST', '/v1/workflows', { type: 'echo', input: 'stream' }),
+        engine,
+      );
+      const { id } = (await json(startResponse)) as { id: string };
+      await flush();
+
+      const response = await handleRequest(
+        new Request(`http://localhost/v1/workflows/${id}/sse`, {
+          method: 'GET',
+          headers: { Accept: 'text/event-stream', 'Last-Event-ID': '1abc' },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await json(response)).toEqual({
+        error: 'Invalid Last-Event-ID header: 1abc',
+      });
     });
   });
 

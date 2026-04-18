@@ -9,7 +9,7 @@
  */
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
-import { createSSEStream } from '../ai/streaming-agent.ts';
+import { createSSEStream, formatSSE } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type { Engine } from '../core/engine.ts';
@@ -36,6 +36,7 @@ import {
 } from '../observability/metrics.ts';
 import { generateOpenApiDocument } from './openapi.ts';
 import { ROUTES, toRegex } from './route-model.ts';
+import { parseOptionalSequenceCursor } from './sequence-cursor.ts';
 
 // ---------------------------------------------------------------------------
 // Route matching
@@ -59,6 +60,7 @@ const ROUTE_PATTERNS: Array<{
   handler: HandlerName;
   paramNames: readonly string[];
 }> = [];
+const textEncoder = new TextEncoder();
 
 for (const route of ROUTES) {
   ROUTE_PATTERNS.push({
@@ -122,17 +124,27 @@ function errorResponse(message: string, status: number): Response {
 }
 
 function parseAfterQueryParameter(request: Request): number | Response | undefined {
-  const afterParam = new URL(request.url).searchParams.get('after');
-  if (afterParam === null) {
-    return undefined;
+  const result = parseOptionalSequenceCursor(
+    new URL(request.url).searchParams.get('after'),
+    'after query parameter',
+  );
+  if (result.error) {
+    return errorResponse(result.error, 400);
   }
 
-  const after = Number(afterParam);
-  if (!Number.isSafeInteger(after) || after < -1) {
-    return errorResponse(`Invalid after query parameter: ${afterParam}`, 400);
+  return result.value;
+}
+
+function parseLastEventIdHeader(request: Request): number | Response | undefined {
+  const result = parseOptionalSequenceCursor(
+    request.headers.get('Last-Event-ID'),
+    'Last-Event-ID header',
+  );
+  if (result.error) {
+    return errorResponse(result.error, 400);
   }
 
-  return after;
+  return result.value;
 }
 
 function createStoredChunkStream(
@@ -147,6 +159,47 @@ function createStoredChunkStream(
           controller.enqueue(text);
         }
       }
+      controller.close();
+    },
+  });
+}
+
+function createStoredChunkSSEStream(
+  chunks: StoredStreamChunk[],
+  startingSequence: number,
+  mapChunkToText: (chunk: StoredStreamChunk) => string | null,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      let lastEventId = startingSequence;
+
+      for (const chunk of chunks) {
+        const text = mapChunkToText(chunk);
+        if (text === null) {
+          continue;
+        }
+
+        controller.enqueue(
+          textEncoder.encode(
+            formatSSE({
+              id: String(chunk.sequence),
+              event: 'token',
+              data: text,
+            }),
+          ),
+        );
+        lastEventId = chunk.sequence;
+      }
+
+      controller.enqueue(
+        textEncoder.encode(
+          formatSSE({
+            id: String(lastEventId + 1),
+            event: 'done',
+            data: '',
+          }),
+        ),
+      );
       controller.close();
     },
   });
@@ -822,17 +875,17 @@ async function handleStreamSSE(
     return errorResponse(`Workflow "${workflowId}" not found`, 404);
   }
 
-  const lastEventId = request.headers.get('Last-Event-ID') ?? undefined;
-  const parsedLastEventId =
-    lastEventId === undefined ? Number.NaN : Number.parseInt(lastEventId, 10);
-  const after = Number.isSafeInteger(parsedLastEventId) ? parsedLastEventId : undefined;
+  const after = parseLastEventIdHeader(request);
+  if (after instanceof Response) {
+    return after;
+  }
 
   const chunks =
     after !== undefined
       ? await engine.getStreamChunks(workflowId, 'tokens', { after })
       : await engine.getStreamChunks(workflowId, 'tokens');
 
-  const tokenStream = createStoredChunkStream(chunks, (chunk) => {
+  const sseStream = createStoredChunkSSEStream(chunks, after ?? -1, (chunk) => {
     if (typeof chunk.value === 'string') {
       return chunk.value;
     }
@@ -849,8 +902,6 @@ async function handleStreamSSE(
 
     return null;
   });
-
-  const sseStream = createSSEStream(tokenStream, lastEventId ?? undefined);
 
   return new Response(sseStream, {
     status: 200,

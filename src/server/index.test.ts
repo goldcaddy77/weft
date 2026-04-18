@@ -1537,6 +1537,33 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     return ws;
   }
 
+  async function expectStreamConnectionFailure(
+    wsServer: WeftServer,
+    workflowId: string,
+    resumeFrom: string,
+  ): Promise<void> {
+    const wsUrl = wsServer.url.replace('http://', 'ws://');
+    const url = new URL(`${wsUrl}/v1/workflows/${encodeURIComponent(workflowId)}/stream`);
+    url.searchParams.set('resumeFrom', resumeFrom);
+
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(url.toString());
+      const timeout = setTimeout(() => reject(new Error('Expected WebSocket failure')), 1_000);
+      const finish = (): void => {
+        clearTimeout(timeout);
+        resolve();
+      };
+
+      ws.addEventListener('open', () => {
+        clearTimeout(timeout);
+        ws.close();
+        reject(new Error(`Unexpectedly connected with resumeFrom=${resumeFrom}`));
+      });
+      ws.addEventListener('error', finish, { once: true });
+      ws.addEventListener('close', finish, { once: true });
+    });
+  }
+
   async function connectWatch(wsServer: WeftServer, workflowId: string): Promise<WebSocket> {
     const wsUrl = wsServer.url.replace('http://', 'ws://');
     const ws = new WebSocket(`${wsUrl}/v1/workflows/${encodeURIComponent(workflowId)}/watch`);
@@ -1749,6 +1776,18 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(healthResponse.status).toBe(200);
   });
 
+  it('rejects invalid resumeFrom query parameter values', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    for (const resumeFrom of ['not-a-number', '1.5', '1abc']) {
+      await expectStreamConnectionFailure(server, 'wf-invalid-resume', resumeFrom);
+    }
+
+    const healthResponse = await fetch(`${server.url}/v1/health`);
+    expect(healthResponse.status).toBe(200);
+  });
+
   it('continues event persistence from the highest stored sequence number', async () => {
     engine = createEngine();
     const storage = engine.storage as MemoryStorage;
@@ -1835,6 +1874,56 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(replayMessages[0]?.['sequence']).toBe(1);
     expect(replayMessages[0]?.['data']).toMatchObject({ token: 'second' });
 
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('buffers live token events that arrive while replay is still in progress', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    engine.dispatchEvent(new TokenEvent('wf-overlap', 'first', 'gpt-4'));
+    engine.dispatchEvent(new TokenEvent('wf-overlap', 'second', 'gpt-4'));
+    await Bun.sleep(200);
+
+    const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
+    let releaseReplay!: () => void;
+    const replayGate = new Promise<void>((resolve) => {
+      releaseReplay = resolve;
+    });
+    let shouldBlockReplay = true;
+
+    engine.getStreamChunks = async (...args) => {
+      if (
+        shouldBlockReplay &&
+        args[0] === 'wf-overlap' &&
+        args[1] === 'tokens' &&
+        args[2]?.after === 0
+      ) {
+        shouldBlockReplay = false;
+        await replayGate;
+      }
+
+      return originalGetStreamChunks(...args);
+    };
+
+    const ws = await connectStream(server, 'wf-overlap', { resumeFrom: 0 });
+    const messages = collectMessages(ws);
+    await Bun.sleep(50);
+
+    engine.dispatchEvent(new TokenEvent('wf-overlap', 'third', 'gpt-4'));
+    await Bun.sleep(50);
+
+    releaseReplay();
+    await Bun.sleep(250);
+
+    const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
+    expect(tokenMessages.map((message) => message['sequence'])).toEqual([1, 2]);
+    expect(
+      tokenMessages.map((message) => (message['data'] as Record<string, unknown>)?.['token']),
+    ).toEqual(['second', 'third']);
+
+    engine.getStreamChunks = originalGetStreamChunks;
     ws.close();
     await Bun.sleep(50);
   });

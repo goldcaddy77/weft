@@ -39,6 +39,7 @@ import {
   evictOldestAffinityEntries,
   restoreExtendedDeadlineIfStillActive,
 } from './runtime-helpers.ts';
+import { parseOptionalSequenceCursor } from './sequence-cursor.ts';
 import { TaskQueue, type PendingTask, type SchedulingPolicy } from './task-queue.ts';
 import type { InflightRecord, QueuedRecord } from './task-state.ts';
 import {
@@ -918,14 +919,14 @@ export function serve(options: ServeOptions): WeftServer {
     }
 
     const resumeFromParam = url.searchParams.get('resumeFrom');
-    let resumeFrom: number | undefined;
-    if (resumeFromParam !== null) {
-      const parsedResumeFrom = Number.parseInt(resumeFromParam, 10);
-      if (!Number.isSafeInteger(parsedResumeFrom) || parsedResumeFrom < -1) {
-        return new Response('Invalid resumeFrom query parameter', { status: 400 });
-      }
-      resumeFrom = parsedResumeFrom;
+    const resumeFromResult = parseOptionalSequenceCursor(
+      resumeFromParam,
+      'resumeFrom query parameter',
+    );
+    if (resumeFromResult.error) {
+      return new Response(resumeFromResult.error, { status: 400 });
     }
+    const resumeFrom = resumeFromResult.value;
 
     const upgraded = server.upgrade(request, {
       data: {
