@@ -2637,18 +2637,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     sourceState: WorkflowState,
     versionTuple: WorkflowVersionTuple,
     lineage: ForkLineage,
+    forkedAt: number,
   ): WorkflowState {
-    const now = this.#options.getNow();
-
     return {
       id: workflowId,
       type: sourceState.type,
       status: 'running',
       input: sourceState.input,
       version: versionTuple.workflowVersion,
-      createdAt: now,
-      startedAt: now,
-      updatedAt: now,
+      createdAt: forkedAt,
+      startedAt: forkedAt,
+      updatedAt: forkedAt,
       ...(versionTuple.agentVersion !== undefined && {
         agentVersion: versionTuple.agentVersion,
       }),
@@ -2807,9 +2806,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       selectPersistedWorkflowStartHeaders(sourceWorkflowHeaders);
 
     const workflowId = crypto.randomUUID();
+    const forkedAt = this.#options.getNow();
     const lineage = this.#createForkLineage(sourceWorkflowId, sourceCheckpoint);
     const forkCheckpoint: Checkpoint = {
       ...preparedExecutionState.checkpoint,
+      createdAt: forkedAt,
       workflowId,
       searchAttributes: this.#buildForkSearchAttributes(preparedExecutionState.checkpoint, lineage),
     };
@@ -2818,6 +2819,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       preparedExecutionState.state,
       preparedExecutionState.versionTuple,
       lineage,
+      forkedAt,
     );
 
     let forkStarted = false;

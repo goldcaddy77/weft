@@ -5,6 +5,7 @@ import type { LLMProvider } from '../../ai/providers/interface.ts';
 import type { ChatResponse } from '../../ai/providers/types.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
+import { deserializeCheckpoint } from '../checkpoint.ts';
 import { decode } from '../codec.ts';
 import type { Context } from '../context.ts';
 import { WorkflowCompletedEvent, WorkflowStartedEvent } from '../events.ts';
@@ -118,6 +119,50 @@ describe('workflow forking', () => {
     await engine.signal(original.id, 'continue');
     await expect(original.result()).resolves.toBe('first:second');
 
+    engine[Symbol.dispose]();
+  });
+
+  it('refreshes fork checkpoint timestamps so resumed sleeps use the fork time', async () => {
+    const engine = new TestEngine({ startTime: 1_000 });
+
+    engine.register('fork-sleep-reference', async function* (ctx: WorkflowContext) {
+      const durableContext = ctx as Context;
+      yield* durableContext.waitForSignal('continue');
+      yield* durableContext.sleep('1 hour');
+      return 'done';
+    });
+
+    const original = await engine.start('fork-sleep-reference', null, { id: 'wf-sleep-root' });
+    const originalResult = original.result();
+    const sourceCheckpointBytes = await engine.storage.get(KEYS.checkpoint(original.id));
+    expect(sourceCheckpointBytes).not.toBeNull();
+    const sourceCheckpoint = deserializeCheckpoint(sourceCheckpointBytes!);
+
+    await engine.advanceTime('2 hours');
+
+    const forked = await engine.fork(original.id);
+    const forkCheckpointBytes = await engine.storage.get(KEYS.checkpoint(forked.id));
+    expect(forkCheckpointBytes).not.toBeNull();
+    const forkCheckpoint = deserializeCheckpoint(forkCheckpointBytes!);
+
+    expect(forkCheckpoint.createdAt).toBe(engine.now);
+    expect(forkCheckpoint.createdAt).toBeGreaterThan(sourceCheckpoint.createdAt);
+
+    await engine.signal(forked.id, 'continue');
+    await Bun.sleep(0);
+
+    const forkedStateBeforeFinalAdvance = await engine.get(forked.id);
+    expect(forkedStateBeforeFinalAdvance?.status).toBe('running');
+
+    await engine.advanceTime('59 minutes');
+    const forkedStateBeforeTimerFires = await engine.get(forked.id);
+    expect(forkedStateBeforeTimerFires?.status).toBe('running');
+
+    await engine.advanceTime('1 minute');
+    await expect(forked.result()).resolves.toBe('done');
+
+    await engine.cancel(original.id);
+    await expect(originalResult).rejects.toThrow('Workflow cancelled');
     engine[Symbol.dispose]();
   });
 
