@@ -1780,7 +1780,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
 
-    for (const resumeFrom of ['', 'not-a-number', '1.5', '1abc']) {
+    for (const resumeFrom of ['', 'not-a-number', '1.5', '1abc', '0x10', '1e3']) {
       await expectStreamConnectionFailure(server, 'wf-invalid-resume', resumeFrom);
     }
 
@@ -1873,6 +1873,29 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(replayMessages).toHaveLength(1);
     expect(replayMessages[0]?.['sequence']).toBe(1);
     expect(replayMessages[0]?.['data']).toMatchObject({ token: 'second' });
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('clamps resumeFrom above the durable token range so live tokens still arrive', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    engine.dispatchEvent(new TokenEvent('wf-resume-clamped', 'first', 'gpt-4'));
+    await Bun.sleep(200);
+
+    const ws = await connectStream(server, 'wf-resume-clamped', { resumeFrom: 999 });
+    const messages = collectMessages(ws);
+    await Bun.sleep(50);
+
+    engine.dispatchEvent(new TokenEvent('wf-resume-clamped', 'second', 'gpt-4'));
+    await Bun.sleep(200);
+
+    const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
+    expect(tokenMessages).toHaveLength(1);
+    expect(tokenMessages[0]?.['sequence']).toBe(1);
+    expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'second', model: 'gpt-4' });
 
     ws.close();
     await Bun.sleep(50);

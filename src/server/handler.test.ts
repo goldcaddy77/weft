@@ -2287,15 +2287,17 @@ describe('handleRequest', () => {
   it('GET /v1/workflows/:id/streams/:key returns 400 for an invalid after query parameter', async () => {
     engine = createEngine();
 
-    const response = await handleRequest(
-      request('GET', '/v1/workflows/wf-stream/streams/tokens?after=not-a-number'),
-      engine,
-    );
+    for (const after of ['not-a-number', '0x10', '1e3']) {
+      const response = await handleRequest(
+        request('GET', `/v1/workflows/wf-stream/streams/tokens?after=${after}`),
+        engine,
+      );
 
-    expect(response.status).toBe(400);
-    expect(await json(response)).toEqual({
-      error: 'Invalid after query parameter: not-a-number',
-    });
+      expect(response.status).toBe(400);
+      expect(await json(response)).toEqual({
+        error: `Invalid after query parameter: ${after}`,
+      });
+    }
   });
 
   it('GET /v1/workflows/:id/streams/:key returns 400 for an empty after query parameter', async () => {
@@ -2435,6 +2437,7 @@ describe('handleRequest', () => {
       expect(body).toContain('beta');
       expect(body).not.toContain('ignored');
       expect(body).not.toContain('id: 2\nevent: token');
+      expect(body).not.toContain('id: 5\nevent: done');
 
       engine.getStreamChunks = originalGetStreamChunks;
     });
@@ -2449,18 +2452,20 @@ describe('handleRequest', () => {
       const { id } = (await json(startResponse)) as { id: string };
       await flush();
 
-      const response = await handleRequest(
-        new Request(`http://localhost/v1/workflows/${id}/sse`, {
-          method: 'GET',
-          headers: { Accept: 'text/event-stream', 'Last-Event-ID': '1abc' },
-        }),
-        engine,
-      );
+      for (const lastEventId of ['1abc', '0x10', '1e3']) {
+        const response = await handleRequest(
+          new Request(`http://localhost/v1/workflows/${id}/sse`, {
+            method: 'GET',
+            headers: { Accept: 'text/event-stream', 'Last-Event-ID': lastEventId },
+          }),
+          engine,
+        );
 
-      expect(response.status).toBe(400);
-      expect(await json(response)).toEqual({
-        error: 'Invalid Last-Event-ID header: 1abc',
-      });
+        expect(response.status).toBe(400);
+        expect(await json(response)).toEqual({
+          error: `Invalid Last-Event-ID header: ${lastEventId}`,
+        });
+      }
     });
 
     it('returns 400 when Last-Event-ID is empty', async () => {

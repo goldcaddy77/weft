@@ -2564,7 +2564,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return this.#budgetPolicyEnforcer.policies.get(namespace) ?? null;
   }
 
-  /** Read stream chunks back from storage for a completed stream operation. */
+  /** Read stored stream chunks back from storage, optionally after a durable sequence cursor. */
   async getStreamChunks(
     workflowId: string,
     key: string,

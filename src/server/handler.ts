@@ -166,13 +166,10 @@ function createStoredChunkStream(
 
 function createStoredChunkSSEStream(
   chunks: StoredStreamChunk[],
-  startingSequence: number,
   mapChunkToText: (chunk: StoredStreamChunk) => string | null,
 ): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      let lastEventId = startingSequence;
-
       for (const chunk of chunks) {
         const text = mapChunkToText(chunk);
         if (text === null) {
@@ -188,13 +185,11 @@ function createStoredChunkSSEStream(
             }),
           ),
         );
-        lastEventId = chunk.sequence;
       }
 
       controller.enqueue(
         textEncoder.encode(
           formatSSE({
-            id: String(lastEventId + 1),
             event: 'done',
             data: '',
           }),
@@ -885,7 +880,7 @@ async function handleStreamSSE(
       ? await engine.getStreamChunks(workflowId, 'tokens', { after })
       : await engine.getStreamChunks(workflowId, 'tokens');
 
-  const sseStream = createStoredChunkSSEStream(chunks, after ?? -1, (chunk) => {
+  const sseStream = createStoredChunkSSEStream(chunks, (chunk) => {
     if (typeof chunk.value === 'string') {
       return chunk.value;
     }

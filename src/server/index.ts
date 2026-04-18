@@ -314,6 +314,24 @@ function sendStreamMessage(
   ws.data.lastDeliveredSequence = sequence;
 }
 
+async function getHighestStoredStreamSequence(
+  engine: Engine,
+  workflowId: string,
+  key: string,
+): Promise<number> {
+  const prefix = KEYS.streamChunkPrefix(workflowId, key);
+
+  for await (const [storageKey] of engine.storage.scan(prefix, { reverse: true, limit: 1 })) {
+    const sequenceText = storageKey.slice(prefix.length);
+    const sequence = Number.parseInt(sequenceText, 10);
+    if (Number.isSafeInteger(sequence) && sequence >= 0) {
+      return sequence;
+    }
+  }
+
+  return -1;
+}
+
 // ---------------------------------------------------------------------------
 // WebSocket event broadcasting
 // ---------------------------------------------------------------------------
@@ -750,10 +768,20 @@ export function serve(options: ServeOptions): WeftServer {
     ws: ServerWebSocket<WebSocketData>,
     workflowId: string,
   ): Promise<void> {
+    ws.data.lastDeliveredSequence = -1;
+
     try {
-      const after = ws.data.lastDeliveredSequence;
+      const requestedResumeFrom = ws.data.resumeFrom;
+      const after =
+        requestedResumeFrom === undefined
+          ? -1
+          : Math.min(
+              requestedResumeFrom,
+              await getHighestStoredStreamSequence(options.engine, workflowId, 'tokens'),
+            );
+      ws.data.lastDeliveredSequence = after;
       const chunks =
-        after !== undefined
+        after >= 0
           ? await options.engine.getStreamChunks(workflowId, 'tokens', { after })
           : await options.engine.getStreamChunks(workflowId, 'tokens');
 
@@ -1071,14 +1099,13 @@ export function serve(options: ServeOptions): WeftServer {
     websocket: {
       open(ws) {
         const { pathname, connectionType, workflowId } = ws.data;
-        if (pathname && connectionType !== 'stream') {
+        if (pathname) {
           ws.subscribe(pathname);
         }
 
         // Stream sockets track replay state individually so reconnects can
         // catch up from durable storage without duplicate live tokens.
         if (connectionType === 'stream' && workflowId) {
-          ws.data.lastDeliveredSequence = ws.data.resumeFrom ?? -1;
           ws.data.replayInProgress = true;
           ws.data.pendingStreamMessages = [];
           addStreamSocket(workflowId, ws);
