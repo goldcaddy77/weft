@@ -1517,9 +1517,17 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
   });
 
   /** Open a WebSocket to the token stream endpoint and wait for the connection. */
-  async function connectStream(wsServer: WeftServer, workflowId: string): Promise<WebSocket> {
+  async function connectStream(
+    wsServer: WeftServer,
+    workflowId: string,
+    options?: { resumeFrom?: number },
+  ): Promise<WebSocket> {
     const wsUrl = wsServer.url.replace('http://', 'ws://');
-    const ws = new WebSocket(`${wsUrl}/v1/workflows/${encodeURIComponent(workflowId)}/stream`);
+    const url = new URL(`${wsUrl}/v1/workflows/${encodeURIComponent(workflowId)}/stream`);
+    if (options?.resumeFrom !== undefined) {
+      url.searchParams.set('resumeFrom', String(options.resumeFrom));
+    }
+    const ws = new WebSocket(url.toString());
 
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener('open', () => resolve());
@@ -1588,6 +1596,8 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(tokenMessages.length).toBe(2);
     expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'Hello', model: 'gpt-4' });
     expect(tokenMessages[1]?.['data']).toMatchObject({ token: ' world', model: 'gpt-4' });
+    expect(typeof tokenMessages[0]?.['sequence']).toBe('number');
+    expect(typeof tokenMessages[1]?.['sequence']).toBe('number');
 
     ws.close();
     await Bun.sleep(50);
@@ -1674,15 +1684,15 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     const messages = collectMessages(ws);
     await Bun.sleep(200);
 
-    const replayMessages = messages.filter((m) => m.type === 'replay');
-    expect(replayMessages.length).toBeGreaterThanOrEqual(1);
+    const replayMessages = messages.filter((message) => message.type === TokenEvent.type);
+    expect(replayMessages.length).toBeGreaterThanOrEqual(2);
 
-    // Replayed content should include the tokens
     const replayedTokens = replayMessages.map(
-      (m) => (m['data'] as Record<string, unknown>)?.['token'],
+      (message) => (message['data'] as Record<string, unknown>)?.['token'],
     );
     expect(replayedTokens).toContain('first');
     expect(replayedTokens).toContain('second');
+    expect(replayMessages.map((message) => message['sequence'])).toEqual([0, 1]);
 
     ws.close();
     await Bun.sleep(50);
@@ -1700,7 +1710,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     const messages = collectMessages(ws);
     await Bun.sleep(200);
 
-    const replayMessages = messages.filter((message) => message.type === 'replay');
+    const replayMessages = messages.filter((message) => message.type === TokenEvent.type);
     const replayedTokens = replayMessages.map(
       (message) => (message['data'] as Record<string, unknown>)?.['token'],
     );
@@ -1759,6 +1769,23 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(await storage.get(KEYS.event('wf-sequence', 5))).not.toBeNull();
   });
 
+  it('persists streamed token chunks under the durable blob prefix', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    server = serve({ engine, port: 0 });
+
+    engine.dispatchEvent(new TokenEvent('wf-token-blob', 'alpha', 'gpt-4'));
+    await Bun.sleep(200);
+
+    const storedChunk = await storage.get(KEYS.streamChunk('wf-token-blob', 'tokens', 0));
+    expect(storedChunk).not.toBeNull();
+    expect(decode(storedChunk!)).toEqual({
+      workflowId: 'wf-token-blob',
+      token: 'alpha',
+      model: 'gpt-4',
+    });
+  });
+
   it('retries event sequence initialization after a failed scan', async () => {
     engine = createEngine();
     const storage = engine.storage as MemoryStorage;
@@ -1791,6 +1818,61 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     }
   });
 
+  it('replays only missing token chunks when resumeFrom is provided', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    engine.dispatchEvent(new TokenEvent('wf-resume', 'first', 'gpt-4'));
+    engine.dispatchEvent(new TokenEvent('wf-resume', 'second', 'gpt-4'));
+    await Bun.sleep(200);
+
+    const ws = await connectStream(server, 'wf-resume', { resumeFrom: 0 });
+    const messages = collectMessages(ws);
+    await Bun.sleep(200);
+
+    const replayMessages = messages.filter((message) => message.type === TokenEvent.type);
+    expect(replayMessages).toHaveLength(1);
+    expect(replayMessages[0]?.['sequence']).toBe(1);
+    expect(replayMessages[0]?.['data']).toMatchObject({ token: 'second' });
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('replays stored token chunks after a server restart', async () => {
+    const storage = new MemoryStorage();
+
+    engine = new Engine({ storage });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    server = serve({ engine, port: 0 });
+
+    engine.dispatchEvent(new TokenEvent('wf-restart', 'persisted', 'gpt-4'));
+    await Bun.sleep(200);
+
+    await server.stop();
+    engine[Symbol.dispose]();
+
+    engine = new Engine({ storage });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectStream(server, 'wf-restart', { resumeFrom: -1 });
+    const messages = collectMessages(ws);
+    await Bun.sleep(200);
+
+    const replayMessages = messages.filter((message) => message.type === TokenEvent.type);
+    expect(replayMessages).toHaveLength(1);
+    expect(replayMessages[0]?.['sequence']).toBe(0);
+    expect(replayMessages[0]?.['data']).toMatchObject({ token: 'persisted' });
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
   it('logs replay failures when stored token scanning throws', async () => {
     engine = createEngine();
     const storage = engine.storage as MemoryStorage;
@@ -1800,7 +1882,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
       prefix: string,
       options?: Parameters<MemoryStorage['scan']>[1],
     ) {
-      if (prefix === 'ev:wf-replay-failure:') {
+      if (prefix === 'blob:wf-replay-failure:tokens:chunk:') {
         throw new Error('replay scan failed');
       }
       yield* originalScan(prefix, options);
@@ -1812,7 +1894,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
       await Bun.sleep(100);
 
       expect(errorSpy).toHaveBeenCalledWith(
-        '[weft] Failed to replay token events for workflow "wf-replay-failure":',
+        '[weft] Failed to replay token stream for workflow "wf-replay-failure":',
         expect.any(Error),
       );
 

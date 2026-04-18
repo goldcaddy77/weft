@@ -2235,11 +2235,14 @@ describe('handleRequest', () => {
     });
   });
 
-  it('GET /v1/workflows/:id/streams/:key returns stored stream chunks', async () => {
+  it('GET /v1/workflows/:id/streams/:key returns stored stream chunks with sequence metadata', async () => {
     engine = createEngine();
 
     const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
-    engine.getStreamChunks = async () => ['alpha', { token: 'beta' }];
+    engine.getStreamChunks = async () => [
+      { sequence: 0, value: 'alpha' },
+      { sequence: 1, value: { token: 'beta' } },
+    ];
 
     const response = await handleRequest(
       request('GET', '/v1/workflows/wf-stream/streams/tokens'),
@@ -2248,10 +2251,51 @@ describe('handleRequest', () => {
 
     expect(response.status).toBe(200);
     expect(await json(response)).toEqual({
-      chunks: ['alpha', { token: 'beta' }],
+      chunks: [
+        { sequence: 0, value: 'alpha' },
+        { sequence: 1, value: { token: 'beta' } },
+      ],
     });
 
     engine.getStreamChunks = originalGetStreamChunks;
+  });
+
+  it('GET /v1/workflows/:id/streams/:key forwards the after query parameter', async () => {
+    engine = createEngine();
+
+    const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
+    let receivedAfter: number | undefined;
+    engine.getStreamChunks = async (_workflowId, _key, options) => {
+      receivedAfter = options?.after;
+      return [{ sequence: 2, value: 'charlie' }];
+    };
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-stream/streams/tokens?after=1'),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(receivedAfter).toBe(1);
+    expect(await json(response)).toEqual({
+      chunks: [{ sequence: 2, value: 'charlie' }],
+    });
+
+    engine.getStreamChunks = originalGetStreamChunks;
+  });
+
+  it('GET /v1/workflows/:id/streams/:key returns 400 for an invalid after query parameter', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-stream/streams/tokens?after=not-a-number'),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Invalid after query parameter: not-a-number',
+    });
   });
 
   // SSE streaming endpoint
@@ -2349,13 +2393,17 @@ describe('handleRequest', () => {
       await flush();
 
       const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
-      engine.getStreamChunks = async () => [
-        'alpha',
-        { token: 'beta' },
-        { token: '' },
-        { nope: 'ignored' },
-        42,
-      ];
+      let receivedAfter: number | undefined;
+      engine.getStreamChunks = async (_workflowId, _key, options) => {
+        receivedAfter = options?.after;
+        return [
+          { sequence: 3, value: 'alpha' },
+          { sequence: 4, value: { token: 'beta' } },
+          { sequence: 5, value: { token: '' } },
+          { sequence: 6, value: { nope: 'ignored' } },
+          { sequence: 7, value: 42 },
+        ];
+      };
 
       const response = await handleRequest(
         new Request(`http://localhost/v1/workflows/${id}/sse`, {
@@ -2366,6 +2414,7 @@ describe('handleRequest', () => {
       );
 
       const body = await response.text();
+      expect(receivedAfter).toBe(2);
       expect(body).toContain('alpha');
       expect(body).toContain('beta');
       expect(body).not.toContain('ignored');

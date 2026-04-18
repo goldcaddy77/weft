@@ -11,6 +11,7 @@
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import { createSSEStream } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
+import type { StoredStreamChunk } from '../core/context.ts';
 import type { Engine } from '../core/engine.ts';
 import {
   StartWorkflowValidationError,
@@ -118,6 +119,37 @@ function negotiatedResponse(request: Request, body: unknown, status: number = 20
 
 function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
+}
+
+function parseAfterQueryParameter(request: Request): number | Response | undefined {
+  const afterParam = new URL(request.url).searchParams.get('after');
+  if (afterParam === null) {
+    return undefined;
+  }
+
+  const after = Number(afterParam);
+  if (!Number.isSafeInteger(after) || after < -1) {
+    return errorResponse(`Invalid after query parameter: ${afterParam}`, 400);
+  }
+
+  return after;
+}
+
+function createStoredChunkStream(
+  chunks: StoredStreamChunk[],
+  mapChunkToText: (chunk: StoredStreamChunk) => string | null,
+): ReadableStream<string> {
+  return new ReadableStream<string>({
+    start(controller) {
+      for (const chunk of chunks) {
+        const text = mapChunkToText(chunk);
+        if (text !== null) {
+          controller.enqueue(text);
+        }
+      }
+      controller.close();
+    },
+  });
 }
 
 export function getRequiredRouteParameter(
@@ -734,11 +766,39 @@ async function handleGetBudgetPolicy(engine: Engine, namespace: string): Promise
 // ---------------------------------------------------------------------------
 
 async function handleGetStreamChunks(
+  request: Request,
   engine: Engine,
   workflowId: string,
   key: string,
 ): Promise<Response> {
-  const chunks = await engine.getStreamChunks(workflowId, key);
+  const after = parseAfterQueryParameter(request);
+  if (after instanceof Response) {
+    return after;
+  }
+
+  const chunks =
+    after !== undefined
+      ? await engine.getStreamChunks(workflowId, key, { after })
+      : await engine.getStreamChunks(workflowId, key);
+
+  const accept = request.headers.get('Accept') ?? '';
+  if (accept.includes('text/event-stream')) {
+    const chunkStream = createStoredChunkStream(chunks, (chunk) =>
+      JSON.stringify({ sequence: chunk.sequence, value: chunk.value }),
+    );
+    return new Response(
+      createSSEStream(chunkStream, after !== undefined ? String(after) : undefined),
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      },
+    );
+  }
+
   return jsonResponse({ chunks });
 }
 
@@ -762,28 +822,35 @@ async function handleStreamSSE(
     return errorResponse(`Workflow "${workflowId}" not found`, 404);
   }
 
-  // Get Last-Event-ID for reconnection support
   const lastEventId = request.headers.get('Last-Event-ID') ?? undefined;
+  const parsedLastEventId =
+    lastEventId === undefined ? Number.NaN : Number.parseInt(lastEventId, 10);
+  const after = Number.isSafeInteger(parsedLastEventId) ? parsedLastEventId : undefined;
 
-  // Get token stream from engine's stream chunks
-  const chunks = await engine.getStreamChunks(workflowId, 'tokens');
+  const chunks =
+    after !== undefined
+      ? await engine.getStreamChunks(workflowId, 'tokens', { after })
+      : await engine.getStreamChunks(workflowId, 'tokens');
 
-  // Build a ReadableStream<string> from the stored chunks
-  const tokenStream = new ReadableStream<string>({
-    start(controller) {
-      for (const chunk of chunks) {
-        if (typeof chunk === 'string') {
-          controller.enqueue(chunk);
-        } else if (typeof chunk === 'object' && chunk !== null && 'token' in chunk) {
-          const token = (chunk as { token?: string }).token;
-          if (token) controller.enqueue(token);
-        }
-      }
-      controller.close();
-    },
+  const tokenStream = createStoredChunkStream(chunks, (chunk) => {
+    if (typeof chunk.value === 'string') {
+      return chunk.value;
+    }
+
+    if (
+      typeof chunk.value === 'object' &&
+      chunk.value !== null &&
+      'token' in chunk.value &&
+      typeof chunk.value['token'] === 'string' &&
+      chunk.value['token'].length > 0
+    ) {
+      return chunk.value['token'];
+    }
+
+    return null;
   });
 
-  const sseStream = createSSEStream(tokenStream, lastEventId);
+  const sseStream = createSSEStream(tokenStream, lastEventId ?? undefined);
 
   return new Response(sseStream, {
     status: 200,
@@ -869,8 +936,8 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   recoverAll: async ({ engine }) => handleRecoverAll(engine),
   setBudgetPolicy: async ({ request, engine }) => handleSetBudgetPolicy(request, engine),
   getBudgetPolicy: async ({ engine, param }) => handleGetBudgetPolicy(engine, param('namespace')),
-  getStreamChunks: async ({ engine, param }) =>
-    handleGetStreamChunks(engine, param('id'), param('key')),
+  getStreamChunks: async ({ request, engine, param }) =>
+    handleGetStreamChunks(request, engine, param('id'), param('key')),
   queryWorkflow: async ({ engine, param }) =>
     handleQueryWorkflow(engine, param('id'), param('name')),
   resumeWorkflow: async ({ engine, param }) => handleResumeWorkflow(engine, param('id')),
