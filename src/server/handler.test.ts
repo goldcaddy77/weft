@@ -2314,6 +2314,39 @@ describe('handleRequest', () => {
     });
   });
 
+  it('GET /v1/workflows/:id/streams/:key uses durable chunk sequences for SSE event ids', async () => {
+    engine = createEngine();
+
+    const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
+    engine.getStreamChunks = async (_workflowId, _key, options) => {
+      expect(options?.after).toBe(2);
+      return [
+        { sequence: 3, value: 'alpha' },
+        { sequence: 5, value: { done: true } },
+      ];
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/wf-stream/streams/tokens?after=2', {
+        method: 'GET',
+        headers: { Accept: 'text/event-stream' },
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+
+    const body = await response.text();
+    expect(body).toContain('id: 3');
+    expect(body).toContain('id: 5');
+    expect(body).not.toContain('id: 4');
+    expect(body).toContain('{"sequence":3,"value":"alpha"}');
+    expect(body).toContain('{"sequence":5,"value":{"done":true}}');
+
+    engine.getStreamChunks = originalGetStreamChunks;
+  });
+
   // SSE streaming endpoint
   describe('GET /v1/workflows/:id/sse', () => {
     it('returns 406 when Accept header does not include text/event-stream', async () => {

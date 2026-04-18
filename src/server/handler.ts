@@ -9,7 +9,7 @@
  */
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
-import { createSSEStream, formatSSE } from '../ai/streaming-agent.ts';
+import { formatSSE } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type { Engine } from '../core/engine.ts';
@@ -145,23 +145,6 @@ function parseLastEventIdHeader(request: Request): number | Response | undefined
   }
 
   return result.value;
-}
-
-function createStoredChunkStream(
-  chunks: StoredStreamChunk[],
-  mapChunkToText: (chunk: StoredStreamChunk) => string | null,
-): ReadableStream<string> {
-  return new ReadableStream<string>({
-    start(controller) {
-      for (const chunk of chunks) {
-        const text = mapChunkToText(chunk);
-        if (text !== null) {
-          controller.enqueue(text);
-        }
-      }
-      controller.close();
-    },
-  });
 }
 
 function createStoredChunkSSEStream(
@@ -831,11 +814,10 @@ async function handleGetStreamChunks(
 
   const accept = request.headers.get('Accept') ?? '';
   if (accept.includes('text/event-stream')) {
-    const chunkStream = createStoredChunkStream(chunks, (chunk) =>
-      JSON.stringify({ sequence: chunk.sequence, value: chunk.value }),
-    );
     return new Response(
-      createSSEStream(chunkStream, after !== undefined ? String(after) : undefined),
+      createStoredChunkSSEStream(chunks, (chunk) =>
+        JSON.stringify({ sequence: chunk.sequence, value: chunk.value }),
+      ),
       {
         status: 200,
         headers: {
