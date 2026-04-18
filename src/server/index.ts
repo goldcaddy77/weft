@@ -1099,7 +1099,12 @@ export function serve(options: ServeOptions): WeftServer {
     websocket: {
       open(ws) {
         const { pathname, connectionType, workflowId } = ws.data;
-        if (pathname) {
+        // Watch and worker sockets ride Bun pub/sub by pathname. Stream
+        // sockets do not: `serve()` wires token delivery through
+        // `publishTokenMessage()` and the `streamSockets` registry instead,
+        // while `wireEventBroadcasting()` retains the `server.publish()`
+        // fallback for direct callers that manage subscriptions themselves.
+        if (pathname && connectionType !== 'stream') {
           ws.subscribe(pathname);
         }
 

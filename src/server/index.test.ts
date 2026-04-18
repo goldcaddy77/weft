@@ -452,6 +452,37 @@ describe('serve', () => {
     broadcaster.dispose();
   });
 
+  it('publishes token stream events to the stream channel when direct delivery is unavailable', async () => {
+    engine = createEngine();
+    const publishedMessages: Array<{ channel: string; message: string }> = [];
+    const broadcaster = wireEventBroadcasting(engine, {
+      publish(channel: string, message: string) {
+        publishedMessages.push({ channel, message });
+        return 1;
+      },
+    } as unknown as ReturnType<typeof Bun.serve>);
+
+    const workflowId = 'stream-fallback-publish-wf';
+    engine.dispatchEvent(new TokenEvent(workflowId, 'hello', 'gpt-4'));
+
+    await waitFor(() => publishedMessages.length === 2, {
+      label: 'watch and stream channel publishes',
+    });
+
+    expect(publishedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channel: `/v1/workflows/${encodeURIComponent(workflowId)}/watch`,
+        }),
+        expect.objectContaining({
+          channel: `/v1/workflows/${encodeURIComponent(workflowId)}/stream`,
+        }),
+      ]),
+    );
+
+    broadcaster.dispose();
+  });
+
   it('waits for an extended post-terminal chain before dropping sequence bookkeeping', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
