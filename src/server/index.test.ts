@@ -1780,7 +1780,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
 
-    for (const resumeFrom of ['not-a-number', '1.5', '1abc']) {
+    for (const resumeFrom of ['', 'not-a-number', '1.5', '1abc']) {
       await expectStreamConnectionFailure(server, 'wf-invalid-resume', resumeFrom);
     }
 

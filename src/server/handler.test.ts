@@ -2298,6 +2298,20 @@ describe('handleRequest', () => {
     });
   });
 
+  it('GET /v1/workflows/:id/streams/:key returns 400 for an empty after query parameter', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-stream/streams/tokens?after='),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Invalid after query parameter: ',
+    });
+  });
+
   // SSE streaming endpoint
   describe('GET /v1/workflows/:id/sse', () => {
     it('returns 406 when Accept header does not include text/event-stream', async () => {
@@ -2446,6 +2460,30 @@ describe('handleRequest', () => {
       expect(response.status).toBe(400);
       expect(await json(response)).toEqual({
         error: 'Invalid Last-Event-ID header: 1abc',
+      });
+    });
+
+    it('returns 400 when Last-Event-ID is empty', async () => {
+      engine = createEngine();
+
+      const startResponse = await handleRequest(
+        request('POST', '/v1/workflows', { type: 'echo', input: 'stream' }),
+        engine,
+      );
+      const { id } = (await json(startResponse)) as { id: string };
+      await flush();
+
+      const response = await handleRequest(
+        new Request(`http://localhost/v1/workflows/${id}/sse`, {
+          method: 'GET',
+          headers: { Accept: 'text/event-stream', 'Last-Event-ID': '' },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await json(response)).toEqual({
+        error: 'Invalid Last-Event-ID header: ',
       });
     });
   });

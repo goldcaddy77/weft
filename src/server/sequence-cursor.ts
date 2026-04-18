@@ -11,6 +11,12 @@ export function parseOptionalSequenceCursor(
     return {};
   }
 
+  if (rawValue.trim().length === 0) {
+    return {
+      error: `Invalid ${parameterName}: ${rawValue}`,
+    };
+  }
+
   const value = Number(rawValue);
   if (!Number.isSafeInteger(value) || value < -1) {
     return {
