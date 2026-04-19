@@ -7,7 +7,7 @@ import {
   type Storage as WeftStorage,
 } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { encode } from './codec.ts';
+import { decode, encode } from './codec.ts';
 import { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import { buildTimerBatchOperations } from './scheduler.ts';
@@ -310,6 +310,38 @@ describe('tenant resource quotas', () => {
     } satisfies Partial<QuotaExceededError>);
   });
 
+  it('does not read estimated storage bytes when storage quotas are disabled', async () => {
+    const storage = new MemoryStorage();
+    const workflowId = 'quota-no-storage-estimate';
+    const workflowState = encode({
+      id: workflowId,
+      status: 'pending',
+      tenant: { id: 'acme' },
+    });
+    const quotaManager = new TenantQuotaManager(storage, Date.now, {
+      maxConcurrentWorkflows: 2,
+    });
+    let estimateReadCount = 0;
+
+    await quotaManager.commitStartAdmission({
+      tenantId: 'acme',
+      workflowId,
+      startOperations: [
+        {
+          type: 'put',
+          key: KEYS.workflow(workflowId),
+          value: workflowState,
+        },
+      ],
+      get estimatedStorageBytes() {
+        estimateReadCount++;
+        return measureStoredRecordBytes(KEYS.workflow(workflowId), workflowState);
+      },
+    });
+
+    expect(estimateReadCount).toBe(0);
+  });
+
   it('releases active workflow quota when a tenant workflow reaches a terminal state', async () => {
     const engine = createEngine({ quotas: { maxConcurrentWorkflows: 1 } });
     disposables.push(engine);
@@ -382,6 +414,47 @@ describe('tenant resource quotas', () => {
     now += 61_000;
 
     await expect(engine.start('echo', { tenantId: 'acme', value: 3 })).resolves.toBeDefined();
+  });
+
+  it('captures the workflow creation timestamp once per admission attempt', async () => {
+    const storage = new MemoryStorage();
+    let nowCalls = 0;
+    const quotaManager = new TenantQuotaManager(
+      storage,
+      () => {
+        nowCalls++;
+        return 1000 + nowCalls;
+      },
+      {
+        maxWorkflowCreationRate: { count: 2, window: '1m' },
+      },
+    );
+    const workflowId = 'quota-rate-single-now';
+    const workflowState = encode({
+      id: workflowId,
+      status: 'pending',
+      tenant: { id: 'acme' },
+    });
+
+    await quotaManager.commitStartAdmission({
+      tenantId: 'acme',
+      workflowId,
+      startOperations: [
+        {
+          type: 'put',
+          key: KEYS.workflow(workflowId),
+          value: workflowState,
+        },
+      ],
+      estimatedStorageBytes: 0,
+    });
+
+    expect(nowCalls).toBe(1);
+    expect(decode((await storage.get(KEYS.quotaRate('acme', 60_000))) as Uint8Array)).toMatchObject(
+      {
+        timestamps: [1001],
+      },
+    );
   });
 
   it('rejects starts that would exceed maxStorageBytes for a tenant', async () => {
@@ -523,6 +596,26 @@ describe('tenant resource quotas', () => {
       }, 0);
 
     expect(usage.storageBytes.used).toBe(expectedStorageBytes);
+  });
+
+  it('counts workflow ids that begin with "ckpt" in tenant quota usage and active workflow scans', async () => {
+    const engine = createEngine({
+      storage: new MemoryStorage(),
+      quotas: {
+        maxConcurrentWorkflows: 1,
+        maxStorageBytes: 65_536,
+      },
+    });
+    disposables.push(engine);
+
+    const handle = await engine.start('hold', { tenantId: 'acme' }, { id: 'ckpt-starts-counted' });
+    const usage = await engine.getQuotaUsage('acme');
+
+    expect(usage.activeWorkflows.used).toBe(1);
+    expect(usage.storageBytes.used).toBeGreaterThan(0);
+
+    await engine.signal(handle.id, 'release');
+    await expect(handle.result()).resolves.toBe('released');
   });
 
   it('reports current quota usage versus configured limits for a tenant', async () => {

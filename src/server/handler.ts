@@ -787,11 +787,7 @@ async function handleGetTenantQuota(
     }
   }
 
-  try {
-    return jsonResponse(await engine.getQuotaUsage(normalizedTenantId));
-  } catch {
-    return errorResponse('Internal server error', 500);
-  }
+  return jsonResponse(await engine.getQuotaUsage(normalizedTenantId));
 }
 
 // ---------------------------------------------------------------------------

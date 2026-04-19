@@ -157,6 +157,10 @@
   async function handleTenantQuotaSubmit(event: SubmitEvent): Promise<void> {
     event.preventDefault();
 
+    if (tenantQuotaLoading) {
+      return;
+    }
+
     const normalizedTenantId = tenantQuotaId.trim();
     if (normalizedTenantId.length === 0) {
       tenantQuotaError = 'Enter a tenant ID to inspect quota usage.';

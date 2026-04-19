@@ -215,6 +215,40 @@ describe('handleRequest', () => {
     expect(body.workflowCreationRate.limit).toBe(5);
   });
 
+  it('GET /v1/tenants/:id/quota lets unexpected errors reach the top-level handler logger', async () => {
+    engine = new Engine({
+      storage: new MemoryStorage(),
+      tenantResolver: tenantFromInputField('tenantId'),
+    });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    const originalGetQuotaUsage = engine.getQuotaUsage.bind(engine);
+    engine.getQuotaUsage = async () => {
+      throw new Error('quota exploded');
+    };
+
+    const recordedCalls: unknown[][] = [];
+    const originalError = console.error;
+    console.error = ((...args: unknown[]) => {
+      recordedCalls.push(args);
+    }) as typeof console.error;
+
+    let response: Response;
+    try {
+      response = await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine);
+    } finally {
+      console.error = originalError;
+      engine.getQuotaUsage = originalGetQuotaUsage;
+    }
+
+    expect(response.status).toBe(500);
+    expect(await json(response)).toEqual({ error: 'Internal server error' });
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0]?.map(String).join(' ')).toContain('Unhandled error in handleRequest');
+  });
+
   it('GET /v1/tenants/:id/quota rejects blank tenant ids', async () => {
     engine = new Engine({
       storage: new MemoryStorage(),

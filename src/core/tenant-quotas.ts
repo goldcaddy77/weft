@@ -148,7 +148,7 @@ function normalizeQuotaOptions(
 }
 
 function isTopLevelWorkflowStateKey(key: string): boolean {
-  return key.startsWith('wf:') && !key.includes(':ckpt');
+  return key.startsWith('wf:') && !key.slice('wf:'.length).includes(':');
 }
 
 function isActiveWorkflowStatus(status: WorkflowStatus): boolean {
@@ -379,7 +379,7 @@ export class TenantQuotaManager {
   }
 
   async commitStartAdmission(parameters: StartAdmissionParameters): Promise<void> {
-    const { tenantId, workflowId, startOperations, estimatedStorageBytes } = parameters;
+    const { tenantId, workflowId, startOperations } = parameters;
 
     for (let attempt = 1; attempt <= MAX_CONDITIONAL_BATCH_ATTEMPTS; attempt++) {
       const quotaOperations: BatchOperation[] = [];
@@ -427,7 +427,7 @@ export class TenantQuotaManager {
 
       if (this.#quotas.maxStorageBytes !== null) {
         const usage = await this.getUsage(tenantId);
-        const projectedStorageBytes = usage.storageBytes.used + estimatedStorageBytes;
+        const projectedStorageBytes = usage.storageBytes.used + parameters.estimatedStorageBytes;
         if (projectedStorageBytes > this.#quotas.maxStorageBytes) {
           throw new QuotaExceededError({
             tenantId,
@@ -452,12 +452,13 @@ export class TenantQuotaManager {
 
       const rateLimit = this.#quotas.maxWorkflowCreationRate;
       if (rateLimit !== null) {
+        const attemptTimestamp = this.#getNow();
         const currentRateRecord = await this.#storage.get(
           KEYS.quotaRate(tenantId, rateLimit.windowMilliseconds),
         );
         const currentTimestamps = trimWorkflowCreationTimestamps(
           decodeWorkflowCreationRateRecord(currentRateRecord),
-          this.#getNow(),
+          attemptTimestamp,
           rateLimit.windowMilliseconds,
         );
         const projectedWorkflowCreations = currentTimestamps.length + 1;
@@ -476,7 +477,7 @@ export class TenantQuotaManager {
           type: 'put',
           key: KEYS.quotaRate(tenantId, rateLimit.windowMilliseconds),
           value: encode({
-            timestamps: [...currentTimestamps, this.#getNow()],
+            timestamps: [...currentTimestamps, attemptTimestamp],
           } satisfies WorkflowCreationRateRecord),
         });
         conditions.push({

@@ -1522,14 +1522,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
 
       if (tenant !== undefined) {
-        await this.#tenantQuotaManager.commitStartAdmission({
+        const tenantQuotaManager = this.#tenantQuotaManager;
+        await tenantQuotaManager.commitStartAdmission({
           tenantId: tenant.id,
           workflowId,
           startOperations,
-          estimatedStorageBytes: this.#tenantQuotaManager.estimateStartStorageBytes(
-            workflowId,
-            startOperations,
-          ),
+          get estimatedStorageBytes() {
+            return tenantQuotaManager.estimateStartStorageBytes(workflowId, startOperations);
+          },
         });
       } else {
         await this.#storage.batch(startOperations);
