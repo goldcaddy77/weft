@@ -1,7 +1,9 @@
 import {
   matchesScanOptions,
   resolvePrefixRangeEnd,
+  storageValuesEqual,
   type BatchOperation,
+  type ConditionalBatchCondition,
   type ScanOptions,
   type Storage,
 } from './interface';
@@ -238,6 +240,95 @@ export class IndexedDBStorage implements Storage {
 
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
+    });
+  }
+
+  async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    const database = await this.#databasePromise;
+
+    return new Promise<boolean>((resolve, reject) => {
+      const transaction = database.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      let settled = false;
+      let abortedByCondition = false;
+
+      const settleReject = (
+        error: DOMException | Error | null | undefined,
+        message: string,
+      ): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        reject(error ?? new Error(message));
+      };
+
+      transaction.oncomplete = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(true);
+      };
+
+      transaction.onerror = () => {
+        settleReject(transaction.error, 'IndexedDB conditionalBatch transaction failed.');
+      };
+
+      transaction.onabort = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        if (abortedByCondition) {
+          resolve(false);
+          return;
+        }
+
+        reject(transaction.error ?? new Error('IndexedDB conditionalBatch transaction aborted.'));
+      };
+
+      const applyOperations = (): void => {
+        for (const operation of operations) {
+          if (operation.type === 'put') {
+            store.put(operation.value, operation.key);
+          } else {
+            store.delete(operation.key);
+          }
+        }
+      };
+
+      const verifyCondition = (index: number): void => {
+        if (index >= conditions.length) {
+          applyOperations();
+          return;
+        }
+
+        const condition = conditions[index]!;
+        const request = store.get(condition.key);
+
+        request.onsuccess = () => {
+          const raw = request.result;
+          const currentValue = raw === undefined ? null : new Uint8Array(raw);
+          if (!storageValuesEqual(currentValue, condition.expectedValue)) {
+            abortedByCondition = true;
+            transaction.abort();
+            return;
+          }
+
+          verifyCondition(index + 1);
+        };
+
+        request.onerror = () => {
+          settleReject(request.error, 'IndexedDB conditionalBatch condition check failed.');
+        };
+      };
+
+      verifyCondition(0);
     });
   }
 

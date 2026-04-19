@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import { WorkflowCompletedEvent, WorkflowFailedEvent } from '../core/events.ts';
+import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { WeftClient } from './interface.ts';
@@ -19,7 +20,15 @@ async function* failingWorkflow(_ctx: WorkflowContext, _input: unknown) {
 }
 
 function createTestEngine(): Engine {
-  const engine = new Engine({ storage: new MemoryStorage() });
+  const engine = new Engine({
+    storage: new MemoryStorage(),
+    tenantResolver: tenantFromInputField('tenantId'),
+    quotas: {
+      maxConcurrentWorkflows: 5,
+      maxStorageBytes: 1_000_000,
+      maxWorkflowCreationRate: { count: 10, window: '1m' },
+    },
+  });
   engine.register('echo', echoWorkflow);
   engine.register('failing', failingWorkflow);
   return engine;
@@ -60,6 +69,7 @@ describe('LocalClient', () => {
     expect(client.submitReview).toBeFunction();
     expect(client.setBudgetPolicy).toBeFunction();
     expect(client.getBudgetPolicy).toBeFunction();
+    expect(client.getQuotaUsage).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();
     expect(client.getUpdateResult).toBeFunction();
@@ -183,6 +193,20 @@ describe('LocalClient', () => {
     it('returns null for an unknown update', async () => {
       const result = await client.getUpdateResult('nonexistent');
       expect(result).toBeNull();
+    });
+  });
+
+  describe('getQuotaUsage', () => {
+    it('returns tenant quota usage from the local engine surface', async () => {
+      const handle = await client.start('echo', { tenantId: 'acme', payload: 'quota-local' });
+      await handle.result();
+
+      const usage = await client.getQuotaUsage('acme');
+      expect(usage.tenantId).toBe('acme');
+      expect(usage.storageBytes.used).toBeGreaterThan(0);
+      expect(usage.activeWorkflows.limit).toBe(5);
+      expect(usage.workflowCreationRate.limit).toBe(10);
+      expect(usage.workflowCreationRate.used).toBeGreaterThanOrEqual(1);
     });
   });
 

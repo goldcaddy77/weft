@@ -73,6 +73,11 @@ export type {
   Serializer,
   StartOptions,
   SubmitReviewOptions,
+  TenantQuotaMetricUsage,
+  TenantQuotaOptions,
+  TenantQuotaUsage,
+  TenantWorkflowCreationRateLimit,
+  TenantWorkflowCreationRateUsage,
   WorkflowContext,
   WorkflowEvent,
   WorkflowFunction,
@@ -134,8 +139,13 @@ export { CompressedStorage } from './storage/compressed-storage';
 // Storage — interface, KEYS, and zero-native-dep backends only.
 // Heavy backends (BunSQLiteStorage, LMDBStorage, TursoStorage) are subpath-only:
 //   weft/storage/bun-sqlite | weft/storage/lmdb | weft/storage/turso
-export { KEYS } from './storage/interface';
-export type { BatchOperation, ScanOptions, Storage } from './storage/interface';
+export { KEYS, storageConditionalBatch, storageValuesEqual } from './storage/interface';
+export type {
+  BatchOperation,
+  ConditionalBatchCondition,
+  ScanOptions,
+  Storage,
+} from './storage/interface';
 export { MemoryStorage } from './storage/memory';
 export { ScopedStorage, scopedStorage } from './storage/scoped-storage';
 export { jsonCodec, msgpackCodec, withCodec } from './storage/typed-storage';
@@ -190,6 +200,7 @@ export type {
 // Multi-tenant primitives
 export { tenantFromInputField } from './core/tenant';
 export type { TenantContext, TenantResolver } from './core/tenant';
+export { QuotaExceededError } from './core/tenant-quotas';
 
 // Step Context
 export { StepContext, compileStepWorkflow, isAsyncGeneratorFunction } from './core/step-context';

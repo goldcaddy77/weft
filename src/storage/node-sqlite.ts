@@ -13,7 +13,13 @@
 
 import { createRequire } from 'node:module';
 
-import type { BatchOperation, ScanOptions, Storage } from './interface.ts';
+import type {
+  BatchOperation,
+  ConditionalBatchCondition,
+  ScanOptions,
+  Storage,
+} from './interface.ts';
+import { storageValuesEqual } from './interface.ts';
 
 /**
  * Minimal subset of the `better-sqlite3` API surface that this adapter uses.
@@ -26,13 +32,13 @@ type BetterSqliteStatement = {
   all(...parameters: unknown[]): Record<string, unknown>[];
 };
 
-type BetterSqliteTransaction = (...args: unknown[]) => void;
+type BetterSqliteTransaction = (...args: unknown[]) => unknown;
 
 type BetterSqliteDatabase = {
   pragma(source: string): unknown;
   exec(source: string): void;
   prepare(source: string): BetterSqliteStatement;
-  transaction(fn: (...args: unknown[]) => void): BetterSqliteTransaction;
+  transaction(fn: (...args: unknown[]) => unknown): BetterSqliteTransaction;
   close(): void;
 };
 
@@ -193,6 +199,38 @@ export class NodeSQLiteStorage implements Storage {
   async batch(operations: BatchOperation[]): Promise<void> {
     if (operations.length === 0) return;
     this.#batchTransaction(operations);
+  }
+
+  async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    const conditionalTransaction = this.#database.transaction(
+      (...arguments_: unknown[]): boolean => {
+        const pendingConditions = arguments_[0] as ConditionalBatchCondition[];
+        const pendingOperations = arguments_[1] as BatchOperation[];
+
+        for (const condition of pendingConditions) {
+          const row = this.#getStatement.get(condition.key);
+          const currentValue = row ? new Uint8Array((row as { value: Uint8Array }).value) : null;
+          if (!storageValuesEqual(currentValue, condition.expectedValue)) {
+            return false;
+          }
+        }
+
+        for (const operation of pendingOperations) {
+          if (operation.type === 'put') {
+            this.#putStatement.run(operation.key, operation.value);
+          } else {
+            this.#deleteStatement.run(operation.key);
+          }
+        }
+
+        return true;
+      },
+    );
+
+    return Boolean(conditionalTransaction(conditions, operations));
   }
 
   [Symbol.dispose](): void {

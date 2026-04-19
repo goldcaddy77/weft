@@ -33,6 +33,7 @@ import {
   type MetricsCollector,
   type PrometheusExporter,
 } from '../observability/metrics.ts';
+import type { AuthMethod, JWTPayload } from './authentication.ts';
 import { generateOpenApiDocument } from './openapi.ts';
 import { ROUTES, toRegex } from './route-model.ts';
 
@@ -46,6 +47,18 @@ type HandlerName = (typeof ROUTES)[number]['handler'];
 interface RouteMatch {
   handler: HandlerName;
   params: Record<string, string>;
+}
+
+type AuthenticatedRequestContext = {
+  method: AuthMethod;
+  claims?: JWTPayload;
+};
+
+class MalformedRouteParameterError extends Error {
+  constructor() {
+    super('Malformed route parameter encoding');
+    this.name = 'MalformedRouteParameterError';
+  }
 }
 
 /**
@@ -80,7 +93,11 @@ function matchRoute(method: string, pathname: string): RouteMatch | null {
       const name = route.paramNames[i];
       const value = match[i + 1];
       if (name !== undefined && value !== undefined) {
-        params[name] = decodeURIComponent(value);
+        try {
+          params[name] = decodeURIComponent(value);
+        } catch {
+          throw new MalformedRouteParameterError();
+        }
       }
     }
 
@@ -118,6 +135,24 @@ function negotiatedResponse(request: Request, body: unknown, status: number = 20
 
 function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
+}
+
+function getAuthenticatedTenantId(claims: JWTPayload | undefined): string | null {
+  if (!claims) {
+    return null;
+  }
+
+  for (const key of ['tenantId', 'tenant_id', 'tenant'] as const) {
+    const value = claims[key];
+    if (typeof value === 'string') {
+      const normalizedTenantId = value.trim();
+      if (normalizedTenantId.length > 0) {
+        return normalizedTenantId;
+      }
+    }
+  }
+
+  return null;
 }
 
 export function getRequiredRouteParameter(
@@ -729,6 +764,36 @@ async function handleGetBudgetPolicy(engine: Engine, namespace: string): Promise
   return jsonResponse(policy);
 }
 
+async function handleGetTenantQuota(
+  engine: Engine,
+  tenantId: string,
+  authContext: AuthenticatedRequestContext | undefined,
+): Promise<Response> {
+  const normalizedTenantId = tenantId.trim();
+  if (normalizedTenantId.length === 0) {
+    return errorResponse('Tenant id must be a non-empty string', 400);
+  }
+
+  if (authContext?.method === 'jwt') {
+    const authenticatedTenantId = getAuthenticatedTenantId(authContext.claims);
+    if (authenticatedTenantId === null) {
+      return errorResponse(
+        'JWT-authenticated tenant quota requests require a tenantId, tenant_id, or tenant claim',
+        403,
+      );
+    }
+    if (authenticatedTenantId !== normalizedTenantId) {
+      return errorResponse('Tenant quota access is limited to the authenticated tenant', 403);
+    }
+  }
+
+  try {
+    return jsonResponse(await engine.getQuotaUsage(normalizedTenantId));
+  } catch {
+    return errorResponse('Internal server error', 500);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Stream chunks route — engine.getStreamChunks()
 // ---------------------------------------------------------------------------
@@ -869,6 +934,8 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   recoverAll: async ({ engine }) => handleRecoverAll(engine),
   setBudgetPolicy: async ({ request, engine }) => handleSetBudgetPolicy(request, engine),
   getBudgetPolicy: async ({ engine, param }) => handleGetBudgetPolicy(engine, param('namespace')),
+  getTenantQuota: async ({ engine, options, param }) =>
+    handleGetTenantQuota(engine, param('id'), options?.authContext),
   getStreamChunks: async ({ engine, param }) =>
     handleGetStreamChunks(engine, param('id'), param('key')),
   queryWorkflow: async ({ engine, param }) =>
@@ -906,6 +973,11 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
 // ---------------------------------------------------------------------------
 
 export interface HandlerOptions {
+  /** Optional authenticated caller context injected by the HTTP server wrapper. */
+  authContext?: {
+    method: AuthMethod;
+    claims?: JWTPayload;
+  };
   /**
    * Optional {@link PrometheusExporter} used to produce the body of
    * `/v1/metrics`. When set, it takes precedence over `metricsCollector` —
@@ -932,7 +1004,15 @@ export async function handleRequest(
   options?: HandlerOptions,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const route = matchRoute(request.method, url.pathname);
+  let route: RouteMatch | null;
+  try {
+    route = matchRoute(request.method, url.pathname);
+  } catch (error) {
+    if (error instanceof MalformedRouteParameterError) {
+      return errorResponse(error.message, 400);
+    }
+    throw error;
+  }
 
   if (route === null) {
     return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);

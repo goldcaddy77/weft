@@ -96,6 +96,14 @@ export const ROUTES = [
   },
   {
     method: 'GET',
+    path: '/v1/tenants/:id/quota',
+    handler: 'getTenantQuota',
+    paramNames: ['id'],
+    summary: 'Get quota usage for a tenant',
+    tags: ['Budget'],
+  },
+  {
+    method: 'GET',
     path: '/v1/workflows/:id/streams/:key',
     handler: 'getStreamChunks',
     paramNames: ['id', 'key'],

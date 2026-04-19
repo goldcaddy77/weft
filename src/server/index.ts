@@ -30,7 +30,7 @@ import type { MetricsCollector, PrometheusExporter } from '../observability/metr
 import { KEYS } from '../storage/interface.ts';
 import type { RoutingOptions, RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
-import type { AuthConfig, Authenticator } from './authentication.ts';
+import type { AuthConfig, AuthMethod, Authenticator, JWTPayload } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
 import { handleRequest } from './handler.ts';
@@ -724,24 +724,39 @@ export function serve(options: ServeOptions): WeftServer {
     routes['/ui/*'] = dashboard;
   }
 
-  async function authenticateRequest(request: Request): Promise<Response | null> {
+  async function authenticateRequest(request: Request): Promise<{
+    authContext?: { method: AuthMethod; claims?: JWTPayload };
+    response: Response | null;
+  }> {
     if (!authenticatorPromise) {
-      return null;
+      return { response: null };
     }
 
     const authenticator = await authenticatorPromise;
     const authResult = await authenticator(request);
     if (authResult.authenticated) {
-      return null;
+      if (authResult.method === 'public') {
+        return { response: null };
+      }
+
+      return {
+        authContext: {
+          method: authResult.method,
+          ...(authResult.claims !== undefined ? { claims: authResult.claims } : {}),
+        },
+        response: null,
+      };
     }
 
-    return new Response(JSON.stringify({ error: authResult.error }), {
-      status: 401,
-      headers: {
-        'Content-Type': 'application/json',
-        'WWW-Authenticate': 'Bearer',
-      },
-    });
+    return {
+      response: new Response(JSON.stringify({ error: authResult.error }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': 'Bearer',
+        },
+      }),
+    };
   }
 
   function createLongPollInflightRecord(queue: string, task: PendingTask): InflightRecord {
@@ -883,9 +898,9 @@ export function serve(options: ServeOptions): WeftServer {
     async fetch(request) {
       const url = new URL(request.url);
 
-      const authResponse = await authenticateRequest(request);
-      if (authResponse) {
-        return authResponse;
+      const authentication = await authenticateRequest(request);
+      if (authentication.response) {
+        return authentication.response;
       }
 
       const websocketResponse = handleWebSocketUpgrade(request, url.pathname);
@@ -908,6 +923,9 @@ export function serve(options: ServeOptions): WeftServer {
       // an options object whose fields are `T?: U` (not `T?: U | undefined`),
       // so each optional field is attached only when present.
       return handleRequest(request, options.engine, {
+        ...(authentication.authContext !== undefined
+          ? { authContext: authentication.authContext }
+          : {}),
         ...(options.prometheusExporter !== undefined
           ? { prometheusExporter: options.prometheusExporter }
           : {}),

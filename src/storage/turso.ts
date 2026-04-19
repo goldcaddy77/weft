@@ -2,7 +2,9 @@ import { createClient, type Client, type InValue } from '@libsql/client';
 
 import {
   resolvePrefixRangeEnd,
+  storageValuesEqual,
   type BatchOperation,
+  type ConditionalBatchCondition,
   type ScanOptions,
   type Storage,
 } from './interface';
@@ -211,6 +213,57 @@ export class TursoStorage implements Storage {
     });
 
     await this.#client.batch(statements, 'write');
+  }
+
+  async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    await this.#ensureTable();
+
+    const transaction = await this.#client.transaction('write');
+    try {
+      await transaction.executeMultiple(TABLE_INIT);
+
+      for (const condition of conditions) {
+        const result = await transaction.execute({
+          sql: 'SELECT value FROM kv WHERE key = ?',
+          args: [condition.key],
+        });
+
+        const raw = result.rows[0]?.['value'] as unknown;
+        const currentValue =
+          raw === null || raw === undefined ? null : new Uint8Array(raw as ArrayBuffer);
+        if (!storageValuesEqual(currentValue, condition.expectedValue)) {
+          await transaction.rollback();
+          return false;
+        }
+      }
+
+      for (const operation of operations) {
+        if (operation.type === 'put') {
+          await transaction.execute({
+            sql: 'INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+            args: [operation.key, operation.value],
+          });
+        } else {
+          await transaction.execute({
+            sql: 'DELETE FROM kv WHERE key = ?',
+            args: [operation.key],
+          });
+        }
+      }
+
+      await transaction.commit();
+      return true;
+    } catch (error) {
+      try {
+        await transaction.rollback();
+      } catch {
+        // Best-effort rollback; preserve the original failure.
+      }
+      throw error;
+    }
   }
 
   async query<T>(sql: string, parameters?: unknown[]): Promise<T[]> {

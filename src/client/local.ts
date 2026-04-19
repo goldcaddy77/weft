@@ -17,6 +17,7 @@ import type {
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
+  TenantQuotaUsage,
   WorkflowEvent,
   WorkflowState,
   WorkflowSummary,
@@ -174,6 +175,10 @@ export class LocalClient implements WeftClient {
 
   async getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null> {
     return this.#engine.getBudgetPolicy(namespace);
+  }
+
+  async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
+    return this.#engine.getQuotaUsage(tenantId);
   }
 
   async getStreamChunks(workflowId: string, key: string): Promise<unknown[]> {

@@ -55,6 +55,22 @@ export interface ListFilter {
   offset?: number;
 }
 
+export interface TenantQuotaMetricUsage {
+  used: number;
+  limit: number | null;
+}
+
+export interface TenantWorkflowCreationRateUsage extends TenantQuotaMetricUsage {
+  windowMilliseconds: number | null;
+}
+
+export interface TenantQuotaUsage {
+  tenantId: string;
+  activeWorkflows: TenantQuotaMetricUsage;
+  storageBytes: TenantQuotaMetricUsage;
+  workflowCreationRate: TenantWorkflowCreationRateUsage;
+}
+
 export interface WorkflowEvent {
   type: string;
   timestamp: number;
@@ -185,6 +201,11 @@ export class ApiClient {
   async listPendingReviews(): Promise<ReviewRequest[]> {
     const response = await request<{ items: ReviewRequest[] }>('/reviews');
     return response.items;
+  }
+
+  /** Get current quota usage versus configured limits for a tenant. */
+  async getTenantQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
+    return request<TenantQuotaUsage>(`/tenants/${encodeURIComponent(tenantId)}/quota`);
   }
 
   /** Submit a decision for a pending review. */
