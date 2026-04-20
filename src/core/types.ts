@@ -3,6 +3,7 @@ import type { AlertingOptions } from '../alerting/types.ts';
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import type { CompressionAlgorithm, CompressionOptions } from './compression.ts';
 import type { ConstraintDefinition } from './constraint.ts';
+import type { WorkflowVersionTuple } from './workflow-version-tuple.ts';
 
 // ---------------------------------------------------------------------------
 // Workflow identity
@@ -124,6 +125,20 @@ export type CheckpointState = Pick<
   Checkpoint,
   'step' | 'locals' | 'searchAttributes' | 'version' | 'createdAt'
 >;
+
+export type WorkflowTimelineStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'timed-out';
+
+export type WorkflowTimelineEntry = {
+  step: number;
+  operationType: string;
+  operationLabel: string;
+  inputSummary: string;
+  outputSummary?: string;
+  duration?: number;
+  timestamp: number;
+  status: WorkflowTimelineStatus;
+  versionTuple?: WorkflowVersionTuple;
+};
 
 // ---------------------------------------------------------------------------
 // Retry policy for activities
@@ -545,6 +560,12 @@ export interface WorkflowEvent {
   timestamp: number;
   data: Record<string, unknown>;
 }
+
+export type WorkflowReplay = {
+  checkpoint: CheckpointState;
+  accumulatedResults: Array<[number, unknown]>;
+  events: WorkflowEvent[];
+};
 
 // ---------------------------------------------------------------------------
 // Review decision types (for engine.submitReview)

@@ -79,9 +79,12 @@ export type {
   WorkflowId,
   WorkflowRegistration,
   WorkflowRegistry,
+  WorkflowReplay,
   WorkflowState,
   WorkflowStatus,
   WorkflowSummary,
+  WorkflowTimelineEntry,
+  WorkflowTimelineStatus,
 } from './core/types';
 
 // Alerting

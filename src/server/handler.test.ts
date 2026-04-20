@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { decode, encode } from '../core/codec.ts';
+import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
@@ -2498,6 +2499,117 @@ describe('handleRequest', () => {
 
     // Route pattern only matches digits, so this is a 404 (not found)
     expect(response.status).toBe(404);
+  });
+
+  it('returns 404 instead of throwing for malformed percent-encoding in route parameters', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/%E0%A4%A/checkpoints/1'),
+      engine,
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  // -------------------------------------------------------------------------
+  // Timeline and replay endpoints
+  // -------------------------------------------------------------------------
+
+  it('GET /v1/workflows/:id/timeline returns structured timeline entries', async () => {
+    let now = 5_000;
+    const storage = new MemoryStorage();
+    engine = new Engine({ storage, checkpointHistory: 10, getNow: () => now });
+
+    async function loadCart(input: unknown) {
+      const { cartId } = input as { cartId: string; token: string };
+      now += 15;
+      return { cartId, password: 'cart-secret', status: 'loaded' as const };
+    }
+
+    async function submitOrder(input: unknown) {
+      const { cartId } = input as { cardNumber: string; cartId: string };
+      now += 20;
+      return { cardNumber: '4111111111111111', cartId, orderId: 'ord-42' };
+    }
+
+    engine.register('timeline-http', {
+      version: '1.2.3',
+      handler: async function* (ctx: WorkflowContext) {
+        const cart = yield* (ctx as Context).run(loadCart, {
+          cartId: 'cart-1',
+          token: 'Bearer inbound-secret',
+        });
+        return yield* (ctx as Context).run(submitOrder, {
+          cardNumber: '4111 1111 1111 1111',
+          cartId: cart.cartId,
+        });
+      },
+    });
+
+    const handle = await engine.start('timeline-http', null, { id: 'wf-http-timeline' });
+    await handle.result();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-http-timeline/timeline'),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as Array<Record<string, unknown>>;
+    expect(body).toHaveLength(2);
+    expect(body[0]?.['step']).toBe(1);
+    expect(body[0]?.['operationType']).toBe('activity');
+    expect(body[0]?.['inputSummary']).toBe('{"cartId":"cart-1","token":"[REDACTED]"}');
+    expect(body[0]?.['outputSummary']).toBe(
+      '{"cartId":"cart-1","password":"[REDACTED]","status":"loaded"}',
+    );
+    expect(body[1]?.['operationLabel']).toBe('submitOrder');
+    expect(body[1]?.['inputSummary']).toBe('{"cardNumber":"[REDACTED]","cartId":"cart-1"}');
+    expect(body[1]?.['outputSummary']).toBe(
+      '{"cardNumber":"[REDACTED]","cartId":"cart-1","orderId":"ord-42"}',
+    );
+  });
+
+  it('GET /v1/workflows/:id/replay/:step returns checkpoint replay data', async () => {
+    let now = 8_000;
+    const storage = new MemoryStorage();
+    engine = new Engine({ storage, checkpointHistory: 10, getNow: () => now });
+
+    async function firstStage() {
+      now += 5;
+      return { stage: 'first' as const, token: 'Bearer replay-secret' };
+    }
+
+    async function secondStage() {
+      now += 5;
+      return { stage: 'second' as const };
+    }
+
+    engine.register('replay-http', {
+      version: '4.0.0',
+      handler: async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).run(firstStage);
+        return yield* (ctx as Context).run(secondStage);
+      },
+    });
+
+    const handle = await engine.start('replay-http', null, { id: 'wf-http-replay' });
+    await handle.result();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-http-replay/replay/2'),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as Record<string, unknown>;
+    expect(body['checkpoint']).toMatchObject({ step: 2, version: '4.0.0' });
+    expect(body['accumulatedResults']).toEqual([[0, { stage: 'first', token: '[REDACTED]' }]]);
+    expect((body['events'] as Array<{ type: string }>).map((event) => event.type)).toEqual([
+      'workflow:checkpoint',
+      'workflow:checkpoint',
+    ]);
   });
 
   it('GET /v1/workflows/:id/checkpoints/:step returns 400 for a numeric step outside the safe integer range', async () => {

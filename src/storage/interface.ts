@@ -148,6 +148,9 @@ export const KEYS = {
   checkpoint: (id: string) => `wf:${encodeStorageKeyComponent(id)}:ckpt`,
   checkpointHistory: (id: string, step: number) =>
     `wf:${encodeStorageKeyComponent(id)}:ckpt:${String(step).padStart(10, '0')}`,
+  timelinePrefix: (id: string) => `wf:${encodeStorageKeyComponent(id)}:timeline:`,
+  timeline: (id: string, step: number) =>
+    `wf:${encodeStorageKeyComponent(id)}:timeline:${String(step).padStart(10, '0')}`,
   operation: (queue: string, scheduledAt: number, id: string) =>
     `op:${queue}:${String(scheduledAt).padStart(16, '0')}:${id}`,
   operationInflight: (id: string) => `op:inflight:${id}`,

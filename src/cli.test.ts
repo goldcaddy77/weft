@@ -8,10 +8,12 @@ import {
   type CliCommand,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,
+  TIMELINE_HELP_TEXT,
   VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
   createStorage,
   executeDoctor,
+  executeTimeline,
   executeValidate,
   executeVersionCheck,
   parseCliArguments,
@@ -23,6 +25,7 @@ type ServeCommand = Extract<CliCommand, { command: 'serve' }>;
 type DoctorCommand = Extract<CliCommand, { command: 'doctor' }>;
 type VersionCheckCommand = Extract<CliCommand, { command: 'version:check' }>;
 type ValidateCommand = Extract<CliCommand, { command: 'validate' }>;
+type TimelineCommand = Extract<CliCommand, { command: 'timeline' }>;
 
 describe('CLI argument parsing', () => {
   describe('default subcommand (serve)', () => {
@@ -414,6 +417,25 @@ describe('CLI argument parsing', () => {
       expect(() => parseCliArguments(['validate', '--port', '8080'])).toThrow();
     });
   });
+
+  describe('timeline subcommand', () => {
+    it('returns command timeline when timeline is the first positional', () => {
+      const result = parseCliArguments(['timeline', 'wf-1']) as TimelineCommand;
+      expect(result.command).toBe('timeline');
+      expect(result.workflowId).toBe('wf-1');
+      expect(result.database).toBe('./weft.db');
+    });
+
+    it('parses --step for timeline', () => {
+      const result = parseCliArguments(['timeline', 'wf-1', '--step', '2']) as TimelineCommand;
+      expect(result.step).toBe(2);
+    });
+
+    it('parses --diff with two positional step numbers', () => {
+      const result = parseCliArguments(['timeline', 'wf-1', '--diff', '1', '2']) as TimelineCommand;
+      expect(result.diff).toEqual([1, 2]);
+    });
+  });
 });
 
 describe('help text', () => {
@@ -423,6 +445,10 @@ describe('help text', () => {
 
   it('HELP_TEXT contains version:check subcommand', () => {
     expect(HELP_TEXT).toContain('version:check');
+  });
+
+  it('HELP_TEXT contains timeline subcommand', () => {
+    expect(HELP_TEXT).toContain('timeline');
   });
 
   it('HELP_TEXT contains validate subcommand', () => {
@@ -476,6 +502,12 @@ describe('help text', () => {
 
   it('VERSION_CHECK_HELP_TEXT contains --help flag', () => {
     expect(VERSION_CHECK_HELP_TEXT).toContain('--help');
+  });
+
+  it('TIMELINE_HELP_TEXT contains --step and --diff flags', () => {
+    expect(TIMELINE_HELP_TEXT).toContain('--step');
+    expect(TIMELINE_HELP_TEXT).toContain('--diff');
+    expect(TIMELINE_HELP_TEXT).toContain('--database');
   });
 
   it('HELP_TEXT documents --storage flag', () => {
@@ -653,6 +685,21 @@ describe('CLI direct execution', () => {
     expect(stdout).toContain('--database');
     expect(stdout).toContain('--workflows');
     expect(stdout).toContain('--json');
+  });
+
+  it('runs timeline --help and exits 0', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'timeline', '--help'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    const stdout = await new Response(process.stdout).text();
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('timeline');
+    expect(stdout).toContain('--step');
+    expect(stdout).toContain('--diff');
   });
 
   it('runs doctor against an in-memory database and exits 0', async () => {
@@ -866,6 +913,115 @@ describe('executeValidate', () => {
       await expect(iterator.next()).resolves.toEqual({ value: 'done', done: true });
     } finally {
       rmSync(entryPath, { force: true });
+    }
+  });
+});
+
+describe('executeTimeline', () => {
+  it('prints timeline rows, replay output, and diffs for a stored workflow history', async () => {
+    const database = join(tmpdir(), `weft-timeline-${crypto.randomUUID()}.db`);
+    const storage = await createStorage('sqlite', database);
+    const { Engine } = await import('./core/engine.ts');
+    const engine = new Engine({ storage, checkpointHistory: 10 });
+
+    try {
+      async function firstCliStep() {
+        return { apiKey: 'sk-cli-secret', phase: 'first' as const };
+      }
+
+      async function secondCliStep() {
+        return { phase: 'second' as const };
+      }
+
+      engine.register('cli-timeline', {
+        version: '7.0.0',
+        handler: async function* (ctx) {
+          yield* (ctx as import('./core/context.ts').Context).run(firstCliStep);
+          return yield* (ctx as import('./core/context.ts').Context).run(secondCliStep);
+        },
+      });
+
+      const handle = await engine.start('cli-timeline', null, { id: 'wf-cli-timeline' });
+      await handle.result();
+    } finally {
+      await engine[Symbol.asyncDispose]();
+      storage[Symbol.dispose]();
+    }
+
+    try {
+      const timelineResult = await executeTimeline({
+        database,
+        workflowId: 'wf-cli-timeline',
+      });
+      expect(timelineResult.exitCode).toBe(0);
+      expect(timelineResult.stdout).toContain('Step 1');
+      expect(timelineResult.stdout).toContain('firstCliStep');
+
+      const replayResult = await executeTimeline({
+        database,
+        workflowId: 'wf-cli-timeline',
+        step: 2,
+      });
+      expect(replayResult.exitCode).toBe(0);
+      expect(replayResult.stdout).toContain('Replay step 2');
+      expect(replayResult.stdout).toContain('"version": "7.0.0"');
+      expect(replayResult.stdout).toContain('"apiKey": "[REDACTED]"');
+
+      const diffResult = await executeTimeline({
+        database,
+        workflowId: 'wf-cli-timeline',
+        diff: [1, 2],
+      });
+      expect(diffResult.exitCode).toBe(0);
+      expect(diffResult.stdout).toContain('Diff 1 -> 2');
+      expect(diffResult.stdout).toContain('accumulatedResults[0]');
+    } finally {
+      rmSync(database, { force: true });
+    }
+  });
+
+  it('shows failed timeline entries with the terminal status and error summary', async () => {
+    const database = join(tmpdir(), `weft-timeline-failed-${crypto.randomUUID()}.db`);
+    const storage = await createStorage('sqlite', database);
+    const { Engine } = await import('./core/engine.ts');
+    const engine = new Engine({ storage, checkpointHistory: 10 });
+
+    try {
+      async function prepareCliFailure() {
+        return { phase: 'prepared' as const };
+      }
+
+      async function failCliTimeline() {
+        throw new Error('cli timeline failure');
+      }
+
+      engine.register('cli-timeline-failed', {
+        handler: async function* (ctx) {
+          yield* (ctx as import('./core/context.ts').Context).run(prepareCliFailure);
+          return yield* (ctx as import('./core/context.ts').Context).run(failCliTimeline);
+        },
+      });
+
+      const handle = await engine.start('cli-timeline-failed', null, {
+        id: 'wf-cli-timeline-failed',
+      });
+      await handle.result().catch(() => {});
+    } finally {
+      await engine[Symbol.asyncDispose]();
+      storage[Symbol.dispose]();
+    }
+
+    try {
+      const result = await executeTimeline({
+        database,
+        workflowId: 'wf-cli-timeline-failed',
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('Step 2 | activity | failCliTimeline | failed');
+      expect(result.stdout).toContain('cli timeline failure');
+    } finally {
+      rmSync(database, { force: true });
     }
   });
 });

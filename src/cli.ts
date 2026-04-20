@@ -11,6 +11,7 @@
 
 import { parseArgs } from 'node:util';
 
+import { safeDebugStringify } from './core/debug-output.ts';
 import type { ActivityDefinition, WorkflowRegistration } from './core/types.ts';
 import type { Storage } from './storage/interface.ts';
 
@@ -38,13 +39,21 @@ export type CliCommand =
       help: boolean;
       json: boolean;
     }
-  | { command: 'validate'; entryPath: string; help: boolean; json: boolean };
+  | { command: 'validate'; entryPath: string; help: boolean; json: boolean }
+  | {
+      command: 'timeline';
+      database: string;
+      workflowId: string;
+      step?: number;
+      diff?: [number, number];
+      help: boolean;
+    };
 
 // ---------------------------------------------------------------------------
 // Known subcommands
 // ---------------------------------------------------------------------------
 
-const KNOWN_SUBCOMMANDS = new Set(['doctor', 'version:check', 'validate']);
+const KNOWN_SUBCOMMANDS = new Set(['doctor', 'version:check', 'validate', 'timeline']);
 
 const VALID_STORAGE_BACKENDS = new Set<string>(['sqlite', 'lmdb', 'memory']);
 
@@ -99,6 +108,10 @@ export function parseCliArguments(args: string[]): CliCommand {
 
   if (subcommand === 'validate') {
     return parseValidateArguments(remainingArgs);
+  }
+
+  if (subcommand === 'timeline') {
+    return parseTimelineArguments(remainingArgs);
   }
 
   return parseServeArguments(remainingArgs);
@@ -203,6 +216,55 @@ function parseValidateArguments(args: string[]): CliCommand {
   };
 }
 
+function parseTimelineStep(value: string, flagName: string): number {
+  const step = Number(value);
+  if (!Number.isSafeInteger(step) || step < 0) {
+    throw new Error(`${flagName} must be a non-negative integer`);
+  }
+  return step;
+}
+
+function parseTimelineArguments(args: string[]): CliCommand {
+  const { values, positionals } = parseArgs({
+    args,
+    options: {
+      database: { type: 'string', short: 'd', default: './weft.db' },
+      step: { type: 'string' },
+      diff: { type: 'boolean', default: false },
+      help: { type: 'boolean', short: 'h', default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+
+  const workflowId = positionals[0] ?? '';
+  const step = values.step !== undefined ? parseTimelineStep(values.step, '--step') : undefined;
+
+  let diff: [number, number] | undefined;
+  if (values.diff) {
+    if (positionals[1] === undefined || positionals[2] === undefined) {
+      throw new Error('--diff requires two step numbers');
+    }
+    diff = [
+      parseTimelineStep(positionals[1], '--diff'),
+      parseTimelineStep(positionals[2], '--diff'),
+    ];
+  }
+
+  if (step !== undefined && diff !== undefined) {
+    throw new Error('--step and --diff cannot be used together');
+  }
+
+  return {
+    command: 'timeline',
+    database: values.database ?? './weft.db',
+    workflowId,
+    ...(step !== undefined ? { step } : {}),
+    ...(diff !== undefined ? { diff } : {}),
+    help: values.help ?? false,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Help text
 // ---------------------------------------------------------------------------
@@ -215,6 +277,7 @@ Usage: weft [command] [options]
 Commands:
   serve           Start the Weft server (default)
   doctor          Run diagnostics on the Weft database
+  timeline        Inspect workflow timeline and replay history
   version:check   Check workflow version compatibility
   validate        Lint workflow registrations for design-time anti-patterns
 
@@ -246,6 +309,20 @@ Options:
   -d, --database <path>     Database file path (default: ./weft.db)
   -w, --workflows <path>    Path to workflows module
   -j, --json                Output results as JSON
+  -h, --help                Show this help message
+`;
+
+export const TIMELINE_HELP_TEXT = `
+weft timeline - Inspect workflow timeline and replay history
+
+Usage:
+  weft timeline <workflowId> [options]
+  weft timeline <workflowId> --diff <fromStep> <toStep> [options]
+
+Options:
+  -d, --database <path>     Database file path (default: ./weft.db)
+      --step <step>         Show replay details for one checkpoint step
+      --diff                Diff two checkpoint steps (requires two positional step numbers)
   -h, --help                Show this help message
 `;
 
@@ -370,6 +447,151 @@ export async function executeValidate(options: {
     : formatValidationReport(report, options.entryPath);
 
   return { stdout, exitCode: report.valid ? 0 : 1 };
+}
+
+function formatTimelineLine(entry: {
+  step: number;
+  operationType: string;
+  operationLabel: string;
+  status: string;
+  duration?: number;
+  outputSummary?: string;
+}): string {
+  const duration = entry.duration !== undefined ? `${entry.duration}ms` : '-';
+  const output = entry.outputSummary ?? '(pending)';
+  return `Step ${entry.step} | ${entry.operationType} | ${entry.operationLabel} | ${entry.status} | ${duration} | ${output}`;
+}
+
+function formatValue(value: unknown): string {
+  return safeDebugStringify(value, 2);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function collectDiffLines(
+  beforeValue: unknown,
+  afterValue: unknown,
+  path: string,
+  lines: string[],
+): void {
+  if (Object.is(beforeValue, afterValue)) {
+    return;
+  }
+
+  if (Array.isArray(beforeValue) && Array.isArray(afterValue)) {
+    const length = Math.max(beforeValue.length, afterValue.length);
+    for (let index = 0; index < length; index++) {
+      collectDiffLines(beforeValue[index], afterValue[index], `${path}[${index}]`, lines);
+    }
+    return;
+  }
+
+  if (isRecord(beforeValue) && isRecord(afterValue)) {
+    const keys = new Set([...Object.keys(beforeValue), ...Object.keys(afterValue)]);
+    for (const key of [...keys].toSorted()) {
+      const childPath = path ? `${path}.${key}` : key;
+      collectDiffLines(beforeValue[key], afterValue[key], childPath, lines);
+    }
+    return;
+  }
+
+  lines.push(`${path}: ${formatValue(beforeValue)} -> ${formatValue(afterValue)}`);
+}
+
+export async function executeTimeline(options: {
+  database: string;
+  workflowId: string;
+  step?: number;
+  diff?: [number, number];
+}): Promise<CommandOutput> {
+  if (!options.workflowId) {
+    return {
+      stdout: '',
+      stderr: 'Error: workflowId is required for timeline',
+      exitCode: 1,
+    };
+  }
+
+  const { BunSQLiteStorage } = await import('./storage/bun-sql.ts');
+  const storage = new BunSQLiteStorage(options.database);
+  const { Engine } = await import('./core/engine.ts');
+  const engine = new Engine({ storage });
+
+  try {
+    const state = await engine.get(options.workflowId);
+    if (state === null) {
+      return {
+        stdout: '',
+        stderr: `Error: workflow "${options.workflowId}" not found`,
+        exitCode: 1,
+      };
+    }
+
+    if (options.step !== undefined) {
+      const replay = await engine.replayTo(options.workflowId, options.step);
+      if (replay === null) {
+        return {
+          stdout: '',
+          stderr: `Error: replay not found for step ${options.step}`,
+          exitCode: 1,
+        };
+      }
+
+      return {
+        stdout: [
+          `Replay step ${options.step} for ${options.workflowId}`,
+          '',
+          `Checkpoint: ${formatValue(replay.checkpoint)}`,
+          '',
+          `Accumulated results: ${formatValue(replay.accumulatedResults)}`,
+          '',
+          `Events: ${formatValue(replay.events)}`,
+        ].join('\n'),
+        exitCode: 0,
+      };
+    }
+
+    if (options.diff !== undefined) {
+      const [fromStep, toStep] = options.diff;
+      const fromReplay = await engine.replayTo(options.workflowId, fromStep);
+      const toReplay = await engine.replayTo(options.workflowId, toStep);
+      if (fromReplay === null || toReplay === null) {
+        return {
+          stdout: '',
+          stderr: `Error: replay not found for diff ${fromStep} -> ${toStep}`,
+          exitCode: 1,
+        };
+      }
+
+      const lines: string[] = [];
+      collectDiffLines(fromReplay.checkpoint, toReplay.checkpoint, 'checkpoint', lines);
+      collectDiffLines(
+        fromReplay.accumulatedResults,
+        toReplay.accumulatedResults,
+        'accumulatedResults',
+        lines,
+      );
+
+      return {
+        stdout: [`Diff ${fromStep} -> ${toStep} for ${options.workflowId}`, ...lines].join('\n'),
+        exitCode: 0,
+      };
+    }
+
+    const timeline = await engine.getTimeline(options.workflowId);
+    return {
+      stdout:
+        timeline.length === 0
+          ? `No timeline entries found for workflow "${options.workflowId}".`
+          : timeline.map(formatTimelineLine).join('\n'),
+      exitCode: 0,
+    };
+  } finally {
+    await engine[Symbol.asyncDispose]();
+    storage[Symbol.dispose]();
+  }
 }
 
 // ---------------------------------------------------------------------------
