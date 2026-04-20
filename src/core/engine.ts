@@ -213,6 +213,16 @@ export interface AgentRegistrationOptions {
   provider: LLMProvider;
 }
 
+export class WorkflowAlreadyExistsError extends Error {
+  readonly workflowId: string;
+
+  constructor(workflowId: string) {
+    super(`Workflow with id "${workflowId}" already exists`);
+    this.name = 'WorkflowAlreadyExistsError';
+    this.workflowId = workflowId;
+  }
+}
+
 interface ResolvedOptions {
   storage: WeftStorage;
   development: boolean;
@@ -916,9 +926,17 @@ function createExecutionStrategyBundle(parameters: {
   development: boolean;
   broadcastEvents: boolean;
   getRegistration: (workflowType: string) => RegistrationEntry | undefined;
+  resolveWorkflowType: (target: string | Function) => string;
 }): ExecutionStrategyBundle {
-  const { options, getNow, maxNestingDepth, development, broadcastEvents, getRegistration } =
-    parameters;
+  const {
+    options,
+    getNow,
+    maxNestingDepth,
+    development,
+    broadcastEvents,
+    getRegistration,
+    resolveWorkflowType,
+  } = parameters;
 
   if (options?.workerExecution) {
     const pool = new WorkerPool({
@@ -938,6 +956,7 @@ function createExecutionStrategyBundle(parameters: {
     getNow,
     maxNestingDepth,
     development,
+    resolveWorkflowType,
   });
 
   return {
@@ -1060,6 +1079,49 @@ function paginateItems<T>(items: T[], filter: PaginationFilter | undefined): Pag
   };
 }
 
+function isPlainObjectRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function normalizeValueForEncodedComparison(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeValueForEncodedComparison(entry));
+  }
+
+  if (!isPlainObjectRecord(value)) {
+    return value;
+  }
+
+  const normalizedRecord: Record<string, unknown> = {};
+  for (const key of Object.keys(value).toSorted()) {
+    normalizedRecord[key] = normalizeValueForEncodedComparison(value[key]);
+  }
+
+  return normalizedRecord;
+}
+
+function encodedValuesEqual(left: unknown, right: unknown): boolean {
+  const leftEncoded = encode(normalizeValueForEncodedComparison(left));
+  const rightEncoded = encode(normalizeValueForEncodedComparison(right));
+
+  if (leftEncoded.byteLength !== rightEncoded.byteLength) {
+    return false;
+  }
+
+  for (let index = 0; index < leftEncoded.byteLength; index++) {
+    if (leftEncoded[index] !== rightEncoded[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function matchesScheduleFilter(state: ScheduleState, filter: ScheduleFilter | undefined): boolean {
   if (state.tenant?.id !== undefined) {
     if (filter?.tenantId === undefined) {
@@ -1113,7 +1175,6 @@ type RefreshedScheduleState = {
   state: ScheduleState;
   currentWorkflowState: WorkflowState | null;
 };
-
 // ---------------------------------------------------------------------------
 // WorkflowHandle
 // ---------------------------------------------------------------------------
@@ -1438,6 +1499,7 @@ export class ScheduleHandle {
 export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #storage: WeftStorage;
   #registrations: Map<string, RegistrationEntry>;
+  #workflowTypesByHandler: WeakMap<Function, string>;
   #abortController: AbortController;
   #scheduler: Scheduler;
   #options: ResolvedOptions;
@@ -1523,6 +1585,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     super();
 
     this.#registrations = new Map();
+    this.#workflowTypesByHandler = new WeakMap();
 
     const storage = resolveEngineStorage(options, this.#getAgentWorkflowIds.bind(this));
     const getNow = options?.getNow ?? Date.now;
@@ -1534,6 +1597,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       development: resolvedOptions.development,
       broadcastEvents: resolvedOptions.broadcastEvents,
       getRegistration: this.#registrations.get.bind(this.#registrations),
+      resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
     });
 
     this.#storage = storage;
@@ -1944,6 +2008,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       this.#registrations.set(agentDef.name, agentRegistrationEntry);
       this.#ensureRetentionSweepInterval();
+      this.#workflowTypesByHandler.set(handler, agentDef.name);
       return;
     }
 
@@ -1995,8 +2060,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
       this.#registrations.set(name, entry);
       this.#ensureRetentionSweepInterval();
+      this.#workflowTypesByHandler.set(registration.handler, name);
     } else {
       // Auto-detect step-based (non-generator) workflow functions and compile them
+      const originalHandler = handlerOrRegistration;
       let handler = handlerOrRegistration;
       if (typeof handler === 'function' && !isAsyncGeneratorFunction(handler)) {
         handler = compileStepWorkflow(handler as StepWorkflowFunction);
@@ -2007,7 +2074,29 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         version: '1',
       });
       this.#ensureRetentionSweepInterval();
+      if (typeof originalHandler === 'function') {
+        this.#workflowTypesByHandler.set(originalHandler, name);
+      }
+      if (typeof handler === 'function') {
+        this.#workflowTypesByHandler.set(handler, name);
+      }
     }
+  }
+
+  #resolveWorkflowTypeTarget(target: string | Function): string {
+    if (typeof target === 'string') {
+      return target;
+    }
+
+    const registeredType = this.#workflowTypesByHandler.get(target);
+    if (registeredType) {
+      return registeredType;
+    }
+
+    throw new Error(
+      'Workflow functions used in composition operators must be registered before use. ' +
+        'Pass the registered workflow type string or register the function on the engine first.',
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -2099,7 +2188,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Atomic check-and-reserve: prevent two concurrent start() calls with the
     // same ID from both passing the storage check before either writes state.
     if (this.#pendingStarts.has(workflowId)) {
-      throw new Error(`Workflow with id "${workflowId}" already exists`);
+      throw new WorkflowAlreadyExistsError(workflowId);
     }
     this.#pendingStarts.add(workflowId);
     let startSucceeded = false;
@@ -2113,7 +2202,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (callerProvidedId) {
         const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
         if (existingBytes !== null) {
-          throw new Error(`Workflow with id "${workflowId}" already exists`);
+          throw new WorkflowAlreadyExistsError(workflowId);
         }
       }
 
@@ -3855,7 +3944,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#eventLogHeads.set(workflowId, restoredHead);
     this.#setWorkflowStartHeaders(workflowId, await this.#loadWorkflowStartHeaders(workflowId));
 
-    const handle = this.#createWorkflowHandle(workflowId);
+    const handle = this.getHandle(workflowId);
 
     // Dispatch resumed event
     this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
@@ -3874,6 +3963,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         startedAt: getWorkflowExecutionStartedAt(state),
         abortController: workflowAbort,
         getNow: this.#options.getNow,
+        resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
         accumulatedResults,
         searchAttributes: resumeCheckpoint.searchAttributes,
         ...(registration.searchAttributes && {
@@ -5275,12 +5365,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     operation: Extract<ContextOperationRequest, { type: 'load' }>,
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, async () => {
-      const raw = await this.#storage.get(
-        KEYS.offload(operation.reference.workflowId, operation.reference.key),
-      );
+      const { workflowId: referenceWorkflowId, key: referenceKey, sizeBytes } = operation.reference;
+
+      if (typeof referenceWorkflowId !== 'string' || referenceWorkflowId !== workflowId) {
+        throw new Error('ctx.load() can only read offloaded data from the current workflow');
+      }
+      if (typeof referenceKey !== 'string' || referenceKey.length === 0) {
+        throw new Error('ctx.load() requires a non-empty offload reference key');
+      }
+      if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes < 0) {
+        throw new Error('ctx.load() requires a valid offload reference size');
+      }
+
+      const raw = await this.#storage.get(KEYS.offload(referenceWorkflowId, referenceKey));
       if (raw === null) {
         throw new Error(
-          `Offloaded data not found for key "${operation.reference.key}" in workflow "${operation.reference.workflowId}"`,
+          `Offloaded data not found for key "${referenceKey}" in workflow "${referenceWorkflowId}"`,
         );
       }
       return decode(raw);
@@ -5797,20 +5897,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'child-workflow' }>,
   ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      this.#executeChildWorkflow(
+        workflowId,
+        operation,
+        this.#assertChildWorkflowNestingDepth(workflowId),
+      ),
+    );
+  }
+
+  #assertChildWorkflowNestingDepth(workflowId: string): number {
     const currentDepth = this.#getWorkflowNestingDepth(workflowId);
     if (currentDepth + 1 > this.#options.maxNestingDepth) {
-      this.#feedOperationResult(workflowId, {
-        status: 'failed',
-        error:
-          `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
+      throw new Error(
+        `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
           'Configure maxNestingDepth in engine options to increase the limit.',
-      });
-      return;
+      );
     }
 
-    return this.#runOperationWithResult(workflowId, operation, () =>
-      this.#executeChildWorkflow(workflowId, operation, currentDepth),
-    );
+    return currentDepth;
   }
 
   #getWorkflowNestingDepth(workflowId: string): number {
@@ -5829,9 +5934,48 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const executeChild = async () => {
       this.#pendingNestingDepth = currentDepth + 1;
       this.#pendingParentHeaders = this.#workflowHeaders.get(workflowId);
-      const childHandle = await this.start(operation.workflowType, operation.input, {
-        id: childWorkflowId,
-      });
+      let childHandle: WorkflowHandle;
+
+      try {
+        childHandle = await this.start(operation.workflowType, operation.input, {
+          id: childWorkflowId,
+        });
+      } catch (error) {
+        if (error instanceof WorkflowAlreadyExistsError) {
+          const [existingState, parentState] = await Promise.all([
+            this.#loadWorkflowState(childWorkflowId),
+            this.#loadWorkflowState(workflowId),
+          ]);
+
+          if (!existingState) {
+            throw error;
+          }
+
+          const existingTenantId = existingState.tenant?.id;
+          const parentTenantId = parentState?.tenant?.id;
+          const tenantMatches =
+            (existingTenantId === undefined && parentTenantId === undefined) ||
+            (existingTenantId !== undefined &&
+              parentTenantId !== undefined &&
+              existingTenantId === parentTenantId);
+
+          if (
+            existingState.type !== operation.workflowType ||
+            !encodedValuesEqual(existingState.input, operation.input) ||
+            !tenantMatches
+          ) {
+            throw new Error(
+              `Child workflow id collision for "${childWorkflowId}" does not match the requested child workflow`,
+              { cause: error },
+            );
+          }
+
+          childHandle = this.getHandle(childWorkflowId);
+        } else {
+          throw error;
+        }
+      }
+
       return childHandle.result();
     };
 
@@ -5909,6 +6053,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'activity':
         signal?.throwIfAborted();
         return this.#executeActivityOperationResult(workflowId, operation, speculativeState);
+      case 'child-workflow':
+        signal?.throwIfAborted();
+        return this.#executeChildWorkflow(
+          workflowId,
+          operation,
+          this.#assertChildWorkflowNestingDepth(workflowId),
+        );
       case 'memo':
         signal?.throwIfAborted();
         return callMemoFunction(operation.fn);

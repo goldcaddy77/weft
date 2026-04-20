@@ -45,7 +45,7 @@
 export const VERSION = '0.0.1';
 
 // Core
-export { Engine, ScheduleHandle, WorkflowHandle } from './core/engine';
+export { Engine, ScheduleHandle, WorkflowAlreadyExistsError, WorkflowHandle } from './core/engine';
 export {
   DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD,
   DEFAULT_MAX_NESTING_DEPTH,
@@ -199,6 +199,16 @@ export type {
   StreamReference,
   StreamSink,
 } from './core/context';
+export type {
+  ChildWorkflowOptions,
+  ChildWorkflowTarget,
+  WorkflowMapOptions,
+  WorkflowOperation,
+  WorkflowPipeStage,
+  WorkflowPipeStageDefinition,
+  WorkflowReduceInput,
+  WorkflowReduceOptions,
+} from './core/types';
 
 // Multi-tenant primitives
 export { tenantFromInputField } from './core/tenant';

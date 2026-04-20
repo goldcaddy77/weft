@@ -284,6 +284,51 @@ describe('Context', () => {
       expect(op0.options).toEqual({ queue: 'gpu' });
       expect(op1.options).toEqual({ queue: 'cpu' });
     });
+
+    it('preserves legacy recovery step ordering for cached parallel results', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [0, ['cached-a', 'cached-b']],
+          [1, 'next-cached-result'],
+        ]),
+      });
+
+      const generator = context.all([context.run(taskA), context.run(taskB)]);
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toEqual(['cached-a', 'cached-b']);
+
+      const nextStep = context.run(task).next();
+      expect(nextStep.done).toBe(true);
+      expect(nextStep.value).toBe('next-cached-result');
+    });
+
+    it('advances recovery past cached parallel sub-operations for new checkpoints', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              result: ['cached-a', 'cached-b'],
+              subOperationCount: 2,
+            },
+          ],
+          [3, 'next-cached-result'],
+        ]),
+      });
+
+      const generator = context.all([context.run(taskA), context.run(taskB)]);
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toEqual(['cached-a', 'cached-b']);
+
+      const nextStep = context.run(task).next();
+      expect(nextStep.done).toBe(true);
+      expect(nextStep.value).toBe('next-cached-result');
+    });
   });
 
   describe('ctx.race', () => {
@@ -294,6 +339,51 @@ describe('Context', () => {
       const request = expectRequest(generator.next(), 'race');
 
       expect(request.operations).toHaveLength(2);
+    });
+
+    it('preserves legacy recovery step ordering for cached race results', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [0, 'winner'],
+          [1, 'next-cached-result'],
+        ]),
+      });
+
+      const generator = context.race([context.run(taskA), context.run(taskB)]);
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('winner');
+
+      const nextStep = context.run(task).next();
+      expect(nextStep.done).toBe(true);
+      expect(nextStep.value).toBe('next-cached-result');
+    });
+
+    it('advances recovery past cached race sub-operations for new checkpoints', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              result: 'winner',
+              subOperationCount: 2,
+            },
+          ],
+          [3, 'next-cached-result'],
+        ]),
+      });
+
+      const generator = context.race([context.run(taskA), context.run(taskB)]);
+      const result = generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value).toBe('winner');
+
+      const nextStep = context.run(task).next();
+      expect(nextStep.done).toBe(true);
+      expect(nextStep.value).toBe('next-cached-result');
     });
   });
 
@@ -1158,6 +1248,24 @@ describe('Context', () => {
       expect(request.callerStack).toBeDefined();
       expect(typeof request.callerStack).toBe('string');
       expect(request.callerStack!.length).toBeGreaterThan(0);
+    });
+
+    it('ctx.startChild preserves custom option keys alongside id', () => {
+      const context = createContext();
+      const generator = context.startChild(
+        'child-type',
+        { key: 'value' },
+        {
+          id: 'child-123',
+          queue: 'priority',
+        },
+      );
+      const request = expectRequest(generator.next(), 'child-workflow');
+
+      expect(request.options).toEqual({
+        id: 'child-123',
+        queue: 'priority',
+      });
     });
 
     it('ctx.offload yields a request with callerStack', () => {
