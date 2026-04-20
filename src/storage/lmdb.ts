@@ -187,7 +187,7 @@ export class LMDBStorage implements Storage {
     conditions: ConditionalBatchCondition[],
     operations: BatchOperation[],
   ): Promise<boolean> {
-    return this.#database.transactionSync(() => {
+    const committed = this.#database.transactionSync(() => {
       for (const condition of conditions) {
         const currentValue = this.#database.get(condition.key);
         const normalizedCurrentValue =
@@ -207,6 +207,12 @@ export class LMDBStorage implements Storage {
 
       return true;
     });
+
+    if (committed && operations.length > 0) {
+      this.#requiresFreshReadSnapshot = true;
+    }
+
+    return committed;
   }
 
   [Symbol.dispose](): void {
