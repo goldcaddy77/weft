@@ -2576,6 +2576,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
       if (!stateBytes) {
+        await this.#storage.delete(key);
         continue;
       }
 
@@ -7161,6 +7162,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       await this.#storage.batch([
+        ...this.#buildTerminalWorkflowIndexOperations(state, updatedState),
         { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
         ...buildWorkflowTagIndexOperations(workflowId, currentTags, nextTags),
       ]);

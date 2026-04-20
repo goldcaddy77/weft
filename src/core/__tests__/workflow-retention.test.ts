@@ -642,6 +642,32 @@ describe('workflow retention', () => {
     engine[Symbol.dispose]();
   });
 
+  it('retention sweep deletes orphaned terminal workflow index entries', async () => {
+    const storage = new MemoryStorage();
+    let now = 10_000;
+    const engine = new Engine({
+      storage,
+      getNow: () => now,
+      retention: {
+        completed: 0,
+      },
+      retentionSweepInterval: '10ms',
+    });
+
+    await storage.put(
+      KEYS.terminalWorkflow(now - 1, 'orphaned-terminal-workflow'),
+      new Uint8Array(),
+    );
+
+    await waitForCondition(async () => {
+      const keys = await collectKeys(storage, KEYS.terminalWorkflowPrefix());
+      return keys.length === 0;
+    }, 'Expected the retention sweep to delete orphaned terminal workflow index entries');
+
+    now += 1;
+    engine[Symbol.dispose]();
+  });
+
   it('retention sweep scans the terminal-workflow index instead of top-level workflow state rows', async () => {
     let now = 10_000;
     const storage = new CountingWorkflowStateScanStorage();
