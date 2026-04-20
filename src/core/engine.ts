@@ -467,7 +467,7 @@ function sanitizeTimelineSummary(summary: string | undefined): string | undefine
   try {
     return summarizeTimelineValue(JSON.parse(summary) as unknown);
   } catch {
-    return summarizeTimelineValue(summary);
+    return summary;
   }
 }
 
@@ -519,10 +519,6 @@ function isWorkflowTimelineEntry(value: unknown): value is WorkflowTimelineEntry
     (value['duration'] === undefined || isFiniteNumber(value['duration'])) &&
     (value['versionTuple'] === undefined || isWorkflowVersionTuple(value['versionTuple']))
   );
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function isValidScheduleTimestamp(value: unknown): value is number {
@@ -831,7 +827,7 @@ function decodeScheduleRuntimeFields(
 
 function decodeScheduleState(bytes: Uint8Array): ScheduleState | null {
   const decoded = decode(bytes);
-  if (!isObjectRecord(decoded)) {
+  if (!isRecord(decoded)) {
     console.warn('[weft] Ignoring malformed schedule record with non-object payload.');
     return null;
   }
@@ -3829,7 +3825,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const timeline: WorkflowTimelineEntry[] = [];
 
     for await (const [, value] of this.#storage.scan(KEYS.timelinePrefix(workflowId))) {
-      const decoded = decode(value);
+      let decoded: unknown;
+      try {
+        decoded = decode(value);
+      } catch {
+        continue;
+      }
+
       if (isWorkflowTimelineEntry(decoded)) {
         timeline.push({
           ...decoded,
@@ -4320,7 +4322,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     output: unknown,
   ): void {
     const pendingEntry = this.#pendingTimelineEntries.get(workflowId);
-    if (!pendingEntry) {
+    if (!pendingEntry || pendingEntry.entry.status !== 'running') {
       return;
     }
 

@@ -466,7 +466,16 @@ function formatValue(value: unknown): string {
   return safeDebugStringify(value, 2);
 }
 
-function collectDiffLines(
+function isPlainObjectRecord(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+export function collectDiffLines(
   beforeValue: unknown,
   afterValue: unknown,
   path: string,
@@ -484,7 +493,7 @@ function collectDiffLines(
     return;
   }
 
-  if (isRecord(beforeValue) && isRecord(afterValue)) {
+  if (isPlainObjectRecord(beforeValue) && isPlainObjectRecord(afterValue)) {
     const keys = new Set([...Object.keys(beforeValue), ...Object.keys(afterValue)]);
     for (const key of [...keys].toSorted()) {
       const childPath = path ? `${path}.${key}` : key;

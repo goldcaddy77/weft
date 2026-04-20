@@ -11,6 +11,7 @@ import {
   TIMELINE_HELP_TEXT,
   VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
+  collectDiffLines,
   createStorage,
   executeDoctor,
   executeTimeline,
@@ -918,6 +919,21 @@ describe('executeValidate', () => {
 });
 
 describe('executeTimeline', () => {
+  it('formats non-plain replay values as leaf diff lines instead of recursing into them', () => {
+    const lines: string[] = [];
+
+    collectDiffLines(
+      [new Date('2026-01-01T00:00:00.000Z')],
+      [new Date('2026-01-02T00:00:00.000Z')],
+      'accumulatedResults',
+      lines,
+    );
+
+    expect(lines).toEqual([
+      'accumulatedResults[0]: "2026-01-01T00:00:00.000Z" -> "2026-01-02T00:00:00.000Z"',
+    ]);
+  });
+
   it('prints timeline rows, replay output, and diffs for a stored workflow history', async () => {
     const database = join(tmpdir(), `weft-timeline-${crypto.randomUUID()}.db`);
     const storage = await createStorage('sqlite', database);

@@ -222,9 +222,63 @@ describe('timeline and replay', () => {
         duration: Number.NaN,
       }),
     );
+    await storage.put(KEYS.timeline('wf-malformed-timeline', 8), new Uint8Array([0xc1]));
 
     const timeline = await engine.getTimeline('wf-malformed-timeline');
 
     expect(timeline.map((entry) => entry.step)).toEqual([1, 2]);
+  });
+
+  it('keeps malformed timeline summary strings unchanged instead of re-quoting them', async () => {
+    const storage = new MemoryStorage();
+    engine = new Engine({ storage, checkpointHistory: 10 });
+
+    await storage.put(
+      KEYS.timeline('wf-summary-fallback', 1),
+      encode({
+        step: 1,
+        operationType: 'activity',
+        operationLabel: 'summaries',
+        inputSummary: 'undefined',
+        outputSummary: '[unserializable]',
+        timestamp: 1_000,
+        status: 'failed',
+      }),
+    );
+
+    const timeline = await engine.getTimeline('wf-summary-fallback');
+
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]?.inputSummary).toBe('undefined');
+    expect(timeline[0]?.outputSummary).toBe('[unserializable]');
+  });
+
+  it('does not overwrite a failed operation timeline duration during workflow failure cleanup', async () => {
+    let now = 0;
+    const storage = new MemoryStorage();
+    engine = new Engine({ storage, checkpointHistory: 10, getNow: () => now++ });
+
+    async function failStep() {
+      throw new Error('timeline failure');
+    }
+
+    engine.register('timeline-failure', {
+      handler: async function* (ctx: WorkflowContext) {
+        return yield* (ctx as Context).run(failStep);
+      },
+    });
+
+    const handle = await engine.start('timeline-failure', null, { id: 'wf-timeline-failure' });
+    await handle.result().catch(() => {});
+
+    const timeline = await engine.getTimeline('wf-timeline-failure');
+
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toMatchObject({
+      status: 'failed',
+      operationLabel: 'failStep',
+    });
+    expect(timeline[0]?.duration).toBe(1);
+    expect(timeline[0]?.outputSummary).toContain('timeline failure');
   });
 });
