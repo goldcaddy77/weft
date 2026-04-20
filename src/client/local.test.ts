@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { WorkflowCompletedEvent, WorkflowFailedEvent } from '../core/events.ts';
 import type { WorkflowContext } from '../core/types.ts';
@@ -14,6 +15,11 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
 }
 
+async function* waitingWorkflow(ctx: WorkflowContext, input: unknown) {
+  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  return `${String(input)}:${signal}`;
+}
+
 async function* failingWorkflow(_ctx: WorkflowContext, _input: unknown) {
   throw new Error('intentional failure');
 }
@@ -21,6 +27,7 @@ async function* failingWorkflow(_ctx: WorkflowContext, _input: unknown) {
 function createTestEngine(): Engine {
   const engine = new Engine({ storage: new MemoryStorage() });
   engine.register('echo', echoWorkflow);
+  engine.register('waiting', waitingWorkflow);
   engine.register('failing', failingWorkflow);
   return engine;
 }
@@ -170,6 +177,22 @@ describe('LocalClient', () => {
       const attributes = await client.getAttributes(handle.id);
       expect(attributes).not.toBeNull();
       expect(attributes!['priority']).toBe('high');
+    });
+  });
+
+  describe('workflow tags', () => {
+    it('ClientHandle.addTags/removeTags mutate workflow tags through the local client', async () => {
+      const handle = await client.start('waiting', 'payload', {
+        id: 'local-client-tags',
+        tags: ['nightly'],
+      });
+      await Bun.sleep(10);
+
+      await handle.addTags('v2');
+      await handle.removeTags('nightly');
+
+      const state = await client.get('local-client-tags');
+      expect(state?.tags).toEqual(['v2']);
     });
   });
 
