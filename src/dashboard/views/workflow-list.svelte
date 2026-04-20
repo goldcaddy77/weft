@@ -8,6 +8,7 @@
   import Skeleton from '../components/skeleton.svelte';
   import EmptyState from '../components/empty-state.svelte';
   import WorkflowTableRow from '../fragments/workflow-table-row.svelte';
+  import { collectWorkflowTags, toggleWorkflowTagSelection } from '../utilities/workflow-tags.ts';
 
   const apiClient = getContext<ApiClient>('api-client');
 
@@ -17,6 +18,7 @@
 
   let statusFilter: WorkflowStatus | 'all' = $state('all');
   let typeFilter = $state('');
+  let selectedTags = $state<string[]>([]);
   let currentOffset = $state(0);
   const pageSize = 20;
 
@@ -37,6 +39,7 @@
   interface FetchFilters {
     status: WorkflowStatus | 'all';
     type: string;
+    tags: string[];
     offset: number;
   }
 
@@ -45,6 +48,7 @@
       const result = await apiClient.listWorkflows({
         status: filters.status === 'all' ? undefined : filters.status,
         type: filters.type || undefined,
+        tags: filters.tags.length > 0 ? filters.tags : undefined,
         limit: pageSize,
         offset: filters.offset,
       });
@@ -71,6 +75,7 @@
     const filters: FetchFilters = {
       status: statusFilter,
       type: typeFilter,
+      tags: selectedTags,
       offset: currentOffset,
     };
 
@@ -128,8 +133,19 @@
     fetchWorkflows(fetchGeneration, {
       status: statusFilter,
       type: typeFilter,
+      tags: selectedTags,
       offset: currentOffset,
     });
+  }
+
+  const availableTagFilters = $derived.by(() => {
+    const tags = new Set([...collectWorkflowTags(workflows), ...selectedTags]);
+    return [...tags].toSorted((left, right) => left.localeCompare(right));
+  });
+
+  function toggleTagFilter(tag: string): void {
+    selectedTags = toggleWorkflowTagSelection(selectedTags, tag);
+    currentOffset = 0;
   }
 
   const STATUS_OPTIONS: Array<{ value: WorkflowStatus | 'all'; label: string }> = [
@@ -172,6 +188,22 @@
       />
     </div>
   </div>
+
+  {#if availableTagFilters.length > 0}
+    <div class="workflow-tag-filters" aria-label="Workflow tag filters">
+      {#each availableTagFilters as tag (tag)}
+        <button
+          type="button"
+          class="workflow-tag-chip"
+          data-selected={selectedTags.includes(tag)}
+          aria-pressed={selectedTags.includes(tag)}
+          onclick={() => toggleTagFilter(tag)}
+        >
+          {tag}
+        </button>
+      {/each}
+    </div>
+  {/if}
 
   {#if loading && workflows.length === 0}
     <div class="workflow-list-skeleton">
@@ -241,6 +273,12 @@
     flex-wrap: wrap;
   }
 
+  .workflow-tag-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2, 0.5rem);
+  }
+
   .workflow-list-filter-group {
     display: flex;
     align-items: center;
@@ -258,6 +296,28 @@
   .workflow-list-filter-group select,
   .workflow-list-filter-group input {
     flex: 1;
+  }
+
+  .workflow-tag-chip {
+    appearance: none;
+    border: 1px solid var(--border-muted, #d1d5db);
+    background: var(--surface, #ffffff);
+    color: var(--text, #111827);
+    border-radius: 999px;
+    padding: 0.35rem 0.7rem;
+    font-size: var(--text-xs, 0.75rem);
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background-color var(--duration-fast, 150ms) var(--ease-standard, ease),
+      border-color var(--duration-fast, 150ms) var(--ease-standard, ease),
+      color var(--duration-fast, 150ms) var(--ease-standard, ease);
+  }
+
+  .workflow-tag-chip[data-selected='true'] {
+    background: color-mix(in oklch, var(--secondary, #2563eb), transparent 84%);
+    border-color: color-mix(in oklch, var(--secondary, #2563eb), transparent 52%);
+    color: var(--secondary, #2563eb);
   }
 
   .workflow-list-skeleton {

@@ -68,6 +68,14 @@ class LocalHandle implements ClientHandle {
     return this.#client.setAttributes(this.id, attributes);
   }
 
+  async addTags(...tags: string[]): Promise<void> {
+    return this.#client.addTags(this.id, ...tags);
+  }
+
+  async removeTags(...tags: string[]): Promise<void> {
+    return this.#client.removeTags(this.id, ...tags);
+  }
+
   addEventListener(
     type: string,
     listener: EventListenerOrEventListenerObject,
@@ -156,6 +164,14 @@ export class LocalClient implements WeftClient {
 
   async setAttributes(id: string, attributes: Record<string, SearchAttributeValue>): Promise<void> {
     return this.#engine.setAttributes(id, attributes);
+  }
+
+  async addTags(id: string, ...tags: string[]): Promise<void> {
+    return this.#engine.addTags(id, ...tags);
+  }
+
+  async removeTags(id: string, ...tags: string[]): Promise<void> {
+    return this.#engine.removeTags(id, ...tags);
   }
 
   async getEvents(id: string): Promise<WorkflowEvent[]> {
