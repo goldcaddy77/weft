@@ -73,6 +73,20 @@ describe('OpenAPI document generation', () => {
     expect(stepParam!.schema.type).toBe('integer');
   });
 
+  it('marks replay step parameter as integer type', () => {
+    const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
+    const replayPath = paths['/v1/workflows/{id}/replay/{step}'];
+    expect(replayPath).toBeDefined();
+
+    const operation = replayPath!['get']!;
+    const parameters = operation['parameters'] as Array<{
+      name: string;
+      schema: { type: string };
+    }>;
+    const stepParam = parameters.find((parameter) => parameter.name === 'step');
+    expect(stepParam!.schema.type).toBe('integer');
+  });
+
   it('includes tags sorted alphabetically', () => {
     const tags = document['tags'] as Array<{ name: string }>;
     expect(tags.length).toBeGreaterThan(0);

@@ -72,6 +72,8 @@ describe('LocalClient', () => {
     expect(client.getAttributes).toBeFunction();
     expect(client.setAttributes).toBeFunction();
     expect(client.getEvents).toBeFunction();
+    expect(client.getTimeline).toBeFunction();
+    expect(client.replayTo).toBeFunction();
     expect(client.listReviews).toBeFunction();
     expect(client.submitReview).toBeFunction();
     expect(client.setBudgetPolicy).toBeFunction();
@@ -176,6 +178,46 @@ describe('LocalClient', () => {
 
       const events = await client.getEvents(handle.id);
       expect(Array.isArray(events)).toBe(true);
+    });
+  });
+
+  describe('getTimeline / replayTo', () => {
+    it('returns timeline entries and replay data for a completed workflow', async () => {
+      async function firstStep() {
+        return { phase: 'first' as const };
+      }
+
+      async function secondStep() {
+        return { phase: 'second' as const };
+      }
+
+      engine.register('timeline-local', {
+        version: '9.0.0',
+        handler: async function* (ctx: WorkflowContext) {
+          yield* (ctx as import('../core/context.ts').Context).run(firstStep);
+          return yield* (ctx as import('../core/context.ts').Context).run(secondStep);
+        },
+      });
+
+      const handle = await client.start('timeline-local', null, { id: 'wf-local-timeline' });
+      await handle.result();
+
+      const timeline = await client.getTimeline('wf-local-timeline');
+      const replay = await client.replayTo('wf-local-timeline', 2);
+
+      expect(timeline).toHaveLength(2);
+      expect(timeline[0]?.operationLabel).toBe('firstStep');
+      expect(replay?.checkpoint.step).toBe(2);
+      expect(replay?.accumulatedResults).toEqual([[0, { phase: 'first' }]]);
+    });
+
+    it('returns empty timeline and null replay for missing data', async () => {
+      const handle = await client.start('echo', 'done', { id: 'wf-local-missing-replay' });
+      await handle.result();
+
+      await expect(client.getTimeline('missing-workflow')).resolves.toEqual([]);
+      await expect(client.replayTo('missing-workflow', 1)).resolves.toBeNull();
+      await expect(client.replayTo('wf-local-missing-replay', 1)).resolves.toBeNull();
     });
   });
 
@@ -412,6 +454,21 @@ describe('LocalClient delegation surface', () => {
       getAttributes: mock(async () => ({ priority: 'high' })),
       setAttributes: mock(async () => undefined),
       getEvents: mock(async () => [{ type: 'workflow:started' }]),
+      getTimeline: mock(async () => [
+        {
+          step: 1,
+          operationType: 'activity',
+          operationLabel: 'mock-step',
+          inputSummary: '{}',
+          timestamp: 1,
+          status: 'completed',
+        },
+      ]),
+      replayTo: mock(async () => ({
+        checkpoint: { step: 1, locals: {}, searchAttributes: {}, version: '1.0.0', createdAt: 1 },
+        accumulatedResults: [[0, 'value']],
+        events: [{ type: 'workflow:checkpoint', timestamp: 1, data: { step: 1 } }],
+      })),
       listReviews: mock(async () => [{ reviewId: 'review-1' }]),
       submitReview: mock(async () => undefined),
       setBudgetPolicy: mock(async () => undefined),
@@ -465,6 +522,12 @@ describe('LocalClient delegation surface', () => {
     expect(await client.getEvents('delegated-workflow')).toMatchObject([
       { type: 'workflow:started' },
     ]);
+    expect(await client.getTimeline('delegated-workflow')).toMatchObject([
+      { operationLabel: 'mock-step', step: 1 },
+    ]);
+    expect(await client.replayTo('delegated-workflow', 1)).toMatchObject({
+      checkpoint: { step: 1, version: '1.0.0' },
+    });
     expect(await client.listReviews()).toEqual([{ reviewId: 'review-1' }]);
     await client.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
     await client.setBudgetPolicy({ namespace: 'agents', daily: { maxCost: 10 } });

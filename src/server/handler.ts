@@ -1257,6 +1257,44 @@ async function handleGetCheckpointAt(
   return negotiatedResponse(request, state);
 }
 
+async function handleGetTimeline(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+): Promise<Response> {
+  const state = await engine.get(workflowId);
+  if (state === null) {
+    return errorResponse(`Workflow "${workflowId}" not found`, 404);
+  }
+
+  const timeline = await engine.getTimeline(workflowId);
+  return negotiatedResponse(request, timeline);
+}
+
+async function handleReplayWorkflowToStep(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+  stepParam: string,
+): Promise<Response> {
+  const state = await engine.get(workflowId);
+  if (state === null) {
+    return errorResponse(`Workflow "${workflowId}" not found`, 404);
+  }
+
+  const step = Number(stepParam);
+  if (!Number.isSafeInteger(step) || step < 0) {
+    return errorResponse(`Invalid step: ${stepParam}`, 400);
+  }
+
+  const replay = await engine.replayTo(workflowId, step);
+  if (replay === null) {
+    return errorResponse(`Replay not found at step ${step} for workflow ${workflowId}`, 404);
+  }
+
+  return negotiatedResponse(request, replay);
+}
+
 // ---------------------------------------------------------------------------
 // Metrics route
 // ---------------------------------------------------------------------------
@@ -1335,6 +1373,10 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     handleListCheckpoints(request, engine, param('id')),
   getCheckpointAt: async ({ request, engine, param }) =>
     handleGetCheckpointAt(request, engine, param('id'), param('step')),
+  getTimeline: async ({ request, engine, param }) =>
+    handleGetTimeline(request, engine, param('id')),
+  replayWorkflowToStep: async ({ request, engine, param }) =>
+    handleReplayWorkflowToStep(request, engine, param('id'), param('step')),
   getWorkflow: async ({ engine, param }) => handleGetWorkflow(engine, param('id')),
   cancelWorkflow: async ({ engine, param }) => handleCancelWorkflow(engine, param('id')),
   openApiDocument: async () => jsonResponse(generateOpenApiDocument()),
