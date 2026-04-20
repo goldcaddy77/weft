@@ -5618,10 +5618,10 @@ Weft has durable `ctx.sleep()` for delays within a running workflow, but no way 
 
 Child workflows exist, but composing them into pipelines, fan-out/fan-in DAGs, or conditional branches requires manual boilerplate.
 
-- [ ] **`ctx.pipe(stages)` runs a sequence of workflows where each stage's output is the next stage's input.** `stages` is an array of `{ type, options? }` or workflow functions. Returns the final stage's output. Each stage is independently checkpointed as a child workflow. If the pipeline fails at stage 3, recovery skips stages 1–2.
-- [ ] **`ctx.map(items, workflowType, options?)` runs a workflow for each item in parallel.** Like `ctx.all()` but parameterized over a collection. Supports `{ concurrency: number }` to limit parallelism. Returns results in input order.
-- [ ] **`ctx.reduce(items, workflowType, initialValue, options?)` sequentially folds items through a workflow.** Each invocation receives `{ accumulator, item, index }`. Returns the final accumulator. Checkpointed after each fold step.
-- [ ] Tests cover: 3-stage pipeline, pipeline failure at middle stage with compensation, map with concurrency limit, reduce over empty array, nested composition (pipe inside map).
+- [x] **`ctx.pipe(stages)` runs a sequence of workflows where each stage's output is the next stage's input.** `stages` is an array of `{ type, options? }` or workflow functions. Returns the final stage's output. Each stage is independently checkpointed as a child workflow. If the pipeline fails at stage 3, recovery skips stages 1–2.
+- [x] **`ctx.map(items, workflowType, options?)` runs a workflow for each item in parallel.** Like `ctx.all()` but parameterized over a collection. Supports `{ concurrency: number }` to limit parallelism. Returns results in input order.
+- [x] **`ctx.reduce(items, workflowType, initialValue, options?)` sequentially folds items through a workflow.** Each invocation receives `{ accumulator, item, index }`. Returns the final accumulator. Checkpointed after each fold step.
+- [x] Tests cover: 3-stage pipeline, pipeline failure at middle stage with compensation, map with concurrency limit, reduce over empty array, nested composition (pipe inside map).
 
 #### 7d. Workflow garbage collection and TTL
 
