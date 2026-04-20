@@ -75,6 +75,8 @@ describe('HttpClient', () => {
     expect(client.getAttributes).toBeFunction();
     expect(client.setAttributes).toBeFunction();
     expect(client.getEvents).toBeFunction();
+    expect(client.getTimeline).toBeFunction();
+    expect(client.replayTo).toBeFunction();
     expect(client.listReviews).toBeFunction();
     expect(client.submitReview).toBeFunction();
     expect(client.setBudgetPolicy).toBeFunction();
@@ -216,6 +218,46 @@ describe('HttpClient', () => {
 
       const events = await client.getEvents('http-events-test');
       expect(Array.isArray(events)).toBe(true);
+    });
+  });
+
+  describe('getTimeline / replayTo', () => {
+    it('returns timeline entries and replay data over HTTP', async () => {
+      async function firstHttpStep() {
+        return { phase: 'first' as const };
+      }
+
+      async function secondHttpStep() {
+        return { phase: 'second' as const };
+      }
+
+      engine.register('http-timeline', {
+        version: '6.0.0',
+        handler: async function* (ctx: WorkflowContext) {
+          yield* (ctx as import('../core/context.ts').Context).run(firstHttpStep);
+          return yield* (ctx as import('../core/context.ts').Context).run(secondHttpStep);
+        },
+      });
+
+      const handle = await client.start('http-timeline', null, { id: 'wf-http-client-timeline' });
+      await handle.result();
+
+      const timeline = await client.getTimeline('wf-http-client-timeline');
+      const replay = await client.replayTo('wf-http-client-timeline', 2);
+
+      expect(timeline).toHaveLength(2);
+      expect(timeline[0]?.operationLabel).toBe('firstHttpStep');
+      expect(replay?.checkpoint.step).toBe(2);
+      expect(replay?.accumulatedResults).toEqual([[0, { phase: 'first' }]]);
+    });
+
+    it('returns empty timeline and null replay for missing data over HTTP', async () => {
+      const handle = await client.start('echo', 'done', { id: 'wf-http-missing-replay' });
+      await handle.result();
+
+      await expect(client.getTimeline('missing-workflow')).resolves.toEqual([]);
+      await expect(client.replayTo('missing-workflow', 1)).resolves.toBeNull();
+      await expect(client.replayTo('wf-http-missing-replay', 1)).resolves.toBeNull();
     });
   });
 

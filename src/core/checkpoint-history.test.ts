@@ -302,8 +302,8 @@ describe('checkpoint history', () => {
   // Cleanup on termination
   // -------------------------------------------------------------------------
 
-  describe('cleanup on workflow termination', () => {
-    it('checkpoint history entries are deleted when workflow completes', async () => {
+  describe('retention after workflow termination', () => {
+    it('retains checkpoint history entries when workflow completes', async () => {
       const storage = new MemoryStorage();
       engine = createMultiStepEngine(storage, 4, { checkpointHistory: 10 });
 
@@ -311,16 +311,20 @@ describe('checkpoint history', () => {
       await handle.result();
       await flush();
 
-      // After completion + cleanup, history entries should be gone
+      // Completed workflows keep their checkpoint history so replay and
+      // time-travel inspection remain available after terminal cleanup.
       const entries: string[] = [];
       const prefix = `wf:${handle.id}:ckpt:`;
       for await (const [key] of storage.scan(prefix)) {
         entries.push(key);
       }
-      expect(entries).toHaveLength(0);
+      expect(entries).toHaveLength(4);
+
+      const summaries = await engine.listCheckpoints(handle.id);
+      expect(summaries.map((summary: CheckpointSummary) => summary.step)).toEqual([4, 3, 2, 1]);
     });
 
-    it('checkpoint history entries are deleted when workflow is cancelled', async () => {
+    it('retains checkpoint history entries when workflow is cancelled', async () => {
       const storage = new MemoryStorage();
       engine = new Engine({ storage, checkpointHistory: 10 });
 
@@ -338,13 +342,16 @@ describe('checkpoint history', () => {
       await resultPromise;
       await flush();
 
-      // After cancellation, history entries should be gone
+      // Cancelled workflows keep the last durable checkpoint for inspection.
       const entries: string[] = [];
       const prefix = `wf:${handle.id}:ckpt:`;
       for await (const [key] of storage.scan(prefix)) {
         entries.push(key);
       }
-      expect(entries).toHaveLength(0);
+      expect(entries).toHaveLength(1);
+
+      const checkpoint = await engine.getCheckpointAt(handle.id, 1);
+      expect(checkpoint).not.toBeNull();
     });
   });
 });
