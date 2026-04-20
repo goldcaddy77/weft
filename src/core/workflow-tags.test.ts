@@ -108,6 +108,25 @@ describe('workflow tags', () => {
     }
   });
 
+  it('handle.addTags(...tags) reports tag mutation validation errors with workflow-tag context', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      const handle = await engine.start('wait-for-signal', 'payload', {
+        id: 'tag-validation-context',
+        tags: ['alpha'],
+      });
+      await Bun.sleep(10);
+
+      await expect(handle.addTags('')).rejects.toThrow(
+        'Workflow tags must not contain empty tags',
+      );
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
   it("engine.list({ tags: ['nightly', 'v2'] }) filters by tag intersection", async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
     engine.register('echo', echoWorkflow);

@@ -6353,12 +6353,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     await this.#storage.put(KEYS.workflow(workflowId), encode(updated));
   }
 
-  #normalizeStartWorkflowTags(tags: unknown): string[] | undefined {
+  #normalizeStartWorkflowTags(tags: unknown, fieldName = 'options.tags'): string[] | undefined {
     if (tags === undefined) {
       return undefined;
     }
 
-    return normalizeWorkflowTags(coerceStartWorkflowTags(tags, 'options.tags'));
+    return normalizeWorkflowTags(coerceStartWorkflowTags(tags, fieldName));
   }
 
   async #mutateWorkflowTags(
@@ -6373,7 +6373,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const state = decodeWorkflowState(bytes);
     const currentTags = normalizeWorkflowTags(state.tags) ?? [];
-    const requestedTags = this.#normalizeStartWorkflowTags(tags) ?? [];
+    const requestedTags = this.#normalizeStartWorkflowTags(tags, 'Workflow tags') ?? [];
     if (requestedTags.length === 0) {
       return;
     }
