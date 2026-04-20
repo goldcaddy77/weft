@@ -9,8 +9,9 @@
  */
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
-import { createSSEStream } from '../ai/streaming-agent.ts';
+import { formatSSE } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
+import type { StoredStreamChunk } from '../core/context.ts';
 import type { Engine } from '../core/engine.ts';
 import {
   StartWorkflowValidationError,
@@ -36,6 +37,7 @@ import {
 import type { AuthMethod, JWTPayload } from './authentication.ts';
 import { generateOpenApiDocument } from './openapi.ts';
 import { ROUTES, toRegex } from './route-model.ts';
+import { parseOptionalSequenceCursor } from './sequence-cursor.ts';
 
 // ---------------------------------------------------------------------------
 // Route matching
@@ -71,6 +73,7 @@ const ROUTE_PATTERNS: Array<{
   handler: HandlerName;
   paramNames: readonly string[];
 }> = [];
+const textEncoder = new TextEncoder();
 
 for (const route of ROUTES) {
   ROUTE_PATTERNS.push({
@@ -153,6 +156,66 @@ function getAuthenticatedTenantId(claims: JWTPayload | undefined): string | null
   }
 
   return null;
+}
+
+function parseAfterQueryParameter(request: Request): number | Response | undefined {
+  const result = parseOptionalSequenceCursor(
+    new URL(request.url).searchParams.get('after'),
+    'after query parameter',
+  );
+  if (result.error) {
+    return errorResponse(result.error, 400);
+  }
+
+  return result.value;
+}
+
+function parseLastEventIdHeader(request: Request): number | Response | undefined {
+  const result = parseOptionalSequenceCursor(
+    request.headers.get('Last-Event-ID'),
+    'Last-Event-ID header',
+  );
+  if (result.error) {
+    return errorResponse(result.error, 400);
+  }
+
+  return result.value;
+}
+
+function createStoredChunkSSEStream(
+  chunks: StoredStreamChunk[],
+  mapChunkToText: (chunk: StoredStreamChunk) => string | null,
+): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        const text = mapChunkToText(chunk);
+        if (text === null) {
+          continue;
+        }
+
+        controller.enqueue(
+          textEncoder.encode(
+            formatSSE({
+              id: String(chunk.sequence),
+              event: 'token',
+              data: text,
+            }),
+          ),
+        );
+      }
+
+      controller.enqueue(
+        textEncoder.encode(
+          formatSSE({
+            event: 'done',
+            data: '',
+          }),
+        ),
+      );
+      controller.close();
+    },
+  });
 }
 
 export function getRequiredRouteParameter(
@@ -795,11 +858,38 @@ async function handleGetTenantQuota(
 // ---------------------------------------------------------------------------
 
 async function handleGetStreamChunks(
+  request: Request,
   engine: Engine,
   workflowId: string,
   key: string,
 ): Promise<Response> {
-  const chunks = await engine.getStreamChunks(workflowId, key);
+  const after = parseAfterQueryParameter(request);
+  if (after instanceof Response) {
+    return after;
+  }
+
+  const chunks =
+    after !== undefined
+      ? await engine.getStreamChunks(workflowId, key, { after })
+      : await engine.getStreamChunks(workflowId, key);
+
+  const accept = request.headers.get('Accept') ?? '';
+  if (accept.includes('text/event-stream')) {
+    return new Response(
+      createStoredChunkSSEStream(chunks, (chunk) =>
+        JSON.stringify({ sequence: chunk.sequence, value: chunk.value }),
+      ),
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      },
+    );
+  }
+
   return jsonResponse({ chunks });
 }
 
@@ -823,28 +913,33 @@ async function handleStreamSSE(
     return errorResponse(`Workflow "${workflowId}" not found`, 404);
   }
 
-  // Get Last-Event-ID for reconnection support
-  const lastEventId = request.headers.get('Last-Event-ID') ?? undefined;
+  const after = parseLastEventIdHeader(request);
+  if (after instanceof Response) {
+    return after;
+  }
 
-  // Get token stream from engine's stream chunks
-  const chunks = await engine.getStreamChunks(workflowId, 'tokens');
+  const chunks =
+    after !== undefined
+      ? await engine.getStreamChunks(workflowId, 'tokens', { after })
+      : await engine.getStreamChunks(workflowId, 'tokens');
 
-  // Build a ReadableStream<string> from the stored chunks
-  const tokenStream = new ReadableStream<string>({
-    start(controller) {
-      for (const chunk of chunks) {
-        if (typeof chunk === 'string') {
-          controller.enqueue(chunk);
-        } else if (typeof chunk === 'object' && chunk !== null && 'token' in chunk) {
-          const token = (chunk as { token?: string }).token;
-          if (token) controller.enqueue(token);
-        }
-      }
-      controller.close();
-    },
+  const sseStream = createStoredChunkSSEStream(chunks, (chunk) => {
+    if (typeof chunk.value === 'string') {
+      return chunk.value;
+    }
+
+    if (
+      typeof chunk.value === 'object' &&
+      chunk.value !== null &&
+      'token' in chunk.value &&
+      typeof chunk.value['token'] === 'string' &&
+      chunk.value['token'].length > 0
+    ) {
+      return chunk.value['token'];
+    }
+
+    return null;
   });
-
-  const sseStream = createSSEStream(tokenStream, lastEventId);
 
   return new Response(sseStream, {
     status: 200,
@@ -932,8 +1027,8 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   getBudgetPolicy: async ({ engine, param }) => handleGetBudgetPolicy(engine, param('namespace')),
   getTenantQuota: async ({ engine, options, param }) =>
     handleGetTenantQuota(engine, param('id'), options?.authContext),
-  getStreamChunks: async ({ engine, param }) =>
-    handleGetStreamChunks(engine, param('id'), param('key')),
+  getStreamChunks: async ({ request, engine, param }) =>
+    handleGetStreamChunks(request, engine, param('id'), param('key')),
   queryWorkflow: async ({ engine, param }) =>
     handleQueryWorkflow(engine, param('id'), param('name')),
   resumeWorkflow: async ({ engine, param }) => handleResumeWorkflow(engine, param('id')),

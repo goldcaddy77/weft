@@ -357,7 +357,10 @@ describe('LocalClient delegation surface', () => {
       submitReview: mock(async () => undefined),
       setBudgetPolicy: mock(async () => undefined),
       getBudgetPolicy: mock(async () => ({ namespace: 'agents', daily: { maxCost: 12 } })),
-      getStreamChunks: mock(async () => ['chunk-a', 'chunk-b']),
+      getStreamChunks: mock(async () => [
+        { sequence: 2, value: 'chunk-a' },
+        { sequence: 3, value: 'chunk-b' },
+      ]),
       submitCoordinatedUpdate: mock(async () => ({ updateId: 'update-1', result: 'ok' })),
       getUpdateResult: mock(async () => ({ updateId: 'update-1', result: 'done', error: 'none' })),
     } as unknown as Engine;
@@ -410,9 +413,9 @@ describe('LocalClient delegation surface', () => {
       namespace: 'agents',
       daily: { maxCost: 12 },
     });
-    expect(await client.getStreamChunks('delegated-workflow', 'stream-key')).toEqual([
-      'chunk-a',
-      'chunk-b',
+    expect(await client.getStreamChunks('delegated-workflow', 'stream-key', { after: 1 })).toEqual([
+      { sequence: 2, value: 'chunk-a' },
+      { sequence: 3, value: 'chunk-b' },
     ]);
     expect(
       await client.submitCoordinatedUpdate(
