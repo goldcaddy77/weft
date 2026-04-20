@@ -569,7 +569,10 @@ describe('Engine', () => {
     });
 
     await engine.start('dup', null, { id: 'same-id' });
-    await expect(engine.start('dup', null, { id: 'same-id' })).rejects.toThrow('already exists');
+    await expect(engine.start('dup', null, { id: 'same-id' })).rejects.toMatchObject({
+      message: 'Workflow with id "same-id" already exists',
+      name: 'WorkflowAlreadyExistsError',
+    });
     engine[Symbol.dispose]();
   });
 
