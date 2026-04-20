@@ -65,7 +65,11 @@ export type {
   EngineOptions,
   FailureCategory,
   ListFilter,
+  NormalizedRetentionPolicy,
   PaginatedResult,
+  PurgeResult,
+  RetentionOverview,
+  RetentionPolicy,
   RetryPolicy,
   ReviewDecision,
   ScheduleAccessOptions,
@@ -92,6 +96,7 @@ export type {
   WorkflowSummary,
   WorkflowTimelineEntry,
   WorkflowTimelineStatus,
+  WorkflowTypeRetentionPolicy,
 } from './core/types';
 
 // Alerting

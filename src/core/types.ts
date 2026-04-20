@@ -96,6 +96,24 @@ export interface WorkflowState {
 export type Duration = number | string;
 
 // ---------------------------------------------------------------------------
+// Workflow retention
+// ---------------------------------------------------------------------------
+
+export interface RetentionPolicy {
+  completed?: Duration;
+  failed?: Duration;
+  cancelled?: Duration;
+  timedOut?: Duration;
+}
+
+export interface NormalizedRetentionPolicy {
+  completed?: number;
+  failed?: number;
+  cancelled?: number;
+  timedOut?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Checkpoint: snapshot of workflow at a yield* boundary
 // ---------------------------------------------------------------------------
 
@@ -222,6 +240,9 @@ export interface EngineOptions {
   storage?: WeftStorage;
   development?: boolean;
   serializer?: Serializer;
+  retention?: RetentionPolicy;
+  retentionSweepInterval?: Duration;
+  retentionSweepBatchSize?: number;
   /** Payload compression applied at the storage layer. */
   compression?: CompressionOptions & {
     /** Compression algorithm for agent workflow checkpoints. Default: 'brotli'. */
@@ -571,6 +592,7 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
   handler: WorkflowFunction<TInput, TOutput>;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
+  retention?: RetentionPolicy;
   /**
    * Domain constraints evaluated at every checkpoint commit. When a constraint's
    * `check` returns false, the engine dispatches a `ConstraintViolatedEvent`
@@ -634,6 +656,20 @@ export interface WorkflowSummary {
   version: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface WorkflowTypeRetentionPolicy {
+  type: string;
+  source: 'engine' | 'workflow' | 'none';
+  retention: NormalizedRetentionPolicy | null;
+}
+
+export interface RetentionOverview {
+  defaultRetention: NormalizedRetentionPolicy | null;
+  sweepIntervalMs: number;
+  sweepBatchSize: number;
+  nextSweepAt: number | null;
+  workflowTypes: WorkflowTypeRetentionPolicy[];
 }
 
 // ---------------------------------------------------------------------------
@@ -736,6 +772,10 @@ export interface CoordinatedUpdateResult {
   error?: string;
 }
 
+export interface PurgeResult {
+  deleted: number;
+}
+
 // ---------------------------------------------------------------------------
 // Default constants
 // ---------------------------------------------------------------------------
@@ -751,6 +791,8 @@ export const DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD = 65_536; // 64KB
 export const DEFAULT_MAX_NESTING_DEPTH = 10;
 export const DEFAULT_POLL_INTERVAL_MS = 1000;
 export const DEFAULT_VISIBILITY_TIMEOUT_MS = 30_000;
+export const DEFAULT_RETENTION_SWEEP_INTERVAL_MS = 300_000;
+export const DEFAULT_RETENTION_SWEEP_BATCH_SIZE = 1000;
 
 // ---------------------------------------------------------------------------
 // activity() helper — wraps a function with colocated configuration

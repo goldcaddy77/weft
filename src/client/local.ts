@@ -14,6 +14,8 @@ import type {
   CoordinatedUpdateResult,
   ListFilter,
   PaginatedResult,
+  PurgeResult,
+  RetentionOverview,
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
@@ -208,6 +210,14 @@ export class LocalClient implements WeftClient {
     options?: { after?: number },
   ): ReturnType<Engine['getStreamChunks']> {
     return this.#engine.getStreamChunks(workflowId, key, options);
+  }
+
+  async getRetentionOverview(): Promise<RetentionOverview> {
+    return this.#engine.getRetentionOverview();
+  }
+
+  async purge(filter?: ListFilter): Promise<PurgeResult> {
+    return this.#engine.purge(filter);
   }
 
   async submitCoordinatedUpdate(
