@@ -27,6 +27,7 @@ import type { BatchOperation, Storage as WeftStorage } from '../storage/interfac
 import {
   KEYS,
   encodeStorageKeyComponent,
+  storageKeys,
   tryDecodeStorageKeyComponent,
 } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -876,14 +877,7 @@ function isTerminalWorkflowStatus(status: WorkflowStatus): boolean {
 async function collectKeysForPrefix(storage: WeftStorage, prefix: string): Promise<string[]> {
   const keys: string[] = [];
 
-  if (storage.keys) {
-    for await (const key of storage.keys(prefix)) {
-      keys.push(key);
-    }
-    return keys;
-  }
-
-  for await (const [key] of storage.scan(prefix)) {
+  for await (const key of storageKeys(storage, prefix)) {
     keys.push(key);
   }
 
