@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import type { LLMProvider } from '../../ai/providers/interface.ts';
 import type { ChatResponse } from '../../ai/providers/types.ts';
+import { encode } from '../codec.ts';
 import type { BatchOperation, ScanOptions } from '../../storage/interface.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
@@ -66,6 +67,48 @@ class RecordingMemoryStorage extends MemoryStorage {
   override async batch(operations: BatchOperation[]): Promise<void> {
     this.batchCalls.push([...operations]);
     await super.batch(operations);
+  }
+}
+
+class OverlapTrackingMemoryStorage extends MemoryStorage {
+  readonly delayMs: number;
+
+  shouldTrackPurgeBatches = false;
+  activePurgeBatches = 0;
+  maxConcurrentPurgeBatches = 0;
+
+  constructor(delayMs: number) {
+    super();
+    this.delayMs = delayMs;
+  }
+
+  override async batch(operations: BatchOperation[]): Promise<void> {
+    const isTrackedPurgeBatch =
+      this.shouldTrackPurgeBatches &&
+      operations.some(
+        (operation) =>
+          operation.type === 'delete' &&
+          operation.key.startsWith('wf:') &&
+          !operation.key.slice('wf:'.length).includes(':'),
+      );
+
+    if (!isTrackedPurgeBatch) {
+      await super.batch(operations);
+      return;
+    }
+
+    this.activePurgeBatches++;
+    this.maxConcurrentPurgeBatches = Math.max(
+      this.maxConcurrentPurgeBatches,
+      this.activePurgeBatches,
+    );
+
+    try {
+      await Bun.sleep(this.delayMs);
+      await super.batch(operations);
+    } finally {
+      this.activePurgeBatches--;
+    }
   }
 }
 
@@ -249,6 +292,37 @@ describe('workflow retention', () => {
     engine[Symbol.dispose]();
   });
 
+  it('retention sweep skips overlapping ticks while a previous purge batch is still running', async () => {
+    const storage = new OverlapTrackingMemoryStorage(30);
+    const engine = new Engine({
+      storage,
+      retention: {
+        completed: 0,
+      },
+      retentionSweepInterval: '20ms',
+      retentionSweepBatchSize: 1,
+    });
+
+    engine.register('retention-overlap', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    const first = await engine.start('retention-overlap', 'a', { id: 'retention-overlap-a' });
+    const second = await engine.start('retention-overlap', 'b', { id: 'retention-overlap-b' });
+    await Promise.all([first.result(), second.result()]);
+
+    storage.shouldTrackPurgeBatches = true;
+
+    await waitForCondition(async () => {
+      const remainingStates = await Promise.all([engine.get(first.id), engine.get(second.id)]);
+      return remainingStates.filter((state) => state !== null).length === 1;
+    }, 'Expected exactly one workflow to be purged while the first retention sweep is in flight');
+
+    expect(storage.maxConcurrentPurgeBatches).toBe(1);
+
+    engine[Symbol.dispose]();
+  });
+
   it('Acceptance criteria: retention sweep defaults to every 5 minutes when not configured', async () => {
     const engine = new Engine({
       storage: new MemoryStorage(),
@@ -328,6 +402,8 @@ describe('workflow retention', () => {
     await handle.result();
     await engine.setAttributes(handle.id, { priority: 'high' });
     await storage.put(`shared:${handle.id}:counter`, new TextEncoder().encode('1'));
+    await storage.put(KEYS.update(handle.id, 'update-1'), encode({ updateId: 'update-1' }));
+    await storage.put(KEYS.updateResponse('update-1'), encode({ result: 'done' }));
 
     const batchCallsBeforePurge = storage.batchCalls.length;
 
@@ -346,6 +422,8 @@ describe('workflow retention', () => {
     expect(await collectKeys(storage, `shared:${handle.id}:`)).toEqual([]);
     expect(await collectKeys(storage, `idx:priority:`)).toEqual([]);
     expect(await collectKeys(storage, KEYS.terminalWorkflowPrefix())).toEqual([]);
+    expect(await storage.get(KEYS.update(handle.id, 'update-1'))).toBeNull();
+    expect(await storage.get(KEYS.updateResponse('update-1'))).toBeNull();
 
     engine[Symbol.dispose]();
   });

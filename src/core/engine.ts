@@ -1455,6 +1455,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #chargedAgentOperationsByWorkflow: Map<string, Set<string>>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
   #retentionSweepInterval: ReturnType<typeof setInterval> | null;
+  #retentionSweepInFlight: Promise<void> | null;
   #nextRetentionSweepAt: number | null;
   #defaultModelRouter: import('../ai/model-router.ts').ModelRouter | undefined;
   #reviewCoordinator: ReviewCoordinator;
@@ -1561,6 +1562,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       60_000,
     );
     this.#retentionSweepInterval = null;
+    this.#retentionSweepInFlight = null;
     this.#nextRetentionSweepAt = null;
 
     this.#activityWorkerDispatcher = createActivityWorkerDispatcher(options?.activityExecution);
@@ -1607,7 +1609,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#setNextRetentionSweepAt();
     this.#retentionSweepInterval = setInterval(() => {
       this.#setNextRetentionSweepAt();
-      void this.#runRetentionSweep();
+      if (this.#retentionSweepInFlight !== null) {
+        return;
+      }
+
+      const sweepPromise = this.#runRetentionSweep();
+      const settledSweepPromise = sweepPromise.finally(() => {
+        if (this.#retentionSweepInFlight === settledSweepPromise) {
+          this.#retentionSweepInFlight = null;
+        }
+      });
+      this.#retentionSweepInFlight = settledSweepPromise;
     }, this.#options.retentionSweepIntervalMs);
   }
 
@@ -2629,6 +2641,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     deleteOperations.push(...this.#releaseChargedAgentOperations(workflowId));
 
+    const updateRequestPrefix = KEYS.updatePrefix(workflowId);
+    const updateRequestKeys = await collectKeysForPrefix(this.#storage, updateRequestPrefix);
+    for (const key of updateRequestKeys) {
+      deleteKeys.add(key);
+      const updateId = key.slice(updateRequestPrefix.length);
+      if (updateId.length > 0) {
+        deleteKeys.add(KEYS.updateResponse(updateId));
+      }
+    }
+
     for (const prefix of [
       `wf:${encodedWorkflowId}:ckpt:`,
       `ev:${encodedWorkflowId}:`,
@@ -2639,7 +2661,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       `blob:${encodedWorkflowId}:`,
       `shared:${encodedWorkflowId}:`,
       `tool-effect:${encodedWorkflowId}:`,
-      `upd:${encodedWorkflowId}:`,
       `upk:${encodedWorkflowId}:`,
     ]) {
       const keys = await collectKeysForPrefix(this.#storage, prefix);
