@@ -17,6 +17,7 @@ import { scopedStorage } from './scoped-storage';
  */
 export class LMDBStorage implements Storage {
   #database: lmdb.RootDatabase<Buffer, string>;
+  #requiresFreshReadSnapshot = false;
 
   constructor(path: string) {
     this.#database = lmdb.open<Buffer, string>({
@@ -25,7 +26,17 @@ export class LMDBStorage implements Storage {
     });
   }
 
+  #refreshReadSnapshotIfRequired(): void {
+    if (!this.#requiresFreshReadSnapshot) {
+      return;
+    }
+
+    this.#database.resetReadTxn();
+    this.#requiresFreshReadSnapshot = false;
+  }
+
   async get(key: string): Promise<Uint8Array | null> {
+    this.#refreshReadSnapshotIfRequired();
     const value = this.#database.get(key);
     if (value === undefined) return null;
     return new Uint8Array(value);
@@ -33,13 +44,16 @@ export class LMDBStorage implements Storage {
 
   async put(key: string, value: Uint8Array): Promise<void> {
     await this.#database.put(key, Buffer.from(value));
+    this.#requiresFreshReadSnapshot = true;
   }
 
   async delete(key: string): Promise<void> {
     await this.#database.remove(key);
+    this.#requiresFreshReadSnapshot = true;
   }
 
   async has(key: string): Promise<boolean> {
+    this.#refreshReadSnapshotIfRequired();
     return this.#database.doesExist(key);
   }
 
@@ -58,11 +72,13 @@ export class LMDBStorage implements Storage {
         void this.#database.remove(key);
       }
     });
+    this.#requiresFreshReadSnapshot = true;
 
     return keys.length;
   }
 
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
+    this.#refreshReadSnapshotIfRequired();
     const { limit, reverse, gt, lt, gte, lte } = options;
 
     const prefixEnd = resolvePrefixRangeEnd(prefix);
@@ -102,6 +118,7 @@ export class LMDBStorage implements Storage {
   }
 
   async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
+    this.#refreshReadSnapshotIfRequired();
     const { limit, reverse } = options;
     const prefixEnd = resolvePrefixRangeEnd(prefix);
 
@@ -139,6 +156,7 @@ export class LMDBStorage implements Storage {
   }
 
   async count(prefix: string): Promise<number> {
+    this.#refreshReadSnapshotIfRequired();
     const prefixEnd = resolvePrefixRangeEnd(prefix);
     return this.#database.getKeysCount({ start: prefix, end: prefixEnd });
   }
@@ -160,9 +178,11 @@ export class LMDBStorage implements Storage {
         }
       }
     });
+    this.#requiresFreshReadSnapshot = true;
   }
 
   [Symbol.dispose](): void {
+    this.#requiresFreshReadSnapshot = false;
     void this.#database.close();
   }
 }

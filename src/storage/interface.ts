@@ -148,6 +148,10 @@ export const KEYS = {
   checkpoint: (id: string) => `wf:${encodeStorageKeyComponent(id)}:ckpt`,
   checkpointHistory: (id: string, step: number) =>
     `wf:${encodeStorageKeyComponent(id)}:ckpt:${String(step).padStart(10, '0')}`,
+  schedule: (id: string) => `schedule:${encodeStorageKeyComponent(id)}`,
+  scheduleTick: (fireAt: number, id: string) =>
+    `schedule-due:${String(fireAt).padStart(16, '0')}:${encodeStorageKeyComponent(id)}`,
+  scheduleRun: (workflowId: string) => `schedule-run:${encodeStorageKeyComponent(workflowId)}`,
   operation: (queue: string, scheduledAt: number, id: string) =>
     `op:${queue}:${String(scheduledAt).padStart(16, '0')}:${id}`,
   operationInflight: (id: string) => `op:inflight:${id}`,

@@ -5598,14 +5598,14 @@ The `Storage` interface is the right primitive for Weft internals (binary KV wit
 
 Weft has durable `ctx.sleep()` for delays within a running workflow, but no way to express "run this workflow every hour" or "start this workflow at 3am on Tuesdays." Every durable execution platform eventually needs cron — Temporal has it, and consumers who don't get it from the engine build it themselves on top (usually badly).
 
-- [ ] **`engine.schedule(type, input, cronExpression, options?)` registers a recurring workflow.** Accepts a standard cron expression (5-field or 6-field with seconds). Returns a `ScheduleHandle` with `pause()`, `resume()`, `cancel()`, `update(newCron)`, and `describe()`.
-- [ ] **Schedules are durable.** Stored in storage under `schedule:{id}`. Survive process restarts. The scheduler scans for due schedules on startup and resumes ticking.
-- [ ] **Overlap policy is configurable.** `{ overlap: 'skip' | 'queue' | 'cancel-running' | 'allow' }`. Default: `'skip'` (if the previous run is still executing, don't start another). `'queue'` waits for the previous run to complete before starting. `'cancel-running'` cancels the previous run. `'allow'` starts regardless.
-- [ ] **Schedules support backfill.** If the engine was down and missed 3 ticks, `{ backfill: true }` runs them all on recovery. `{ backfill: false }` (default) skips missed ticks and resumes from the next future tick.
-- [ ] **Schedules are listable and queryable.** `engine.listSchedules(filter?)` returns all active schedules with their next fire time, last fire time, and status.
+- [x] **`engine.schedule(type, input, cronExpression, options?)` registers a recurring workflow.** Accepts a standard cron expression (5-field or 6-field with seconds). Returns a `ScheduleHandle` with `pause()`, `resume()`, `cancel()`, `update(newCron)`, and `describe()`.
+- [x] **Schedules are durable.** Stored in storage under `schedule:{id}`. Survive process restarts. The scheduler scans for due schedules on startup and resumes ticking.
+- [x] **Overlap policy is configurable.** `{ overlap: 'skip' | 'queue' | 'cancel-running' | 'allow' }`. Default: `'skip'` (if the previous run is still executing, don't start another). `'queue'` waits for the previous run to complete before starting. `'cancel-running'` cancels the previous run. `'allow'` starts regardless.
+- [x] **Schedules support backfill.** If the engine was down and missed 3 ticks, `{ backfill: true }` runs them all on recovery. `{ backfill: false }` (default) skips missed ticks and resumes from the next future tick.
+- [x] **Schedules are listable and queryable.** `engine.listSchedules(filter?)` returns all active schedules with their next fire time, last fire time, and status.
 - [ ] **`GET /v1/schedules` and `POST /v1/schedules` HTTP endpoints.** Full CRUD via REST. Dashboard shows schedule state, history, and next fire time.
 - [ ] **`weft schedule` CLI subcommand.** `weft schedule list`, `weft schedule create`, `weft schedule pause <id>`, `weft schedule cancel <id>`.
-- [ ] Tests cover: create/fire/cancel cycle, overlap policies, backfill after downtime, cron edge cases (Feb 29, DST transitions), multi-tenant schedule isolation.
+- [x] Tests cover: create/fire/cancel cycle, overlap policies, backfill after downtime, cron edge cases (Feb 29, DST transitions), multi-tenant schedule isolation.
 
 #### 7b. Delayed start
 
