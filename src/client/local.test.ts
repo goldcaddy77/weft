@@ -69,7 +69,6 @@ describe('LocalClient', () => {
     expect(client.getBudgetPolicy).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
     expect(client.fork).toBeFunction();
-    expect(client.fork).toBeFunction();
     expect(client.getRetentionOverview).toBeFunction();
     expect(client.purge).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();

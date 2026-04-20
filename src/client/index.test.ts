@@ -81,7 +81,6 @@ describe('HttpClient', () => {
     expect(client.getBudgetPolicy).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
     expect(client.fork).toBeFunction();
-    expect(client.fork).toBeFunction();
     expect(client.getRetentionOverview).toBeFunction();
     expect(client.purge).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();
@@ -367,7 +366,6 @@ describe('HttpClient', () => {
         'setBudgetPolicy',
         'getBudgetPolicy',
         'getStreamChunks',
-        'fork',
         'fork',
         'getRetentionOverview',
         'purge',
