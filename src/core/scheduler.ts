@@ -17,7 +17,8 @@ function isTimerEntryKind(value: unknown): value is TimerEntry['kind'] {
     value === 'sleep' ||
     value === 'visibility-timeout' ||
     value === 'execution-deadline' ||
-    value === 'delayed-start'
+    value === 'delayed-start' ||
+    value === 'schedule'
   );
 }
 
@@ -51,7 +52,9 @@ export function buildTimerBatchOperations(entry: TimerEntry): BatchOperation[] {
   const deadlineKey =
     normalizedEntry.kind === 'delayed-start'
       ? KEYS.delayedStart(normalizedEntry.fireAt, normalizedEntry.workflowId)
-      : KEYS.deadline(normalizedEntry.fireAt, normalizedEntry.id);
+      : normalizedEntry.kind === 'schedule'
+        ? KEYS.scheduleTick(normalizedEntry.fireAt, normalizedEntry.workflowId)
+        : KEYS.deadline(normalizedEntry.fireAt, normalizedEntry.id);
   const indexKey = `timer-idx:${normalizedEntry.id}`;
   return [
     { type: 'put', key: deadlineKey, value: encode(normalizedEntry) },
@@ -285,34 +288,56 @@ export class Scheduler implements Disposable {
     { respectStopped }: { respectStopped: boolean },
   ): Promise<void> {
     const currentTime = now ?? this.#getNow();
-    const deadlineScan = this.#storage.scan('wf-deadline:', {
+    const deadlineIterator = this.#storage.scan('wf-deadline:', {
       lt: resolvePrefixRangeEnd(KEYS.deadline(currentTime, '')),
     });
-    const deadlineIterator = deadlineScan[Symbol.asyncIterator]();
-    const delayedStartScan = this.#storage.scan('wf-delayed:', {
+    const delayedStartIterator = this.#storage.scan('wf-delayed:', {
       lt: resolvePrefixRangeEnd(KEYS.delayedStart(currentTime, '')),
     });
-    const delayedStartIterator = delayedStartScan[Symbol.asyncIterator]();
+    const scheduleIterator = this.#storage.scan('schedule-due:', {
+      lt: resolvePrefixRangeEnd(KEYS.scheduleTick(currentTime, '')),
+    });
+    const timerSources = [
+      {
+        iterator: deadlineIterator[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+      },
+      {
+        iterator: delayedStartIterator[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+      },
+      {
+        iterator: scheduleIterator[Symbol.asyncIterator](),
+        next: null as ScannedTimerEntry | null,
+      },
+    ];
 
-    const deadlineSource = {
-      iterator: deadlineIterator,
-      next: await readNextScannedTimerEntry(deadlineIterator, this.#storage),
-    };
-    const delayedStartSource = {
-      iterator: delayedStartIterator,
-      next: await readNextScannedTimerEntry(delayedStartIterator, this.#storage),
+    type TimerSource = {
+      iterator: AsyncIterator<[string, Uint8Array]>;
+      next: ScannedTimerEntry | null;
     };
 
-    while (deadlineSource.next || delayedStartSource.next) {
-      const selectedSource =
-        deadlineSource.next && delayedStartSource.next
-          ? compareScannedTimerEntries(deadlineSource.next, delayedStartSource.next) <= 0
-            ? deadlineSource
-            : delayedStartSource
-          : deadlineSource.next
-            ? deadlineSource
-            : delayedStartSource;
-      const nextEntry = selectedSource.next!;
+    for (const timerSource of timerSources satisfies TimerSource[]) {
+      timerSource.next = await readNextScannedTimerEntry(timerSource.iterator, this.#storage);
+    }
+
+    while (timerSources.some((timerSource) => timerSource.next !== null)) {
+      let selectedSource: TimerSource | undefined;
+
+      for (const timerSource of timerSources) {
+        if (timerSource.next === null) continue;
+        if (
+          selectedSource === undefined ||
+          compareScannedTimerEntries(timerSource.next, selectedSource.next!) < 0
+        ) {
+          selectedSource = timerSource;
+        }
+      }
+
+      const nextEntry = selectedSource?.next;
+      if (!nextEntry || !selectedSource) {
+        break;
+      }
 
       // Re-check #stopped before each callback so an interval-dispatched tick
       // terminates early when stop() or dispose is called concurrently. flush()
@@ -332,15 +357,30 @@ export class Scheduler implements Disposable {
         continue;
       }
 
+      const indexKey = `timer-idx:${nextEntry.entry.id}`;
+
       // Callback succeeded — clean up the timer keys. If this delete fails,
       // the timer will re-fire on the next tick (duplicate execution), but we
       // surface the error rather than silently swallowing it.
       try {
-        const indexKey = `timer-idx:${nextEntry.entry.id}`;
-        await this.#storage.batch([
-          { type: 'delete', key: nextEntry.key },
-          { type: 'delete', key: indexKey },
-        ]);
+        const cleanupOperations: BatchOperation[] = [{ type: 'delete', key: nextEntry.key }];
+        if (nextEntry.entry.kind !== 'schedule') {
+          cleanupOperations.push({ type: 'delete', key: indexKey });
+        } else {
+          const indexValue = await this.#storage.get(indexKey);
+          if (indexValue !== null) {
+            const decodedIndexValue = decode(indexValue);
+
+            // Schedule callbacks re-arm the next tick with the same timer id.
+            // Only remove the index when it still points at the timer that just
+            // fired; otherwise we would delete the freshly-registered next tick.
+            if (typeof decodedIndexValue !== 'string' || decodedIndexValue === nextEntry.key) {
+              cleanupOperations.push({ type: 'delete', key: indexKey });
+            }
+          }
+        }
+
+        await this.#storage.batch(cleanupOperations);
       } catch (deleteError) {
         console.error(`Failed to delete timer keys for ${nextEntry.entry.id}:`, deleteError);
       }

@@ -192,8 +192,12 @@ export class LocalClient implements WeftClient {
     return this.#engine.getBudgetPolicy(namespace);
   }
 
-  async getStreamChunks(workflowId: string, key: string): Promise<unknown[]> {
-    return this.#engine.getStreamChunks(workflowId, key);
+  async getStreamChunks(
+    workflowId: string,
+    key: string,
+    options?: { after?: number },
+  ): ReturnType<Engine['getStreamChunks']> {
+    return this.#engine.getStreamChunks(workflowId, key, options);
   }
 
   async submitCoordinatedUpdate(

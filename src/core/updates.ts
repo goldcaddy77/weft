@@ -170,6 +170,11 @@ export class UpdateCoordinator {
     return operations;
   }
 
+  /** Delete a pending update request that will never be observed. */
+  async deleteRequest(workflowId: string, updateId: string): Promise<void> {
+    await this.#storage.delete(KEYS.update(workflowId, updateId));
+  }
+
   /** Retrieve a stored response by update ID. */
   async getResponse(updateId: string): Promise<UpdateResponse | null> {
     const key = KEYS.updateResponse(updateId);
