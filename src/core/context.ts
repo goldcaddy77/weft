@@ -121,6 +121,39 @@ export interface StreamSink {
   heartbeat(details?: unknown): void;
 }
 
+type ParallelOperationCacheEntry<TResult> = {
+  __weftParallelOperationCache: true;
+  result: TResult;
+  subOperationCount: number;
+};
+
+function isParallelOperationCacheEntry<TResult>(
+  value: unknown,
+): value is ParallelOperationCacheEntry<TResult> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    '__weftParallelOperationCache' in value &&
+    value['__weftParallelOperationCache'] === true &&
+    'subOperationCount' in value &&
+    typeof value['subOperationCount'] === 'number' &&
+    Number.isSafeInteger(value['subOperationCount']) &&
+    value['subOperationCount'] >= 0 &&
+    'result' in value
+  );
+}
+
+function createParallelOperationCacheEntry<TResult>(
+  result: TResult,
+  subOperationCount: number,
+): ParallelOperationCacheEntry<TResult> {
+  return {
+    __weftParallelOperationCache: true,
+    result,
+    subOperationCount,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Agent context options
 // ---------------------------------------------------------------------------
@@ -735,12 +768,18 @@ export class Context implements WorkflowContext {
     operations: Generator<ContextOperationRequest, unknown, unknown>[],
   ): Generator<ContextOperationRequest, unknown[], unknown> {
     const step = this.#stepIndex++;
-    const subOperations = this.#primeParallelOperations(operations);
 
     if (this.#accumulatedResults.has(step)) {
-      return this.#accumulatedResults.get(step) as unknown[];
+      const cached = this.#accumulatedResults.get(step);
+      if (isParallelOperationCacheEntry<unknown[]>(cached)) {
+        this.#stepIndex += cached.subOperationCount;
+        return cached.result;
+      }
+
+      return cached as unknown[];
     }
 
+    const subOperations = this.#primeParallelOperations(operations);
     const operationId = crypto.randomUUID();
     const callerStack = this.#captureCallerStack();
     const result = yield {
@@ -750,7 +789,10 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.#accumulatedResults.set(
+      step,
+      createParallelOperationCacheEntry(result as unknown[], subOperations.length),
+    );
     return result as unknown[];
   }
 
@@ -758,12 +800,18 @@ export class Context implements WorkflowContext {
     operations: Generator<ContextOperationRequest, unknown, unknown>[],
   ): Generator<ContextOperationRequest, unknown, unknown> {
     const step = this.#stepIndex++;
-    const subOperations = this.#primeParallelOperations(operations);
 
     if (this.#accumulatedResults.has(step)) {
-      return this.#accumulatedResults.get(step);
+      const cached = this.#accumulatedResults.get(step);
+      if (isParallelOperationCacheEntry(cached)) {
+        this.#stepIndex += cached.subOperationCount;
+        return cached.result;
+      }
+
+      return cached;
     }
 
+    const subOperations = this.#primeParallelOperations(operations);
     const operationId = crypto.randomUUID();
     const callerStack = this.#captureCallerStack();
     const result = yield {
@@ -773,7 +821,10 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.#accumulatedResults.set(
+      step,
+      createParallelOperationCacheEntry(result, subOperations.length),
+    );
     return result;
   }
 
