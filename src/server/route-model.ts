@@ -63,6 +63,14 @@ export const ROUTES = [
     tags: ['Workflows'],
   },
   {
+    method: 'POST',
+    path: '/v1/workflows/purge',
+    handler: 'purgeWorkflows',
+    paramNames: [],
+    summary: 'Purge terminal workflows',
+    tags: ['Workflows'],
+  },
+  {
     method: 'GET',
     path: '/v1/workflows',
     handler: 'listWorkflows',
@@ -76,6 +84,14 @@ export const ROUTES = [
     handler: 'recoverAll',
     paramNames: [],
     summary: 'Recover all interrupted workflows',
+    tags: ['System'],
+  },
+  {
+    method: 'GET',
+    path: '/v1/retention',
+    handler: 'getRetentionOverview',
+    paramNames: [],
+    summary: 'Get retention policy overview',
     tags: ['System'],
   },
   {

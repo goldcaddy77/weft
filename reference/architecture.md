@@ -5625,12 +5625,12 @@ Child workflows exist, but composing them into pipelines, fan-out/fan-in DAGs, o
 
 #### 7d. Workflow garbage collection and TTL
 
-- [ ] **`EngineOptions.retention` configures automatic cleanup of terminal workflows.** Accepts `{ completed?: Duration, failed?: Duration, cancelled?: Duration, timedOut?: Duration }`. Default: no retention (keep forever). When set, a background sweep deletes workflows whose `updatedAt + TTL < now`.
-- [ ] **Retention sweep runs on a configurable interval.** Default: every 5 minutes. Deletes in batches (default 1000 per sweep) to avoid blocking storage.
-- [ ] **Retention is per-workflow-type overridable.** `engine.register(type, { handler, retention: { completed: '7d' } })` overrides the engine-level default for that type.
-- [ ] **Retention deletes all associated data.** Workflow state, checkpoints, checkpoint history, events, search attribute indexes, offloaded data, archived data, and stream chunks. One `batch()` call per workflow.
-- [ ] **`engine.purge(filter)` manually triggers cleanup.** For one-off housekeeping outside the automatic sweep.
-- [ ] Dashboard shows retention policy per workflow type and next scheduled sweep.
+- [x] **`EngineOptions.retention` configures automatic cleanup of terminal workflows.** Accepts `{ completed?: Duration, failed?: Duration, cancelled?: Duration, timedOut?: Duration }`. Default: no retention (keep forever). When set, a background sweep deletes workflows whose `updatedAt + TTL < now`.
+- [x] **Retention sweep runs on a configurable interval.** Default: every 5 minutes. Deletes in batches (default 1000 per sweep) to avoid blocking storage.
+- [x] **Retention is per-workflow-type overridable.** `engine.register(type, { handler, retention: { completed: '7d' } })` overrides the engine-level default for that type.
+- [x] **Retention deletes all associated data.** Workflow state, checkpoints, checkpoint history, events, search attribute indexes, offloaded data, archived data, and stream chunks. One `batch()` call per workflow.
+- [x] **`engine.purge(filter)` manually triggers cleanup.** For one-off housekeeping outside the automatic sweep.
+- [x] Dashboard shows retention policy per workflow type and next scheduled sweep.
 
 #### 7e. Per-tenant resource quotas
 

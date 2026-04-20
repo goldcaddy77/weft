@@ -20,6 +20,23 @@ async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
   return `${String(input)}:${signal}`;
 }
 
+async function collectKeys(storage: Storage, prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  const iterable = storage.keys
+    ? storage.keys(prefix)
+    : (async function* (): AsyncIterable<string> {
+        for await (const [key] of storage.scan(prefix)) {
+          yield key;
+        }
+      })();
+
+  for await (const key of iterable) {
+    keys.push(key);
+  }
+
+  return keys;
+}
+
 class WorkflowStateWriteTrackingStorage implements Storage {
   readonly #storage = new MemoryStorage();
   readonly #trackedWorkflowKey: string;
@@ -180,6 +197,40 @@ describe('workflow tags', () => {
       expect(recoveredState?.tags).toEqual(['beta']);
     } finally {
       await recoveredEngine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('handle.addTags(...tags) keeps the terminal workflow index synchronized', async () => {
+    let now = 1_000;
+    const storage = new MemoryStorage();
+    const engine = new Engine({
+      storage,
+      getNow: () => now,
+    });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      const handle = await engine.start('echo', 'done', {
+        id: 'terminal-tagged-workflow',
+        tags: ['alpha'],
+      });
+      await handle.result();
+
+      expect(await collectKeys(storage, KEYS.terminalWorkflowPrefix())).toEqual([
+        KEYS.terminalWorkflow(now, handle.id),
+      ]);
+
+      now = 2_000;
+      await handle.addTags('beta');
+
+      const state = await engine.get(handle.id);
+      expect(state?.tags).toEqual(['alpha', 'beta']);
+      expect(state?.updatedAt).toBe(now);
+      expect(await collectKeys(storage, KEYS.terminalWorkflowPrefix())).toEqual([
+        KEYS.terminalWorkflow(now, handle.id),
+      ]);
+    } finally {
+      await engine[Symbol.asyncDispose]();
     }
   });
 

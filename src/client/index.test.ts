@@ -80,6 +80,8 @@ describe('HttpClient', () => {
     expect(client.setBudgetPolicy).toBeFunction();
     expect(client.getBudgetPolicy).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
+    expect(client.getRetentionOverview).toBeFunction();
+    expect(client.purge).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();
     expect(client.getUpdateResult).toBeFunction();
   });
@@ -242,6 +244,98 @@ describe('HttpClient', () => {
     });
   });
 
+  describe('retention surface', () => {
+    it('returns the retention overview from the HTTP server', async () => {
+      const retentionEngine = new Engine({
+        storage: new MemoryStorage(),
+        retention: {
+          completed: '5m',
+        },
+      });
+      retentionEngine.register('retained-echo', echoWorkflow);
+
+      const retentionServer = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          return handleRequest(request, retentionEngine);
+        },
+      });
+
+      try {
+        const retentionClient = new HttpClient({
+          baseUrl: `http://localhost:${retentionServer.port}`,
+        });
+
+        const overview = await retentionClient.getRetentionOverview();
+
+        expect(overview.sweepIntervalMs).toBe(300_000);
+        expect(overview.workflowTypes).toContainEqual(
+          expect.objectContaining({
+            type: 'retained-echo',
+            source: 'engine',
+          }),
+        );
+      } finally {
+        retentionServer.stop(true);
+        await retentionEngine[Symbol.asyncDispose]();
+      }
+    });
+
+    it('purges matching terminal workflows via the HTTP client', async () => {
+      const handle = await client.start('echo', 'data', { id: 'http-purge' });
+      await handle.result();
+
+      const result = await client.purge({ status: 'completed' });
+
+      expect(result.deleted).toBeGreaterThanOrEqual(1);
+      expect(await client.get('http-purge')).toBeNull();
+    });
+
+    it('purge honors attribute filters, offset, and limit through the HTTP server', async () => {
+      const first = await client.start('echo', 'one', { id: 'http-purge-filter-1' });
+      const second = await client.start('echo', 'two', { id: 'http-purge-filter-2' });
+      const third = await client.start('echo', 'three', { id: 'http-purge-filter-3' });
+      await Promise.all([first.result(), second.result(), third.result()]);
+
+      await client.setAttributes('http-purge-filter-1', { bucket: 'target' });
+      await client.setAttributes('http-purge-filter-2', { bucket: 'target' });
+      await client.setAttributes('http-purge-filter-3', { bucket: 'other' });
+
+      const result = await client.purge({
+        status: 'completed',
+        attributes: [{ key: 'bucket', value: 'target' }],
+        offset: 1,
+        limit: 1,
+      });
+
+      expect(result.deleted).toBe(1);
+      expect(await client.get('http-purge-filter-1')).not.toBeNull();
+      expect(await client.get('http-purge-filter-2')).toBeNull();
+      expect(await client.get('http-purge-filter-3')).not.toBeNull();
+    });
+
+    it('purge honors tag filters through the HTTP server', async () => {
+      const first = await client.start('echo', 'one', {
+        id: 'http-purge-tag-1',
+        tags: ['nightly', 'v2'],
+      });
+      const second = await client.start('echo', 'two', {
+        id: 'http-purge-tag-2',
+        tags: ['nightly'],
+      });
+      await Promise.all([first.result(), second.result()]);
+
+      const result = await client.purge({
+        status: 'completed',
+        tags: ['nightly', 'v2'],
+      });
+
+      expect(result.deleted).toBe(1);
+      expect(await client.get('http-purge-tag-1')).toBeNull();
+      expect(await client.get('http-purge-tag-2')).not.toBeNull();
+    });
+  });
+
   describe('same interface as LocalClient', () => {
     it('both export WeftClient-compatible classes', async () => {
       const { LocalClient } = await import('./local.ts');
@@ -271,6 +365,8 @@ describe('HttpClient', () => {
         'setBudgetPolicy',
         'getBudgetPolicy',
         'getStreamChunks',
+        'getRetentionOverview',
+        'purge',
         'submitCoordinatedUpdate',
         'getUpdateResult',
       ] as const;
