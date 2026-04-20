@@ -455,6 +455,69 @@ describe('tenant resource quotas', () => {
     });
   });
 
+  it('uses the stored active workflow counter without rescanning workflow state on admission', async () => {
+    const storage = new WorkflowScanTrackingStorage();
+    const workflowId = 'quota-active-counter';
+    const workflowState = encode({
+      id: workflowId,
+      status: 'pending',
+      tenant: { id: 'acme' },
+    });
+
+    await storage.put(
+      KEYS.quotaActive('acme'),
+      encode({ workflowIds: ['existing-active'] } satisfies { workflowIds: string[] }),
+    );
+
+    const quotaManager = new TenantQuotaManager(storage, Date.now, {
+      maxConcurrentWorkflows: 2,
+    });
+
+    await quotaManager.commitStartAdmission({
+      tenantId: 'acme',
+      workflowId,
+      startOperations: [
+        {
+          type: 'put',
+          key: KEYS.workflow(workflowId),
+          value: workflowState,
+        },
+      ],
+      estimatedStorageBytes: 0,
+    });
+
+    expect(storage.workflowScanCount).toBe(0);
+    expect(decode((await storage.get(KEYS.quotaActive('acme'))) as Uint8Array)).toEqual({
+      workflowIds: ['existing-active', workflowId],
+    });
+  });
+
+  it('uses the stored active workflow counter without rescanning workflow state on terminal transition', async () => {
+    const storage = new WorkflowScanTrackingStorage();
+
+    await storage.put(
+      KEYS.quotaActive('acme'),
+      encode({
+        workflowIds: ['existing-active', 'quota-active-terminal'],
+      } satisfies { workflowIds: string[] }),
+    );
+
+    const quotaManager = new TenantQuotaManager(storage, Date.now, {
+      maxConcurrentWorkflows: 2,
+    });
+
+    await quotaManager.commitTerminalTransition({
+      tenantId: 'acme',
+      workflowId: 'quota-active-terminal',
+      operations: [],
+    });
+
+    expect(storage.workflowScanCount).toBe(0);
+    expect(decode((await storage.get(KEYS.quotaActive('acme'))) as Uint8Array)).toEqual({
+      workflowIds: ['existing-active'],
+    });
+  });
+
   it('releases storage byte reservations when a tenant workflow reaches a terminal state', async () => {
     const storage = new MemoryStorage();
     const quotaManager = new TenantQuotaManager(storage, Date.now, {
@@ -685,7 +748,7 @@ describe('tenant resource quotas', () => {
     expect((error as QuotaExceededError).currentUsage).toBeGreaterThan(512);
   });
 
-  it('counts attribute indexes and timer records in start-time storage byte estimates', async () => {
+  it('counts attribute, tag, and timer records in start-time storage byte estimates', async () => {
     const storage = new MemoryStorage();
     const workflowId = 'quota-storage-estimate';
     const workflowState = encode({
@@ -708,6 +771,11 @@ describe('tenant resource quotas', () => {
       {
         type: 'put',
         key: KEYS.attributeIndex('status', 's:queued', workflowId),
+        value: new Uint8Array(0),
+      },
+      {
+        type: 'put',
+        key: KEYS.tagIndex('nightly', workflowId),
         value: new Uint8Array(0),
       },
       ...timerOperations,
@@ -763,7 +831,7 @@ describe('tenant resource quotas', () => {
     await expect(engine.start('echo', { tenantId: 'acme', value: 1 })).resolves.toBeDefined();
   });
 
-  it('counts attribute indexes and timer records in tenant quota usage', async () => {
+  it('counts attribute, tag, and timer records in tenant quota usage', async () => {
     const storage = new MemoryStorage();
     const quotaManager = new TenantQuotaManager(storage, Date.now, {
       maxStorageBytes: 65_536,
@@ -784,6 +852,7 @@ describe('tenant resource quotas', () => {
 
     await storage.put(KEYS.workflow(workflowId), workflowState);
     await storage.put(KEYS.attributeIndex('status', 's:queued', workflowId), indexValue);
+    await storage.put(KEYS.tagIndex('nightly', workflowId), indexValue);
     for (const operation of timerOperations) {
       if (operation.type === 'put') {
         await storage.put(operation.key, operation.value);
@@ -794,6 +863,7 @@ describe('tenant resource quotas', () => {
     const expectedStorageBytes =
       measureStoredRecordBytes(KEYS.workflow(workflowId), workflowState) +
       measureStoredRecordBytes(KEYS.attributeIndex('status', 's:queued', workflowId), indexValue) +
+      measureStoredRecordBytes(KEYS.tagIndex('nightly', workflowId), indexValue) +
       timerOperations.reduce((total, operation) => {
         if (operation.type !== 'put') {
           return total;

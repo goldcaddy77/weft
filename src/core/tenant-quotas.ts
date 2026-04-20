@@ -79,6 +79,7 @@ const WORKFLOW_OWNED_PREFIXES = [
 
 const WORKFLOW_USAGE_SCAN_PREFIXES = [
   'idx:',
+  'tag:',
   'wf-deadline:',
   'wf-delayed:',
   'timer-idx:',
@@ -186,7 +187,7 @@ function extractWorkflowIdFromLastKeySegment(key: string): string | null {
 }
 
 function extractWorkflowIdFromStorageKey(key: string): string | null {
-  if (key.startsWith('idx:')) {
+  if (key.startsWith('idx:') || key.startsWith('tag:')) {
     return extractWorkflowIdFromLastKeySegment(key);
   }
 
@@ -274,6 +275,25 @@ function decodeTenantStorageUsageBytes(bytes: Uint8Array | null): number {
   }
 
   return bytesUsed;
+}
+
+function decodeTenantActiveWorkflowIds(bytes: Uint8Array | null): string[] {
+  if (!bytes) {
+    return [];
+  }
+
+  let decoded: unknown;
+  try {
+    decoded = decode(bytes);
+  } catch {
+    return [];
+  }
+
+  if (!isRecord(decoded) || !Array.isArray(decoded['workflowIds'])) {
+    return [];
+  }
+
+  return [...new Set(decoded['workflowIds'].filter((value): value is string => typeof value === 'string'))];
 }
 
 function decodeWorkflowTenantRecord(bytes: Uint8Array): DecodedWorkflowTenantRecord | null {
@@ -423,17 +443,20 @@ export class TenantQuotaManager {
           ? await this.#storage.get(KEYS.quotaWorkflowStorage(tenantId, workflowId))
           : null;
 
-      const durableActiveWorkflowIds =
-        this.#quotas.maxConcurrentWorkflows !== null
-          ? await this.#listTenantActiveWorkflowIds(tenantId)
-          : [];
       const currentActiveRecord =
         this.#quotas.maxConcurrentWorkflows !== null
           ? await this.#storage.get(KEYS.quotaActive(tenantId))
           : null;
+      const durableActiveWorkflowIds =
+        this.#quotas.maxConcurrentWorkflows !== null
+          ? currentActiveRecord === null
+            ? await this.#listTenantActiveWorkflowIds(tenantId)
+            : decodeTenantActiveWorkflowIds(currentActiveRecord)
+          : [];
 
       if (this.#quotas.maxConcurrentWorkflows !== null) {
-        const projectedActiveWorkflows = durableActiveWorkflowIds.length + 1;
+        const nextActiveWorkflowIds = [...new Set([...durableActiveWorkflowIds, workflowId])];
+        const projectedActiveWorkflows = nextActiveWorkflowIds.length;
         if (projectedActiveWorkflows > this.#quotas.maxConcurrentWorkflows) {
           throw new QuotaExceededError({
             tenantId,
@@ -447,7 +470,7 @@ export class TenantQuotaManager {
           type: 'put',
           key: KEYS.quotaActive(tenantId),
           value: encode({
-            workflowIds: [...durableActiveWorkflowIds, workflowId],
+            workflowIds: nextActiveWorkflowIds,
           } satisfies TenantActiveWorkflowRecord),
         });
         conditions.push({
@@ -561,9 +584,14 @@ export class TenantQuotaManager {
       }> = [];
 
       if (this.#quotas.maxConcurrentWorkflows !== null) {
-        const durableActiveWorkflowIds = await this.#listTenantActiveWorkflowIds(tenantId);
         const currentActiveRecord = await this.#storage.get(KEYS.quotaActive(tenantId));
-        const remainingWorkflowIds = durableActiveWorkflowIds.filter((id) => id !== workflowId);
+        const durableActiveWorkflowIds =
+          currentActiveRecord === null
+            ? await this.#listTenantActiveWorkflowIds(tenantId)
+            : decodeTenantActiveWorkflowIds(currentActiveRecord);
+        const remainingWorkflowIds = [
+          ...new Set(durableActiveWorkflowIds.filter((id) => id !== workflowId)),
+        ];
 
         quotaOperations.push(
           ...(remainingWorkflowIds.length > 0
