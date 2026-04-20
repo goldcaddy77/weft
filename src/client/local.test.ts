@@ -78,6 +78,8 @@ describe('LocalClient', () => {
     expect(client.getBudgetPolicy).toBeFunction();
     expect(client.getQuotaUsage).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
+    expect(client.getRetentionOverview).toBeFunction();
+    expect(client.purge).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();
     expect(client.getUpdateResult).toBeFunction();
   });
@@ -230,6 +232,40 @@ describe('LocalClient', () => {
       expect(usage.activeWorkflows.limit).toBe(5);
       expect(usage.workflowCreationRate.limit).toBe(10);
       expect(usage.workflowCreationRate.used).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('retention surface', () => {
+    it('returns the retention overview from the local engine', async () => {
+      await engine[Symbol.asyncDispose]();
+      engine = new Engine({
+        storage: new MemoryStorage(),
+        retention: {
+          completed: '5m',
+        },
+      });
+      engine.register('echo', echoWorkflow);
+      client = new LocalClient(engine);
+
+      const overview = await client.getRetentionOverview();
+
+      expect(overview.sweepIntervalMs).toBe(300_000);
+      expect(overview.workflowTypes).toContainEqual(
+        expect.objectContaining({
+          type: 'echo',
+          source: 'engine',
+        }),
+      );
+    });
+
+    it('purges matching terminal workflows via the local client', async () => {
+      const handle = await client.start('echo', 'data', { id: 'local-purge' });
+      await handle.result();
+
+      const result = await client.purge({ status: 'completed' });
+
+      expect(result.deleted).toBeGreaterThanOrEqual(1);
+      expect(await client.get('local-purge')).toBeNull();
     });
   });
 

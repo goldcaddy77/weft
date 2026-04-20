@@ -23,10 +23,11 @@ import {
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
-import type { Storage as WeftStorage } from '../storage/interface.ts';
+import type { BatchOperation, Storage as WeftStorage } from '../storage/interface.ts';
 import {
   KEYS,
   encodeStorageKeyComponent,
+  storageKeys,
   tryDecodeStorageKeyComponent,
 } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -122,8 +123,12 @@ import type {
   EngineOptions,
   FailureCategory,
   ListFilter,
+  NormalizedRetentionPolicy,
   OperationOutcome,
   PaginatedResult,
+  PurgeResult,
+  RetentionOverview,
+  RetentionPolicy,
   ScheduleAccessOptions,
   ScheduleFilter,
   ScheduleOptions,
@@ -145,6 +150,11 @@ import type {
   WorkflowState,
   WorkflowStatus,
   WorkflowSummary,
+  WorkflowTypeRetentionPolicy,
+} from './types.ts';
+import {
+  DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
+  DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
 } from './types.ts';
 import {
   UpdateCoordinator,
@@ -187,6 +197,7 @@ interface RegistrationEntry {
   version: string;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
+  retention?: NormalizedRetentionPolicy;
   /** True when this registration originated from an AgentDefinition. */
   isAgent?: boolean;
   /** LLM provider for agent-typed registrations (used for connection pre-warming). */
@@ -205,6 +216,16 @@ export interface AgentRegistrationOptions {
   provider: LLMProvider;
 }
 
+export class WorkflowAlreadyExistsError extends Error {
+  readonly workflowId: string;
+
+  constructor(workflowId: string) {
+    super(`Workflow with id "${workflowId}" already exists`);
+    this.name = 'WorkflowAlreadyExistsError';
+    this.workflowId = workflowId;
+  }
+}
+
 interface ResolvedOptions {
   storage: WeftStorage;
   development: boolean;
@@ -212,6 +233,9 @@ interface ResolvedOptions {
   checkpointSizeWarningThreshold: number;
   maxNestingDepth: number;
   broadcastEvents: boolean;
+  retention: NormalizedRetentionPolicy | null;
+  retentionSweepIntervalMs: number;
+  retentionSweepBatchSize: number;
   getNow: () => number;
   tenantResolver: import('./tenant.ts').TenantResolver | undefined;
 }
@@ -777,6 +801,93 @@ function selectPersistedWorkflowStartHeaders(
   return persistedHeaders.size > 0 ? persistedHeaders : undefined;
 }
 
+function normalizeRetentionDuration(
+  value: import('./types.ts').Duration | undefined,
+  fieldName: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const milliseconds = parseStartWorkflowDuration(value, fieldName);
+  return Math.ceil(milliseconds);
+}
+
+function normalizeRetentionPolicy(
+  policy: RetentionPolicy | undefined,
+  context: string,
+): NormalizedRetentionPolicy | null {
+  if (!policy) {
+    return null;
+  }
+
+  const normalized: NormalizedRetentionPolicy = {};
+  const completed = normalizeRetentionDuration(policy.completed, `${context}.completed`);
+  const failed = normalizeRetentionDuration(policy.failed, `${context}.failed`);
+  const cancelled = normalizeRetentionDuration(policy.cancelled, `${context}.cancelled`);
+  const timedOut = normalizeRetentionDuration(policy.timedOut, `${context}.timedOut`);
+
+  if (completed !== undefined) {
+    normalized.completed = completed;
+  }
+  if (failed !== undefined) {
+    normalized.failed = failed;
+  }
+  if (cancelled !== undefined) {
+    normalized.cancelled = cancelled;
+  }
+  if (timedOut !== undefined) {
+    normalized.timedOut = timedOut;
+  }
+
+  const isEmpty =
+    normalized.completed === undefined &&
+    normalized.failed === undefined &&
+    normalized.cancelled === undefined &&
+    normalized.timedOut === undefined;
+
+  return isEmpty ? null : normalized;
+}
+
+function resolveRetentionForStatus(
+  policy: NormalizedRetentionPolicy | null | undefined,
+  status: WorkflowStatus,
+): number | undefined {
+  switch (status) {
+    case 'completed':
+      return policy?.completed;
+    case 'failed':
+      return policy?.failed;
+    case 'cancelled':
+      return policy?.cancelled;
+    case 'timed-out':
+      return policy?.timedOut;
+    default:
+      return undefined;
+  }
+}
+
+function isTerminalWorkflowStatus(status: WorkflowStatus): boolean {
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'timed-out'
+  );
+}
+
+async function collectKeysForPrefix(storage: WeftStorage, prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+
+  for await (const key of storageKeys(storage, prefix)) {
+    keys.push(key);
+  }
+
+  return keys;
+}
+
+const EMPTY_STORAGE_VALUE = new Uint8Array(0);
+
 function resolveEngineOptions(
   storage: WeftStorage,
   options: EngineConstructorOptions | undefined,
@@ -789,6 +900,16 @@ function resolveEngineOptions(
     checkpointSizeWarningThreshold: options?.checkpointSizeWarningThreshold ?? 65_536,
     maxNestingDepth: options?.maxNestingDepth ?? 10,
     broadcastEvents: options?.broadcastEvents ?? false,
+    retention: normalizeRetentionPolicy(options?.retention, 'options.retention'),
+    retentionSweepIntervalMs:
+      normalizeRetentionDuration(
+        options?.retentionSweepInterval,
+        'options.retentionSweepInterval',
+      ) ?? DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
+    retentionSweepBatchSize:
+      options?.retentionSweepBatchSize !== undefined
+        ? Math.max(1, Math.floor(options.retentionSweepBatchSize))
+        : DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
     getNow,
     tenantResolver: options?.tenantResolver,
   };
@@ -801,9 +922,17 @@ function createExecutionStrategyBundle(parameters: {
   development: boolean;
   broadcastEvents: boolean;
   getRegistration: (workflowType: string) => RegistrationEntry | undefined;
+  resolveWorkflowType: (target: string | Function) => string;
 }): ExecutionStrategyBundle {
-  const { options, getNow, maxNestingDepth, development, broadcastEvents, getRegistration } =
-    parameters;
+  const {
+    options,
+    getNow,
+    maxNestingDepth,
+    development,
+    broadcastEvents,
+    getRegistration,
+    resolveWorkflowType,
+  } = parameters;
 
   if (options?.workerExecution) {
     const pool = new WorkerPool({
@@ -823,6 +952,7 @@ function createExecutionStrategyBundle(parameters: {
     getNow,
     maxNestingDepth,
     development,
+    resolveWorkflowType,
   });
 
   return {
@@ -945,6 +1075,49 @@ function paginateItems<T>(items: T[], filter: PaginationFilter | undefined): Pag
   };
 }
 
+function isPlainObjectRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function normalizeValueForEncodedComparison(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeValueForEncodedComparison(entry));
+  }
+
+  if (!isPlainObjectRecord(value)) {
+    return value;
+  }
+
+  const normalizedRecord: Record<string, unknown> = {};
+  for (const key of Object.keys(value).toSorted()) {
+    normalizedRecord[key] = normalizeValueForEncodedComparison(value[key]);
+  }
+
+  return normalizedRecord;
+}
+
+function encodedValuesEqual(left: unknown, right: unknown): boolean {
+  const leftEncoded = encode(normalizeValueForEncodedComparison(left));
+  const rightEncoded = encode(normalizeValueForEncodedComparison(right));
+
+  if (leftEncoded.byteLength !== rightEncoded.byteLength) {
+    return false;
+  }
+
+  for (let index = 0; index < leftEncoded.byteLength; index++) {
+    if (leftEncoded[index] !== rightEncoded[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function matchesScheduleFilter(state: ScheduleState, filter: ScheduleFilter | undefined): boolean {
   if (state.tenant?.id !== undefined) {
     if (filter?.tenantId === undefined) {
@@ -998,7 +1171,6 @@ type RefreshedScheduleState = {
   state: ScheduleState;
   currentWorkflowState: WorkflowState | null;
 };
-
 // ---------------------------------------------------------------------------
 // WorkflowHandle
 // ---------------------------------------------------------------------------
@@ -1323,6 +1495,7 @@ export class ScheduleHandle {
 export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #storage: WeftStorage;
   #registrations: Map<string, RegistrationEntry>;
+  #workflowTypesByHandler: WeakMap<Function, string>;
   #abortController: AbortController;
   #scheduler: Scheduler;
   #options: ResolvedOptions;
@@ -1373,6 +1546,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    */
   #chargedAgentOperationsByWorkflow: Map<string, Set<string>>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
+  #retentionSweepInterval: ReturnType<typeof setInterval> | null;
+  #retentionSweepInFlight: Promise<void> | null;
+  #nextRetentionSweepAt: number | null;
   #defaultModelRouter: import('../ai/model-router.ts').ModelRouter | undefined;
   #reviewCoordinator: ReviewCoordinator;
   #reviewWaiters: Map<string, (decision: HumanReviewResult) => void>;
@@ -1406,6 +1582,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     super();
 
     this.#registrations = new Map();
+    this.#workflowTypesByHandler = new WeakMap();
 
     const storage = resolveEngineStorage(options, this.#getAgentWorkflowIds.bind(this));
     const getNow = options?.getNow ?? Date.now;
@@ -1417,6 +1594,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       development: resolvedOptions.development,
       broadcastEvents: resolvedOptions.broadcastEvents,
       getRegistration: this.#registrations.get.bind(this.#registrations),
+      resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
     });
 
     this.#storage = storage;
@@ -1479,6 +1657,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       ),
       60_000,
     );
+    this.#retentionSweepInterval = null;
+    this.#retentionSweepInFlight = null;
+    this.#nextRetentionSweepAt = null;
 
     this.#activityWorkerDispatcher = createActivityWorkerDispatcher(options?.activityExecution);
 
@@ -1486,6 +1667,68 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#strategy.onMessage(this.#handleStrategyMessage.bind(this));
 
     this.#alertManager = createAlertManagerForEngine(this, options?.alerts, getNow);
+    this.#ensureRetentionSweepInterval();
+  }
+
+  #hasConfiguredRetention(): boolean {
+    if (this.#options.retention !== null) {
+      return true;
+    }
+
+    for (const registration of this.#registrations.values()) {
+      if (registration.retention !== undefined && registration.retention !== null) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  #setNextRetentionSweepAt(): void {
+    this.#nextRetentionSweepAt = this.#options.getNow() + this.#options.retentionSweepIntervalMs;
+  }
+
+  #ensureRetentionSweepInterval(): void {
+    if (!this.#hasConfiguredRetention()) {
+      if (this.#retentionSweepInterval !== null) {
+        clearInterval(this.#retentionSweepInterval);
+        this.#retentionSweepInterval = null;
+      }
+      this.#nextRetentionSweepAt = null;
+      return;
+    }
+
+    if (this.#retentionSweepInterval !== null) {
+      return;
+    }
+
+    this.#setNextRetentionSweepAt();
+    this.#retentionSweepInterval = setInterval(() => {
+      this.#setNextRetentionSweepAt();
+      if (this.#retentionSweepInFlight !== null) {
+        return;
+      }
+
+      const sweepPromise = this.#runRetentionSweep();
+      const settledSweepPromise = sweepPromise.finally(() => {
+        if (this.#retentionSweepInFlight === settledSweepPromise) {
+          this.#retentionSweepInFlight = null;
+        }
+      });
+      this.#retentionSweepInFlight = settledSweepPromise;
+    }, this.#options.retentionSweepIntervalMs);
+  }
+
+  async #runRetentionSweep(): Promise<void> {
+    try {
+      await this.#purgeInternal(undefined, {
+        expiredOnly: true,
+        limit: this.#options.retentionSweepBatchSize,
+        now: this.#options.getNow(),
+      });
+    } catch (error) {
+      this.#handleCleanupError('retentionSweep', error);
+    }
   }
 
   async #swallowPromiseRejection(promise: Promise<unknown> | undefined): Promise<void> {
@@ -1762,6 +2005,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       };
 
       this.#registrations.set(agentDef.name, agentRegistrationEntry);
+      this.#ensureRetentionSweepInterval();
+      this.#workflowTypesByHandler.set(handler, agentDef.name);
       return;
     }
 
@@ -1779,9 +2024,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     if (isRegistration) {
       const registration = handlerOrRegistration;
+      const normalizedRetention = normalizeRetentionPolicy(
+        registration.retention,
+        `registration("${name}").retention`,
+      );
       const entry: RegistrationEntry = {
         handler: registration.handler,
         version: registration.version ?? '1',
+        ...(normalizedRetention !== null && { retention: normalizedRetention }),
       };
       if (registration.migrate) {
         entry.migrate = registration.migrate;
@@ -1807,8 +2057,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         entry.constraints = registration.constraints;
       }
       this.#registrations.set(name, entry);
+      this.#ensureRetentionSweepInterval();
+      this.#workflowTypesByHandler.set(registration.handler, name);
     } else {
       // Auto-detect step-based (non-generator) workflow functions and compile them
+      const originalHandler = handlerOrRegistration;
       let handler = handlerOrRegistration;
       if (typeof handler === 'function' && !isAsyncGeneratorFunction(handler)) {
         handler = compileStepWorkflow(handler as StepWorkflowFunction);
@@ -1818,7 +2071,30 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         handler: handler as WorkflowFunction,
         version: '1',
       });
+      this.#ensureRetentionSweepInterval();
+      if (typeof originalHandler === 'function') {
+        this.#workflowTypesByHandler.set(originalHandler, name);
+      }
+      if (typeof handler === 'function') {
+        this.#workflowTypesByHandler.set(handler, name);
+      }
     }
+  }
+
+  #resolveWorkflowTypeTarget(target: string | Function): string {
+    if (typeof target === 'string') {
+      return target;
+    }
+
+    const registeredType = this.#workflowTypesByHandler.get(target);
+    if (registeredType) {
+      return registeredType;
+    }
+
+    throw new Error(
+      'Workflow functions used in composition operators must be registered before use. ' +
+        'Pass the registered workflow type string or register the function on the engine first.',
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1910,7 +2186,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Atomic check-and-reserve: prevent two concurrent start() calls with the
     // same ID from both passing the storage check before either writes state.
     if (this.#pendingStarts.has(workflowId)) {
-      throw new Error(`Workflow with id "${workflowId}" already exists`);
+      throw new WorkflowAlreadyExistsError(workflowId);
     }
     this.#pendingStarts.add(workflowId);
     let startSucceeded = false;
@@ -1924,7 +2200,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (callerProvidedId) {
         const existingBytes = await this.#storage.get(KEYS.workflow(workflowId));
         if (existingBytes !== null) {
-          throw new Error(`Workflow with id "${workflowId}" already exists`);
+          throw new WorkflowAlreadyExistsError(workflowId);
         }
       }
 
@@ -2210,6 +2486,356 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     return paginateWorkflowSummaries(items, filter);
+  }
+
+  async *#streamWorkflowStates(filter?: ListFilter): AsyncGenerator<WorkflowState> {
+    const normalizedTagFilters = normalizeWorkflowTags(filter?.tags);
+    const constrainedIds = await this.#resolveConstrainedIds(filter, normalizedTagFilters);
+
+    if (constrainedIds !== null) {
+      for (const workflowId of constrainedIds) {
+        const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
+        if (!stateBytes) continue;
+
+        const state = decodeWorkflowState(stateBytes);
+        if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
+        yield state;
+      }
+
+      return;
+    }
+
+    for await (const [key, value] of this.#storage.scan('wf:')) {
+      if (!this.#isTopLevelWorkflowStateKey(key)) continue;
+
+      const state = decodeWorkflowState(value);
+      if (!matchesListFilter(state, filter, constrainedIds, normalizedTagFilters)) continue;
+      yield state;
+    }
+  }
+
+  #buildTerminalWorkflowIndexOperations(
+    previousState: WorkflowState,
+    nextState: WorkflowState,
+  ): BatchOperation[] {
+    const operations: BatchOperation[] = [];
+
+    if (isTerminalWorkflowStatus(previousState.status)) {
+      operations.push({
+        type: 'delete',
+        key: KEYS.terminalWorkflow(previousState.updatedAt, previousState.id),
+      });
+    }
+
+    if (isTerminalWorkflowStatus(nextState.status)) {
+      operations.push({
+        type: 'put',
+        key: KEYS.terminalWorkflow(nextState.updatedAt, nextState.id),
+        value: EMPTY_STORAGE_VALUE,
+      });
+    }
+
+    return operations;
+  }
+
+  #getMinimumRetentionMs(): number | null {
+    let minimumRetentionMs: number | null = null;
+
+    const considerRetentionPolicy = (
+      policy: NormalizedRetentionPolicy | null | undefined,
+    ): void => {
+      for (const retentionMs of [
+        policy?.completed,
+        policy?.failed,
+        policy?.cancelled,
+        policy?.timedOut,
+      ]) {
+        if (retentionMs === undefined) {
+          continue;
+        }
+
+        minimumRetentionMs =
+          minimumRetentionMs === null ? retentionMs : Math.min(minimumRetentionMs, retentionMs);
+      }
+    };
+
+    considerRetentionPolicy(this.#options.retention);
+    for (const registration of this.#registrations.values()) {
+      considerRetentionPolicy(registration.retention);
+    }
+
+    return minimumRetentionMs;
+  }
+
+  async *#streamExpiredRetentionWorkflowStates(now: number): AsyncGenerator<WorkflowState> {
+    const minimumRetentionMs = this.#getMinimumRetentionMs();
+    if (minimumRetentionMs === null) {
+      return;
+    }
+
+    const terminalWorkflowPrefix = KEYS.terminalWorkflowPrefix();
+    const newestPossibleExpiredUpdatedAt = now - minimumRetentionMs;
+    const upperBound = `${terminalWorkflowPrefix}${String(newestPossibleExpiredUpdatedAt).padStart(16, '0')}:\xff`;
+
+    for await (const [key] of this.#storage.scan(terminalWorkflowPrefix, { lte: upperBound })) {
+      const encodedWorkflowId = key.slice(key.lastIndexOf(':') + 1);
+      const workflowId = tryDecodeStorageKeyComponent(encodedWorkflowId);
+      if (workflowId === null) {
+        continue;
+      }
+
+      const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
+      if (!stateBytes) {
+        await this.#storage.delete(key);
+        continue;
+      }
+
+      const state = decodeWorkflowState(stateBytes);
+      if (!isTerminalWorkflowStatus(state.status)) {
+        continue;
+      }
+
+      yield state;
+    }
+  }
+
+  #resolveWorkflowTypeRetention(type: string): WorkflowTypeRetentionPolicy {
+    const registration = this.#registrations.get(type);
+    if (registration?.retention) {
+      return {
+        type,
+        source: 'workflow',
+        retention: registration.retention,
+      };
+    }
+
+    if (this.#options.retention !== null) {
+      return {
+        type,
+        source: 'engine',
+        retention: this.#options.retention,
+      };
+    }
+
+    return {
+      type,
+      source: 'none',
+      retention: null,
+    };
+  }
+
+  #getWorkflowRetentionDeadline(state: WorkflowState): number | null {
+    if (!isTerminalWorkflowStatus(state.status)) {
+      return null;
+    }
+
+    const policy = this.#resolveWorkflowTypeRetention(state.type).retention;
+    const retentionMs = resolveRetentionForStatus(policy, state.status);
+    if (retentionMs === undefined) {
+      return null;
+    }
+
+    return state.updatedAt + retentionMs;
+  }
+
+  getRetentionOverview(): RetentionOverview {
+    const workflowTypes = [...this.#registrations.keys()]
+      .toSorted()
+      .map((type) => this.#resolveWorkflowTypeRetention(type));
+
+    return {
+      defaultRetention: this.#options.retention,
+      sweepIntervalMs: this.#options.retentionSweepIntervalMs,
+      sweepBatchSize: this.#options.retentionSweepBatchSize,
+      nextSweepAt: this.#nextRetentionSweepAt,
+      workflowTypes,
+    };
+  }
+
+  async purge(filter?: ListFilter): Promise<PurgeResult> {
+    return this.#purgeInternal(filter, {
+      expiredOnly: false,
+      now: this.#options.getNow(),
+    });
+  }
+
+  #resolvePurgeWindow(
+    filter: ListFilter | undefined,
+    fallbackLimit: number | undefined,
+  ): { effectiveLimit: number | undefined; manualOffset: number } {
+    const manualOffset =
+      filter?.offset !== undefined && Number.isFinite(filter.offset) && filter.offset > 0
+        ? Math.floor(filter.offset)
+        : 0;
+    const manualLimit =
+      filter?.limit !== undefined && Number.isFinite(filter.limit) && filter.limit >= 0
+        ? Math.floor(filter.limit)
+        : undefined;
+
+    return {
+      manualOffset,
+      effectiveLimit:
+        manualLimit !== undefined && fallbackLimit !== undefined
+          ? Math.min(manualLimit, fallbackLimit)
+          : (manualLimit ?? fallbackLimit),
+    };
+  }
+
+  #shouldPurgeWorkflowState(state: WorkflowState, expiredOnly: boolean, now: number): boolean {
+    if (!isTerminalWorkflowStatus(state.status)) {
+      return false;
+    }
+
+    if (!expiredOnly) {
+      return true;
+    }
+
+    const deadline = this.#getWorkflowRetentionDeadline(state);
+    return deadline !== null && deadline <= now;
+  }
+
+  async #purgeInternal(
+    filter: ListFilter | undefined,
+    parameters: {
+      expiredOnly: boolean;
+      now: number;
+      limit?: number;
+    },
+  ): Promise<PurgeResult> {
+    const { effectiveLimit, manualOffset } = this.#resolvePurgeWindow(filter, parameters.limit);
+
+    if (effectiveLimit === 0) {
+      return { deleted: 0 };
+    }
+
+    let remainingOffset = manualOffset;
+    let deleted = 0;
+
+    const workflowStateStream =
+      parameters.expiredOnly && filter === undefined
+        ? this.#streamExpiredRetentionWorkflowStates(parameters.now)
+        : this.#streamWorkflowStates(filter);
+
+    for await (const state of workflowStateStream) {
+      if (!this.#shouldPurgeWorkflowState(state, parameters.expiredOnly, parameters.now)) {
+        continue;
+      }
+
+      if (remainingOffset > 0) {
+        remainingOffset -= 1;
+        continue;
+      }
+
+      await this.#purgeWorkflow(state);
+      deleted += 1;
+
+      if (effectiveLimit !== undefined && deleted >= effectiveLimit) {
+        break;
+      }
+    }
+
+    return { deleted };
+  }
+
+  #releaseChargedAgentOperations(workflowId: string): BatchOperation[] {
+    const workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
+    if (!workflowOperations) {
+      return [];
+    }
+
+    const budgetChargedDeletes: BatchOperation[] = [];
+    for (const operationId of workflowOperations) {
+      this.#chargedAgentOperations.delete(operationId);
+      budgetChargedDeletes.push({ type: 'delete', key: KEYS.budgetCharged(operationId) });
+    }
+
+    this.#chargedAgentOperationsByWorkflow.delete(workflowId);
+    return budgetChargedDeletes;
+  }
+
+  async #purgeWorkflow(state: WorkflowState): Promise<void> {
+    const workflowId = state.id;
+    const encodedWorkflowId = encodeStorageKeyComponent(workflowId);
+    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+    const deleteOperations: BatchOperation[] = [];
+    const deleteKeys = new Set<string>([
+      KEYS.workflow(workflowId),
+      KEYS.checkpoint(workflowId),
+      KEYS.workflowHeaders(workflowId),
+      KEYS.attribute(workflowId),
+      KEYS.terminalWorkflow(state.updatedAt, workflowId),
+    ]);
+
+    if (state.executionDeadline !== undefined) {
+      deleteKeys.add(KEYS.deadline(state.executionDeadline, workflowId));
+      deleteKeys.add(`timer-idx:deadline:${workflowId}`);
+    }
+
+    if (attributeBytes) {
+      const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+      for (const operation of buildIndexOperations(workflowId, currentAttributes, {})) {
+        if (operation.type === 'delete') {
+          deleteOperations.push(operation);
+        }
+      }
+    }
+
+    for (const operation of buildWorkflowTagIndexOperations(
+      workflowId,
+      normalizeWorkflowTags(state.tags),
+      undefined,
+    )) {
+      if (operation.type === 'delete') {
+        deleteOperations.push(operation);
+      }
+    }
+
+    deleteOperations.push(...this.#releaseChargedAgentOperations(workflowId));
+
+    const updateRequestPrefix = KEYS.updatePrefix(workflowId);
+    const updateRequestKeys = await collectKeysForPrefix(this.#storage, updateRequestPrefix);
+    for (const key of updateRequestKeys) {
+      deleteKeys.add(key);
+      const updateId = key.slice(updateRequestPrefix.length);
+      if (updateId.length > 0) {
+        deleteKeys.add(KEYS.updateResponse(updateId));
+      }
+    }
+
+    for (const prefix of [
+      `wf:${encodedWorkflowId}:ckpt:`,
+      `ev:${encodedWorkflowId}:`,
+      `sig:${encodedWorkflowId}:`,
+      `review:${encodedWorkflowId}:`,
+      `offload:${encodedWorkflowId}:`,
+      `archive:${encodedWorkflowId}:`,
+      `blob:${encodedWorkflowId}:`,
+      `shared:${encodedWorkflowId}:`,
+      `tool-effect:${encodedWorkflowId}:`,
+      `upk:${encodedWorkflowId}:`,
+    ]) {
+      const keys = await collectKeysForPrefix(this.#storage, prefix);
+      for (const key of keys) {
+        deleteKeys.add(key);
+      }
+    }
+
+    for (const key of deleteKeys) {
+      deleteOperations.push({ type: 'delete', key });
+    }
+
+    await this.#storage.batch(deleteOperations);
+
+    this.#checkpoints.delete(workflowId);
+    this.#heartbeatDetails.delete(workflowId);
+    this.#agentWorkflowIds.delete(workflowId);
+    this.#eventLogHeads.delete(workflowId);
+    this.#workflowVersionTuples.delete(workflowId);
+    this.#handleCache.delete(workflowId);
+    this.#resultResolvers.delete(workflowId);
+    this.#workflowHeaders.delete(workflowId);
+    this.#workflowNestingDepths.delete(workflowId);
+    this.#cleanupWaiters(workflowId);
   }
 
   async schedule(
@@ -3344,7 +3970,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#eventLogHeads.set(workflowId, restoredHead);
     this.#setWorkflowStartHeaders(workflowId, await this.#loadWorkflowStartHeaders(workflowId));
 
-    const handle = this.#createWorkflowHandle(workflowId);
+    const handle = this.getHandle(workflowId);
 
     // Dispatch resumed event
     this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
@@ -3363,6 +3989,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         startedAt: getWorkflowExecutionStartedAt(state),
         abortController: workflowAbort,
         getNow: this.#options.getNow,
+        resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
         accumulatedResults,
         searchAttributes: resumeCheckpoint.searchAttributes,
         ...(registration.searchAttributes && {
@@ -3914,6 +4541,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       clearInterval(this.#cleanupInterval);
       this.#cleanupInterval = null;
     }
+    if (this.#retentionSweepInterval !== null) {
+      clearInterval(this.#retentionSweepInterval);
+      this.#retentionSweepInterval = null;
+    }
+    this.#nextRetentionSweepAt = null;
     this.#handleCache.clear();
     this.#resultResolvers.clear();
     this.#signalWaiters.clear();
@@ -4790,12 +5422,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     operation: Extract<ContextOperationRequest, { type: 'load' }>,
   ): Promise<void> {
     return this.#runOperationWithResult(workflowId, operation, async () => {
-      const raw = await this.#storage.get(
-        KEYS.offload(operation.reference.workflowId, operation.reference.key),
-      );
+      const { workflowId: referenceWorkflowId, key: referenceKey, sizeBytes } = operation.reference;
+
+      if (typeof referenceWorkflowId !== 'string' || referenceWorkflowId !== workflowId) {
+        throw new Error('ctx.load() can only read offloaded data from the current workflow');
+      }
+      if (typeof referenceKey !== 'string' || referenceKey.length === 0) {
+        throw new Error('ctx.load() requires a non-empty offload reference key');
+      }
+      if (typeof sizeBytes !== 'number' || !Number.isFinite(sizeBytes) || sizeBytes < 0) {
+        throw new Error('ctx.load() requires a valid offload reference size');
+      }
+
+      const raw = await this.#storage.get(KEYS.offload(referenceWorkflowId, referenceKey));
       if (raw === null) {
         throw new Error(
-          `Offloaded data not found for key "${operation.reference.key}" in workflow "${operation.reference.workflowId}"`,
+          `Offloaded data not found for key "${referenceKey}" in workflow "${referenceWorkflowId}"`,
         );
       }
       return decode(raw);
@@ -5312,20 +5954,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'child-workflow' }>,
   ): Promise<void> {
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      this.#executeChildWorkflow(
+        workflowId,
+        operation,
+        this.#assertChildWorkflowNestingDepth(workflowId),
+      ),
+    );
+  }
+
+  #assertChildWorkflowNestingDepth(workflowId: string): number {
     const currentDepth = this.#getWorkflowNestingDepth(workflowId);
     if (currentDepth + 1 > this.#options.maxNestingDepth) {
-      this.#feedOperationResult(workflowId, {
-        status: 'failed',
-        error:
-          `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
+      throw new Error(
+        `Child workflow nesting depth exceeded: ${currentDepth + 1} exceeds maximum of ${this.#options.maxNestingDepth}. ` +
           'Configure maxNestingDepth in engine options to increase the limit.',
-      });
-      return;
+      );
     }
 
-    return this.#runOperationWithResult(workflowId, operation, () =>
-      this.#executeChildWorkflow(workflowId, operation, currentDepth),
-    );
+    return currentDepth;
   }
 
   #getWorkflowNestingDepth(workflowId: string): number {
@@ -5344,9 +5991,48 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const executeChild = async () => {
       this.#pendingNestingDepth = currentDepth + 1;
       this.#pendingParentHeaders = this.#workflowHeaders.get(workflowId);
-      const childHandle = await this.start(operation.workflowType, operation.input, {
-        id: childWorkflowId,
-      });
+      let childHandle: WorkflowHandle;
+
+      try {
+        childHandle = await this.start(operation.workflowType, operation.input, {
+          id: childWorkflowId,
+        });
+      } catch (error) {
+        if (error instanceof WorkflowAlreadyExistsError) {
+          const [existingState, parentState] = await Promise.all([
+            this.#loadWorkflowState(childWorkflowId),
+            this.#loadWorkflowState(workflowId),
+          ]);
+
+          if (!existingState) {
+            throw error;
+          }
+
+          const existingTenantId = existingState.tenant?.id;
+          const parentTenantId = parentState?.tenant?.id;
+          const tenantMatches =
+            (existingTenantId === undefined && parentTenantId === undefined) ||
+            (existingTenantId !== undefined &&
+              parentTenantId !== undefined &&
+              existingTenantId === parentTenantId);
+
+          if (
+            existingState.type !== operation.workflowType ||
+            !encodedValuesEqual(existingState.input, operation.input) ||
+            !tenantMatches
+          ) {
+            throw new Error(
+              `Child workflow id collision for "${childWorkflowId}" does not match the requested child workflow`,
+              { cause: error },
+            );
+          }
+
+          childHandle = this.getHandle(childWorkflowId);
+        } else {
+          throw error;
+        }
+      }
+
       return childHandle.result();
     };
 
@@ -5424,6 +6110,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       case 'activity':
         signal?.throwIfAborted();
         return this.#executeActivityOperationResult(workflowId, operation, speculativeState);
+      case 'child-workflow':
+        signal?.throwIfAborted();
+        return this.#executeChildWorkflow(
+          workflowId,
+          operation,
+          this.#assertChildWorkflowNestingDepth(workflowId),
+        );
       case 'memo':
         signal?.throwIfAborted();
         return callMemoFunction(operation.fn);
@@ -6066,15 +6759,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Also queue the per-operation `budget-charged:{operationId}` durable
     // keys for deletion. These are not workflow-scoped in storage, so we
     // have to build the batch from the reverse index before dropping it.
-    const workflowOperations = this.#chargedAgentOperationsByWorkflow.get(workflowId);
-    const budgetChargedDeletes: import('../storage/interface.ts').BatchOperation[] = [];
-    if (workflowOperations) {
-      for (const operationId of workflowOperations) {
-        this.#chargedAgentOperations.delete(operationId);
-        budgetChargedDeletes.push({ type: 'delete', key: KEYS.budgetCharged(operationId) });
-      }
-      this.#chargedAgentOperationsByWorkflow.delete(workflowId);
-    }
+    const budgetChargedDeletes = this.#releaseChargedAgentOperations(workflowId);
 
     // Durable records
     await this.#cleanupReviews(workflowId);
@@ -6323,6 +7008,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           updatedAt: now,
         };
         const completionOperations: import('../storage/interface.ts').BatchOperation[] = [
+          ...this.#buildTerminalWorkflowIndexOperations(state, updatedState),
           { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
         ];
 
@@ -6473,7 +7159,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       ...indexOperations,
     ]);
   }
-
   #normalizeStartWorkflowTags(tags: unknown, fieldName = 'options.tags'): string[] | undefined {
     if (tags === undefined) {
       return undefined;
@@ -6531,6 +7216,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       await this.#storage.batch([
+        ...this.#buildTerminalWorkflowIndexOperations(state, updatedState),
         { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
         ...buildWorkflowTagIndexOperations(workflowId, currentTags, nextTags),
       ]);

@@ -95,6 +95,24 @@ export interface WorkflowState {
 export type Duration = number | string;
 
 // ---------------------------------------------------------------------------
+// Workflow retention
+// ---------------------------------------------------------------------------
+
+export interface RetentionPolicy {
+  completed?: Duration;
+  failed?: Duration;
+  cancelled?: Duration;
+  timedOut?: Duration;
+}
+
+export interface NormalizedRetentionPolicy {
+  completed?: number;
+  failed?: number;
+  cancelled?: number;
+  timedOut?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Checkpoint: snapshot of workflow at a yield* boundary
 // ---------------------------------------------------------------------------
 
@@ -207,6 +225,9 @@ export interface EngineOptions {
   storage?: WeftStorage;
   development?: boolean;
   serializer?: Serializer;
+  retention?: RetentionPolicy;
+  retentionSweepInterval?: Duration;
+  retentionSweepBatchSize?: number;
   /** Payload compression applied at the storage layer. */
   compression?: CompressionOptions & {
     /** Compression algorithm for agent workflow checkpoints. Default: 'brotli'. */
@@ -428,6 +449,40 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
   input: TInput,
 ) => Promise<TOutput>;
 
+export type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
+
+export type ChildWorkflowTarget<TInput = unknown, TOutput = unknown> =
+  | string
+  | WorkflowFunction<TInput, TOutput>
+  | StepWorkflowFunction<TInput, TOutput>;
+
+export type ChildWorkflowOptions = Record<string, unknown> & {
+  id?: string;
+};
+
+export interface WorkflowPipeStage<TInput = unknown, TOutput = unknown> {
+  type: ChildWorkflowTarget<TInput, TOutput>;
+  options?: ChildWorkflowOptions;
+}
+
+export type WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> =
+  | WorkflowPipeStage<TInput, TOutput>
+  | ChildWorkflowTarget<TInput, TOutput>;
+
+export interface WorkflowMapOptions {
+  concurrency?: number;
+}
+
+export interface WorkflowReduceInput<TAccumulator, TItem> {
+  accumulator: TAccumulator;
+  item: TItem;
+  index: number;
+}
+
+export interface WorkflowReduceOptions extends Record<string, unknown> {
+  idPrefix?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Forward-declared WorkflowContext interface (full implementation in context.ts)
 // ---------------------------------------------------------------------------
@@ -446,6 +501,10 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
  *   yield* (ctx as Context).suspendUntil('resume-token');
  * });
  * ```
+ *
+ * Composition operators are available directly on `WorkflowContext`, so
+ * `ctx.pipe(...)`, `ctx.map(...)`, and `ctx.reduce(...)` do not require a
+ * cast.
  *
  * `tenant` is surfaced directly on this interface (not via the cast) because
  * reading it is a common lightweight path that doesn't need the full method
@@ -469,6 +528,49 @@ export interface WorkflowContext {
    * contract that the getter can't satisfy.
    */
   readonly tenant: import('./tenant.ts').TenantContext | undefined;
+  pipe<TInput, TOutput>(
+    stages: [WorkflowPipeStageDefinition<TInput, TOutput>],
+    input: TInput,
+  ): WorkflowOperation<TOutput>;
+  pipe<TInput, TIntermediate, TOutput>(
+    stages: [
+      WorkflowPipeStageDefinition<TInput, TIntermediate>,
+      WorkflowPipeStageDefinition<TIntermediate, TOutput>,
+    ],
+    input: TInput,
+  ): WorkflowOperation<TOutput>;
+  pipe<TInput, TFirst, TSecond, TOutput>(
+    stages: [
+      WorkflowPipeStageDefinition<TInput, TFirst>,
+      WorkflowPipeStageDefinition<TFirst, TSecond>,
+      WorkflowPipeStageDefinition<TSecond, TOutput>,
+    ],
+    input: TInput,
+  ): WorkflowOperation<TOutput>;
+  pipe<TInput, TFirst, TSecond, TThird, TOutput>(
+    stages: [
+      WorkflowPipeStageDefinition<TInput, TFirst>,
+      WorkflowPipeStageDefinition<TFirst, TSecond>,
+      WorkflowPipeStageDefinition<TSecond, TThird>,
+      WorkflowPipeStageDefinition<TThird, TOutput>,
+    ],
+    input: TInput,
+  ): WorkflowOperation<TOutput>;
+  pipe<TResult = unknown>(
+    stages: Array<WorkflowPipeStage | ChildWorkflowTarget>,
+    input: unknown,
+  ): WorkflowOperation<TResult>;
+  map<TItem, TResult>(
+    items: readonly TItem[],
+    workflowType: ChildWorkflowTarget<TItem, TResult>,
+    options?: WorkflowMapOptions,
+  ): WorkflowOperation<TResult[]>;
+  reduce<TItem, TAccumulator>(
+    items: readonly TItem[],
+    workflowType: ChildWorkflowTarget<WorkflowReduceInput<TAccumulator, TItem>, TAccumulator>,
+    initialValue: TAccumulator,
+    options?: WorkflowReduceOptions,
+  ): WorkflowOperation<TAccumulator>;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +582,7 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
   handler: WorkflowFunction<TInput, TOutput>;
   migrate?: (checkpoint: unknown, fromVersion: string) => unknown;
   searchAttributes?: SearchAttributeSchema;
+  retention?: RetentionPolicy;
   /**
    * Domain constraints evaluated at every checkpoint commit. When a constraint's
    * `check` returns false, the engine dispatches a `ConstraintViolatedEvent`
@@ -576,6 +679,20 @@ export interface WorkflowSummary {
   updatedAt: number;
 }
 
+export interface WorkflowTypeRetentionPolicy {
+  type: string;
+  source: 'engine' | 'workflow' | 'none';
+  retention: NormalizedRetentionPolicy | null;
+}
+
+export interface RetentionOverview {
+  defaultRetention: NormalizedRetentionPolicy | null;
+  sweepIntervalMs: number;
+  sweepBatchSize: number;
+  nextSweepAt: number | null;
+  workflowTypes: WorkflowTypeRetentionPolicy[];
+}
+
 // ---------------------------------------------------------------------------
 // Recurring schedule state
 // ---------------------------------------------------------------------------
@@ -670,6 +787,10 @@ export interface CoordinatedUpdateResult {
   error?: string;
 }
 
+export interface PurgeResult {
+  deleted: number;
+}
+
 // ---------------------------------------------------------------------------
 // Default constants
 // ---------------------------------------------------------------------------
@@ -685,6 +806,8 @@ export const DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD = 65_536; // 64KB
 export const DEFAULT_MAX_NESTING_DEPTH = 10;
 export const DEFAULT_POLL_INTERVAL_MS = 1000;
 export const DEFAULT_VISIBILITY_TIMEOUT_MS = 30_000;
+export const DEFAULT_RETENTION_SWEEP_INTERVAL_MS = 300_000;
+export const DEFAULT_RETENTION_SWEEP_BATCH_SIZE = 1000;
 
 // ---------------------------------------------------------------------------
 // activity() helper — wraps a function with colocated configuration

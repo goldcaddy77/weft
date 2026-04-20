@@ -52,6 +52,27 @@ export interface PaginatedResult<T> {
   limit: number;
 }
 
+export interface RetentionPolicy {
+  completed?: number;
+  failed?: number;
+  cancelled?: number;
+  timedOut?: number;
+}
+
+export interface WorkflowTypeRetentionPolicy {
+  type: string;
+  source: 'engine' | 'workflow' | 'none';
+  retention: RetentionPolicy | null;
+}
+
+export interface RetentionOverview {
+  defaultRetention: RetentionPolicy | null;
+  sweepIntervalMs: number;
+  sweepBatchSize: number;
+  nextSweepAt: number | null;
+  workflowTypes: WorkflowTypeRetentionPolicy[];
+}
+
 export interface ListFilter {
   status?: WorkflowStatus;
   type?: string;
@@ -223,5 +244,10 @@ export class ApiClient {
   /** Health check. */
   async checkHealth(): Promise<{ status: string }> {
     return request<{ status: string }>('/health');
+  }
+
+  /** Get retention policies and next sweep timing for the dashboard. */
+  async getRetentionOverview(): Promise<RetentionOverview> {
+    return request<RetentionOverview>('/retention');
   }
 }

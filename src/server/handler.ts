@@ -382,6 +382,158 @@ function inferAttributeValue(raw: string): SearchAttributeValue {
   return raw;
 }
 
+function isJsonSearchAttributeValue(value: unknown): value is SearchAttributeValue {
+  if (typeof value === 'string' || typeof value === 'boolean') {
+    return true;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value);
+  }
+
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function parseAttributeFiltersFromBody(value: unknown): AttributeFilter[] {
+  if (!Array.isArray(value)) {
+    throw new Error('Field "filter.attributes" must be an array');
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null) {
+      throw new Error(`Field "filter.attributes[${index}]" must be an object`);
+    }
+
+    const record = entry as Record<string, unknown>;
+    const key = record['key'];
+    if (typeof key !== 'string' || key.length === 0) {
+      throw new Error(`Field "filter.attributes[${index}].key" must be a non-empty string`);
+    }
+
+    const filter: AttributeFilter = { key };
+    for (const property of ['value', 'gt', 'lt', 'gte', 'lte'] as const) {
+      const attributeValue = record[property];
+      if (attributeValue === undefined) {
+        continue;
+      }
+
+      if (!isJsonSearchAttributeValue(attributeValue)) {
+        throw new Error(
+          `Field "filter.attributes[${index}].${property}" must be a string, number, boolean, or string array`,
+        );
+      }
+
+      filter[property] = attributeValue;
+    }
+
+    return filter;
+  });
+}
+
+function parseFilterStatus(value: unknown): ListFilter['status'] {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === 'string') {
+    return value as WorkflowStatus;
+  }
+
+  if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
+    return value as WorkflowStatus[];
+  }
+
+  throw new Error('Field "filter.status" must be a string or an array of strings');
+}
+
+function parseOptionalFilterType(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  throw new Error('Field "filter.type" must be a string');
+}
+
+function parseOptionalFilterTags(value: unknown): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return coerceStartWorkflowTags(value, 'Field "filter.tags"');
+}
+
+function parseOptionalFilterNumber(
+  value: unknown,
+  fieldName: 'limit' | 'offset',
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Field "filter.${fieldName}" must be a non-negative number`);
+  }
+
+  return Math.floor(value);
+}
+
+function parseListFilterBody(body: unknown): ListFilter {
+  if (body === undefined) {
+    return {};
+  }
+
+  if (typeof body !== 'object' || body === null) {
+    throw new Error('Request body must be a JSON object');
+  }
+
+  const record = body as Record<string, unknown>;
+  const rawFilter = record['filter'];
+  if (rawFilter === undefined) {
+    return {};
+  }
+
+  if (typeof rawFilter !== 'object' || rawFilter === null) {
+    throw new Error('Field "filter" must be an object');
+  }
+
+  const filterRecord = rawFilter as Record<string, unknown>;
+  const filter: ListFilter = {};
+  const status = parseFilterStatus(filterRecord['status']);
+  if (status !== undefined) {
+    filter.status = status;
+  }
+
+  const type = parseOptionalFilterType(filterRecord['type']);
+  if (type !== undefined) {
+    filter.type = type;
+  }
+
+  const tags = parseOptionalFilterTags(filterRecord['tags']);
+  if (tags !== undefined) {
+    filter.tags = tags;
+  }
+
+  if (filterRecord['attributes'] !== undefined) {
+    filter.attributes = parseAttributeFiltersFromBody(filterRecord['attributes']);
+  }
+
+  const limit = parseOptionalFilterNumber(filterRecord['limit'], 'limit');
+  if (limit !== undefined) {
+    filter.limit = limit;
+  }
+
+  const offset = parseOptionalFilterNumber(filterRecord['offset'], 'offset');
+  if (offset !== undefined) {
+    filter.offset = offset;
+  }
+
+  return filter;
+}
+
 async function handleListWorkflows(request: Request, engine: Engine): Promise<Response> {
   const url = new URL(request.url);
   const filter: ListFilter = {};
@@ -431,6 +583,34 @@ async function handleListWorkflows(request: Request, engine: Engine): Promise<Re
   }
 
   const result = await engine.list(filter);
+  return jsonResponse(result);
+}
+
+async function handleGetRetentionOverview(engine: Engine): Promise<Response> {
+  return jsonResponse(engine.getRetentionOverview());
+}
+
+async function handlePurgeWorkflows(request: Request, engine: Engine): Promise<Response> {
+  let body: unknown = undefined;
+
+  try {
+    const rawBody = await request.text();
+    if (rawBody.trim() !== '') {
+      body = JSON.parse(rawBody) as unknown;
+    }
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  let filter: ListFilter;
+  try {
+    filter = parseListFilterBody(body);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
+
+  const result = await engine.purge(filter);
   return jsonResponse(result);
 }
 
@@ -1116,8 +1296,10 @@ type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
 const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
+  purgeWorkflows: async ({ request, engine }) => handlePurgeWorkflows(request, engine),
   listWorkflows: async ({ request, engine }) => handleListWorkflows(request, engine),
   recoverAll: async ({ engine }) => handleRecoverAll(engine),
+  getRetentionOverview: async ({ engine }) => handleGetRetentionOverview(engine),
   setBudgetPolicy: async ({ request, engine }) => handleSetBudgetPolicy(request, engine),
   getBudgetPolicy: async ({ engine, param }) => handleGetBudgetPolicy(engine, param('namespace')),
   getTenantQuota: async ({ engine, options, param }) =>

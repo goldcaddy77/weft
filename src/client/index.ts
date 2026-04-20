@@ -14,6 +14,8 @@ import type {
   CoordinatedUpdateResult,
   ListFilter,
   PaginatedResult,
+  PurgeResult,
+  RetentionOverview,
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
@@ -556,6 +558,17 @@ export class HttpClient implements WeftClient {
       this.headers,
     );
     return response.chunks;
+  }
+
+  async getRetentionOverview(): Promise<RetentionOverview> {
+    return request<RetentionOverview>(this.baseUrl, '/retention', this.headers);
+  }
+
+  async purge(filter?: ListFilter): Promise<PurgeResult> {
+    return request<PurgeResult>(this.baseUrl, '/workflows/purge', this.headers, {
+      method: 'POST',
+      body: JSON.stringify({ filter }),
+    });
   }
 
   async submitCoordinatedUpdate(

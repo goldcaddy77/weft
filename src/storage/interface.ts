@@ -188,6 +188,10 @@ export function tryDecodeStorageKeyComponent(value: string): string | null {
   }
 }
 
+function formatSortableTimestamp(timestamp: number): string {
+  return String(timestamp).padStart(16, '0');
+}
+
 /**
  * Key layout constants for hierarchical key encoding.
  * All timestamps are zero-padded to 16 digits for correct lexicographic ordering.
@@ -202,7 +206,7 @@ export const KEYS = {
     `schedule-due:${String(fireAt).padStart(16, '0')}:${encodeStorageKeyComponent(id)}`,
   scheduleRun: (workflowId: string) => `schedule-run:${encodeStorageKeyComponent(workflowId)}`,
   operation: (queue: string, scheduledAt: number, id: string) =>
-    `op:${queue}:${String(scheduledAt).padStart(16, '0')}:${id}`,
+    `op:${queue}:${formatSortableTimestamp(scheduledAt)}:${id}`,
   operationInflight: (id: string) => `op:inflight:${id}`,
   operationQueued: (id: string) => `op:queued:${id}`,
   operationResolved: (id: string) => `op:resolved:${id}`,
@@ -213,9 +217,12 @@ export const KEYS = {
   signal: (workflowId: string, name: string, id: string) =>
     `sig:${encodeStorageKeyComponent(workflowId)}:${name}:${id}`,
   deadline: (deadline: number, workflowId: string) =>
-    `wf-deadline:${String(deadline).padStart(16, '0')}:${encodeStorageKeyComponent(workflowId)}`,
+    `wf-deadline:${formatSortableTimestamp(deadline)}:${encodeStorageKeyComponent(workflowId)}`,
   delayedStart: (startAt: number, workflowId: string) =>
-    `wf-delayed:${String(startAt).padStart(16, '0')}:${encodeStorageKeyComponent(workflowId)}`,
+    `wf-delayed:${formatSortableTimestamp(startAt)}:${encodeStorageKeyComponent(workflowId)}`,
+  terminalWorkflowPrefix: () => 'wf-terminal:',
+  terminalWorkflow: (updatedAt: number, workflowId: string) =>
+    `wf-terminal:${formatSortableTimestamp(updatedAt)}:${encodeStorageKeyComponent(workflowId)}`,
   attribute: (workflowId: string) => `attr:${encodeStorageKeyComponent(workflowId)}`,
   attributeIndex: (attributeName: string, encodedValue: string, workflowId: string) =>
     `idx:${attributeName}:${encodedValue}:${encodeStorageKeyComponent(workflowId)}`,
