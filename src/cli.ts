@@ -11,7 +11,7 @@
 
 import { parseArgs } from 'node:util';
 
-import { safeDebugStringify } from './core/debug-output.ts';
+import { isRecord, safeDebugStringify } from './core/debug-output.ts';
 import type { ActivityDefinition, WorkflowRegistration } from './core/types.ts';
 import type { Storage } from './storage/interface.ts';
 
@@ -464,10 +464,6 @@ function formatTimelineLine(entry: {
 
 function formatValue(value: unknown): string {
   return safeDebugStringify(value, 2);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function collectDiffLines(

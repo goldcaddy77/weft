@@ -177,6 +177,51 @@ describe('timeline and replay', () => {
         status: 'not-a-real-status',
       }),
     );
+    await storage.put(
+      KEYS.timeline('wf-malformed-timeline', 4),
+      encode({
+        step: 0,
+        operationType: 'activity',
+        operationLabel: 'zero-step',
+        inputSummary: '{}',
+        timestamp: 4_000,
+        status: 'completed',
+      }),
+    );
+    await storage.put(
+      KEYS.timeline('wf-malformed-timeline', 5),
+      encode({
+        step: Number.NaN,
+        operationType: 'activity',
+        operationLabel: 'nan-step',
+        inputSummary: '{}',
+        timestamp: 5_000,
+        status: 'completed',
+      }),
+    );
+    await storage.put(
+      KEYS.timeline('wf-malformed-timeline', 6),
+      encode({
+        step: 6,
+        operationType: 'activity',
+        operationLabel: 'infinite-timestamp',
+        inputSummary: '{}',
+        timestamp: Number.POSITIVE_INFINITY,
+        status: 'completed',
+      }),
+    );
+    await storage.put(
+      KEYS.timeline('wf-malformed-timeline', 7),
+      encode({
+        step: 7,
+        operationType: 'activity',
+        operationLabel: 'nan-duration',
+        inputSummary: '{}',
+        timestamp: 7_000,
+        status: 'completed',
+        duration: Number.NaN,
+      }),
+    );
 
     const timeline = await engine.getTimeline('wf-malformed-timeline');
 

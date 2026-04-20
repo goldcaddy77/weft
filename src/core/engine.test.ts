@@ -3606,6 +3606,75 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
+    it('cancelling after a checkpoint batch failure does not invent a phantom timeline step', async () => {
+      const script = String.raw`
+        import { Engine } from './src/core/engine.ts';
+        import { MemoryStorage } from './src/storage/memory.ts';
+
+        const storage = new MemoryStorage();
+        const originalBatch = storage.batch.bind(storage);
+        let batchCount = 0;
+        let engine;
+
+        process.on('unhandledRejection', async () => {
+          await engine.cancel('wf-batch');
+          const timeline = await engine.getTimeline('wf-batch');
+          console.log(JSON.stringify(timeline));
+          engine[Symbol.dispose]();
+          storage[Symbol.dispose]();
+          process.exit(0);
+        });
+
+        storage.batch = async (operations) => {
+          batchCount++;
+          if (batchCount === 3) {
+            throw new Error('simulated checkpoint batch failure');
+          }
+          return await originalBatch(operations);
+        };
+
+        engine = new Engine({ storage, checkpointHistory: 10 });
+        engine.register('wf', async function* (ctx) {
+          yield* ctx.run(async () => 'one');
+          return yield* ctx.run(async () => 'two');
+        });
+
+        const handle = await engine.start('wf', null, { id: 'wf-batch' });
+        try {
+          await handle.result();
+        } catch {}
+
+        await Bun.sleep(250);
+        process.exit(1);
+      `;
+
+      const process = Bun.spawn(['bun', '-e', script], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const exitCode = await process.exited;
+      const stdoutText = await new Response(process.stdout).text();
+      const stderrText = await new Response(process.stderr).text();
+      const stdout = stdoutText.trim();
+      const stderr = stderrText.trim();
+
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe('');
+
+      const timeline = JSON.parse(stdout) as Array<{
+        outputSummary?: string;
+        status: string;
+        step: number;
+      }>;
+
+      expect(timeline).toHaveLength(1);
+      expect(timeline[0]).toMatchObject({
+        step: 1,
+        status: 'cancelled',
+      });
+      expect(timeline[0]?.outputSummary).toContain('Workflow cancelled');
+    });
+
     it('runs agent workflows with compression-enabled engine storage', async () => {
       const engine = new Engine({
         storage: new MemoryStorage(),

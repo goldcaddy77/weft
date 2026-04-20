@@ -45,7 +45,7 @@ import { decode, encode } from './codec.ts';
 import type { ConstraintCheckState, ConstraintDefinition } from './constraint.ts';
 import type { ContextOperationRequest, StreamReference, StreamSink } from './context.ts';
 import { Context } from './context.ts';
-import { safeDebugStringify, sanitizeDebugValueForDisplay } from './debug-output.ts';
+import { isRecord, safeDebugStringify, sanitizeDebugValueForDisplay } from './debug-output.ts';
 import {
   cleanupPartialStreamChunks,
   createAgentInterceptorExecute,
@@ -392,10 +392,6 @@ function getTimelineInputSummary(operation: ContextOperationRequest): string {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isSanitizedSearchAttributeValue(
   value: unknown,
 ): value is import('./types.ts').SearchAttributeValue {
@@ -482,20 +478,28 @@ function isWorkflowVersionTuple(value: unknown): value is WorkflowVersionTuple {
   );
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isTimelineStep(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+}
+
 function isWorkflowTimelineEntry(value: unknown): value is WorkflowTimelineEntry {
   if (!isRecord(value)) {
     return false;
   }
 
   return (
-    typeof value['step'] === 'number' &&
+    isTimelineStep(value['step']) &&
     typeof value['operationType'] === 'string' &&
     typeof value['operationLabel'] === 'string' &&
     typeof value['inputSummary'] === 'string' &&
-    typeof value['timestamp'] === 'number' &&
+    isFiniteNumber(value['timestamp']) &&
     WORKFLOW_TIMELINE_STATUSES.has(value['status'] as WorkflowTimelineStatus) &&
     (value['outputSummary'] === undefined || typeof value['outputSummary'] === 'string') &&
-    (value['duration'] === undefined || typeof value['duration'] === 'number') &&
+    (value['duration'] === undefined || isFiniteNumber(value['duration'])) &&
     (value['versionTuple'] === undefined || isWorkflowVersionTuple(value['versionTuple']))
   );
 }
@@ -3422,6 +3426,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#chargedAgentOperationsByWorkflow.clear();
     this.#agentWorkflowIds.clear();
     this.#eventLogHeads.clear();
+    this.#pendingTimelineEntries.clear();
     this.#workflowVersionTuples.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
@@ -3515,7 +3520,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         );
       }
 
-      this.#appendTimelineBatchOperations(
+      const nextPendingTimelineEntry = this.#appendTimelineBatchOperations(
         workflowId,
         operation,
         advanced.step,
@@ -3534,6 +3539,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
 
       await this.#storage.batch(operations);
+      this.#pendingTimelineEntries.set(workflowId, nextPendingTimelineEntry);
       this.#checkpoints.set(workflowId, advanced);
       this.#eventLogHeads.set(workflowId, newHead);
       // Fire-and-forget: pruning is idempotent and non-critical, so deferring
@@ -3568,7 +3574,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         });
       }
 
-      this.#appendTimelineBatchOperations(
+      const nextPendingTimelineEntry = this.#appendTimelineBatchOperations(
         workflowId,
         operation,
         checkpoint.step,
@@ -3587,6 +3593,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
 
       await this.#storage.batch(operations);
+      this.#pendingTimelineEntries.set(workflowId, nextPendingTimelineEntry);
       this.#checkpoints.set(workflowId, checkpoint);
       this.#eventLogHeads.set(workflowId, newHead);
       void this.#swallowPromiseRejection(this.#pruneCheckpointHistory(workflowId, checkpoint.step));
@@ -3599,7 +3606,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     step: number,
     timestamp: number,
     operations: import('../storage/interface.ts').BatchOperation[],
-  ): void {
+  ): PendingTimelineEntry {
     const pendingEntry = this.#pendingTimelineEntries.get(workflowId);
     const versionTuple = this.#workflowVersionTuples.get(workflowId);
 
@@ -3627,10 +3634,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       value: encode(entry),
     });
 
-    this.#pendingTimelineEntries.set(workflowId, {
+    return {
       startedAt: timestamp,
       entry,
-    });
+    };
   }
 
   #finalizePendingTimelineEntry(
