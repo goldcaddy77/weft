@@ -20,8 +20,10 @@ import type {
   StartOptions,
   SubmitReviewOptions,
   WorkflowEvent,
+  WorkflowReplay,
   WorkflowState,
   WorkflowSummary,
+  WorkflowTimelineEntry,
 } from '../core/types.ts';
 import type { ClientHandle, UpdateResult, WeftClient } from './interface.ts';
 
@@ -494,6 +496,23 @@ export class HttpClient implements WeftClient {
     );
     if (response === null) return [];
     return response.events;
+  }
+
+  async getTimeline(id: string): Promise<WorkflowTimelineEntry[]> {
+    const response = await request<WorkflowTimelineEntry[] | null>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/timeline`,
+      this.headers,
+    );
+    return response ?? [];
+  }
+
+  async replayTo(id: string, step: number): Promise<WorkflowReplay | null> {
+    return request<WorkflowReplay | null>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/replay/${step}`,
+      this.headers,
+    );
   }
 
   async listReviews(): Promise<Array<Record<string, unknown>>> {

@@ -272,6 +272,22 @@ export const ROUTES = [
   },
   {
     method: 'GET',
+    path: '/v1/workflows/:id/timeline',
+    handler: 'getTimeline',
+    paramNames: ['id'],
+    summary: 'Get the structured execution timeline for a workflow',
+    tags: ['Checkpoints'],
+  },
+  {
+    method: 'GET',
+    path: '/v1/workflows/:id/replay/:step',
+    handler: 'replayWorkflowToStep',
+    paramNames: ['id', 'step'],
+    summary: 'Replay a workflow to a historical checkpoint step',
+    tags: ['Checkpoints'],
+  },
+  {
+    method: 'GET',
     path: '/v1/workflows/:id',
     handler: 'getWorkflow',
     paramNames: ['id'],

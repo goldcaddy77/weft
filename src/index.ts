@@ -90,9 +90,12 @@ export type {
   WorkflowId,
   WorkflowRegistration,
   WorkflowRegistry,
+  WorkflowReplay,
   WorkflowState,
   WorkflowStatus,
   WorkflowSummary,
+  WorkflowTimelineEntry,
+  WorkflowTimelineStatus,
   WorkflowTypeRetentionPolicy,
 } from './core/types';
 

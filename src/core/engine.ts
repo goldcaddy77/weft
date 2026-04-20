@@ -51,6 +51,7 @@ import type {
   StreamSink,
 } from './context.ts';
 import { Context } from './context.ts';
+import { isRecord, safeDebugStringify, sanitizeDebugValueForDisplay } from './debug-output.ts';
 import {
   cleanupPartialStreamChunks,
   createAgentInterceptorExecute,
@@ -145,12 +146,13 @@ import type {
   WorkflowEvent,
   WorkflowFunction,
   WorkflowRegistration,
+  WorkflowReplay,
   WorkflowState,
   WorkflowStatus,
   WorkflowSummary,
+  WorkflowTimelineEntry,
+  WorkflowTimelineStatus,
   WorkflowTypeRetentionPolicy,
-} from './types.ts';
-import {
   DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
 } from './types.ts';
@@ -206,6 +208,19 @@ interface RegistrationEntry {
   versionTupleForTenant?: (
     tenant: import('./tenant.ts').TenantContext | undefined,
   ) => WorkflowVersionTuple;
+}
+
+interface WorkflowStateUpdateOptions {
+  allowedStatuses?: readonly WorkflowStatus[];
+  buildAdditionalOperations?: (
+    previousState: WorkflowState,
+    updatedAt: number,
+  ) => BatchOperation[];
+}
+
+interface WorkflowStateUpdateResult {
+  previousState: WorkflowState;
+  updatedAt: number;
 }
 
 /** Options required when registering an AgentDefinition as a workflow. */
@@ -275,6 +290,11 @@ type WorkflowHandleIteratorState = {
   done: boolean;
 };
 
+type PendingTimelineEntry = {
+  startedAt: number;
+  entry: WorkflowTimelineEntry;
+};
+
 class SpeculativeExecutionState implements VerificationRecorder {
   readonly #verifications: Array<Promise<{ failed: false } | { failed: true; error: unknown }>>;
   readonly #compensations: Array<() => Promise<void>>;
@@ -336,8 +356,212 @@ function callMemoFunction(fn: Function): unknown {
   return (fn as () => unknown)();
 }
 
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+function summarizeTimelineValue(value: unknown): string {
+  return safeDebugStringify(value);
+}
+
+function getTimelineOperationLabel(operation: ContextOperationRequest): string {
+  switch (operation.type) {
+    case 'activity':
+      return operation.activityName;
+    case 'wait-signal':
+      return operation.signalName;
+    case 'wait-update':
+      return operation.updateName;
+    case 'child-workflow':
+      return operation.workflowType;
+    case 'memo':
+    case 'offload':
+    case 'archive':
+    case 'stream':
+      return operation.key;
+    case 'load':
+      return operation.reference.key;
+    case 'agent':
+      return operation.options.model;
+    default:
+      return operation.type;
+  }
+}
+
+function getTimelineReviewArtifactType(artifact: unknown): unknown {
+  if (typeof artifact !== 'object' || artifact === null || !('type' in artifact)) {
+    return undefined;
+  }
+
+  return (artifact as Record<string, unknown>)['type'];
+}
+
+function getTimelineBasicInputSummary(operation: ContextOperationRequest): string {
+  switch (operation.type) {
+    case 'sleep':
+      return summarizeTimelineValue({ duration: operation.duration });
+    case 'wait-signal':
+      return summarizeTimelineValue({ signalName: operation.signalName });
+    case 'wait-update':
+      return summarizeTimelineValue({ updateName: operation.updateName });
+    case 'parallel':
+    case 'race':
+      return summarizeTimelineValue({ operationCount: operation.operations.length });
+    case 'memo':
+      return summarizeTimelineValue({ key: operation.key });
+    case 'offload':
+      return summarizeTimelineValue({ key: operation.key });
+    case 'load':
+      return summarizeTimelineValue({ key: operation.reference.key });
+    case 'archive':
+      return summarizeTimelineValue({ key: operation.key, data: operation.data });
+    case 'speculate':
+      return summarizeTimelineValue({ branch: 'speculative' });
+    case 'stream':
+      return summarizeTimelineValue({ key: operation.key });
+    default:
+      return summarizeTimelineValue(undefined);
+  }
+}
+
+function getTimelineInputSummary(operation: ContextOperationRequest): string {
+  switch (operation.type) {
+    case 'activity':
+      return summarizeTimelineValue(
+        operation.args.length <= 1 ? operation.args[0] : operation.args,
+      );
+    case 'child-workflow':
+      return summarizeTimelineValue({
+        workflowType: operation.workflowType,
+        input: operation.input,
+      });
+    case 'run-all':
+      return summarizeTimelineValue({ branches: Object.keys(operation.branches) });
+    case 'agent':
+      return summarizeTimelineValue({
+        model: operation.options.model,
+        promptLength: operation.options.prompt.length,
+      });
+    case 'wait-review':
+      return summarizeTimelineValue({
+        reviewers: operation.reviewOptions.reviewers,
+        artifactType: getTimelineReviewArtifactType(operation.reviewOptions.artifact),
+      });
+    case 'handoff':
+    case 'debate':
+    case 'supervise':
+      return summarizeTimelineValue(operation.options);
+    default:
+      return getTimelineBasicInputSummary(operation);
+  }
+}
+
+function isSanitizedSearchAttributeValue(
+  value: unknown,
+): value is import('./types.ts').SearchAttributeValue {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return true;
+  }
+
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function sanitizeCheckpointLocals(locals: unknown): Record<string, unknown> {
+  const sanitized = sanitizeDebugValueForDisplay(locals);
+  return isRecord(sanitized) ? sanitized : {};
+}
+
+function sanitizeCheckpointSearchAttributes(
+  searchAttributes: unknown,
+): Record<string, import('./types.ts').SearchAttributeValue> {
+  const sanitized = sanitizeDebugValueForDisplay(searchAttributes);
+  if (!isRecord(sanitized)) {
+    return {};
+  }
+
+  const result: Record<string, import('./types.ts').SearchAttributeValue> = {};
+  for (const [key, value] of Object.entries(sanitized)) {
+    if (isSanitizedSearchAttributeValue(value)) {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
+
+function sanitizeCheckpointState(
+  checkpoint: import('./types.ts').CheckpointState,
+): import('./types.ts').CheckpointState {
+  return {
+    step: checkpoint.step,
+    locals: sanitizeCheckpointLocals(checkpoint.locals),
+    searchAttributes: sanitizeCheckpointSearchAttributes(checkpoint.searchAttributes),
+    version: checkpoint.version,
+    createdAt: checkpoint.createdAt,
+  };
+}
+
+function sanitizeWorkflowEventPayload(payload: unknown): Record<string, unknown> {
+  const sanitized = sanitizeDebugValueForDisplay(payload);
+  return isRecord(sanitized) ? sanitized : { value: sanitized };
+}
+
+function sanitizeTimelineSummary(summary: string | undefined): string | undefined {
+  if (summary === undefined) {
+    return undefined;
+  }
+
+  try {
+    return summarizeTimelineValue(JSON.parse(summary) as unknown);
+  } catch {
+    return summary;
+  }
+}
+
+const WORKFLOW_TIMELINE_STATUSES = new Set<WorkflowTimelineStatus>([
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+  'timed-out',
+]);
+
+function isWorkflowVersionTuple(value: unknown): value is WorkflowVersionTuple {
+  if (!isRecord(value) || typeof value['workflowVersion'] !== 'string') {
+    return false;
+  }
+
+  if (value['agentVersion'] !== undefined && typeof value['agentVersion'] !== 'string') {
+    return false;
+  }
+
+  return (
+    value['toolVersions'] === undefined ||
+    (Array.isArray(value['toolVersions']) &&
+      value['toolVersions'].every((entry) => typeof entry === 'string'))
+  );
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isTimelineStep(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1;
+}
+
+function isWorkflowTimelineEntry(value: unknown): value is WorkflowTimelineEntry {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    isTimelineStep(value['step']) &&
+    typeof value['operationType'] === 'string' &&
+    typeof value['operationLabel'] === 'string' &&
+    typeof value['inputSummary'] === 'string' &&
+    isFiniteNumber(value['timestamp']) &&
+    WORKFLOW_TIMELINE_STATUSES.has(value['status'] as WorkflowTimelineStatus) &&
+    (value['outputSummary'] === undefined || typeof value['outputSummary'] === 'string') &&
+    (value['duration'] === undefined || isFiniteNumber(value['duration'])) &&
+    (value['versionTuple'] === undefined || isWorkflowVersionTuple(value['versionTuple']))
+  );
 }
 
 function isValidScheduleTimestamp(value: unknown): value is number {
@@ -657,7 +881,7 @@ function decodeScheduleRuntimeFields(
 
 function decodeScheduleState(bytes: Uint8Array): ScheduleState | null {
   const decoded = decode(bytes);
-  if (!isObjectRecord(decoded)) {
+  if (!isRecord(decoded)) {
     console.warn('[weft] Ignoring malformed schedule record with non-object payload.');
     return null;
   }
@@ -1574,6 +1798,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * the checkpoint was written.
    */
   #workflowVersionTuples: Map<string, WorkflowVersionTuple> = new Map();
+  #pendingTimelineEntries: Map<string, PendingTimelineEntry>;
 
   constructor(options?: EngineConstructorOptions) {
     super();
@@ -1646,6 +1871,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#workflowReviewIds = new Map();
     this.#reviewTimerIds = new Map();
     this.#pendingWebhooks = new Set();
+    this.#pendingTimelineEntries = new Map();
     this.#cleanupInterval = setInterval(
       createExpiredResponseCleanupTick(
         this.#updateCoordinator,
@@ -4062,19 +4288,30 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#strategy.cancelWorkflow(workflowId);
 
-    const state = await this.#loadWorkflowState(workflowId);
-    // Guard: if the workflow is already terminal (completed, failed, cancelled,
-    // timed-out), a stale deadline timer firing should be a no-op. This is
-    // critical now that scheduler.cancel is fire-and-forget on terminal paths.
-    if (!state || (state.status !== 'running' && state.status !== 'pending')) return;
-    const elapsed = this.#options.getNow() - getWorkflowExecutionStartedAt(state);
+    const terminationMessage = status === 'timed-out' ? 'Workflow timed out' : 'Workflow cancelled';
+    const terminationResult = await this.#updateWorkflowState(
+      workflowId,
+      { status },
+      {
+        allowedStatuses: ['running', 'pending'],
+        buildAdditionalOperations: (_previousState, updatedAt) => {
+          this.#finalizePendingTimelineEntry(workflowId, status, terminationMessage, updatedAt);
+          const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
+          return pendingTimelineOperation ? [pendingTimelineOperation] : [];
+        },
+      },
+    );
+    if (!terminationResult) {
+      return;
+    }
 
-    await this.#updateWorkflowState(workflowId, { status });
+    const { previousState, updatedAt } = terminationResult;
+    const elapsed = updatedAt - getWorkflowExecutionStartedAt(previousState);
     await this.#cleanupAttributeIndex(workflowId);
     void this.#swallowPromiseRejection(
       this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
     );
-    if (state.status === 'pending') {
+    if (previousState.status === 'pending') {
       void this.#swallowPromiseRejection(
         this.#scheduler.cancel(`delayed-start:${workflowId}`, workflowId),
       );
@@ -4251,7 +4488,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       events.push({
         type: entry.type,
         timestamp: entry.timestamp,
-        data: (entry.payload as Record<string, unknown>) ?? {},
+        data: sanitizeWorkflowEventPayload(entry.payload),
       });
     }
 
@@ -4296,12 +4533,76 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (!bytes) return null;
 
     const checkpoint = deserializeCheckpoint(bytes);
-    return {
+    return sanitizeCheckpointState({
       step: checkpoint.step,
       locals: checkpoint.locals,
       searchAttributes: checkpoint.searchAttributes,
       version: checkpoint.version,
       createdAt: checkpoint.createdAt,
+    });
+  }
+
+  /** Return the durable per-step execution timeline for a workflow. */
+  async getTimeline(workflowId: string): Promise<WorkflowTimelineEntry[]> {
+    const timeline: WorkflowTimelineEntry[] = [];
+
+    for await (const [, value] of this.#storage.scan(KEYS.timelinePrefix(workflowId))) {
+      let decoded: unknown;
+      try {
+        decoded = decode(value);
+      } catch {
+        continue;
+      }
+
+      if (isWorkflowTimelineEntry(decoded)) {
+        timeline.push({
+          ...decoded,
+          inputSummary: sanitizeTimelineSummary(decoded.inputSummary) ?? decoded.inputSummary,
+          ...(decoded.outputSummary !== undefined
+            ? {
+                outputSummary:
+                  sanitizeTimelineSummary(decoded.outputSummary) ?? decoded.outputSummary,
+              }
+            : {}),
+        });
+      }
+    }
+
+    timeline.sort((left, right) => left.step - right.step);
+    return timeline;
+  }
+
+  /**
+   * Reconstruct workflow state at a historical checkpoint step.
+   * Returns `null` when that step is not retained in checkpoint history.
+   */
+  async replayTo(workflowId: string, step: number): Promise<WorkflowReplay | null> {
+    const bytes = await this.#storage.get(KEYS.checkpointHistory(workflowId, step));
+    if (!bytes) {
+      return null;
+    }
+
+    const checkpoint = deserializeCheckpoint(bytes);
+    const eventLog = new EventLog(this.#storage, workflowId);
+    const entries = await eventLog.replay(Math.max(step - 1, -1));
+
+    return {
+      checkpoint: sanitizeCheckpointState({
+        step: checkpoint.step,
+        locals: checkpoint.locals,
+        searchAttributes: checkpoint.searchAttributes,
+        version: checkpoint.version,
+        createdAt: checkpoint.createdAt,
+      }),
+      accumulatedResults: checkpoint.accumulatedResults.map(([index, value]) => [
+        index,
+        sanitizeDebugValueForDisplay(value),
+      ]),
+      events: entries.map((entry) => ({
+        type: entry.type,
+        timestamp: entry.timestamp,
+        data: sanitizeWorkflowEventPayload(entry.payload),
+      })),
     };
   }
 
@@ -4520,6 +4821,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#chargedAgentOperationsByWorkflow.clear();
     this.#agentWorkflowIds.clear();
     this.#eventLogHeads.clear();
+    this.#pendingTimelineEntries.clear();
     this.#workflowVersionTuples.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
@@ -4567,7 +4869,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // Private: checkpoint persistence
   // -------------------------------------------------------------------------
 
-  async #persistCheckpoint(workflowId: string, workerCheckpointBytes?: ArrayBuffer): Promise<void> {
+  async #persistCheckpoint(
+    workflowId: string,
+    operation: ContextOperationRequest,
+    workerCheckpointBytes?: ArrayBuffer,
+  ): Promise<void> {
     const context = this.#inlineStrategy?.getContext(workflowId);
 
     if (context) {
@@ -4617,6 +4923,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         );
       }
 
+      const nextPendingTimelineEntry = this.#appendTimelineBatchOperations(
+        workflowId,
+        operation,
+        advanced.step,
+        advanced.createdAt,
+        operations,
+      );
+
       // Co-write event log entry in the same batch so checkpoint and log never diverge.
       // appendToBatch() is synchronous — no storage reads, no extra await.
       const eventLog = new EventLog(this.#storage, workflowId);
@@ -4628,6 +4942,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
 
       await this.#storage.batch(operations);
+      this.#pendingTimelineEntries.set(workflowId, nextPendingTimelineEntry);
       this.#checkpoints.set(workflowId, advanced);
       this.#eventLogHeads.set(workflowId, newHead);
       // Fire-and-forget: pruning is idempotent and non-critical, so deferring
@@ -4662,6 +4977,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         });
       }
 
+      const nextPendingTimelineEntry = this.#appendTimelineBatchOperations(
+        workflowId,
+        operation,
+        checkpoint.step,
+        checkpoint.createdAt,
+        operations,
+      );
+
       // Co-write event log entry in the same batch so checkpoint and log never diverge.
       // appendToBatch() is synchronous — no storage reads, no extra await.
       const eventLog = new EventLog(this.#storage, workflowId);
@@ -4673,10 +4996,94 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
 
       await this.#storage.batch(operations);
+      this.#pendingTimelineEntries.set(workflowId, nextPendingTimelineEntry);
       this.#checkpoints.set(workflowId, checkpoint);
       this.#eventLogHeads.set(workflowId, newHead);
       void this.#swallowPromiseRejection(this.#pruneCheckpointHistory(workflowId, checkpoint.step));
     }
+  }
+
+  #appendTimelineBatchOperations(
+    workflowId: string,
+    operation: ContextOperationRequest,
+    step: number,
+    timestamp: number,
+    operations: import('../storage/interface.ts').BatchOperation[],
+  ): PendingTimelineEntry {
+    const pendingEntry = this.#pendingTimelineEntries.get(workflowId);
+    const versionTuple = this.#workflowVersionTuples.get(workflowId);
+
+    if (pendingEntry) {
+      operations.push({
+        type: 'put',
+        key: KEYS.timeline(workflowId, pendingEntry.entry.step),
+        value: encode(pendingEntry.entry),
+      });
+    }
+
+    const entry: WorkflowTimelineEntry = {
+      step,
+      operationType: operation.type,
+      operationLabel: getTimelineOperationLabel(operation),
+      inputSummary: getTimelineInputSummary(operation),
+      timestamp,
+      status: 'running',
+      ...(versionTuple ? { versionTuple } : {}),
+    };
+
+    operations.push({
+      type: 'put',
+      key: KEYS.timeline(workflowId, step),
+      value: encode(entry),
+    });
+
+    return {
+      startedAt: timestamp,
+      entry,
+    };
+  }
+
+  #finalizePendingTimelineEntry(
+    workflowId: string,
+    status: WorkflowTimelineEntry['status'],
+    output: unknown,
+    finishedAt = this.#options.getNow(),
+  ): void {
+    const pendingEntry = this.#pendingTimelineEntries.get(workflowId);
+    if (!pendingEntry) {
+      return;
+    }
+
+    const currentStatus = pendingEntry.entry.status;
+    if (currentStatus === status) {
+      return;
+    }
+
+    const canOverrideCompletedWithTerminalStatus =
+      currentStatus === 'completed' &&
+      (status === 'failed' || status === 'cancelled' || status === 'timed-out');
+    if (currentStatus !== 'running' && !canOverrideCompletedWithTerminalStatus) {
+      return;
+    }
+
+    pendingEntry.entry.status = status;
+    pendingEntry.entry.outputSummary = summarizeTimelineValue(output);
+    pendingEntry.entry.duration = finishedAt - pendingEntry.startedAt;
+  }
+
+  #buildPendingTimelineOperation(
+    workflowId: string,
+  ): import('../storage/interface.ts').BatchOperation | null {
+    const pendingEntry = this.#pendingTimelineEntries.get(workflowId);
+    if (!pendingEntry) {
+      return null;
+    }
+
+    return {
+      type: 'put',
+      key: KEYS.timeline(workflowId, pendingEntry.entry.step),
+      value: encode(pendingEntry.entry),
+    };
   }
 
   /**
@@ -4753,8 +5160,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       case 'checkpoint': {
+        const operation = this.#translateOperationRequest(message.operationRequest);
+
         // Persist checkpoint at this yield boundary
-        await this.#persistCheckpoint(message.workflowId, message.checkpoint);
+        await this.#persistCheckpoint(message.workflowId, operation, message.checkpoint);
 
         // Development mode: validate checkpoint round-trip
         this.#validateDevelopmentCheckpoint(message.workflowId);
@@ -4769,7 +5178,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
         // Translate the operation request: worker protocol uses `kind` while the
         // engine uses `type`. Inline strategy already emits ContextOperationRequest.
-        const operation = this.#translateOperationRequest(message.operationRequest);
         await this.#processOperation(message.workflowId, operation);
         break;
       }
@@ -4968,6 +5376,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   #completeOperation(workflowId: string, value: unknown): void {
+    this.#finalizePendingTimelineEntry(workflowId, 'completed', value);
     this.#feedOperationResult(workflowId, { status: 'completed', value });
   }
 
@@ -4977,6 +5386,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const enrichedError = error instanceof Error ? error : new Error(String(error));
+    this.#finalizePendingTimelineEntry(workflowId, 'failed', enrichedError.message);
     this.#feedOperationResult(
       workflowId,
       { status: 'failed', error: enrichedError.message },
@@ -6619,11 +7029,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // and the tool-effect log holds per-tool-call dedup records that have no
     // consumers after the workflow terminates — leaving them behind would
     // leak linearly with tool-call volume across the engine's lifetime.
-    const prefixes: string[] = [
-      `sig:${encodedWorkflowId}:`,
-      `tool-effect:${encodedWorkflowId}:`,
-      `wf:${encodedWorkflowId}:ckpt:`,
-    ];
+    const prefixes: string[] = [`sig:${encodedWorkflowId}:`, `tool-effect:${encodedWorkflowId}:`];
 
     if (includeOutputArtifacts) {
       // Terminated workflows have no waiting consumers, so drop the output
@@ -6696,6 +7102,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#heartbeatDetails.delete(workflowId);
     this.#agentWorkflowIds.delete(workflowId);
     this.#eventLogHeads.delete(workflowId);
+    this.#pendingTimelineEntries.delete(workflowId);
     this.#workflowVersionTuples.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
@@ -6959,6 +7366,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           ...this.#buildTerminalWorkflowIndexOperations(state, updatedState),
           { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
         ];
+        const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
+        if (pendingTimelineOperation) {
+          completionOperations.push(pendingTimelineOperation);
+        }
 
         // Inline attribute cleanup into the same batch instead of a separate
         // storage.get() + storage.batch() round-trip.
@@ -7023,7 +7434,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (error.stack !== undefined) {
       stateUpdate.errorStack = error.stack;
     }
-    await this.#updateWorkflowState(workflowId, stateUpdate);
+    const failureResult = await this.#updateWorkflowState(workflowId, stateUpdate, {
+      allowedStatuses: ['running', 'pending'],
+      buildAdditionalOperations: (_previousState, updatedAt) => {
+        this.#finalizePendingTimelineEntry(workflowId, 'failed', error.message, updatedAt);
+        const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
+        return pendingTimelineOperation ? [pendingTimelineOperation] : [];
+      },
+    });
+    if (!failureResult) {
+      return;
+    }
 
     // Clean up user-set attribute indexes; fire-and-forget the deadline
     // timer cancel since the workflow is terminal.
@@ -7080,22 +7501,40 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     ]);
   }
 
-  async #updateWorkflowState(workflowId: string, updates: Partial<WorkflowState>): Promise<void> {
-    await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+  async #updateWorkflowState(
+    workflowId: string,
+    updates: Partial<WorkflowState>,
+    options: WorkflowStateUpdateOptions = {},
+  ): Promise<WorkflowStateUpdateResult | null> {
+    return await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
       const bytes = await this.#storage.get(KEYS.workflow(workflowId));
-      if (!bytes) return;
+      if (!bytes) {
+        return null;
+      }
 
       const state = decodeWorkflowState(bytes);
+      if (options.allowedStatuses && !options.allowedStatuses.includes(state.status)) {
+        return null;
+      }
+
+      const updatedAt = this.#options.getNow();
       const updated = {
         ...state,
         ...updates,
-        updatedAt: this.#options.getNow(),
+        updatedAt,
       };
+      const additionalOperations = options.buildAdditionalOperations?.(state, updatedAt) ?? [];
 
       await this.#storage.batch([
         ...this.#buildTerminalWorkflowIndexOperations(state, updated),
         { type: 'put', key: KEYS.workflow(workflowId), value: encode(updated) },
+        ...additionalOperations,
       ]);
+
+      return {
+        previousState: state,
+        updatedAt,
+      };
     });
   }
 

@@ -4,10 +4,12 @@ import {
   createStorage,
   DOCTOR_HELP_TEXT,
   executeDoctor,
+  executeTimeline,
   executeValidate,
   executeVersionCheck,
   HELP_TEXT,
   parseCliArguments,
+  TIMELINE_HELP_TEXT,
   VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
 } from './cli.ts';
@@ -108,6 +110,16 @@ if (parsedArguments.command === 'serve') {
   }
 
   const result = await executeValidate(parsedArguments);
+  if (result.stderr) console.error(result.stderr);
+  if (result.stdout) console.log(result.stdout);
+  process.exit(result.exitCode);
+} else if (parsedArguments.command === 'timeline') {
+  if (parsedArguments.help) {
+    console.log(TIMELINE_HELP_TEXT);
+    process.exit(0);
+  }
+
+  const result = await executeTimeline(parsedArguments);
   if (result.stderr) console.error(result.stderr);
   if (result.stdout) console.log(result.stdout);
   process.exit(result.exitCode);

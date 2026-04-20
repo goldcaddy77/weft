@@ -19,8 +19,10 @@ import type {
   StartOptions,
   SubmitReviewOptions,
   WorkflowEvent,
+  WorkflowReplay,
   WorkflowState,
   WorkflowSummary,
+  WorkflowTimelineEntry,
 } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -133,6 +135,15 @@ export interface WeftClient {
 
   /** Get the event history for a workflow. */
   getEvents(id: string): Promise<WorkflowEvent[]>;
+
+  /**
+   * Get the structured execution timeline for a workflow.
+   * Returns `[]` when the workflow is missing or has no retained timeline entries.
+   */
+  getTimeline(id: string): Promise<WorkflowTimelineEntry[]>;
+
+  /** Reconstruct workflow state at a historical checkpoint step. */
+  replayTo(id: string, step: number): Promise<WorkflowReplay | null>;
 
   /** List pending human review requests. */
   listReviews(): Promise<Array<Record<string, unknown>>>;
