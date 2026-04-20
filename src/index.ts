@@ -64,6 +64,8 @@ export type {
   Duration,
   EngineOptions,
   FailureCategory,
+  ForkLineage,
+  ForkOptions,
   ListFilter,
   NormalizedRetentionPolicy,
   PaginatedResult,

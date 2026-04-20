@@ -144,6 +144,14 @@ export const ROUTES = [
   },
   {
     method: 'POST',
+    path: '/v1/workflows/:id/fork',
+    handler: 'forkWorkflow',
+    paramNames: ['id'],
+    summary: 'Fork a workflow from its latest or a historical checkpoint',
+    tags: ['Workflows'],
+  },
+  {
+    method: 'POST',
     path: '/v1/workflows/:id/timeout',
     handler: 'timeoutWorkflow',
     paramNames: ['id'],

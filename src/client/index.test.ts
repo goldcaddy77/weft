@@ -92,6 +92,7 @@ describe('HttpClient', () => {
     expect(client.getBudgetPolicy).toBeFunction();
     expect(client.getQuotaUsage).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
+    expect(client.fork).toBeFunction();
     expect(client.getRetentionOverview).toBeFunction();
     expect(client.purge).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();
@@ -436,6 +437,7 @@ describe('HttpClient', () => {
         'getBudgetPolicy',
         'getQuotaUsage',
         'getStreamChunks',
+        'fork',
         'getRetentionOverview',
         'purge',
         'submitCoordinatedUpdate',
@@ -505,6 +507,7 @@ describe('HttpClient request surface', () => {
           { sequence: 3, value: 'chunk-b' },
         ],
       }),
+      jsonResponse({ id: 'wf-forked' }),
       jsonResponse({ updateId: 'update-1', result: 'accepted' }),
       jsonResponse({ status: 'completed', result: 'done', error: 'warn' }),
     ];
@@ -568,6 +571,8 @@ describe('HttpClient request surface', () => {
       { sequence: 2, value: 'chunk-a' },
       { sequence: 3, value: 'chunk-b' },
     ]);
+    const forked = await httpClient.fork('wf/1', { fromStep: 2 });
+    expect(forked.id).toBe('wf-forked');
     expect(
       await httpClient.submitCoordinatedUpdate(
         'wf/1',
@@ -620,6 +625,14 @@ describe('HttpClient request surface', () => {
     expect(fetchCalls[14]?.url).toContain('/resume');
     expect(fetchCalls[15]?.url).toBe('http://example.test/v1/recover');
     expect(fetchCalls[24]?.url).toContain('/streams/stream%2Fkey?after=1');
+    expect(fetchCalls[25]?.url).toBe('http://example.test/v1/workflows/wf%2F1/fork');
+    expect(fetchCalls[25]?.init?.method).toBe('POST');
+    const forkBody = fetchCalls[25]?.init?.body;
+    expect(typeof forkBody).toBe('string');
+    if (typeof forkBody !== 'string') {
+      throw new Error('Expected fork request body to be a string');
+    }
+    expect(JSON.parse(forkBody)).toEqual({ fromStep: 2 });
   });
 
   it('serializes startAt in the workflow start payload', async () => {

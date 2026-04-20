@@ -5659,11 +5659,11 @@ Child workflows exist, but composing them into pipelines, fan-out/fan-in DAGs, o
 
 #### 7h. Workflow forking
 
-- [ ] **`engine.fork(workflowId, options?)` creates a new workflow from an existing workflow's checkpoint.** The forked workflow starts from the same step with the same accumulated results, but gets a new ID and can diverge from that point. Original workflow is unaffected.
-- [ ] **Fork options include `{ fromStep?: number }`.** Default: fork from the latest checkpoint. `fromStep` allows forking from a historical checkpoint (if checkpoint history is retained).
-- [ ] **Fork records lineage.** Forked workflow state includes `forkedFrom: { workflowId, step }`. Queryable via search attribute `weft:forkedFrom`.
-- [ ] **`POST /v1/workflows/:id/fork` HTTP endpoint.** Returns the new workflow handle.
-- [ ] Tests cover: fork and diverge, fork from historical step, fork a completed workflow (starts from last checkpoint, re-runs terminal step), fork lineage chain (A → B → C).
+- [x] **`engine.fork(workflowId, options?)` creates a new workflow from an existing workflow's checkpoint.** The forked workflow starts from the same step with the same accumulated results, but gets a new ID and can diverge from that point. Original workflow is unaffected.
+- [x] **Fork options include `{ fromStep?: number }`.** Default: fork from the latest checkpoint. `fromStep` allows forking from a historical checkpoint (if checkpoint history is retained).
+- [x] **Fork records lineage.** Forked workflow state includes `forkedFrom: { workflowId, step }`. Queryable via search attribute `weft:forkedFrom`.
+- [x] **`POST /v1/workflows/:id/fork` HTTP endpoint.** Returns the new workflow handle.
+- [x] Tests cover: fork and diverge, fork from historical step, fork a completed workflow (starts from last checkpoint, re-runs terminal step), fork lineage chain (A → B → C).
 
 #### 7i. Event replay and time-travel debugging
 

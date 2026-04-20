@@ -24,6 +24,7 @@ import {
 import { QuotaExceededError } from '../core/tenant-quotas.ts';
 import type {
   AttributeFilter,
+  ForkOptions,
   ListFilter,
   ReviewDecision,
   SearchAttributeValue,
@@ -1021,6 +1022,58 @@ async function handleResumeWorkflow(engine: Engine, workflowId: string): Promise
   }
 }
 
+async function handleForkWorkflow(
+  request: Request,
+  engine: Engine,
+  workflowId: string,
+): Promise<Response> {
+  let options: ForkOptions | undefined;
+  const rawBody = await request.text();
+
+  if (rawBody.trim().length > 0) {
+    let body: unknown;
+    try {
+      body = JSON.parse(rawBody) as unknown;
+    } catch {
+      return errorResponse('Invalid JSON body', 400);
+    }
+
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      return errorResponse('Request body must be a JSON object', 400);
+    }
+
+    const record = body as Record<string, unknown>;
+    if (record['fromStep'] !== undefined) {
+      const fromStep = record['fromStep'];
+      if (typeof fromStep !== 'number' || !Number.isSafeInteger(fromStep) || fromStep < 0) {
+        return errorResponse('Field "fromStep" must be a non-negative safe integer', 400);
+      }
+      options = { fromStep };
+    }
+  }
+
+  try {
+    const handle = await engine.fork(workflowId, options);
+    return jsonResponse({ id: handle.id }, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (message.includes('fromStep') || message.includes('Checkpoint not found at step')) {
+      return errorResponse(message, 400);
+    }
+
+    if (message.includes('Checkpoint not found')) {
+      return errorResponse(message, 404);
+    }
+
+    if (message.includes('not found')) {
+      return errorResponse(message, 404);
+    }
+
+    return errorResponse(message, 500);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Recover all route — engine.recoverAll()
 // ---------------------------------------------------------------------------
@@ -1347,6 +1400,8 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   queryWorkflow: async ({ engine, param }) =>
     handleQueryWorkflow(engine, param('id'), param('name')),
   resumeWorkflow: async ({ engine, param }) => handleResumeWorkflow(engine, param('id')),
+  forkWorkflow: async ({ request, engine, param }) =>
+    handleForkWorkflow(request, engine, param('id')),
   timeoutWorkflow: async ({ engine, param }) => handleTimeoutWorkflow(engine, param('id')),
   getWorkflowResult: async ({ engine, param }) => handleGetWorkflowResult(engine, param('id')),
   signalWorkflow: async ({ request, engine, param }) =>

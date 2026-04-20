@@ -11,6 +11,7 @@ import type { StoredStreamChunk } from '../core/context.ts';
 import type { TypedEventTarget, WeftEventMap } from '../core/events.ts';
 import type {
   CoordinatedUpdateResult,
+  ForkOptions,
   ListFilter,
   PaginatedResult,
   PurgeResult,
@@ -168,6 +169,8 @@ export interface WeftClient {
     options?: { after?: number },
   ): Promise<StoredStreamChunk[]>;
 
+  /** Fork a workflow from its latest or a historical checkpoint. */
+  fork(id: string, options?: ForkOptions): Promise<ClientHandle>;
   /** Get the configured workflow retention policies and next sweep time. */
   getRetentionOverview(): Promise<RetentionOverview>;
 
