@@ -2965,11 +2965,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // Private: attribute index cleanup
   // -------------------------------------------------------------------------
 
-  async #cleanupAttributeIndex(workflowId: string): Promise<void> {
-    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-    if (!attributeBytes) return;
+  async #cleanupAttributeIndex(
+    workflowId: string,
+    currentAttributes?: Record<string, SearchAttributeValue>,
+  ): Promise<void> {
+    if (currentAttributes === undefined) {
+      const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+      if (!attributeBytes) return;
 
-    const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+      currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+    }
+
     const deleteOperations = buildIndexOperations(workflowId, currentAttributes, {});
 
     // Delete the attribute record itself along with all index entries
@@ -3646,14 +3652,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (!state || (state.status !== 'running' && state.status !== 'pending')) return;
     const elapsed = this.#options.getNow() - getWorkflowExecutionStartedAt(state);
     const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-    const retainedAttributes = attributeBytes
-      ? this.#buildRetainedTerminalSearchAttributes(
-          decode(attributeBytes) as Record<string, SearchAttributeValue>,
-        )
+    const attributes = attributeBytes
+      ? (decode(attributeBytes) as Record<string, SearchAttributeValue>)
       : {};
+    const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(attributes);
 
     await this.#updateWorkflowState(workflowId, { status });
-    await this.#cleanupAttributeIndex(workflowId);
+    await this.#cleanupAttributeIndex(workflowId, attributes);
     await this.#writeRetainedTerminalSearchAttributes(workflowId, retainedAttributes);
     void this.#swallowPromiseRejection(
       this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
@@ -6491,10 +6496,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     failureCategory: FailureCategory = 'system',
   ): Promise<void> {
     const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-    const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(
-      attributeBytes ? (decode(attributeBytes) as Record<string, SearchAttributeValue>) : {},
-      { failureCategory },
-    );
+    const attributes = attributeBytes
+      ? (decode(attributeBytes) as Record<string, SearchAttributeValue>)
+      : {};
+    const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(attributes, {
+      failureCategory,
+    });
 
     const stateUpdate: Partial<WorkflowState> = {
       status: 'failed',
@@ -6508,7 +6515,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // Clean up user-set attribute indexes; fire-and-forget the deadline
     // timer cancel since the workflow is terminal.
-    await this.#cleanupAttributeIndex(workflowId);
+    await this.#cleanupAttributeIndex(workflowId, attributes);
     void this.#swallowPromiseRejection(
       this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
     );
