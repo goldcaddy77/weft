@@ -4404,7 +4404,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     output: unknown,
   ): void {
     const pendingEntry = this.#pendingTimelineEntries.get(workflowId);
-    if (!pendingEntry || pendingEntry.entry.status !== 'running') {
+    if (!pendingEntry) {
+      return;
+    }
+
+    const currentStatus = pendingEntry.entry.status;
+    if (currentStatus === status) {
+      return;
+    }
+
+    const canOverrideCompletedWithTerminalStatus =
+      currentStatus === 'completed' &&
+      (status === 'failed' || status === 'cancelled' || status === 'timed-out');
+    if (currentStatus !== 'running' && !canOverrideCompletedWithTerminalStatus) {
       return;
     }
 
