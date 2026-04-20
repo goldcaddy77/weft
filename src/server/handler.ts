@@ -598,6 +598,14 @@ function getWorkflowTagBodyValue(body: Record<string, unknown>): string[] {
   return coerceStartWorkflowTags(body['tags'], 'Field "tags"');
 }
 
+function parseJsonRecordBody(body: unknown): Record<string, unknown> | null {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return null;
+  }
+
+  return body as Record<string, unknown>;
+}
+
 async function handleAddWorkflowTags(
   request: Request,
   engine: Engine,
@@ -605,7 +613,11 @@ async function handleAddWorkflowTags(
 ): Promise<Response> {
   let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as Record<string, unknown>;
+    const parsedBody = parseJsonRecordBody((await request.json()) as unknown);
+    if (!parsedBody) {
+      return errorResponse('Invalid JSON body', 400);
+    }
+    body = parsedBody;
   } catch {
     return errorResponse('Invalid JSON body', 400);
   }
@@ -632,7 +644,11 @@ async function handleRemoveWorkflowTags(
 ): Promise<Response> {
   let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as Record<string, unknown>;
+    const parsedBody = parseJsonRecordBody((await request.json()) as unknown);
+    if (!parsedBody) {
+      return errorResponse('Invalid JSON body', 400);
+    }
+    body = parsedBody;
   } catch {
     return errorResponse('Invalid JSON body', 400);
   }

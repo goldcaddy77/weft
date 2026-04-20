@@ -196,6 +196,7 @@
           type="button"
           class="workflow-tag-chip"
           data-selected={selectedTags.includes(tag)}
+          aria-pressed={selectedTags.includes(tag)}
           onclick={() => toggleTagFilter(tag)}
         >
           {tag}
