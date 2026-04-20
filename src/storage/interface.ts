@@ -229,6 +229,8 @@ export const KEYS = {
     `budget:${namespace}:${period}:${date}`,
   quotaActive: (tenantId: string) => `quota:${encodeStorageKeyComponent(tenantId)}:active`,
   quotaStorage: (tenantId: string) => `quota:${encodeStorageKeyComponent(tenantId)}:storage`,
+  quotaWorkflowStorage: (tenantId: string, workflowId: string) =>
+    `quota:${encodeStorageKeyComponent(tenantId)}:storage:${encodeStorageKeyComponent(workflowId)}`,
   quotaRate: (tenantId: string, windowMilliseconds: number) =>
     `quota:${encodeStorageKeyComponent(tenantId)}:rate:${String(windowMilliseconds)}`,
   review: (workflowId: string, reviewId: string) =>

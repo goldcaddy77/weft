@@ -415,6 +415,10 @@ export class TenantQuotaManager {
         this.#quotas.maxStorageBytes !== null
           ? await this.#storage.get(KEYS.quotaStorage(tenantId))
           : null;
+      const currentWorkflowStorageReservationRecord =
+        this.#quotas.maxStorageBytes !== null
+          ? await this.#storage.get(KEYS.quotaWorkflowStorage(tenantId, workflowId))
+          : null;
 
       const durableActiveWorkflowIds =
         this.#quotas.maxConcurrentWorkflows !== null
@@ -468,9 +472,20 @@ export class TenantQuotaManager {
             bytes: projectedStorageBytes,
           } satisfies TenantStorageUsageRecord),
         });
+        quotaOperations.push({
+          type: 'put',
+          key: KEYS.quotaWorkflowStorage(tenantId, workflowId),
+          value: encode({
+            bytes: parameters.estimatedStorageBytes,
+          } satisfies TenantStorageUsageRecord),
+        });
         conditions.push({
           key: KEYS.quotaStorage(tenantId),
           expectedValue: currentStorageUsageRecord,
+        });
+        conditions.push({
+          key: KEYS.quotaWorkflowStorage(tenantId, workflowId),
+          expectedValue: currentWorkflowStorageReservationRecord,
         });
       }
 
@@ -535,40 +550,85 @@ export class TenantQuotaManager {
   async commitTerminalTransition(parameters: TerminalTransitionParameters): Promise<void> {
     const { tenantId, workflowId, operations } = parameters;
 
-    if (this.#quotas.maxConcurrentWorkflows === null) {
-      await this.#storage.batch(operations);
-      return;
-    }
-
     for (let attempt = 1; attempt <= MAX_CONDITIONAL_BATCH_ATTEMPTS; attempt++) {
-      const durableActiveWorkflowIds = await this.#listTenantActiveWorkflowIds(tenantId);
-      const currentActiveRecord = await this.#storage.get(KEYS.quotaActive(tenantId));
-      const remainingWorkflowIds = durableActiveWorkflowIds.filter((id) => id !== workflowId);
+      const quotaOperations: BatchOperation[] = [];
+      const conditions: Array<{
+        key: string;
+        expectedValue: Uint8Array | null;
+      }> = [];
 
-      const quotaOperations: BatchOperation[] =
-        remainingWorkflowIds.length > 0
-          ? [
-              {
-                type: 'put',
-                key: KEYS.quotaActive(tenantId),
-                value: encode({
-                  workflowIds: remainingWorkflowIds,
-                } satisfies TenantActiveWorkflowRecord),
-              },
-            ]
-          : [{ type: 'delete', key: KEYS.quotaActive(tenantId) }];
+      if (this.#quotas.maxConcurrentWorkflows !== null) {
+        const durableActiveWorkflowIds = await this.#listTenantActiveWorkflowIds(tenantId);
+        const currentActiveRecord = await this.#storage.get(KEYS.quotaActive(tenantId));
+        const remainingWorkflowIds = durableActiveWorkflowIds.filter((id) => id !== workflowId);
+
+        quotaOperations.push(
+          ...(remainingWorkflowIds.length > 0
+            ? [
+                {
+                  type: 'put' as const,
+                  key: KEYS.quotaActive(tenantId),
+                  value: encode({
+                    workflowIds: remainingWorkflowIds,
+                  } satisfies TenantActiveWorkflowRecord),
+                },
+              ]
+            : [{ type: 'delete' as const, key: KEYS.quotaActive(tenantId) }]),
+        );
+        conditions.push({
+          key: KEYS.quotaActive(tenantId),
+          expectedValue: currentActiveRecord,
+        });
+      }
+
+      if (this.#quotas.maxStorageBytes !== null) {
+        const currentStorageUsageRecord = await this.#storage.get(KEYS.quotaStorage(tenantId));
+        const currentWorkflowStorageReservationRecord = await this.#storage.get(
+          KEYS.quotaWorkflowStorage(tenantId, workflowId),
+        );
+        const reservedStorageBytes =
+          currentWorkflowStorageReservationRecord !== null
+            ? decodeTenantStorageUsageBytes(currentWorkflowStorageReservationRecord)
+            : await this.#measureWorkflowStorageBytes(workflowId);
+        const remainingStorageBytes = Math.max(
+          0,
+          decodeTenantStorageUsageBytes(currentStorageUsageRecord) - reservedStorageBytes,
+        );
+
+        quotaOperations.push(
+          ...(remainingStorageBytes > 0
+            ? [
+                {
+                  type: 'put' as const,
+                  key: KEYS.quotaStorage(tenantId),
+                  value: encode({
+                    bytes: remainingStorageBytes,
+                  } satisfies TenantStorageUsageRecord),
+                },
+              ]
+            : [{ type: 'delete' as const, key: KEYS.quotaStorage(tenantId) }]),
+        );
+        quotaOperations.push({
+          type: 'delete',
+          key: KEYS.quotaWorkflowStorage(tenantId, workflowId),
+        });
+        conditions.push({
+          key: KEYS.quotaStorage(tenantId),
+          expectedValue: currentStorageUsageRecord,
+        });
+        conditions.push({
+          key: KEYS.quotaWorkflowStorage(tenantId, workflowId),
+          expectedValue: currentWorkflowStorageReservationRecord,
+        });
+      }
+
+      if (conditions.length === 0) {
+        await this.#storage.batch(operations);
+        return;
+      }
 
       if (
-        await storageConditionalBatch(
-          this.#storage,
-          [
-            {
-              key: KEYS.quotaActive(tenantId),
-              expectedValue: currentActiveRecord,
-            },
-          ],
-          [...operations, ...quotaOperations],
-        )
+        await storageConditionalBatch(this.#storage, conditions, [...operations, ...quotaOperations])
       ) {
         return;
       }
@@ -716,6 +776,23 @@ export class TenantQuotaManager {
     }
 
     return extractWorkflowIdFromStorageKey(key);
+  }
+
+  async #measureWorkflowStorageBytes(workflowId: string): Promise<number> {
+    let storageBytes = 0;
+
+    for (const prefix of WORKFLOW_USAGE_SCAN_PREFIXES) {
+      for await (const [key, value] of this.#storage.scan(prefix)) {
+        const ownedWorkflowId = await this.#extractWorkflowIdFromStoredRecord(key, value);
+        if (ownedWorkflowId !== workflowId) {
+          continue;
+        }
+
+        storageBytes += measureStoredRecordBytes(key, value);
+      }
+    }
+
+    return storageBytes;
   }
 
   #requiresConditionalBatch(): boolean {

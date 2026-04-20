@@ -398,6 +398,56 @@ describe('tenant resource quotas', () => {
     });
   });
 
+  it('releases storage byte reservations when a tenant workflow reaches a terminal state', async () => {
+    const storage = new MemoryStorage();
+    const quotaManager = new TenantQuotaManager(storage, Date.now, {
+      maxStorageBytes: 1024,
+    });
+
+    await storage.put(KEYS.quotaStorage('acme'), encode({ bytes: 256 } satisfies { bytes: number }));
+    await storage.put(
+      KEYS.quotaWorkflowStorage('acme', 'wf-storage-release'),
+      encode({ bytes: 256 } satisfies { bytes: number }),
+    );
+
+    await quotaManager.commitTerminalTransition({
+      tenantId: 'acme',
+      workflowId: 'wf-storage-release',
+      operations: [],
+    });
+
+    expect(await storage.get(KEYS.quotaStorage('acme'))).toBeNull();
+    expect(await storage.get(KEYS.quotaWorkflowStorage('acme', 'wf-storage-release'))).toBeNull();
+  });
+
+  it('falls back to measured workflow storage when a legacy storage reservation is missing', async () => {
+    const storage = new MemoryStorage();
+    const quotaManager = new TenantQuotaManager(storage, Date.now, {
+      maxStorageBytes: 1024,
+    });
+    const workflowId = 'wf-legacy-storage-release';
+    const workflowState = encode({
+      id: workflowId,
+      status: 'running',
+      tenant: { id: 'acme' },
+    });
+    const workflowBytes = measureStoredRecordBytes(KEYS.workflow(workflowId), workflowState);
+
+    await storage.put(KEYS.workflow(workflowId), workflowState);
+    await storage.put(
+      KEYS.quotaStorage('acme'),
+      encode({ bytes: workflowBytes } satisfies { bytes: number }),
+    );
+
+    await quotaManager.commitTerminalTransition({
+      tenantId: 'acme',
+      workflowId,
+      operations: [{ type: 'delete', key: KEYS.workflow(workflowId) }],
+    });
+
+    expect(await storage.get(KEYS.quotaStorage('acme'))).toBeNull();
+  });
+
   it('releases active workflow quota when a tenant workflow reaches a terminal state', async () => {
     const engine = createEngine({ quotas: { maxConcurrentWorkflows: 1 } });
     disposables.push(engine);
