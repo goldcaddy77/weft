@@ -605,6 +605,43 @@ describe('workflow retention', () => {
     engine[Symbol.dispose]();
   });
 
+  it('engine.purge(filter) deletes workflow tag index entries for purged workflows', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('tagged-purge', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    const purgedHandle = await engine.start('tagged-purge', 'purge me', {
+      id: 'purge-tagged-workflow',
+      tags: ['nightly', 'v2'],
+    });
+    const retainedHandle = await engine.start('tagged-purge', 'keep me', {
+      id: 'retain-tagged-workflow',
+      tags: ['nightly'],
+    });
+    await Promise.all([purgedHandle.result(), retainedHandle.result()]);
+
+    expect(await collectKeys(storage, 'tag:')).toEqual([
+      KEYS.tagIndex('nightly', 'purge-tagged-workflow'),
+      KEYS.tagIndex('nightly', 'retain-tagged-workflow'),
+      KEYS.tagIndex('v2', 'purge-tagged-workflow'),
+    ]);
+
+    const result = await engine.purge({
+      status: 'completed',
+      tags: ['nightly', 'v2'],
+    });
+
+    expect(result.deleted).toBe(1);
+    expect(await collectKeys(storage, 'tag:')).toEqual([
+      KEYS.tagIndex('nightly', 'retain-tagged-workflow'),
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
   it('retention sweep scans the terminal-workflow index instead of top-level workflow state rows', async () => {
     let now = 10_000;
     const storage = new CountingWorkflowStateScanStorage();

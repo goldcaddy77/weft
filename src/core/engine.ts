@@ -2769,6 +2769,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
     }
 
+    for (const operation of buildWorkflowTagIndexOperations(
+      workflowId,
+      normalizeWorkflowTags(state.tags),
+      undefined,
+    )) {
+      if (operation.type === 'delete') {
+        deleteOperations.push(operation);
+      }
+    }
+
     deleteOperations.push(...this.#releaseChargedAgentOperations(workflowId));
 
     const updateRequestPrefix = KEYS.updatePrefix(workflowId);
