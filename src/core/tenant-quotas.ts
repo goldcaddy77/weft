@@ -78,7 +78,6 @@ const WORKFLOW_OWNED_PREFIXES = [
 ] as const;
 
 const WORKFLOW_USAGE_SCAN_PREFIXES = [
-  ...WORKFLOW_OWNED_PREFIXES,
   'idx:',
   'wf-deadline:',
   'wf-delayed:',
@@ -228,6 +227,10 @@ function decodeTimerIndexTargetKey(bytes: Uint8Array): string | null {
 
 function measureStoredRecordBytes(key: string, value: Uint8Array): number {
   return STORAGE_BYTE_ENCODER.encode(key).byteLength + value.byteLength;
+}
+
+function resolveNestedWorkflowPrefix(workflowId: string): string {
+  return `${KEYS.workflow(workflowId)}:`;
 }
 
 function decodeWorkflowCreationRateRecord(bytes: Uint8Array | null): number[] {
@@ -672,12 +675,14 @@ export class TenantQuotaManager {
     }
 
     if (tenantWorkflowIds.size > 0) {
+      for (const workflowId of tenantWorkflowIds) {
+        for await (const [key, value] of this.#storage.scan(resolveNestedWorkflowPrefix(workflowId))) {
+          storageBytes += measureStoredRecordBytes(key, value);
+        }
+      }
+
       for (const prefix of WORKFLOW_USAGE_SCAN_PREFIXES) {
         for await (const [key, value] of this.#storage.scan(prefix)) {
-          if (prefix === 'wf:' && isTopLevelWorkflowStateKey(key)) {
-            continue;
-          }
-
           const workflowId = await this.#extractWorkflowIdFromStoredRecord(key, value);
           if (!workflowId || !tenantWorkflowIds.has(workflowId)) {
             continue;
@@ -780,6 +785,15 @@ export class TenantQuotaManager {
 
   async #measureWorkflowStorageBytes(workflowId: string): Promise<number> {
     let storageBytes = 0;
+
+    const workflowStateBytes = await this.#storage.get(KEYS.workflow(workflowId));
+    if (workflowStateBytes !== null) {
+      storageBytes += measureStoredRecordBytes(KEYS.workflow(workflowId), workflowStateBytes);
+    }
+
+    for await (const [key, value] of this.#storage.scan(resolveNestedWorkflowPrefix(workflowId))) {
+      storageBytes += measureStoredRecordBytes(key, value);
+    }
 
     for (const prefix of WORKFLOW_USAGE_SCAN_PREFIXES) {
       for await (const [key, value] of this.#storage.scan(prefix)) {

@@ -3456,33 +3456,50 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#strategy.cancelWorkflow(workflowId);
 
-    const state = await this.#loadWorkflowState(workflowId);
-    // Guard: if the workflow is already terminal (completed, failed, cancelled,
-    // timed-out), a stale deadline timer firing should be a no-op. This is
-    // critical now that scheduler.cancel is fire-and-forget on terminal paths.
-    if (!state || (state.status !== 'running' && state.status !== 'pending')) return;
-    const elapsed = this.#options.getNow() - getWorkflowExecutionStartedAt(state);
+    const terminationMetadata = await this.#runSerializedWorkflowStateWrite(
+      workflowId,
+      async () => {
+        const state = await this.#loadWorkflowState(workflowId);
+        // Guard: if the workflow is already terminal (completed, failed, cancelled,
+        // timed-out), a stale deadline timer firing should be a no-op. This is
+        // critical now that scheduler.cancel is fire-and-forget on terminal paths.
+        if (!state || (state.status !== 'running' && state.status !== 'pending')) {
+          return null;
+        }
 
-    await this.#commitWorkflowStateOperations(
-      state,
-      [
-        {
-          type: 'put',
-          key: KEYS.workflow(workflowId),
-          value: encode({
-            ...state,
-            status,
-            updatedAt: this.#options.getNow(),
-          }),
-        },
-      ],
-      { releaseTenantQuota: true },
+        const now = this.#options.getNow();
+        await this.#commitWorkflowStateOperations(
+          state,
+          [
+            {
+              type: 'put',
+              key: KEYS.workflow(workflowId),
+              value: encode({
+                ...state,
+                status,
+                updatedAt: now,
+              }),
+            },
+          ],
+          { releaseTenantQuota: true },
+        );
+
+        return {
+          elapsed: now - getWorkflowExecutionStartedAt(state),
+          wasPending: state.status === 'pending',
+        };
+      },
     );
+    if (!terminationMetadata) {
+      return;
+    }
+
+    const { elapsed, wasPending } = terminationMetadata;
     await this.#cleanupAttributeIndex(workflowId);
     void this.#swallowPromiseRejection(
       this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
     );
-    if (state.status === 'pending') {
+    if (wasPending) {
       void this.#swallowPromiseRejection(
         this.#scheduler.cancel(`delayed-start:${workflowId}`, workflowId),
       );
@@ -6374,23 +6391,33 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (error.stack !== undefined) {
       stateUpdate.errorStack = error.stack;
     }
-    const state = await this.#loadWorkflowState(workflowId);
-    if (!state) return;
-    await this.#commitWorkflowStateOperations(
-      state,
-      [
-        {
-          type: 'put',
-          key: KEYS.workflow(workflowId),
-          value: encode({
-            ...state,
-            ...stateUpdate,
-            updatedAt: this.#options.getNow(),
-          }),
-        },
-      ],
-      { releaseTenantQuota: true },
-    );
+    const failureCommitted = await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+      const state = await this.#loadWorkflowState(workflowId);
+      if (!state) {
+        return false;
+      }
+
+      await this.#commitWorkflowStateOperations(
+        state,
+        [
+          {
+            type: 'put',
+            key: KEYS.workflow(workflowId),
+            value: encode({
+              ...state,
+              ...stateUpdate,
+              updatedAt: this.#options.getNow(),
+            }),
+          },
+        ],
+        { releaseTenantQuota: true },
+      );
+
+      return true;
+    });
+    if (!failureCommitted) {
+      return;
+    }
 
     // Clean up user-set attribute indexes; fire-and-forget the deadline
     // timer cancel since the workflow is terminal.

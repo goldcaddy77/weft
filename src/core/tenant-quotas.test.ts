@@ -93,6 +93,7 @@ class BarrierConditionalBatchMemoryStorage extends MemoryStorage {
 
 class WorkflowScanTrackingStorage extends MemoryStorage {
   workflowScanCount = 0;
+  nestedWorkflowPrefixes: string[] = [];
 
   override async *scan(
     prefix: string,
@@ -100,11 +101,67 @@ class WorkflowScanTrackingStorage extends MemoryStorage {
   ): AsyncIterable<[string, Uint8Array]> {
     if (prefix === 'wf:') {
       this.workflowScanCount++;
+    } else if (prefix.startsWith('wf:')) {
+      this.nestedWorkflowPrefixes.push(prefix);
     }
 
     for await (const entry of super.scan(prefix, options)) {
       yield entry;
     }
+  }
+}
+
+class TerminalTransitionBarrierStorage extends MemoryStorage {
+  sawConcurrentWorkflowRead = false;
+  readonly #workflowKey: string;
+  #armed = false;
+  #blockingTransitionWrite = false;
+  #blockedTransitionSeen = false;
+  readonly #blockedWrite = Promise.withResolvers<void>();
+  readonly #releaseWrite = Promise.withResolvers<void>();
+
+  constructor(workflowId: string) {
+    super();
+    this.#workflowKey = KEYS.workflow(workflowId);
+  }
+
+  arm(): void {
+    this.#armed = true;
+  }
+
+  async waitForBlockedTransitionWrite(): Promise<void> {
+    await this.#blockedWrite.promise;
+  }
+
+  releaseBlockedTransitionWrite(): void {
+    this.#releaseWrite.resolve();
+  }
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    if (this.#armed && this.#blockingTransitionWrite && key === this.#workflowKey) {
+      this.sawConcurrentWorkflowRead = true;
+    }
+
+    return super.get(key);
+  }
+
+  override async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    if (
+      this.#armed &&
+      !this.#blockedTransitionSeen &&
+      operations.some((operation) => operation.type === 'put' && operation.key === this.#workflowKey)
+    ) {
+      this.#blockedTransitionSeen = true;
+      this.#blockingTransitionWrite = true;
+      this.#blockedWrite.resolve();
+      await this.#releaseWrite.promise;
+      this.#blockingTransitionWrite = false;
+    }
+
+    return super.conditionalBatch(conditions, operations);
   }
 }
 
@@ -492,6 +549,50 @@ describe('tenant resource quotas', () => {
     await expect(secondHandle.result()).resolves.toBeDefined();
   });
 
+  it('serializes cancellation before a concurrent tenant workflow completion writes terminal state', async () => {
+    const workflowId = 'quota-terminal-write-serialization';
+    const storage = new TerminalTransitionBarrierStorage(workflowId);
+    const engine = createEngine({
+      storage,
+      quotas: { maxConcurrentWorkflows: 4 },
+    });
+    disposables.push(engine);
+
+    const activityStarted = Promise.withResolvers<void>();
+    const activityResult = Promise.withResolvers<string>();
+
+    engine.register('slow-tenant-completion', async function* (context: WorkflowContext) {
+      const result = yield* (context as Context).run(async () => {
+        activityStarted.resolve();
+        return activityResult.promise;
+      });
+      return result;
+    });
+
+    const handle = await engine.start(
+      'slow-tenant-completion',
+      { tenantId: 'acme' },
+      { id: workflowId },
+    );
+    await activityStarted.promise;
+
+    storage.arm();
+
+    const cancelPromise = engine.cancel(handle.id);
+    await storage.waitForBlockedTransitionWrite();
+
+    activityResult.resolve('completed');
+    await Promise.resolve();
+
+    expect(storage.sawConcurrentWorkflowRead).toBe(false);
+
+    storage.releaseBlockedTransitionWrite();
+
+    await cancelPromise;
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+    await expect(engine.get(workflowId)).resolves.toMatchObject({ status: 'cancelled' });
+  });
+
   it('rejects starts that exceed maxWorkflowCreationRate within the configured window', async () => {
     let now = new Date('2026-04-19T07:00:00.000Z').getTime();
     const engine = createEngine({
@@ -702,6 +803,32 @@ describe('tenant resource quotas', () => {
       }, 0);
 
     expect(usage.storageBytes.used).toBe(expectedStorageBytes);
+  });
+
+  it('counts nested workflow state records without rescanning the full workflow prefix', async () => {
+    const storage = new WorkflowScanTrackingStorage();
+    const quotaManager = new TenantQuotaManager(storage, Date.now, {
+      maxStorageBytes: 65_536,
+    });
+    const workflowId = 'quota-usage-checkpoint-prefix';
+    const workflowState = encode({
+      id: workflowId,
+      status: 'running',
+      tenant: { id: 'acme' },
+    });
+    const checkpoint = encode({ step: 3, result: 'checkpointed' });
+
+    await storage.put(KEYS.workflow(workflowId), workflowState);
+    await storage.put(KEYS.checkpoint(workflowId), checkpoint);
+
+    const usage = await quotaManager.getUsage('acme');
+
+    expect(usage.storageBytes.used).toBe(
+      measureStoredRecordBytes(KEYS.workflow(workflowId), workflowState) +
+        measureStoredRecordBytes(KEYS.checkpoint(workflowId), checkpoint),
+    );
+    expect(storage.workflowScanCount).toBe(1);
+    expect(storage.nestedWorkflowPrefixes).toEqual([`${KEYS.workflow(workflowId)}:`]);
   });
 
   it('counts workflow ids that begin with "ckpt" in tenant quota usage and active workflow scans', async () => {
