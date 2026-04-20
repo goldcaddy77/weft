@@ -6393,7 +6393,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     const failureCommitted = await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
       const state = await this.#loadWorkflowState(workflowId);
-      if (!state) {
+      if (!state || (state.status !== 'running' && state.status !== 'pending')) {
         return false;
       }
 
