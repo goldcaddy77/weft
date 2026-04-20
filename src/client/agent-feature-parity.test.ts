@@ -134,9 +134,9 @@ function agentFeatureTests(getClient: () => WeftClient, getEngine: () => Engine,
 
       const chunks = await client.getStreamChunks(handle.id, 'report');
       expect(chunks).toHaveLength(3);
-      expect(chunks[0]).toEqual({ row: 1, data: 'alpha' });
-      expect(chunks[1]).toEqual({ row: 2, data: 'bravo' });
-      expect(chunks[2]).toEqual({ row: 3, data: 'charlie' });
+      expect(chunks[0]).toEqual({ sequence: 0, value: { row: 1, data: 'alpha' } });
+      expect(chunks[1]).toEqual({ sequence: 1, value: { row: 2, data: 'bravo' } });
+      expect(chunks[2]).toEqual({ sequence: 2, value: { row: 3, data: 'charlie' } });
 
       // Unblock the workflow so its resources get released.
       await client.signal(handle.id, 'finish-streaming');

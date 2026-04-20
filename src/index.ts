@@ -190,6 +190,7 @@ export type {
   ContextOptions,
   OffloadReference,
   SagaStep,
+  StoredStreamChunk,
   StreamReference,
   StreamSink,
 } from './core/context';

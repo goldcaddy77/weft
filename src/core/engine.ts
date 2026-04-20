@@ -43,7 +43,12 @@ import {
 } from './checkpoint.ts';
 import { decode, encode } from './codec.ts';
 import type { ConstraintCheckState, ConstraintDefinition } from './constraint.ts';
-import type { ContextOperationRequest, StreamReference, StreamSink } from './context.ts';
+import type {
+  ContextOperationRequest,
+  StoredStreamChunk,
+  StreamReference,
+  StreamSink,
+} from './context.ts';
 import { Context } from './context.ts';
 import {
   cleanupPartialStreamChunks,
@@ -3153,19 +3158,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return this.#budgetPolicyEnforcer.policies.get(namespace) ?? null;
   }
 
-  /** Read stream chunks back from storage for a completed stream operation. */
-  async getStreamChunks(workflowId: string, key: string): Promise<unknown[]> {
-    const metadataBytes = await this.#storage.get(KEYS.streamMetadata(workflowId, key));
-    if (!metadataBytes) return [];
+  /** Read stored stream chunks back from storage, optionally after a durable sequence cursor. */
+  async getStreamChunks(
+    workflowId: string,
+    key: string,
+    options?: { after?: number },
+  ): Promise<StoredStreamChunk[]> {
+    const after = options?.after;
+    const prefix = KEYS.streamChunkPrefix(workflowId, key);
+    const chunks: StoredStreamChunk[] = [];
+    const scanOptions =
+      after !== undefined && after >= 0
+        ? { gt: KEYS.streamChunk(workflowId, key, after) }
+        : undefined;
 
-    const metadata = decode(metadataBytes) as StreamReference;
-    const chunks: unknown[] = [];
-
-    for (let i = 0; i < metadata.chunkCount; i++) {
-      const chunkBytes = await this.#storage.get(KEYS.streamChunk(workflowId, key, i));
-      if (chunkBytes) {
-        chunks.push(decode(chunkBytes));
+    for await (const [storageKey, chunkBytes] of this.#storage.scan(prefix, scanOptions)) {
+      const sequenceText = storageKey.slice(prefix.length);
+      const sequence = Number.parseInt(sequenceText, 10);
+      if (!Number.isSafeInteger(sequence) || sequence < 0) {
+        continue;
       }
+
+      chunks.push({
+        sequence,
+        value: decode(chunkBytes),
+      });
     }
 
     return chunks;

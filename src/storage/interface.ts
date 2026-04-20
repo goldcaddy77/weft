@@ -189,6 +189,8 @@ export const KEYS = {
     `shared:${encodeStorageKeyComponent(workflowId)}:${stateKey}`,
   sharedStateVersion: (workflowId: string, stateKey: string) =>
     `shared:${encodeStorageKeyComponent(workflowId)}:${stateKey}:version`,
+  streamChunkPrefix: (workflowId: string, key: string) =>
+    `blob:${encodeStorageKeyComponent(workflowId)}:${key}:chunk:`,
   streamChunk: (workflowId: string, key: string, chunkIndex: number) =>
     `blob:${encodeStorageKeyComponent(workflowId)}:${key}:chunk:${String(chunkIndex).padStart(10, '0')}`,
   streamMetadata: (workflowId: string, key: string) =>

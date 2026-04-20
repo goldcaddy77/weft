@@ -2255,11 +2255,14 @@ describe('handleRequest', () => {
     });
   });
 
-  it('GET /v1/workflows/:id/streams/:key returns stored stream chunks', async () => {
+  it('GET /v1/workflows/:id/streams/:key returns stored stream chunks with sequence metadata', async () => {
     engine = createEngine();
 
     const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
-    engine.getStreamChunks = async () => ['alpha', { token: 'beta' }];
+    engine.getStreamChunks = async () => [
+      { sequence: 0, value: 'alpha' },
+      { sequence: 1, value: { token: 'beta' } },
+    ];
 
     const response = await handleRequest(
       request('GET', '/v1/workflows/wf-stream/streams/tokens'),
@@ -2268,8 +2271,98 @@ describe('handleRequest', () => {
 
     expect(response.status).toBe(200);
     expect(await json(response)).toEqual({
-      chunks: ['alpha', { token: 'beta' }],
+      chunks: [
+        { sequence: 0, value: 'alpha' },
+        { sequence: 1, value: { token: 'beta' } },
+      ],
     });
+
+    engine.getStreamChunks = originalGetStreamChunks;
+  });
+
+  it('GET /v1/workflows/:id/streams/:key forwards the after query parameter', async () => {
+    engine = createEngine();
+
+    const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
+    let receivedAfter: number | undefined;
+    engine.getStreamChunks = async (_workflowId, _key, options) => {
+      receivedAfter = options?.after;
+      return [{ sequence: 2, value: 'charlie' }];
+    };
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-stream/streams/tokens?after=1'),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(receivedAfter).toBe(1);
+    expect(await json(response)).toEqual({
+      chunks: [{ sequence: 2, value: 'charlie' }],
+    });
+
+    engine.getStreamChunks = originalGetStreamChunks;
+  });
+
+  it('GET /v1/workflows/:id/streams/:key returns 400 for an invalid after query parameter', async () => {
+    engine = createEngine();
+
+    for (const after of ['not-a-number', '0x10', '1e3']) {
+      const response = await handleRequest(
+        request('GET', `/v1/workflows/wf-stream/streams/tokens?after=${after}`),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await json(response)).toEqual({
+        error: `Invalid after query parameter: ${after}`,
+      });
+    }
+  });
+
+  it('GET /v1/workflows/:id/streams/:key returns 400 for an empty after query parameter', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-stream/streams/tokens?after='),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Invalid after query parameter: ',
+    });
+  });
+
+  it('GET /v1/workflows/:id/streams/:key uses durable chunk sequences for SSE event ids', async () => {
+    engine = createEngine();
+
+    const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
+    engine.getStreamChunks = async (_workflowId, _key, options) => {
+      expect(options?.after).toBe(2);
+      return [
+        { sequence: 3, value: 'alpha' },
+        { sequence: 5, value: { done: true } },
+      ];
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/wf-stream/streams/tokens?after=2', {
+        method: 'GET',
+        headers: { Accept: 'text/event-stream' },
+      }),
+      engine,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('text/event-stream');
+
+    const body = await response.text();
+    expect(body).toContain('id: 3');
+    expect(body).toContain('id: 5');
+    expect(body).not.toContain('id: 4');
+    expect(body).toContain('{"sequence":3,"value":"alpha"}');
+    expect(body).toContain('{"sequence":5,"value":{"done":true}}');
 
     engine.getStreamChunks = originalGetStreamChunks;
   });
@@ -2369,13 +2462,17 @@ describe('handleRequest', () => {
       await flush();
 
       const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
-      engine.getStreamChunks = async () => [
-        'alpha',
-        { token: 'beta' },
-        { token: '' },
-        { nope: 'ignored' },
-        42,
-      ];
+      let receivedAfter: number | undefined;
+      engine.getStreamChunks = async (_workflowId, _key, options) => {
+        receivedAfter = options?.after;
+        return [
+          { sequence: 3, value: 'alpha' },
+          { sequence: 4, value: { token: 'beta' } },
+          { sequence: 5, value: { token: '' } },
+          { sequence: 6, value: { nope: 'ignored' } },
+          { sequence: 7, value: 42 },
+        ];
+      };
 
       const response = await handleRequest(
         new Request(`http://localhost/v1/workflows/${id}/sse`, {
@@ -2386,11 +2483,66 @@ describe('handleRequest', () => {
       );
 
       const body = await response.text();
+      expect(receivedAfter).toBe(2);
+      expect(body).toContain('id: 3');
+      expect(body).toContain('id: 4');
       expect(body).toContain('alpha');
       expect(body).toContain('beta');
       expect(body).not.toContain('ignored');
+      expect(body).not.toContain('id: 2\nevent: token');
+      expect(body).not.toContain('id: 5\nevent: done');
 
       engine.getStreamChunks = originalGetStreamChunks;
+    });
+
+    it('returns 400 when Last-Event-ID is invalid', async () => {
+      engine = createEngine();
+
+      const startResponse = await handleRequest(
+        request('POST', '/v1/workflows', { type: 'echo', input: 'stream' }),
+        engine,
+      );
+      const { id } = (await json(startResponse)) as { id: string };
+      await flush();
+
+      for (const lastEventId of ['1abc', '0x10', '1e3']) {
+        const response = await handleRequest(
+          new Request(`http://localhost/v1/workflows/${id}/sse`, {
+            method: 'GET',
+            headers: { Accept: 'text/event-stream', 'Last-Event-ID': lastEventId },
+          }),
+          engine,
+        );
+
+        expect(response.status).toBe(400);
+        expect(await json(response)).toEqual({
+          error: `Invalid Last-Event-ID header: ${lastEventId}`,
+        });
+      }
+    });
+
+    it('returns 400 when Last-Event-ID is empty', async () => {
+      engine = createEngine();
+
+      const startResponse = await handleRequest(
+        request('POST', '/v1/workflows', { type: 'echo', input: 'stream' }),
+        engine,
+      );
+      const { id } = (await json(startResponse)) as { id: string };
+      await flush();
+
+      const response = await handleRequest(
+        new Request(`http://localhost/v1/workflows/${id}/sse`, {
+          method: 'GET',
+          headers: { Accept: 'text/event-stream', 'Last-Event-ID': '' },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await json(response)).toEqual({
+        error: 'Invalid Last-Event-ID header: ',
+      });
     });
   });
 

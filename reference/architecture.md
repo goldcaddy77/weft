@@ -5680,11 +5680,11 @@ Weft already has a hash-chained event log — the data is there, but there's no 
 
 Weft streams tokens over WebSocket with a reconnection buffer, but if the buffer has been flushed before the client reconnects, there's a gap.
 
-- [ ] **Every streamed chunk includes a monotonic `sequence: number`.** The sequence is persisted alongside the chunk in storage (`blob:{workflowId}:{key}:chunk:{sequence}`).
-- [ ] **Client reconnection accepts `{ resumeFrom: sequence }`.** Server replays all chunks with `sequence > resumeFrom` from storage, then switches to live streaming. No gaps, no duplicates.
-- [ ] **`GET /v1/workflows/:id/streams/:key?after=N` HTTP endpoint.** Returns chunks after sequence N as a JSON array (for non-WebSocket clients) or SSE stream.
-- [ ] **Resumption works across server restarts.** Since chunks are in storage, a client can reconnect to a different server instance and resume without loss.
-- [ ] Tests cover: disconnect and resume mid-stream, resume after server restart, resume with sequence=0 (replay all), resume after stream completion (returns all chunks immediately).
+- [x] **Every streamed chunk includes a monotonic `sequence: number`.** The sequence is persisted alongside the chunk in storage (`blob:{workflowId}:{key}:chunk:{sequence}`).
+- [x] **Client reconnection accepts `{ resumeFrom: sequence }`.** Server replays all chunks with `sequence > resumeFrom` from storage, then switches to live streaming. No gaps, no duplicates.
+- [x] **`GET /v1/workflows/:id/streams/:key?after=N` HTTP endpoint.** Returns chunks after sequence N as a JSON array (for non-WebSocket clients) or SSE stream.
+- [x] **Resumption works across server restarts.** Since chunks are in storage, a client can reconnect to a different server instance and resume without loss.
+- [x] Tests cover: disconnect and resume mid-stream, resume after server restart, resume with sequence=0 (replay all), resume after stream completion (returns all chunks immediately).
 
 #### Final
 
