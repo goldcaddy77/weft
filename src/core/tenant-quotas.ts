@@ -78,6 +78,7 @@ const WORKFLOW_OWNED_PREFIXES = [
 ] as const;
 
 const WORKFLOW_USAGE_SCAN_PREFIXES = [
+  'attr:',
   'idx:',
   'tag:',
   'wf-deadline:',

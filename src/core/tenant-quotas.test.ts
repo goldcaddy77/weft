@@ -851,6 +851,7 @@ describe('tenant resource quotas', () => {
     });
 
     await storage.put(KEYS.workflow(workflowId), workflowState);
+    await storage.put(KEYS.attribute(workflowId), encode({ status: 'queued' }));
     await storage.put(KEYS.attributeIndex('status', 's:queued', workflowId), indexValue);
     await storage.put(KEYS.tagIndex('nightly', workflowId), indexValue);
     for (const operation of timerOperations) {
@@ -862,6 +863,7 @@ describe('tenant resource quotas', () => {
     const usage = await quotaManager.getUsage('acme');
     const expectedStorageBytes =
       measureStoredRecordBytes(KEYS.workflow(workflowId), workflowState) +
+      measureStoredRecordBytes(KEYS.attribute(workflowId), encode({ status: 'queued' })) +
       measureStoredRecordBytes(KEYS.attributeIndex('status', 's:queued', workflowId), indexValue) +
       measureStoredRecordBytes(KEYS.tagIndex('nightly', workflowId), indexValue) +
       timerOperations.reduce((total, operation) => {
