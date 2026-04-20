@@ -14,6 +14,17 @@ describe('computeTenantQuotaMeter', () => {
     });
   });
 
+  it('treats a zero limit as a hard cap instead of no limit', () => {
+    expect(computeTenantQuotaMeter({ used: 0, limit: 0 })).toEqual({
+      percentage: 0,
+      severity: 'normal',
+    });
+    expect(computeTenantQuotaMeter({ used: 1, limit: 0 })).toEqual({
+      percentage: 100,
+      severity: 'danger',
+    });
+  });
+
   it('marks ratios at or above 80 percent as warning', () => {
     expect(computeTenantQuotaMeter({ used: 8, limit: 10 })).toEqual({
       percentage: 80,

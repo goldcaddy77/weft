@@ -91,6 +91,23 @@ class BarrierConditionalBatchMemoryStorage extends MemoryStorage {
   }
 }
 
+class WorkflowScanTrackingStorage extends MemoryStorage {
+  workflowScanCount = 0;
+
+  override async *scan(
+    prefix: string,
+    options?: Parameters<MemoryStorage['scan']>[1],
+  ): AsyncIterable<[string, Uint8Array]> {
+    if (prefix === 'wf:') {
+      this.workflowScanCount++;
+    }
+
+    for await (const entry of super.scan(prefix, options)) {
+      yield entry;
+    }
+  }
+}
+
 function measureStoredRecordBytes(key: string, value: Uint8Array): number {
   return storageByteEncoder.encode(key).byteLength + value.byteLength;
 }
@@ -340,6 +357,45 @@ describe('tenant resource quotas', () => {
     });
 
     expect(estimateReadCount).toBe(0);
+  });
+
+  it('uses the stored quota storage counter without rescanning workflow state on admission', async () => {
+    const storage = new WorkflowScanTrackingStorage();
+    const workflowId = 'quota-storage-counter';
+    const workflowState = encode({
+      id: workflowId,
+      status: 'pending',
+      tenant: { id: 'acme' },
+    });
+    const estimatedStorageBytes = measureStoredRecordBytes(KEYS.workflow(workflowId), workflowState);
+    const initialStorageBytes = 128;
+
+    await storage.put(
+      KEYS.quotaStorage('acme'),
+      encode({ bytes: initialStorageBytes } satisfies { bytes: number }),
+    );
+
+    const quotaManager = new TenantQuotaManager(storage, Date.now, {
+      maxStorageBytes: initialStorageBytes + estimatedStorageBytes + 1,
+    });
+
+    await quotaManager.commitStartAdmission({
+      tenantId: 'acme',
+      workflowId,
+      startOperations: [
+        {
+          type: 'put',
+          key: KEYS.workflow(workflowId),
+          value: workflowState,
+        },
+      ],
+      estimatedStorageBytes,
+    });
+
+    expect(storage.workflowScanCount).toBe(0);
+    expect(decode((await storage.get(KEYS.quotaStorage('acme'))) as Uint8Array)).toEqual({
+      bytes: initialStorageBytes + estimatedStorageBytes,
+    });
   });
 
   it('releases active workflow quota when a tenant workflow reaches a terminal state', async () => {

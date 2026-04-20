@@ -4,6 +4,7 @@ import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
 import { StartWorkflowValidationError } from '../core/start-workflow-validation.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
+import { QuotaExceededError } from '../core/tenant-quotas.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -775,6 +776,31 @@ describe('handleRequest', () => {
 
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Field "id" must be a string' });
+
+    engine.start = originalStart;
+  });
+
+  it('POST /v1/workflows returns 429 when engine.start throws a quota error', async () => {
+    engine = createEngine();
+
+    const originalStart = engine.start.bind(engine);
+    engine.start = async () => {
+      throw new QuotaExceededError({
+        tenantId: 'acme',
+        quota: 'maxConcurrentWorkflows',
+        currentUsage: 2,
+        limit: 1,
+      });
+    };
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'data' }),
+      engine,
+    );
+
+    expect(response.status).toBe(429);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Tenant quota exceeded');
 
     engine.start = originalStart;
   });

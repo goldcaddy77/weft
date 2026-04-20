@@ -20,6 +20,7 @@ import {
   coerceStartWorkflowId,
   coerceStartWorkflowTimestamp,
 } from '../core/start-workflow-validation.ts';
+import { QuotaExceededError } from '../core/tenant-quotas.ts';
 import type {
   AttributeFilter,
   ListFilter,
@@ -307,6 +308,9 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
 
     if (error instanceof StartWorkflowValidationError) {
       return errorResponse(message, 400);
+    }
+    if (error instanceof QuotaExceededError) {
+      return errorResponse(message, 429);
     }
     if (message.includes('No workflow registered')) {
       return errorResponse(message, 400);

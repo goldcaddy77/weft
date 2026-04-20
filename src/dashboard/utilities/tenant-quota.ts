@@ -12,7 +12,26 @@ function clampPercentage(value: number): number {
 }
 
 export function computeTenantQuotaMeter(metric: TenantQuotaMetricUsage): TenantQuotaMeter {
-  if (metric.limit === null || metric.limit <= 0) {
+  if (metric.limit === null) {
+    return {
+      percentage: 0,
+      severity: 'normal',
+    };
+  }
+
+  if (metric.limit === 0) {
+    return metric.used > 0
+      ? {
+          percentage: 100,
+          severity: 'danger',
+        }
+      : {
+          percentage: 0,
+          severity: 'normal',
+        };
+  }
+
+  if (metric.limit < 0) {
     return {
       percentage: 0,
       severity: 'normal',

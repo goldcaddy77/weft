@@ -249,6 +249,30 @@ function decodeWorkflowCreationRateRecord(bytes: Uint8Array | null): number[] {
   return decoded['timestamps'].filter((value): value is number => Number.isFinite(value));
 }
 
+function decodeTenantStorageUsageBytes(bytes: Uint8Array | null): number {
+  if (!bytes) {
+    return 0;
+  }
+
+  let decoded: unknown;
+  try {
+    decoded = decode(bytes);
+  } catch {
+    return 0;
+  }
+
+  if (!isRecord(decoded)) {
+    return 0;
+  }
+
+  const bytesUsed = decoded['bytes'];
+  if (typeof bytesUsed !== 'number' || !Number.isInteger(bytesUsed) || bytesUsed < 0) {
+    return 0;
+  }
+
+  return bytesUsed;
+}
+
 function decodeWorkflowTenantRecord(bytes: Uint8Array): DecodedWorkflowTenantRecord | null {
   let decoded: unknown;
   try {
@@ -426,8 +450,8 @@ export class TenantQuotaManager {
       }
 
       if (this.#quotas.maxStorageBytes !== null) {
-        const usage = await this.getUsage(tenantId);
-        const projectedStorageBytes = usage.storageBytes.used + parameters.estimatedStorageBytes;
+        const currentStorageBytes = decodeTenantStorageUsageBytes(currentStorageUsageRecord);
+        const projectedStorageBytes = currentStorageBytes + parameters.estimatedStorageBytes;
         if (projectedStorageBytes > this.#quotas.maxStorageBytes) {
           throw new QuotaExceededError({
             tenantId,
