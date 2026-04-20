@@ -338,4 +338,31 @@ describe('workflow composition operators', () => {
       'Workflow functions used in composition operators must be registered before use.',
     );
   });
+
+  it('Track 7c: ctx.map rejects unregistered workflow functions even when the item list is empty', async () => {
+    const engine = new TestEngine();
+
+    async function* registeredStage(_ctx: WorkflowContext, input: unknown) {
+      return String(input).toUpperCase();
+    }
+
+    const imposterStage = async function* shadowStage(_ctx: WorkflowContext, input: unknown) {
+      return `imposter:${String(input)}`;
+    };
+    Object.defineProperty(imposterStage, 'name', {
+      value: 'registeredStage',
+      configurable: true,
+    });
+
+    engine.register('registered-stage', registeredStage);
+    engine.register('map-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.map([], imposterStage);
+    });
+
+    const handle = await engine.start('map-parent', null);
+
+    await expect(handle.result()).rejects.toThrow(
+      'Workflow functions used in composition operators must be registered before use.',
+    );
+  });
 });
