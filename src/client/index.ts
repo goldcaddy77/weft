@@ -102,6 +102,73 @@ async function request<T>(
   return response.json() as Promise<T>;
 }
 
+function appendStatusFilters(params: URLSearchParams, status: ListFilter['status']): void {
+  if (status === undefined) {
+    return;
+  }
+
+  const statuses = (Array.isArray(status) ? status : [status]).filter(Boolean);
+  for (const value of statuses) {
+    params.append('status', value);
+  }
+}
+
+function appendTagFilters(params: URLSearchParams, tags: ListFilter['tags']): void {
+  if (tags === undefined) {
+    return;
+  }
+
+  for (const tag of tags) {
+    params.append('tag', tag);
+  }
+}
+
+function appendAttributeFilters(
+  params: URLSearchParams,
+  attributes: ListFilter['attributes'],
+): void {
+  if (attributes === undefined) {
+    return;
+  }
+
+  for (const attribute of attributes) {
+    if (attribute.value !== undefined) {
+      params.set(`attr.${attribute.key}`, String(attribute.value));
+    }
+    if (attribute.gt !== undefined) {
+      params.set(`attr.${attribute.key}.gt`, String(attribute.gt));
+    }
+    if (attribute.lt !== undefined) {
+      params.set(`attr.${attribute.key}.lt`, String(attribute.lt));
+    }
+    if (attribute.gte !== undefined) {
+      params.set(`attr.${attribute.key}.gte`, String(attribute.gte));
+    }
+    if (attribute.lte !== undefined) {
+      params.set(`attr.${attribute.key}.lte`, String(attribute.lte));
+    }
+  }
+}
+
+function buildWorkflowListSearchParams(filter?: ListFilter): URLSearchParams {
+  const params = new URLSearchParams();
+
+  appendStatusFilters(params, filter?.status);
+  if (filter?.type !== undefined) {
+    params.set('type', filter.type);
+  }
+  appendTagFilters(params, filter?.tags);
+  if (filter?.limit !== undefined) {
+    params.set('limit', String(filter.limit));
+  }
+  if (filter?.offset !== undefined) {
+    params.set('offset', String(filter.offset));
+  }
+  appendAttributeFilters(params, filter?.attributes);
+
+  return params;
+}
+
 // ---------------------------------------------------------------------------
 // HttpHandle — remote workflow handle
 // ---------------------------------------------------------------------------
@@ -217,6 +284,14 @@ class HttpHandle implements ClientHandle {
     return this.#client.setAttributes(this.id, attributes);
   }
 
+  async addTags(...tags: string[]): Promise<void> {
+    return this.#client.addTags(this.id, ...tags);
+  }
+
+  async removeTags(...tags: string[]): Promise<void> {
+    return this.#client.removeTags(this.id, ...tags);
+  }
+
   addEventListener(
     type: string,
     listener: EventListenerOrEventListenerObject,
@@ -259,6 +334,7 @@ export class HttpClient implements WeftClient {
       body['executionTimeout'] = options.executionTimeout;
     if (options?.startAt !== undefined) body['startAt'] = options.startAt;
     if (options?.startAfter !== undefined) body['startAfter'] = options.startAfter;
+    if (options?.tags !== undefined) body['tags'] = options.tags;
     // searchAttributes and idempotencyKey are not yet forwarded by the server's
     // POST /v1/workflows handler — omit them from the HTTP payload to avoid
     // silent divergence between LocalClient and HttpClient.
@@ -280,43 +356,7 @@ export class HttpClient implements WeftClient {
   }
 
   async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
-    const params = new URLSearchParams();
-
-    if (filter?.status !== undefined) {
-      const statuses = (Array.isArray(filter.status) ? filter.status : [filter.status]).filter(
-        Boolean,
-      );
-      // Server reads searchParams.getAll('status'), so append each separately.
-      for (const s of statuses) {
-        params.append('status', s);
-      }
-    }
-    if (filter?.type !== undefined) params.set('type', filter.type);
-    if (filter?.limit !== undefined) params.set('limit', String(filter.limit));
-    if (filter?.offset !== undefined) params.set('offset', String(filter.offset));
-    // Encode attributes in the format the server expects: attr.{name}={value},
-    // attr.{name}.gt={value}, attr.{name}.lt={value}, attr.{name}.gte={value},
-    // attr.{name}.lte={value}.
-    if (filter?.attributes !== undefined) {
-      for (const attr of filter.attributes) {
-        if (attr.value !== undefined) {
-          params.set(`attr.${attr.key}`, String(attr.value));
-        }
-        if (attr.gt !== undefined) {
-          params.set(`attr.${attr.key}.gt`, String(attr.gt));
-        }
-        if (attr.lt !== undefined) {
-          params.set(`attr.${attr.key}.lt`, String(attr.lt));
-        }
-        if (attr.gte !== undefined) {
-          params.set(`attr.${attr.key}.gte`, String(attr.gte));
-        }
-        if (attr.lte !== undefined) {
-          params.set(`attr.${attr.key}.lte`, String(attr.lte));
-        }
-      }
-    }
-
+    const params = buildWorkflowListSearchParams(filter);
     const query = params.toString();
     const path = query ? `/workflows?${query}` : '/workflows';
 
@@ -416,6 +456,30 @@ export class HttpClient implements WeftClient {
       {
         method: 'PATCH',
         body: JSON.stringify({ attributes }),
+      },
+    );
+  }
+
+  async addTags(id: string, ...tags: string[]): Promise<void> {
+    await request<unknown>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/tags`,
+      this.headers,
+      {
+        method: 'POST',
+        body: JSON.stringify({ tags }),
+      },
+    );
+  }
+
+  async removeTags(id: string, ...tags: string[]): Promise<void> {
+    await request<unknown>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/tags`,
+      this.headers,
+      {
+        method: 'DELETE',
+        body: JSON.stringify({ tags }),
       },
     );
   }

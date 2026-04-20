@@ -57,6 +57,12 @@ export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable
 
   /** Set search attributes on this workflow (merge semantics). */
   setAttributes(attributes: Record<string, SearchAttributeValue>): Promise<void>;
+
+  /** Add free-form tags to this workflow. */
+  addTags(...tags: string[]): Promise<void>;
+
+  /** Remove free-form tags from this workflow. */
+  removeTags(...tags: string[]): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +122,12 @@ export interface WeftClient {
 
   /** Set search attributes on a workflow. */
   setAttributes(id: string, attributes: Record<string, SearchAttributeValue>): Promise<void>;
+
+  /** Add free-form tags to a workflow. */
+  addTags(id: string, ...tags: string[]): Promise<void>;
+
+  /** Remove free-form tags from a workflow. */
+  removeTags(id: string, ...tags: string[]): Promise<void>;
 
   /** Get the event history for a workflow. */
   getEvents(id: string): Promise<WorkflowEvent[]>;
