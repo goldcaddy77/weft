@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
+import { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
@@ -12,6 +13,11 @@ import type { WeftClient } from './interface.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
+}
+
+async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
+  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  return `${String(input)}:${signal}`;
 }
 
 function requestInputToUrl(input: RequestInfo | URL): string {
@@ -33,6 +39,7 @@ let client: WeftClient;
 beforeAll(() => {
   engine = new Engine({ storage: new MemoryStorage() });
   engine.register('echo', echoWorkflow);
+  engine.register('wait-for-signal', waitForSignalWorkflow);
 
   server = Bun.serve({
     port: 0, // random available port
@@ -104,6 +111,26 @@ describe('HttpClient', () => {
 
       const state = await client.get('http-client-tags');
       expect(state?.tags).toEqual(['nightly', 'v2']);
+    });
+
+    it('persists handle.addTags(...tags) and handle.removeTags(...tags) through the HTTP routes', async () => {
+      const handle = await client.start('wait-for-signal', 'payload', {
+        id: 'http-client-tag-mutations',
+        tags: ['alpha'],
+      });
+      await Bun.sleep(10);
+
+      await handle.addTags('beta');
+      await handle.removeTags('alpha');
+
+      const state = await client.get('http-client-tag-mutations');
+      expect(state?.tags).toEqual(['beta']);
+
+      const result = await client.list({ tags: ['beta'] });
+      expect(result.items.some((item) => item.id === 'http-client-tag-mutations')).toBe(true);
+
+      await handle.signal('continue', 'done');
+      await expect(handle.result()).resolves.toBe('payload:done');
     });
   });
 

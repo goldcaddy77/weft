@@ -5643,7 +5643,7 @@ Child workflows exist, but composing them into pipelines, fan-out/fan-in DAGs, o
 #### 7f. Lightweight tagging
 
 - [x] **`StartOptions.tags` accepts `string[]`.** Tags are stored alongside workflow state and indexed for filtering. Unlike search attributes, tags require no schema declaration — they're free-form labels.
-- [x] **`handle.addTags(...tags)` and `handle.removeTags(...tags)` mutate tags on a running workflow.** Changes are durable (written in the next checkpoint batch).
+- [x] **`handle.addTags(...tags)` and `handle.removeTags(...tags)` mutate tags on a running workflow.** Changes are durable immediately when the tag mutation is persisted.
 - [x] **`engine.list({ tags: ['nightly', 'v2'] })` filters by tag intersection.** A workflow matches if it has all specified tags.
 - [x] **Tags are distinct from search attributes.** Search attributes are typed, schema-declared, and support range queries. Tags are untyped, schema-free, and support only equality/intersection. Both are useful; neither replaces the other.
 - [x] Tags visible in dashboard workflow list as badges. Filterable via tag chips in the UI.

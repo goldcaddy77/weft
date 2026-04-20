@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import { KEYS, type BatchOperation, type ScanOptions, type Storage } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { Context } from './context.ts';
 import { Engine } from './engine.ts';
@@ -17,6 +18,104 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
 async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
   const signal = yield* (ctx as Context).waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
+}
+
+class WorkflowStateWriteTrackingStorage implements Storage {
+  readonly #storage = new MemoryStorage();
+  readonly #trackedWorkflowKey: string;
+
+  activeWorkflowWrites = 0;
+  maxConcurrentWorkflowWrites = 0;
+
+  constructor(workflowId: string) {
+    this.#trackedWorkflowKey = KEYS.workflow(workflowId);
+  }
+
+  async get(key: string): Promise<Uint8Array | null> {
+    return this.#storage.get(key);
+  }
+
+  async put(key: string, value: Uint8Array): Promise<void> {
+    if (key === this.#trackedWorkflowKey) {
+      await this.#trackWorkflowStateWrite(() => this.#storage.put(key, value));
+      return;
+    }
+
+    await this.#storage.put(key, value);
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.#storage.delete(key);
+  }
+
+  scan(prefix: string, options?: ScanOptions): AsyncIterable<[string, Uint8Array]> {
+    return this.#storage.scan(prefix, options);
+  }
+
+  async batch(operations: BatchOperation[]): Promise<void> {
+    const writesTrackedWorkflowState = operations.some(
+      (operation) => operation.type === 'put' && operation.key === this.#trackedWorkflowKey,
+    );
+    if (writesTrackedWorkflowState) {
+      await this.#trackWorkflowStateWrite(() => this.#storage.batch(operations));
+      return;
+    }
+
+    await this.#storage.batch(operations);
+  }
+
+  async has(key: string): Promise<boolean> {
+    return (await this.#storage.get(key)) !== null;
+  }
+
+  async deletePrefix(prefix: string): Promise<number> {
+    const operations: BatchOperation[] = [];
+    for await (const key of this.keys(prefix)) {
+      operations.push({ type: 'delete', key });
+    }
+    if (operations.length === 0) {
+      return 0;
+    }
+    await this.batch(operations);
+    return operations.length;
+  }
+
+  async *keys(prefix: string, options?: ScanOptions): AsyncIterable<string> {
+    for await (const [key] of this.#storage.scan(prefix, options)) {
+      yield key;
+    }
+  }
+
+  async count(prefix: string): Promise<number> {
+    let total = 0;
+    for await (const _key of this.keys(prefix)) {
+      total++;
+    }
+    return total;
+  }
+
+  scoped(prefix: string): Storage {
+    return this.#storage.scoped?.(prefix) ?? this.#storage;
+  }
+
+  [Symbol.dispose](): void {
+    this.#storage[Symbol.dispose]();
+  }
+
+  async #trackWorkflowStateWrite(writeOperation: () => Promise<void>): Promise<void> {
+    this.activeWorkflowWrites++;
+    this.maxConcurrentWorkflowWrites = Math.max(
+      this.maxConcurrentWorkflowWrites,
+      this.activeWorkflowWrites,
+    );
+
+    try {
+      await Bun.sleep(25);
+      await writeOperation();
+    } finally {
+      this.activeWorkflowWrites--;
+    }
+  }
 }
 
 describe('workflow tags', () => {
@@ -122,6 +221,35 @@ describe('workflow tags', () => {
       await expect(handle.addTags('')).rejects.toThrow(
         'Workflow tags must not contain empty tags',
       );
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('serializes tag mutations with concurrent workflow state writes', async () => {
+    const workflowId = 'serialized-tag-mutations';
+    const storage = new WorkflowStateWriteTrackingStorage(workflowId);
+    const engine = new Engine({ storage });
+    engine.register('wait-for-signal', waitForSignalWorkflow);
+
+    try {
+      const handle = await engine.start('wait-for-signal', 'payload', {
+        id: workflowId,
+        tags: ['alpha'],
+      });
+      await Bun.sleep(10);
+
+      const addTagsPromise = handle.addTags('beta');
+      await Bun.sleep(0);
+      const signalPromise = handle.signal('continue', 'done');
+
+      await Promise.all([addTagsPromise, signalPromise]);
+      await expect(handle.result()).resolves.toBe('payload:done');
+
+      const state = await engine.get(workflowId);
+      expect(state?.status).toBe('completed');
+      expect(state?.tags).toEqual(['alpha', 'beta']);
+      expect(storage.maxConcurrentWorkflowWrites).toBe(1);
     } finally {
       await engine[Symbol.asyncDispose]();
     }

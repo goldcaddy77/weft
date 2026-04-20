@@ -1348,6 +1348,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #pendingParentHeaders: Map<string, string> | undefined;
   #workflowNestingDepths: Map<string, number>;
   #workflowHeaders: Map<string, Map<string, string>>;
+  #workflowStateWriteChains: Map<string, Promise<void>>;
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
@@ -1438,6 +1439,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#pendingParentHeaders = undefined;
     this.#workflowNestingDepths = new Map();
     this.#workflowHeaders = new Map();
+    this.#workflowStateWriteChains = new Map();
     this.#finalizationRegistry = new FinalizationRegistry<string>(
       createHandleCacheFinalizer(this.#handleCache),
     );
@@ -2136,8 +2138,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const items: WorkflowSummary[] = [];
 
-    // Fast path: when attribute filters constrained the set of candidate IDs,
-    // load only those rows by key instead of scanning every `wf:*` entry.
+    // Fast path: when tag or attribute filters constrained the set of
+    // candidate IDs, load only those rows by key instead of scanning every
+    // `wf:*` entry.
     // This turns the cost from O(total workflows) into O(matches), which is
     // the shape the architecture "<1ms single-attribute equality" target
     // assumes.
@@ -5558,29 +5561,48 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return;
       }
     }
-    const runningState: WorkflowState = {
-      ...state,
-      status: 'running',
-      startedAt: now,
-      updatedAt: now,
-      ...(executionDeadline !== undefined && { executionDeadline }),
-    };
+    const runningState = await this.#runSerializedWorkflowStateWrite(
+      entry.workflowId,
+      async () => {
+        const latestState = await this.#loadWorkflowState(entry.workflowId);
+        if (!latestState || latestState.status !== 'pending') {
+          return null;
+        }
 
-    const operations: import('../storage/interface.ts').BatchOperation[] = [
-      { type: 'put', key: KEYS.workflow(entry.workflowId), value: encode(runningState) },
-    ];
-    if (executionDeadline !== undefined) {
-      operations.push(
-        ...buildTimerBatchOperations({
-          id: `deadline:${entry.workflowId}`,
-          workflowId: entry.workflowId,
-          fireAt: executionDeadline,
-          kind: 'execution-deadline',
-        }),
-      );
+        const nextRunningState: WorkflowState = {
+          ...latestState,
+          status: 'running',
+          startedAt: now,
+          updatedAt: now,
+          ...(executionDeadline !== undefined && { executionDeadline }),
+        };
+
+        const operations: import('../storage/interface.ts').BatchOperation[] = [
+          {
+            type: 'put',
+            key: KEYS.workflow(entry.workflowId),
+            value: encode(nextRunningState),
+          },
+        ];
+        if (executionDeadline !== undefined) {
+          operations.push(
+            ...buildTimerBatchOperations({
+              id: `deadline:${entry.workflowId}`,
+              workflowId: entry.workflowId,
+              fireAt: executionDeadline,
+              kind: 'execution-deadline',
+            }),
+          );
+        }
+
+        await this.#storage.batch(operations);
+        return nextRunningState;
+      },
+    );
+    if (!runningState) {
+      return;
     }
 
-    await this.#storage.batch(operations);
     this.#checkpoints.set(entry.workflowId, checkpoint);
     this.#workflowVersionTuples.set(
       entry.workflowId,
@@ -5596,11 +5618,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     this.#beginWorkflowExecution(
       entry.workflowId,
-      state.type,
-      state.input,
+      runningState.type,
+      runningState.input,
       checkpoint,
       executionDeadline,
-      state.tenant,
+      runningState.tenant,
       registration,
     );
   }
@@ -6206,35 +6228,68 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // Private: state management
   // -------------------------------------------------------------------------
 
-  async #completeWorkflow(workflowId: string, result: unknown): Promise<void> {
-    const state = await this.#loadWorkflowState(workflowId);
-    if (!state || state.status !== 'running') return;
+  async #runSerializedWorkflowStateWrite<TResult>(
+    workflowId: string,
+    writeOperation: () => Promise<TResult>,
+  ): Promise<TResult> {
+    const previousWrite = this.#workflowStateWriteChains.get(workflowId) ?? Promise.resolve();
+    const execution = previousWrite.catch(() => undefined).then(writeOperation);
+    const settledExecution = execution.then(
+      () => undefined,
+      () => undefined,
+    );
 
-    const now = this.#options.getNow();
-    const duration = now - getWorkflowExecutionStartedAt(state);
+    this.#workflowStateWriteChains.set(workflowId, settledExecution);
 
-    // Batch the completion state write with attribute index cleanup into a
-    // single storage transaction to reduce round-trips on the hot path.
-    const updatedState = {
-      ...state,
-      status: 'completed' as const,
-      result,
-      updatedAt: now,
-    };
-    const completionOperations: import('../storage/interface.ts').BatchOperation[] = [
-      { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
-    ];
-
-    // Inline attribute cleanup into the same batch instead of a separate
-    // storage.get() + storage.batch() round-trip.
-    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-    if (attributeBytes) {
-      const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
-      completionOperations.push(...buildIndexOperations(workflowId, currentAttributes, {}));
-      completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
+    try {
+      return await execution;
+    } finally {
+      if (this.#workflowStateWriteChains.get(workflowId) === settledExecution) {
+        this.#workflowStateWriteChains.delete(workflowId);
+      }
     }
+  }
 
-    await this.#storage.batch(completionOperations);
+  async #completeWorkflow(workflowId: string, result: unknown): Promise<void> {
+    const completionMetadata = await this.#runSerializedWorkflowStateWrite(
+      workflowId,
+      async () => {
+        const state = await this.#loadWorkflowState(workflowId);
+        if (!state || state.status !== 'running') {
+          return null;
+        }
+
+        const now = this.#options.getNow();
+        const duration = now - getWorkflowExecutionStartedAt(state);
+
+        // Batch the completion state write with attribute index cleanup into a
+        // single storage transaction to reduce round-trips on the hot path.
+        const updatedState = {
+          ...state,
+          status: 'completed' as const,
+          result,
+          updatedAt: now,
+        };
+        const completionOperations: import('../storage/interface.ts').BatchOperation[] = [
+          { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
+        ];
+
+        // Inline attribute cleanup into the same batch instead of a separate
+        // storage.get() + storage.batch() round-trip.
+        const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+        if (attributeBytes) {
+          const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+          completionOperations.push(...buildIndexOperations(workflowId, currentAttributes, {}));
+          completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
+        }
+
+        await this.#storage.batch(completionOperations);
+        return { duration };
+      },
+    );
+    if (!completionMetadata) return;
+
+    const { duration } = completionMetadata;
 
     // Cancel deadline timer — fire-and-forget since the workflow is already
     // terminal and a stale timer firing will see the terminal state and no-op.
@@ -6340,17 +6395,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #updateWorkflowState(workflowId: string, updates: Partial<WorkflowState>): Promise<void> {
-    const bytes = await this.#storage.get(KEYS.workflow(workflowId));
-    if (!bytes) return;
+    await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+      const bytes = await this.#storage.get(KEYS.workflow(workflowId));
+      if (!bytes) return;
 
-    const state = decodeWorkflowState(bytes);
-    const updated = {
-      ...state,
-      ...updates,
-      updatedAt: this.#options.getNow(),
-    };
+      const state = decodeWorkflowState(bytes);
+      const updated = {
+        ...state,
+        ...updates,
+        updatedAt: this.#options.getNow(),
+      };
 
-    await this.#storage.put(KEYS.workflow(workflowId), encode(updated));
+      await this.#storage.put(KEYS.workflow(workflowId), encode(updated));
+    });
   }
 
   #normalizeStartWorkflowTags(tags: unknown, fieldName = 'options.tags'): string[] | undefined {
@@ -6366,52 +6423,54 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     tags: string[],
     mode: 'add' | 'remove',
   ): Promise<void> {
-    const bytes = await this.#storage.get(KEYS.workflow(workflowId));
-    if (!bytes) {
-      throw new Error(`Workflow "${workflowId}" not found`);
-    }
-
-    const state = decodeWorkflowState(bytes);
-    const currentTags = normalizeWorkflowTags(state.tags) ?? [];
-    const requestedTags = this.#normalizeStartWorkflowTags(tags, 'Workflow tags') ?? [];
-    if (requestedTags.length === 0) {
-      return;
-    }
-
-    const nextTagSet = new Set(currentTags);
-    for (const tag of requestedTags) {
-      if (mode === 'add') {
-        nextTagSet.add(tag);
-      } else {
-        nextTagSet.delete(tag);
+    await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+      const bytes = await this.#storage.get(KEYS.workflow(workflowId));
+      if (!bytes) {
+        throw new Error(`Workflow "${workflowId}" not found`);
       }
-    }
 
-    const nextTags = normalizeWorkflowTags([...nextTagSet]);
-    if (mode === 'add' && nextTags !== undefined) {
-      assertWorkflowTagCount(nextTags, 'Workflow tags');
-    }
-    const unchanged =
-      currentTags.length === (nextTags?.length ?? 0) &&
-      currentTags.every((tag, index) => tag === nextTags?.[index]);
-    if (unchanged) {
-      return;
-    }
+      const state = decodeWorkflowState(bytes);
+      const currentTags = normalizeWorkflowTags(state.tags) ?? [];
+      const requestedTags = this.#normalizeStartWorkflowTags(tags, 'Workflow tags') ?? [];
+      if (requestedTags.length === 0) {
+        return;
+      }
 
-    const updatedState: WorkflowState = {
-      ...state,
-      updatedAt: this.#options.getNow(),
-    };
-    if (nextTags !== undefined) {
-      updatedState.tags = nextTags;
-    } else {
-      delete updatedState.tags;
-    }
+      const nextTagSet = new Set(currentTags);
+      for (const tag of requestedTags) {
+        if (mode === 'add') {
+          nextTagSet.add(tag);
+        } else {
+          nextTagSet.delete(tag);
+        }
+      }
 
-    await this.#storage.batch([
-      { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
-      ...buildWorkflowTagIndexOperations(workflowId, currentTags, nextTags),
-    ]);
+      const nextTags = normalizeWorkflowTags([...nextTagSet]);
+      if (mode === 'add' && nextTags !== undefined) {
+        assertWorkflowTagCount(nextTags, 'Workflow tags');
+      }
+      const unchanged =
+        currentTags.length === (nextTags?.length ?? 0) &&
+        currentTags.every((tag, index) => tag === nextTags?.[index]);
+      if (unchanged) {
+        return;
+      }
+
+      const updatedState: WorkflowState = {
+        ...state,
+        updatedAt: this.#options.getNow(),
+      };
+      if (nextTags !== undefined) {
+        updatedState.tags = nextTags;
+      } else {
+        delete updatedState.tags;
+      }
+
+      await this.#storage.batch([
+        { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
+        ...buildWorkflowTagIndexOperations(workflowId, currentTags, nextTags),
+      ]);
+    });
   }
 
   async #loadWorkflowState(workflowId: string): Promise<WorkflowState | null> {
