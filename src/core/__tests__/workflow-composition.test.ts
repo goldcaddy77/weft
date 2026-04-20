@@ -339,7 +339,7 @@ describe('workflow composition operators', () => {
     );
   });
 
-  it('Track 7c: ctx.map rejects unregistered workflow functions even when the item list is empty', async () => {
+  it('Track 7c: empty ctx.map and ctx.reduce are side-effect free even for unregistered workflow functions', async () => {
     const engine = new TestEngine();
 
     async function* registeredStage(_ctx: WorkflowContext, input: unknown) {
@@ -355,14 +355,45 @@ describe('workflow composition operators', () => {
     });
 
     engine.register('registered-stage', registeredStage);
-    engine.register('map-parent', async function* (ctx: WorkflowContext) {
-      return yield* ctx.map([], imposterStage);
+    engine.register('composition-parent', async function* (ctx: WorkflowContext) {
+      const mapped = yield* ctx.map([], imposterStage);
+      const reduced = yield* ctx.reduce([], imposterStage, 'seed');
+      return { mapped, reduced };
     });
 
-    const handle = await engine.start('map-parent', null);
+    const handle = await engine.start('composition-parent', null);
 
-    await expect(handle.result()).rejects.toThrow(
-      'Workflow functions used in composition operators must be registered before use.',
-    );
+    await expect(handle.result()).resolves.toEqual({
+      mapped: [],
+      reduced: 'seed',
+    });
+  });
+
+  it('Track 7c: child workflow reuse ignores plain-object key ordering in inputs', async () => {
+    const engine = new TestEngine();
+
+    async function* echoStage(_ctx: WorkflowContext, input: unknown) {
+      return input;
+    }
+
+    engine.register('echo-stage', echoStage);
+    engine.register('first-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe(
+        [{ type: echoStage, options: { id: 'shared-child' } }],
+        { alpha: 1, beta: 2 },
+      );
+    });
+    engine.register('second-parent', async function* (ctx: WorkflowContext) {
+      return yield* ctx.pipe(
+        [{ type: echoStage, options: { id: 'shared-child' } }],
+        { beta: 2, alpha: 1 },
+      );
+    });
+
+    const firstHandle = await engine.start('first-parent', null);
+    await expect(firstHandle.result()).resolves.toEqual({ alpha: 1, beta: 2 });
+
+    const secondHandle = await engine.start('second-parent', null);
+    await expect(secondHandle.result()).resolves.toEqual({ alpha: 1, beta: 2 });
   });
 });

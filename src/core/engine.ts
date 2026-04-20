@@ -195,7 +195,7 @@ export interface AgentRegistrationOptions {
   provider: LLMProvider;
 }
 
-class WorkflowAlreadyExistsError extends Error {
+export class WorkflowAlreadyExistsError extends Error {
   readonly workflowId: string;
 
   constructor(workflowId: string) {
@@ -938,9 +938,35 @@ function paginateItems<T>(items: T[], filter: PaginationFilter | undefined): Pag
   };
 }
 
+function isPlainObjectRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function normalizeValueForEncodedComparison(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeValueForEncodedComparison(entry));
+  }
+
+  if (!isPlainObjectRecord(value)) {
+    return value;
+  }
+
+  const normalizedRecord: Record<string, unknown> = {};
+  for (const key of Object.keys(value).toSorted()) {
+    normalizedRecord[key] = normalizeValueForEncodedComparison(value[key]);
+  }
+
+  return normalizedRecord;
+}
+
 function encodedValuesEqual(left: unknown, right: unknown): boolean {
-  const leftEncoded = encode(left);
-  const rightEncoded = encode(right);
+  const leftEncoded = encode(normalizeValueForEncodedComparison(left));
+  const rightEncoded = encode(normalizeValueForEncodedComparison(right));
 
   if (leftEncoded.byteLength !== rightEncoded.byteLength) {
     return false;

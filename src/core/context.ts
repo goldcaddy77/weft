@@ -1143,13 +1143,13 @@ export class Context implements WorkflowContext {
     workflowType: ChildWorkflowTarget<TItem, TResult>,
     options?: WorkflowMapOptions,
   ): Generator<ContextOperationRequest, TResult[], unknown> {
-    const resolvedWorkflowType = this.#resolveChildWorkflowTarget(workflowType);
     if (items.length === 0) {
       return [];
     }
 
     const mapToken = this.#createCompositionToken('map');
     const concurrency = this.#resolveMapConcurrency(items.length, options?.concurrency);
+    const resolvedWorkflowType = this.#resolveChildWorkflowTarget(workflowType);
     const results: TResult[] = [];
 
     for (let startIndex = 0; startIndex < items.length; startIndex += concurrency) {
@@ -1178,6 +1178,10 @@ export class Context implements WorkflowContext {
     initialValue: TAccumulator,
     options?: WorkflowReduceOptions,
   ): Generator<ContextOperationRequest, TAccumulator, unknown> {
+    if (items.length === 0) {
+      return initialValue;
+    }
+
     const reduceToken = this.#createCompositionToken('reduce');
     const resolvedWorkflowType = this.#resolveChildWorkflowTarget(workflowType);
     let accumulator = initialValue;
