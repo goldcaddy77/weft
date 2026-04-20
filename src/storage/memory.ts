@@ -1,7 +1,9 @@
 import {
   matchesScanOptions,
   resolvePrefixRangeEnd,
+  storageValuesEqual,
   type BatchOperation,
+  type ConditionalBatchCondition,
   type ScanOptions,
   type Storage,
 } from './interface';
@@ -70,6 +72,21 @@ export class MemoryStorage implements Storage {
         this.#data.delete(operation.key);
       }
     }
+  }
+
+  async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    for (const condition of conditions) {
+      const currentValue = this.#data.get(condition.key) ?? null;
+      if (!storageValuesEqual(currentValue, condition.expectedValue)) {
+        return false;
+      }
+    }
+
+    await this.batch(operations);
+    return true;
   }
 
   async has(key: string): Promise<boolean> {

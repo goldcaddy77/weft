@@ -314,6 +314,11 @@ export interface EngineOptions {
    * state so it survives recovery. Leave unset for single-tenant deployments.
    */
   tenantResolver?: import('./tenant.ts').TenantResolver;
+  /**
+   * Optional per-tenant admission control limits enforced when a workflow is
+   * created for a resolved tenant.
+   */
+  quotas?: TenantQuotaOptions;
 }
 
 // ---------------------------------------------------------------------------
@@ -636,6 +641,37 @@ export interface ListFilter {
   attributes?: AttributeFilter[];
   limit?: number;
   offset?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Per-tenant quotas
+// ---------------------------------------------------------------------------
+
+export interface TenantWorkflowCreationRateLimit {
+  count: number;
+  window: Duration;
+}
+
+export interface TenantQuotaOptions {
+  maxConcurrentWorkflows?: number;
+  maxWorkflowCreationRate?: TenantWorkflowCreationRateLimit;
+  maxStorageBytes?: number;
+}
+
+export interface TenantQuotaMetricUsage {
+  used: number;
+  limit: number | null;
+}
+
+export interface TenantWorkflowCreationRateUsage extends TenantQuotaMetricUsage {
+  windowMilliseconds: number | null;
+}
+
+export interface TenantQuotaUsage {
+  tenantId: string;
+  activeWorkflows: TenantQuotaMetricUsage;
+  storageBytes: TenantQuotaMetricUsage;
+  workflowCreationRate: TenantWorkflowCreationRateUsage;
 }
 
 export interface AttributeFilter {

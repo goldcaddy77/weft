@@ -1,11 +1,13 @@
 /**
  * Typed fetch wrapper for the Weft REST API.
  *
- * All types are declared inline rather than imported from core
- * because the dashboard runs in the browser, not the server.
+ * Browser-only shapes are declared inline here, while shared contract
+ * types are re-exported from core as type-only imports.
  *
  * @module dashboard/api-client
  */
+
+import type { TenantQuotaUsage } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,6 +80,12 @@ export interface ListFilter {
   limit?: number;
   offset?: number;
 }
+
+export type {
+  TenantQuotaMetricUsage,
+  TenantQuotaUsage,
+  TenantWorkflowCreationRateUsage,
+} from '../core/types.ts';
 
 export interface WorkflowEvent {
   type: string;
@@ -214,6 +222,11 @@ export class ApiClient {
   async listPendingReviews(): Promise<ReviewRequest[]> {
     const response = await request<{ items: ReviewRequest[] }>('/reviews');
     return response.items;
+  }
+
+  /** Get current quota usage versus configured limits for a tenant. */
+  async getTenantQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
+    return request<TenantQuotaUsage>(`/tenants/${encodeURIComponent(tenantId)}/quota`);
   }
 
   /** Submit a decision for a pending review. */

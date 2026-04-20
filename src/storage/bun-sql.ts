@@ -2,7 +2,9 @@ import { Database, Statement, type SQLQueryBindings } from 'bun:sqlite';
 
 import {
   resolvePrefixRangeEnd,
+  storageValuesEqual,
   type BatchOperation,
+  type ConditionalBatchCondition,
   type ScanOptions,
   type Storage,
 } from './interface';
@@ -212,6 +214,38 @@ export class BunSQLiteStorage implements Storage {
   async batch(operations: BatchOperation[]): Promise<void> {
     if (operations.length === 0) return;
     this.#batchTransaction(operations);
+  }
+
+  async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    const conditionalTransaction = this.#database.transaction(
+      (
+        pendingConditions: ConditionalBatchCondition[],
+        pendingOperations: BatchOperation[],
+      ): boolean => {
+        for (const condition of pendingConditions) {
+          const row = this.#getStatement.get(condition.key);
+          const currentValue = row ? new Uint8Array(row.value) : null;
+          if (!storageValuesEqual(currentValue, condition.expectedValue)) {
+            return false;
+          }
+        }
+
+        for (const operation of pendingOperations) {
+          if (operation.type === 'put') {
+            this.#putStatement.run(operation.key, operation.value);
+          } else {
+            this.#deleteStatement.run(operation.key);
+          }
+        }
+
+        return true;
+      },
+    );
+
+    return conditionalTransaction(conditions, operations);
   }
 
   async query<T>(sql: string, parameters?: SQLQueryBindings[]): Promise<T[]> {

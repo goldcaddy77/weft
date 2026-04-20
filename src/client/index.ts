@@ -20,6 +20,7 @@ import type {
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
+  TenantQuotaUsage,
   WorkflowEvent,
   WorkflowReplay,
   WorkflowState,
@@ -548,6 +549,14 @@ export class HttpClient implements WeftClient {
     return request<BudgetPolicyOptions | null>(
       this.baseUrl,
       `/budget-policy/${encodeURIComponent(namespace)}`,
+      this.headers,
+    );
+  }
+
+  async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
+    return request<TenantQuotaUsage>(
+      this.baseUrl,
+      `/tenants/${encodeURIComponent(tenantId)}/quota`,
       this.headers,
     );
   }

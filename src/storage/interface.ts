@@ -3,6 +3,17 @@ export type BatchOperation =
   | { type: 'put'; key: string; value: Uint8Array }
   | { type: 'delete'; key: string };
 
+/**
+ * A key/value precondition for {@link Storage.conditionalBatch}.
+ *
+ * The batch commits only when every listed key currently matches the expected
+ * value. Use `null` to require that the key is absent.
+ */
+export interface ConditionalBatchCondition {
+  key: string;
+  expectedValue: Uint8Array | null;
+}
+
 /** Options for range scans. */
 export interface ScanOptions {
   limit?: number;
@@ -20,6 +31,10 @@ export interface Storage extends Disposable {
   delete(key: string): Promise<void>;
   scan(prefix: string, options?: ScanOptions): AsyncIterable<[string, Uint8Array]>;
   batch(operations: BatchOperation[]): Promise<void>;
+  conditionalBatch?(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean>;
   has?(key: string): Promise<boolean>;
   deletePrefix?(prefix: string): Promise<number>;
   keys?(prefix: string, options?: ScanOptions): AsyncIterable<string>;
@@ -53,6 +68,25 @@ export function matchesScanOptions(key: string, options: ScanOptions = {}): bool
 
   if (options.lte !== undefined && key > options.lte) {
     return false;
+  }
+
+  return true;
+}
+
+/** Compare two storage values for byte-for-byte equality. */
+export function storageValuesEqual(left: Uint8Array | null, right: Uint8Array | null): boolean {
+  if (left === null || right === null) {
+    return left === right;
+  }
+
+  if (left.byteLength !== right.byteLength) {
+    return false;
+  }
+
+  for (let index = 0; index < left.byteLength; index++) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
   }
 
   return true;
@@ -115,6 +149,21 @@ export async function storageDeletePrefix(storage: Storage, prefix: string): Pro
 
   await storage.batch(operations);
   return operations.length;
+}
+
+/** Run a conditional batch or throw when the backend does not support it. */
+export async function storageConditionalBatch(
+  storage: Storage,
+  conditions: ConditionalBatchCondition[],
+  operations: BatchOperation[],
+): Promise<boolean> {
+  if (!storage.conditionalBatch) {
+    throw new Error(
+      'This storage backend does not support conditionalBatch(), which is required for this operation.',
+    );
+  }
+
+  return storage.conditionalBatch(conditions, operations);
 }
 
 /** Encode an untrusted string so it is safe to embed in a colon-delimited storage key. */
@@ -190,6 +239,12 @@ export const KEYS = {
     `upk:${encodeStorageKeyComponent(workflowId)}:${key}`,
   budget: (namespace: string, period: string, date: string) =>
     `budget:${namespace}:${period}:${date}`,
+  quotaActive: (tenantId: string) => `quota:${encodeStorageKeyComponent(tenantId)}:active`,
+  quotaStorage: (tenantId: string) => `quota:${encodeStorageKeyComponent(tenantId)}:storage`,
+  quotaWorkflowStorage: (tenantId: string, workflowId: string) =>
+    `quota:${encodeStorageKeyComponent(tenantId)}:storage:${encodeStorageKeyComponent(workflowId)}`,
+  quotaRate: (tenantId: string, windowMilliseconds: number) =>
+    `quota:${encodeStorageKeyComponent(tenantId)}:rate:${String(windowMilliseconds)}`,
   review: (workflowId: string, reviewId: string) =>
     `review:${encodeStorageKeyComponent(workflowId)}:${reviewId}`,
   workflowHeaders: (workflowId: string) => `wf-headers:${encodeStorageKeyComponent(workflowId)}`,

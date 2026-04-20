@@ -197,6 +197,22 @@ describe('LMDBStorage', () => {
     storage[Symbol.dispose]();
   });
 
+  it('conditionalBatch refreshes the read snapshot before the next read', async () => {
+    const storage = createStorage();
+    await storage.put('condition:match', encode('before'));
+
+    expect(await storage.get('condition:match')).toEqual(encode('before'));
+
+    const committed = await storage.conditionalBatch(
+      [{ key: 'condition:match', expectedValue: encode('before') }],
+      [{ type: 'put', key: 'condition:match', value: encode('after') }],
+    );
+
+    expect(committed).toBe(true);
+    expect(await storage.get('condition:match')).toEqual(encode('after'));
+    storage[Symbol.dispose]();
+  });
+
   it('[Symbol.dispose] closes the environment', () => {
     const storage = createStorage();
     storage[Symbol.dispose]();
