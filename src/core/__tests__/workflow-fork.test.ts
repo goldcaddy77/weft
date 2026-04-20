@@ -364,6 +364,34 @@ describe('workflow forking', () => {
     engine[Symbol.dispose]();
   });
 
+  it('preserves workflow function resolution for composition operators after a fork', async () => {
+    const engine = new TestEngine();
+
+    const childWorkflow = async function* (_ctx: WorkflowContext, input: unknown) {
+      return Number(input) * 2;
+    };
+
+    engine.register('fork-child-function', childWorkflow);
+    engine.register('fork-parent-composition', async function* (ctx: WorkflowContext) {
+      const durableContext = ctx as Context;
+      yield* durableContext.waitForSignal('continue');
+      return yield* durableContext.map([1, 2], childWorkflow);
+    });
+
+    const original = await engine.start('fork-parent-composition', null, {
+      id: 'wf-fork-composition-root',
+    });
+    const forked = await engine.fork(original.id);
+    const originalResult = original.result();
+
+    await engine.signal(forked.id, 'continue');
+    await expect(forked.result()).resolves.toEqual([2, 4]);
+
+    await engine.cancel(original.id);
+    await expect(originalResult).rejects.toThrow('Workflow cancelled');
+    engine[Symbol.dispose]();
+  });
+
   it('warms agent providers when forking agent workflows', async () => {
     const engine = new TestEngine();
     const warmupCalls: string[] = [];

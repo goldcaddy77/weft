@@ -4270,6 +4270,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         startedAt: getWorkflowExecutionStartedAt(state),
         abortController: workflowAbort,
         getNow: this.#options.getNow,
+        resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
         accumulatedResults,
         searchAttributes: checkpoint.searchAttributes,
         ...(registration.searchAttributes && {
