@@ -15,6 +15,8 @@ import type {
   ForkOptions,
   ListFilter,
   PaginatedResult,
+  PurgeResult,
+  RetentionOverview,
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
@@ -204,6 +206,14 @@ export class LocalClient implements WeftClient {
   async fork(id: string, options?: ForkOptions): Promise<ClientHandle> {
     const handle = await this.#engine.fork(id, options);
     return new LocalHandle(handle, this);
+  }
+
+  async getRetentionOverview(): Promise<RetentionOverview> {
+    return this.#engine.getRetentionOverview();
+  }
+
+  async purge(filter?: ListFilter): Promise<PurgeResult> {
+    return this.#engine.purge(filter);
   }
 
   async submitCoordinatedUpdate(

@@ -14,6 +14,8 @@ import type {
   ForkOptions,
   ListFilter,
   PaginatedResult,
+  PurgeResult,
+  RetentionOverview,
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
@@ -154,6 +156,11 @@ export interface WeftClient {
 
   /** Fork a workflow from its latest or a historical checkpoint. */
   fork(id: string, options?: ForkOptions): Promise<ClientHandle>;
+  /** Get the configured workflow retention policies and next sweep time. */
+  getRetentionOverview(): Promise<RetentionOverview>;
+
+  /** Purge matching terminal workflows. */
+  purge(filter?: ListFilter): Promise<PurgeResult>;
 
   /** Submit a coordinated update and wait for the result. */
   submitCoordinatedUpdate(

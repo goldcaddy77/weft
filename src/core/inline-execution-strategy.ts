@@ -35,6 +35,7 @@ export interface InlineExecutionDependencies {
       }
     | undefined;
   getNow: () => number;
+  resolveWorkflowType?: (target: string | Function) => string;
   maxNestingDepth: number;
   development?: boolean;
 }
@@ -128,6 +129,9 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       abortController: workflowAbort,
       getNow: this.#dependencies.getNow,
       nestingDepth: parameters.nestingDepth ?? 0,
+      ...(this.#dependencies.resolveWorkflowType !== undefined && {
+        resolveWorkflowType: this.#dependencies.resolveWorkflowType,
+      }),
       ...(registration.searchAttributes && {
         searchAttributeSchema: registration.searchAttributes,
       }),
