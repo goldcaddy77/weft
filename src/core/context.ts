@@ -105,6 +105,11 @@ export interface StreamReference {
   totalSizeBytes: number;
 }
 
+export interface StoredStreamChunk<T = unknown> {
+  sequence: number;
+  value: T;
+}
+
 export interface StreamSink {
   heartbeat(details?: unknown): void;
 }

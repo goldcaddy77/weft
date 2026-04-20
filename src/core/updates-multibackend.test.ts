@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { KEYS } from '../storage/interface.ts';
-import { flush, storageBackends, teardown } from '../testing/storage-backends.ts';
+import {
+  flush,
+  storageBackends,
+  teardown,
+  waitForWorkflowStatus,
+} from '../testing/storage-backends.ts';
 import { encode } from './codec.ts';
 import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
@@ -64,7 +69,7 @@ for (const backend of storageBackends) {
       });
 
       const handle = await engine.start('waiter', undefined);
-      await flush();
+      await waitForWorkflowStatus(engine, handle.id, 'running');
 
       const updateResult = await engine.update(handle.id, 'review', 'my-data');
       expect(updateResult).toEqual({ accepted: true, data: 'my-data' });

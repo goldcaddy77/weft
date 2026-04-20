@@ -242,6 +242,31 @@ describe('LMDBStorage', () => {
     storage[Symbol.dispose]();
   });
 
+  it('refreshes the read snapshot after writes so immediate follow-up scans observe new keys', async () => {
+    const storage = createStorage();
+
+    expect(await storage.get('upd:wf-1:missing')).toBeNull();
+    expect(await storage.has('upd:wf-1:missing')).toBe(false);
+    expect(await collect(storage.scan('upd:'))).toEqual([]);
+
+    await storage.put('upd:wf-1:first', encode('first'));
+    expect(await storage.has('upd:wf-1:first')).toBe(true);
+    const firstScanEntries = await collect(storage.scan('upd:'));
+    expect(firstScanEntries.map(([key]) => key)).toEqual(['upd:wf-1:first']);
+
+    await storage.batch([{ type: 'put', key: 'upd:wf-1:second', value: encode('second') }]);
+    expect(await storage.has('upd:wf-1:second')).toBe(true);
+    const secondScanEntries = await collect(storage.scan('upd:'));
+    expect(secondScanEntries.map(([key]) => key)).toEqual(['upd:wf-1:first', 'upd:wf-1:second']);
+
+    await storage.delete('upd:wf-1:first');
+    expect(await storage.has('upd:wf-1:first')).toBe(false);
+    const thirdScanEntries = await collect(storage.scan('upd:'));
+    expect(thirdScanEntries.map(([key]) => key)).toEqual(['upd:wf-1:second']);
+
+    storage[Symbol.dispose]();
+  });
+
   it('writes are batched asynchronously (put returns a promise)', async () => {
     const storage = createStorage();
 

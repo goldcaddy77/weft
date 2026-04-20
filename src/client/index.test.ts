@@ -280,7 +280,12 @@ describe('HttpClient request surface', () => {
       new Response(null, { status: 204 }),
       new Response(null, { status: 204 }),
       jsonResponse({ namespace: 'agents', daily: { maxCost: 10 } }),
-      jsonResponse({ chunks: ['chunk-a', 'chunk-b'] }),
+      jsonResponse({
+        chunks: [
+          { sequence: 2, value: 'chunk-a' },
+          { sequence: 3, value: 'chunk-b' },
+        ],
+      }),
       jsonResponse({ id: 'wf-forked' }),
       jsonResponse({ updateId: 'update-1', result: 'accepted' }),
       jsonResponse({ status: 'completed', result: 'done', error: 'warn' }),
@@ -341,7 +346,10 @@ describe('HttpClient request surface', () => {
       namespace: 'agents',
       daily: { maxCost: 10 },
     });
-    expect(await httpClient.getStreamChunks('wf/1', 'stream/key')).toEqual(['chunk-a', 'chunk-b']);
+    expect(await httpClient.getStreamChunks('wf/1', 'stream/key', { after: 1 })).toEqual([
+      { sequence: 2, value: 'chunk-a' },
+      { sequence: 3, value: 'chunk-b' },
+    ]);
     const forked = await httpClient.fork('wf/1', { fromStep: 2 });
     expect(forked.id).toBe('wf-forked');
     expect(
@@ -395,7 +403,7 @@ describe('HttpClient request surface', () => {
     expect(fetchCalls[13]?.url).toContain('/update/rename');
     expect(fetchCalls[14]?.url).toContain('/resume');
     expect(fetchCalls[15]?.url).toBe('http://example.test/v1/recover');
-    expect(fetchCalls[24]?.url).toContain('/streams/stream%2Fkey');
+    expect(fetchCalls[24]?.url).toContain('/streams/stream%2Fkey?after=1');
     expect(fetchCalls[25]?.url).toBe('http://example.test/v1/workflows/wf%2F1/fork');
     expect(fetchCalls[25]?.init?.method).toBe('POST');
     const forkBody = fetchCalls[25]?.init?.body;
