@@ -1639,6 +1639,44 @@ describe('handleRequest', () => {
     });
   });
 
+  describe('POST/DELETE /v1/workflows/:id/tags (error paths)', () => {
+    it('returns 400 when POST /v1/workflows/:id/tags receives a null JSON body', async () => {
+      engine = createEngine();
+      await engine.start('echo', 'payload', { id: 'tag-route-null-add' });
+
+      const response = await handleRequest(
+        new Request('http://localhost/v1/workflows/tag-route-null-add/tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: 'null',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toBe('Invalid JSON body');
+    });
+
+    it('returns 400 when DELETE /v1/workflows/:id/tags receives an array JSON body', async () => {
+      engine = createEngine();
+      await engine.start('echo', 'payload', { id: 'tag-route-array-remove', tags: ['alpha'] });
+
+      const response = await handleRequest(
+        new Request('http://localhost/v1/workflows/tag-route-array-remove/tags', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(['alpha']),
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await json(response)) as { error: string };
+      expect(body.error).toBe('Invalid JSON body');
+    });
+  });
+
   // -------------------------------------------------------------------------
   // GET /v1/workflows/:id/events — workflow event history
   // -------------------------------------------------------------------------

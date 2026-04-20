@@ -23,6 +23,7 @@ export interface WorkflowState {
   id: string;
   type: string;
   status: WorkflowStatus;
+  tags?: string[];
   input: unknown;
   result?: unknown;
   error?: string;
@@ -36,6 +37,7 @@ export interface WorkflowSummary {
   id: string;
   type: string;
   status: WorkflowStatus;
+  tags?: string[];
   version: string;
   createdAt: number;
   updatedAt: number;
@@ -51,6 +53,7 @@ export interface PaginatedResult<T> {
 export interface ListFilter {
   status?: WorkflowStatus;
   type?: string;
+  tags?: string[];
   limit?: number;
   offset?: number;
 }
@@ -152,6 +155,11 @@ export class ApiClient {
 
     if (filter?.status !== undefined) params.set('status', filter.status);
     if (filter?.type !== undefined) params.set('type', filter.type);
+    if (filter?.tags !== undefined) {
+      for (const tag of filter.tags) {
+        params.append('tag', tag);
+      }
+    }
     if (filter?.limit !== undefined) params.set('limit', String(filter.limit));
     if (filter?.offset !== undefined) params.set('offset', String(filter.offset));
 

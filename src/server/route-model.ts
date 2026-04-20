@@ -183,6 +183,22 @@ export const ROUTES = [
     tags: ['Attributes'],
   },
   {
+    method: 'POST',
+    path: '/v1/workflows/:id/tags',
+    handler: 'addWorkflowTags',
+    paramNames: ['id'],
+    summary: 'Add workflow tags',
+    tags: ['Tags'],
+  },
+  {
+    method: 'DELETE',
+    path: '/v1/workflows/:id/tags',
+    handler: 'removeWorkflowTags',
+    paramNames: ['id'],
+    summary: 'Remove workflow tags',
+    tags: ['Tags'],
+  },
+  {
     method: 'GET',
     path: '/v1/metrics',
     handler: 'getMetrics',

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
+import { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
@@ -13,6 +14,11 @@ import type { WeftClient } from './interface.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
+}
+
+async function* waitForSignalWorkflow(ctx: WorkflowContext, input: unknown) {
+  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  return `${String(input)}:${signal}`;
 }
 
 function requestInputToUrl(input: RequestInfo | URL): string {
@@ -42,6 +48,7 @@ beforeAll(() => {
     },
   });
   engine.register('echo', echoWorkflow);
+  engine.register('wait-for-signal', waitForSignalWorkflow);
 
   server = Bun.serve({
     port: 0, // random available port
@@ -104,6 +111,37 @@ describe('HttpClient', () => {
       const result = await handle.result();
       expect(result).toBe(42);
     });
+
+    it('forwards StartOptions.tags through the HTTP client', async () => {
+      const handle = await client.start('echo', 'tagged', {
+        id: 'http-client-tags',
+        tags: ['nightly', 'v2'],
+      });
+      await handle.result();
+
+      const state = await client.get('http-client-tags');
+      expect(state?.tags).toEqual(['nightly', 'v2']);
+    });
+
+    it('persists handle.addTags(...tags) and handle.removeTags(...tags) through the HTTP routes', async () => {
+      const handle = await client.start('wait-for-signal', 'payload', {
+        id: 'http-client-tag-mutations',
+        tags: ['alpha'],
+      });
+      await Bun.sleep(10);
+
+      await handle.addTags('beta');
+      await handle.removeTags('alpha');
+
+      const state = await client.get('http-client-tag-mutations');
+      expect(state?.tags).toEqual(['beta']);
+
+      const result = await client.list({ tags: ['beta'] });
+      expect(result.items.some((item) => item.id === 'http-client-tag-mutations')).toBe(true);
+
+      await handle.signal('continue', 'done');
+      await expect(handle.result()).resolves.toBe('payload:done');
+    });
   });
 
   describe('get', () => {
@@ -134,6 +172,22 @@ describe('HttpClient', () => {
     it('filters by status', async () => {
       const result = await client.list({ status: 'completed' });
       expect(result.items.every((item) => item.status === 'completed')).toBe(true);
+    });
+
+    it('filters by repeated tag query parameters', async () => {
+      const firstHandle = await client.start('echo', 'one', {
+        id: 'http-tag-wf-1',
+        tags: ['nightly', 'v2', 'release-candidate'],
+      });
+      const secondHandle = await client.start('echo', 'two', {
+        id: 'http-tag-wf-2',
+        tags: ['nightly'],
+      });
+      await firstHandle.result();
+      await secondHandle.result();
+
+      const result = await client.list({ tags: ['nightly', 'v2', 'release-candidate'] });
+      expect(result.items.map((item) => item.id)).toEqual(['http-tag-wf-1']);
     });
   });
 
