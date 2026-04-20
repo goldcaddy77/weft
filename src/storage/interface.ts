@@ -151,6 +151,10 @@ export const KEYS = {
   timelinePrefix: (id: string) => `wf:${encodeStorageKeyComponent(id)}:timeline:`,
   timeline: (id: string, step: number) =>
     `wf:${encodeStorageKeyComponent(id)}:timeline:${String(step).padStart(10, '0')}`,
+  schedule: (id: string) => `schedule:${encodeStorageKeyComponent(id)}`,
+  scheduleTick: (fireAt: number, id: string) =>
+    `schedule-due:${String(fireAt).padStart(16, '0')}:${encodeStorageKeyComponent(id)}`,
+  scheduleRun: (workflowId: string) => `schedule-run:${encodeStorageKeyComponent(workflowId)}`,
   operation: (queue: string, scheduledAt: number, id: string) =>
     `op:${queue}:${String(scheduledAt).padStart(16, '0')}:${id}`,
   operationInflight: (id: string) => `op:inflight:${id}`,
@@ -188,6 +192,8 @@ export const KEYS = {
     `shared:${encodeStorageKeyComponent(workflowId)}:${stateKey}`,
   sharedStateVersion: (workflowId: string, stateKey: string) =>
     `shared:${encodeStorageKeyComponent(workflowId)}:${stateKey}:version`,
+  streamChunkPrefix: (workflowId: string, key: string) =>
+    `blob:${encodeStorageKeyComponent(workflowId)}:${key}:chunk:`,
   streamChunk: (workflowId: string, key: string, chunkIndex: number) =>
     `blob:${encodeStorageKeyComponent(workflowId)}:${key}:chunk:${String(chunkIndex).padStart(10, '0')}`,
   streamMetadata: (workflowId: string, key: string) =>

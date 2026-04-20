@@ -39,6 +39,7 @@ import {
   evictOldestAffinityEntries,
   restoreExtendedDeadlineIfStillActive,
 } from './runtime-helpers.ts';
+import { parseOptionalSequenceCursor } from './sequence-cursor.ts';
 import { TaskQueue, type PendingTask, type SchedulingPolicy } from './task-queue.ts';
 import type { InflightRecord, QueuedRecord } from './task-state.ts';
 import {
@@ -175,9 +176,14 @@ interface WebSocketData {
   connectionType: ConnectionType;
   /** Workflow ID extracted from the URL for stream/watch connections. */
   workflowId?: string;
+  /** Optional starting sequence for stream replay. */
+  resumeFrom?: number;
   /** Queue name extracted from the URL for worker connections. */
   queue?: string;
   workerId?: string;
+  lastDeliveredSequence?: number;
+  replayInProgress?: boolean;
+  pendingStreamMessages?: Array<{ sequence: number; message: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,10 +271,11 @@ async function parseTaskResultBody(request: Request): Promise<Record<string, unk
   }
 }
 
-/** Classify a WebSocket pathname and extract relevant parameters. */
+/** Classify a WebSocket request URL and extract relevant parameters. */
 function classifyConnection(
-  pathname: string,
+  url: URL,
 ): Pick<WebSocketData, 'connectionType' | 'workflowId' | 'queue'> | null {
+  const pathname = url.pathname;
   const streamMatch = WORKFLOW_STREAM_RE.exec(pathname);
   if (streamMatch?.[1]) {
     const workflowId = tryDecodePathComponent(streamMatch[1]);
@@ -292,6 +299,37 @@ function classifyConnection(
 
 function workflowChannelPath(workflowId: string, connectionType: 'watch' | 'stream'): string {
   return `/v1/workflows/${encodeURIComponent(workflowId)}/${connectionType}`;
+}
+
+function sendStreamMessage(
+  ws: ServerWebSocket<WebSocketData>,
+  sequence: number,
+  message: string,
+): void {
+  if (sequence <= (ws.data.lastDeliveredSequence ?? -1)) {
+    return;
+  }
+
+  ws.send(message);
+  ws.data.lastDeliveredSequence = sequence;
+}
+
+async function getHighestStoredStreamSequence(
+  engine: Engine,
+  workflowId: string,
+  key: string,
+): Promise<number> {
+  const prefix = KEYS.streamChunkPrefix(workflowId, key);
+
+  for await (const [storageKey] of engine.storage.scan(prefix, { reverse: true, limit: 1 })) {
+    const sequenceText = storageKey.slice(prefix.length);
+    const sequence = Number.parseInt(sequenceText, 10);
+    if (Number.isSafeInteger(sequence) && sequence >= 0) {
+      return sequence;
+    }
+  }
+
+  return -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +400,9 @@ function getWorkflowIdFromEvent(event: Event): string | undefined {
 export function wireEventBroadcasting(
   engine: Engine,
   server: ReturnType<typeof Bun.serve>,
+  options?: {
+    publishTokenMessage?: (workflowId: string, sequence: number, message: string) => void;
+  },
 ): EventBroadcastingHandle {
   const controller = new AbortController();
   const { signal } = controller;
@@ -376,6 +417,8 @@ export function wireEventBroadcasting(
    */
   const sequenceCounters = new Map<string, number>();
   const sequenceInitPromises = new Map<string, Promise<void>>();
+  const tokenSequenceCounters = new Map<string, number>();
+  const tokenSequenceInitPromises = new Map<string, Promise<void>>();
 
   /**
    * Per-workflow serialization chain. Each workflow's events are persisted
@@ -417,6 +460,33 @@ export function wireEventBroadcasting(
     return promise;
   }
 
+  /** Ensure the token-stream chunk counter is seeded from durable storage. */
+  function ensureTokenSequenceInitialized(workflowId: string): Promise<void> {
+    const existing = tokenSequenceInitPromises.get(workflowId);
+    if (existing) return existing;
+
+    const promise = (async () => {
+      const prefix = KEYS.streamChunkPrefix(workflowId, 'tokens');
+      let highestSequence = -1;
+
+      for await (const [key] of engine.storage.scan(prefix, { reverse: true, limit: 1 })) {
+        const sequenceText = key.slice(prefix.length);
+        const parsedSequence = Number.parseInt(sequenceText, 10);
+        if (Number.isSafeInteger(parsedSequence)) {
+          highestSequence = parsedSequence;
+        }
+      }
+
+      tokenSequenceCounters.set(workflowId, highestSequence + 1);
+    })().catch((error) => {
+      tokenSequenceInitPromises.delete(workflowId);
+      throw error;
+    });
+
+    tokenSequenceInitPromises.set(workflowId, promise);
+    return promise;
+  }
+
   /** Persist an event to storage and publish to WebSocket channels. */
   async function persistAndPublishEvent(
     workflowId: string,
@@ -448,8 +518,34 @@ export function wireEventBroadcasting(
 
     // For token events, also publish to the stream channel
     if (eventType === TokenEvent.type) {
-      const streamChannel = workflowChannelPath(workflowId, 'stream');
-      server.publish(streamChannel, message);
+      const tokenPayload = {
+        workflowId:
+          typeof parsed.data['workflowId'] === 'string' ? parsed.data['workflowId'] : workflowId,
+        token: typeof parsed.data['token'] === 'string' ? parsed.data['token'] : '',
+        model: typeof parsed.data['model'] === 'string' ? parsed.data['model'] : '',
+      };
+      await ensureTokenSequenceInitialized(workflowId);
+      const tokenSequence = claimNextSequence(tokenSequenceCounters, workflowId);
+      await withRetry(
+        async () =>
+          engine.storage.put(
+            KEYS.streamChunk(workflowId, 'tokens', tokenSequence),
+            encode(tokenPayload),
+          ),
+        `persist token stream chunk for workflow "${workflowId}"`,
+      );
+
+      const streamMessage = JSON.stringify({
+        ...parsed,
+        sequence: tokenSequence,
+        data: tokenPayload,
+      });
+      if (options?.publishTokenMessage) {
+        options.publishTokenMessage(workflowId, tokenSequence, streamMessage);
+      } else {
+        const streamChannel = workflowChannelPath(workflowId, 'stream');
+        server.publish(streamChannel, streamMessage);
+      }
     }
   }
 
@@ -528,6 +624,8 @@ export function wireEventBroadcasting(
     const drop = (): void => {
       sequenceCounters.delete(workflowId);
       sequenceInitPromises.delete(workflowId);
+      tokenSequenceCounters.delete(workflowId);
+      tokenSequenceInitPromises.delete(workflowId);
       sequenceChains.delete(workflowId);
     };
     if (!pendingChain) {
@@ -588,6 +686,7 @@ export function serve(options: ServeOptions): WeftServer {
       : undefined,
   );
   const workerSockets = new Map<string, ServerWebSocket<WebSocketData>>();
+  const streamSockets = new Map<string, Set<ServerWebSocket<WebSocketData>>>();
   /** Tracks per-workflow worker affinity for sticky routing. Maps workflowId → workerId. */
   const workerAffinity = new Map<string, string>();
   /** Reverse index: workflowId → set of operationIds currently in-flight for that workflow. */
@@ -612,35 +711,102 @@ export function serve(options: ServeOptions): WeftServer {
     }
   }
 
+  function addStreamSocket(workflowId: string, ws: ServerWebSocket<WebSocketData>): void {
+    let sockets = streamSockets.get(workflowId);
+    if (!sockets) {
+      sockets = new Set();
+      streamSockets.set(workflowId, sockets);
+    }
+    sockets.add(ws);
+  }
+
+  function removeStreamSocket(ws: ServerWebSocket<WebSocketData>): void {
+    const workflowId = ws.data.workflowId;
+    if (!workflowId) return;
+
+    const sockets = streamSockets.get(workflowId);
+    if (!sockets) return;
+
+    sockets.delete(ws);
+    if (sockets.size === 0) {
+      streamSockets.delete(workflowId);
+    }
+  }
+
+  function flushPendingStreamMessages(ws: ServerWebSocket<WebSocketData>): void {
+    const pendingMessages = ws.data.pendingStreamMessages ?? [];
+    pendingMessages.sort((left, right) => left.sequence - right.sequence);
+
+    for (const pending of pendingMessages) {
+      sendStreamMessage(ws, pending.sequence, pending.message);
+    }
+
+    ws.data.pendingStreamMessages = [];
+  }
+
+  function publishTokenMessage(workflowId: string, sequence: number, message: string): void {
+    const sockets = streamSockets.get(workflowId);
+    if (!sockets) return;
+
+    for (const ws of sockets) {
+      if (ws.data.replayInProgress) {
+        ws.data.pendingStreamMessages ??= [];
+        ws.data.pendingStreamMessages.push({ sequence, message });
+        continue;
+      }
+
+      sendStreamMessage(ws, sequence, message);
+    }
+  }
+
   /**
-   * Send existing token events from storage as replay messages to a newly
+   * Send existing token chunks from storage to a newly
    * connected stream client, so it can catch up on tokens emitted before
    * the connection was established.
    */
-  async function replayTokenEvents(
+  async function replayTokenStream(
     ws: ServerWebSocket<WebSocketData>,
     workflowId: string,
   ): Promise<void> {
-    const prefix = KEYS.eventPrefix(workflowId);
-    try {
-      for await (const [, value] of options.engine.storage.scan(prefix)) {
-        const event = decode(value);
-        if (event === null || typeof event !== 'object' || !('type' in event) || !('data' in event))
-          continue;
-        const { type: eventType, data } = event as { type: string; data: Record<string, unknown> };
-        if (eventType !== TokenEvent.type) continue;
+    ws.data.lastDeliveredSequence = -1;
 
-        ws.send(
+    try {
+      const requestedResumeFrom = ws.data.resumeFrom;
+      const after =
+        requestedResumeFrom === undefined
+          ? -1
+          : Math.min(
+              requestedResumeFrom,
+              await getHighestStoredStreamSequence(options.engine, workflowId, 'tokens'),
+            );
+      ws.data.lastDeliveredSequence = after;
+      const chunks =
+        after >= 0
+          ? await options.engine.getStreamChunks(workflowId, 'tokens', { after })
+          : await options.engine.getStreamChunks(workflowId, 'tokens');
+
+      for (const chunk of chunks) {
+        if (typeof chunk.value !== 'object' || chunk.value === null) {
+          continue;
+        }
+
+        sendStreamMessage(
+          ws,
+          chunk.sequence,
           JSON.stringify({
-            type: 'replay',
+            type: TokenEvent.type,
             timestamp: Date.now(),
-            data,
+            sequence: chunk.sequence,
+            data: chunk.value,
           }),
         );
       }
       /* c8 ignore start -- replay failures require injected storage scan faults */
     } catch (error) {
-      console.error(`[weft] Failed to replay token events for workflow "${workflowId}":`, error);
+      console.error(`[weft] Failed to replay token stream for workflow "${workflowId}":`, error);
+    } finally {
+      ws.data.replayInProgress = false;
+      flushPendingStreamMessages(ws);
     }
     /* c8 ignore stop */
   }
@@ -770,18 +936,32 @@ export function serve(options: ServeOptions): WeftServer {
     void transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
   }
 
-  function handleWebSocketUpgrade(request: Request, pathname: string): Response | undefined | null {
+  function handleWebSocketUpgrade(request: Request, url: URL): Response | undefined | null {
     if (request.headers.get('upgrade') !== 'websocket') {
       return null;
     }
 
-    const classification = classifyConnection(pathname);
+    const classification = classifyConnection(url);
     if (classification === null) {
       return new Response('Invalid encoded WebSocket path', { status: 400 });
     }
 
+    const resumeFromParam = url.searchParams.get('resumeFrom');
+    const resumeFromResult = parseOptionalSequenceCursor(
+      resumeFromParam,
+      'resumeFrom query parameter',
+    );
+    if (resumeFromResult.error) {
+      return new Response(resumeFromResult.error, { status: 400 });
+    }
+    const resumeFrom = resumeFromResult.value;
+
     const upgraded = server.upgrade(request, {
-      data: { pathname, ...classification },
+      data: {
+        pathname: url.pathname,
+        ...classification,
+        ...(resumeFrom !== undefined ? { resumeFrom } : {}),
+      },
     });
     if (upgraded) {
       return undefined;
@@ -888,7 +1068,7 @@ export function serve(options: ServeOptions): WeftServer {
         return authResponse;
       }
 
-      const websocketResponse = handleWebSocketUpgrade(request, url.pathname);
+      const websocketResponse = handleWebSocketUpgrade(request, url);
       if (websocketResponse !== null) {
         return websocketResponse;
       }
@@ -919,13 +1099,22 @@ export function serve(options: ServeOptions): WeftServer {
     websocket: {
       open(ws) {
         const { pathname, connectionType, workflowId } = ws.data;
-        if (pathname) {
+        // Watch and worker sockets ride Bun pub/sub by pathname. Stream
+        // sockets do not: `serve()` wires token delivery through
+        // `publishTokenMessage()` and the `streamSockets` registry instead,
+        // while `wireEventBroadcasting()` retains the `server.publish()`
+        // fallback for direct callers that manage subscriptions themselves.
+        if (pathname && connectionType !== 'stream') {
           ws.subscribe(pathname);
         }
 
-        // For stream connections, replay existing token events from storage
+        // Stream sockets track replay state individually so reconnects can
+        // catch up from durable storage without duplicate live tokens.
         if (connectionType === 'stream' && workflowId) {
-          void replayTokenEvents(ws, workflowId);
+          ws.data.replayInProgress = true;
+          ws.data.pendingStreamMessages = [];
+          addStreamSocket(workflowId, ws);
+          void replayTokenStream(ws, workflowId);
         }
       },
       message(ws, rawMessage) {
@@ -1071,6 +1260,10 @@ export function serve(options: ServeOptions): WeftServer {
         }
       },
       close(ws) {
+        if (ws.data.connectionType === 'stream') {
+          removeStreamSocket(ws);
+        }
+
         const workerId = ws.data.workerId;
         if (workerId) {
           // Fix 2: If the worker already reconnected with a new socket, this close
@@ -1161,7 +1354,9 @@ export function serve(options: ServeOptions): WeftServer {
   // stack (which stops the server) before propagating the error.
   let broadcastingHandle: EventBroadcastingHandle;
   try {
-    broadcastingHandle = wireEventBroadcasting(options.engine, server);
+    broadcastingHandle = wireEventBroadcasting(options.engine, server, {
+      publishTokenMessage,
+    });
     /* c8 ignore start -- initialization failure requires injected broadcaster setup faults */
   } catch (error) {
     void stack[Symbol.asyncDispose]();
