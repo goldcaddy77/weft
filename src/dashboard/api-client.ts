@@ -1,11 +1,13 @@
 /**
  * Typed fetch wrapper for the Weft REST API.
  *
- * All types are declared inline rather than imported from core
- * because the dashboard runs in the browser, not the server.
+ * Browser-only shapes are declared inline here, while shared contract
+ * types are re-exported from core as type-only imports.
  *
  * @module dashboard/api-client
  */
+
+import type { TenantQuotaUsage } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,21 +60,11 @@ export interface ListFilter {
   offset?: number;
 }
 
-export interface TenantQuotaMetricUsage {
-  used: number;
-  limit: number | null;
-}
-
-export interface TenantWorkflowCreationRateUsage extends TenantQuotaMetricUsage {
-  windowMilliseconds: number | null;
-}
-
-export interface TenantQuotaUsage {
-  tenantId: string;
-  activeWorkflows: TenantQuotaMetricUsage;
-  storageBytes: TenantQuotaMetricUsage;
-  workflowCreationRate: TenantWorkflowCreationRateUsage;
-}
+export type {
+  TenantQuotaMetricUsage,
+  TenantQuotaUsage,
+  TenantWorkflowCreationRateUsage,
+} from '../core/types.ts';
 
 export interface WorkflowEvent {
   type: string;
