@@ -4,6 +4,8 @@ import { decode, encode } from '../core/codec.ts';
 import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { StartWorkflowValidationError } from '../core/start-workflow-validation.ts';
+import { tenantFromInputField } from '../core/tenant.ts';
+import { QuotaExceededError } from '../core/tenant-quotas.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -228,6 +230,99 @@ describe('handleRequest', () => {
     const body = (await json(response)) as { items: unknown[]; total: number };
     expect(body.items.length).toBe(2);
     expect(body.total).toBe(2);
+  });
+
+  it('GET /v1/tenants/:id/quota returns tenant quota usage', async () => {
+    engine = new Engine({
+      storage: new MemoryStorage(),
+      tenantResolver: tenantFromInputField('tenantId'),
+      quotas: {
+        maxConcurrentWorkflows: 3,
+        maxStorageBytes: 16_384,
+        maxWorkflowCreationRate: { count: 5, window: '1m' },
+      },
+    });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: { tenantId: 'acme', payload: 'x' } }),
+      engine,
+    );
+    await flush();
+
+    const response = await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as {
+      tenantId: string;
+      storageBytes: { used: number; limit: number | null };
+      workflowCreationRate: { used: number; limit: number | null };
+    };
+    expect(body.tenantId).toBe('acme');
+    expect(body.storageBytes.used).toBeGreaterThan(0);
+    expect(body.storageBytes.limit).toBe(16_384);
+    expect(body.workflowCreationRate.used).toBe(1);
+    expect(body.workflowCreationRate.limit).toBe(5);
+  });
+
+  it('GET /v1/tenants/:id/quota lets unexpected errors reach the top-level handler logger', async () => {
+    engine = new Engine({
+      storage: new MemoryStorage(),
+      tenantResolver: tenantFromInputField('tenantId'),
+    });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    const originalGetQuotaUsage = engine.getQuotaUsage.bind(engine);
+    engine.getQuotaUsage = async () => {
+      throw new Error('quota exploded');
+    };
+
+    const recordedCalls: unknown[][] = [];
+    const originalError = console.error;
+    console.error = ((...args: unknown[]) => {
+      recordedCalls.push(args);
+    }) as typeof console.error;
+
+    let response: Response;
+    try {
+      response = await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine);
+    } finally {
+      console.error = originalError;
+      engine.getQuotaUsage = originalGetQuotaUsage;
+    }
+
+    expect(response.status).toBe(500);
+    expect(await json(response)).toEqual({ error: 'Internal server error' });
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0]?.map(String).join(' ')).toContain('Unhandled error in handleRequest');
+  });
+
+  it('GET /v1/tenants/:id/quota rejects blank tenant ids', async () => {
+    engine = new Engine({
+      storage: new MemoryStorage(),
+      tenantResolver: tenantFromInputField('tenantId'),
+    });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    const response = await handleRequest(request('GET', '/v1/tenants/%20%20/quota'), engine);
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Tenant id must be a non-empty string' });
+  });
+
+  it('returns 400 for malformed percent-encoded route parameters', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(request('GET', '/v1/workflows/%E0%A4%A/result'), engine);
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Malformed route parameter encoding' });
   });
 
   // 9. List workflows with status filter
@@ -812,6 +907,31 @@ describe('handleRequest', () => {
 
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Field "id" must be a string' });
+
+    engine.start = originalStart;
+  });
+
+  it('POST /v1/workflows returns 429 when engine.start throws a quota error', async () => {
+    engine = createEngine();
+
+    const originalStart = engine.start.bind(engine);
+    engine.start = async () => {
+      throw new QuotaExceededError({
+        tenantId: 'acme',
+        quota: 'maxConcurrentWorkflows',
+        currentUsage: 2,
+        limit: 1,
+      });
+    };
+
+    const response = await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'data' }),
+      engine,
+    );
+
+    expect(response.status).toBe(429);
+    const body = (await json(response)) as { error: string };
+    expect(body.error).toContain('Tenant quota exceeded');
 
     engine.start = originalStart;
   });
@@ -2841,7 +2961,7 @@ describe('handleRequest', () => {
     expect(response.status).toBe(404);
   });
 
-  it('returns 404 instead of throwing for malformed percent-encoding in route parameters', async () => {
+  it('returns 400 for malformed percent-encoding in route parameters', async () => {
     engine = createEngine();
 
     const response = await handleRequest(
@@ -2849,7 +2969,8 @@ describe('handleRequest', () => {
       engine,
     );
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Malformed route parameter encoding' });
   });
 
   // -------------------------------------------------------------------------

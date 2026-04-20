@@ -113,6 +113,7 @@ import {
   isAsyncGeneratorFunction,
   isGeneratorResult,
 } from './step-context.ts';
+import { TenantQuotaManager } from './tenant-quotas.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   AttributeFilter,
@@ -141,6 +142,7 @@ import type {
   StartOptions,
   StepWorkflowFunction,
   SubmitReviewOptions,
+  TenantQuotaUsage,
   TimerEntry,
   WorkerOutboundMessage,
   WorkflowEvent,
@@ -153,6 +155,8 @@ import type {
   WorkflowTimelineEntry,
   WorkflowTimelineStatus,
   WorkflowTypeRetentionPolicy,
+} from './types.ts';
+import {
   DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
 } from './types.ts';
@@ -216,6 +220,7 @@ interface WorkflowStateUpdateOptions {
     previousState: WorkflowState,
     updatedAt: number,
   ) => BatchOperation[];
+  releaseTenantQuota?: boolean;
 }
 
 interface WorkflowStateUpdateResult {
@@ -1747,6 +1752,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #workflowHeaders: Map<string, Map<string, string>>;
   #workflowStateWriteChains: Map<string, Promise<void>>;
   #budgetPolicyEnforcer: import('../ai/budget-policy.ts').BudgetPolicyEnforcer | null;
+  #tenantQuotaManager: TenantQuotaManager;
   #heartbeatDetails: Map<string, unknown>;
   #pendingStarts: Set<string>;
   #pendingScheduleCreations: Set<string>;
@@ -1859,6 +1865,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#inlineStrategy = strategyBundle.inlineStrategy;
 
     this.#budgetPolicyEnforcer = null;
+    this.#tenantQuotaManager = new TenantQuotaManager(storage, getNow, options?.quotas);
     this.#heartbeatDetails = new Map();
     this.#pendingStarts = new Set();
     this.#pendingScheduleCreations = new Set();
@@ -2468,19 +2475,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.#agentWorkflowIds.add(workflowId);
       }
 
-      await this.#storage.batch(
-        this.#buildStartBatchOperations(
-          workflowId,
-          state,
-          checkpoint,
-          registration,
-          options,
-          state.executionDeadline,
-          delayedStartTimer,
-          persistedWorkflowStartHeaders,
-          additionalStartOperations,
-        ),
+      const startOperations = this.#buildStartBatchOperations(
+        workflowId,
+        state,
+        checkpoint,
+        registration,
+        options,
+        state.executionDeadline,
+        delayedStartTimer,
+        persistedWorkflowStartHeaders,
+        additionalStartOperations,
       );
+
+      if (tenant !== undefined) {
+        const tenantQuotaManager = this.#tenantQuotaManager;
+        await tenantQuotaManager.commitStartAdmission({
+          tenantId: tenant.id,
+          workflowId,
+          startOperations,
+          get estimatedStorageBytes() {
+            return tenantQuotaManager.estimateStartStorageBytes(workflowId, startOperations);
+          },
+        });
+      } else {
+        await this.#storage.batch(startOperations);
+      }
       // Deadline timer operations are now folded into the start batch above,
       // eliminating a separate storage transaction on the hot start path.
 
@@ -4082,6 +4101,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return this.#budgetPolicyEnforcer.policies.get(namespace) ?? null;
   }
 
+  /** Retrieve current quota usage versus configured limits for a tenant. */
+  async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
+    return this.#tenantQuotaManager.getUsage(tenantId);
+  }
+
   /** Read stored stream chunks back from storage, optionally after a durable sequence cursor. */
   async getStreamChunks(
     workflowId: string,
@@ -4287,13 +4311,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#strategy.cancelWorkflow(workflowId);
-
     const terminationMessage = status === 'timed-out' ? 'Workflow timed out' : 'Workflow cancelled';
     const terminationResult = await this.#updateWorkflowState(
       workflowId,
       { status },
       {
         allowedStatuses: ['running', 'pending'],
+        releaseTenantQuota: true,
         buildAdditionalOperations: (_previousState, updatedAt) => {
           this.#finalizePendingTimelineEntry(workflowId, status, terminationMessage, updatedAt);
           const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
@@ -7380,7 +7404,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
         }
 
-        await this.#storage.batch(completionOperations);
+        await this.#commitWorkflowStateOperations(state, completionOperations, {
+          releaseTenantQuota: true,
+        });
         return { duration };
       },
     );
@@ -7436,6 +7462,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     const failureResult = await this.#updateWorkflowState(workflowId, stateUpdate, {
       allowedStatuses: ['running', 'pending'],
+      releaseTenantQuota: true,
       buildAdditionalOperations: (_previousState, updatedAt) => {
         this.#finalizePendingTimelineEntry(workflowId, 'failed', error.message, updatedAt);
         const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
@@ -7524,12 +7551,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         updatedAt,
       };
       const additionalOperations = options.buildAdditionalOperations?.(state, updatedAt) ?? [];
+      const commitOptions =
+        options.releaseTenantQuota === true ? { releaseTenantQuota: true } : undefined;
 
-      await this.#storage.batch([
-        ...this.#buildTerminalWorkflowIndexOperations(state, updated),
-        { type: 'put', key: KEYS.workflow(workflowId), value: encode(updated) },
-        ...additionalOperations,
-      ]);
+      await this.#commitWorkflowStateOperations(
+        state,
+        [
+          ...this.#buildTerminalWorkflowIndexOperations(state, updated),
+          { type: 'put', key: KEYS.workflow(workflowId), value: encode(updated) },
+          ...additionalOperations,
+        ],
+        commitOptions,
+      );
 
       return {
         previousState: state,
@@ -7537,7 +7570,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       };
     });
   }
-
   #normalizeStartWorkflowTags(tags: unknown, fieldName = 'options.tags'): string[] | undefined {
     if (tags === undefined) {
       return undefined;
@@ -7601,7 +7633,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       ]);
     });
   }
-
   async #loadWorkflowState(workflowId: string): Promise<WorkflowState | null> {
     const bytes = await this.#storage.get(KEYS.workflow(workflowId));
     if (!bytes) return null;
@@ -7625,6 +7656,23 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new WorkflowTimeoutError(workflowId, 'execution', elapsed);
     }
     throw new Error(`Workflow "${workflowId}" is still ${state.status}`);
+  }
+
+  async #commitWorkflowStateOperations(
+    state: WorkflowState,
+    operations: import('../storage/interface.ts').BatchOperation[],
+    options?: { releaseTenantQuota?: boolean },
+  ): Promise<void> {
+    if (options?.releaseTenantQuota && state.tenant !== undefined) {
+      await this.#tenantQuotaManager.commitTerminalTransition({
+        tenantId: state.tenant.id,
+        workflowId: state.id,
+        operations,
+      });
+      return;
+    }
+
+    await this.#storage.batch(operations);
   }
 
   // -------------------------------------------------------------------------

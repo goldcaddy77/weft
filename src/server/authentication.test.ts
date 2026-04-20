@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
+import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { AuthConfig, JWTConfig, JWTPayload } from './authentication.ts';
@@ -755,6 +756,118 @@ describe('serve() with authentication', () => {
     });
 
     expect(response.status).toBe(201);
+  });
+
+  it('allows JWT tenant quota requests for the authenticated tenant', async () => {
+    engine = new Engine({
+      storage: new MemoryStorage(),
+      tenantResolver: tenantFromInputField('tenantId'),
+      quotas: {
+        maxConcurrentWorkflows: 2,
+        maxWorkflowCreationRate: { count: 5, window: '1m' },
+      },
+    });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    server = serve({ engine, port: 0, auth: { jwt: { secret: TEST_SECRET } } });
+
+    const token = await signJWT({ sub: 'user-1', tenantId: 'acme' }, TEST_SECRET);
+
+    const startResponse = await fetch(`${server.url}/v1/workflows`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ type: 'echo', input: { tenantId: 'acme', payload: 'quota' } }),
+    });
+    expect(startResponse.status).toBe(201);
+
+    const response = await fetch(`${server.url}/v1/tenants/acme/quota`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      tenantId: string;
+      workflowCreationRate: { used: number };
+    };
+    expect(body.tenantId).toBe('acme');
+    expect(body.workflowCreationRate.used).toBe(1);
+  });
+
+  it('rejects JWT tenant quota requests for a different tenant', async () => {
+    engine = new Engine({
+      storage: new MemoryStorage(),
+      tenantResolver: tenantFromInputField('tenantId'),
+      quotas: {
+        maxConcurrentWorkflows: 2,
+      },
+    });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    server = serve({ engine, port: 0, auth: { jwt: { secret: TEST_SECRET } } });
+
+    const startToken = await signJWT({ sub: 'user-1', tenantId: 'acme' }, TEST_SECRET);
+    const mismatchedTenantToken = await signJWT({ sub: 'user-1', tenantId: 'other' }, TEST_SECRET);
+
+    const startResponse = await fetch(`${server.url}/v1/workflows`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${startToken}`,
+      },
+      body: JSON.stringify({ type: 'echo', input: { tenantId: 'acme', payload: 'quota' } }),
+    });
+    expect(startResponse.status).toBe(201);
+
+    const response = await fetch(`${server.url}/v1/tenants/acme/quota`, {
+      headers: { Authorization: `Bearer ${mismatchedTenantToken}` },
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'Tenant quota access is limited to the authenticated tenant',
+    });
+  });
+
+  it('rejects JWT tenant quota requests without a tenant claim', async () => {
+    engine = new Engine({
+      storage: new MemoryStorage(),
+      tenantResolver: tenantFromInputField('tenantId'),
+      quotas: {
+        maxConcurrentWorkflows: 2,
+      },
+    });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+    server = serve({ engine, port: 0, auth: { jwt: { secret: TEST_SECRET } } });
+
+    const startToken = await signJWT({ sub: 'user-1', tenantId: 'acme' }, TEST_SECRET);
+    const missingTenantToken = await signJWT({ sub: 'user-1' }, TEST_SECRET);
+
+    const startResponse = await fetch(`${server.url}/v1/workflows`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${startToken}`,
+      },
+      body: JSON.stringify({ type: 'echo', input: { tenantId: 'acme', payload: 'quota' } }),
+    });
+    expect(startResponse.status).toBe(201);
+
+    const response = await fetch(`${server.url}/v1/tenants/acme/quota`, {
+      headers: { Authorization: `Bearer ${missingTenantToken}` },
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error:
+        'JWT-authenticated tenant quota requests require a tenantId, tenant_id, or tenant claim',
+    });
   });
 
   it('allows health check without authentication', async () => {

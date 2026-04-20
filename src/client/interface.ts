@@ -18,6 +18,7 @@ import type {
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
+  TenantQuotaUsage,
   WorkflowEvent,
   WorkflowReplay,
   WorkflowState,
@@ -156,6 +157,9 @@ export interface WeftClient {
 
   /** Retrieve the budget policy for a namespace, or `null` if none is set. */
   getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null>;
+
+  /** Retrieve current quota usage versus configured limits for a tenant. */
+  getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage>;
 
   /** Read stream chunks back from storage for a completed stream operation. */
   getStreamChunks(

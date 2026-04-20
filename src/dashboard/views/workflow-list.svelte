@@ -1,8 +1,17 @@
 <script lang="ts">
   import { getContext } from 'svelte';
 
-  import type { ApiClient, RetentionOverview, WorkflowStatus, WorkflowSummary } from '../api-client.ts';
-  import { search, filter, refreshCw } from '../icons.ts';
+  import type {
+    ApiClient,
+    RetentionOverview,
+    TenantQuotaMetricUsage,
+    TenantQuotaUsage,
+    WorkflowStatus,
+    WorkflowSummary,
+  } from '../api-client.ts';
+  import { activity, filter, refreshCw, search } from '../icons.ts';
+  import Alert from '../components/alert.svelte';
+  import Input from '../components/input.svelte';
   import Page from '../components/page.svelte';
   import Button from '../components/button.svelte';
   import Card from '../components/card.svelte';
@@ -10,6 +19,11 @@
   import Skeleton from '../components/skeleton.svelte';
   import EmptyState from '../components/empty-state.svelte';
   import WorkflowTableRow from '../fragments/workflow-table-row.svelte';
+  import {
+    computeTenantQuotaMeter,
+    formatTenantQuotaBytes,
+    formatTenantQuotaWindow,
+  } from '../utilities/tenant-quota.ts';
   import { loadWorkflowListData } from '../utilities/workflow-list-data.ts';
   import { buildWorkflowRetentionRows } from '../utilities/workflow-retention.ts';
   import { collectWorkflowTags, toggleWorkflowTagSelection } from '../utilities/workflow-tags.ts';
@@ -36,6 +50,10 @@
   let loading = $state(true);
   let error: string | null = $state(null);
   let fetchGeneration = 0;
+  let tenantQuotaId = $state('');
+  let tenantQuotaUsage = $state.raw<TenantQuotaUsage | null>(null);
+  let tenantQuotaLoading = $state(false);
+  let tenantQuotaError: string | null = $state(null);
 
   // ---------------------------------------------------------------------------
   // Fetching
@@ -141,6 +159,10 @@
     });
   }
 
+  function formatTenantQuotaLimit(metric: TenantQuotaMetricUsage): string {
+    return metric.limit === null ? 'No limit' : String(metric.limit);
+  }
+
   const availableTagFilters = $derived.by(() => {
     const tags = new Set([...collectWorkflowTags(workflows), ...selectedTags]);
     return [...tags].toSorted((left, right) => left.localeCompare(right));
@@ -149,6 +171,32 @@
   function toggleTagFilter(tag: string): void {
     selectedTags = toggleWorkflowTagSelection(selectedTags, tag);
     currentOffset = 0;
+  }
+
+  async function handleTenantQuotaSubmit(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+
+    if (tenantQuotaLoading) {
+      return;
+    }
+
+    const normalizedTenantId = tenantQuotaId.trim();
+    if (normalizedTenantId.length === 0) {
+      tenantQuotaError = 'Enter a tenant ID to inspect quota usage.';
+      tenantQuotaUsage = null;
+      return;
+    }
+
+    tenantQuotaLoading = true;
+    try {
+      tenantQuotaUsage = await apiClient.getTenantQuotaUsage(normalizedTenantId);
+      tenantQuotaError = null;
+    } catch (fetchError) {
+      tenantQuotaError = fetchError instanceof Error ? fetchError.message : String(fetchError);
+      tenantQuotaUsage = null;
+    } finally {
+      tenantQuotaLoading = false;
+    }
   }
 
   const STATUS_OPTIONS: Array<{ value: WorkflowStatus | 'all'; label: string }> = [
@@ -207,6 +255,108 @@
       {/each}
     </div>
   {/if}
+
+  <Card
+    title="Tenant quota inspector"
+    description="Check current tenant usage against configured workflow admission limits."
+    icon={activity(14)}
+  >
+    <form class="tenant-quota-form" onsubmit={handleTenantQuotaSubmit}>
+      <Input
+        id="tenant-quota-id"
+        label="Tenant ID"
+        placeholder="acme"
+        bind:value={tenantQuotaId}
+        description="Use a resolved tenant identifier to inspect active workflows, durable bytes, and workflow creation rate."
+      />
+      <div class="tenant-quota-actions">
+        <Button
+          type="submit"
+          variant="secondary"
+          size="md"
+          label="Inspect quotas"
+          loading={tenantQuotaLoading}
+        />
+      </div>
+    </form>
+
+    {#if tenantQuotaError}
+      <div class="tenant-quota-alert">
+        <Alert
+          variant="danger"
+          title="Quota lookup failed"
+          description={tenantQuotaError}
+        />
+      </div>
+    {/if}
+
+    {#if tenantQuotaUsage}
+      {@const activeWorkflowMeter = computeTenantQuotaMeter(tenantQuotaUsage.activeWorkflows)}
+      {@const storageBytesMeter = computeTenantQuotaMeter(tenantQuotaUsage.storageBytes)}
+      {@const workflowCreationRateMeter = computeTenantQuotaMeter(tenantQuotaUsage.workflowCreationRate)}
+
+      <div class="tenant-quota-grid" aria-live="polite">
+        <div class="tenant-quota-metric">
+          <div class="tenant-quota-metric-header">
+            <span class="tenant-quota-metric-label">Active workflows</span>
+            <span class="tenant-quota-metric-value">
+              {tenantQuotaUsage.activeWorkflows.used} / {formatTenantQuotaLimit(tenantQuotaUsage.activeWorkflows)}
+            </span>
+          </div>
+          <div class="tenant-quota-meter" aria-hidden="true">
+            <div
+              class="tenant-quota-meter-fill"
+              data-severity={activeWorkflowMeter.severity}
+              style={`width: ${activeWorkflowMeter.percentage}%`}
+            ></div>
+          </div>
+          <p class="tenant-quota-metric-note">
+            Currently active tenant workflows across pending and running states.
+          </p>
+        </div>
+
+        <div class="tenant-quota-metric">
+          <div class="tenant-quota-metric-header">
+            <span class="tenant-quota-metric-label">Durable storage</span>
+            <span class="tenant-quota-metric-value">
+              {formatTenantQuotaBytes(tenantQuotaUsage.storageBytes.used)} / {tenantQuotaUsage.storageBytes.limit === null
+                ? 'No limit'
+                : formatTenantQuotaBytes(tenantQuotaUsage.storageBytes.limit)}
+            </span>
+          </div>
+          <div class="tenant-quota-meter" aria-hidden="true">
+            <div
+              class="tenant-quota-meter-fill"
+              data-severity={storageBytesMeter.severity}
+              style={`width: ${storageBytesMeter.percentage}%`}
+            ></div>
+          </div>
+          <p class="tenant-quota-metric-note">
+            Durable bytes currently attributed to this tenant’s workflows.
+          </p>
+        </div>
+
+        <div class="tenant-quota-metric">
+          <div class="tenant-quota-metric-header">
+            <span class="tenant-quota-metric-label">Workflow creation rate</span>
+            <span class="tenant-quota-metric-value">
+              {tenantQuotaUsage.workflowCreationRate.used} / {formatTenantQuotaLimit(tenantQuotaUsage.workflowCreationRate)}
+            </span>
+          </div>
+          <div class="tenant-quota-meter" aria-hidden="true">
+            <div
+              class="tenant-quota-meter-fill"
+              data-severity={workflowCreationRateMeter.severity}
+              style={`width: ${workflowCreationRateMeter.percentage}%`}
+            ></div>
+          </div>
+          <p class="tenant-quota-metric-note">
+            {formatTenantQuotaWindow(tenantQuotaUsage.workflowCreationRate)}
+          </p>
+        </div>
+      </div>
+    {/if}
+  </Card>
 
   {#if retentionRows}
     <Card
@@ -372,6 +522,96 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2, 0.5rem);
+  }
+
+  .tenant-quota-form {
+    display: grid;
+    gap: var(--space-3, 0.75rem);
+    align-items: end;
+  }
+
+  @media (min-width: 720px) {
+    .tenant-quota-form {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+  }
+
+  .tenant-quota-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
+  .tenant-quota-alert {
+    margin-top: var(--space-3, 0.75rem);
+  }
+
+  .tenant-quota-grid {
+    margin-top: var(--space-4, 1rem);
+    display: grid;
+    gap: var(--space-4, 1rem);
+  }
+
+  @media (min-width: 960px) {
+    .tenant-quota-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  .tenant-quota-metric {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2, 0.5rem);
+    padding: var(--space-3, 0.75rem);
+    border-radius: var(--radius-md, 0.375rem);
+    border: 1px solid var(--border-muted, #e5e7eb);
+    background: var(--surface, #fff);
+  }
+
+  .tenant-quota-metric-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3, 0.75rem);
+  }
+
+  .tenant-quota-metric-label {
+    font-size: var(--text-xs, 0.75rem);
+    font-weight: var(--font-medium, 500);
+    color: var(--text-muted, #6b7280);
+  }
+
+  .tenant-quota-metric-value {
+    font-size: var(--text-sm, 0.875rem);
+    font-weight: var(--font-medium, 500);
+    color: var(--text, #111827);
+  }
+
+  .tenant-quota-meter {
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--surface-inset, #f3f4f6);
+    overflow: hidden;
+  }
+
+  .tenant-quota-meter-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--success, #16a34a);
+    transition: width var(--duration-fast, 150ms) var(--ease-standard, ease);
+  }
+
+  .tenant-quota-meter-fill[data-severity='warning'] {
+    background: var(--warning, #d97706);
+  }
+
+  .tenant-quota-meter-fill[data-severity='danger'] {
+    background: var(--error, #dc2626);
+  }
+
+  .tenant-quota-metric-note {
+    font-size: var(--text-xs, 0.75rem);
+    color: var(--text-muted, #6b7280);
   }
 
   .workflow-list-error {

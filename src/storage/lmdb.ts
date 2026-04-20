@@ -3,7 +3,9 @@ import * as lmdb from 'lmdb';
 import {
   matchesScanOptions,
   resolvePrefixRangeEnd,
+  storageValuesEqual,
   type BatchOperation,
+  type ConditionalBatchCondition,
   type ScanOptions,
   type Storage,
 } from './interface';
@@ -179,6 +181,38 @@ export class LMDBStorage implements Storage {
       }
     });
     this.#requiresFreshReadSnapshot = true;
+  }
+
+  async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    const committed = this.#database.transactionSync(() => {
+      for (const condition of conditions) {
+        const currentValue = this.#database.get(condition.key);
+        const normalizedCurrentValue =
+          currentValue === undefined ? null : new Uint8Array(currentValue);
+        if (!storageValuesEqual(normalizedCurrentValue, condition.expectedValue)) {
+          return false;
+        }
+      }
+
+      for (const operation of operations) {
+        if (operation.type === 'put') {
+          this.#database.putSync(operation.key, Buffer.from(operation.value));
+        } else {
+          this.#database.removeSync(operation.key);
+        }
+      }
+
+      return true;
+    });
+
+    if (committed && operations.length > 0) {
+      this.#requiresFreshReadSnapshot = true;
+    }
+
+    return committed;
   }
 
   [Symbol.dispose](): void {

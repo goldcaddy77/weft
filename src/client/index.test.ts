@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'bun:test';
 import { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
+import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -37,7 +38,15 @@ let server: ReturnType<typeof Bun.serve>;
 let client: WeftClient;
 
 beforeAll(() => {
-  engine = new Engine({ storage: new MemoryStorage() });
+  engine = new Engine({
+    storage: new MemoryStorage(),
+    tenantResolver: tenantFromInputField('tenantId'),
+    quotas: {
+      maxConcurrentWorkflows: 5,
+      maxStorageBytes: 1_000_000,
+      maxWorkflowCreationRate: { count: 10, window: '1m' },
+    },
+  });
   engine.register('echo', echoWorkflow);
   engine.register('wait-for-signal', waitForSignalWorkflow);
 
@@ -81,6 +90,7 @@ describe('HttpClient', () => {
     expect(client.submitReview).toBeFunction();
     expect(client.setBudgetPolicy).toBeFunction();
     expect(client.getBudgetPolicy).toBeFunction();
+    expect(client.getQuotaUsage).toBeFunction();
     expect(client.getStreamChunks).toBeFunction();
     expect(client.getRetentionOverview).toBeFunction();
     expect(client.purge).toBeFunction();
@@ -286,6 +296,24 @@ describe('HttpClient', () => {
     });
   });
 
+  describe('getQuotaUsage', () => {
+    it('returns tenant quota usage from the server surface', async () => {
+      const handle = await client.start(
+        'echo',
+        { tenantId: 'acme', payload: 'quota-http' },
+        { id: 'http-quota-usage' },
+      );
+      await handle.result();
+
+      const usage = await client.getQuotaUsage('acme');
+      expect(usage.tenantId).toBe('acme');
+      expect(usage.storageBytes.used).toBeGreaterThan(0);
+      expect(usage.activeWorkflows.limit).toBe(5);
+      expect(usage.workflowCreationRate.limit).toBe(10);
+      expect(usage.workflowCreationRate.used).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   describe('retention surface', () => {
     it('returns the retention overview from the HTTP server', async () => {
       const retentionEngine = new Engine({
@@ -406,6 +434,7 @@ describe('HttpClient', () => {
         'submitReview',
         'setBudgetPolicy',
         'getBudgetPolicy',
+        'getQuotaUsage',
         'getStreamChunks',
         'getRetentionOverview',
         'purge',
