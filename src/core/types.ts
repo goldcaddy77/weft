@@ -367,7 +367,7 @@ export interface TimerEntry {
   id: string;
   workflowId: WorkflowId;
   fireAt: number;
-  kind: 'sleep' | 'visibility-timeout' | 'execution-deadline' | 'delayed-start';
+  kind: 'sleep' | 'visibility-timeout' | 'execution-deadline' | 'delayed-start' | 'schedule';
   executionTimeoutMs?: number;
 }
 
@@ -570,6 +570,64 @@ export interface RetentionOverview {
   sweepBatchSize: number;
   nextSweepAt: number | null;
   workflowTypes: WorkflowTypeRetentionPolicy[];
+}
+
+// ---------------------------------------------------------------------------
+// Recurring schedule state
+// ---------------------------------------------------------------------------
+
+export type ScheduleStatus = 'active' | 'paused' | 'cancelled';
+
+export type ScheduleOverlapPolicy = 'skip' | 'queue' | 'cancel-running' | 'allow';
+
+export interface ScheduleOptions {
+  id?: string;
+  overlap?: ScheduleOverlapPolicy;
+  backfill?: boolean;
+}
+
+export interface ScheduleState {
+  id: string;
+  workflowType: string;
+  input: unknown;
+  cronExpression: string;
+  status: ScheduleStatus;
+  overlap: ScheduleOverlapPolicy;
+  backfill: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastFireAt?: number;
+  nextFireAt: number | null;
+  currentWorkflowId?: string;
+  queuedRuns: number;
+  tenant?: import('./tenant.ts').TenantContext;
+}
+
+export interface ScheduleSummary {
+  id: string;
+  workflowType: string;
+  cronExpression: string;
+  status: ScheduleStatus;
+  overlap: ScheduleOverlapPolicy;
+  backfill: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastFireAt?: number;
+  nextFireAt: number | null;
+  currentWorkflowId?: string;
+  queuedRuns: number;
+}
+
+export interface ScheduleAccessOptions {
+  tenantId?: string;
+}
+
+export interface ScheduleFilter {
+  status?: ScheduleStatus | ScheduleStatus[];
+  workflowType?: string;
+  tenantId?: string;
+  limit?: number;
+  offset?: number;
 }
 
 // ---------------------------------------------------------------------------

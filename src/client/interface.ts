@@ -7,6 +7,7 @@
  */
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
+import type { StoredStreamChunk } from '../core/context.ts';
 import type { TypedEventTarget, WeftEventMap } from '../core/events.ts';
 import type {
   CoordinatedUpdateResult,
@@ -134,7 +135,11 @@ export interface WeftClient {
   getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null>;
 
   /** Read stream chunks back from storage for a completed stream operation. */
-  getStreamChunks(workflowId: string, key: string): Promise<unknown[]>;
+  getStreamChunks(
+    workflowId: string,
+    key: string,
+    options?: { after?: number },
+  ): Promise<StoredStreamChunk[]>;
 
   /** Get the configured workflow retention policies and next sweep time. */
   getRetentionOverview(): Promise<RetentionOverview>;

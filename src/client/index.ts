@@ -9,6 +9,7 @@
  */
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
+import type { StoredStreamChunk } from '../core/context.ts';
 import type {
   CoordinatedUpdateResult,
   ListFilter,
@@ -467,10 +468,20 @@ export class HttpClient implements WeftClient {
     );
   }
 
-  async getStreamChunks(workflowId: string, key: string): Promise<unknown[]> {
-    const response = await request<{ chunks: unknown[] }>(
+  async getStreamChunks(
+    workflowId: string,
+    key: string,
+    options?: { after?: number },
+  ): Promise<StoredStreamChunk[]> {
+    const search = new URLSearchParams();
+    if (options?.after !== undefined) {
+      search.set('after', String(options.after));
+    }
+
+    const query = search.size > 0 ? `?${search.toString()}` : '';
+    const response = await request<{ chunks: StoredStreamChunk[] }>(
       this.baseUrl,
-      `/workflows/${encodeURIComponent(workflowId)}/streams/${encodeURIComponent(key)}`,
+      `/workflows/${encodeURIComponent(workflowId)}/streams/${encodeURIComponent(key)}${query}`,
       this.headers,
     );
     return response.chunks;

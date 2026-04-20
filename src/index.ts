@@ -45,7 +45,7 @@
 export const VERSION = '0.0.1';
 
 // Core
-export { Engine, WorkflowHandle } from './core/engine';
+export { Engine, ScheduleHandle, WorkflowHandle } from './core/engine';
 export {
   DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD,
   DEFAULT_MAX_NESTING_DEPTH,
@@ -72,6 +72,13 @@ export type {
   RetentionPolicy,
   RetryPolicy,
   ReviewDecision,
+  ScheduleAccessOptions,
+  ScheduleFilter,
+  ScheduleOptions,
+  ScheduleOverlapPolicy,
+  ScheduleState,
+  ScheduleStatus,
+  ScheduleSummary,
   SearchAttributeSchema,
   SearchAttributeValue,
   Serializer,
@@ -188,6 +195,7 @@ export type {
   ContextOptions,
   OffloadReference,
   SagaStep,
+  StoredStreamChunk,
   StreamReference,
   StreamSink,
 } from './core/context';

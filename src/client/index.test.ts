@@ -353,7 +353,12 @@ describe('HttpClient request surface', () => {
       new Response(null, { status: 204 }),
       new Response(null, { status: 204 }),
       jsonResponse({ namespace: 'agents', daily: { maxCost: 10 } }),
-      jsonResponse({ chunks: ['chunk-a', 'chunk-b'] }),
+      jsonResponse({
+        chunks: [
+          { sequence: 2, value: 'chunk-a' },
+          { sequence: 3, value: 'chunk-b' },
+        ],
+      }),
       jsonResponse({ updateId: 'update-1', result: 'accepted' }),
       jsonResponse({ status: 'completed', result: 'done', error: 'warn' }),
     ];
@@ -413,7 +418,10 @@ describe('HttpClient request surface', () => {
       namespace: 'agents',
       daily: { maxCost: 10 },
     });
-    expect(await httpClient.getStreamChunks('wf/1', 'stream/key')).toEqual(['chunk-a', 'chunk-b']);
+    expect(await httpClient.getStreamChunks('wf/1', 'stream/key', { after: 1 })).toEqual([
+      { sequence: 2, value: 'chunk-a' },
+      { sequence: 3, value: 'chunk-b' },
+    ]);
     expect(
       await httpClient.submitCoordinatedUpdate(
         'wf/1',
@@ -465,7 +473,7 @@ describe('HttpClient request surface', () => {
     expect(fetchCalls[13]?.url).toContain('/update/rename');
     expect(fetchCalls[14]?.url).toContain('/resume');
     expect(fetchCalls[15]?.url).toBe('http://example.test/v1/recover');
-    expect(fetchCalls[24]?.url).toContain('/streams/stream%2Fkey');
+    expect(fetchCalls[24]?.url).toContain('/streams/stream%2Fkey?after=1');
   });
 
   it('serializes startAt in the workflow start payload', async () => {
