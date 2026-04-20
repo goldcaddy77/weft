@@ -313,6 +313,27 @@ describe('HttpClient', () => {
       expect(await client.get('http-purge-filter-2')).toBeNull();
       expect(await client.get('http-purge-filter-3')).not.toBeNull();
     });
+
+    it('purge honors tag filters through the HTTP server', async () => {
+      const first = await client.start('echo', 'one', {
+        id: 'http-purge-tag-1',
+        tags: ['nightly', 'v2'],
+      });
+      const second = await client.start('echo', 'two', {
+        id: 'http-purge-tag-2',
+        tags: ['nightly'],
+      });
+      await Promise.all([first.result(), second.result()]);
+
+      const result = await client.purge({
+        status: 'completed',
+        tags: ['nightly', 'v2'],
+      });
+
+      expect(result.deleted).toBe(1);
+      expect(await client.get('http-purge-tag-1')).toBeNull();
+      expect(await client.get('http-purge-tag-2')).not.toBeNull();
+    });
   });
 
   describe('same interface as LocalClient', () => {

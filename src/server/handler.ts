@@ -419,6 +419,14 @@ function parseOptionalFilterType(value: unknown): string | undefined {
   throw new Error('Field "filter.type" must be a string');
 }
 
+function parseOptionalFilterTags(value: unknown): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return coerceStartWorkflowTags(value, 'Field "filter.tags"');
+}
+
 function parseOptionalFilterNumber(
   value: unknown,
   fieldName: 'limit' | 'offset',
@@ -463,6 +471,11 @@ function parseListFilterBody(body: unknown): ListFilter {
   const type = parseOptionalFilterType(filterRecord['type']);
   if (type !== undefined) {
     filter.type = type;
+  }
+
+  const tags = parseOptionalFilterTags(filterRecord['tags']);
+  if (tags !== undefined) {
+    filter.tags = tags;
   }
 
   if (filterRecord['attributes'] !== undefined) {
