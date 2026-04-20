@@ -8,6 +8,7 @@ import type {
 export interface WorkflowListFilters {
   status: WorkflowStatus | 'all';
   type: string;
+  tags: string[];
   offset: number;
 }
 
@@ -33,6 +34,10 @@ export async function loadWorkflowListData(
 
   if (filters.type.length > 0) {
     listFilter.type = filters.type;
+  }
+
+  if (filters.tags.length > 0) {
+    listFilter.tags = filters.tags;
   }
 
   const workflowListPromise = apiClient.listWorkflows(listFilter);

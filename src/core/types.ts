@@ -48,6 +48,7 @@ export interface WorkflowState {
   id: WorkflowId;
   type: string;
   status: WorkflowStatus;
+  tags?: string[];
   input: unknown;
   result?: unknown;
   error?: string;
@@ -203,6 +204,7 @@ export interface StartOptions {
   executionTimeout?: Duration;
   startAt?: number;
   startAfter?: Duration;
+  tags?: string[];
   searchAttributes?: Record<string, SearchAttributeValue>;
 }
 
@@ -520,6 +522,7 @@ export type WorkflowRegistry = Record<string, { input: unknown; output: unknown 
 export interface ListFilter {
   status?: WorkflowStatus | WorkflowStatus[];
   type?: string;
+  tags?: string[];
   attributes?: AttributeFilter[];
   limit?: number;
   offset?: number;
@@ -553,6 +556,7 @@ export interface WorkflowSummary {
   id: WorkflowId;
   type: string;
   status: WorkflowStatus;
+  tags?: string[];
   version: string;
   createdAt: number;
   updatedAt: number;

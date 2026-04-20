@@ -31,6 +31,7 @@ describe('loadWorkflowListData', () => {
       {
         status: 'all',
         type: '',
+        tags: [],
         offset: 0,
       },
       20,
@@ -63,6 +64,7 @@ describe('loadWorkflowListData', () => {
       {
         status: 'completed',
         type: 'echo',
+        tags: ['nightly', 'v2'],
         offset: 40,
       },
       20,
@@ -71,6 +73,7 @@ describe('loadWorkflowListData', () => {
     expect(apiClient.listWorkflows).toHaveBeenCalledWith({
       status: 'completed',
       type: 'echo',
+      tags: ['nightly', 'v2'],
       limit: 20,
       offset: 40,
     });
