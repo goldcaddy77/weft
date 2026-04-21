@@ -4,8 +4,8 @@ import { decode, encode } from '../core/codec.ts';
 import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { StartWorkflowValidationError } from '../core/start-workflow-validation.ts';
-import { tenantFromInputField } from '../core/tenant.ts';
 import { QuotaExceededError } from '../core/tenant-quotas.ts';
+import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -24,6 +24,20 @@ async function flush(): Promise<void> {
 function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
+
+  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    return input;
+  });
+
+  return engine;
+}
+
+function createTenantAwareEngine(): Engine {
+  const storage = new MemoryStorage();
+  const engine = new Engine({
+    storage,
+    tenantResolver: tenantFromInputField('tenantId'),
+  });
 
   engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
     return input;
@@ -122,6 +136,308 @@ describe('handleRequest', () => {
         retention: expect.objectContaining({ completed: 3_600_000 }),
       }),
     );
+  });
+
+  describe('schedule routes', () => {
+    it('Acceptance criterion: GET /v1/schedules and POST /v1/schedules expose schedule CRUD over REST', async () => {
+      engine = createEngine();
+
+      const createResponse = await handleRequest(
+        request('POST', '/v1/schedules', {
+          type: 'echo',
+          input: { payload: 'nightly' },
+          cronExpression: '0 * * * *',
+          id: 'nightly-maintenance',
+          overlap: 'queue',
+          backfill: true,
+        }),
+        engine,
+      );
+
+      expect(createResponse.status).toBe(201);
+      expect(await json(createResponse)).toEqual({ id: 'nightly-maintenance' });
+
+      const listResponse = await handleRequest(request('GET', '/v1/schedules'), engine);
+      expect(listResponse.status).toBe(200);
+
+      const listed = (await json(listResponse)) as {
+        items: Array<{
+          id: string;
+          workflowType: string;
+          cronExpression: string;
+          status: string;
+          overlap: string;
+          backfill: boolean;
+          nextFireAt: number | null;
+          queuedRuns: number;
+        }>;
+        total: number;
+      };
+      expect(listed.total).toBe(1);
+      expect(listed.items).toContainEqual(
+        expect.objectContaining({
+          id: 'nightly-maintenance',
+          workflowType: 'echo',
+          cronExpression: '0 * * * *',
+          status: 'active',
+          overlap: 'queue',
+          backfill: true,
+          queuedRuns: 0,
+        }),
+      );
+      expect(listed.items[0]?.nextFireAt).toEqual(expect.any(Number));
+    });
+
+    it('GET /v1/schedules/:id returns a stored schedule summary', async () => {
+      engine = createEngine();
+      await engine.schedule('echo', 'payload', '0 * * * *', { id: 'schedule-detail' });
+
+      const response = await handleRequest(request('GET', '/v1/schedules/schedule-detail'), engine);
+
+      expect(response.status).toBe(200);
+      expect(await json(response)).toEqual(
+        expect.objectContaining({
+          id: 'schedule-detail',
+          workflowType: 'echo',
+          cronExpression: '0 * * * *',
+          status: 'active',
+        }),
+      );
+    });
+
+    it('POST /v1/schedules/:id/pause and /resume mutate schedule state', async () => {
+      engine = createEngine();
+      await engine.schedule('echo', null, '0 * * * *', { id: 'schedule-pause-resume' });
+
+      const pauseResponse = await handleRequest(
+        request('POST', '/v1/schedules/schedule-pause-resume/pause'),
+        engine,
+      );
+      expect(pauseResponse.status).toBe(204);
+      expect(await engine.getSchedule('schedule-pause-resume')).toEqual(
+        expect.objectContaining({ status: 'paused' }),
+      );
+
+      const resumeResponse = await handleRequest(
+        request('POST', '/v1/schedules/schedule-pause-resume/resume'),
+        engine,
+      );
+      expect(resumeResponse.status).toBe(204);
+      expect(await engine.getSchedule('schedule-pause-resume')).toEqual(
+        expect.objectContaining({ status: 'active' }),
+      );
+    });
+
+    it('PATCH /v1/schedules/:id updates the cron expression', async () => {
+      engine = createEngine();
+      await engine.schedule('echo', null, '0 * * * *', { id: 'schedule-update' });
+
+      const response = await handleRequest(
+        request('PATCH', '/v1/schedules/schedule-update', { cronExpression: '30 * * * *' }),
+        engine,
+      );
+
+      expect(response.status).toBe(204);
+      expect(await engine.getSchedule('schedule-update')).toEqual(
+        expect.objectContaining({ cronExpression: '30 * * * *' }),
+      );
+    });
+
+    it('DELETE /v1/schedules/:id cancels the schedule', async () => {
+      engine = createEngine();
+      await engine.schedule('echo', null, '0 * * * *', { id: 'schedule-cancel' });
+
+      const response = await handleRequest(
+        request('DELETE', '/v1/schedules/schedule-cancel'),
+        engine,
+      );
+
+      expect(response.status).toBe(204);
+      expect(await engine.getSchedule('schedule-cancel')).toEqual(
+        expect.objectContaining({ status: 'cancelled', nextFireAt: null }),
+      );
+    });
+
+    it('POST /v1/schedules validates the request body', async () => {
+      engine = createEngine();
+
+      const missingTypeResponse = await handleRequest(
+        request('POST', '/v1/schedules', {
+          cronExpression: '0 * * * *',
+        }),
+        engine,
+      );
+      expect(missingTypeResponse.status).toBe(400);
+      expect(await json(missingTypeResponse)).toEqual({ error: 'Missing required field: type' });
+
+      const invalidCronResponse = await handleRequest(
+        request('POST', '/v1/schedules', {
+          type: 'echo',
+          cronExpression: 'not-a-cron',
+        }),
+        engine,
+      );
+      expect(invalidCronResponse.status).toBe(400);
+      expect((await json(invalidCronResponse)) as { error: string }).toEqual(
+        expect.objectContaining({
+          error: expect.stringContaining('Cron'),
+        }),
+      );
+    });
+
+    it('GET /v1/schedules rejects invalid status filters', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(request('GET', '/v1/schedules?status=unknown'), engine);
+
+      expect(response.status).toBe(400);
+      expect(await json(response)).toEqual({
+        error: 'Query parameter "status" must be one of active, paused, cancelled',
+      });
+    });
+
+    it('JWT-authenticated schedule routes scope reads to the authenticated tenant', async () => {
+      engine = createTenantAwareEngine();
+      await engine.schedule('echo', { tenantId: 'acme', payload: 'tenant-a' }, '0 * * * *', {
+        id: 'schedule-acme',
+      });
+      await engine.schedule('echo', { tenantId: 'globex', payload: 'tenant-b' }, '0 * * * *', {
+        id: 'schedule-globex',
+      });
+
+      const authOptions = {
+        authContext: {
+          method: 'jwt' as const,
+          claims: { tenantId: 'acme' },
+        },
+      };
+
+      const listResponse = await handleRequest(
+        request('GET', '/v1/schedules'),
+        engine,
+        authOptions,
+      );
+      expect(listResponse.status).toBe(200);
+      expect(await json(listResponse)).toEqual(
+        expect.objectContaining({
+          items: [expect.objectContaining({ id: 'schedule-acme' })],
+          total: 1,
+          offset: 0,
+          limit: 1,
+        }),
+      );
+
+      const mismatchResponse = await handleRequest(
+        request('GET', '/v1/schedules?tenantId=globex'),
+        engine,
+        authOptions,
+      );
+      expect(mismatchResponse.status).toBe(403);
+      expect(await json(mismatchResponse)).toEqual({
+        error: 'Schedule access is limited to the authenticated tenant',
+      });
+
+      const getOtherTenantResponse = await handleRequest(
+        request('GET', '/v1/schedules/schedule-globex'),
+        engine,
+        authOptions,
+      );
+      expect(getOtherTenantResponse.status).toBe(404);
+      expect(await json(getOtherTenantResponse)).toEqual({
+        error: 'Schedule "schedule-globex" not found',
+      });
+    });
+
+    it('JWT-authenticated schedule mutation routes only operate on the authenticated tenant', async () => {
+      engine = createTenantAwareEngine();
+      await engine.schedule('echo', { tenantId: 'acme' }, '0 * * * *', { id: 'schedule-acme' });
+      await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', {
+        id: 'schedule-globex',
+      });
+
+      const authOptions = {
+        authContext: {
+          method: 'jwt' as const,
+          claims: { tenantId: 'acme' },
+        },
+      };
+
+      const pauseOwnResponse = await handleRequest(
+        request('POST', '/v1/schedules/schedule-acme/pause'),
+        engine,
+        authOptions,
+      );
+      expect(pauseOwnResponse.status).toBe(204);
+
+      const resumeOwnResponse = await handleRequest(
+        request('POST', '/v1/schedules/schedule-acme/resume'),
+        engine,
+        authOptions,
+      );
+      expect(resumeOwnResponse.status).toBe(204);
+
+      const pauseOtherTenantResponse = await handleRequest(
+        request('POST', '/v1/schedules/schedule-globex/pause'),
+        engine,
+        authOptions,
+      );
+      expect(pauseOtherTenantResponse.status).toBe(404);
+
+      const updateOtherTenantResponse = await handleRequest(
+        request('PATCH', '/v1/schedules/schedule-globex', { cronExpression: '30 * * * *' }),
+        engine,
+        authOptions,
+      );
+      expect(updateOtherTenantResponse.status).toBe(404);
+
+      const cancelOtherTenantResponse = await handleRequest(
+        request('DELETE', '/v1/schedules/schedule-globex'),
+        engine,
+        authOptions,
+      );
+      expect(cancelOtherTenantResponse.status).toBe(404);
+
+      expect(await engine.getSchedule('schedule-globex', { tenantId: 'globex' })).toEqual(
+        expect.objectContaining({
+          id: 'schedule-globex',
+          status: 'active',
+          cronExpression: '0 * * * *',
+        }),
+      );
+    });
+
+    it('JWT-authenticated schedule routes require a tenant claim', async () => {
+      engine = createTenantAwareEngine();
+      await engine.schedule('echo', { tenantId: 'acme' }, '0 * * * *', { id: 'schedule-acme' });
+
+      const response = await handleRequest(request('GET', '/v1/schedules'), engine, {
+        authContext: {
+          method: 'jwt',
+          claims: { sub: 'user-123' },
+        },
+      });
+
+      expect(response.status).toBe(403);
+      expect(await json(response)).toEqual({
+        error: 'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim',
+      });
+    });
+
+    it('schedule item routes return 404 when the schedule does not exist', async () => {
+      engine = createEngine();
+
+      const getResponse = await handleRequest(
+        request('GET', '/v1/schedules/missing-schedule'),
+        engine,
+      );
+      expect(getResponse.status).toBe(404);
+
+      const pauseResponse = await handleRequest(
+        request('POST', '/v1/schedules/missing-schedule/pause'),
+        engine,
+      );
+      expect(pauseResponse.status).toBe(404);
+    });
   });
 
   // 2. Start workflow with valid body

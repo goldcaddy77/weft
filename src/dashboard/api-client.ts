@@ -7,7 +7,7 @@
  * @module dashboard/api-client
  */
 
-import type { TenantQuotaUsage } from '../core/types.ts';
+import type { ScheduleFilter, ScheduleSummary, TenantQuotaUsage } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -82,6 +82,8 @@ export interface ListFilter {
 }
 
 export type {
+  ScheduleFilter,
+  ScheduleSummary,
   TenantQuotaMetricUsage,
   TenantQuotaUsage,
   TenantWorkflowCreationRateUsage,
@@ -222,6 +224,27 @@ export class ApiClient {
   async listPendingReviews(): Promise<ReviewRequest[]> {
     const response = await request<{ items: ReviewRequest[] }>('/reviews');
     return response.items;
+  }
+
+  /** List recurring schedules with optional filtering. */
+  async listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>> {
+    const params = new URLSearchParams();
+
+    if (filter?.status !== undefined) {
+      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+      for (const status of statuses) {
+        params.append('status', status);
+      }
+    }
+    if (filter?.workflowType !== undefined) params.set('workflowType', filter.workflowType);
+    if (filter?.tenantId !== undefined) params.set('tenantId', filter.tenantId);
+    if (filter?.limit !== undefined) params.set('limit', String(filter.limit));
+    if (filter?.offset !== undefined) params.set('offset', String(filter.offset));
+
+    const query = params.toString();
+    const path = query ? `/schedules?${query}` : '/schedules';
+
+    return request<PaginatedResult<ScheduleSummary>>(path);
   }
 
   /** Get current quota usage versus configured limits for a tenant. */

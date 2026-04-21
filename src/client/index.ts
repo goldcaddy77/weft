@@ -17,6 +17,9 @@ import type {
   PaginatedResult,
   PurgeResult,
   RetentionOverview,
+  ScheduleFilter,
+  ScheduleOptions,
+  ScheduleSummary,
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
@@ -27,13 +30,13 @@ import type {
   WorkflowSummary,
   WorkflowTimelineEntry,
 } from '../core/types.ts';
-import type { ClientHandle, UpdateResult, WeftClient } from './interface.ts';
+import type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } from './interface.ts';
 
 // ---------------------------------------------------------------------------
 // Re-exports so consumers can import everything from `weft/client`
 // ---------------------------------------------------------------------------
 
-export type { ClientHandle, UpdateResult, WeftClient } from './interface.ts';
+export type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } from './interface.ts';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -171,6 +174,40 @@ function buildWorkflowListSearchParams(filter?: ListFilter): URLSearchParams {
     params.set('offset', String(filter.offset));
   }
   appendAttributeFilters(params, filter?.attributes);
+
+  return params;
+}
+
+function appendScheduleStatusFilters(
+  params: URLSearchParams,
+  status: ScheduleFilter['status'],
+): void {
+  if (status === undefined) {
+    return;
+  }
+
+  const statuses = (Array.isArray(status) ? status : [status]).filter(Boolean);
+  for (const value of statuses) {
+    params.append('status', value);
+  }
+}
+
+function buildScheduleListSearchParams(filter?: ScheduleFilter): URLSearchParams {
+  const params = new URLSearchParams();
+
+  appendScheduleStatusFilters(params, filter?.status);
+  if (filter?.workflowType !== undefined) {
+    params.set('workflowType', filter.workflowType);
+  }
+  if (filter?.tenantId !== undefined) {
+    params.set('tenantId', filter.tenantId);
+  }
+  if (filter?.limit !== undefined) {
+    params.set('limit', String(filter.limit));
+  }
+  if (filter?.offset !== undefined) {
+    params.set('offset', String(filter.offset));
+  }
 
   return params;
 }
@@ -316,6 +353,40 @@ class HttpHandle implements ClientHandle {
   }
 }
 
+class HttpScheduleHandle implements ClientScheduleHandle {
+  readonly id: string;
+  readonly #client: HttpClient;
+
+  constructor(id: string, client: HttpClient) {
+    this.id = id;
+    this.#client = client;
+  }
+
+  async pause(): Promise<void> {
+    return this.#client.pauseSchedule(this.id);
+  }
+
+  async resume(): Promise<void> {
+    return this.#client.resumeSchedule(this.id);
+  }
+
+  async cancel(): Promise<void> {
+    return this.#client.cancelSchedule(this.id);
+  }
+
+  async update(newCronExpression: string): Promise<void> {
+    return this.#client.updateSchedule(this.id, newCronExpression);
+  }
+
+  async describe(): Promise<ScheduleSummary | null> {
+    return this.#client.getSchedule(this.id);
+  }
+
+  [Symbol.dispose](): void {
+    // HTTP schedule handles do not hold long-lived resources.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // HttpClient
 // ---------------------------------------------------------------------------
@@ -353,10 +424,41 @@ export class HttpClient implements WeftClient {
     return new HttpHandle(response.id, this);
   }
 
+  async schedule(
+    type: string,
+    input: unknown,
+    cronExpression: string,
+    options?: ScheduleOptions,
+  ): Promise<ClientScheduleHandle> {
+    const body: Record<string, unknown> = {
+      type,
+      input,
+      cronExpression,
+    };
+    if (options?.id !== undefined) body['id'] = options.id;
+    if (options?.overlap !== undefined) body['overlap'] = options.overlap;
+    if (options?.backfill !== undefined) body['backfill'] = options.backfill;
+
+    const response = await request<{ id: string }>(this.baseUrl, '/schedules', this.headers, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    return new HttpScheduleHandle(response.id, this);
+  }
+
   async get(id: string): Promise<WorkflowState | null> {
     return request<WorkflowState | null>(
       this.baseUrl,
       `/workflows/${encodeURIComponent(id)}`,
+      this.headers,
+    );
+  }
+
+  async getSchedule(id: string): Promise<ScheduleSummary | null> {
+    return request<ScheduleSummary | null>(
+      this.baseUrl,
+      `/schedules/${encodeURIComponent(id)}`,
       this.headers,
     );
   }
@@ -369,9 +471,45 @@ export class HttpClient implements WeftClient {
     return request<PaginatedResult<WorkflowSummary>>(this.baseUrl, path, this.headers);
   }
 
+  async listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>> {
+    const params = buildScheduleListSearchParams(filter);
+    const query = params.toString();
+    const path = query ? `/schedules?${query}` : '/schedules';
+
+    return request<PaginatedResult<ScheduleSummary>>(this.baseUrl, path, this.headers);
+  }
+
   async cancel(id: string): Promise<void> {
     return request<void>(this.baseUrl, `/workflows/${encodeURIComponent(id)}`, this.headers, {
       method: 'DELETE',
+    });
+  }
+
+  async pauseSchedule(id: string): Promise<void> {
+    return request<void>(this.baseUrl, `/schedules/${encodeURIComponent(id)}/pause`, this.headers, {
+      method: 'POST',
+    });
+  }
+
+  async resumeSchedule(id: string): Promise<void> {
+    return request<void>(
+      this.baseUrl,
+      `/schedules/${encodeURIComponent(id)}/resume`,
+      this.headers,
+      { method: 'POST' },
+    );
+  }
+
+  async cancelSchedule(id: string): Promise<void> {
+    return request<void>(this.baseUrl, `/schedules/${encodeURIComponent(id)}`, this.headers, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateSchedule(id: string, newCronExpression: string): Promise<void> {
+    return request<void>(this.baseUrl, `/schedules/${encodeURIComponent(id)}`, this.headers, {
+      method: 'PATCH',
+      body: JSON.stringify({ cronExpression: newCronExpression }),
     });
   }
 

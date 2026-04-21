@@ -218,10 +218,7 @@ interface RegistrationEntry {
 
 interface WorkflowStateUpdateOptions {
   allowedStatuses?: readonly WorkflowStatus[];
-  buildAdditionalOperations?: (
-    previousState: WorkflowState,
-    updatedAt: number,
-  ) => BatchOperation[];
+  buildAdditionalOperations?: (previousState: WorkflowState, updatedAt: number) => BatchOperation[];
   releaseTenantQuota?: boolean;
 }
 
@@ -6977,44 +6974,41 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return;
       }
     }
-    const runningState = await this.#runSerializedWorkflowStateWrite(
-      entry.workflowId,
-      async () => {
-        const latestState = await this.#loadWorkflowState(entry.workflowId);
-        if (!latestState || latestState.status !== 'pending') {
-          return null;
-        }
+    const runningState = await this.#runSerializedWorkflowStateWrite(entry.workflowId, async () => {
+      const latestState = await this.#loadWorkflowState(entry.workflowId);
+      if (!latestState || latestState.status !== 'pending') {
+        return null;
+      }
 
-        const nextRunningState: WorkflowState = {
-          ...latestState,
-          status: 'running',
-          startedAt: now,
-          updatedAt: now,
-          ...(executionDeadline !== undefined && { executionDeadline }),
-        };
+      const nextRunningState: WorkflowState = {
+        ...latestState,
+        status: 'running',
+        startedAt: now,
+        updatedAt: now,
+        ...(executionDeadline !== undefined && { executionDeadline }),
+      };
 
-        const operations: import('../storage/interface.ts').BatchOperation[] = [
-          {
-            type: 'put',
-            key: KEYS.workflow(entry.workflowId),
-            value: encode(nextRunningState),
-          },
-        ];
-        if (executionDeadline !== undefined) {
-          operations.push(
-            ...buildTimerBatchOperations({
-              id: `deadline:${entry.workflowId}`,
-              workflowId: entry.workflowId,
-              fireAt: executionDeadline,
-              kind: 'execution-deadline',
-            }),
-          );
-        }
+      const operations: import('../storage/interface.ts').BatchOperation[] = [
+        {
+          type: 'put',
+          key: KEYS.workflow(entry.workflowId),
+          value: encode(nextRunningState),
+        },
+      ];
+      if (executionDeadline !== undefined) {
+        operations.push(
+          ...buildTimerBatchOperations({
+            id: `deadline:${entry.workflowId}`,
+            workflowId: entry.workflowId,
+            fireAt: executionDeadline,
+            kind: 'execution-deadline',
+          }),
+        );
+      }
 
-        await this.#storage.batch(operations);
-        return nextRunningState;
-      },
-    );
+      await this.#storage.batch(operations);
+      return nextRunningState;
+    });
     if (!runningState) {
       return;
     }
@@ -7123,6 +7117,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
+  async #settleBackfillScheduleState(state: ScheduleState): Promise<ScheduleState> {
+    let settledState = state;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const refreshed = await this.#refreshScheduledWorkflowState(settledState);
+      if (
+        refreshed.currentWorkflowState?.status !== 'running' &&
+        refreshed.currentWorkflowState?.status !== 'pending'
+      ) {
+        return refreshed.state;
+      }
+
+      settledState = refreshed.state;
+      await Promise.resolve();
+    }
+
+    return settledState;
+  }
+
   async #handleScheduleTimer(entry: TimerEntry): Promise<void> {
     const state = await this.#loadScheduleState(entry.workflowId);
     if (!state || state.status !== 'active' || state.nextFireAt === null) {
@@ -7168,6 +7181,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // failure can safely pause the schedule without replaying the same
         // occurrence or losing the active workflow linkage.
         await this.#writeScheduleState(nextState, { includeTimer: false });
+
+        // Backfill can process multiple missed ticks in one scheduler turn.
+        // Give inline runs a few microtasks to settle so immediately-completing
+        // workflows do not look active and incorrectly suppress later
+        // catch-up occurrences under overlap policies like "skip" or "queue".
+        if (state.backfill && nextState.currentWorkflowId !== undefined) {
+          nextState = await this.#settleBackfillScheduleState(nextState);
+        }
       }
 
       nextState = {
@@ -7656,61 +7677,58 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #completeWorkflow(workflowId: string, result: unknown): Promise<void> {
-    const completionMetadata = await this.#runSerializedWorkflowStateWrite(
-      workflowId,
-      async () => {
-        const state = await this.#loadWorkflowState(workflowId);
-        if (!state || state.status !== 'running') {
-          return null;
+    const completionMetadata = await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+      const state = await this.#loadWorkflowState(workflowId);
+      if (!state || state.status !== 'running') {
+        return null;
+      }
+
+      const now = this.#options.getNow();
+      const duration = now - getWorkflowExecutionStartedAt(state);
+
+      // Batch the completion state write with attribute index cleanup into a
+      // single storage transaction to reduce round-trips on the hot path.
+      const updatedState = {
+        ...state,
+        status: 'completed' as const,
+        result,
+        updatedAt: now,
+      };
+      const completionOperations: import('../storage/interface.ts').BatchOperation[] = [
+        ...this.#buildTerminalWorkflowIndexOperations(state, updatedState),
+        { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
+      ];
+      const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
+      if (pendingTimelineOperation) {
+        completionOperations.push(pendingTimelineOperation);
+      }
+
+      // Inline attribute cleanup into the same batch instead of a separate
+      // storage.get() + storage.batch() round-trip.
+      const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+      if (attributeBytes) {
+        const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+        const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(currentAttributes);
+
+        completionOperations.push(
+          ...buildIndexOperations(workflowId, currentAttributes, retainedAttributes),
+        );
+        if (Object.keys(retainedAttributes).length > 0) {
+          completionOperations.push({
+            type: 'put',
+            key: KEYS.attribute(workflowId),
+            value: encode(retainedAttributes),
+          });
+        } else {
+          completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
         }
+      }
 
-        const now = this.#options.getNow();
-        const duration = now - getWorkflowExecutionStartedAt(state);
-
-        // Batch the completion state write with attribute index cleanup into a
-        // single storage transaction to reduce round-trips on the hot path.
-        const updatedState = {
-          ...state,
-          status: 'completed' as const,
-          result,
-          updatedAt: now,
-        };
-        const completionOperations: import('../storage/interface.ts').BatchOperation[] = [
-          ...this.#buildTerminalWorkflowIndexOperations(state, updatedState),
-          { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
-        ];
-        const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
-        if (pendingTimelineOperation) {
-          completionOperations.push(pendingTimelineOperation);
-        }
-
-        // Inline attribute cleanup into the same batch instead of a separate
-        // storage.get() + storage.batch() round-trip.
-        const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-        if (attributeBytes) {
-          const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
-          const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(currentAttributes);
-
-          completionOperations.push(
-            ...buildIndexOperations(workflowId, currentAttributes, retainedAttributes),
-          );
-          if (Object.keys(retainedAttributes).length > 0) {
-            completionOperations.push({
-              type: 'put',
-              key: KEYS.attribute(workflowId),
-              value: encode(retainedAttributes),
-            });
-          } else {
-            completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
-          }
-        }
-
-        await this.#commitWorkflowStateOperations(state, completionOperations, {
-          releaseTenantQuota: true,
-        });
-        return { duration };
-      },
-    );
+      await this.#commitWorkflowStateOperations(state, completionOperations, {
+        releaseTenantQuota: true,
+      });
+      return { duration };
+    });
     if (!completionMetadata) return;
 
     const { duration } = completionMetadata;

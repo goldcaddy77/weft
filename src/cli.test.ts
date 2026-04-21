@@ -8,18 +8,21 @@ import {
   type CliCommand,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,
+  SCHEDULE_HELP_TEXT,
   TIMELINE_HELP_TEXT,
   VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
   collectDiffLines,
   createStorage,
   executeDoctor,
+  executeSchedule,
   executeTimeline,
   executeValidate,
   executeVersionCheck,
   parseCliArguments,
 } from './cli.ts';
 import { encode } from './core/codec.ts';
+import type { WorkflowContext } from './core/types.ts';
 import { KEYS } from './storage/interface.ts';
 
 type ServeCommand = Extract<CliCommand, { command: 'serve' }>;
@@ -27,6 +30,12 @@ type DoctorCommand = Extract<CliCommand, { command: 'doctor' }>;
 type VersionCheckCommand = Extract<CliCommand, { command: 'version:check' }>;
 type ValidateCommand = Extract<CliCommand, { command: 'validate' }>;
 type TimelineCommand = Extract<CliCommand, { command: 'timeline' }>;
+type ScheduleListCommand = Extract<CliCommand, { command: 'schedule'; action: 'list' }>;
+type ScheduleCreateCommand = Extract<CliCommand, { command: 'schedule'; action: 'create' }>;
+type ScheduleMutationCommand = Extract<
+  CliCommand,
+  { command: 'schedule'; action: 'pause' | 'cancel' }
+>;
 
 describe('CLI argument parsing', () => {
   describe('default subcommand (serve)', () => {
@@ -437,6 +446,61 @@ describe('CLI argument parsing', () => {
       expect(result.diff).toEqual([1, 2]);
     });
   });
+
+  describe('schedule subcommand', () => {
+    it('parses schedule list', () => {
+      const result = parseCliArguments(['schedule', 'list']) as ScheduleListCommand;
+      expect(result.command).toBe('schedule');
+      expect(result.action).toBe('list');
+      expect(result.database).toBe('./weft.db');
+    });
+
+    it('parses schedule create with workflow module and cron expression', () => {
+      const result = parseCliArguments([
+        'schedule',
+        'create',
+        'echo',
+        '0 * * * *',
+        '--workflows',
+        './workflows.ts',
+        '--input',
+        '{"payload":"nightly"}',
+        '--id',
+        'nightly-maintenance',
+        '--overlap',
+        'queue',
+        '--backfill',
+      ]) as ScheduleCreateCommand;
+
+      expect(result.command).toBe('schedule');
+      expect(result.action).toBe('create');
+      expect(result.workflowType).toBe('echo');
+      expect(result.cronExpression).toBe('0 * * * *');
+      expect(result.workflows).toBe('./workflows.ts');
+      expect(result.input).toBe('{"payload":"nightly"}');
+      expect(result.id).toBe('nightly-maintenance');
+      expect(result.overlap).toBe('queue');
+      expect(result.backfill).toBe(true);
+    });
+
+    it('parses schedule pause and cancel ids', () => {
+      const pauseResult = parseCliArguments([
+        'schedule',
+        'pause',
+        'schedule-1',
+      ]) as ScheduleMutationCommand;
+      expect(pauseResult.action).toBe('pause');
+      expect(pauseResult.scheduleId).toBe('schedule-1');
+
+      const cancelResult = parseCliArguments([
+        'schedule',
+        'cancel',
+        'schedule-2',
+      ]) as ScheduleMutationCommand;
+      expect(cancelResult.action).toBe('cancel');
+      expect(cancelResult.scheduleId).toBe('schedule-2');
+    });
+  });
 });
 
 describe('help text', () => {
@@ -450,6 +514,10 @@ describe('help text', () => {
 
   it('HELP_TEXT contains timeline subcommand', () => {
     expect(HELP_TEXT).toContain('timeline');
+  });
+
+  it('HELP_TEXT contains schedule subcommand', () => {
+    expect(HELP_TEXT).toContain('schedule');
   });
 
   it('HELP_TEXT contains validate subcommand', () => {
@@ -509,6 +577,14 @@ describe('help text', () => {
     expect(TIMELINE_HELP_TEXT).toContain('--step');
     expect(TIMELINE_HELP_TEXT).toContain('--diff');
     expect(TIMELINE_HELP_TEXT).toContain('--database');
+  });
+
+  it('SCHEDULE_HELP_TEXT contains list, create, pause, and cancel', () => {
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule list');
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule create');
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule pause');
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule cancel');
+    expect(SCHEDULE_HELP_TEXT).toContain('--workflows');
   });
 
   it('HELP_TEXT documents --storage flag', () => {
@@ -701,6 +777,22 @@ describe('CLI direct execution', () => {
     expect(stdout).toContain('timeline');
     expect(stdout).toContain('--step');
     expect(stdout).toContain('--diff');
+  });
+
+  it('runs schedule --help and exits 0', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'schedule', '--help'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    const stdout = await new Response(process.stdout).text();
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('schedule list');
+    expect(stdout).toContain('schedule create');
+    expect(stdout).toContain('schedule pause');
+    expect(stdout).toContain('schedule cancel');
   });
 
   it('runs doctor against an in-memory database and exits 0', async () => {
@@ -1037,6 +1129,113 @@ describe('executeTimeline', () => {
       expect(result.stdout).toContain('Step 2 | activity | failCliTimeline | failed');
       expect(result.stdout).toContain('cli timeline failure');
     } finally {
+      rmSync(database, { force: true });
+    }
+  });
+});
+
+describe('executeSchedule', () => {
+  it('lists, creates, pauses, and cancels schedules against a SQLite database', async () => {
+    const database = join(tmpdir(), `weft-schedule-${crypto.randomUUID()}.db`);
+    const workflows = join(tmpdir(), `weft-schedule-workflows-${crypto.randomUUID()}.ts`);
+
+    await Bun.write(
+      workflows,
+      [
+        'export default {',
+        '  scheduledEcho: {',
+        '    handler: async function* (_ctx, input) {',
+        '      return input;',
+        '    },',
+        '  },',
+        '};',
+      ].join('\n'),
+    );
+
+    const storage = await createStorage('sqlite', database);
+    const { Engine } = await import('./core/engine.ts');
+    let engine = new Engine({ storage });
+
+    try {
+      engine.register('scheduledEcho', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+      await engine.schedule('scheduledEcho', { payload: 'existing' }, '0 * * * *', {
+        id: 'existing-schedule',
+      });
+    } finally {
+      await engine[Symbol.asyncDispose]();
+      storage[Symbol.dispose]();
+    }
+
+    try {
+      const listResult = await executeSchedule({
+        command: 'schedule',
+        action: 'list',
+        database,
+        help: false,
+        json: false,
+      });
+      expect(listResult.exitCode).toBe(0);
+      expect(listResult.stdout).toContain('existing-schedule');
+
+      const createResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        help: false,
+        json: false,
+        workflows,
+        workflowType: 'scheduledEcho',
+        cronExpression: '15 * * * *',
+        input: '{"payload":"nightly"}',
+        id: 'created-schedule',
+        overlap: 'queue',
+        backfill: true,
+      });
+      expect(createResult.exitCode).toBe(0);
+      expect(createResult.stdout).toContain('created-schedule');
+
+      const pauseResult = await executeSchedule({
+        command: 'schedule',
+        action: 'pause',
+        database,
+        help: false,
+        json: false,
+        scheduleId: 'created-schedule',
+      });
+      expect(pauseResult.exitCode).toBe(0);
+
+      const cancelResult = await executeSchedule({
+        command: 'schedule',
+        action: 'cancel',
+        database,
+        help: false,
+        json: false,
+        scheduleId: 'created-schedule',
+      });
+      expect(cancelResult.exitCode).toBe(0);
+
+      const verificationStorage = await createStorage('sqlite', database);
+      engine = new Engine({ storage: verificationStorage });
+      try {
+        const existing = await engine.getSchedule('existing-schedule');
+        const created = await engine.getSchedule('created-schedule');
+        expect(existing).not.toBeNull();
+        expect(created).toEqual(
+          expect.objectContaining({
+            id: 'created-schedule',
+            status: 'cancelled',
+            overlap: 'queue',
+            backfill: true,
+          }),
+        );
+      } finally {
+        await engine[Symbol.asyncDispose]();
+        verificationStorage[Symbol.dispose]();
+      }
+    } finally {
+      rmSync(workflows, { force: true });
       rmSync(database, { force: true });
     }
   });
