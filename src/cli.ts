@@ -382,6 +382,19 @@ function buildScheduleListCommand(
   };
 }
 
+function buildScheduleHelpCommand(
+  values: ReturnType<typeof parseScheduleCliValues>['values'],
+): ScheduleListCommand {
+  return {
+    command: 'schedule',
+    action: 'list',
+    database: values.database ?? './weft.db',
+    storage: 'sqlite',
+    help: true,
+    json: values.json ?? false,
+  };
+}
+
 function formatScheduleActionList(): string {
   return [...SCHEDULE_ACTIONS].join(', ');
 }
@@ -457,7 +470,7 @@ function buildScheduleMutationCommand(
 function parseScheduleArguments(args: string[]): CliCommand {
   const { values, positionals } = parseScheduleCliValues(args);
   if (values.help) {
-    return buildScheduleListCommand(values);
+    return buildScheduleHelpCommand(values);
   }
 
   const action = requireScheduleAction(positionals);

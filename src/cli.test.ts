@@ -474,6 +474,18 @@ describe('CLI argument parsing', () => {
       );
     });
 
+    it('allows schedule help to bypass storage validation', () => {
+      const result = parseCliArguments([
+        'schedule',
+        '--help',
+        '--storage',
+        'memory',
+      ]) as ScheduleListCommand;
+
+      expect(result.command).toBe('schedule');
+      expect(result.help).toBe(true);
+    });
+
     it('parses schedule create with workflow module and cron expression', () => {
       const result = parseCliArguments([
         'schedule',
