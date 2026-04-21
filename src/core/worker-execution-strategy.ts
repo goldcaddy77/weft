@@ -281,6 +281,11 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   // -------------------------------------------------------------------------
 
   #emit(message: WorkerOutboundMessage): void {
-    void this.#messageHandler?.(message);
+    const result = this.#messageHandler?.(message);
+    if (result instanceof Promise) {
+      // Worker strategy callers do not await handler turns, so observe
+      // rejections here to prevent unhandled rejection noise.
+      void result.catch(() => {});
+    }
   }
 }
