@@ -218,10 +218,7 @@ interface RegistrationEntry {
 
 interface WorkflowStateUpdateOptions {
   allowedStatuses?: readonly WorkflowStatus[];
-  buildAdditionalOperations?: (
-    previousState: WorkflowState,
-    updatedAt: number,
-  ) => BatchOperation[];
+  buildAdditionalOperations?: (previousState: WorkflowState, updatedAt: number) => BatchOperation[];
   releaseTenantQuota?: boolean;
 }
 
@@ -1382,7 +1379,15 @@ function paginateScheduleSummaries(
   items: ScheduleSummary[],
   filter?: ScheduleFilter,
 ): PaginatedResult<ScheduleSummary> {
-  return paginateItems(items, filter);
+  const sortedItems = items.toSorted((left, right) => {
+    if (left.createdAt !== right.createdAt) {
+      return left.createdAt - right.createdAt;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+
+  return paginateItems(sortedItems, filter);
 }
 
 function createScheduleTimerId(scheduleId: string): string {
@@ -3089,6 +3094,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     input: unknown,
     cronExpression: string,
     options?: ScheduleOptions,
+    accessOptions?: ScheduleAccessOptions,
   ): Promise<ScheduleHandle> {
     if (!this.#registrations.has(type)) {
       throw new Error(`No workflow registered with name "${type}"`);
@@ -3099,6 +3105,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const normalizedOptions = normalizeScheduleOptions(options);
+    const normalizedAccessOptions = normalizeScheduleAccessOptions(accessOptions);
     parseCronExpression(cronExpression);
     const scheduleId = normalizedOptions.id ?? crypto.randomUUID();
     if (this.#pendingScheduleCreations.has(scheduleId)) {
@@ -3112,7 +3119,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       const now = this.#options.getNow();
-      const tenant = await this.#resolveTenantForStart(scheduleId, type, input);
+      const resolvedTenant = await this.#resolveTenantForStart(scheduleId, type, input);
+      const tenant =
+        normalizedAccessOptions?.tenantId === undefined
+          ? resolvedTenant
+          : resolvedTenant === undefined
+            ? { id: normalizedAccessOptions.tenantId }
+            : resolvedTenant.id === normalizedAccessOptions.tenantId
+              ? resolvedTenant
+              : (() => {
+                  throw new Error('Schedule creation is limited to the authenticated tenant');
+                })();
       const state: ScheduleState = {
         id: scheduleId,
         workflowType: type,
@@ -3664,6 +3681,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #createWorkflowResultPromise(workflowId: string): Promise<unknown> {
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
     this.#resultResolvers.set(workflowId, { resolve, reject });
+    // Internal workflow starts can create handles whose result promises are
+    // never observed directly, so mark the promise handled to avoid unhandled
+    // rejection noise while still allowing callers to await the original promise.
+    void promise.catch(() => {});
     return promise;
   }
 
@@ -3671,6 +3692,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
     const resolver = { resolve, reject };
     this.#resultResolvers.set(workflowId, resolver);
+    void promise.catch(() => {});
     void this.#bootstrapWorkflowResultResolver(workflowId, resolver);
     return promise;
   }
@@ -6977,44 +6999,41 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return;
       }
     }
-    const runningState = await this.#runSerializedWorkflowStateWrite(
-      entry.workflowId,
-      async () => {
-        const latestState = await this.#loadWorkflowState(entry.workflowId);
-        if (!latestState || latestState.status !== 'pending') {
-          return null;
-        }
+    const runningState = await this.#runSerializedWorkflowStateWrite(entry.workflowId, async () => {
+      const latestState = await this.#loadWorkflowState(entry.workflowId);
+      if (!latestState || latestState.status !== 'pending') {
+        return null;
+      }
 
-        const nextRunningState: WorkflowState = {
-          ...latestState,
-          status: 'running',
-          startedAt: now,
-          updatedAt: now,
-          ...(executionDeadline !== undefined && { executionDeadline }),
-        };
+      const nextRunningState: WorkflowState = {
+        ...latestState,
+        status: 'running',
+        startedAt: now,
+        updatedAt: now,
+        ...(executionDeadline !== undefined && { executionDeadline }),
+      };
 
-        const operations: import('../storage/interface.ts').BatchOperation[] = [
-          {
-            type: 'put',
-            key: KEYS.workflow(entry.workflowId),
-            value: encode(nextRunningState),
-          },
-        ];
-        if (executionDeadline !== undefined) {
-          operations.push(
-            ...buildTimerBatchOperations({
-              id: `deadline:${entry.workflowId}`,
-              workflowId: entry.workflowId,
-              fireAt: executionDeadline,
-              kind: 'execution-deadline',
-            }),
-          );
-        }
+      const operations: import('../storage/interface.ts').BatchOperation[] = [
+        {
+          type: 'put',
+          key: KEYS.workflow(entry.workflowId),
+          value: encode(nextRunningState),
+        },
+      ];
+      if (executionDeadline !== undefined) {
+        operations.push(
+          ...buildTimerBatchOperations({
+            id: `deadline:${entry.workflowId}`,
+            workflowId: entry.workflowId,
+            fireAt: executionDeadline,
+            kind: 'execution-deadline',
+          }),
+        );
+      }
 
-        await this.#storage.batch(operations);
-        return nextRunningState;
-      },
-    );
+      await this.#storage.batch(operations);
+      return nextRunningState;
+    });
     if (!runningState) {
       return;
     }
@@ -7123,6 +7142,23 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
+  async #settleBackfillScheduleState(state: ScheduleState): Promise<ScheduleState> {
+    if (!state.currentWorkflowId) {
+      return state;
+    }
+
+    // Inline execution can complete or checkpoint during the same scheduler
+    // turn that started the run. Wait for that first turn to finish handling
+    // its outbound message before re-reading persisted schedule state.
+    const pendingTurn = this.#inlineStrategy?.waitForWorkflowTurn(state.currentWorkflowId);
+    if (pendingTurn) {
+      await pendingTurn;
+    }
+
+    const refreshed = await this.#refreshScheduledWorkflowState(state);
+    return refreshed.state;
+  }
+
   async #handleScheduleTimer(entry: TimerEntry): Promise<void> {
     const state = await this.#loadScheduleState(entry.workflowId);
     if (!state || state.status !== 'active' || state.nextFireAt === null) {
@@ -7168,6 +7204,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // failure can safely pause the schedule without replaying the same
         // occurrence or losing the active workflow linkage.
         await this.#writeScheduleState(nextState, { includeTimer: false });
+
+        // Backfill can process multiple missed ticks in one scheduler turn.
+        // Wait for the inline strategy to finish handling the just-started
+        // run's outbound message so immediately-completing workflows do not
+        // look active and incorrectly suppress later catch-up occurrences
+        // under overlap policies like "skip" or "queue".
+        if (state.backfill && nextState.currentWorkflowId !== undefined) {
+          nextState = await this.#settleBackfillScheduleState(nextState);
+        }
       }
 
       nextState = {
@@ -7656,61 +7701,58 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #completeWorkflow(workflowId: string, result: unknown): Promise<void> {
-    const completionMetadata = await this.#runSerializedWorkflowStateWrite(
-      workflowId,
-      async () => {
-        const state = await this.#loadWorkflowState(workflowId);
-        if (!state || state.status !== 'running') {
-          return null;
+    const completionMetadata = await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+      const state = await this.#loadWorkflowState(workflowId);
+      if (!state || state.status !== 'running') {
+        return null;
+      }
+
+      const now = this.#options.getNow();
+      const duration = now - getWorkflowExecutionStartedAt(state);
+
+      // Batch the completion state write with attribute index cleanup into a
+      // single storage transaction to reduce round-trips on the hot path.
+      const updatedState = {
+        ...state,
+        status: 'completed' as const,
+        result,
+        updatedAt: now,
+      };
+      const completionOperations: import('../storage/interface.ts').BatchOperation[] = [
+        ...this.#buildTerminalWorkflowIndexOperations(state, updatedState),
+        { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
+      ];
+      const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
+      if (pendingTimelineOperation) {
+        completionOperations.push(pendingTimelineOperation);
+      }
+
+      // Inline attribute cleanup into the same batch instead of a separate
+      // storage.get() + storage.batch() round-trip.
+      const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+      if (attributeBytes) {
+        const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+        const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(currentAttributes);
+
+        completionOperations.push(
+          ...buildIndexOperations(workflowId, currentAttributes, retainedAttributes),
+        );
+        if (Object.keys(retainedAttributes).length > 0) {
+          completionOperations.push({
+            type: 'put',
+            key: KEYS.attribute(workflowId),
+            value: encode(retainedAttributes),
+          });
+        } else {
+          completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
         }
+      }
 
-        const now = this.#options.getNow();
-        const duration = now - getWorkflowExecutionStartedAt(state);
-
-        // Batch the completion state write with attribute index cleanup into a
-        // single storage transaction to reduce round-trips on the hot path.
-        const updatedState = {
-          ...state,
-          status: 'completed' as const,
-          result,
-          updatedAt: now,
-        };
-        const completionOperations: import('../storage/interface.ts').BatchOperation[] = [
-          ...this.#buildTerminalWorkflowIndexOperations(state, updatedState),
-          { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
-        ];
-        const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
-        if (pendingTimelineOperation) {
-          completionOperations.push(pendingTimelineOperation);
-        }
-
-        // Inline attribute cleanup into the same batch instead of a separate
-        // storage.get() + storage.batch() round-trip.
-        const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-        if (attributeBytes) {
-          const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
-          const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(currentAttributes);
-
-          completionOperations.push(
-            ...buildIndexOperations(workflowId, currentAttributes, retainedAttributes),
-          );
-          if (Object.keys(retainedAttributes).length > 0) {
-            completionOperations.push({
-              type: 'put',
-              key: KEYS.attribute(workflowId),
-              value: encode(retainedAttributes),
-            });
-          } else {
-            completionOperations.push({ type: 'delete', key: KEYS.attribute(workflowId) });
-          }
-        }
-
-        await this.#commitWorkflowStateOperations(state, completionOperations, {
-          releaseTenantQuota: true,
-        });
-        return { duration };
-      },
-    );
+      await this.#commitWorkflowStateOperations(state, completionOperations, {
+        releaseTenantQuota: true,
+      });
+      return { duration };
+    });
     if (!completionMetadata) return;
 
     const { duration } = completionMetadata;

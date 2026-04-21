@@ -60,9 +60,16 @@ describe('LocalClient', () => {
 
   it('implements WeftClient', () => {
     expect(client.start).toBeFunction();
+    expect(client.schedule).toBeFunction();
     expect(client.get).toBeFunction();
+    expect(client.getSchedule).toBeFunction();
     expect(client.list).toBeFunction();
+    expect(client.listSchedules).toBeFunction();
     expect(client.cancel).toBeFunction();
+    expect(client.pauseSchedule).toBeFunction();
+    expect(client.resumeSchedule).toBeFunction();
+    expect(client.cancelSchedule).toBeFunction();
+    expect(client.updateSchedule).toBeFunction();
     expect(client.signal).toBeFunction();
     expect(client.query).toBeFunction();
     expect(client.update).toBeFunction();
@@ -140,6 +147,52 @@ describe('LocalClient', () => {
 
       const result = await client.list({ status: 'completed' });
       expect(result.items.every((item) => item.status === 'completed')).toBe(true);
+    });
+  });
+
+  describe('schedule surface', () => {
+    it('creates, lists, mutates, and describes schedules through the local client', async () => {
+      const schedule = await client.schedule('echo', { payload: 'nightly' }, '0 * * * *', {
+        id: 'local-schedule',
+        overlap: 'queue',
+        backfill: true,
+      });
+
+      expect(schedule.id).toBe('local-schedule');
+      expect(await schedule.describe()).toEqual(
+        expect.objectContaining({
+          id: 'local-schedule',
+          workflowType: 'echo',
+          cronExpression: '0 * * * *',
+          status: 'active',
+          overlap: 'queue',
+          backfill: true,
+        }),
+      );
+
+      expect(await client.getSchedule('local-schedule')).toEqual(
+        expect.objectContaining({ id: 'local-schedule' }),
+      );
+      const schedules = await client.listSchedules();
+      expect(schedules.items.map((item) => item.id)).toContain('local-schedule');
+
+      await schedule.pause();
+      expect(await client.getSchedule('local-schedule')).toEqual(
+        expect.objectContaining({ status: 'paused' }),
+      );
+
+      await schedule.update('30 * * * *');
+      expect(await client.getSchedule('local-schedule')).toEqual(
+        expect.objectContaining({ cronExpression: '30 * * * *' }),
+      );
+
+      await client.resumeSchedule('local-schedule');
+      expect(await schedule.describe()).toEqual(expect.objectContaining({ status: 'active' }));
+
+      await schedule.cancel();
+      expect(await client.getSchedule('local-schedule')).toEqual(
+        expect.objectContaining({ status: 'cancelled', nextFireAt: null }),
+      );
     });
   });
 
@@ -443,9 +496,61 @@ describe('LocalClient delegation surface', () => {
 
     const engine = {
       start: mock(async () => workflowHandle),
+      schedule: mock(async () => ({
+        id: 'delegated-schedule',
+        pause: async () => undefined,
+        resume: async () => undefined,
+        cancel: async () => undefined,
+        update: async () => undefined,
+        describe: async () => ({
+          id: 'delegated-schedule',
+          workflowType: 'echo',
+          cronExpression: '0 * * * *',
+          status: 'active',
+          overlap: 'skip',
+          backfill: false,
+          createdAt: 1,
+          updatedAt: 1,
+          nextFireAt: 2,
+          queuedRuns: 0,
+        }),
+      })),
       get: mock(async () => ({ id: 'delegated-workflow', status: 'running' })),
+      getSchedule: mock(async () => ({
+        id: 'delegated-schedule',
+        workflowType: 'echo',
+        cronExpression: '0 * * * *',
+        status: 'active',
+        overlap: 'skip',
+        backfill: false,
+        createdAt: 1,
+        updatedAt: 1,
+        nextFireAt: 2,
+        queuedRuns: 0,
+      })),
       list: mock(async () => ({ items: [{ id: 'delegated-workflow' }], total: 1 })),
+      listSchedules: mock(async () => ({
+        items: [
+          {
+            id: 'delegated-schedule',
+            workflowType: 'echo',
+            cronExpression: '0 * * * *',
+            status: 'active',
+            overlap: 'skip',
+            backfill: false,
+            createdAt: 1,
+            updatedAt: 1,
+            nextFireAt: 2,
+            queuedRuns: 0,
+          },
+        ],
+        total: 1,
+      })),
       cancel: mock(async () => undefined),
+      pauseSchedule: mock(async () => undefined),
+      resumeSchedule: mock(async () => undefined),
+      cancelSchedule: mock(async () => undefined),
+      updateSchedule: mock(async () => undefined),
       signal: mock(async () => undefined),
       query: mock(async () => 'query-result'),
       update: mock(async () => 'update-result'),
@@ -486,7 +591,18 @@ describe('LocalClient delegation surface', () => {
     const client = new LocalClient(engine);
 
     const handle = await client.start('echo', 'hello', { id: 'start-id' });
+    const scheduleHandle = await client.schedule('echo', 'nightly', '0 * * * *', {
+      id: 'delegated-schedule',
+    });
     expect(await handle.result()).toBe('workflow-result');
+    await scheduleHandle.pause();
+    await scheduleHandle.resume();
+    await scheduleHandle.update('30 * * * *');
+    await scheduleHandle.cancel();
+    expect(await scheduleHandle.describe()).toMatchObject({
+      id: 'delegated-schedule',
+      cronExpression: '0 * * * *',
+    });
     await handle.cancel();
     await handle.signal('status', { ok: true });
     expect(await handle.update('rename', { value: 1 }, { timeout: 50 })).toBe('update-result');
@@ -501,11 +617,23 @@ describe('LocalClient delegation surface', () => {
       id: 'delegated-workflow',
       status: 'running',
     });
+    expect(await client.getSchedule('delegated-schedule')).toMatchObject({
+      id: 'delegated-schedule',
+      cronExpression: '0 * * * *',
+    });
     expect(await client.list({ status: 'running' })).toMatchObject({
       items: [{ id: 'delegated-workflow' }],
       total: 1,
     });
+    expect(await client.listSchedules()).toMatchObject({
+      items: [{ id: 'delegated-schedule' }],
+      total: 1,
+    });
     await client.cancel('delegated-workflow');
+    await client.pauseSchedule('delegated-schedule');
+    await client.resumeSchedule('delegated-schedule');
+    await client.updateSchedule('delegated-schedule', '15 * * * *');
+    await client.cancelSchedule('delegated-schedule');
     await client.signal('delegated-workflow', 'status', { ok: true });
     expect(await client.query('delegated-workflow', 'status')).toBe('query-result');
     expect(await client.update('delegated-workflow', 'rename', { value: 1 }, { timeout: 50 })).toBe(
@@ -562,6 +690,13 @@ describe('LocalClient delegation surface', () => {
 
     expect(registeredListener).toHaveBeenCalled();
     expect(removedListener).toHaveBeenCalled();
+    expect(engine.schedule).toHaveBeenCalledWith('echo', 'nightly', '0 * * * *', {
+      id: 'delegated-schedule',
+    });
+    expect(engine.pauseSchedule).toHaveBeenCalledWith('delegated-schedule');
+    expect(engine.resumeSchedule).toHaveBeenCalledWith('delegated-schedule');
+    expect(engine.updateSchedule).toHaveBeenCalledWith('delegated-schedule', '15 * * * *');
+    expect(engine.cancelSchedule).toHaveBeenCalledWith('delegated-schedule');
     expect(engine.fork).toHaveBeenCalledWith('delegated-workflow', { fromStep: 2 });
   });
 

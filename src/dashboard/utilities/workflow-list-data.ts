@@ -1,6 +1,7 @@
 import type {
   ApiClient,
   RetentionOverview,
+  ScheduleSummary,
   WorkflowStatus,
   WorkflowSummary,
 } from '../api-client.ts';
@@ -14,12 +15,13 @@ export interface WorkflowListFilters {
 
 export interface WorkflowListData {
   workflows: WorkflowSummary[];
+  schedules: ScheduleSummary[];
   total: number;
   retentionOverview: RetentionOverview | null;
 }
 
 export async function loadWorkflowListData(
-  apiClient: Pick<ApiClient, 'listWorkflows' | 'getRetentionOverview'>,
+  apiClient: Pick<ApiClient, 'listWorkflows' | 'listSchedules' | 'getRetentionOverview'>,
   filters: WorkflowListFilters,
   pageSize: number,
 ): Promise<WorkflowListData> {
@@ -41,13 +43,21 @@ export async function loadWorkflowListData(
   }
 
   const workflowListPromise = apiClient.listWorkflows(listFilter);
+  const schedulesPromise = apiClient.listSchedules({ limit: pageSize }).catch(() => ({
+    items: [],
+    total: 0,
+    offset: 0,
+    limit: pageSize,
+  }));
   const retentionOverviewPromise = apiClient.getRetentionOverview().catch(() => null);
 
   const workflowList = await workflowListPromise;
+  const schedules = await schedulesPromise;
   const retentionOverview = await retentionOverviewPromise;
 
   return {
     workflows: workflowList.items,
+    schedules: schedules.items,
     total: workflowList.total,
     retentionOverview,
   };

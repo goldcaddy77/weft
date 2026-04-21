@@ -4,6 +4,7 @@
   import type {
     ApiClient,
     RetentionOverview,
+    ScheduleSummary,
     TenantQuotaMetricUsage,
     TenantQuotaUsage,
     WorkflowStatus,
@@ -19,6 +20,7 @@
   import Skeleton from '../components/skeleton.svelte';
   import EmptyState from '../components/empty-state.svelte';
   import WorkflowTableRow from '../fragments/workflow-table-row.svelte';
+  import ScheduleList from '../fragments/schedule-list.svelte';
   import {
     computeTenantQuotaMeter,
     formatTenantQuotaBytes,
@@ -45,6 +47,7 @@
   // ---------------------------------------------------------------------------
 
   let workflows: WorkflowSummary[] = $state([]);
+  let schedules: ScheduleSummary[] = $state([]);
   let retentionOverview: RetentionOverview | null = $state(null);
   let total = $state(0);
   let loading = $state(true);
@@ -71,6 +74,7 @@
       const result = await loadWorkflowListData(apiClient, filters, pageSize);
       if (generation !== fetchGeneration) return;
       workflows = result.workflows;
+      schedules = result.schedules;
       total = result.total;
       retentionOverview = result.retentionOverview;
       error = null;
@@ -378,6 +382,15 @@
           </div>
         {/snippet}
       </DataList>
+    </Card>
+  {/if}
+
+  {#if schedules.length > 0}
+    <Card
+      title="Schedules"
+      subtitle={`${schedules.length} recurring workflow${schedules.length === 1 ? '' : 's'}`}
+    >
+      <ScheduleList {schedules} />
     </Card>
   {/if}
 

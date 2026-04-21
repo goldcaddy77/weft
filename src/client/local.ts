@@ -9,7 +9,7 @@
  */
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
-import type { Engine, WorkflowHandle } from '../core/engine.ts';
+import type { Engine, ScheduleHandle, WorkflowHandle } from '../core/engine.ts';
 import type {
   CoordinatedUpdateResult,
   ForkOptions,
@@ -17,6 +17,9 @@ import type {
   PaginatedResult,
   PurgeResult,
   RetentionOverview,
+  ScheduleFilter,
+  ScheduleOptions,
+  ScheduleSummary,
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
@@ -27,7 +30,7 @@ import type {
   WorkflowSummary,
   WorkflowTimelineEntry,
 } from '../core/types.ts';
-import type { ClientHandle, UpdateResult, WeftClient } from './interface.ts';
+import type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } from './interface.ts';
 
 // ---------------------------------------------------------------------------
 // LocalHandle — wraps Engine's WorkflowHandle
@@ -102,6 +105,42 @@ class LocalHandle implements ClientHandle {
   }
 }
 
+class LocalScheduleHandle implements ClientScheduleHandle {
+  readonly id: string;
+  readonly #handle: ScheduleHandle;
+  readonly #client: LocalClient;
+
+  constructor(handle: ScheduleHandle, client: LocalClient) {
+    this.id = handle.id;
+    this.#handle = handle;
+    this.#client = client;
+  }
+
+  async pause(): Promise<void> {
+    return this.#client.pauseSchedule(this.id);
+  }
+
+  async resume(): Promise<void> {
+    return this.#client.resumeSchedule(this.id);
+  }
+
+  async cancel(): Promise<void> {
+    return this.#client.cancelSchedule(this.id);
+  }
+
+  async update(newCronExpression: string): Promise<void> {
+    return this.#client.updateSchedule(this.id, newCronExpression);
+  }
+
+  async describe(): Promise<ScheduleSummary | null> {
+    return this.#client.getSchedule(this.id);
+  }
+
+  [Symbol.dispose](): void {
+    void this.#handle;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // LocalClient
 // ---------------------------------------------------------------------------
@@ -119,16 +158,50 @@ export class LocalClient implements WeftClient {
     return new LocalHandle(handle, this);
   }
 
+  async schedule(
+    type: string,
+    input: unknown,
+    cronExpression: string,
+    options?: ScheduleOptions,
+  ): Promise<ClientScheduleHandle> {
+    const handle = await this.#engine.schedule(type, input, cronExpression, options);
+    return new LocalScheduleHandle(handle, this);
+  }
+
   async get(id: string): Promise<WorkflowState | null> {
     return this.#engine.get(id);
+  }
+
+  async getSchedule(id: string): Promise<ScheduleSummary | null> {
+    return this.#engine.getSchedule(id);
   }
 
   async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
     return this.#engine.list(filter);
   }
 
+  async listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>> {
+    return this.#engine.listSchedules(filter);
+  }
+
   async cancel(id: string): Promise<void> {
     return this.#engine.cancel(id);
+  }
+
+  async pauseSchedule(id: string): Promise<void> {
+    return this.#engine.pauseSchedule(id);
+  }
+
+  async resumeSchedule(id: string): Promise<void> {
+    return this.#engine.resumeSchedule(id);
+  }
+
+  async cancelSchedule(id: string): Promise<void> {
+    return this.#engine.cancelSchedule(id);
+  }
+
+  async updateSchedule(id: string, newCronExpression: string): Promise<void> {
+    return this.#engine.updateSchedule(id, newCronExpression);
   }
 
   async signal(id: string, name: string, payload?: unknown): Promise<void> {

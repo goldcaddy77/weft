@@ -7,7 +7,8 @@
  * @module dashboard/api-client
  */
 
-import type { TenantQuotaUsage } from '../core/types.ts';
+import { buildScheduleListSearchParams } from '../client/schedule-list-search-params.ts';
+import type { ScheduleFilter, ScheduleSummary, TenantQuotaUsage } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -82,6 +83,8 @@ export interface ListFilter {
 }
 
 export type {
+  ScheduleFilter,
+  ScheduleSummary,
   TenantQuotaMetricUsage,
   TenantQuotaUsage,
   TenantWorkflowCreationRateUsage,
@@ -222,6 +225,15 @@ export class ApiClient {
   async listPendingReviews(): Promise<ReviewRequest[]> {
     const response = await request<{ items: ReviewRequest[] }>('/reviews');
     return response.items;
+  }
+
+  /** List recurring schedules with optional filtering. */
+  async listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>> {
+    const params = buildScheduleListSearchParams(filter);
+    const query = params.toString();
+    const path = query ? `/schedules?${query}` : '/schedules';
+
+    return request<PaginatedResult<ScheduleSummary>>(path);
   }
 
   /** Get current quota usage versus configured limits for a tenant. */
