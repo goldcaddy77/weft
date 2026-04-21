@@ -215,8 +215,53 @@ describe('recurring schedules', () => {
 
   it('matches the day-of-month branch when day-of-week is a wildcard', () => {
     const afterTimestamp = Date.UTC(2026, 0, 5, 12, 0, 0); // Monday the 5th
-
     expect(getNextCronOccurrence('0 9 7 * *', afterTimestamp)).toBe(Date.UTC(2026, 0, 7, 9, 0, 0));
+  });
+
+  it('falls back to a zero offset when the formatter returns an unparseable GMT offset', () => {
+    const originalFormatToParts = Intl.DateTimeFormat.prototype.formatToParts;
+    const formatToPartsSpy = spyOn(
+      Intl.DateTimeFormat.prototype,
+      'formatToParts',
+    ).mockImplementation(function (
+      this: Intl.DateTimeFormat,
+      ...arguments_: Parameters<Intl.DateTimeFormat['formatToParts']>
+    ) {
+      return originalFormatToParts
+        .call(this, ...arguments_)
+        .map((part) => (part.type === 'timeZoneName' ? { ...part, value: 'UTC' } : part));
+    });
+
+    try {
+      expect(getNextCronOccurrence('0 13 * * *', Date.UTC(2026, 0, 5, 12, 0, 0))).toBe(
+        Date.UTC(2026, 0, 5, 13, 0, 0),
+      );
+    } finally {
+      formatToPartsSpy.mockRestore();
+    }
+  });
+
+  it('throws when the formatter does not provide a resolvable weekday name', () => {
+    const originalFormatToParts = Intl.DateTimeFormat.prototype.formatToParts;
+    const formatToPartsSpy = spyOn(
+      Intl.DateTimeFormat.prototype,
+      'formatToParts',
+    ).mockImplementation(function (
+      this: Intl.DateTimeFormat,
+      ...arguments_: Parameters<Intl.DateTimeFormat['formatToParts']>
+    ) {
+      return originalFormatToParts
+        .call(this, ...arguments_)
+        .map((part) => (part.type === 'weekday' ? { ...part, value: 'Nope' } : part));
+    });
+
+    try {
+      expect(() => getNextCronOccurrence('* * * * *', Date.UTC(2026, 0, 5, 12, 0, 0))).toThrow(
+        'Unable to resolve weekday for time zone "UTC"',
+      );
+    } finally {
+      formatToPartsSpy.mockRestore();
+    }
   });
 
   it('engine.schedule(type, input, cronExpression, options?) registers a recurring workflow and fires it at the next cron boundary', async () => {
@@ -564,12 +609,16 @@ describe('recurring schedules', () => {
     });
 
     try {
+      const cancellationPromise = engine.cancel(firstWorkflowId).then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      );
       const resultPromise = engine
         .getHandle(firstWorkflowId)
         .result()
         .catch((error: Error) => error.message);
 
-      await expect(engine.cancel(firstWorkflowId)).resolves.toBeUndefined();
+      expect(await cancellationPromise).toBe('resolved');
       expect(await resultPromise).toBe('Workflow cancelled');
       await drainEngine();
 
