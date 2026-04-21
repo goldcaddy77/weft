@@ -23,10 +23,6 @@ function passesLuhnCheck(value: string): boolean {
 
   for (let index = value.length - 1; index >= 0; index--) {
     const digit = Number(value[index]);
-    if (!Number.isInteger(digit)) {
-      return false;
-    }
-
     let transformed = digit;
     if (shouldDouble) {
       transformed *= 2;

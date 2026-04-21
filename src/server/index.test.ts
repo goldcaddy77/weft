@@ -1888,6 +1888,51 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     }
   });
 
+  it('retries token sequence initialization after a failed scan', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const originalScan = storage.scan.bind(storage);
+    let failFirstTokenScan = true;
+    const restoreScan = overrideProperty(storage, 'scan', async function* (
+      prefix: string,
+      options?: Parameters<MemoryStorage['scan']>[1],
+    ) {
+      if (
+        prefix === KEYS.streamChunkPrefix('wf-token-sequence-retry', 'tokens') &&
+        failFirstTokenScan
+      ) {
+        failFirstTokenScan = false;
+        throw new Error('token scan failed');
+      }
+      yield* originalScan(prefix, options);
+    } as MemoryStorage['scan']);
+    server = serve({ engine, port: 0 });
+
+    try {
+      engine.dispatchEvent(new TokenEvent('wf-token-sequence-retry', 'first', 'gpt-4'));
+      await waitFor(() => errorSpy.mock.calls.length > 0, {
+        label: 'initial token sequence scan failure to surface',
+      });
+      engine.dispatchEvent(new TokenEvent('wf-token-sequence-retry', 'second', 'gpt-4'));
+      await waitFor(
+        async () =>
+          (await storage.get(KEYS.streamChunk('wf-token-sequence-retry', 'tokens', 0))) !== null,
+        {
+          label: 'token chunk persistence after retry',
+        },
+      );
+
+      expect(
+        await storage.get(KEYS.streamChunk('wf-token-sequence-retry', 'tokens', 0)),
+      ).not.toBeNull();
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      restoreScan();
+      errorSpy.mockRestore();
+    }
+  });
+
   it('replays only missing token chunks when resumeFrom is provided', async () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
@@ -1927,6 +1972,51 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(tokenMessages).toHaveLength(1);
     expect(tokenMessages[0]?.['sequence']).toBe(1);
     expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'second', model: 'gpt-4' });
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('treats a resume cursor with no durable token chunks as an empty replay cursor', async () => {
+    engine = createEngine();
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectStream(server, 'wf-resume-empty', { resumeFrom: 999 });
+    const messages = collectMessages(ws);
+    await Bun.sleep(50);
+
+    engine.dispatchEvent(new TokenEvent('wf-resume-empty', 'live', 'gpt-4'));
+    await Bun.sleep(200);
+
+    const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
+    expect(tokenMessages).toHaveLength(1);
+    expect(tokenMessages[0]?.['sequence']).toBe(0);
+    expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'live', model: 'gpt-4' });
+
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it('treats missing or malformed durable token sequences as an empty replay cursor', async () => {
+    engine = createEngine();
+    const storage = engine.storage as MemoryStorage;
+    await storage.put(
+      `${KEYS.streamChunkPrefix('wf-resume-malformed', 'tokens')}zzz`,
+      encode({ workflowId: 'wf-resume-malformed', token: 'stale', model: 'gpt-4' }),
+    );
+    server = serve({ engine, port: 0 });
+
+    const ws = await connectStream(server, 'wf-resume-malformed', { resumeFrom: 999 });
+    const messages = collectMessages(ws);
+    await Bun.sleep(50);
+
+    engine.dispatchEvent(new TokenEvent('wf-resume-malformed', 'live', 'gpt-4'));
+    await Bun.sleep(200);
+
+    const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
+    expect(tokenMessages).toHaveLength(1);
+    expect(tokenMessages[0]?.['sequence']).toBe(0);
+    expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'live', model: 'gpt-4' });
 
     ws.close();
     await Bun.sleep(50);

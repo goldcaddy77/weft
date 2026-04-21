@@ -111,6 +111,12 @@ async function measureColdStart(
   throw new Error(`Server did not respond within ${timeoutMs}ms`);
 }
 
+function isMissingExecutableError(error: unknown): boolean {
+  return (
+    typeof error === 'object' && error !== null && 'code' in error && error['code'] === 'ENOENT'
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Source-mode cold start (bun src/cli-main.ts)
 // ---------------------------------------------------------------------------
@@ -193,55 +199,64 @@ describe('Server cold start benchmark', () => {
         return;
       }
 
-      // Warm the OS file cache once: a freshly compiled 50+ MB Bun binary
-      // takes 600-900ms to read off disk on the first invocation (filesystem
-      // cold cache + Gatekeeper verification on macOS). That first-run cost
-      // dominates any engine-side optimization and is not what the spec
-      // target measures — `<100ms` is a warm-cache server restart, which is
-      // the realistic operational scenario.
-      {
-        const port = 19000 + Math.floor(Math.random() * 1000);
-        const { process: warmupProc } = await measureColdStart(
-          [binaryPath, '--port', String(port), '--database', ':memory:', '--storage', 'memory'],
-          port,
+      try {
+        // Warm the OS file cache once: a freshly compiled 50+ MB Bun binary
+        // takes 600-900ms to read off disk on the first invocation (filesystem
+        // cold cache + Gatekeeper verification on macOS). That first-run cost
+        // dominates any engine-side optimization and is not what the spec
+        // target measures — `<100ms` is a warm-cache server restart, which is
+        // the realistic operational scenario.
+        {
+          const port = 19000 + Math.floor(Math.random() * 1000);
+          const { process: warmupProc } = await measureColdStart(
+            [binaryPath, '--port', String(port), '--database', ':memory:', '--storage', 'memory'],
+            port,
+          );
+          warmupProc.kill('SIGTERM');
+          await warmupProc.exited;
+        }
+
+        const iterations = 5;
+        const samples: number[] = [];
+        for (let index = 0; index < iterations; index += 1) {
+          const port = 19000 + Math.floor(Math.random() * 1000);
+          const { elapsedMs, process: proc } = await measureColdStart(
+            [binaryPath, '--port', String(port), '--database', ':memory:', '--storage', 'memory'],
+            port,
+          );
+          samples.push(elapsedMs);
+          proc.kill('SIGTERM');
+          await proc.exited;
+        }
+
+        const sorted = [...samples].toSorted((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)]!;
+        const min = sorted[0]!;
+        const max = sorted[sorted.length - 1]!;
+
+        console.log(
+          [
+            `  Binary-mode cold start (${iterations} warm-cache runs):`,
+            `    Median:          ${median.toFixed(1)}ms`,
+            `    Min:             ${min.toFixed(1)}ms`,
+            `    Max:             ${max.toFixed(1)}ms`,
+          ].join('\n'),
         );
-        warmupProc.kill('SIGTERM');
-        await warmupProc.exited;
+
+        // Spec target: <100ms warm-cache cold start. Measured 2026-04-11:
+        // ~90ms median on this Apple Silicon host with a 120ms+ tail under
+        // suite-level CPU contention. The enforced gate stays at 150ms until
+        // the benchmark runs in a less noisy environment; the tighter spec
+        // target remains tracked in `reference/IMPORTANT.md`.
+        expect(median).toBeLessThan(BINARY_WARM_CACHE_TARGET_MS);
+      } catch (error) {
+        if (isMissingExecutableError(error)) {
+          console.warn('Skipping binary cold start benchmark: compiled executable is unavailable');
+          return;
+        }
+
+        throw error;
       }
-
-      const iterations = 5;
-      const samples: number[] = [];
-      for (let index = 0; index < iterations; index += 1) {
-        const port = 19000 + Math.floor(Math.random() * 1000);
-        const { elapsedMs, process: proc } = await measureColdStart(
-          [binaryPath, '--port', String(port), '--database', ':memory:', '--storage', 'memory'],
-          port,
-        );
-        samples.push(elapsedMs);
-        proc.kill('SIGTERM');
-        await proc.exited;
-      }
-
-      const sorted = [...samples].toSorted((a, b) => a - b);
-      const median = sorted[Math.floor(sorted.length / 2)]!;
-      const min = sorted[0]!;
-      const max = sorted[sorted.length - 1]!;
-
-      console.log(
-        [
-          `  Binary-mode cold start (${iterations} warm-cache runs):`,
-          `    Median:          ${median.toFixed(1)}ms`,
-          `    Min:             ${min.toFixed(1)}ms`,
-          `    Max:             ${max.toFixed(1)}ms`,
-        ].join('\n'),
-      );
-
-      // Spec target: <100ms warm-cache cold start. Measured 2026-04-11:
-      // ~90ms median on this Apple Silicon host with a 120ms+ tail under
-      // suite-level CPU contention. The enforced gate stays at 150ms until
-      // the benchmark runs in a less noisy environment; the tighter spec
-      // target remains tracked in `reference/IMPORTANT.md`.
-      expect(median).toBeLessThan(BINARY_WARM_CACHE_TARGET_MS);
     }, 60_000);
   });
 });

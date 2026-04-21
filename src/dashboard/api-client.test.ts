@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 
-import { ApiClient } from './api-client.ts';
+import { ApiClient, type ReviewDecision } from './api-client.ts';
 
 function requestInputToUrl(input: RequestInfo | URL): string {
   if (typeof input === 'string') {
@@ -19,6 +19,46 @@ describe('ApiClient', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+  });
+
+  it('reads workflow list filters and serializes scalar query parameters', async () => {
+    let requestedUrl = '';
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedUrl = requestInputToUrl(input);
+      return Response.json({ items: [], total: 0, offset: 2, limit: 10 });
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    await client.listWorkflows({
+      status: 'running',
+      type: 'echo',
+      tags: ['nightly', 'v2'],
+      limit: 10,
+      offset: 2,
+    });
+
+    expect(requestedUrl).toContain('/v1/workflows?');
+    expect(requestedUrl).toContain('status=running');
+    expect(requestedUrl).toContain('type=echo');
+    expect(requestedUrl).toContain('tag=nightly');
+    expect(requestedUrl).toContain('tag=v2');
+    expect(requestedUrl).toContain('limit=10');
+    expect(requestedUrl).toContain('offset=2');
+  });
+
+  it('requests the plain workflow list path when no filters are provided', async () => {
+    let requestedUrl = '';
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedUrl = requestInputToUrl(input);
+      return Response.json({ items: [], total: 0, offset: 0, limit: 20 });
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    await client.listWorkflows();
+
+    expect(requestedUrl).toBe('/v1/workflows');
   });
 
   it('calls /v1/retention and returns the parsed overview', async () => {
@@ -87,5 +127,158 @@ describe('ApiClient', () => {
     expect(requestedUrl).toContain('/v1/workflows?');
     expect(requestedUrl).toContain('tag=nightly');
     expect(requestedUrl).toContain('tag=v2');
+  });
+
+  it('covers the remaining client endpoints and request shaping', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const decision: ReviewDecision = {
+      decision: 'approved',
+      reviewer: 'Ada',
+      feedback: 'Looks good',
+    };
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestInputToUrl(input);
+      requests.push(init === undefined ? { url } : { url, init });
+
+      if (url === '/v1/workflows/workflow%20id' && init?.method === 'DELETE') {
+        return new Response(null, { status: 204 });
+      }
+
+      if (url === '/v1/workflows/workflow%20id') {
+        return Response.json({
+          id: 'workflow id',
+          type: 'echo',
+          status: 'running',
+          input: { ok: true },
+          version: '1.0.0',
+          createdAt: 1,
+          updatedAt: 2,
+        });
+      }
+
+      if (url === '/v1/workflows/workflow%20id/signal/approve%2Fdeny') {
+        return new Response(null, { status: 204 });
+      }
+
+      if (url === '/v1/workflows/workflow%20id/events') {
+        return Response.json({
+          events: [{ type: 'workflow.started', timestamp: 1, data: { step: 1 } }],
+        });
+      }
+
+      if (url === '/v1/workflows/workflow%20id/attributes') {
+        return Response.json({ tenant: 'acme' });
+      }
+
+      if (url === '/v1/reviews') {
+        return Response.json({
+          items: [
+            {
+              reviewId: 'review-1',
+              workflowId: 'workflow id',
+              artifact: { type: 'diff' },
+              reviewType: 'approval',
+              reviewers: ['Ada'],
+              createdAt: 1,
+            },
+          ],
+        });
+      }
+
+      if (url === '/v1/tenants/acme%2Fwest/quota') {
+        return Response.json({
+          workflowCreationRate: { used: 1, limit: 5, windowMilliseconds: 60_000 },
+          memory: { used: 1024, limit: 4096 },
+          storage: { used: 2048, limit: 8192 },
+        });
+      }
+
+      if (url === '/v1/reviews/review%2F1/decision') {
+        return new Response(null, { status: 204 });
+      }
+
+      if (url === '/v1/health') {
+        return Response.json({ status: 'ok' });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    expect(await client.getWorkflow('workflow id')).toEqual(
+      expect.objectContaining({ id: 'workflow id', status: 'running' }),
+    );
+    await client.cancelWorkflow('workflow id');
+    await client.signalWorkflow('workflow id', 'approve/deny', { ok: true });
+    expect(await client.getWorkflowEvents('workflow id')).toEqual([
+      { type: 'workflow.started', timestamp: 1, data: { step: 1 } },
+    ]);
+    expect(await client.getWorkflowAttributes('workflow id')).toEqual({ tenant: 'acme' });
+    expect(await client.listPendingReviews()).toEqual([
+      expect.objectContaining({ reviewId: 'review-1' }),
+    ]);
+    expect(await client.getTenantQuotaUsage('acme/west')).toEqual(
+      expect.objectContaining({
+        workflowCreationRate: expect.objectContaining({ used: 1 }),
+      }),
+    );
+    await client.submitReviewDecision('review/1', 'workflow id', decision);
+    expect(await client.checkHealth()).toEqual({ status: 'ok' });
+
+    expect(requests.map((entry) => entry.url)).toEqual([
+      '/v1/workflows/workflow%20id',
+      '/v1/workflows/workflow%20id',
+      '/v1/workflows/workflow%20id/signal/approve%2Fdeny',
+      '/v1/workflows/workflow%20id/events',
+      '/v1/workflows/workflow%20id/attributes',
+      '/v1/reviews',
+      '/v1/tenants/acme%2Fwest/quota',
+      '/v1/reviews/review%2F1/decision',
+      '/v1/health',
+    ]);
+
+    expect(requests[1]?.init?.method).toBe('DELETE');
+    expect(requests[2]?.init?.method).toBe('POST');
+    expect(requests[2]?.init?.headers).toBeDefined();
+    expect(requests[2]?.init?.body).toBe(JSON.stringify({ payload: { ok: true } }));
+    expect(requests[7]?.init?.method).toBe('POST');
+    expect(requests[7]?.init?.body).toBe(
+      JSON.stringify({ ...decision, workflowId: 'workflow id' }),
+    );
+  });
+
+  it('prefers API error payloads and falls back to status text when parsing fails', async () => {
+    let callCount = 0;
+
+    globalThis.fetch = (async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Response(JSON.stringify({ error: 'workflow exploded' }), {
+          status: 500,
+          statusText: 'Internal Server Error',
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response('not-json', {
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: { 'Content-Type': 'text/plain' },
+      });
+    }) as unknown as typeof fetch;
+
+    const client = new ApiClient();
+
+    await expect(client.getWorkflow('bad')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 500,
+      message: 'workflow exploded',
+    });
+    await expect(client.getWorkflow('still-bad')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 502,
+      message: 'Bad Gateway',
+    });
   });
 });

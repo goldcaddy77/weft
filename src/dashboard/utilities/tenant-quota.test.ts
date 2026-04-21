@@ -38,6 +38,17 @@ describe('computeTenantQuotaMeter', () => {
       severity: 'danger',
     });
   });
+
+  it('treats negative limits as effectively unconfigured and clamps percentages above 100', () => {
+    expect(computeTenantQuotaMeter({ used: 10, limit: -1 })).toEqual({
+      percentage: 0,
+      severity: 'normal',
+    });
+    expect(computeTenantQuotaMeter({ used: 25, limit: 10 })).toEqual({
+      percentage: 100,
+      severity: 'danger',
+    });
+  });
 });
 
 describe('formatTenantQuotaBytes', () => {
@@ -64,6 +75,12 @@ describe('formatTenantQuotaWindow', () => {
     );
     expect(formatTenantQuotaWindow({ used: 1, limit: 5, windowMilliseconds: 300_000 })).toBe(
       '5m window',
+    );
+  });
+
+  it('formats fractional-minute windows when they do not divide evenly', () => {
+    expect(formatTenantQuotaWindow({ used: 1, limit: 5, windowMilliseconds: 90_000 })).toBe(
+      '1.5m window',
     );
   });
 });

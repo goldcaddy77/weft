@@ -436,6 +436,18 @@ describe('CLI argument parsing', () => {
       const result = parseCliArguments(['timeline', 'wf-1', '--diff', '1', '2']) as TimelineCommand;
       expect(result.diff).toEqual([1, 2]);
     });
+
+    it('rejects invalid timeline step combinations and values', () => {
+      expect(() => parseCliArguments(['timeline', 'wf-1', '--step=-1'])).toThrow(
+        '--step must be a non-negative integer',
+      );
+      expect(() => parseCliArguments(['timeline', 'wf-1', '--diff'])).toThrow(
+        '--diff requires two step numbers',
+      );
+      expect(() =>
+        parseCliArguments(['timeline', 'wf-1', '--step', '2', '--diff', '1', '3']),
+      ).toThrow('--step and --diff cannot be used together');
+    });
   });
 });
 
@@ -1036,6 +1048,75 @@ describe('executeTimeline', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Step 2 | activity | failCliTimeline | failed');
       expect(result.stdout).toContain('cli timeline failure');
+    } finally {
+      rmSync(database, { force: true });
+    }
+  });
+
+  it('returns errors for missing workflow ids and missing replay steps', async () => {
+    expect(
+      await executeTimeline({
+        database: ':memory:',
+        workflowId: '',
+      }),
+    ).toEqual({
+      stdout: '',
+      stderr: 'Error: workflowId is required for timeline',
+      exitCode: 1,
+    });
+
+    const database = join(tmpdir(), `weft-timeline-missing-${crypto.randomUUID()}.db`);
+    const storage = await createStorage('sqlite', database);
+    const { Engine } = await import('./core/engine.ts');
+    const engine = new Engine({ storage });
+
+    try {
+      engine.register('timeline-missing', async function* () {
+        return 'done';
+      });
+
+      const handle = await engine.start('timeline-missing', null, { id: 'wf-cli-missing-replay' });
+      await handle.result();
+    } finally {
+      await engine[Symbol.asyncDispose]();
+      storage[Symbol.dispose]();
+    }
+
+    try {
+      expect(
+        await executeTimeline({
+          database,
+          workflowId: 'missing-workflow',
+        }),
+      ).toEqual({
+        stdout: '',
+        stderr: 'Error: workflow "missing-workflow" not found',
+        exitCode: 1,
+      });
+
+      expect(
+        await executeTimeline({
+          database,
+          workflowId: 'wf-cli-missing-replay',
+          step: 99,
+        }),
+      ).toEqual({
+        stdout: '',
+        stderr: 'Error: replay not found for step 99',
+        exitCode: 1,
+      });
+
+      expect(
+        await executeTimeline({
+          database,
+          workflowId: 'wf-cli-missing-replay',
+          diff: [1, 99],
+        }),
+      ).toEqual({
+        stdout: '',
+        stderr: 'Error: replay not found for diff 1 -> 99',
+        exitCode: 1,
+      });
     } finally {
       rmSync(database, { force: true });
     }

@@ -436,7 +436,6 @@ export function wireEventBroadcasting(
       const prefix = KEYS.eventPrefix(workflowId);
       let highestSequence = -1;
 
-      /* c8 ignore start -- existing-event replay and rejected-scan recovery are defensive */
       for await (const [key] of engine.storage.scan(prefix, { reverse: true, limit: 1 })) {
         // Key format: ev:{workflowId}:{zero-padded sequence}
         const parts = key.split(':');
@@ -454,7 +453,6 @@ export function wireEventBroadcasting(
       sequenceInitPromises.delete(workflowId);
       throw error;
     });
-    /* c8 ignore stop */
 
     sequenceInitPromises.set(workflowId, promise);
     return promise;

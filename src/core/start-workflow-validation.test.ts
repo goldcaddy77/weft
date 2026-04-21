@@ -4,7 +4,9 @@ import {
   assertExclusiveStartWorkflowOptions,
   coerceStartWorkflowDuration,
   coerceStartWorkflowId,
+  coerceStartWorkflowTags,
   coerceStartWorkflowTimestamp,
+  MAX_WORKFLOW_TAG_BYTES,
   parseStartWorkflowDuration,
   StartWorkflowValidationError,
 } from './start-workflow-validation.ts';
@@ -93,6 +95,35 @@ describe('start workflow validation', () => {
     expect(error).toEqual(
       new StartWorkflowValidationError(
         'options.startAfter must be a finite, non-negative number or valid duration string',
+      ),
+    );
+  });
+
+  it('normalizes valid workflow tags in their original order', () => {
+    expect(coerceStartWorkflowTags(['alpha', ' beta '], 'options.tags')).toEqual([
+      'alpha',
+      ' beta ',
+    ]);
+  });
+
+  it('rejects non-array and non-string tag values', () => {
+    expect(() => coerceStartWorkflowTags('alpha', 'options.tags')).toThrow(
+      new StartWorkflowValidationError('options.tags must be an array of strings'),
+    );
+    expect(() => coerceStartWorkflowTags(['alpha', 2], 'options.tags')).toThrow(
+      new StartWorkflowValidationError('options.tags must contain only strings'),
+    );
+  });
+
+  it('rejects empty and oversized workflow tags', () => {
+    expect(() => coerceStartWorkflowTags(['   '], 'options.tags')).toThrow(
+      new StartWorkflowValidationError('options.tags must not contain empty tags'),
+    );
+    expect(() =>
+      coerceStartWorkflowTags(['x'.repeat(MAX_WORKFLOW_TAG_BYTES + 1)], 'options.tags'),
+    ).toThrow(
+      new StartWorkflowValidationError(
+        `options.tags tags must be at most ${MAX_WORKFLOW_TAG_BYTES} UTF-8 bytes each`,
       ),
     );
   });
