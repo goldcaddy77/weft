@@ -76,7 +76,7 @@ export type CliCommand =
     }
   | {
       command: 'schedule';
-      action: 'pause' | 'cancel';
+      action: 'pause' | 'resume' | 'cancel';
       database: string;
       scheduleId: string;
       help: boolean;
@@ -87,7 +87,7 @@ type ScheduleCommand = Extract<CliCommand, { command: 'schedule' }>;
 type ScheduleAction = ScheduleCommand['action'];
 type ScheduleListCommand = Extract<ScheduleCommand, { action: 'list' }>;
 type ScheduleCreateCommand = Extract<ScheduleCommand, { action: 'create' }>;
-type ScheduleMutationCommand = Extract<ScheduleCommand, { action: 'pause' | 'cancel' }>;
+type ScheduleMutationCommand = Extract<ScheduleCommand, { action: 'pause' | 'resume' | 'cancel' }>;
 
 // ---------------------------------------------------------------------------
 // Known subcommands
@@ -96,16 +96,7 @@ type ScheduleMutationCommand = Extract<ScheduleCommand, { action: 'pause' | 'can
 const KNOWN_SUBCOMMANDS = new Set(['doctor', 'version:check', 'validate', 'timeline', 'schedule']);
 
 const VALID_STORAGE_BACKENDS = new Set<string>(['sqlite', 'lmdb', 'memory']);
-const SCHEDULE_ACTIONS = new Set<ScheduleAction>(['list', 'create', 'pause', 'cancel']);
-const SCHEDULE_FLAGS_WITH_VALUES = new Set([
-  '-d',
-  '-w',
-  '--database',
-  '--workflows',
-  '--input',
-  '--id',
-  '--overlap',
-]);
+const SCHEDULE_ACTIONS = new Set<ScheduleAction>(['list', 'create', 'pause', 'resume', 'cancel']);
 const VALID_SCHEDULE_OVERLAP_POLICIES = new Set<ScheduleOverlapPolicy>([
   'skip',
   'queue',
@@ -325,32 +316,6 @@ function parseTimelineArguments(args: string[]): CliCommand {
   };
 }
 
-function findScheduleAction(args: string[]): {
-  action: ScheduleAction | undefined;
-  actionIndex: number;
-} {
-  let action: ScheduleAction | undefined;
-  let actionIndex = -1;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (arg.startsWith('-')) {
-      if (SCHEDULE_FLAGS_WITH_VALUES.has(arg)) {
-        i++;
-      }
-      continue;
-    }
-
-    if (SCHEDULE_ACTIONS.has(arg as ScheduleAction)) {
-      action = arg as ScheduleAction;
-      actionIndex = i;
-    }
-    break;
-  }
-
-  return { action, actionIndex };
-}
-
 function parseScheduleCliValues(args: string[]) {
   return parseArgs({
     args,
@@ -395,9 +360,40 @@ function buildScheduleListCommand(
   };
 }
 
+function formatScheduleActionList(): string {
+  return [...SCHEDULE_ACTIONS].join(', ');
+}
+
+function rejectUnexpectedSchedulePositionals(
+  action: string,
+  positionals: string[],
+  usage: string,
+): void {
+  if (positionals.length <= 1) {
+    return;
+  }
+
+  throw new Error(`schedule ${action} expects exactly 1 positional argument: ${usage}`);
+}
+
+function requireScheduleAction(positionals: string[]): ScheduleAction {
+  const action = positionals[0];
+  if (action === undefined) {
+    throw new Error(`Missing schedule action. Expected one of: ${formatScheduleActionList()}`);
+  }
+
+  if (!SCHEDULE_ACTIONS.has(action as ScheduleAction)) {
+    throw new Error(
+      `Unknown schedule action "${action}". Expected one of: ${formatScheduleActionList()}`,
+    );
+  }
+
+  return action as ScheduleAction;
+}
+
 function buildScheduleCreateCommand(
   values: ReturnType<typeof parseScheduleCliValues>['values'],
-  positionals: ReturnType<typeof parseScheduleCliValues>['positionals'],
+  positionals: string[],
 ): ScheduleCreateCommand {
   const overlap = parseScheduleOverlapPolicy(values.overlap);
 
@@ -420,7 +416,7 @@ function buildScheduleCreateCommand(
 function buildScheduleMutationCommand(
   action: ScheduleMutationCommand['action'],
   values: ReturnType<typeof parseScheduleCliValues>['values'],
-  positionals: ReturnType<typeof parseScheduleCliValues>['positionals'],
+  positionals: string[],
 ): ScheduleMutationCommand {
   return {
     command: 'schedule',
@@ -433,19 +429,30 @@ function buildScheduleMutationCommand(
 }
 
 function parseScheduleArguments(args: string[]): CliCommand {
-  const { action, actionIndex } = findScheduleAction(args);
-
-  const remainingArgs =
-    actionIndex >= 0 ? [...args.slice(0, actionIndex), ...args.slice(actionIndex + 1)] : args;
-
-  const { values, positionals } = parseScheduleCliValues(remainingArgs);
-
-  if (action === 'create') {
-    return buildScheduleCreateCommand(values, positionals);
+  const { values, positionals } = parseScheduleCliValues(args);
+  if (values.help) {
+    return buildScheduleListCommand(values);
   }
 
-  if (action === 'pause' || action === 'cancel') {
-    return buildScheduleMutationCommand(action, values, positionals);
+  const action = requireScheduleAction(positionals);
+  const actionPositionals = positionals.slice(1);
+
+  if (action === 'create') {
+    if (actionPositionals.length > 2) {
+      throw new Error(
+        'schedule create expects exactly 2 positional arguments: <workflowType> <cronExpression>',
+      );
+    }
+    return buildScheduleCreateCommand(values, actionPositionals);
+  }
+
+  if (action === 'pause' || action === 'resume' || action === 'cancel') {
+    rejectUnexpectedSchedulePositionals(action, actionPositionals, '<scheduleId>');
+    return buildScheduleMutationCommand(action, values, actionPositionals);
+  }
+
+  if (actionPositionals.length > 0) {
+    throw new Error('schedule list does not accept positional arguments');
   }
 
   return buildScheduleListCommand(values);
@@ -520,6 +527,7 @@ Usage:
   weft schedule list [options]
   weft schedule create <workflowType> <cronExpression> [options]
   weft schedule pause <scheduleId> [options]
+  weft schedule resume <scheduleId> [options]
   weft schedule cancel <scheduleId> [options]
 
 Options:
@@ -813,9 +821,13 @@ function formatScheduleLine(schedule: {
   status: string;
   nextFireAt: number | null;
 }): string {
-  return `${schedule.id} | ${schedule.workflowType} | ${schedule.status} | ${schedule.cronExpression} | next ${
-    schedule.nextFireAt ?? 'none'
-  }`;
+  return [
+    schedule.id,
+    schedule.workflowType,
+    schedule.status,
+    schedule.cronExpression,
+    schedule.nextFireAt === null ? 'none' : new Date(schedule.nextFireAt).toISOString(),
+  ].join(' | ');
 }
 
 function formatScheduleCommandOutput(schedule: unknown, json: boolean, message: string): string {
@@ -831,7 +843,10 @@ async function executeScheduleList(
     ? JSON.stringify(result, null, 2)
     : result.items.length === 0
       ? 'No schedules found.'
-      : result.items.map(formatScheduleLine).join('\n');
+      : [
+          'ID | Workflow Type | Status | Cron | Next Fire',
+          ...result.items.map(formatScheduleLine),
+        ].join('\n');
 
   return { stdout, exitCode: 0 };
 }
@@ -841,8 +856,12 @@ function getScheduleCreateValidationError(options: ScheduleCreateCommand): strin
     return 'Error: --workflows flag is required for schedule create';
   }
 
-  if (!options.workflowType || !options.cronExpression) {
-    return 'Error: workflowType and cronExpression are required for schedule create';
+  if (!options.workflowType) {
+    return 'Error: missing required argument <workflowType> for schedule create';
+  }
+
+  if (!options.cronExpression) {
+    return 'Error: missing required argument <cronExpression> for schedule create';
   }
 
   return null;
@@ -929,6 +948,19 @@ async function executeScheduleMutation(
         schedule,
         options.json,
         `Paused schedule ${options.scheduleId}`,
+      ),
+      exitCode: 0,
+    };
+  }
+
+  if (options.action === 'resume') {
+    await engine.resumeSchedule(options.scheduleId);
+    const schedule = await engine.getSchedule(options.scheduleId);
+    return {
+      stdout: formatScheduleCommandOutput(
+        schedule,
+        options.json,
+        `Resumed schedule ${options.scheduleId}`,
       ),
       exitCode: 0,
     };

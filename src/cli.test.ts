@@ -34,7 +34,7 @@ type ScheduleListCommand = Extract<CliCommand, { command: 'schedule'; action: 'l
 type ScheduleCreateCommand = Extract<CliCommand, { command: 'schedule'; action: 'create' }>;
 type ScheduleMutationCommand = Extract<
   CliCommand,
-  { command: 'schedule'; action: 'pause' | 'cancel' }
+  { command: 'schedule'; action: 'pause' | 'resume' | 'cancel' }
 >;
 
 describe('CLI argument parsing', () => {
@@ -483,7 +483,7 @@ describe('CLI argument parsing', () => {
       expect(result.backfill).toBe(true);
     });
 
-    it('parses schedule pause and cancel ids', () => {
+    it('parses schedule pause, resume, and cancel ids', () => {
       const pauseResult = parseCliArguments([
         'schedule',
         'pause',
@@ -492,6 +492,14 @@ describe('CLI argument parsing', () => {
       expect(pauseResult.action).toBe('pause');
       expect(pauseResult.scheduleId).toBe('schedule-1');
 
+      const resumeResult = parseCliArguments([
+        'schedule',
+        'resume',
+        'schedule-1',
+      ]) as ScheduleMutationCommand;
+      expect(resumeResult.action).toBe('resume');
+      expect(resumeResult.scheduleId).toBe('schedule-1');
+
       const cancelResult = parseCliArguments([
         'schedule',
         'cancel',
@@ -499,6 +507,36 @@ describe('CLI argument parsing', () => {
       ]) as ScheduleMutationCommand;
       expect(cancelResult.action).toBe('cancel');
       expect(cancelResult.scheduleId).toBe('schedule-2');
+    });
+
+    it('rejects missing or unknown schedule actions', () => {
+      expect(() => parseCliArguments(['schedule'])).toThrow(
+        'Missing schedule action. Expected one of: list, create, pause, resume, cancel',
+      );
+      expect(() => parseCliArguments(['schedule', 'typo'])).toThrow(
+        'Unknown schedule action "typo". Expected one of: list, create, pause, resume, cancel',
+      );
+    });
+
+    it('rejects unexpected list positionals', () => {
+      expect(() => parseCliArguments(['schedule', 'list', 'extra'])).toThrow(
+        'schedule list does not accept positional arguments',
+      );
+    });
+
+    it('rejects extra schedule create and mutation positionals', () => {
+      expect(() => parseCliArguments(['schedule', 'create', 'echo', '0 * * * *', 'extra'])).toThrow(
+        'schedule create expects exactly 2 positional arguments: <workflowType> <cronExpression>',
+      );
+      expect(() => parseCliArguments(['schedule', 'pause', 'schedule-1', 'extra'])).toThrow(
+        'schedule pause expects exactly 1 positional argument: <scheduleId>',
+      );
+      expect(() => parseCliArguments(['schedule', 'resume', 'schedule-1', 'extra'])).toThrow(
+        'schedule resume expects exactly 1 positional argument: <scheduleId>',
+      );
+      expect(() => parseCliArguments(['schedule', 'cancel', 'schedule-1', 'extra'])).toThrow(
+        'schedule cancel expects exactly 1 positional argument: <scheduleId>',
+      );
     });
   });
 });
@@ -579,10 +617,11 @@ describe('help text', () => {
     expect(TIMELINE_HELP_TEXT).toContain('--database');
   });
 
-  it('SCHEDULE_HELP_TEXT contains list, create, pause, and cancel', () => {
+  it('SCHEDULE_HELP_TEXT contains list, create, pause, resume, and cancel', () => {
     expect(SCHEDULE_HELP_TEXT).toContain('schedule list');
     expect(SCHEDULE_HELP_TEXT).toContain('schedule create');
     expect(SCHEDULE_HELP_TEXT).toContain('schedule pause');
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule resume');
     expect(SCHEDULE_HELP_TEXT).toContain('schedule cancel');
     expect(SCHEDULE_HELP_TEXT).toContain('--workflows');
   });
@@ -792,6 +831,7 @@ describe('CLI direct execution', () => {
     expect(stdout).toContain('schedule list');
     expect(stdout).toContain('schedule create');
     expect(stdout).toContain('schedule pause');
+    expect(stdout).toContain('schedule resume');
     expect(stdout).toContain('schedule cancel');
   });
 
@@ -1135,7 +1175,7 @@ describe('executeTimeline', () => {
 });
 
 describe('executeSchedule', () => {
-  it('lists, creates, pauses, and cancels schedules against a SQLite database', async () => {
+  it('lists, creates, pauses, resumes, and cancels schedules against a SQLite database', async () => {
     const database = join(tmpdir(), `weft-schedule-${crypto.randomUUID()}.db`);
     const workflows = join(tmpdir(), `weft-schedule-workflows-${crypto.randomUUID()}.ts`);
 
@@ -1178,6 +1218,7 @@ describe('executeSchedule', () => {
       });
       expect(listResult.exitCode).toBe(0);
       expect(listResult.stdout).toContain('existing-schedule');
+      expect(listResult.stdout).toContain('ID | Workflow Type | Status | Cron | Next Fire');
 
       const createResult = await executeSchedule({
         command: 'schedule',
@@ -1205,6 +1246,16 @@ describe('executeSchedule', () => {
         scheduleId: 'created-schedule',
       });
       expect(pauseResult.exitCode).toBe(0);
+
+      const resumeResult = await executeSchedule({
+        command: 'schedule',
+        action: 'resume',
+        database,
+        help: false,
+        json: false,
+        scheduleId: 'created-schedule',
+      });
+      expect(resumeResult.exitCode).toBe(0);
 
       const cancelResult = await executeSchedule({
         command: 'schedule',

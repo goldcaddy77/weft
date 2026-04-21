@@ -369,17 +369,19 @@ function parseScheduleListFilter(request: Request): ScheduleFilter {
   const limit = url.searchParams.get('limit');
   if (limit !== null) {
     const parsed = Number(limit);
-    if (Number.isFinite(parsed) && parsed >= 1) {
-      filter.limit = Math.min(Math.floor(parsed), 1000);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new Error('Query parameter "limit" must be a positive integer');
     }
+    filter.limit = Math.min(parsed, 1000);
   }
 
   const offset = url.searchParams.get('offset');
   if (offset !== null) {
     const parsed = Number(offset);
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      filter.offset = Math.floor(parsed);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new Error('Query parameter "offset" must be a non-negative integer');
     }
+    filter.offset = parsed;
   }
 
   return filter;
@@ -399,6 +401,10 @@ function scheduleErrorResponse(error: unknown): Response {
 
   if (normalizedMessage.includes('cannot be resumed')) {
     return errorResponse(message, 409);
+  }
+
+  if (normalizedMessage.includes('authenticated tenant')) {
+    return errorResponse(message, 403);
   }
 
   if (
@@ -806,7 +812,11 @@ async function handleListSchedules(
   }
 }
 
-async function handleCreateSchedule(request: Request, engine: Engine): Promise<Response> {
+async function handleCreateSchedule(
+  request: Request,
+  engine: Engine,
+  authContext: AuthenticatedRequestContext | undefined,
+): Promise<Response> {
   let body: unknown;
   try {
     body = await request.json();
@@ -820,11 +830,16 @@ async function handleCreateSchedule(request: Request, engine: Engine): Promise<R
 
   try {
     const validated = validateScheduleOptions(body as Record<string, unknown>);
+    const accessOptions = getScheduleAccessOptions(authContext);
+    if (accessOptions instanceof Response) {
+      return accessOptions;
+    }
     const handle = await engine.schedule(
       validated.type,
       validated.input,
       validated.cronExpression,
       validated.options,
+      accessOptions,
     );
     return jsonResponse({ id: handle.id }, 201);
   } catch (error) {
@@ -1745,7 +1760,8 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   getRetentionOverview: async ({ engine }) => handleGetRetentionOverview(engine),
   listSchedules: async ({ request, engine, options }) =>
     handleListSchedules(request, engine, options?.authContext),
-  createSchedule: async ({ request, engine }) => handleCreateSchedule(request, engine),
+  createSchedule: async ({ request, engine, options }) =>
+    handleCreateSchedule(request, engine, options?.authContext),
   getSchedule: async ({ engine, options, param }) =>
     handleGetSchedule(engine, param('id'), options?.authContext),
   updateSchedule: async ({ request, engine, options, param }) =>

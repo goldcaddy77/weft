@@ -1354,14 +1354,7 @@ function encodedValuesEqual(left: unknown, right: unknown): boolean {
 }
 
 function matchesScheduleFilter(state: ScheduleState, filter: ScheduleFilter | undefined): boolean {
-  if (state.tenant?.id !== undefined) {
-    if (filter?.tenantId === undefined) {
-      return false;
-    }
-    if (state.tenant.id !== filter.tenantId) {
-      return false;
-    }
-  } else if (filter?.tenantId !== undefined) {
+  if (filter?.tenantId !== undefined && state.tenant?.id !== filter.tenantId) {
     return false;
   }
 
@@ -1379,7 +1372,15 @@ function paginateScheduleSummaries(
   items: ScheduleSummary[],
   filter?: ScheduleFilter,
 ): PaginatedResult<ScheduleSummary> {
-  return paginateItems(items, filter);
+  const sortedItems = items.toSorted((left, right) => {
+    if (left.createdAt !== right.createdAt) {
+      return left.createdAt - right.createdAt;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+
+  return paginateItems(sortedItems, filter);
 }
 
 function createScheduleTimerId(scheduleId: string): string {
@@ -3086,6 +3087,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     input: unknown,
     cronExpression: string,
     options?: ScheduleOptions,
+    accessOptions?: ScheduleAccessOptions,
   ): Promise<ScheduleHandle> {
     if (!this.#registrations.has(type)) {
       throw new Error(`No workflow registered with name "${type}"`);
@@ -3096,6 +3098,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const normalizedOptions = normalizeScheduleOptions(options);
+    const normalizedAccessOptions = normalizeScheduleAccessOptions(accessOptions);
     parseCronExpression(cronExpression);
     const scheduleId = normalizedOptions.id ?? crypto.randomUUID();
     if (this.#pendingScheduleCreations.has(scheduleId)) {
@@ -3109,7 +3112,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       const now = this.#options.getNow();
-      const tenant = await this.#resolveTenantForStart(scheduleId, type, input);
+      const resolvedTenant = await this.#resolveTenantForStart(scheduleId, type, input);
+      const tenant =
+        normalizedAccessOptions?.tenantId === undefined
+          ? resolvedTenant
+          : resolvedTenant === undefined
+            ? { id: normalizedAccessOptions.tenantId }
+            : resolvedTenant.id === normalizedAccessOptions.tenantId
+              ? resolvedTenant
+              : (() => {
+                  throw new Error('Schedule creation is limited to the authenticated tenant');
+                })();
       const state: ScheduleState = {
         id: scheduleId,
         workflowType: type,
@@ -5449,48 +5462,54 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async #handleStrategyMessage(message: WorkerOutboundMessage): Promise<void> {
-    switch (message.type) {
-      case 'completed':
-        await this.#completeWorkflow(message.workflowId, message.result);
-        break;
+    const inlineTurn = this.#inlineStrategy?.waitForWorkflowTurn(message.workflowId);
 
-      case 'failed': {
-        const failedError = new Error(message.error);
-        // Preserve the original error stack from the strategy if available,
-        // rather than using the stack pointing to engine internals.
-        if (message.errorStack) {
-          failedError.stack = message.errorStack;
-        }
-        await this.#failWorkflow(
-          message.workflowId,
-          failedError,
-          message.failureCategory ?? 'system',
-        );
-        break;
-      }
+    try {
+      switch (message.type) {
+        case 'completed':
+          await this.#completeWorkflow(message.workflowId, message.result);
+          break;
 
-      case 'checkpoint': {
-        const operation = this.#translateOperationRequest(message.operationRequest);
-
-        // Persist checkpoint at this yield boundary
-        await this.#persistCheckpoint(message.workflowId, operation, message.checkpoint);
-
-        // Development mode: validate checkpoint round-trip
-        this.#validateDevelopmentCheckpoint(message.workflowId);
-
-        // Evaluate domain constraints — done after persistence so the
-        // checkpoint is durable before any violation reaction.
-        const constraintViolated = await this.#evaluateConstraints(message.workflowId);
-        if (constraintViolated) {
-          // Violation already handled (event dispatched, error thrown or logged).
+        case 'failed': {
+          const failedError = new Error(message.error);
+          // Preserve the original error stack from the strategy if available,
+          // rather than using the stack pointing to engine internals.
+          if (message.errorStack) {
+            failedError.stack = message.errorStack;
+          }
+          await this.#failWorkflow(
+            message.workflowId,
+            failedError,
+            message.failureCategory ?? 'system',
+          );
           break;
         }
 
-        // Translate the operation request: worker protocol uses `kind` while the
-        // engine uses `type`. Inline strategy already emits ContextOperationRequest.
-        await this.#processOperation(message.workflowId, operation);
-        break;
+        case 'checkpoint': {
+          const operation = this.#translateOperationRequest(message.operationRequest);
+
+          // Persist checkpoint at this yield boundary
+          await this.#persistCheckpoint(message.workflowId, operation, message.checkpoint);
+
+          // Development mode: validate checkpoint round-trip
+          this.#validateDevelopmentCheckpoint(message.workflowId);
+
+          // Evaluate domain constraints — done after persistence so the
+          // checkpoint is durable before any violation reaction.
+          const constraintViolated = await this.#evaluateConstraints(message.workflowId);
+          if (constraintViolated) {
+            // Violation already handled (event dispatched, error thrown or logged).
+            break;
+          }
+
+          // Translate the operation request: worker protocol uses `kind` while the
+          // engine uses `type`. Inline strategy already emits ContextOperationRequest.
+          await this.#processOperation(message.workflowId, operation);
+          break;
+        }
       }
+    } finally {
+      this.#inlineStrategy?.clearWorkflowTurn(message.workflowId, inlineTurn);
     }
   }
 
@@ -7118,22 +7137,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #settleBackfillScheduleState(state: ScheduleState): Promise<ScheduleState> {
-    let settledState = state;
-
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const refreshed = await this.#refreshScheduledWorkflowState(settledState);
-      if (
-        refreshed.currentWorkflowState?.status !== 'running' &&
-        refreshed.currentWorkflowState?.status !== 'pending'
-      ) {
-        return refreshed.state;
-      }
-
-      settledState = refreshed.state;
-      await Promise.resolve();
+    if (!state.currentWorkflowId) {
+      return state;
     }
 
-    return settledState;
+    // Inline execution can complete or checkpoint during the same scheduler
+    // turn that started the run. Wait for that first turn to finish handling
+    // its outbound message before re-reading persisted schedule state.
+    const pendingTurn = this.#inlineStrategy?.waitForWorkflowTurn(state.currentWorkflowId);
+    if (pendingTurn) {
+      await pendingTurn;
+    }
+
+    const refreshed = await this.#refreshScheduledWorkflowState(state);
+    return refreshed.state;
   }
 
   async #handleScheduleTimer(entry: TimerEntry): Promise<void> {
@@ -7183,9 +7200,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         await this.#writeScheduleState(nextState, { includeTimer: false });
 
         // Backfill can process multiple missed ticks in one scheduler turn.
-        // Give inline runs a few microtasks to settle so immediately-completing
-        // workflows do not look active and incorrectly suppress later
-        // catch-up occurrences under overlap policies like "skip" or "queue".
+        // Wait for the inline strategy to finish handling the just-started
+        // run's outbound message so immediately-completing workflows do not
+        // look active and incorrectly suppress later catch-up occurrences
+        // under overlap policies like "skip" or "queue".
         if (state.backfill && nextState.currentWorkflowId !== undefined) {
           nextState = await this.#settleBackfillScheduleState(nextState);
         }

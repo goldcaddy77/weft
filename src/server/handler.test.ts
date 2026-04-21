@@ -296,6 +296,28 @@ describe('handleRequest', () => {
       });
     });
 
+    it('GET /v1/schedules rejects invalid pagination values', async () => {
+      engine = createEngine();
+
+      const invalidLimitResponse = await handleRequest(
+        request('GET', '/v1/schedules?limit=bogus'),
+        engine,
+      );
+      expect(invalidLimitResponse.status).toBe(400);
+      expect(await json(invalidLimitResponse)).toEqual({
+        error: 'Query parameter "limit" must be a positive integer',
+      });
+
+      const invalidOffsetResponse = await handleRequest(
+        request('GET', '/v1/schedules?offset=-1'),
+        engine,
+      );
+      expect(invalidOffsetResponse.status).toBe(400);
+      expect(await json(invalidOffsetResponse)).toEqual({
+        error: 'Query parameter "offset" must be a non-negative integer',
+      });
+    });
+
     it('JWT-authenticated schedule routes scope reads to the authenticated tenant', async () => {
       engine = createTenantAwareEngine();
       await engine.schedule('echo', { tenantId: 'acme', payload: 'tenant-a' }, '0 * * * *', {
@@ -406,6 +428,70 @@ describe('handleRequest', () => {
       );
     });
 
+    it('JWT-authenticated schedule creation binds the schedule to the authenticated tenant', async () => {
+      engine = createTenantAwareEngine();
+
+      const createOwnTenantResponse = await handleRequest(
+        request('POST', '/v1/schedules', {
+          type: 'echo',
+          input: { tenantId: 'acme', payload: 'tenant-a' },
+          cronExpression: '0 * * * *',
+          id: 'schedule-acme',
+        }),
+        engine,
+        {
+          authContext: {
+            method: 'jwt',
+            claims: { tenantId: 'acme' },
+          },
+        },
+      );
+      expect(createOwnTenantResponse.status).toBe(201);
+      expect(await engine.getSchedule('schedule-acme', { tenantId: 'acme' })).toEqual(
+        expect.objectContaining({ id: 'schedule-acme' }),
+      );
+
+      const mismatchedTenantResponse = await handleRequest(
+        request('POST', '/v1/schedules', {
+          type: 'echo',
+          input: { tenantId: 'globex', payload: 'tenant-b' },
+          cronExpression: '0 * * * *',
+          id: 'schedule-globex',
+        }),
+        engine,
+        {
+          authContext: {
+            method: 'jwt',
+            claims: { tenantId: 'acme' },
+          },
+        },
+      );
+      expect(mismatchedTenantResponse.status).toBe(403);
+      expect(await json(mismatchedTenantResponse)).toEqual({
+        error: 'Schedule creation is limited to the authenticated tenant',
+      });
+
+      const responseWithoutResolverTenant = await handleRequest(
+        request('POST', '/v1/schedules', {
+          type: 'echo',
+          input: { payload: 'no-tenant-field' },
+          cronExpression: '0 * * * *',
+          id: 'schedule-attached-by-auth',
+        }),
+        engine,
+        {
+          authContext: {
+            method: 'jwt',
+            claims: { tenantId: 'acme' },
+          },
+        },
+      );
+      expect(responseWithoutResolverTenant.status).toBe(201);
+      expect(await engine.getSchedule('schedule-attached-by-auth', { tenantId: 'acme' })).toEqual(
+        expect.objectContaining({ id: 'schedule-attached-by-auth' }),
+      );
+    });
+
     it('JWT-authenticated schedule routes require a tenant claim', async () => {
       engine = createTenantAwareEngine();
       await engine.schedule('echo', { tenantId: 'acme' }, '0 * * * *', { id: 'schedule-acme' });
@@ -419,6 +505,25 @@ describe('handleRequest', () => {
 
       expect(response.status).toBe(403);
       expect(await json(response)).toEqual({
+        error: 'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim',
+      });
+
+      const createResponse = await handleRequest(
+        request('POST', '/v1/schedules', {
+          type: 'echo',
+          input: { tenantId: 'acme' },
+          cronExpression: '0 * * * *',
+        }),
+        engine,
+        {
+          authContext: {
+            method: 'jwt',
+            claims: { sub: 'user-123' },
+          },
+        },
+      );
+      expect(createResponse.status).toBe(403);
+      expect(await json(createResponse)).toEqual({
         error: 'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim',
       });
     });

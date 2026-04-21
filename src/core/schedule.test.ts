@@ -889,6 +889,33 @@ describe('recurring schedules', () => {
     engine[Symbol.dispose]();
   });
 
+  it('listSchedules sorts deterministically before applying pagination.', async () => {
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock);
+
+    registerWorkflow(engine, 'ordered-schedule-workflow', async function* () {
+      return 'done';
+    });
+
+    await engine.schedule('ordered-schedule-workflow', null, '* * * * *', {
+      id: 'zeta-schedule',
+    });
+    clock.now += 1;
+    await engine.schedule('ordered-schedule-workflow', null, '* * * * *', {
+      id: 'alpha-schedule',
+    });
+
+    const allSchedules = await engine.listSchedules();
+    const firstPage = await engine.listSchedules({ limit: 1 });
+    const secondPage = await engine.listSchedules({ limit: 1, offset: 1 });
+
+    expect(allSchedules.items.map((item) => item.id)).toEqual(['zeta-schedule', 'alpha-schedule']);
+    expect(firstPage.items.map((item) => item.id)).toEqual(['zeta-schedule']);
+    expect(secondPage.items.map((item) => item.id)).toEqual(['alpha-schedule']);
+
+    engine[Symbol.dispose]();
+  });
+
   it('Schedule summaries omit stored workflow input from describe, getSchedule, and listSchedules.', async () => {
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
     const engine = createEngine(clock);
@@ -1080,7 +1107,10 @@ describe('recurring schedules', () => {
     });
     const unscopedSchedules = await engine.listSchedules();
     const alphaSchedules = await engine.listSchedules({ tenantId: 'alpha' });
-    expect(unscopedSchedules.items).toEqual([]);
+    expect(unscopedSchedules.items.map((item) => item.id).toSorted()).toEqual([
+      'tenant-alpha',
+      'tenant-beta',
+    ]);
     expect(alphaSchedules.items).toEqual([expect.objectContaining({ id: 'tenant-alpha' })]);
 
     const descriptions: ScheduleSummary[] = [

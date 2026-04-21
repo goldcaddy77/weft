@@ -28,7 +28,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   readonly #workerListeners: Map<string, WorkerListeners>;
   readonly #broadcastChannel: BroadcastChannel | null;
   readonly #broadcastListener: ((event: MessageEvent) => void) | null;
-  #messageHandler: ((message: WorkerOutboundMessage) => void) | null;
+  #messageHandler: ((message: WorkerOutboundMessage) => void | Promise<void>) | null;
 
   constructor(pool: WorkerPool, options?: { broadcastEvents?: boolean }) {
     this.#pool = pool;
@@ -55,7 +55,7 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   // ExecutionStrategy interface
   // -------------------------------------------------------------------------
 
-  onMessage(handler: (message: WorkerOutboundMessage) => void): void {
+  onMessage(handler: (message: WorkerOutboundMessage) => void | Promise<void>): void {
     this.#messageHandler = handler;
   }
 
@@ -281,6 +281,6 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
   // -------------------------------------------------------------------------
 
   #emit(message: WorkerOutboundMessage): void {
-    this.#messageHandler?.(message);
+    void this.#messageHandler?.(message);
   }
 }
