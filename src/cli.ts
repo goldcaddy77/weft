@@ -26,6 +26,7 @@ import type { Storage } from './storage/interface.ts';
 
 /** Supported storage backend identifiers for the `--storage` flag. */
 export type StorageBackend = 'sqlite' | 'lmdb' | 'memory';
+type PersistentStorageBackend = Exclude<StorageBackend, 'memory'>;
 
 export type CliCommand =
   | {
@@ -57,7 +58,7 @@ export type CliCommand =
       command: 'schedule';
       action: 'list';
       database: string;
-      storage: StorageBackend;
+      storage: PersistentStorageBackend;
       help: boolean;
       json: boolean;
     }
@@ -65,7 +66,7 @@ export type CliCommand =
       command: 'schedule';
       action: 'create';
       database: string;
-      storage: StorageBackend;
+      storage: PersistentStorageBackend;
       workflows: string;
       workflowType: string;
       cronExpression: string;
@@ -80,7 +81,7 @@ export type CliCommand =
       command: 'schedule';
       action: 'pause' | 'resume' | 'cancel';
       database: string;
-      storage: StorageBackend;
+      storage: PersistentStorageBackend;
       scheduleId: string;
       help: boolean;
       json: boolean;
@@ -182,6 +183,18 @@ function parseStorageBackend(value: string | undefined): StorageBackend {
   if (!isValidStorageBackend(storageValue)) {
     throw new Error(
       `Invalid storage backend '${storageValue}'. Must be one of: sqlite, lmdb, memory`,
+    );
+  }
+
+  return storageValue;
+}
+
+function parsePersistentStorageBackend(value: string | undefined): PersistentStorageBackend {
+  const storageValue = parseStorageBackend(value);
+
+  if (storageValue === 'memory') {
+    throw new Error(
+      "Invalid storage backend 'memory'. Schedule commands support only sqlite and lmdb because data must persist across CLI invocations",
     );
   }
 
@@ -363,7 +376,7 @@ function buildScheduleListCommand(
     command: 'schedule',
     action: 'list',
     database: values.database ?? './weft.db',
-    storage: parseStorageBackend(values.storage),
+    storage: parsePersistentStorageBackend(values.storage),
     help: values.help ?? false,
     json: values.json ?? false,
   };
@@ -373,16 +386,18 @@ function formatScheduleActionList(): string {
   return [...SCHEDULE_ACTIONS].join(', ');
 }
 
-function rejectUnexpectedSchedulePositionals(
+function assertExactSchedulePositionals(
   action: string,
   positionals: string[],
+  count: number,
   usage: string,
 ): void {
-  if (positionals.length <= 1) {
+  if (positionals.length === count) {
     return;
   }
 
-  throw new Error(`schedule ${action} expects exactly 1 positional argument: ${usage}`);
+  const noun = count === 1 ? 'positional argument' : 'positional arguments';
+  throw new Error(`schedule ${action} expects exactly ${count} ${noun}: ${usage}`);
 }
 
 function requireScheduleAction(positionals: string[]): ScheduleAction {
@@ -410,7 +425,7 @@ function buildScheduleCreateCommand(
     command: 'schedule',
     action: 'create',
     database: values.database ?? './weft.db',
-    storage: parseStorageBackend(values.storage),
+    storage: parsePersistentStorageBackend(values.storage),
     workflows: values.workflows ?? '',
     workflowType: positionals[0] ?? '',
     cronExpression: positionals[1] ?? '',
@@ -432,7 +447,7 @@ function buildScheduleMutationCommand(
     command: 'schedule',
     action,
     database: values.database ?? './weft.db',
-    storage: parseStorageBackend(values.storage),
+    storage: parsePersistentStorageBackend(values.storage),
     scheduleId: positionals[0] ?? '',
     help: values.help ?? false,
     json: values.json ?? false,
@@ -449,16 +464,12 @@ function parseScheduleArguments(args: string[]): CliCommand {
   const actionPositionals = positionals.slice(1);
 
   if (action === 'create') {
-    if (actionPositionals.length > 2) {
-      throw new Error(
-        'schedule create expects exactly 2 positional arguments: <workflowType> <cronExpression>',
-      );
-    }
+    assertExactSchedulePositionals(action, actionPositionals, 2, '<workflowType> <cronExpression>');
     return buildScheduleCreateCommand(values, actionPositionals);
   }
 
   if (action === 'pause' || action === 'resume' || action === 'cancel') {
-    rejectUnexpectedSchedulePositionals(action, actionPositionals, '<scheduleId>');
+    assertExactSchedulePositionals(action, actionPositionals, 1, '<scheduleId>');
     return buildScheduleMutationCommand(action, values, actionPositionals);
   }
 
@@ -543,7 +554,7 @@ Usage:
 
 Options:
   -d, --database <path>     Database file path (default: ./weft.db)
-  -s, --storage <backend>   Storage backend: sqlite, lmdb, memory (default: sqlite)
+  -s, --storage <backend>   Storage backend: sqlite, lmdb (default: sqlite)
   -w, --workflows <path>    Path to workflow registrations module (required for create)
       --input <json>        JSON input payload for create (default: null)
       --id <id>             Custom schedule id for create
@@ -846,6 +857,14 @@ function formatScheduleCommandOutput(schedule: unknown, json: boolean, message: 
   return json ? JSON.stringify(schedule, null, 2) : message;
 }
 
+function getScheduleStorageValidationError(storage: string): string | null {
+  if (storage !== 'memory') {
+    return null;
+  }
+
+  return 'Error: --storage memory is not supported for schedule commands because data does not persist across CLI invocations';
+}
+
 async function executeScheduleList(
   options: ScheduleListCommand,
   engine: Engine,
@@ -991,6 +1010,15 @@ async function executeScheduleMutation(
 }
 
 export async function executeSchedule(options: ScheduleCommand): Promise<CommandOutput> {
+  const storageValidationError = getScheduleStorageValidationError(options.storage);
+  if (storageValidationError !== null) {
+    return {
+      stdout: '',
+      stderr: storageValidationError,
+      exitCode: 1,
+    };
+  }
+
   const { Engine } = await import('./core/engine.ts');
   const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
   const storage = await createStorage(options.storage, options.database);

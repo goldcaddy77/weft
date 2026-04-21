@@ -457,14 +457,6 @@ describe('CLI argument parsing', () => {
     });
 
     it('parses schedule storage backend flags', () => {
-      const listResult = parseCliArguments([
-        'schedule',
-        'list',
-        '--storage',
-        'memory',
-      ]) as ScheduleListCommand;
-      expect(listResult.storage).toBe('memory');
-
       const createResult = parseCliArguments([
         'schedule',
         'create',
@@ -474,6 +466,12 @@ describe('CLI argument parsing', () => {
         'lmdb',
       ]) as ScheduleCreateCommand;
       expect(createResult.storage).toBe('lmdb');
+    });
+
+    it('rejects non-persistent memory storage for schedule commands', () => {
+      expect(() => parseCliArguments(['schedule', 'list', '--storage', 'memory'])).toThrow(
+        "Invalid storage backend 'memory'. Schedule commands support only sqlite and lmdb because data must persist across CLI invocations",
+      );
     });
 
     it('parses schedule create with workflow module and cron expression', () => {
@@ -556,6 +554,21 @@ describe('CLI argument parsing', () => {
         'schedule resume expects exactly 1 positional argument: <scheduleId>',
       );
       expect(() => parseCliArguments(['schedule', 'cancel', 'schedule-1', 'extra'])).toThrow(
+        'schedule cancel expects exactly 1 positional argument: <scheduleId>',
+      );
+    });
+
+    it('rejects missing schedule create and mutation positionals', () => {
+      expect(() => parseCliArguments(['schedule', 'create', 'echo'])).toThrow(
+        'schedule create expects exactly 2 positional arguments: <workflowType> <cronExpression>',
+      );
+      expect(() => parseCliArguments(['schedule', 'pause'])).toThrow(
+        'schedule pause expects exactly 1 positional argument: <scheduleId>',
+      );
+      expect(() => parseCliArguments(['schedule', 'resume'])).toThrow(
+        'schedule resume expects exactly 1 positional argument: <scheduleId>',
+      );
+      expect(() => parseCliArguments(['schedule', 'cancel'])).toThrow(
         'schedule cancel expects exactly 1 positional argument: <scheduleId>',
       );
     });
@@ -645,7 +658,8 @@ describe('help text', () => {
     expect(SCHEDULE_HELP_TEXT).toContain('schedule resume');
     expect(SCHEDULE_HELP_TEXT).toContain('schedule cancel');
     expect(SCHEDULE_HELP_TEXT).toContain('--storage');
-    expect(SCHEDULE_HELP_TEXT).toContain('sqlite, lmdb, memory');
+    expect(SCHEDULE_HELP_TEXT).toContain('sqlite, lmdb');
+    expect(SCHEDULE_HELP_TEXT).not.toContain('sqlite, lmdb, memory');
     expect(SCHEDULE_HELP_TEXT).toContain('--workflows');
   });
 
@@ -1384,6 +1398,22 @@ describe('executeSchedule', () => {
       rmSync(workflows, { force: true });
       rmSync(database, { recursive: true, force: true });
     }
+  });
+
+  it('rejects memory storage for schedule commands before creating a fresh in-memory backend', async () => {
+    const result = await executeSchedule({
+      command: 'schedule',
+      action: 'list',
+      database: ':memory:',
+      storage: 'memory' as never,
+      help: false,
+      json: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe(
+      'Error: --storage memory is not supported for schedule commands because data does not persist across CLI invocations',
+    );
   });
 });
 
