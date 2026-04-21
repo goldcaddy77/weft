@@ -1354,7 +1354,14 @@ function encodedValuesEqual(left: unknown, right: unknown): boolean {
 }
 
 function matchesScheduleFilter(state: ScheduleState, filter: ScheduleFilter | undefined): boolean {
-  if (filter?.tenantId !== undefined && state.tenant?.id !== filter.tenantId) {
+  if (state.tenant?.id !== undefined) {
+    if (filter?.tenantId === undefined) {
+      return false;
+    }
+    if (state.tenant.id !== filter.tenantId) {
+      return false;
+    }
+  } else if (filter?.tenantId !== undefined) {
     return false;
   }
 

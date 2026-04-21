@@ -1107,10 +1107,7 @@ describe('recurring schedules', () => {
     });
     const unscopedSchedules = await engine.listSchedules();
     const alphaSchedules = await engine.listSchedules({ tenantId: 'alpha' });
-    expect(unscopedSchedules.items.map((item) => item.id).toSorted()).toEqual([
-      'tenant-alpha',
-      'tenant-beta',
-    ]);
+    expect(unscopedSchedules.items).toEqual([]);
     expect(alphaSchedules.items).toEqual([expect.objectContaining({ id: 'tenant-alpha' })]);
 
     const descriptions: ScheduleSummary[] = [
