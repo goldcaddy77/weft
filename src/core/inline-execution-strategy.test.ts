@@ -34,7 +34,9 @@ describe('InlineExecutionStrategy', () => {
     registrations = new Map();
     strategy = createStrategy(registrations);
     messages = [];
-    strategy.onMessage((message) => messages.push(message));
+    strategy.onMessage((message) => {
+      messages.push(message);
+    });
   }
 
   /** Return the first message, asserting it exists. */
@@ -150,6 +152,43 @@ describe('InlineExecutionStrategy', () => {
       if (message.type === 'failed') {
         expect(message.error).toBe('boom');
       }
+    });
+
+    it('clears tracked workflow turns after an async message handler settles', async () => {
+      setup();
+
+      registrations.set('immediate', {
+        handler: async function* () {
+          return 'done';
+        },
+        version: '1',
+      });
+
+      let resolveHandler: (() => void) | undefined;
+      strategy.onMessage(async (message) => {
+        messages.push(message);
+        await new Promise<void>((resolve) => {
+          resolveHandler = resolve;
+        });
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-1',
+        workflowType: 'immediate',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      await Bun.sleep(10);
+
+      const pendingTurn = strategy.waitForWorkflowTurn('wf-1');
+      expect(pendingTurn).toBeDefined();
+      expect(resolveHandler).toBeDefined();
+
+      resolveHandler?.();
+      await pendingTurn;
+
+      expect(strategy.waitForWorkflowTurn('wf-1')).toBeUndefined();
     });
   });
 

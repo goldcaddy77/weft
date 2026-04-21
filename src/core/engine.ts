@@ -5467,54 +5467,48 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async #handleStrategyMessage(message: WorkerOutboundMessage): Promise<void> {
-    const inlineTurn = this.#inlineStrategy?.waitForWorkflowTurn(message.workflowId);
+    switch (message.type) {
+      case 'completed':
+        await this.#completeWorkflow(message.workflowId, message.result);
+        break;
 
-    try {
-      switch (message.type) {
-        case 'completed':
-          await this.#completeWorkflow(message.workflowId, message.result);
-          break;
-
-        case 'failed': {
-          const failedError = new Error(message.error);
-          // Preserve the original error stack from the strategy if available,
-          // rather than using the stack pointing to engine internals.
-          if (message.errorStack) {
-            failedError.stack = message.errorStack;
-          }
-          await this.#failWorkflow(
-            message.workflowId,
-            failedError,
-            message.failureCategory ?? 'system',
-          );
-          break;
+      case 'failed': {
+        const failedError = new Error(message.error);
+        // Preserve the original error stack from the strategy if available,
+        // rather than using the stack pointing to engine internals.
+        if (message.errorStack) {
+          failedError.stack = message.errorStack;
         }
-
-        case 'checkpoint': {
-          const operation = this.#translateOperationRequest(message.operationRequest);
-
-          // Persist checkpoint at this yield boundary
-          await this.#persistCheckpoint(message.workflowId, operation, message.checkpoint);
-
-          // Development mode: validate checkpoint round-trip
-          this.#validateDevelopmentCheckpoint(message.workflowId);
-
-          // Evaluate domain constraints — done after persistence so the
-          // checkpoint is durable before any violation reaction.
-          const constraintViolated = await this.#evaluateConstraints(message.workflowId);
-          if (constraintViolated) {
-            // Violation already handled (event dispatched, error thrown or logged).
-            break;
-          }
-
-          // Translate the operation request: worker protocol uses `kind` while the
-          // engine uses `type`. Inline strategy already emits ContextOperationRequest.
-          await this.#processOperation(message.workflowId, operation);
-          break;
-        }
+        await this.#failWorkflow(
+          message.workflowId,
+          failedError,
+          message.failureCategory ?? 'system',
+        );
+        break;
       }
-    } finally {
-      this.#inlineStrategy?.clearWorkflowTurn(message.workflowId, inlineTurn);
+
+      case 'checkpoint': {
+        const operation = this.#translateOperationRequest(message.operationRequest);
+
+        // Persist checkpoint at this yield boundary
+        await this.#persistCheckpoint(message.workflowId, operation, message.checkpoint);
+
+        // Development mode: validate checkpoint round-trip
+        this.#validateDevelopmentCheckpoint(message.workflowId);
+
+        // Evaluate domain constraints — done after persistence so the
+        // checkpoint is durable before any violation reaction.
+        const constraintViolated = await this.#evaluateConstraints(message.workflowId);
+        if (constraintViolated) {
+          // Violation already handled (event dispatched, error thrown or logged).
+          break;
+        }
+
+        // Translate the operation request: worker protocol uses `kind` while the
+        // engine uses `type`. Inline strategy already emits ContextOperationRequest.
+        await this.#processOperation(message.workflowId, operation);
+        break;
+      }
     }
   }
 

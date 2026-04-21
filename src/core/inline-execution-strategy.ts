@@ -208,16 +208,6 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     return this.#workflowTurns.get(workflowId);
   }
 
-  clearWorkflowTurn(workflowId: string, turn: Promise<void> | undefined): void {
-    if (turn === undefined) {
-      return;
-    }
-
-    if (this.#workflowTurns.get(workflowId) === turn) {
-      this.#workflowTurns.delete(workflowId);
-    }
-  }
-
   hasGenerator(workflowId: string): boolean {
     return this.#generators.has(workflowId);
   }
@@ -369,7 +359,12 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
   #emit(message: WorkerOutboundMessage): void {
     const result = this.#messageHandler?.(message);
     if (result instanceof Promise) {
-      this.#workflowTurns.set(message.workflowId, result);
+      const handledTurn = result.finally(() => {
+        if (this.#workflowTurns.get(message.workflowId) === handledTurn) {
+          this.#workflowTurns.delete(message.workflowId);
+        }
+      });
+      this.#workflowTurns.set(message.workflowId, handledTurn);
       return;
     }
 
