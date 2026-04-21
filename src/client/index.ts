@@ -31,6 +31,7 @@ import type {
   WorkflowTimelineEntry,
 } from '../core/types.ts';
 import type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } from './interface.ts';
+import { buildScheduleListSearchParams } from './schedule-list-search-params.ts';
 
 // ---------------------------------------------------------------------------
 // Re-exports so consumers can import everything from `weft/client`
@@ -174,40 +175,6 @@ function buildWorkflowListSearchParams(filter?: ListFilter): URLSearchParams {
     params.set('offset', String(filter.offset));
   }
   appendAttributeFilters(params, filter?.attributes);
-
-  return params;
-}
-
-function appendScheduleStatusFilters(
-  params: URLSearchParams,
-  status: ScheduleFilter['status'],
-): void {
-  if (status === undefined) {
-    return;
-  }
-
-  const statuses = (Array.isArray(status) ? status : [status]).filter(Boolean);
-  for (const value of statuses) {
-    params.append('status', value);
-  }
-}
-
-function buildScheduleListSearchParams(filter?: ScheduleFilter): URLSearchParams {
-  const params = new URLSearchParams();
-
-  appendScheduleStatusFilters(params, filter?.status);
-  if (filter?.workflowType !== undefined) {
-    params.set('workflowType', filter.workflowType);
-  }
-  if (filter?.tenantId !== undefined) {
-    params.set('tenantId', filter.tenantId);
-  }
-  if (filter?.limit !== undefined) {
-    params.set('limit', String(filter.limit));
-  }
-  if (filter?.offset !== undefined) {
-    params.set('offset', String(filter.offset));
-  }
 
   return params;
 }

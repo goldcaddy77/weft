@@ -57,6 +57,7 @@ export type CliCommand =
       command: 'schedule';
       action: 'list';
       database: string;
+      storage: StorageBackend;
       help: boolean;
       json: boolean;
     }
@@ -64,6 +65,7 @@ export type CliCommand =
       command: 'schedule';
       action: 'create';
       database: string;
+      storage: StorageBackend;
       workflows: string;
       workflowType: string;
       cronExpression: string;
@@ -78,6 +80,7 @@ export type CliCommand =
       command: 'schedule';
       action: 'pause' | 'resume' | 'cancel';
       database: string;
+      storage: StorageBackend;
       scheduleId: string;
       help: boolean;
       json: boolean;
@@ -173,6 +176,18 @@ function isValidStorageBackend(value: string): value is StorageBackend {
   return VALID_STORAGE_BACKENDS.has(value);
 }
 
+function parseStorageBackend(value: string | undefined): StorageBackend {
+  const storageValue = value ?? 'sqlite';
+
+  if (!isValidStorageBackend(storageValue)) {
+    throw new Error(
+      `Invalid storage backend '${storageValue}'. Must be one of: sqlite, lmdb, memory`,
+    );
+  }
+
+  return storageValue;
+}
+
 function parseServeArguments(args: string[]): CliCommand {
   const { values } = parseArgs({
     args,
@@ -188,19 +203,11 @@ function parseServeArguments(args: string[]): CliCommand {
     allowNegative: true,
   });
 
-  const storageValue = values.storage ?? 'sqlite';
-
-  if (!isValidStorageBackend(storageValue)) {
-    throw new Error(
-      `Invalid storage backend '${storageValue}'. Must be one of: sqlite, lmdb, memory`,
-    );
-  }
-
   return {
     command: 'serve',
     port: values.port ?? '7233',
     database: values.database ?? './weft.db',
-    storage: storageValue,
+    storage: parseStorageBackend(values.storage),
     ui: values.ui ?? true,
     help: values.help ?? false,
   };
@@ -321,6 +328,7 @@ function parseScheduleCliValues(args: string[]) {
     args,
     options: {
       database: { type: 'string', short: 'd', default: './weft.db' },
+      storage: { type: 'string', short: 's', default: 'sqlite' },
       workflows: { type: 'string', short: 'w', default: '' },
       input: { type: 'string', default: 'null' },
       id: { type: 'string' },
@@ -355,6 +363,7 @@ function buildScheduleListCommand(
     command: 'schedule',
     action: 'list',
     database: values.database ?? './weft.db',
+    storage: parseStorageBackend(values.storage),
     help: values.help ?? false,
     json: values.json ?? false,
   };
@@ -401,6 +410,7 @@ function buildScheduleCreateCommand(
     command: 'schedule',
     action: 'create',
     database: values.database ?? './weft.db',
+    storage: parseStorageBackend(values.storage),
     workflows: values.workflows ?? '',
     workflowType: positionals[0] ?? '',
     cronExpression: positionals[1] ?? '',
@@ -422,6 +432,7 @@ function buildScheduleMutationCommand(
     command: 'schedule',
     action,
     database: values.database ?? './weft.db',
+    storage: parseStorageBackend(values.storage),
     scheduleId: positionals[0] ?? '',
     help: values.help ?? false,
     json: values.json ?? false,
@@ -532,6 +543,7 @@ Usage:
 
 Options:
   -d, --database <path>     Database file path (default: ./weft.db)
+  -s, --storage <backend>   Storage backend: sqlite, lmdb, memory (default: sqlite)
   -w, --workflows <path>    Path to workflow registrations module (required for create)
       --input <json>        JSON input payload for create (default: null)
       --id <id>             Custom schedule id for create
@@ -979,10 +991,9 @@ async function executeScheduleMutation(
 }
 
 export async function executeSchedule(options: ScheduleCommand): Promise<CommandOutput> {
-  const { BunSQLiteStorage } = await import('./storage/bun-sql.ts');
   const { Engine } = await import('./core/engine.ts');
   const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
-  const storage = new BunSQLiteStorage(options.database);
+  const storage = await createStorage(options.storage, options.database);
   const engine = new Engine({ storage });
 
   try {

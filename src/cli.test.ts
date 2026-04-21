@@ -453,6 +453,27 @@ describe('CLI argument parsing', () => {
       expect(result.command).toBe('schedule');
       expect(result.action).toBe('list');
       expect(result.database).toBe('./weft.db');
+      expect(result.storage).toBe('sqlite');
+    });
+
+    it('parses schedule storage backend flags', () => {
+      const listResult = parseCliArguments([
+        'schedule',
+        'list',
+        '--storage',
+        'memory',
+      ]) as ScheduleListCommand;
+      expect(listResult.storage).toBe('memory');
+
+      const createResult = parseCliArguments([
+        'schedule',
+        'create',
+        'echo',
+        '0 * * * *',
+        '--storage',
+        'lmdb',
+      ]) as ScheduleCreateCommand;
+      expect(createResult.storage).toBe('lmdb');
     });
 
     it('parses schedule create with workflow module and cron expression', () => {
@@ -623,6 +644,8 @@ describe('help text', () => {
     expect(SCHEDULE_HELP_TEXT).toContain('schedule pause');
     expect(SCHEDULE_HELP_TEXT).toContain('schedule resume');
     expect(SCHEDULE_HELP_TEXT).toContain('schedule cancel');
+    expect(SCHEDULE_HELP_TEXT).toContain('--storage');
+    expect(SCHEDULE_HELP_TEXT).toContain('sqlite, lmdb, memory');
     expect(SCHEDULE_HELP_TEXT).toContain('--workflows');
   });
 
@@ -1213,6 +1236,7 @@ describe('executeSchedule', () => {
         command: 'schedule',
         action: 'list',
         database,
+        storage: 'sqlite',
         help: false,
         json: false,
       });
@@ -1224,6 +1248,7 @@ describe('executeSchedule', () => {
         command: 'schedule',
         action: 'create',
         database,
+        storage: 'sqlite',
         help: false,
         json: false,
         workflows,
@@ -1241,6 +1266,7 @@ describe('executeSchedule', () => {
         command: 'schedule',
         action: 'pause',
         database,
+        storage: 'sqlite',
         help: false,
         json: false,
         scheduleId: 'created-schedule',
@@ -1251,6 +1277,7 @@ describe('executeSchedule', () => {
         command: 'schedule',
         action: 'resume',
         database,
+        storage: 'sqlite',
         help: false,
         json: false,
         scheduleId: 'created-schedule',
@@ -1261,6 +1288,7 @@ describe('executeSchedule', () => {
         command: 'schedule',
         action: 'cancel',
         database,
+        storage: 'sqlite',
         help: false,
         json: false,
         scheduleId: 'created-schedule',
@@ -1288,6 +1316,73 @@ describe('executeSchedule', () => {
     } finally {
       rmSync(workflows, { force: true });
       rmSync(database, { force: true });
+    }
+  });
+
+  it('uses the selected storage backend for schedule commands', async () => {
+    const database = join(tmpdir(), `weft-schedule-lmdb-${crypto.randomUUID()}`);
+    const workflows = join(tmpdir(), `weft-schedule-lmdb-workflows-${crypto.randomUUID()}.ts`);
+
+    await Bun.write(
+      workflows,
+      [
+        'export default {',
+        '  scheduledEcho: {',
+        '    handler: async function* (_ctx, input) {',
+        '      return input;',
+        '    },',
+        '  },',
+        '};',
+      ].join('\n'),
+    );
+
+    try {
+      const createResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'lmdb',
+        help: false,
+        json: false,
+        workflows,
+        workflowType: 'scheduledEcho',
+        cronExpression: '30 * * * *',
+        input: '{"payload":"lmdb"}',
+        id: 'lmdb-schedule',
+        backfill: false,
+      });
+      expect(createResult.exitCode).toBe(0);
+      expect(createResult.stdout).toContain('lmdb-schedule');
+
+      const listResult = await executeSchedule({
+        command: 'schedule',
+        action: 'list',
+        database,
+        storage: 'lmdb',
+        help: false,
+        json: false,
+      });
+      expect(listResult.exitCode).toBe(0);
+      expect(listResult.stdout).toContain('lmdb-schedule');
+
+      const storage = await createStorage('lmdb', database);
+      const { Engine } = await import('./core/engine.ts');
+      const engine = new Engine({ storage });
+
+      try {
+        expect(await engine.getSchedule('lmdb-schedule')).toEqual(
+          expect.objectContaining({
+            id: 'lmdb-schedule',
+            cronExpression: '30 * * * *',
+          }),
+        );
+      } finally {
+        await engine[Symbol.asyncDispose]();
+        storage[Symbol.dispose]();
+      }
+    } finally {
+      rmSync(workflows, { force: true });
+      rmSync(database, { recursive: true, force: true });
     }
   });
 });

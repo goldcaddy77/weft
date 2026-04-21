@@ -7,6 +7,7 @@
  * @module dashboard/api-client
  */
 
+import { buildScheduleListSearchParams } from '../client/schedule-list-search-params.ts';
 import type { ScheduleFilter, ScheduleSummary, TenantQuotaUsage } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -228,19 +229,7 @@ export class ApiClient {
 
   /** List recurring schedules with optional filtering. */
   async listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>> {
-    const params = new URLSearchParams();
-
-    if (filter?.status !== undefined) {
-      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
-      for (const status of statuses) {
-        params.append('status', status);
-      }
-    }
-    if (filter?.workflowType !== undefined) params.set('workflowType', filter.workflowType);
-    if (filter?.tenantId !== undefined) params.set('tenantId', filter.tenantId);
-    if (filter?.limit !== undefined) params.set('limit', String(filter.limit));
-    if (filter?.offset !== undefined) params.set('offset', String(filter.offset));
-
+    const params = buildScheduleListSearchParams(filter);
     const query = params.toString();
     const path = query ? `/schedules?${query}` : '/schedules';
 

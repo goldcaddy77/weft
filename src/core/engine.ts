@@ -3674,6 +3674,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #createWorkflowResultPromise(workflowId: string): Promise<unknown> {
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
     this.#resultResolvers.set(workflowId, { resolve, reject });
+    // Internal workflow starts can create handles whose result promises are
+    // never observed directly, so mark the promise handled to avoid unhandled
+    // rejection noise while still allowing callers to await the original promise.
+    void promise.catch(() => {});
     return promise;
   }
 
@@ -3681,6 +3685,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
     const resolver = { resolve, reject };
     this.#resultResolvers.set(workflowId, resolver);
+    void promise.catch(() => {});
     void this.#bootstrapWorkflowResultResolver(workflowId, resolver);
     return promise;
   }
