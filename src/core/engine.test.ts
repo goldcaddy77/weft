@@ -3617,20 +3617,13 @@ describe('Engine', () => {
         const storage = new MemoryStorage();
         const originalBatch = storage.batch.bind(storage);
         let batchCount = 0;
+        const checkpointFailure = Promise.withResolvers<void>();
         let engine;
-
-        process.on('unhandledRejection', async () => {
-          await engine.cancel('wf-batch');
-          const timeline = await engine.getTimeline('wf-batch');
-          console.log(JSON.stringify(timeline));
-          engine[Symbol.dispose]();
-          storage[Symbol.dispose]();
-          process.exit(0);
-        });
 
         storage.batch = async (operations) => {
           batchCount++;
           if (batchCount === 3) {
+            checkpointFailure.resolve();
             throw new Error('simulated checkpoint batch failure');
           }
           return await originalBatch(operations);
@@ -3643,12 +3636,15 @@ describe('Engine', () => {
         });
 
         const handle = await engine.start('wf', null, { id: 'wf-batch' });
-        try {
-          await handle.result();
-        } catch {}
+        void handle.result().catch(() => {});
 
-        await Bun.sleep(250);
-        process.exit(1);
+        await checkpointFailure.promise;
+        await engine.cancel('wf-batch');
+        const timeline = await engine.getTimeline('wf-batch');
+        console.log(JSON.stringify(timeline));
+        engine[Symbol.dispose]();
+        storage[Symbol.dispose]();
+        process.exit(0);
       `;
 
       const process = Bun.spawn(['bun', '-e', script], {

@@ -190,6 +190,62 @@ describe('InlineExecutionStrategy', () => {
 
       expect(strategy.waitForWorkflowTurn('wf-1')).toBeUndefined();
     });
+
+    it('does not surface unhandled rejections when an async message handler fails and nobody awaits the tracked turn', async () => {
+      const script = String.raw`
+        import { InlineExecutionStrategy } from './src/core/inline-execution-strategy.ts';
+
+        const strategy = new InlineExecutionStrategy({
+          getRegistration: (type) =>
+            type === 'immediate'
+              ? {
+                  handler: async function* () {
+                    return 'done';
+                  },
+                  version: '1',
+                }
+              : undefined,
+          getNow: Date.now,
+          maxNestingDepth: 10,
+        });
+
+        process.on('unhandledRejection', (error) => {
+          console.error(error instanceof Error ? error.message : String(error));
+          process.exit(1);
+        });
+
+        strategy.onMessage(async () => {
+          throw new Error('handler failed');
+        });
+
+        strategy.startWorkflow({
+          workflowId: 'wf-1',
+          workflowType: 'immediate',
+          input: null,
+          checkpoint: new ArrayBuffer(0),
+        });
+
+        await Bun.sleep(50);
+        strategy[Symbol.dispose]();
+        process.exit(0);
+      `;
+
+      const childProcess = Bun.spawn(['bun', '-e', script], {
+        cwd: globalThis.process.cwd(),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+
+      const exitCode = await childProcess.exited;
+      const stdoutText = await new Response(childProcess.stdout).text();
+      const stderrText = await new Response(childProcess.stderr).text();
+      const stdout = stdoutText.trim();
+      const stderr = stderrText.trim();
+
+      expect(exitCode).toBe(0);
+      expect(stdout).toBe('');
+      expect(stderr).toBe('');
+    });
   });
 
   // -------------------------------------------------------------------------

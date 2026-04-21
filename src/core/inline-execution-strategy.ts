@@ -364,6 +364,10 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
           this.#workflowTurns.delete(message.workflowId);
         }
       });
+      // The engine only awaits these turns for specific recovery paths.
+      // Mark the tracked promise as observed so rejected handler turns do not
+      // surface as unhandled rejections when no caller awaits them.
+      void handledTurn.catch(() => {});
       this.#workflowTurns.set(message.workflowId, handledTurn);
       return;
     }
