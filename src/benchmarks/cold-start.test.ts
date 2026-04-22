@@ -112,9 +112,11 @@ async function measureColdStart(
 }
 
 function isMissingExecutableError(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && 'code' in error && error['code'] === 'ENOENT'
-  );
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return false;
+  }
+
+  return (error as { code?: unknown }).code === 'ENOENT';
 }
 
 // ---------------------------------------------------------------------------
