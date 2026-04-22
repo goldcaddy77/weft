@@ -3043,30 +3043,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       'pending',
       'running',
     ]);
+    const workflowIdsToCancel = await this.#snapshotMatchingWorkflowIds(actionableFilter);
     let cancelled = 0;
     const errors: BulkOperationError[] = [];
 
-    for await (const batch of this.#streamWorkflowStateBatches(actionableFilter)) {
-      for (const state of batch) {
-        if (state.status !== 'running' && state.status !== 'pending') {
+    for (const workflowId of workflowIdsToCancel) {
+      try {
+        await this.cancel(workflowId);
+        const refreshedState = await this.#loadWorkflowState(workflowId);
+        if (refreshedState?.status === 'cancelled') {
+          cancelled += 1;
           continue;
         }
 
-        try {
-          await this.cancel(state.id);
-          const refreshedState = await this.#loadWorkflowState(state.id);
-          if (refreshedState?.status === 'cancelled') {
-            cancelled += 1;
-            continue;
-          }
-
-          errors.push({
-            id: state.id,
-            error: 'Workflow no longer cancellable',
-          });
-        } catch (error) {
-          errors.push(this.#toBulkOperationError(state.id, error));
-        }
+        errors.push({
+          id: workflowId,
+          error: 'Workflow no longer cancellable',
+        });
+      } catch (error) {
+        errors.push(this.#toBulkOperationError(workflowId, error));
       }
     }
 
@@ -3087,21 +3082,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       'pending',
       'running',
     ]);
+    const workflowIdsToSignal = await this.#snapshotMatchingWorkflowIds(actionableFilter);
     let signalled = 0;
     let failed = 0;
 
-    for await (const batch of this.#streamWorkflowStateBatches(actionableFilter)) {
-      for (const state of batch) {
-        if (state.status !== 'running' && state.status !== 'pending') {
-          continue;
-        }
-
-        try {
-          await this.signal(state.id, name, payload);
-          signalled += 1;
-        } catch {
-          failed += 1;
-        }
+    for (const workflowId of workflowIdsToSignal) {
+      try {
+        await this.signal(workflowId, name, payload);
+        signalled += 1;
+      } catch {
+        failed += 1;
       }
     }
 
@@ -3164,6 +3154,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   /** Remove tags from every workflow that matches the provided filter. */
   async untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
     return this.#bulkMutateWorkflowTags(filter, tags, 'remove');
+  }
+
+  async #snapshotMatchingWorkflowIds(filter?: ListFilter): Promise<string[]> {
+    const workflowIds: string[] = [];
+
+    // Snapshot ids before mutating workflow state entries so storage scans
+    // cannot skip or re-visit workflows when backends reorder after writes.
+    for await (const batch of this.#streamWorkflowStateBatches(filter)) {
+      for (const state of batch) {
+        workflowIds.push(state.id);
+      }
+    }
+
+    return workflowIds;
   }
 
   #resolvePurgeWindow(
@@ -8263,15 +8267,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     mode: 'add' | 'remove',
   ): Promise<BulkTagResult> {
     assertScopedBulkWorkflowFilter(filter);
-    const workflowIdsToMutate: string[] = [];
-
-    // Snapshot the matching workflow ids before mutating tags so storage scans
-    // cannot skip or re-visit workflows when a backend reorders on writes.
-    for await (const batch of this.#streamWorkflowStateBatches(filter)) {
-      for (const state of batch) {
-        workflowIdsToMutate.push(state.id);
-      }
-    }
+    const workflowIdsToMutate = await this.#snapshotMatchingWorkflowIds(filter);
 
     let modified = 0;
     for (const workflowId of workflowIdsToMutate) {
