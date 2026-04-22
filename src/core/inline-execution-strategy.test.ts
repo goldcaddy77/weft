@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import { Context } from './context.ts';
 import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
 import type { WorkerOutboundMessage, WorkflowFunction } from './types.ts';
 
@@ -417,6 +418,29 @@ describe('InlineExecutionStrategy', () => {
       expect(strategy.hasGenerator('wf-1')).toBe(false);
       expect(strategy.getContext('wf-1')).toBeUndefined();
       expect(strategy.getAbortController('wf-1')).toBeUndefined();
+    });
+
+    it('adopts externally created workflow state for resumed workflows', () => {
+      setup();
+
+      const abortController = new AbortController();
+      const context = new Context({
+        workflowId: 'wf-adopted',
+        workflowType: 'yielding',
+        startedAt: Date.now(),
+        abortController,
+        getNow: Date.now,
+        nestingDepth: 0,
+      });
+      const generator = (async function* (): AsyncGenerator {
+        yield 'checkpoint';
+      })();
+
+      strategy.adoptWorkflow('wf-adopted', generator, context, abortController);
+
+      expect(strategy.hasGenerator('wf-adopted')).toBe(true);
+      expect(strategy.getContext('wf-adopted')).toBe(context);
+      expect(strategy.getAbortController('wf-adopted')).toBe(abortController);
     });
   });
 

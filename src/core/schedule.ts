@@ -151,10 +151,7 @@ function parseCronField(
       throw new Error(`Invalid cron field "${field}"`);
     }
 
-    const [rangePart, stepPart] = segment.split('/');
-    if (rangePart === undefined) {
-      throw new Error(`Invalid cron segment "${segment}"`);
-    }
+    const [rangePart = '', stepPart] = segment.split('/');
     const step = stepPart === undefined ? 1 : Number.parseInt(stepPart, 10);
     if (!Number.isInteger(step) || step <= 0) {
       throw new Error(`Invalid cron step "${segment}"`);
@@ -298,7 +295,7 @@ function localDateTimeToTimestamp(
 
 function shiftLocalDateTime(
   localDateTime: LocalDateTime,
-  adjustment: Partial<Record<'days' | 'hours' | 'minutes' | 'seconds', number>>,
+  adjustment: Partial<Record<'days' | 'hours' | 'minutes', number>>,
 ): LocalDateTime {
   const date = new Date(
     Date.UTC(
@@ -319,9 +316,6 @@ function shiftLocalDateTime(
   }
   if (adjustment.minutes !== undefined) {
     date.setUTCMinutes(date.getUTCMinutes() + adjustment.minutes);
-  }
-  if (adjustment.seconds !== undefined) {
-    date.setUTCSeconds(date.getUTCSeconds() + adjustment.seconds);
   }
 
   return {

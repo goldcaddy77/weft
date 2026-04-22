@@ -377,7 +377,7 @@ describe('bulk workflow operations', () => {
     }
   });
 
-  it('rejects unscoped bulk filters, including empty tags and attributes arrays', async () => {
+  it('rejects unscoped bulk filters, including empty or whitespace-only tags and attributes', async () => {
     const engine = new Engine({ storage: new MemoryStorage() });
 
     try {
@@ -385,7 +385,13 @@ describe('bulk workflow operations', () => {
       await expect(engine.cancelAll({ tags: [] })).rejects.toThrow(
         BULK_WORKFLOW_FILTER_ERROR_MESSAGE,
       );
+      await expect(engine.cancelAll({ tags: ['   '] })).rejects.toThrow(
+        BULK_WORKFLOW_FILTER_ERROR_MESSAGE,
+      );
       await expect(engine.cancelAll({ attributes: [] })).rejects.toThrow(
+        BULK_WORKFLOW_FILTER_ERROR_MESSAGE,
+      );
+      await expect(engine.cancelAll({ attributes: [{ key: '   ' }] })).rejects.toThrow(
         BULK_WORKFLOW_FILTER_ERROR_MESSAGE,
       );
     } finally {

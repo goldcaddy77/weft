@@ -722,6 +722,50 @@ describe('handleRequest', () => {
     expect(body.workflowCreationRate.limit).toBe(5);
   });
 
+  it('GET /v1/tenants/:id/quota validates tenant ids and JWT tenant claims', async () => {
+    engine = new Engine({
+      storage: new MemoryStorage(),
+      tenantResolver: tenantFromInputField('tenantId'),
+    });
+    engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+      return input;
+    });
+
+    expect(await handleRequest(request('GET', '/v1/tenants/%20%20/quota'), engine)).toMatchObject({
+      status: 400,
+    });
+
+    expect(
+      await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine, {
+        authContext: { method: 'jwt' },
+      }),
+    ).toMatchObject({ status: 403 });
+
+    expect(
+      await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine, {
+        authContext: { method: 'jwt', claims: {} },
+      }),
+    ).toMatchObject({ status: 403 });
+
+    expect(
+      await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine, {
+        authContext: {
+          method: 'jwt',
+          claims: { tenantId: '   ', tenant: 'acme' },
+        },
+      }),
+    ).toMatchObject({ status: 200 });
+
+    expect(
+      await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine, {
+        authContext: {
+          method: 'jwt',
+          claims: { tenant_id: 'other-tenant' },
+        },
+      }),
+    ).toMatchObject({ status: 403 });
+  });
+
   it('GET /v1/tenants/:id/quota lets unexpected errors reach the top-level handler logger', async () => {
     engine = new Engine({
       storage: new MemoryStorage(),
@@ -816,6 +860,15 @@ describe('handleRequest', () => {
     expect(await json(response)).toEqual({ error: 'Malformed route parameter encoding' });
   });
 
+  it('returns 400 for malformed percent-encoding in top-level route matching', async () => {
+    engine = createEngine();
+
+    const response = await handleRequest(request('GET', '/v1/tenants/%E0%A4%A/quota'), engine);
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Malformed route parameter encoding' });
+  });
+
   it('getRequiredRouteParameter throws a descriptive error when a parameter is missing', () => {
     expect(() => getRequiredRouteParameter({}, 'id', 'GET /v1/workflows/broken-id')).toThrow(
       'Missing route parameter "id" for GET /v1/workflows/broken-id',
@@ -880,6 +933,38 @@ describe('handleRequest', () => {
     expect(await engine.get('purge-empty-body')).toBeNull();
   });
 
+  it('POST /v1/workflows/purge rejects non-object bodies and treats an omitted filter as unfiltered', async () => {
+    engine = createEngine();
+    await handleRequest(
+      request('POST', '/v1/workflows', { type: 'echo', input: 'delete', id: 'purge-no-filter' }),
+      engine,
+    );
+    await flush();
+
+    const nonObjectBodyResponse = await handleRequest(
+      new Request('http://localhost/v1/workflows/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '"not-an-object"',
+      }),
+      engine,
+    );
+
+    expect(nonObjectBodyResponse.status).toBe(400);
+    expect(await json(nonObjectBodyResponse)).toEqual({
+      error: 'Request body must be a JSON object',
+    });
+
+    const omittedFilterResponse = await handleRequest(
+      request('POST', '/v1/workflows/purge', { note: 'ignored' }),
+      engine,
+    );
+
+    expect(omittedFilterResponse.status).toBe(200);
+    expect(await json(omittedFilterResponse)).toEqual({ deleted: 1 });
+    expect(await engine.get('purge-no-filter')).toBeNull();
+  });
+
   it('POST /v1/workflows/purge honors attribute filters, offset, and limit', async () => {
     engine = createEngine();
     await handleRequest(
@@ -916,6 +1001,62 @@ describe('handleRequest', () => {
     expect(await engine.get('purge-filter-1')).not.toBeNull();
     expect(await engine.get('purge-filter-2')).toBeNull();
     expect(await engine.get('purge-filter-3')).not.toBeNull();
+  });
+
+  it('POST /v1/workflows/purge rejects malformed JSON and invalid filter bodies', async () => {
+    engine = createEngine();
+
+    const invalidJsonResponse = await handleRequest(
+      new Request('http://localhost/v1/workflows/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"filter":',
+      }),
+      engine,
+    );
+    expect(invalidJsonResponse.status).toBe(400);
+
+    const invalidAttributesResponse = await handleRequest(
+      request('POST', '/v1/workflows/purge', {
+        filter: {
+          attributes: [{ key: '' }],
+        },
+      }),
+      engine,
+    );
+    expect(invalidAttributesResponse.status).toBe(400);
+    expect(await json(invalidAttributesResponse)).toEqual({
+      error: 'Field "filter.attributes[0].key" must be a non-empty string',
+    });
+
+    const invalidStatusResponse = await handleRequest(
+      request('POST', '/v1/workflows/purge', {
+        filter: {
+          status: [1],
+        },
+      }),
+      engine,
+    );
+    expect(invalidStatusResponse.status).toBe(400);
+    expect(await json(invalidStatusResponse)).toEqual({
+      error: 'Field "filter.status" must be a string or an array of strings',
+    });
+
+    const missingFilterResponse = await handleRequest(
+      request('POST', '/v1/workflows/purge', { note: 'no filter here' }),
+      engine,
+    );
+    expect(missingFilterResponse.status).toBe(200);
+    expect(await json(missingFilterResponse)).toEqual({ deleted: 0 });
+
+    const nonObjectBodyResponse = await handleRequest(
+      request('POST', '/v1/workflows/purge', ['not-an-object']),
+      engine,
+    );
+    expect(nonObjectBodyResponse.status).toBe(400);
+    expect(await json(nonObjectBodyResponse)).toEqual({
+      error: 'Field "filter" must be an object',
+    });
   });
 
   describe('bulk workflow routes', () => {
@@ -1156,6 +1297,18 @@ describe('handleRequest', () => {
 
       expect(emptyAttributesResponse.status).toBe(400);
       expect(await json(emptyAttributesResponse)).toEqual({
+        error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+      });
+
+      const blankAttributeKeyResponse = await handleRequest(
+        request('POST', '/v1/workflows/bulk/cancel', {
+          filter: { attributes: [{ key: '   ' }] },
+        }),
+        engine,
+      );
+
+      expect(blankAttributeKeyResponse.status).toBe(400);
+      expect(await json(blankAttributeKeyResponse)).toEqual({
         error: 'Field "filter" must include at least one of status, type, tags, or attributes',
       });
     });
@@ -2478,6 +2631,34 @@ describe('handleRequest', () => {
   });
 
   describe('POST/DELETE /v1/workflows/:id/tags (error paths)', () => {
+    it('returns 400 when tag routes receive malformed JSON bodies', async () => {
+      engine = createEngine();
+
+      const invalidAddResponse = await handleRequest(
+        new Request('http://localhost/v1/workflows/tag-route-invalid-add/tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{"tags":',
+        }),
+        engine,
+      );
+
+      expect(invalidAddResponse.status).toBe(400);
+      expect(await json(invalidAddResponse)).toEqual({ error: 'Invalid JSON body' });
+
+      const invalidRemoveResponse = await handleRequest(
+        new Request('http://localhost/v1/workflows/tag-route-invalid-remove/tags', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{"tags":',
+        }),
+        engine,
+      );
+
+      expect(invalidRemoveResponse.status).toBe(400);
+      expect(await json(invalidRemoveResponse)).toEqual({ error: 'Invalid JSON body' });
+    });
+
     it('returns 400 when POST /v1/workflows/:id/tags receives a null JSON body', async () => {
       engine = createEngine();
       await engine.start('echo', 'payload', { id: 'tag-route-null-add' });
@@ -2512,6 +2693,96 @@ describe('handleRequest', () => {
       expect(response.status).toBe(400);
       const body = (await json(response)) as { error: string };
       expect(body.error).toBe('Invalid JSON body');
+    });
+
+    it('returns 400 when tag routes receive malformed JSON payloads', async () => {
+      engine = createEngine();
+      await engine.start('echo', 'payload', { id: 'tag-route-malformed-json', tags: ['alpha'] });
+
+      let response = await handleRequest(
+        new Request('http://localhost/v1/workflows/tag-route-malformed-json/tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{',
+        }),
+        engine,
+      );
+      expect(response.status).toBe(400);
+
+      response = await handleRequest(
+        new Request('http://localhost/v1/workflows/tag-route-malformed-json/tags', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{',
+        }),
+        engine,
+      );
+      expect(response.status).toBe(400);
+    });
+
+    it('maps not found, validation, and unexpected tag route errors to the correct status codes', async () => {
+      engine = createEngine();
+      const originalAddTags = engine.addTags.bind(engine);
+      const originalRemoveTags = engine.removeTags.bind(engine);
+
+      try {
+        engine.addTags = async () => {
+          throw new Error('workflow not found');
+        };
+        let response = await handleRequest(
+          request('POST', '/v1/workflows/missing/tags', { tags: ['alpha'] }),
+          engine,
+        );
+        expect(response.status).toBe(404);
+
+        engine.addTags = async () => {
+          throw new StartWorkflowValidationError('invalid tags');
+        };
+        response = await handleRequest(
+          request('POST', '/v1/workflows/missing/tags', { tags: ['alpha'] }),
+          engine,
+        );
+        expect(response.status).toBe(400);
+
+        engine.addTags = async () => {
+          throw new Error('boom');
+        };
+        response = await handleRequest(
+          request('POST', '/v1/workflows/missing/tags', { tags: ['alpha'] }),
+          engine,
+        );
+        expect(response.status).toBe(500);
+
+        engine.removeTags = async () => {
+          throw new Error('workflow not found');
+        };
+        response = await handleRequest(
+          request('DELETE', '/v1/workflows/missing/tags', { tags: ['alpha'] }),
+          engine,
+        );
+        expect(response.status).toBe(404);
+
+        engine.removeTags = async () => {
+          throw new StartWorkflowValidationError('invalid tags');
+        };
+        response = await handleRequest(
+          request('DELETE', '/v1/workflows/missing/tags', { tags: ['alpha'] }),
+          engine,
+        );
+        expect(response.status).toBe(400);
+
+        engine.removeTags = async () => {
+          throw new Error('boom');
+        };
+        response = await handleRequest(
+          request('DELETE', '/v1/workflows/missing/tags', { tags: ['alpha'] }),
+          engine,
+        );
+        expect(response.status).toBe(500);
+      } finally {
+        engine.addTags = originalAddTags;
+        engine.removeTags = originalRemoveTags;
+      }
     });
   });
 
@@ -3780,6 +4051,20 @@ describe('handleRequest', () => {
     ]);
   });
 
+  it('GET /v1/workflows/:id/replay/:step returns 400 for invalid step parameters', async () => {
+    engine = createEngine();
+    const handle = await engine.start('echo', 'value', { id: 'wf-replay-step' });
+    await handle.result();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/wf-replay-step/replay/9007199254740992'),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Invalid step: 9007199254740992' });
+  });
+
   it('GET /v1/workflows/:id/checkpoints/:step returns 400 for a numeric step outside the safe integer range', async () => {
     engine = createEngine();
 
@@ -3902,5 +4187,23 @@ describe('handleRequest', () => {
     });
 
     engine.fork = originalFork;
+  });
+
+  it('POST /v1/workflows/:id/fork returns 500 for unexpected errors', async () => {
+    engine = createEngine();
+    const originalFork = engine.fork.bind(engine);
+
+    try {
+      engine.fork = async () => {
+        throw new Error('unexpected fork failure');
+      };
+
+      const response = await handleRequest(request('POST', '/v1/workflows/wf-source/fork'), engine);
+
+      expect(response.status).toBe(500);
+      expect(await json(response)).toEqual({ error: 'unexpected fork failure' });
+    } finally {
+      engine.fork = originalFork;
+    }
   });
 });
