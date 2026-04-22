@@ -237,23 +237,19 @@ export interface WeftClient {
   purge(filter?: ListFilter): Promise<PurgeResult>;
 
   /** Cancel all running or pending workflows that match a filter. */
-  cancelAll(filter?: ListFilter): Promise<BulkCancelResult>;
+  cancelAll(filter: ListFilter): Promise<BulkCancelResult>;
 
   /** Signal all running or pending workflows that match a filter. */
-  signalAll(
-    filter: ListFilter | undefined,
-    name: string,
-    payload?: unknown,
-  ): Promise<BulkSignalResult>;
+  signalAll(filter: ListFilter, name: string, payload?: unknown): Promise<BulkSignalResult>;
 
   /** Delete all matching terminal workflows. */
-  deleteAll(filter?: ListFilter): Promise<BulkDeleteResult>;
+  deleteAll(filter: ListFilter): Promise<BulkDeleteResult>;
 
   /** Add tags to all workflows that match a filter. */
-  tagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult>;
+  tagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult>;
 
   /** Remove tags from all workflows that match a filter. */
-  untagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult>;
+  untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult>;
 
   /** Submit a coordinated update and wait for the result. */
   submitCoordinatedUpdate(

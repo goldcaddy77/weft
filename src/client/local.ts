@@ -308,27 +308,23 @@ export class LocalClient implements WeftClient {
     return this.#engine.purge(filter);
   }
 
-  async cancelAll(filter?: ListFilter): Promise<BulkCancelResult> {
+  async cancelAll(filter: ListFilter): Promise<BulkCancelResult> {
     return this.#engine.cancelAll(filter);
   }
 
-  async signalAll(
-    filter: ListFilter | undefined,
-    name: string,
-    payload?: unknown,
-  ): Promise<BulkSignalResult> {
+  async signalAll(filter: ListFilter, name: string, payload?: unknown): Promise<BulkSignalResult> {
     return this.#engine.signalAll(filter, name, payload);
   }
 
-  async deleteAll(filter?: ListFilter): Promise<BulkDeleteResult> {
+  async deleteAll(filter: ListFilter): Promise<BulkDeleteResult> {
     return this.#engine.deleteAll(filter);
   }
 
-  async tagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult> {
+  async tagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
     return this.#engine.tagAll(filter, tags);
   }
 
-  async untagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult> {
+  async untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
     return this.#engine.untagAll(filter, tags);
   }
 

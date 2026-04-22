@@ -10,6 +10,7 @@
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import { formatSSE } from '../ai/streaming-agent.ts';
+import { assertScopedBulkWorkflowFilter } from '../core/bulk-workflow-filter.ts';
 import { encode } from '../core/codec.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type { Engine } from '../core/engine.ts';
@@ -739,15 +740,6 @@ function parseListFilterBody(body: unknown): ListFilter {
   return filter;
 }
 
-function hasBulkWorkflowFilterScope(filter: ListFilter): boolean {
-  return (
-    filter.status !== undefined ||
-    filter.type !== undefined ||
-    filter.tags !== undefined ||
-    filter.attributes !== undefined
-  );
-}
-
 type ParsedJsonBody =
   | undefined
   | null
@@ -768,6 +760,10 @@ async function parseOptionalJsonBody(request: Request): Promise<Response | Parse
   } catch {
     return errorResponse('Invalid JSON body', 400);
   }
+}
+
+function parseRequiredBulkWorkflowFilter(body: unknown): ListFilter {
+  return assertScopedBulkWorkflowFilter(parseListFilterBody(body));
 }
 
 async function handleListWorkflows(request: Request, engine: Engine): Promise<Response> {
@@ -1013,18 +1009,19 @@ async function handleBulkCancelWorkflows(request: Request, engine: Engine): Prom
     return parsedBody;
   }
 
+  let filter: ListFilter;
   try {
-    const filter = parseListFilterBody(parsedBody);
-    if (!hasBulkWorkflowFilterScope(filter)) {
-      return errorResponse(
-        'Field "filter" must include at least one of status, type, tags, or attributes',
-        400,
-      );
-    }
-    return jsonResponse(await engine.cancelAll(filter));
+    filter = parseRequiredBulkWorkflowFilter(parsedBody);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 400);
+  }
+
+  try {
+    return jsonResponse(await engine.cancelAll(filter));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 500);
   }
 }
 
@@ -1041,16 +1038,10 @@ async function handleBulkSignalWorkflows(request: Request, engine: Engine): Prom
 
   let filter: ListFilter;
   try {
-    filter = parseListFilterBody({ filter: body['filter'] });
+    filter = parseRequiredBulkWorkflowFilter(body);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 400);
-  }
-  if (!hasBulkWorkflowFilterScope(filter)) {
-    return errorResponse(
-      'Field "filter" must include at least one of status, type, tags, or attributes',
-      400,
-    );
   }
 
   const name = body['name'];
@@ -1074,16 +1065,10 @@ async function handleBulkDeleteWorkflows(request: Request, engine: Engine): Prom
 
   let filter: ListFilter;
   try {
-    filter = parseListFilterBody(parsedBody);
+    filter = parseRequiredBulkWorkflowFilter(parsedBody);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 400);
-  }
-  if (!hasBulkWorkflowFilterScope(filter)) {
-    return errorResponse(
-      'Field "filter" must include at least one of status, type, tags, or attributes',
-      400,
-    );
   }
 
   try {
@@ -1110,16 +1095,10 @@ async function handleBulkMutateWorkflowTags(request: Request, engine: Engine): P
 
   let filter: ListFilter;
   try {
-    filter = parseListFilterBody({ filter: body['filter'] });
+    filter = parseRequiredBulkWorkflowFilter(body);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 400);
-  }
-  if (!hasBulkWorkflowFilterScope(filter)) {
-    return errorResponse(
-      'Field "filter" must include at least one of status, type, tags, or attributes',
-      400,
-    );
   }
 
   let tags: string[];

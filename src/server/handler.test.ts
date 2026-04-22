@@ -21,6 +21,35 @@ async function flush(): Promise<void> {
   await Bun.sleep(10);
 }
 
+async function waitForCondition(
+  predicate: () => Promise<boolean>,
+  message: string,
+  timeoutMilliseconds = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMilliseconds;
+
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+
+    await Bun.sleep(5);
+  }
+
+  throw new Error(message);
+}
+
+async function waitForWorkflowStatus(
+  engine: Engine,
+  workflowId: string,
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timed-out',
+): Promise<void> {
+  await waitForCondition(async () => {
+    const state = await engine.get(workflowId);
+    return state?.status === status;
+  }, `Expected workflow "${workflowId}" to reach ${status}`);
+}
+
 async function* waitingWorkflow(ctx: WorkflowContext, input: unknown) {
   const signal = yield* (ctx as Context).waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
@@ -898,7 +927,11 @@ describe('handleRequest', () => {
       await engine.start('waiting', 'two', { id: 'bulk-route-cancel-b', tags: ['bulk-route'] });
       await engine.start('waiting', 'other', { id: 'bulk-route-cancel-other', tags: ['other'] });
 
-      await Promise.all([flush(), flush()]);
+      await Promise.all([
+        waitForWorkflowStatus(engine, 'bulk-route-cancel-a', 'running'),
+        waitForWorkflowStatus(engine, 'bulk-route-cancel-b', 'running'),
+        waitForWorkflowStatus(engine, 'bulk-route-cancel-other', 'running'),
+      ]);
 
       const response = await handleRequest(
         request('POST', '/v1/workflows/bulk/cancel', {
@@ -940,7 +973,11 @@ describe('handleRequest', () => {
         tags: ['other'],
       });
 
-      await Promise.all([flush(), flush()]);
+      await Promise.all([
+        waitForWorkflowStatus(engine, firstHandle.id, 'running'),
+        waitForWorkflowStatus(engine, secondHandle.id, 'running'),
+        waitForWorkflowStatus(engine, untouchedHandle.id, 'running'),
+      ]);
 
       const response = await handleRequest(
         request('POST', '/v1/workflows/bulk/signal', {
@@ -976,7 +1013,7 @@ describe('handleRequest', () => {
         id: 'bulk-route-delete-running',
         tags: ['bulk-route-delete'],
       });
-      await Promise.all([flush(), flush()]);
+      await waitForWorkflowStatus(engine, runningHandle.id, 'running');
 
       const response = await handleRequest(
         request('DELETE', '/v1/workflows/bulk', {
@@ -1088,13 +1125,37 @@ describe('handleRequest', () => {
     it('bulk workflow routes reject missing or unscoped filters', async () => {
       engine = createEngine();
 
-      const response = await handleRequest(
+      const missingFilterResponse = await handleRequest(
         request('POST', '/v1/workflows/bulk/cancel', {}),
         engine,
       );
 
-      expect(response.status).toBe(400);
-      expect(await json(response)).toEqual({
+      expect(missingFilterResponse.status).toBe(400);
+      expect(await json(missingFilterResponse)).toEqual({
+        error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+      });
+
+      const emptyTagsResponse = await handleRequest(
+        request('POST', '/v1/workflows/bulk/cancel', {
+          filter: { tags: [] },
+        }),
+        engine,
+      );
+
+      expect(emptyTagsResponse.status).toBe(400);
+      expect(await json(emptyTagsResponse)).toEqual({
+        error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+      });
+
+      const emptyAttributesResponse = await handleRequest(
+        request('POST', '/v1/workflows/bulk/cancel', {
+          filter: { attributes: [] },
+        }),
+        engine,
+      );
+
+      expect(emptyAttributesResponse.status).toBe(400);
+      expect(await json(emptyAttributesResponse)).toEqual({
         error: 'Field "filter" must include at least one of status, type, tags, or attributes',
       });
     });

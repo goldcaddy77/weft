@@ -9,6 +9,7 @@
  */
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
+import { assertScopedBulkWorkflowFilter } from '../core/bulk-workflow-filter.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type {
   BulkCancelResult,
@@ -718,39 +719,43 @@ export class HttpClient implements WeftClient {
     });
   }
 
-  async cancelAll(filter?: ListFilter): Promise<BulkCancelResult> {
+  async cancelAll(filter: ListFilter): Promise<BulkCancelResult> {
+    assertScopedBulkWorkflowFilter(filter);
     return request<BulkCancelResult>(this.baseUrl, '/workflows/bulk/cancel', this.headers, {
       method: 'POST',
       body: JSON.stringify({ filter }),
     });
   }
 
-  async signalAll(
-    filter: ListFilter | undefined,
-    name: string,
-    payload?: unknown,
-  ): Promise<BulkSignalResult> {
+  async signalAll(filter: ListFilter, name: string, payload?: unknown): Promise<BulkSignalResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    if (name.length === 0) {
+      throw new Error('Field "name" must be a non-empty string');
+    }
     return request<BulkSignalResult>(this.baseUrl, '/workflows/bulk/signal', this.headers, {
       method: 'POST',
       body: JSON.stringify({ filter, name, payload }),
     });
   }
 
-  async deleteAll(filter?: ListFilter): Promise<BulkDeleteResult> {
+  async deleteAll(filter: ListFilter): Promise<BulkDeleteResult> {
+    assertScopedBulkWorkflowFilter(filter);
     return request<BulkDeleteResult>(this.baseUrl, '/workflows/bulk', this.headers, {
       method: 'DELETE',
       body: JSON.stringify({ filter }),
     });
   }
 
-  async tagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult> {
+  async tagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
+    assertScopedBulkWorkflowFilter(filter);
     return request<BulkTagResult>(this.baseUrl, '/workflows/bulk/tags', this.headers, {
       method: 'PATCH',
       body: JSON.stringify({ filter, tags, operation: 'add' }),
     });
   }
 
-  async untagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult> {
+  async untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
+    assertScopedBulkWorkflowFilter(filter);
     return request<BulkTagResult>(this.baseUrl, '/workflows/bulk/tags', this.headers, {
       method: 'PATCH',
       body: JSON.stringify({ filter, tags, operation: 'remove' }),
