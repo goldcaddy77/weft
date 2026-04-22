@@ -8226,14 +8226,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     mode: 'add' | 'remove',
   ): Promise<BulkTagResult> {
     assertScopedBulkWorkflowFilter(filter);
-    let modified = 0;
+    const workflowIdsToMutate: string[] = [];
 
+    // Snapshot the matching workflow ids before mutating tags so storage scans
+    // cannot skip or re-visit workflows when a backend reorders on writes.
     for await (const batch of this.#streamWorkflowStateBatches(filter)) {
       for (const state of batch) {
-        const changed = await this.#mutateWorkflowTags(state.id, tags, mode);
-        if (changed) {
-          modified += 1;
-        }
+        workflowIdsToMutate.push(state.id);
+      }
+    }
+
+    let modified = 0;
+    for (const workflowId of workflowIdsToMutate) {
+      const changed = await this.#mutateWorkflowTags(workflowId, tags, mode);
+      if (changed) {
+        modified += 1;
       }
     }
 

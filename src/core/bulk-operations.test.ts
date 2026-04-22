@@ -132,6 +132,87 @@ class BulkSignalFailureStorage extends MemoryStorage {
   }
 }
 
+class BulkTagReorderingScanStorage extends MemoryStorage {
+  readonly #topLevelWorkflowKeys = new Set<string>();
+  readonly #workflowScanOrder: string[] = [];
+
+  override async put(key: string, value: Uint8Array): Promise<void> {
+    await super.put(key, value);
+    this.#recordTopLevelWorkflowWrite(key);
+  }
+
+  override async batch(operations: BatchOperation[]): Promise<void> {
+    await super.batch(operations);
+
+    for (const operation of operations) {
+      if (!this.#isTopLevelWorkflowStateKey(operation.key)) {
+        continue;
+      }
+
+      if (operation.type === 'put') {
+        this.#recordTopLevelWorkflowWrite(operation.key);
+      } else {
+        this.#topLevelWorkflowKeys.delete(operation.key);
+        const index = this.#workflowScanOrder.indexOf(operation.key);
+        if (index !== -1) {
+          this.#workflowScanOrder.splice(index, 1);
+        }
+      }
+    }
+  }
+
+  override async *scan(
+    prefix: string,
+    options: ScanOptions = {},
+  ): AsyncIterable<[string, Uint8Array]> {
+    const usesCustomWorkflowScan =
+      prefix === 'wf:' &&
+      options.limit === undefined &&
+      options.reverse !== true &&
+      options.gt === undefined &&
+      options.gte === undefined &&
+      options.lt === undefined &&
+      options.lte === undefined;
+
+    if (!usesCustomWorkflowScan) {
+      yield* super.scan(prefix, options);
+      return;
+    }
+
+    let index = 0;
+    while (index < this.#workflowScanOrder.length) {
+      const key = this.#workflowScanOrder[index];
+      index += 1;
+
+      if (!key || !this.#topLevelWorkflowKeys.has(key)) {
+        continue;
+      }
+
+      const value = await this.get(key);
+      if (value !== null) {
+        yield [key, value];
+      }
+    }
+  }
+
+  #recordTopLevelWorkflowWrite(key: string): void {
+    if (!this.#isTopLevelWorkflowStateKey(key)) {
+      return;
+    }
+
+    this.#topLevelWorkflowKeys.add(key);
+    const existingIndex = this.#workflowScanOrder.indexOf(key);
+    if (existingIndex !== -1) {
+      this.#workflowScanOrder.splice(existingIndex, 1);
+    }
+    this.#workflowScanOrder.push(key);
+  }
+
+  #isTopLevelWorkflowStateKey(key: string): boolean {
+    return key.startsWith('wf:') && !key.slice('wf:'.length).includes(':');
+  }
+}
+
 describe('bulk workflow operations', () => {
   it('acceptance criterion: engine.cancelAll(filter) cancels matching workflows and reports per-workflow failures', async () => {
     const storage = new BulkCancelFailureStorage();
@@ -436,6 +517,30 @@ describe('bulk workflow operations', () => {
       expect(recoveredOtherState?.tags).toEqual(['other']);
     } finally {
       await recoveredEngine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('snapshots workflow ids before bulk tag mutation rewrites workflow state entries mid-scan', async () => {
+    const storage = new BulkTagReorderingScanStorage();
+    const engine = new Engine({ storage });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await createCompletedWorkflow(engine, 'bulk-tags-scan-first');
+      await createCompletedWorkflow(engine, 'bulk-tags-scan-second');
+      await createCompletedWorkflow(engine, 'bulk-tags-scan-third');
+
+      const result = await engine.tagAll({ status: 'completed' }, ['bulk']);
+      const firstWorkflow = await engine.get('bulk-tags-scan-first');
+      const secondWorkflow = await engine.get('bulk-tags-scan-second');
+      const thirdWorkflow = await engine.get('bulk-tags-scan-third');
+
+      expect(result).toEqual({ modified: 3 });
+      expect(firstWorkflow?.tags).toEqual(['bulk']);
+      expect(secondWorkflow?.tags).toEqual(['bulk']);
+      expect(thirdWorkflow?.tags).toEqual(['bulk']);
+    } finally {
+      await engine[Symbol.asyncDispose]();
     }
   });
 
