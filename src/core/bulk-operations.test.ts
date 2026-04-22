@@ -213,6 +213,45 @@ class BulkTagReorderingScanStorage extends MemoryStorage {
   }
 }
 
+class BulkTagDeletionDuringMutationStorage extends MemoryStorage {
+  workflowIdToDeleteOnNextMutation: string | null = null;
+  #shouldDeleteTargetWorkflow = false;
+
+  override async *scan(
+    prefix: string,
+    options: ScanOptions = {},
+  ): AsyncIterable<[string, Uint8Array]> {
+    yield* super.scan(prefix, options);
+
+    const usesBulkWorkflowSnapshotScan =
+      prefix === 'wf:' &&
+      options.limit === undefined &&
+      options.reverse !== true &&
+      options.gt === undefined &&
+      options.gte === undefined &&
+      options.lt === undefined &&
+      options.lte === undefined;
+
+    if (usesBulkWorkflowSnapshotScan && this.workflowIdToDeleteOnNextMutation !== null) {
+      this.#shouldDeleteTargetWorkflow = true;
+    }
+  }
+
+  override async get(key: string): Promise<Uint8Array | null> {
+    if (
+      this.#shouldDeleteTargetWorkflow &&
+      this.workflowIdToDeleteOnNextMutation !== null &&
+      key === KEYS.workflow(this.workflowIdToDeleteOnNextMutation)
+    ) {
+      this.#shouldDeleteTargetWorkflow = false;
+      await super.delete(key);
+      return null;
+    }
+
+    return super.get(key);
+  }
+}
+
 describe('bulk workflow operations', () => {
   it('acceptance criterion: engine.cancelAll(filter) cancels matching workflows and reports per-workflow failures', async () => {
     const storage = new BulkCancelFailureStorage();
@@ -564,6 +603,31 @@ describe('bulk workflow operations', () => {
       expect(result).toEqual({ modified: 3 });
       expect(firstWorkflow?.tags).toEqual(['bulk']);
       expect(secondWorkflow?.tags).toEqual(['bulk']);
+      expect(thirdWorkflow?.tags).toEqual(['bulk']);
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('skips workflows deleted after the bulk tag snapshot instead of aborting the whole operation', async () => {
+    const storage = new BulkTagDeletionDuringMutationStorage();
+    const engine = new Engine({ storage });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await createCompletedWorkflow(engine, 'bulk-tags-delete-first');
+      await createCompletedWorkflow(engine, 'bulk-tags-delete-second');
+      await createCompletedWorkflow(engine, 'bulk-tags-delete-third');
+      storage.workflowIdToDeleteOnNextMutation = 'bulk-tags-delete-second';
+
+      const result = await engine.tagAll({ status: 'completed' }, ['bulk']);
+      const firstWorkflow = await engine.get('bulk-tags-delete-first');
+      const secondWorkflow = await engine.get('bulk-tags-delete-second');
+      const thirdWorkflow = await engine.get('bulk-tags-delete-third');
+
+      expect(result).toEqual({ modified: 2 });
+      expect(firstWorkflow?.tags).toEqual(['bulk']);
+      expect(secondWorkflow).toBeNull();
       expect(thirdWorkflow?.tags).toEqual(['bulk']);
     } finally {
       await engine[Symbol.asyncDispose]();

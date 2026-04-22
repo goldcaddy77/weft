@@ -273,6 +273,16 @@ export class BulkDeleteRequiresTerminalWorkflowsError extends Error {
   }
 }
 
+class WorkflowNotFoundError extends Error {
+  readonly workflowId: string;
+
+  constructor(workflowId: string) {
+    super(`Workflow "${workflowId}" not found`);
+    this.name = 'WorkflowNotFoundError';
+    this.workflowId = workflowId;
+  }
+}
+
 interface ResolvedOptions {
   storage: WeftStorage;
   development: boolean;
@@ -8197,7 +8207,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
       const bytes = await this.#storage.get(KEYS.workflow(workflowId));
       if (!bytes) {
-        throw new Error(`Workflow "${workflowId}" not found`);
+        throw new WorkflowNotFoundError(workflowId);
       }
 
       const state = decodeWorkflowState(bytes);
@@ -8265,7 +8275,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     let modified = 0;
     for (const workflowId of workflowIdsToMutate) {
-      const changed = await this.#mutateWorkflowTags(workflowId, tags, mode);
+      let changed = false;
+      try {
+        changed = await this.#mutateWorkflowTags(workflowId, tags, mode);
+      } catch (error) {
+        if (!(error instanceof WorkflowNotFoundError)) {
+          throw error;
+        }
+      }
+
       if (changed) {
         modified += 1;
       }
