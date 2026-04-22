@@ -11,6 +11,10 @@
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import type { Engine, ScheduleHandle, WorkflowHandle } from '../core/engine.ts';
 import type {
+  BulkCancelResult,
+  BulkDeleteResult,
+  BulkSignalResult,
+  BulkTagResult,
   CoordinatedUpdateResult,
   ForkOptions,
   ListFilter,
@@ -302,6 +306,30 @@ export class LocalClient implements WeftClient {
 
   async purge(filter?: ListFilter): Promise<PurgeResult> {
     return this.#engine.purge(filter);
+  }
+
+  async cancelAll(filter?: ListFilter): Promise<BulkCancelResult> {
+    return this.#engine.cancelAll(filter);
+  }
+
+  async signalAll(
+    filter: ListFilter | undefined,
+    name: string,
+    payload?: unknown,
+  ): Promise<BulkSignalResult> {
+    return this.#engine.signalAll(filter, name, payload);
+  }
+
+  async deleteAll(filter?: ListFilter): Promise<BulkDeleteResult> {
+    return this.#engine.deleteAll(filter);
+  }
+
+  async tagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult> {
+    return this.#engine.tagAll(filter, tags);
+  }
+
+  async untagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult> {
+    return this.#engine.untagAll(filter, tags);
   }
 
   async submitCoordinatedUpdate(

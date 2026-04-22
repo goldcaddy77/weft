@@ -739,6 +739,37 @@ function parseListFilterBody(body: unknown): ListFilter {
   return filter;
 }
 
+function hasBulkWorkflowFilterScope(filter: ListFilter): boolean {
+  return (
+    filter.status !== undefined ||
+    filter.type !== undefined ||
+    filter.tags !== undefined ||
+    filter.attributes !== undefined
+  );
+}
+
+type ParsedJsonBody =
+  | undefined
+  | null
+  | boolean
+  | number
+  | string
+  | Record<string, unknown>
+  | unknown[];
+
+async function parseOptionalJsonBody(request: Request): Promise<Response | ParsedJsonBody> {
+  try {
+    const rawBody = await request.text();
+    if (rawBody.trim() === '') {
+      return undefined;
+    }
+
+    return JSON.parse(rawBody) as ParsedJsonBody;
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+}
+
 async function handleListWorkflows(request: Request, engine: Engine): Promise<Response> {
   const url = new URL(request.url);
   const filter: ListFilter = {};
@@ -959,20 +990,14 @@ async function handleUpdateSchedule(
 }
 
 async function handlePurgeWorkflows(request: Request, engine: Engine): Promise<Response> {
-  let body: unknown = undefined;
-
-  try {
-    const rawBody = await request.text();
-    if (rawBody.trim() !== '') {
-      body = JSON.parse(rawBody) as unknown;
-    }
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
+  const parsedBody = await parseOptionalJsonBody(request);
+  if (parsedBody instanceof Response) {
+    return parsedBody;
   }
 
   let filter: ListFilter;
   try {
-    filter = parseListFilterBody(body);
+    filter = parseListFilterBody(parsedBody);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 400);
@@ -980,6 +1005,144 @@ async function handlePurgeWorkflows(request: Request, engine: Engine): Promise<R
 
   const result = await engine.purge(filter);
   return jsonResponse(result);
+}
+
+async function handleBulkCancelWorkflows(request: Request, engine: Engine): Promise<Response> {
+  const parsedBody = await parseOptionalJsonBody(request);
+  if (parsedBody instanceof Response) {
+    return parsedBody;
+  }
+
+  try {
+    const filter = parseListFilterBody(parsedBody);
+    if (!hasBulkWorkflowFilterScope(filter)) {
+      return errorResponse(
+        'Field "filter" must include at least one of status, type, tags, or attributes',
+        400,
+      );
+    }
+    return jsonResponse(await engine.cancelAll(filter));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
+}
+
+async function handleBulkSignalWorkflows(request: Request, engine: Engine): Promise<Response> {
+  const parsedBody = await parseOptionalJsonBody(request);
+  if (parsedBody instanceof Response) {
+    return parsedBody;
+  }
+
+  const body = parseJsonRecordBody(parsedBody);
+  if (!body) {
+    return errorResponse('Request body must be a JSON object', 400);
+  }
+
+  let filter: ListFilter;
+  try {
+    filter = parseListFilterBody({ filter: body['filter'] });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
+  if (!hasBulkWorkflowFilterScope(filter)) {
+    return errorResponse(
+      'Field "filter" must include at least one of status, type, tags, or attributes',
+      400,
+    );
+  }
+
+  const name = body['name'];
+  if (typeof name !== 'string' || name.length === 0) {
+    return errorResponse('Field "name" must be a non-empty string', 400);
+  }
+
+  try {
+    return jsonResponse(await engine.signalAll(filter, name, body['payload']));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 500);
+  }
+}
+
+async function handleBulkDeleteWorkflows(request: Request, engine: Engine): Promise<Response> {
+  const parsedBody = await parseOptionalJsonBody(request);
+  if (parsedBody instanceof Response) {
+    return parsedBody;
+  }
+
+  let filter: ListFilter;
+  try {
+    filter = parseListFilterBody(parsedBody);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
+  if (!hasBulkWorkflowFilterScope(filter)) {
+    return errorResponse(
+      'Field "filter" must include at least one of status, type, tags, or attributes',
+      400,
+    );
+  }
+
+  try {
+    return jsonResponse(await engine.deleteAll(filter));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === 'Bulk delete matches non-terminal workflows') {
+      return errorResponse(message, 422);
+    }
+    return errorResponse(message, 500);
+  }
+}
+
+async function handleBulkMutateWorkflowTags(request: Request, engine: Engine): Promise<Response> {
+  const parsedBody = await parseOptionalJsonBody(request);
+  if (parsedBody instanceof Response) {
+    return parsedBody;
+  }
+
+  const body = parseJsonRecordBody(parsedBody);
+  if (!body) {
+    return errorResponse('Request body must be a JSON object', 400);
+  }
+
+  let filter: ListFilter;
+  try {
+    filter = parseListFilterBody({ filter: body['filter'] });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
+  if (!hasBulkWorkflowFilterScope(filter)) {
+    return errorResponse(
+      'Field "filter" must include at least one of status, type, tags, or attributes',
+      400,
+    );
+  }
+
+  let tags: string[];
+  try {
+    tags = coerceStartWorkflowTags(body['tags'], 'Field "tags"');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
+
+  const operation = body['operation'];
+  if (operation !== 'add' && operation !== 'remove') {
+    return errorResponse('Field "operation" must be "add" or "remove"', 400);
+  }
+
+  try {
+    const result =
+      operation === 'add' ? await engine.tagAll(filter, tags) : await engine.untagAll(filter, tags);
+    return jsonResponse(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 500);
+  }
 }
 
 async function handleGetWorkflow(engine: Engine, workflowId: string): Promise<Response> {
@@ -1756,6 +1919,11 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
   purgeWorkflows: async ({ request, engine }) => handlePurgeWorkflows(request, engine),
   listWorkflows: async ({ request, engine }) => handleListWorkflows(request, engine),
+  bulkCancelWorkflows: async ({ request, engine }) => handleBulkCancelWorkflows(request, engine),
+  bulkSignalWorkflows: async ({ request, engine }) => handleBulkSignalWorkflows(request, engine),
+  bulkDeleteWorkflows: async ({ request, engine }) => handleBulkDeleteWorkflows(request, engine),
+  bulkMutateWorkflowTags: async ({ request, engine }) =>
+    handleBulkMutateWorkflowTags(request, engine),
   recoverAll: async ({ engine }) => handleRecoverAll(engine),
   getRetentionOverview: async ({ engine }) => handleGetRetentionOverview(engine),
   listSchedules: async ({ request, engine, options }) =>

@@ -11,6 +11,10 @@
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type {
+  BulkCancelResult,
+  BulkDeleteResult,
+  BulkSignalResult,
+  BulkTagResult,
   CoordinatedUpdateResult,
   ForkOptions,
   ListFilter,
@@ -711,6 +715,45 @@ export class HttpClient implements WeftClient {
     return request<PurgeResult>(this.baseUrl, '/workflows/purge', this.headers, {
       method: 'POST',
       body: JSON.stringify({ filter }),
+    });
+  }
+
+  async cancelAll(filter?: ListFilter): Promise<BulkCancelResult> {
+    return request<BulkCancelResult>(this.baseUrl, '/workflows/bulk/cancel', this.headers, {
+      method: 'POST',
+      body: JSON.stringify({ filter }),
+    });
+  }
+
+  async signalAll(
+    filter: ListFilter | undefined,
+    name: string,
+    payload?: unknown,
+  ): Promise<BulkSignalResult> {
+    return request<BulkSignalResult>(this.baseUrl, '/workflows/bulk/signal', this.headers, {
+      method: 'POST',
+      body: JSON.stringify({ filter, name, payload }),
+    });
+  }
+
+  async deleteAll(filter?: ListFilter): Promise<BulkDeleteResult> {
+    return request<BulkDeleteResult>(this.baseUrl, '/workflows/bulk', this.headers, {
+      method: 'DELETE',
+      body: JSON.stringify({ filter }),
+    });
+  }
+
+  async tagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult> {
+    return request<BulkTagResult>(this.baseUrl, '/workflows/bulk/tags', this.headers, {
+      method: 'PATCH',
+      body: JSON.stringify({ filter, tags, operation: 'add' }),
+    });
+  }
+
+  async untagAll(filter: ListFilter | undefined, tags: string[]): Promise<BulkTagResult> {
+    return request<BulkTagResult>(this.baseUrl, '/workflows/bulk/tags', this.headers, {
+      method: 'PATCH',
+      body: JSON.stringify({ filter, tags, operation: 'remove' }),
     });
   }
 

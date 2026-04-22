@@ -21,6 +21,11 @@ async function flush(): Promise<void> {
   await Bun.sleep(10);
 }
 
+async function* waitingWorkflow(ctx: WorkflowContext, input: unknown) {
+  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  return `${String(input)}:${signal}`;
+}
+
 function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
@@ -882,6 +887,217 @@ describe('handleRequest', () => {
     expect(await engine.get('purge-filter-1')).not.toBeNull();
     expect(await engine.get('purge-filter-2')).toBeNull();
     expect(await engine.get('purge-filter-3')).not.toBeNull();
+  });
+
+  describe('bulk workflow routes', () => {
+    it('POST /v1/workflows/bulk/cancel returns counts and cancels matching workflows', async () => {
+      engine = createEngine();
+      engine.register('waiting', waitingWorkflow);
+
+      await engine.start('waiting', 'one', { id: 'bulk-route-cancel-a', tags: ['bulk-route'] });
+      await engine.start('waiting', 'two', { id: 'bulk-route-cancel-b', tags: ['bulk-route'] });
+      await engine.start('waiting', 'other', { id: 'bulk-route-cancel-other', tags: ['other'] });
+
+      await Promise.all([flush(), flush()]);
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/bulk/cancel', {
+          filter: { tags: ['bulk-route'] },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      expect(await json(response)).toEqual({
+        cancelled: 2,
+        failed: 0,
+        errors: [],
+      });
+      const firstCancelledState = await engine.get('bulk-route-cancel-a');
+      const secondCancelledState = await engine.get('bulk-route-cancel-b');
+      const untouchedState = await engine.get('bulk-route-cancel-other');
+      expect(firstCancelledState?.status).toBe('cancelled');
+      expect(secondCancelledState?.status).toBe('cancelled');
+      expect(untouchedState?.status).toBe('running');
+
+      await engine.cancel('bulk-route-cancel-other');
+    });
+
+    it('POST /v1/workflows/bulk/signal returns counts and signals matching workflows', async () => {
+      engine = createEngine();
+      engine.register('waiting', waitingWorkflow);
+
+      const firstHandle = await engine.start('waiting', 'first', {
+        id: 'bulk-route-signal-a',
+        tags: ['bulk-route-signal'],
+      });
+      const secondHandle = await engine.start('waiting', 'second', {
+        id: 'bulk-route-signal-b',
+        tags: ['bulk-route-signal'],
+      });
+      const untouchedHandle = await engine.start('waiting', 'other', {
+        id: 'bulk-route-signal-other',
+        tags: ['other'],
+      });
+
+      await Promise.all([flush(), flush()]);
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/bulk/signal', {
+          filter: { tags: ['bulk-route-signal'] },
+          name: 'continue',
+          payload: 'released',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      expect(await json(response)).toEqual({ signalled: 2, failed: 0 });
+      await expect(firstHandle.result()).resolves.toBe('first:released');
+      await expect(secondHandle.result()).resolves.toBe('second:released');
+      const untouchedState = await engine.get(untouchedHandle.id);
+      expect(untouchedState?.status).toBe('running');
+
+      await engine.signal(untouchedHandle.id, 'continue', 'cleanup');
+      await untouchedHandle.result();
+    });
+
+    it('DELETE /v1/workflows/bulk returns 422 when running workflows would match', async () => {
+      engine = createEngine();
+      engine.register('waiting', waitingWorkflow);
+
+      const completedHandle = await engine.start('echo', 'done', {
+        id: 'bulk-route-delete-completed',
+        tags: ['bulk-route-delete'],
+      });
+      await completedHandle.result();
+
+      const runningHandle = await engine.start('waiting', 'pending', {
+        id: 'bulk-route-delete-running',
+        tags: ['bulk-route-delete'],
+      });
+      await Promise.all([flush(), flush()]);
+
+      const response = await handleRequest(
+        request('DELETE', '/v1/workflows/bulk', {
+          filter: { tags: ['bulk-route-delete'] },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(422);
+      expect(await json(response)).toEqual({
+        error: 'Bulk delete matches non-terminal workflows',
+      });
+      expect(await engine.get('bulk-route-delete-completed')).not.toBeNull();
+      expect(await engine.get('bulk-route-delete-running')).not.toBeNull();
+
+      await engine.cancel(runningHandle.id);
+    });
+
+    it('DELETE /v1/workflows/bulk deletes matching terminal workflows', async () => {
+      engine = createEngine();
+
+      const firstHandle = await engine.start('echo', 'one', {
+        id: 'bulk-route-delete-a',
+        tags: ['bulk-route-delete-only'],
+      });
+      const secondHandle = await engine.start('echo', 'two', {
+        id: 'bulk-route-delete-b',
+        tags: ['bulk-route-delete-only'],
+      });
+      await firstHandle.result();
+      await secondHandle.result();
+
+      const response = await handleRequest(
+        request('DELETE', '/v1/workflows/bulk', {
+          filter: { tags: ['bulk-route-delete-only'] },
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(200);
+      expect(await json(response)).toEqual({ deleted: 2 });
+      expect(await engine.get('bulk-route-delete-a')).toBeNull();
+      expect(await engine.get('bulk-route-delete-b')).toBeNull();
+    });
+
+    it('PATCH /v1/workflows/bulk/tags adds and removes tags on matching workflows', async () => {
+      engine = createEngine();
+
+      const firstHandle = await engine.start('echo', 'one', {
+        id: 'bulk-route-tags-a',
+        tags: ['selected'],
+      });
+      const secondHandle = await engine.start('echo', 'two', {
+        id: 'bulk-route-tags-b',
+        tags: ['selected'],
+      });
+      await firstHandle.result();
+      await secondHandle.result();
+
+      const addResponse = await handleRequest(
+        request('PATCH', '/v1/workflows/bulk/tags', {
+          filter: { tags: ['selected'] },
+          tags: ['bulk'],
+          operation: 'add',
+        }),
+        engine,
+      );
+
+      expect(addResponse.status).toBe(200);
+      expect(await json(addResponse)).toEqual({ modified: 2 });
+      const addedTagsState = await engine.get('bulk-route-tags-a');
+      expect(addedTagsState?.tags).toEqual(['bulk', 'selected']);
+
+      const removeResponse = await handleRequest(
+        request('PATCH', '/v1/workflows/bulk/tags', {
+          filter: { tags: ['bulk'] },
+          tags: ['selected'],
+          operation: 'remove',
+        }),
+        engine,
+      );
+
+      expect(removeResponse.status).toBe(200);
+      expect(await json(removeResponse)).toEqual({ modified: 2 });
+      const firstRemovedTagsState = await engine.get('bulk-route-tags-a');
+      const secondRemovedTagsState = await engine.get('bulk-route-tags-b');
+      expect(firstRemovedTagsState?.tags).toEqual(['bulk']);
+      expect(secondRemovedTagsState?.tags).toEqual(['bulk']);
+    });
+
+    it('PATCH /v1/workflows/bulk/tags validates the operation field', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('PATCH', '/v1/workflows/bulk/tags', {
+          filter: { tags: ['selected'] },
+          tags: ['bulk'],
+          operation: 'rename',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await json(response)).toEqual({
+        error: 'Field "operation" must be "add" or "remove"',
+      });
+    });
+
+    it('bulk workflow routes reject missing or unscoped filters', async () => {
+      engine = createEngine();
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/bulk/cancel', {}),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await json(response)).toEqual({
+        error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+      });
+    });
   });
 
   // 12. Start workflow with executionTimeout passes it through

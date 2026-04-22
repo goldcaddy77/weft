@@ -234,6 +234,73 @@ async function exerciseRecoveryAndReviewRequests(httpClient: HttpClient): Promis
   });
 }
 
+async function exerciseBulkWorkflowClientRequests(httpClient: HttpClient): Promise<void> {
+  expect(await httpClient.cancelAll({ status: 'running', tags: ['nightly'] })).toEqual({
+    cancelled: 2,
+    failed: 1,
+    errors: [{ id: 'wf-failed', error: 'boom' }],
+  });
+  expect(await httpClient.signalAll({ tags: ['nightly'] }, 'continue', { ok: true })).toEqual({
+    signalled: 3,
+    failed: 0,
+  });
+  expect(await httpClient.deleteAll({ status: 'completed' })).toEqual({ deleted: 4 });
+  expect(await httpClient.tagAll({ tags: ['nightly'] }, ['bulk'])).toEqual({ modified: 5 });
+  expect(await httpClient.untagAll({ tags: ['bulk'] }, ['nightly'])).toEqual({ modified: 2 });
+}
+
+function expectStringRequestBody(body: RequestInit['body']): string {
+  expect(typeof body).toBe('string');
+  if (typeof body !== 'string') {
+    throw new Error('Expected request body to be a JSON string');
+  }
+
+  return body;
+}
+
+function assertBulkWorkflowRequestCalls(fetchCalls: FetchCall[]): void {
+  const expectedCalls = [
+    {
+      url: 'http://example.test/v1/workflows/bulk/cancel',
+      method: 'POST',
+      body: { filter: { status: 'running', tags: ['nightly'] } },
+    },
+    {
+      url: 'http://example.test/v1/workflows/bulk/signal',
+      method: 'POST',
+      body: {
+        filter: { tags: ['nightly'] },
+        name: 'continue',
+        payload: { ok: true },
+      },
+    },
+    {
+      url: 'http://example.test/v1/workflows/bulk',
+      method: 'DELETE',
+      body: { filter: { status: 'completed' } },
+    },
+    {
+      url: 'http://example.test/v1/workflows/bulk/tags',
+      method: 'PATCH',
+      body: { filter: { tags: ['nightly'] }, tags: ['bulk'], operation: 'add' },
+    },
+    {
+      url: 'http://example.test/v1/workflows/bulk/tags',
+      method: 'PATCH',
+      body: { filter: { tags: ['bulk'] }, tags: ['nightly'], operation: 'remove' },
+    },
+  ] as const;
+
+  expect(fetchCalls).toHaveLength(expectedCalls.length);
+
+  for (const [index, expectedCall] of expectedCalls.entries()) {
+    const actualCall = fetchCalls[index];
+    expect(actualCall?.url).toBe(expectedCall.url);
+    expect(actualCall?.init?.method).toBe(expectedCall.method);
+    expect(JSON.parse(expectStringRequestBody(actualCall?.init?.body))).toEqual(expectedCall.body);
+  }
+}
+
 function assertWorkflowStartCall(fetchCalls: FetchCall[]): void {
   const startCall = fetchCalls[0]!;
   expect(startCall.url).toBe('http://example.test/v1/workflows');
@@ -389,6 +456,11 @@ describe('HttpClient', () => {
     expect(client.fork).toBeFunction();
     expect(client.getRetentionOverview).toBeFunction();
     expect(client.purge).toBeFunction();
+    expect(client.cancelAll).toBeFunction();
+    expect(client.signalAll).toBeFunction();
+    expect(client.deleteAll).toBeFunction();
+    expect(client.tagAll).toBeFunction();
+    expect(client.untagAll).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();
     expect(client.getUpdateResult).toBeFunction();
   });
@@ -789,6 +861,11 @@ describe('HttpClient', () => {
         'fork',
         'getRetentionOverview',
         'purge',
+        'cancelAll',
+        'signalAll',
+        'deleteAll',
+        'tagAll',
+        'untagAll',
         'submitCoordinatedUpdate',
         'getUpdateResult',
       ] as const;
@@ -850,6 +927,38 @@ describe('HttpClient request surface', () => {
     assertScheduleCalls(fetchCalls);
     assertFilterAndFollowupCalls(fetchCalls);
     assertForkCall(fetchCalls);
+  });
+
+  it('serializes bulk workflow methods into the expected HTTP requests', async () => {
+    const fetchCalls: FetchCall[] = [];
+    const responses = [
+      jsonResponse({
+        cancelled: 2,
+        failed: 1,
+        errors: [{ id: 'wf-failed', error: 'boom' }],
+      }),
+      jsonResponse({ signalled: 3, failed: 0 }),
+      jsonResponse({ deleted: 4 }),
+      jsonResponse({ modified: 5 }),
+      jsonResponse({ modified: 2 }),
+    ];
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ url: requestInputToUrl(input), init });
+      const response = responses.shift();
+      if (!response) {
+        throw new Error(`Unexpected fetch: ${requestInputToUrl(input)}`);
+      }
+      return response;
+    }) as unknown as typeof fetch;
+
+    const httpClient = new HttpClient({
+      baseUrl: 'http://example.test',
+      headers: { Authorization: 'Bearer token' },
+    });
+
+    await exerciseBulkWorkflowClientRequests(httpClient);
+    assertBulkWorkflowRequestCalls(fetchCalls);
   });
 
   it('serializes startAt in the workflow start payload', async () => {
