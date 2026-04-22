@@ -235,6 +235,21 @@ interface WorkflowStateUpdateResult {
 
 const BULK_OPERATION_BATCH_SIZE = 1000;
 
+function normalizeBulkFilterNumber(
+  value: unknown,
+  fieldName: 'limit' | 'offset',
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`filter.${fieldName} must be a non-negative number when provided`);
+  }
+
+  return Math.floor(value);
+}
+
 /** Options required when registering an AgentDefinition as a workflow. */
 export interface AgentRegistrationOptions {
   /** The LLM provider to use when running the agent. */
@@ -248,6 +263,13 @@ export class WorkflowAlreadyExistsError extends Error {
     super(`Workflow with id "${workflowId}" already exists`);
     this.name = 'WorkflowAlreadyExistsError';
     this.workflowId = workflowId;
+  }
+}
+
+export class BulkDeleteRequiresTerminalWorkflowsError extends Error {
+  constructor() {
+    super('Bulk delete matches non-terminal workflows');
+    this.name = 'BulkDeleteRequiresTerminalWorkflowsError';
   }
 }
 
@@ -2774,14 +2796,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async *#streamWorkflowStateBatches(filter?: ListFilter): AsyncGenerator<WorkflowState[]> {
-    let remainingOffset =
-      filter?.offset !== undefined && Number.isFinite(filter.offset) && filter.offset > 0
-        ? Math.floor(filter.offset)
-        : 0;
-    let remainingLimit =
-      filter?.limit !== undefined && Number.isFinite(filter.limit) && filter.limit >= 0
-        ? Math.floor(filter.limit)
-        : undefined;
+    let remainingOffset = normalizeBulkFilterNumber(filter?.offset, 'offset') ?? 0;
+    let remainingLimit = normalizeBulkFilterNumber(filter?.limit, 'limit');
 
     if (remainingLimit === 0) {
       return;
@@ -3090,30 +3106,41 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     for await (const batch of this.#streamWorkflowStateBatches(filter)) {
       for (const state of batch) {
         if (!isTerminalWorkflowStatus(state.status)) {
-          throw new Error('Bulk delete matches non-terminal workflows');
+          throw new BulkDeleteRequiresTerminalWorkflowsError();
         }
 
         candidateWorkflowIds.push(state.id);
       }
     }
 
-    const workflowStatesToDelete: WorkflowState[] = [];
-    for (const workflowId of candidateWorkflowIds) {
-      const refreshedState = await this.#loadWorkflowState(workflowId);
-      if (refreshedState === null) {
-        continue;
-      }
-      if (!isTerminalWorkflowStatus(refreshedState.status)) {
-        throw new Error('Bulk delete matches non-terminal workflows');
-      }
-
-      workflowStatesToDelete.push(refreshedState);
-    }
-
     let deleted = 0;
-    for (const workflowState of workflowStatesToDelete) {
-      await this.#purgeWorkflow(workflowState);
-      deleted += 1;
+    for (
+      let batchStart = 0;
+      batchStart < candidateWorkflowIds.length;
+      batchStart += BULK_OPERATION_BATCH_SIZE
+    ) {
+      const batchWorkflowIds = candidateWorkflowIds.slice(
+        batchStart,
+        batchStart + BULK_OPERATION_BATCH_SIZE,
+      );
+      const workflowStatesToDelete: WorkflowState[] = [];
+
+      for (const workflowId of batchWorkflowIds) {
+        const refreshedState = await this.#loadWorkflowState(workflowId);
+        if (refreshedState === null) {
+          continue;
+        }
+        if (!isTerminalWorkflowStatus(refreshedState.status)) {
+          throw new BulkDeleteRequiresTerminalWorkflowsError();
+        }
+
+        workflowStatesToDelete.push(refreshedState);
+      }
+
+      for (const workflowState of workflowStatesToDelete) {
+        await this.#purgeWorkflow(workflowState);
+        deleted += 1;
+      }
     }
 
     return { deleted };

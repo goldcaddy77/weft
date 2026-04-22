@@ -13,7 +13,7 @@ import { formatSSE } from '../ai/streaming-agent.ts';
 import { assertScopedBulkWorkflowFilter } from '../core/bulk-workflow-filter.ts';
 import { encode } from '../core/codec.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
-import type { Engine } from '../core/engine.ts';
+import { BulkDeleteRequiresTerminalWorkflowsError, type Engine } from '../core/engine.ts';
 import {
   StartWorkflowValidationError,
   assertExclusiveStartWorkflowOptions,
@@ -1074,10 +1074,11 @@ async function handleBulkDeleteWorkflows(request: Request, engine: Engine): Prom
   try {
     return jsonResponse(await engine.deleteAll(filter));
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message === 'Bulk delete matches non-terminal workflows') {
-      return errorResponse(message, 422);
+    if (error instanceof BulkDeleteRequiresTerminalWorkflowsError) {
+      return errorResponse(error.message, 422);
     }
+
+    const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 500);
   }
 }

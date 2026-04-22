@@ -9,7 +9,7 @@ import {
 import { MemoryStorage } from '../storage/memory.ts';
 import { BULK_WORKFLOW_FILTER_ERROR_MESSAGE } from './bulk-workflow-filter.ts';
 import { Context } from './context.ts';
-import { Engine } from './engine.ts';
+import { BulkDeleteRequiresTerminalWorkflowsError, Engine } from './engine.ts';
 import type { WorkflowContext, WorkflowState } from './types.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
@@ -433,9 +433,9 @@ describe('bulk workflow operations', () => {
       });
       await waitForWorkflowStatus(engine, runningHandle.id, 'running');
 
-      await expect(engine.deleteAll({ tags: ['bulk-delete'] })).rejects.toThrow(
-        'Bulk delete matches non-terminal workflows',
-      );
+      const deletePromise = engine.deleteAll({ tags: ['bulk-delete'] });
+      await expect(deletePromise).rejects.toBeInstanceOf(BulkDeleteRequiresTerminalWorkflowsError);
+      await expect(deletePromise).rejects.toThrow('Bulk delete matches non-terminal workflows');
 
       expect(await engine.get('bulk-delete-completed')).not.toBeNull();
       expect(await engine.get('bulk-delete-failed')).not.toBeNull();
@@ -453,6 +453,32 @@ describe('bulk workflow operations', () => {
       expect(await engine.get('bulk-delete-completed')).toBeNull();
       expect(await engine.get('bulk-delete-failed')).toBeNull();
       expect(await engine.get('bulk-delete-running')).toBeNull();
+    } finally {
+      await engine[Symbol.asyncDispose]();
+    }
+  });
+
+  it('rejects invalid limit and offset values for destructive bulk operations instead of widening the filter', async () => {
+    const engine = new Engine({ storage: new MemoryStorage() });
+    engine.register('echo', echoWorkflow);
+
+    try {
+      await createCompletedWorkflow(engine, 'bulk-invalid-pagination', ['bulk-invalid-pagination']);
+
+      await expect(
+        engine.cancelAll({ tags: ['bulk-invalid-pagination'], limit: -1 }),
+      ).rejects.toThrow('filter.limit must be a non-negative number when provided');
+      await expect(
+        engine.signalAll({ tags: ['bulk-invalid-pagination'], offset: Number.NaN }, 'continue'),
+      ).rejects.toThrow('filter.offset must be a non-negative number when provided');
+      await expect(
+        engine.deleteAll({ tags: ['bulk-invalid-pagination'], limit: Number.POSITIVE_INFINITY }),
+      ).rejects.toThrow('filter.limit must be a non-negative number when provided');
+      await expect(
+        engine.tagAll({ tags: ['bulk-invalid-pagination'], offset: -1 }, ['bulk']),
+      ).rejects.toThrow('filter.offset must be a non-negative number when provided');
+
+      expect(await engine.get('bulk-invalid-pagination')).not.toBeNull();
     } finally {
       await engine[Symbol.asyncDispose]();
     }
