@@ -445,6 +445,18 @@ describe('CLI argument parsing', () => {
       const result = parseCliArguments(['timeline', 'wf-1', '--diff', '1', '2']) as TimelineCommand;
       expect(result.diff).toEqual([1, 2]);
     });
+
+    it('rejects invalid timeline step combinations and values', () => {
+      expect(() => parseCliArguments(['timeline', 'wf-1', '--step=-1'])).toThrow(
+        '--step must be a non-negative integer',
+      );
+      expect(() => parseCliArguments(['timeline', 'wf-1', '--diff'])).toThrow(
+        '--diff requires two step numbers',
+      );
+      expect(() =>
+        parseCliArguments(['timeline', 'wf-1', '--step', '2', '--diff', '1', '3']),
+      ).toThrow('--step and --diff cannot be used together');
+    });
   });
 
   describe('schedule subcommand', () => {
@@ -512,6 +524,23 @@ describe('CLI argument parsing', () => {
       expect(result.id).toBe('nightly-maintenance');
       expect(result.overlap).toBe('queue');
       expect(result.backfill).toBe(true);
+    });
+
+    it('rejects invalid schedule overlap policies', () => {
+      expect(() =>
+        parseCliArguments([
+          'schedule',
+          'create',
+          'echo',
+          '0 * * * *',
+          '--workflows',
+          './workflows.ts',
+          '--overlap',
+          'parallel',
+        ]),
+      ).toThrow(
+        "Invalid overlap policy 'parallel'. Must be one of: skip, queue, cancel-running, allow",
+      );
     });
 
     it('parses schedule pause, resume, and cancel ids', () => {
@@ -1221,6 +1250,75 @@ describe('executeTimeline', () => {
       rmSync(database, { force: true });
     }
   });
+
+  it('returns errors for missing workflow ids and missing replay steps', async () => {
+    expect(
+      await executeTimeline({
+        database: ':memory:',
+        workflowId: '',
+      }),
+    ).toEqual({
+      stdout: '',
+      stderr: 'Error: workflowId is required for timeline',
+      exitCode: 1,
+    });
+
+    const database = join(tmpdir(), `weft-timeline-missing-${crypto.randomUUID()}.db`);
+    const storage = await createStorage('sqlite', database);
+    const { Engine } = await import('./core/engine.ts');
+    const engine = new Engine({ storage });
+
+    try {
+      engine.register('timeline-missing', async function* () {
+        return 'done';
+      });
+
+      const handle = await engine.start('timeline-missing', null, { id: 'wf-cli-missing-replay' });
+      await handle.result();
+    } finally {
+      await engine[Symbol.asyncDispose]();
+      storage[Symbol.dispose]();
+    }
+
+    try {
+      expect(
+        await executeTimeline({
+          database,
+          workflowId: 'missing-workflow',
+        }),
+      ).toEqual({
+        stdout: '',
+        stderr: 'Error: workflow "missing-workflow" not found',
+        exitCode: 1,
+      });
+
+      expect(
+        await executeTimeline({
+          database,
+          workflowId: 'wf-cli-missing-replay',
+          step: 99,
+        }),
+      ).toEqual({
+        stdout: '',
+        stderr: 'Error: replay not found for step 99',
+        exitCode: 1,
+      });
+
+      expect(
+        await executeTimeline({
+          database,
+          workflowId: 'wf-cli-missing-replay',
+          diff: [1, 99],
+        }),
+      ).toEqual({
+        stdout: '',
+        stderr: 'Error: replay not found for diff 1 -> 99',
+        exitCode: 1,
+      });
+    } finally {
+      rmSync(database, { force: true });
+    }
+  });
 });
 
 describe('executeSchedule', () => {
@@ -1426,6 +1524,154 @@ describe('executeSchedule', () => {
     expect(result.stderr).toBe(
       'Error: --storage memory is not supported for schedule commands because data does not persist across CLI invocations',
     );
+  });
+
+  it('returns validation errors for incomplete schedule create and mutation commands', async () => {
+    const database = join(tmpdir(), `weft-schedule-validation-${crypto.randomUUID()}.db`);
+
+    try {
+      const missingWorkflowsResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows: '',
+        workflowType: 'scheduledEcho',
+        cronExpression: '0 * * * *',
+        input: 'null',
+        backfill: false,
+      });
+      expect(missingWorkflowsResult).toEqual({
+        stdout: '',
+        stderr: 'Error: --workflows flag is required for schedule create',
+        exitCode: 1,
+      });
+
+      const missingWorkflowTypeResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows: './workflows.ts',
+        cronExpression: '0 * * * *',
+        input: 'null',
+        backfill: false,
+      } as ScheduleCreateCommand);
+      expect(missingWorkflowTypeResult).toEqual({
+        stdout: '',
+        stderr: 'Error: missing required argument <workflowType> for schedule create',
+        exitCode: 1,
+      });
+
+      const missingCronExpressionResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows: './workflows.ts',
+        workflowType: 'scheduledEcho',
+        input: 'null',
+        backfill: false,
+      } as ScheduleCreateCommand);
+      expect(missingCronExpressionResult).toEqual({
+        stdout: '',
+        stderr: 'Error: missing required argument <cronExpression> for schedule create',
+        exitCode: 1,
+      });
+
+      const missingScheduleIdResult = await executeSchedule({
+        command: 'schedule',
+        action: 'pause',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+      } as ScheduleMutationCommand);
+      expect(missingScheduleIdResult).toEqual({
+        stdout: '',
+        stderr: 'Error: scheduleId is required for schedule pause',
+        exitCode: 1,
+      });
+    } finally {
+      rmSync(database, { force: true });
+    }
+  });
+
+  it('returns an error when schedule create input is not valid JSON', async () => {
+    const database = join(tmpdir(), `weft-schedule-input-${crypto.randomUUID()}.db`);
+    const workflows = join(tmpdir(), `weft-schedule-input-${crypto.randomUUID()}.ts`);
+
+    await Bun.write(
+      workflows,
+      [
+        'export default {',
+        '  scheduledEcho: {',
+        '    handler: async function* (_ctx, input) {',
+        '      return input;',
+        '    },',
+        '  },',
+        '};',
+      ].join('\n'),
+    );
+
+    try {
+      const result = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows,
+        workflowType: 'scheduledEcho',
+        cronExpression: '0 * * * *',
+        input: '{"payload"',
+        backfill: false,
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toContain('Error: could not parse --input JSON:');
+    } finally {
+      rmSync(workflows, { force: true });
+      rmSync(database, { force: true });
+    }
+  });
+
+  it('surfaces schedule execution failures through the shared schedule error path', async () => {
+    const database = join(tmpdir(), `weft-schedule-error-${crypto.randomUUID()}.db`);
+    const workflows = join(tmpdir(), `weft-schedule-error-${crypto.randomUUID()}.ts`);
+
+    await Bun.write(workflows, 'export default {};');
+
+    try {
+      const result = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows,
+        workflowType: 'scheduledEcho',
+        cronExpression: '0 * * * *',
+        input: 'null',
+        backfill: false,
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe('Error: No workflow registered with name "scheduledEcho"');
+    } finally {
+      rmSync(workflows, { force: true });
+      rmSync(database, { force: true });
+    }
   });
 });
 

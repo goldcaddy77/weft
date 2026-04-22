@@ -536,6 +536,21 @@ describe('HttpClient', () => {
         expect.objectContaining({ status: 'cancelled', nextFireAt: null }),
       );
     });
+
+    it('exposes schedule handle describe and dispose helpers over HTTP', async () => {
+      const schedule = await client.schedule('echo', { payload: 'wrapper' }, '0 * * * *', {
+        id: 'http-schedule-wrapper',
+      });
+
+      expect(await schedule.describe()).toEqual(
+        expect.objectContaining({
+          id: 'http-schedule-wrapper',
+          workflowType: 'echo',
+        }),
+      );
+
+      expect(() => schedule[Symbol.dispose]()).not.toThrow();
+    });
   });
 
   describe('cancel', () => {
@@ -1057,5 +1072,44 @@ describe('HttpClient request surface', () => {
     handle[Symbol.dispose]();
 
     expect(clearedIntervals).toBe(1);
+  });
+
+  it('exercises HttpScheduleHandle.describe() directly against a mocked remote response', async () => {
+    const originalFetchOverride = globalThis.fetch;
+
+    try {
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          return Response.json({ id: 'schedule-direct' });
+        }
+
+        return Response.json({
+          id: 'schedule-direct',
+          workflowType: 'echo',
+          cronExpression: '0 * * * *',
+          status: 'active',
+          overlap: 'queue',
+          backfill: true,
+          createdAt: 1,
+          updatedAt: 2,
+          nextFireAt: 3,
+          queuedRuns: 0,
+        });
+      }) as typeof fetch;
+
+      const directClient = new HttpClient({ baseUrl: 'http://example.test' });
+      const scheduleHandle = await directClient.schedule('echo', 'payload', '0 * * * *');
+
+      expect(await scheduleHandle.describe()).toEqual(
+        expect.objectContaining({
+          id: 'schedule-direct',
+          cronExpression: '0 * * * *',
+        }),
+      );
+
+      expect(() => scheduleHandle[Symbol.dispose]()).not.toThrow();
+    } finally {
+      globalThis.fetch = originalFetchOverride;
+    }
   });
 });

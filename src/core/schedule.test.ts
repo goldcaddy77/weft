@@ -12,7 +12,11 @@ import {
   WorkflowCompletedEvent,
   WorkflowFailedEvent,
 } from './events.ts';
-import { getNextCronOccurrence } from './schedule.ts';
+import {
+  collectDueCronOccurrences,
+  getNextCronOccurrence,
+  parseCronExpression,
+} from './schedule.ts';
 import { tenantFromInputField, type TenantResolver } from './tenant.ts';
 import type { ScheduleSummary, WorkflowContext, WorkflowFunction, WorkflowState } from './types.ts';
 
@@ -167,6 +171,99 @@ async function createQueuedScheduleStartFailureFixture(): Promise<{
 }
 
 describe('recurring schedules', () => {
+  it('cron parsing rejects invalid tokens, ranges, steps, and field counts', () => {
+    expect(() => parseCronExpression('* * * *')).toThrow(
+      'Cron expression must have 5 fields or 6 fields with seconds',
+    );
+    expect(() => parseCronExpression('x * * * *')).toThrow('Invalid cron token "x"');
+    expect(() => parseCronExpression('* * * * * 8')).toThrow(
+      'Cron token "8" is outside the allowed range 0-6',
+    );
+    expect(() => parseCronExpression('5-1 * * * *')).toThrow('Invalid cron range "5-1"');
+    expect(() => parseCronExpression('*/0 * * * *')).toThrow('Invalid cron step "*/0"');
+    expect(() => parseCronExpression(', * * * *')).toThrow('Invalid cron field ","');
+  });
+
+  it('parses named month and weekday aliases, normalizes Sunday aliases, and validates max occurrence limits', () => {
+    const namedExpression = parseCronExpression('0 9 * JAN MON');
+
+    expect(namedExpression.months.values).toEqual([1]);
+    expect(namedExpression.daysOfWeek.values).toEqual([1]);
+    expect(parseCronExpression('* * * * * 7').daysOfWeek.values).toEqual([0]);
+    expect(
+      collectDueCronOccurrences(
+        '* * * * *',
+        Date.UTC(2026, 0, 1, 0, 1, 0),
+        Date.UTC(2026, 0, 1, 0, 5, 0),
+        { maxOccurrences: 2 },
+      ),
+    ).toEqual([Date.UTC(2026, 0, 1, 0, 1, 0), Date.UTC(2026, 0, 1, 0, 2, 0)]);
+    expect(() =>
+      collectDueCronOccurrences('* * * * *', Date.UTC(2026, 0, 1, 0, 1, 0), Date.UTC(2026, 0, 5), {
+        maxOccurrences: 0,
+      }),
+    ).toThrow('Cron occurrence maxOccurrences must be a positive safe integer');
+  });
+
+  it('matches the day-of-week branch when day-of-month is a wildcard', () => {
+    const afterTimestamp = Date.UTC(2026, 0, 5, 12, 0, 0); // Monday
+
+    expect(getNextCronOccurrence('0 9 * * TUE', afterTimestamp)).toBe(
+      Date.UTC(2026, 0, 6, 9, 0, 0),
+    );
+  });
+
+  it('matches the day-of-month branch when day-of-week is a wildcard', () => {
+    const afterTimestamp = Date.UTC(2026, 0, 5, 12, 0, 0); // Monday the 5th
+    expect(getNextCronOccurrence('0 9 7 * *', afterTimestamp)).toBe(Date.UTC(2026, 0, 7, 9, 0, 0));
+  });
+
+  it('falls back to a zero offset when the formatter returns an unparseable GMT offset', () => {
+    const originalFormatToParts = Intl.DateTimeFormat.prototype.formatToParts;
+    const formatToPartsSpy = spyOn(
+      Intl.DateTimeFormat.prototype,
+      'formatToParts',
+    ).mockImplementation(function (
+      this: Intl.DateTimeFormat,
+      ...arguments_: Parameters<Intl.DateTimeFormat['formatToParts']>
+    ) {
+      return originalFormatToParts
+        .call(this, ...arguments_)
+        .map((part) => (part.type === 'timeZoneName' ? { ...part, value: 'UTC' } : part));
+    });
+
+    try {
+      expect(getNextCronOccurrence('0 13 * * *', Date.UTC(2026, 0, 5, 12, 0, 0))).toBe(
+        Date.UTC(2026, 0, 5, 13, 0, 0),
+      );
+    } finally {
+      formatToPartsSpy.mockRestore();
+    }
+  });
+
+  it('throws when the formatter does not provide a resolvable weekday name', () => {
+    const originalFormatToParts = Intl.DateTimeFormat.prototype.formatToParts;
+    const formatToPartsSpy = spyOn(
+      Intl.DateTimeFormat.prototype,
+      'formatToParts',
+    ).mockImplementation(function (
+      this: Intl.DateTimeFormat,
+      ...arguments_: Parameters<Intl.DateTimeFormat['formatToParts']>
+    ) {
+      return originalFormatToParts
+        .call(this, ...arguments_)
+        .map((part) => (part.type === 'weekday' ? { ...part, value: 'Nope' } : part));
+    });
+
+    try {
+      expect(() => getNextCronOccurrence('* * * * *', Date.UTC(2026, 0, 5, 12, 0, 0))).toThrow(
+        'Unable to resolve weekday for time zone "UTC"',
+      );
+    } finally {
+      formatToPartsSpy.mockRestore();
+    }
+  });
+
   it('engine.schedule(type, input, cronExpression, options?) registers a recurring workflow and fires it at the next cron boundary', async () => {
     const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
     const engine = createEngine(clock);
@@ -450,10 +547,15 @@ describe('recurring schedules', () => {
     await tickEngine(engine, clock, requireNextFireAt(firstDescription));
     const [firstWorkflowId] = await listRunningWorkflowIds(engine);
     expect(firstWorkflowId).toBeDefined();
+    const cancelledResult = engine
+      .getHandle(firstWorkflowId!)
+      .result()
+      .catch((error: Error) => error.message);
 
     const secondDescription = await schedule.describe();
     await tickEngine(engine, clock, requireNextFireAt(secondDescription));
 
+    expect(await cancelledResult).toBe('Workflow cancelled');
     expect(await engine.get(firstWorkflowId!)).toMatchObject({ status: 'cancelled' });
     expect(await listRunningWorkflowIds(engine)).toHaveLength(1);
 
@@ -507,12 +609,16 @@ describe('recurring schedules', () => {
     });
 
     try {
+      const cancellationPromise = engine.cancel(firstWorkflowId).then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      );
       const resultPromise = engine
         .getHandle(firstWorkflowId)
         .result()
         .catch((error: Error) => error.message);
 
-      await expect(engine.cancel(firstWorkflowId)).resolves.toBeUndefined();
+      expect(await cancellationPromise).toBe('resolved');
       expect(await resultPromise).toBe('Workflow cancelled');
       await drainEngine();
 
@@ -606,6 +712,7 @@ describe('recurring schedules', () => {
     const catchUp = await firstEngine.schedule('backfill-workflow', 'catch-up', '* * * * *', {
       id: 'schedule-catch-up',
       backfill: true,
+      overlap: 'allow',
     });
     const skip = await firstEngine.schedule('backfill-workflow', 'skip-missed', '* * * * *', {
       id: 'schedule-skip',

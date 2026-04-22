@@ -194,6 +194,21 @@ describe('LocalClient', () => {
         expect.objectContaining({ status: 'cancelled', nextFireAt: null }),
       );
     });
+
+    it('exposes schedule handle describe and dispose helpers', async () => {
+      const schedule = await client.schedule('echo', { payload: 'direct-wrapper' }, '0 * * * *', {
+        id: 'local-schedule-wrapper',
+      });
+
+      expect(await schedule.describe()).toEqual(
+        expect.objectContaining({
+          id: 'local-schedule-wrapper',
+          workflowType: 'echo',
+        }),
+      );
+
+      expect(() => schedule[Symbol.dispose]()).not.toThrow();
+    });
   });
 
   describe('cancel', () => {

@@ -111,9 +111,9 @@ function createFakeDatabaseConstructor() {
       throw new Error(`Unexpected SQL in fake database: ${source}`);
     }
 
-    transaction(fn: (entries: unknown) => void) {
-      return (entries: unknown): void => {
-        fn(entries);
+    transaction<TArguments extends unknown[], TResult>(fn: (...entries: TArguments) => TResult) {
+      return (...entries: TArguments): TResult => {
+        return fn(...entries);
       };
     }
 
@@ -198,6 +198,22 @@ describe('NodeSQLiteStorage with mocked better-sqlite3', () => {
       { type: 'delete', key: 'a:1' },
     ]);
     await storage.batch([]);
+
+    expect(
+      await storage.conditionalBatch(
+        [{ key: 'a:2', expectedValue: new Uint8Array([2]) }],
+        [{ type: 'put', key: 'conditional:new', value: new Uint8Array([8]) }],
+      ),
+    ).toBe(true);
+    expect(await storage.get('conditional:new')).toEqual(new Uint8Array([8]));
+
+    expect(
+      await storage.conditionalBatch(
+        [{ key: 'a:2', expectedValue: new Uint8Array([9]) }],
+        [{ type: 'put', key: 'conditional:miss', value: new Uint8Array([7]) }],
+      ),
+    ).toBe(false);
+    expect(await storage.get('conditional:miss')).toBeNull();
 
     expect(await storage.get('batch:new')).toEqual(new Uint8Array([9]));
     expect(await storage.get('a:1')).toBeNull();

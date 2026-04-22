@@ -10,6 +10,12 @@ import {
   MAX_WORKFLOW_TAGS,
 } from './start-workflow-validation.ts';
 import type { WorkflowContext } from './types.ts';
+import {
+  buildWorkflowTagIndexOperations,
+  isWorkflowTagArray,
+  matchesWorkflowTagFilter,
+  normalizeWorkflowTags,
+} from './workflow-tags.ts';
 
 async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
   return input;
@@ -136,6 +142,29 @@ class WorkflowStateWriteTrackingStorage implements Storage {
 }
 
 describe('workflow tags', () => {
+  it('normalizes workflow tags by trimming, deduplicating, and sorting', () => {
+    expect(normalizeWorkflowTags(undefined)).toBeUndefined();
+    expect(normalizeWorkflowTags([' beta ', 'alpha', 'alpha', '   '])).toEqual(['alpha', 'beta']);
+  });
+
+  it('builds tag index operations only for changed tags', () => {
+    expect(
+      buildWorkflowTagIndexOperations('workflow-1', ['alpha', 'beta'], ['beta', 'gamma']),
+    ).toEqual([
+      { type: 'delete', key: KEYS.tagIndex('alpha', 'workflow-1') },
+      { type: 'put', key: KEYS.tagIndex('gamma', 'workflow-1'), value: new Uint8Array(0) },
+    ]);
+  });
+
+  it('matches workflow tag filters by intersection and rejects empty workflow tags', () => {
+    expect(isWorkflowTagArray(['alpha', 'beta'])).toBe(true);
+    expect(isWorkflowTagArray(['alpha', 1])).toBe(false);
+    expect(matchesWorkflowTagFilter(['alpha', 'beta'], ['alpha'])).toBe(true);
+    expect(matchesWorkflowTagFilter(['alpha', 'beta'], ['alpha', 'gamma'])).toBe(false);
+    expect(matchesWorkflowTagFilter(undefined, ['alpha'])).toBe(false);
+    expect(matchesWorkflowTagFilter(['alpha'], undefined)).toBe(true);
+  });
+
   it('tag validation rejects too many tags and oversized tags', () => {
     expect(() =>
       coerceStartWorkflowTags(
@@ -269,9 +298,7 @@ describe('workflow tags', () => {
       });
       await Bun.sleep(10);
 
-      await expect(handle.addTags('')).rejects.toThrow(
-        'Workflow tags must not contain empty tags',
-      );
+      await expect(handle.addTags('')).rejects.toThrow('Workflow tags must not contain empty tags');
     } finally {
       await engine[Symbol.asyncDispose]();
     }

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
-import type { BatchOperation } from './interface.ts';
 import { NodeSQLiteStorage } from './node-sqlite.ts';
 
 // better-sqlite3 uses native bindings that aren't supported in Bun.
@@ -134,8 +133,8 @@ function createFakeDatabaseConstructor() {
       throw new Error(`Unexpected SQL in fake database: ${source}`);
     }
 
-    transaction(fn: (entries: BatchOperation[]) => void) {
-      return (entries: BatchOperation[]) => fn(entries);
+    transaction<TArguments extends unknown[], TResult>(fn: (...entries: TArguments) => TResult) {
+      return (...entries: TArguments): TResult => fn(...entries);
     }
 
     close(): void {
@@ -329,6 +328,44 @@ describeIfAvailable('NodeSQLiteStorage (integration)', () => {
     });
   });
 
+  describe('conditionalBatch', () => {
+    it('commits operations when every condition matches', async () => {
+      await storage.put('expected', new Uint8Array([1]));
+
+      const committed = await storage.conditionalBatch(
+        [{ key: 'expected', expectedValue: new Uint8Array([1]) }],
+        [{ type: 'put', key: 'written', value: new Uint8Array([2]) }],
+      );
+
+      expect(committed).toBe(true);
+      expect(await storage.get('written')).toEqual(new Uint8Array([2]));
+    });
+
+    it('returns false and skips writes when a condition does not match', async () => {
+      await storage.put('expected', new Uint8Array([1]));
+
+      const committed = await storage.conditionalBatch(
+        [{ key: 'expected', expectedValue: new Uint8Array([9]) }],
+        [{ type: 'put', key: 'skipped', value: new Uint8Array([2]) }],
+      );
+
+      expect(committed).toBe(false);
+      expect(await storage.get('skipped')).toBeNull();
+    });
+
+    it('supports delete operations inside a committed conditional batch', async () => {
+      await storage.put('delete-me', new Uint8Array([1]));
+
+      const committed = await storage.conditionalBatch(
+        [{ key: 'missing', expectedValue: null }],
+        [{ type: 'delete', key: 'delete-me' }],
+      );
+
+      expect(committed).toBe(true);
+      expect(await storage.get('delete-me')).toBeNull();
+    });
+  });
+
   describe('dispose', () => {
     it('closes the database cleanly', () => {
       const instance = new NodeSQLiteStorage(':memory:');
@@ -363,6 +400,22 @@ it('supports the adapter behavior under Bun when a database constructor is injec
     reverse.push(key);
   }
   expect(reverse).toEqual(['a:2']);
+
+  expect(
+    await storage.conditionalBatch(
+      [{ key: 'a:1', expectedValue: new Uint8Array([1]) }],
+      [{ type: 'put', key: 'a:4', value: new Uint8Array([5]) }],
+    ),
+  ).toBe(true);
+  expect(await storage.get('a:4')).toEqual(new Uint8Array([5]));
+
+  expect(
+    await storage.conditionalBatch(
+      [{ key: 'a:1', expectedValue: new Uint8Array([9]) }],
+      [{ type: 'delete', key: 'a:4' }],
+    ),
+  ).toBe(false);
+  expect(await storage.get('a:4')).toEqual(new Uint8Array([5]));
 
   await storage.batch([
     { type: 'put', key: 'a:3', value: new Uint8Array([4]) },

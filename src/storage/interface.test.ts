@@ -7,10 +7,12 @@ import {
   KEYS,
   matchesScanOptions,
   resolvePrefixRangeEnd,
+  storageConditionalBatch,
   storageCount,
   storageDeletePrefix,
   storageHas,
   storageKeys,
+  storageValuesEqual,
   tryDecodeStorageKeyComponent,
 } from './interface.ts';
 import { MemoryStorage } from './memory.ts';
@@ -140,6 +142,42 @@ describe('storage helper fallbacks', () => {
     expect(keysCalls).toBe(1);
     expect(countCalls).toBe(1);
     expect(deletePrefixCalls).toBe(1);
+  });
+});
+
+describe('storageValuesEqual', () => {
+  it('compares nulls, length mismatches, and byte mismatches correctly', () => {
+    expect(storageValuesEqual(null, null)).toBe(true);
+    expect(storageValuesEqual(new Uint8Array([1]), null)).toBe(false);
+    expect(storageValuesEqual(new Uint8Array([1]), new Uint8Array([1, 2]))).toBe(false);
+    expect(storageValuesEqual(new Uint8Array([1, 2]), new Uint8Array([1, 3]))).toBe(false);
+    expect(storageValuesEqual(new Uint8Array([1, 2]), new Uint8Array([1, 2]))).toBe(true);
+  });
+});
+
+describe('storageConditionalBatch', () => {
+  it('throws when the backend does not support conditionalBatch', async () => {
+    const storage = createCoreStorageAdapter();
+
+    await expect(storageConditionalBatch(storage, [], [])).rejects.toThrow(
+      'This storage backend does not support conditionalBatch(), which is required for this operation.',
+    );
+  });
+
+  it('delegates to the adapter when conditionalBatch is available', async () => {
+    const storage: Storage = {
+      ...createCoreStorageAdapter(),
+      conditionalBatch: async (conditions, operations) =>
+        conditions.length === 1 && operations.length === 1,
+    };
+
+    await expect(
+      storageConditionalBatch(
+        storage,
+        [{ key: 'wf:1', expectedValue: null }],
+        [{ type: 'delete', key: 'wf:1' }],
+      ),
+    ).resolves.toBe(true);
   });
 });
 
