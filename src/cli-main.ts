@@ -4,11 +4,13 @@ import {
   createStorage,
   DOCTOR_HELP_TEXT,
   executeDoctor,
+  executeSchedule,
   executeTimeline,
   executeValidate,
   executeVersionCheck,
   HELP_TEXT,
   parseCliArguments,
+  SCHEDULE_HELP_TEXT,
   TIMELINE_HELP_TEXT,
   VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
@@ -120,6 +122,16 @@ if (parsedArguments.command === 'serve') {
   }
 
   const result = await executeTimeline(parsedArguments);
+  if (result.stderr) console.error(result.stderr);
+  if (result.stdout) console.log(result.stdout);
+  process.exit(result.exitCode);
+} else if (parsedArguments.command === 'schedule') {
+  if (parsedArguments.help) {
+    console.log(SCHEDULE_HELP_TEXT);
+    process.exit(0);
+  }
+
+  const result = await executeSchedule(parsedArguments);
   if (result.stderr) console.error(result.stderr);
   if (result.stdout) console.log(result.stdout);
   process.exit(result.exitCode);

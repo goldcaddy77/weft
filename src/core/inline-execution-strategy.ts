@@ -81,13 +81,15 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
   readonly #generators: Map<string, AsyncGenerator>;
   readonly #abortControllers: Map<string, AbortController>;
   readonly #contexts: Map<string, Context>;
-  #messageHandler: ((message: WorkerOutboundMessage) => void) | null;
+  readonly #workflowTurns: Map<string, Promise<void>>;
+  #messageHandler: ((message: WorkerOutboundMessage) => void | Promise<void>) | null;
 
   constructor(dependencies: InlineExecutionDependencies) {
     this.#dependencies = dependencies;
     this.#generators = new Map();
     this.#abortControllers = new Map();
     this.#contexts = new Map();
+    this.#workflowTurns = new Map();
     this.#messageHandler = null;
   }
 
@@ -95,7 +97,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
   // ExecutionStrategy interface
   // -------------------------------------------------------------------------
 
-  onMessage(handler: (message: WorkerOutboundMessage) => void): void {
+  onMessage(handler: (message: WorkerOutboundMessage) => void | Promise<void>): void {
     this.#messageHandler = handler;
   }
 
@@ -148,7 +150,6 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     const generator = registration.handler(context, parameters.input);
     this.#generators.set(parameters.workflowId, generator);
 
-    // Drive the generator (non-blocking)
     void this.#driveGenerator(parameters.workflowId, generator, undefined);
   }
 
@@ -203,6 +204,10 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     return this.#abortControllers.get(workflowId);
   }
 
+  waitForWorkflowTurn(workflowId: string): Promise<void> | undefined {
+    return this.#workflowTurns.get(workflowId);
+  }
+
   hasGenerator(workflowId: string): boolean {
     return this.#generators.has(workflowId);
   }
@@ -250,6 +255,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     this.#generators.clear();
     this.#abortControllers.clear();
     this.#contexts.clear();
+    this.#workflowTurns.clear();
     this.#messageHandler = null;
   }
 
@@ -351,12 +357,28 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
   // -------------------------------------------------------------------------
 
   #emit(message: WorkerOutboundMessage): void {
-    this.#messageHandler?.(message);
+    const result = this.#messageHandler?.(message);
+    if (result instanceof Promise) {
+      const handledTurn = result.finally(() => {
+        if (this.#workflowTurns.get(message.workflowId) === handledTurn) {
+          this.#workflowTurns.delete(message.workflowId);
+        }
+      });
+      // The engine only awaits these turns for specific recovery paths.
+      // Mark the tracked promise as observed so rejected handler turns do not
+      // surface as unhandled rejections when no caller awaits them.
+      void handledTurn.catch(() => {});
+      this.#workflowTurns.set(message.workflowId, handledTurn);
+      return;
+    }
+
+    this.#workflowTurns.delete(message.workflowId);
   }
 
   #cleanup(workflowId: string): void {
     this.#generators.delete(workflowId);
     this.#abortControllers.delete(workflowId);
     this.#contexts.delete(workflowId);
+    this.#workflowTurns.delete(workflowId);
   }
 }

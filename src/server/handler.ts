@@ -27,6 +27,10 @@ import type {
   ForkOptions,
   ListFilter,
   ReviewDecision,
+  ScheduleAccessOptions,
+  ScheduleFilter,
+  ScheduleOptions,
+  ScheduleStatus,
   SearchAttributeValue,
   StartOptions,
   WorkflowStatus,
@@ -267,6 +271,206 @@ function validateStartWorkflowOptions(body: Record<string, unknown>): StartOptio
   assertExclusiveStartWorkflowOptions(options.startAt, options.startAfter);
 
   return options;
+}
+
+const VALID_SCHEDULE_OVERLAP_POLICIES = new Set<NonNullable<ScheduleOptions['overlap']>>([
+  'skip',
+  'queue',
+  'cancel-running',
+  'allow',
+]);
+const VALID_SCHEDULE_STATUSES = new Set<ScheduleStatus>(['active', 'paused', 'cancelled']);
+
+function validateScheduleOptions(body: Record<string, unknown>): {
+  type: string;
+  input: unknown;
+  cronExpression: string;
+  options: ScheduleOptions;
+} {
+  const type = body['type'];
+  if (typeof type !== 'string' || type.length === 0) {
+    throw new Error('Missing required field: type');
+  }
+
+  const cronExpression = body['cronExpression'];
+  if (typeof cronExpression !== 'string' || cronExpression.length === 0) {
+    throw new Error('Missing required field: cronExpression');
+  }
+
+  const options: ScheduleOptions = {};
+
+  const id = body['id'];
+  if (id !== undefined) {
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new Error('Field "id" must be a non-empty string');
+    }
+    options.id = id;
+  }
+
+  const overlap = body['overlap'];
+  if (overlap !== undefined) {
+    if (
+      typeof overlap !== 'string' ||
+      !VALID_SCHEDULE_OVERLAP_POLICIES.has(overlap as NonNullable<ScheduleOptions['overlap']>)
+    ) {
+      throw new Error('Field "overlap" must be one of skip, queue, cancel-running, allow');
+    }
+    options.overlap = overlap as NonNullable<ScheduleOptions['overlap']>;
+  }
+
+  const backfill = body['backfill'];
+  if (backfill !== undefined) {
+    if (typeof backfill !== 'boolean') {
+      throw new Error('Field "backfill" must be a boolean');
+    }
+    options.backfill = backfill;
+  }
+
+  return {
+    type,
+    input: body['input'],
+    cronExpression,
+    options,
+  };
+}
+
+function parseScheduleListFilter(request: Request): ScheduleFilter {
+  const url = new URL(request.url);
+  const filter: ScheduleFilter = {};
+
+  const statuses = url.searchParams.getAll('status');
+  if (statuses.length > 0) {
+    const normalizedStatuses: ScheduleStatus[] = [];
+    for (const status of statuses) {
+      if (!VALID_SCHEDULE_STATUSES.has(status as ScheduleStatus)) {
+        throw new Error('Query parameter "status" must be one of active, paused, cancelled');
+      }
+      normalizedStatuses.push(status as ScheduleStatus);
+    }
+
+    const [firstStatus] = normalizedStatuses;
+    if (normalizedStatuses.length === 1 && firstStatus !== undefined) {
+      filter.status = firstStatus;
+    } else {
+      filter.status = normalizedStatuses;
+    }
+  }
+
+  const workflowType = url.searchParams.get('workflowType');
+  if (workflowType !== null) {
+    filter.workflowType = workflowType;
+  }
+
+  const tenantId = url.searchParams.get('tenantId');
+  if (tenantId !== null) {
+    filter.tenantId = tenantId;
+  }
+
+  const limit = url.searchParams.get('limit');
+  if (limit !== null) {
+    const parsed = Number(limit);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new Error('Query parameter "limit" must be a positive integer');
+    }
+    filter.limit = Math.min(parsed, 1000);
+  }
+
+  const offset = url.searchParams.get('offset');
+  if (offset !== null) {
+    const parsed = Number(offset);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new Error('Query parameter "offset" must be a non-negative integer');
+    }
+    filter.offset = parsed;
+  }
+
+  return filter;
+}
+
+function scheduleErrorResponse(error: unknown): Response {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalizedMessage = message.toLowerCase();
+
+  if (normalizedMessage.includes('not found')) {
+    return errorResponse(message, 404);
+  }
+
+  if (normalizedMessage.includes('already exists')) {
+    return errorResponse(message, 409);
+  }
+
+  if (normalizedMessage.includes('cannot be resumed')) {
+    return errorResponse(message, 409);
+  }
+
+  if (normalizedMessage.includes('authenticated tenant')) {
+    return errorResponse(message, 403);
+  }
+
+  if (
+    message.includes('Missing required field') ||
+    normalizedMessage.includes('must be') ||
+    normalizedMessage.includes('no workflow registered') ||
+    normalizedMessage.includes('cron')
+  ) {
+    return errorResponse(message, 400);
+  }
+
+  return errorResponse(message, 500);
+}
+
+function getAuthenticatedScheduleTenantId(
+  authContext: AuthenticatedRequestContext | undefined,
+): string | Response | undefined {
+  if (authContext?.method !== 'jwt') {
+    return undefined;
+  }
+
+  const authenticatedTenantId = getAuthenticatedTenantId(authContext.claims);
+  if (authenticatedTenantId === null) {
+    return errorResponse(
+      'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim',
+      403,
+    );
+  }
+
+  return authenticatedTenantId;
+}
+
+function applyAuthenticatedScheduleTenantScope(
+  filter: ScheduleFilter,
+  authContext: AuthenticatedRequestContext | undefined,
+): Response | undefined {
+  const authenticatedTenantId = getAuthenticatedScheduleTenantId(authContext);
+  if (authenticatedTenantId instanceof Response) {
+    return authenticatedTenantId;
+  }
+
+  if (authenticatedTenantId === undefined) {
+    return undefined;
+  }
+
+  if (filter.tenantId !== undefined && filter.tenantId !== authenticatedTenantId) {
+    return errorResponse('Schedule access is limited to the authenticated tenant', 403);
+  }
+
+  filter.tenantId = authenticatedTenantId;
+  return undefined;
+}
+
+function getScheduleAccessOptions(
+  authContext: AuthenticatedRequestContext | undefined,
+): ScheduleAccessOptions | Response | undefined {
+  const authenticatedTenantId = getAuthenticatedScheduleTenantId(authContext);
+  if (authenticatedTenantId instanceof Response) {
+    return authenticatedTenantId;
+  }
+
+  if (authenticatedTenantId === undefined) {
+    return undefined;
+  }
+
+  return { tenantId: authenticatedTenantId };
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +793,169 @@ async function handleListWorkflows(request: Request, engine: Engine): Promise<Re
 
 async function handleGetRetentionOverview(engine: Engine): Promise<Response> {
   return jsonResponse(engine.getRetentionOverview());
+}
+
+async function handleListSchedules(
+  request: Request,
+  engine: Engine,
+  authContext: AuthenticatedRequestContext | undefined,
+): Promise<Response> {
+  try {
+    const filter = parseScheduleListFilter(request);
+    const authError = applyAuthenticatedScheduleTenantScope(filter, authContext);
+    if (authError !== undefined) {
+      return authError;
+    }
+    return jsonResponse(await engine.listSchedules(filter));
+  } catch (error) {
+    return scheduleErrorResponse(error);
+  }
+}
+
+async function handleCreateSchedule(
+  request: Request,
+  engine: Engine,
+  authContext: AuthenticatedRequestContext | undefined,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  if (typeof body !== 'object' || body === null) {
+    return errorResponse('Request body must be a JSON object', 400);
+  }
+
+  try {
+    const validated = validateScheduleOptions(body as Record<string, unknown>);
+    const accessOptions = getScheduleAccessOptions(authContext);
+    if (accessOptions instanceof Response) {
+      return accessOptions;
+    }
+    const handle = await engine.schedule(
+      validated.type,
+      validated.input,
+      validated.cronExpression,
+      validated.options,
+      accessOptions,
+    );
+    return jsonResponse({ id: handle.id }, 201);
+  } catch (error) {
+    return scheduleErrorResponse(error);
+  }
+}
+
+async function handleGetSchedule(
+  engine: Engine,
+  scheduleId: string,
+  authContext: AuthenticatedRequestContext | undefined,
+): Promise<Response> {
+  try {
+    const accessOptions = getScheduleAccessOptions(authContext);
+    if (accessOptions instanceof Response) {
+      return accessOptions;
+    }
+
+    const schedule = await engine.getSchedule(scheduleId, accessOptions);
+    if (schedule === null) {
+      return errorResponse(`Schedule "${scheduleId}" not found`, 404);
+    }
+
+    return jsonResponse(schedule);
+  } catch (error) {
+    return scheduleErrorResponse(error);
+  }
+}
+
+async function handlePauseSchedule(
+  engine: Engine,
+  scheduleId: string,
+  authContext: AuthenticatedRequestContext | undefined,
+): Promise<Response> {
+  try {
+    const accessOptions = getScheduleAccessOptions(authContext);
+    if (accessOptions instanceof Response) {
+      return accessOptions;
+    }
+
+    await engine.pauseSchedule(scheduleId, accessOptions);
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return scheduleErrorResponse(error);
+  }
+}
+
+async function handleResumeSchedule(
+  engine: Engine,
+  scheduleId: string,
+  authContext: AuthenticatedRequestContext | undefined,
+): Promise<Response> {
+  try {
+    const accessOptions = getScheduleAccessOptions(authContext);
+    if (accessOptions instanceof Response) {
+      return accessOptions;
+    }
+
+    await engine.resumeSchedule(scheduleId, accessOptions);
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return scheduleErrorResponse(error);
+  }
+}
+
+async function handleCancelSchedule(
+  engine: Engine,
+  scheduleId: string,
+  authContext: AuthenticatedRequestContext | undefined,
+): Promise<Response> {
+  try {
+    const accessOptions = getScheduleAccessOptions(authContext);
+    if (accessOptions instanceof Response) {
+      return accessOptions;
+    }
+
+    await engine.cancelSchedule(scheduleId, accessOptions);
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return scheduleErrorResponse(error);
+  }
+}
+
+async function handleUpdateSchedule(
+  request: Request,
+  engine: Engine,
+  scheduleId: string,
+  authContext: AuthenticatedRequestContext | undefined,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  if (typeof body !== 'object' || body === null) {
+    return errorResponse('Request body must be a JSON object', 400);
+  }
+
+  const cronExpression = (body as Record<string, unknown>)['cronExpression'];
+  if (typeof cronExpression !== 'string' || cronExpression.length === 0) {
+    return errorResponse('Missing required field: cronExpression', 400);
+  }
+
+  try {
+    const accessOptions = getScheduleAccessOptions(authContext);
+    if (accessOptions instanceof Response) {
+      return accessOptions;
+    }
+
+    await engine.updateSchedule(scheduleId, cronExpression, accessOptions);
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return scheduleErrorResponse(error);
+  }
 }
 
 async function handlePurgeWorkflows(request: Request, engine: Engine): Promise<Response> {
@@ -1391,6 +1758,20 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   listWorkflows: async ({ request, engine }) => handleListWorkflows(request, engine),
   recoverAll: async ({ engine }) => handleRecoverAll(engine),
   getRetentionOverview: async ({ engine }) => handleGetRetentionOverview(engine),
+  listSchedules: async ({ request, engine, options }) =>
+    handleListSchedules(request, engine, options?.authContext),
+  createSchedule: async ({ request, engine, options }) =>
+    handleCreateSchedule(request, engine, options?.authContext),
+  getSchedule: async ({ engine, options, param }) =>
+    handleGetSchedule(engine, param('id'), options?.authContext),
+  updateSchedule: async ({ request, engine, options, param }) =>
+    handleUpdateSchedule(request, engine, param('id'), options?.authContext),
+  cancelSchedule: async ({ engine, options, param }) =>
+    handleCancelSchedule(engine, param('id'), options?.authContext),
+  pauseSchedule: async ({ engine, options, param }) =>
+    handlePauseSchedule(engine, param('id'), options?.authContext),
+  resumeSchedule: async ({ engine, options, param }) =>
+    handleResumeSchedule(engine, param('id'), options?.authContext),
   setBudgetPolicy: async ({ request, engine }) => handleSetBudgetPolicy(request, engine),
   getBudgetPolicy: async ({ engine, param }) => handleGetBudgetPolicy(engine, param('namespace')),
   getTenantQuota: async ({ engine, options, param }) =>

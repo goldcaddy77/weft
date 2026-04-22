@@ -1379,7 +1379,15 @@ function paginateScheduleSummaries(
   items: ScheduleSummary[],
   filter?: ScheduleFilter,
 ): PaginatedResult<ScheduleSummary> {
-  return paginateItems(items, filter);
+  const sortedItems = items.toSorted((left, right) => {
+    if (left.createdAt !== right.createdAt) {
+      return left.createdAt - right.createdAt;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+
+  return paginateItems(sortedItems, filter);
 }
 
 function createScheduleTimerId(scheduleId: string): string {
@@ -3086,6 +3094,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     input: unknown,
     cronExpression: string,
     options?: ScheduleOptions,
+    accessOptions?: ScheduleAccessOptions,
   ): Promise<ScheduleHandle> {
     if (!this.#registrations.has(type)) {
       throw new Error(`No workflow registered with name "${type}"`);
@@ -3096,6 +3105,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     const normalizedOptions = normalizeScheduleOptions(options);
+    const normalizedAccessOptions = normalizeScheduleAccessOptions(accessOptions);
     parseCronExpression(cronExpression);
     const scheduleId = normalizedOptions.id ?? crypto.randomUUID();
     if (this.#pendingScheduleCreations.has(scheduleId)) {
@@ -3109,7 +3119,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       const now = this.#options.getNow();
-      const tenant = await this.#resolveTenantForStart(scheduleId, type, input);
+      const resolvedTenant = await this.#resolveTenantForStart(scheduleId, type, input);
+      const tenant =
+        normalizedAccessOptions?.tenantId === undefined
+          ? resolvedTenant
+          : resolvedTenant === undefined
+            ? { id: normalizedAccessOptions.tenantId }
+            : resolvedTenant.id === normalizedAccessOptions.tenantId
+              ? resolvedTenant
+              : (() => {
+                  throw new Error('Schedule creation is limited to the authenticated tenant');
+                })();
       const state: ScheduleState = {
         id: scheduleId,
         workflowType: type,
@@ -3661,6 +3681,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #createWorkflowResultPromise(workflowId: string): Promise<unknown> {
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
     this.#resultResolvers.set(workflowId, { resolve, reject });
+    // Internal workflow starts can create handles whose result promises are
+    // never observed directly, so mark the promise handled to avoid unhandled
+    // rejection noise while still allowing callers to await the original promise.
+    void promise.catch(() => {});
     return promise;
   }
 
@@ -3668,6 +3692,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
     const resolver = { resolve, reject };
     this.#resultResolvers.set(workflowId, resolver);
+    void promise.catch(() => {});
     void this.#bootstrapWorkflowResultResolver(workflowId, resolver);
     return promise;
   }
@@ -7117,6 +7142,23 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
+  async #settleBackfillScheduleState(state: ScheduleState): Promise<ScheduleState> {
+    if (!state.currentWorkflowId) {
+      return state;
+    }
+
+    // Inline execution can complete or checkpoint during the same scheduler
+    // turn that started the run. Wait for that first turn to finish handling
+    // its outbound message before re-reading persisted schedule state.
+    const pendingTurn = this.#inlineStrategy?.waitForWorkflowTurn(state.currentWorkflowId);
+    if (pendingTurn) {
+      await pendingTurn;
+    }
+
+    const refreshed = await this.#refreshScheduledWorkflowState(state);
+    return refreshed.state;
+  }
+
   async #handleScheduleTimer(entry: TimerEntry): Promise<void> {
     const state = await this.#loadScheduleState(entry.workflowId);
     if (!state || state.status !== 'active' || state.nextFireAt === null) {
@@ -7163,14 +7205,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // occurrence or losing the active workflow linkage.
         await this.#writeScheduleState(nextState, { includeTimer: false });
 
-        if (state.backfill && nextState.currentWorkflowId) {
-          // Backfill can process several missed occurrences in one tick. Give
-          // immediately-completing runs one microtask turn to publish their
-          // terminal state, then refresh the overlap bookkeeping before the
-          // next recovered occurrence is evaluated.
-          await Promise.resolve();
-          const refreshedState = await this.#refreshScheduledWorkflowState(nextState);
-          nextState = refreshedState.state;
+        // Backfill can process multiple missed ticks in one scheduler turn.
+        // Wait for the inline strategy to finish handling the just-started
+        // run's outbound message so immediately-completing workflows do not
+        // look active and incorrectly suppress later catch-up occurrences
+        // under overlap policies like "skip" or "queue".
+        if (state.backfill && nextState.currentWorkflowId !== undefined) {
+          nextState = await this.#settleBackfillScheduleState(nextState);
         }
       }
 

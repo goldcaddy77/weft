@@ -16,6 +16,9 @@ import type {
   PaginatedResult,
   PurgeResult,
   RetentionOverview,
+  ScheduleFilter,
+  ScheduleOptions,
+  ScheduleSummary,
   SearchAttributeValue,
   StartOptions,
   SubmitReviewOptions,
@@ -71,6 +74,32 @@ export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable
   removeTags(...tags: string[]): Promise<void>;
 }
 
+/**
+ * A reference to a recurring schedule that provides convenience methods.
+ *
+ * Mirrors the core {@link ScheduleHandle} surface without leaking the engine
+ * implementation type into the transport-neutral client contract.
+ */
+export interface ClientScheduleHandle extends Disposable {
+  /** The schedule's unique identifier. */
+  readonly id: string;
+
+  /** Pause this schedule. */
+  pause(): Promise<void>;
+
+  /** Resume this schedule. */
+  resume(): Promise<void>;
+
+  /** Cancel this schedule. */
+  cancel(): Promise<void>;
+
+  /** Update the schedule's cron expression. */
+  update(newCronExpression: string): Promise<void>;
+
+  /** Read the latest persisted summary for this schedule. */
+  describe(): Promise<ScheduleSummary | null>;
+}
+
 // ---------------------------------------------------------------------------
 // Update result (subset of internal UpdateResponse)
 // ---------------------------------------------------------------------------
@@ -91,14 +120,40 @@ export interface WeftClient {
   /** Start a new workflow and return a handle to it. */
   start(type: string, input: unknown, options?: StartOptions): Promise<ClientHandle>;
 
+  /** Register a recurring schedule and return a handle to it. */
+  schedule(
+    type: string,
+    input: unknown,
+    cronExpression: string,
+    options?: ScheduleOptions,
+  ): Promise<ClientScheduleHandle>;
+
   /** Get the full persisted state of a workflow, or `null` if not found. */
   get(id: string): Promise<WorkflowState | null>;
+
+  /** Get the current summary of a recurring schedule, or `null` if not found. */
+  getSchedule(id: string): Promise<ScheduleSummary | null>;
 
   /** List workflows with optional filtering and pagination. */
   list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>>;
 
+  /** List recurring schedules with optional filtering and pagination. */
+  listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>>;
+
   /** Cancel a running workflow. */
   cancel(id: string): Promise<void>;
+
+  /** Pause a recurring schedule. */
+  pauseSchedule(id: string): Promise<void>;
+
+  /** Resume a recurring schedule. */
+  resumeSchedule(id: string): Promise<void>;
+
+  /** Cancel a recurring schedule. */
+  cancelSchedule(id: string): Promise<void>;
+
+  /** Update a recurring schedule's cron expression. */
+  updateSchedule(id: string, newCronExpression: string): Promise<void>;
 
   /** Send a named signal to a workflow. */
   signal(id: string, name: string, payload?: unknown): Promise<void>;

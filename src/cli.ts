@@ -12,7 +12,12 @@
 import { parseArgs } from 'node:util';
 
 import { isRecord, safeDebugStringify } from './core/debug-output.ts';
-import type { ActivityDefinition, WorkflowRegistration } from './core/types.ts';
+import type { Engine } from './core/engine.ts';
+import type {
+  ActivityDefinition,
+  ScheduleOverlapPolicy,
+  WorkflowRegistration,
+} from './core/types.ts';
 import type { Storage } from './storage/interface.ts';
 
 // ---------------------------------------------------------------------------
@@ -21,6 +26,7 @@ import type { Storage } from './storage/interface.ts';
 
 /** Supported storage backend identifiers for the `--storage` flag. */
 export type StorageBackend = 'sqlite' | 'lmdb' | 'memory';
+type PersistentStorageBackend = Exclude<StorageBackend, 'memory'>;
 
 export type CliCommand =
   | {
@@ -47,15 +53,60 @@ export type CliCommand =
       step?: number;
       diff?: [number, number];
       help: boolean;
+    }
+  | {
+      command: 'schedule';
+      action: 'list';
+      database: string;
+      storage: PersistentStorageBackend;
+      help: boolean;
+      json: boolean;
+    }
+  | {
+      command: 'schedule';
+      action: 'create';
+      database: string;
+      storage: PersistentStorageBackend;
+      workflows: string;
+      workflowType: string;
+      cronExpression: string;
+      input: string;
+      id?: string;
+      overlap?: 'skip' | 'queue' | 'cancel-running' | 'allow';
+      backfill: boolean;
+      help: boolean;
+      json: boolean;
+    }
+  | {
+      command: 'schedule';
+      action: 'pause' | 'resume' | 'cancel';
+      database: string;
+      storage: PersistentStorageBackend;
+      scheduleId: string;
+      help: boolean;
+      json: boolean;
     };
+
+type ScheduleCommand = Extract<CliCommand, { command: 'schedule' }>;
+type ScheduleAction = ScheduleCommand['action'];
+type ScheduleListCommand = Extract<ScheduleCommand, { action: 'list' }>;
+type ScheduleCreateCommand = Extract<ScheduleCommand, { action: 'create' }>;
+type ScheduleMutationCommand = Extract<ScheduleCommand, { action: 'pause' | 'resume' | 'cancel' }>;
 
 // ---------------------------------------------------------------------------
 // Known subcommands
 // ---------------------------------------------------------------------------
 
-const KNOWN_SUBCOMMANDS = new Set(['doctor', 'version:check', 'validate', 'timeline']);
+const KNOWN_SUBCOMMANDS = new Set(['doctor', 'version:check', 'validate', 'timeline', 'schedule']);
 
 const VALID_STORAGE_BACKENDS = new Set<string>(['sqlite', 'lmdb', 'memory']);
+const SCHEDULE_ACTIONS = new Set<ScheduleAction>(['list', 'create', 'pause', 'resume', 'cancel']);
+const VALID_SCHEDULE_OVERLAP_POLICIES = new Set<ScheduleOverlapPolicy>([
+  'skip',
+  'queue',
+  'cancel-running',
+  'allow',
+]);
 
 // ---------------------------------------------------------------------------
 // Argument parsing (exported for testing)
@@ -114,12 +165,40 @@ export function parseCliArguments(args: string[]): CliCommand {
     return parseTimelineArguments(remainingArgs);
   }
 
+  if (subcommand === 'schedule') {
+    return parseScheduleArguments(remainingArgs);
+  }
+
   return parseServeArguments(remainingArgs);
 }
 
 /** Validates that a string is a known storage backend identifier. */
 function isValidStorageBackend(value: string): value is StorageBackend {
   return VALID_STORAGE_BACKENDS.has(value);
+}
+
+function parseStorageBackend(value: string | undefined): StorageBackend {
+  const storageValue = value ?? 'sqlite';
+
+  if (!isValidStorageBackend(storageValue)) {
+    throw new Error(
+      `Invalid storage backend '${storageValue}'. Must be one of: sqlite, lmdb, memory`,
+    );
+  }
+
+  return storageValue;
+}
+
+function parsePersistentStorageBackend(value: string | undefined): PersistentStorageBackend {
+  const storageValue = parseStorageBackend(value);
+
+  if (storageValue === 'memory') {
+    throw new Error(
+      "Invalid storage backend 'memory'. Schedule commands support only sqlite and lmdb because data must persist across CLI invocations",
+    );
+  }
+
+  return storageValue;
 }
 
 function parseServeArguments(args: string[]): CliCommand {
@@ -137,19 +216,11 @@ function parseServeArguments(args: string[]): CliCommand {
     allowNegative: true,
   });
 
-  const storageValue = values.storage ?? 'sqlite';
-
-  if (!isValidStorageBackend(storageValue)) {
-    throw new Error(
-      `Invalid storage backend '${storageValue}'. Must be one of: sqlite, lmdb, memory`,
-    );
-  }
-
   return {
     command: 'serve',
     port: values.port ?? '7233',
     database: values.database ?? './weft.db',
-    storage: storageValue,
+    storage: parseStorageBackend(values.storage),
     ui: values.ui ?? true,
     help: values.help ?? false,
   };
@@ -265,6 +336,163 @@ function parseTimelineArguments(args: string[]): CliCommand {
   };
 }
 
+function parseScheduleCliValues(args: string[]) {
+  return parseArgs({
+    args,
+    options: {
+      database: { type: 'string', short: 'd', default: './weft.db' },
+      storage: { type: 'string', short: 's', default: 'sqlite' },
+      workflows: { type: 'string', short: 'w', default: '' },
+      input: { type: 'string', default: 'null' },
+      id: { type: 'string' },
+      overlap: { type: 'string' },
+      backfill: { type: 'boolean', default: false },
+      help: { type: 'boolean', short: 'h', default: false },
+      json: { type: 'boolean', short: 'j', default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+}
+
+function parseScheduleOverlapPolicy(value: string | undefined): ScheduleOverlapPolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!VALID_SCHEDULE_OVERLAP_POLICIES.has(value as ScheduleOverlapPolicy)) {
+    throw new Error(
+      `Invalid overlap policy '${value}'. Must be one of: skip, queue, cancel-running, allow`,
+    );
+  }
+
+  return value as ScheduleOverlapPolicy;
+}
+
+function buildScheduleListCommand(
+  values: ReturnType<typeof parseScheduleCliValues>['values'],
+): ScheduleListCommand {
+  return {
+    command: 'schedule',
+    action: 'list',
+    database: values.database ?? './weft.db',
+    storage: parsePersistentStorageBackend(values.storage),
+    help: values.help ?? false,
+    json: values.json ?? false,
+  };
+}
+
+function buildScheduleHelpCommand(
+  values: ReturnType<typeof parseScheduleCliValues>['values'],
+): ScheduleListCommand {
+  return {
+    command: 'schedule',
+    action: 'list',
+    database: values.database ?? './weft.db',
+    storage: 'sqlite',
+    help: true,
+    json: values.json ?? false,
+  };
+}
+
+function formatScheduleActionList(): string {
+  return [...SCHEDULE_ACTIONS].join(', ');
+}
+
+function assertExactSchedulePositionals(
+  action: string,
+  positionals: string[],
+  count: number,
+  usage: string,
+): void {
+  if (positionals.length === count) {
+    return;
+  }
+
+  const noun = count === 1 ? 'positional argument' : 'positional arguments';
+  throw new Error(`schedule ${action} expects exactly ${count} ${noun}: ${usage}`);
+}
+
+function requireScheduleAction(positionals: string[]): ScheduleAction {
+  const action = positionals[0];
+  if (action === undefined) {
+    throw new Error(`Missing schedule action. Expected one of: ${formatScheduleActionList()}`);
+  }
+
+  if (!SCHEDULE_ACTIONS.has(action as ScheduleAction)) {
+    throw new Error(
+      `Unknown schedule action "${action}". Expected one of: ${formatScheduleActionList()}`,
+    );
+  }
+
+  return action as ScheduleAction;
+}
+
+function buildScheduleCreateCommand(
+  values: ReturnType<typeof parseScheduleCliValues>['values'],
+  positionals: string[],
+): ScheduleCreateCommand {
+  const overlap = parseScheduleOverlapPolicy(values.overlap);
+
+  return {
+    command: 'schedule',
+    action: 'create',
+    database: values.database ?? './weft.db',
+    storage: parsePersistentStorageBackend(values.storage),
+    workflows: values.workflows ?? '',
+    workflowType: positionals[0] ?? '',
+    cronExpression: positionals[1] ?? '',
+    input: values.input ?? 'null',
+    ...(values.id !== undefined ? { id: values.id } : {}),
+    ...(overlap !== undefined ? { overlap } : {}),
+    backfill: values.backfill ?? false,
+    help: values.help ?? false,
+    json: values.json ?? false,
+  };
+}
+
+function buildScheduleMutationCommand(
+  action: ScheduleMutationCommand['action'],
+  values: ReturnType<typeof parseScheduleCliValues>['values'],
+  positionals: string[],
+): ScheduleMutationCommand {
+  return {
+    command: 'schedule',
+    action,
+    database: values.database ?? './weft.db',
+    storage: parsePersistentStorageBackend(values.storage),
+    scheduleId: positionals[0] ?? '',
+    help: values.help ?? false,
+    json: values.json ?? false,
+  };
+}
+
+function parseScheduleArguments(args: string[]): CliCommand {
+  const { values, positionals } = parseScheduleCliValues(args);
+  if (values.help) {
+    return buildScheduleHelpCommand(values);
+  }
+
+  const action = requireScheduleAction(positionals);
+  const actionPositionals = positionals.slice(1);
+
+  if (action === 'create') {
+    assertExactSchedulePositionals(action, actionPositionals, 2, '<workflowType> <cronExpression>');
+    return buildScheduleCreateCommand(values, actionPositionals);
+  }
+
+  if (action === 'pause' || action === 'resume' || action === 'cancel') {
+    assertExactSchedulePositionals(action, actionPositionals, 1, '<scheduleId>');
+    return buildScheduleMutationCommand(action, values, actionPositionals);
+  }
+
+  if (actionPositionals.length > 0) {
+    throw new Error('schedule list does not accept positional arguments');
+  }
+
+  return buildScheduleListCommand(values);
+}
+
 // ---------------------------------------------------------------------------
 // Help text
 // ---------------------------------------------------------------------------
@@ -277,6 +505,7 @@ Usage: weft [command] [options]
 Commands:
   serve           Start the Weft server (default)
   doctor          Run diagnostics on the Weft database
+  schedule        Manage recurring schedules
   timeline        Inspect workflow timeline and replay history
   version:check   Check workflow version compatibility
   validate        Lint workflow registrations for design-time anti-patterns
@@ -323,6 +552,28 @@ Options:
   -d, --database <path>     Database file path (default: ./weft.db)
       --step <step>         Show replay details for one checkpoint step
       --diff                Diff two checkpoint steps (requires two positional step numbers)
+  -h, --help                Show this help message
+`;
+
+export const SCHEDULE_HELP_TEXT = `
+weft schedule - Manage recurring schedules
+
+Usage:
+  weft schedule list [options]
+  weft schedule create <workflowType> <cronExpression> [options]
+  weft schedule pause <scheduleId> [options]
+  weft schedule resume <scheduleId> [options]
+  weft schedule cancel <scheduleId> [options]
+
+Options:
+  -d, --database <path>     Database file path (default: ./weft.db)
+  -s, --storage <backend>   Storage backend: sqlite, lmdb (default: sqlite)
+  -w, --workflows <path>    Path to workflow registrations module (required for create)
+      --input <json>        JSON input payload for create (default: null)
+      --id <id>             Custom schedule id for create
+      --overlap <policy>    Overlap policy: skip, queue, cancel-running, allow
+      --backfill            Run missed ticks on recovery
+  -j, --json                Output results as JSON
   -h, --help                Show this help message
 `;
 
@@ -593,6 +844,212 @@ export async function executeTimeline(options: {
           : timeline.map(formatTimelineLine).join('\n'),
       exitCode: 0,
     };
+  } finally {
+    await engine[Symbol.asyncDispose]();
+    storage[Symbol.dispose]();
+  }
+}
+
+function formatScheduleLine(schedule: {
+  id: string;
+  workflowType: string;
+  cronExpression: string;
+  status: string;
+  nextFireAt: number | null;
+}): string {
+  return [
+    schedule.id,
+    schedule.workflowType,
+    schedule.status,
+    schedule.cronExpression,
+    schedule.nextFireAt === null ? 'none' : new Date(schedule.nextFireAt).toISOString(),
+  ].join(' | ');
+}
+
+function formatScheduleCommandOutput(schedule: unknown, json: boolean, message: string): string {
+  return json ? JSON.stringify(schedule, null, 2) : message;
+}
+
+function getScheduleStorageValidationError(storage: string): string | null {
+  if (storage !== 'memory') {
+    return null;
+  }
+
+  return 'Error: --storage memory is not supported for schedule commands because data does not persist across CLI invocations';
+}
+
+async function executeScheduleList(
+  options: ScheduleListCommand,
+  engine: Engine,
+): Promise<CommandOutput> {
+  const result = await engine.listSchedules();
+  const stdout = options.json
+    ? JSON.stringify(result, null, 2)
+    : result.items.length === 0
+      ? 'No schedules found.'
+      : [
+          'ID | Workflow Type | Status | Cron | Next Fire',
+          ...result.items.map(formatScheduleLine),
+        ].join('\n');
+
+  return { stdout, exitCode: 0 };
+}
+
+function getScheduleCreateValidationError(options: ScheduleCreateCommand): string | null {
+  if (!options.workflows) {
+    return 'Error: --workflows flag is required for schedule create';
+  }
+
+  if (!options.workflowType) {
+    return 'Error: missing required argument <workflowType> for schedule create';
+  }
+
+  if (!options.cronExpression) {
+    return 'Error: missing required argument <cronExpression> for schedule create';
+  }
+
+  return null;
+}
+
+function parseScheduleInput(
+  input: string,
+): { ok: true; value: unknown } | { ok: false; message: string } {
+  try {
+    return { ok: true, value: JSON.parse(input) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, message: `Error: could not parse --input JSON: ${message}` };
+  }
+}
+
+async function registerScheduleWorkflows(
+  engine: Engine,
+  workflowsPath: string,
+  loadRegistrationsFromModule: (modulePath: string) => Promise<{
+    registrations: Record<string, WorkflowRegistration>;
+  }>,
+): Promise<void> {
+  const loaded = await loadRegistrationsFromModule(workflowsPath);
+  for (const [workflowType, registration] of Object.entries(loaded.registrations)) {
+    engine.register(workflowType, registration);
+  }
+}
+
+async function executeScheduleCreate(
+  options: ScheduleCreateCommand,
+  engine: Engine,
+  loadRegistrationsFromModule: (modulePath: string) => Promise<{
+    registrations: Record<string, WorkflowRegistration>;
+  }>,
+): Promise<CommandOutput> {
+  const validationError = getScheduleCreateValidationError(options);
+  if (validationError !== null) {
+    return { stdout: '', stderr: validationError, exitCode: 1 };
+  }
+
+  await registerScheduleWorkflows(engine, options.workflows, loadRegistrationsFromModule);
+
+  const parsedInput = parseScheduleInput(options.input);
+  if (!parsedInput.ok) {
+    return { stdout: '', stderr: parsedInput.message, exitCode: 1 };
+  }
+
+  const handle = await engine.schedule(
+    options.workflowType,
+    parsedInput.value,
+    options.cronExpression,
+    {
+      ...(options.id !== undefined ? { id: options.id } : {}),
+      ...(options.overlap !== undefined ? { overlap: options.overlap } : {}),
+      ...(options.backfill ? { backfill: true } : {}),
+    },
+  );
+
+  const schedule = await handle.describe();
+  return {
+    stdout: formatScheduleCommandOutput(schedule, options.json, `Created schedule ${handle.id}`),
+    exitCode: 0,
+  };
+}
+
+async function executeScheduleMutation(
+  options: ScheduleMutationCommand,
+  engine: Engine,
+): Promise<CommandOutput> {
+  if (!options.scheduleId) {
+    return {
+      stdout: '',
+      stderr: `Error: scheduleId is required for schedule ${options.action}`,
+      exitCode: 1,
+    };
+  }
+
+  if (options.action === 'pause') {
+    await engine.pauseSchedule(options.scheduleId);
+    const schedule = await engine.getSchedule(options.scheduleId);
+    return {
+      stdout: formatScheduleCommandOutput(
+        schedule,
+        options.json,
+        `Paused schedule ${options.scheduleId}`,
+      ),
+      exitCode: 0,
+    };
+  }
+
+  if (options.action === 'resume') {
+    await engine.resumeSchedule(options.scheduleId);
+    const schedule = await engine.getSchedule(options.scheduleId);
+    return {
+      stdout: formatScheduleCommandOutput(
+        schedule,
+        options.json,
+        `Resumed schedule ${options.scheduleId}`,
+      ),
+      exitCode: 0,
+    };
+  }
+
+  await engine.cancelSchedule(options.scheduleId);
+  const schedule = await engine.getSchedule(options.scheduleId);
+  return {
+    stdout: formatScheduleCommandOutput(
+      schedule,
+      options.json,
+      `Cancelled schedule ${options.scheduleId}`,
+    ),
+    exitCode: 0,
+  };
+}
+
+export async function executeSchedule(options: ScheduleCommand): Promise<CommandOutput> {
+  const storageValidationError = getScheduleStorageValidationError(options.storage);
+  if (storageValidationError !== null) {
+    return {
+      stdout: '',
+      stderr: storageValidationError,
+      exitCode: 1,
+    };
+  }
+
+  const { Engine } = await import('./core/engine.ts');
+  const { loadRegistrationsFromModule } = await import('./diagnostics/validate.ts');
+  const storage = await createStorage(options.storage, options.database);
+  const engine = new Engine({ storage });
+
+  try {
+    if (options.action === 'list') {
+      return await executeScheduleList(options, engine);
+    }
+
+    if (options.action === 'create') {
+      return await executeScheduleCreate(options, engine, loadRegistrationsFromModule);
+    }
+
+    return await executeScheduleMutation(options, engine);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { stdout: '', stderr: `Error: ${message}`, exitCode: 1 };
   } finally {
     await engine[Symbol.asyncDispose]();
     storage[Symbol.dispose]();

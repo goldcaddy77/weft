@@ -59,5 +59,5 @@ export interface ExecutionStrategy extends Disposable, AsyncDisposable {
    * The engine calls this once during setup; the handler persists for the
    * lifetime of the strategy.
    */
-  onMessage(handler: (message: WorkerOutboundMessage) => void): void;
+  onMessage(handler: (message: WorkerOutboundMessage) => void | Promise<void>): void;
 }

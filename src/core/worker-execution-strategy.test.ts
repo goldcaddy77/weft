@@ -93,7 +93,9 @@ describe('WorkerExecutionStrategy', () => {
     mockPool = createMockPool(mockWorkers);
     strategy = new WorkerExecutionStrategy(mockPool);
     messages = [];
-    strategy.onMessage((message) => messages.push(message));
+    strategy.onMessage((message) => {
+      messages.push(message);
+    });
   }
 
   /** Return the first mock worker, asserting it exists. */
@@ -202,7 +204,9 @@ describe('WorkerExecutionStrategy', () => {
       mockPool = createMockPool([]);
       strategy = new WorkerExecutionStrategy(mockPool);
       messages = [];
-      strategy.onMessage((message) => messages.push(message));
+      strategy.onMessage((message) => {
+        messages.push(message);
+      });
 
       strategy.startWorkflow({
         workflowId: 'wf-fail',
@@ -241,7 +245,9 @@ describe('WorkerExecutionStrategy', () => {
         strategy[Symbol.dispose]();
         strategy = new WorkerExecutionStrategy(mockPool, { broadcastEvents: true });
         messages = [];
-        strategy.onMessage((message) => messages.push(message));
+        strategy.onMessage((message) => {
+          messages.push(message);
+        });
 
         strategy.startWorkflow({
           workflowId: 'wf-broadcast',
@@ -399,6 +405,99 @@ describe('WorkerExecutionStrategy', () => {
       const message = firstMessage();
       expect(message.type).toBe('failed');
       expect(mockPool.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not surface unhandled rejections when an async message handler fails', async () => {
+      const script = String.raw`
+        import { WorkerExecutionStrategy } from './src/core/worker-execution-strategy.ts';
+
+        function createMockWorker() {
+          const listeners = new Map();
+
+          return {
+            postMessage() {},
+            terminate() {},
+            addEventListener(type, listener) {
+              if (!listeners.has(type)) {
+                listeners.set(type, new Set());
+              }
+
+              listeners.get(type).add(listener);
+            },
+            removeEventListener(type, listener) {
+              listeners.get(type)?.delete(listener);
+            },
+            listeners,
+          };
+        }
+
+        const worker = createMockWorker();
+        const pool = {
+          acquire: async () => worker,
+          release() {},
+          get availableCount() {
+            return 0;
+          },
+          get totalCount() {
+            return 1;
+          },
+          get pendingCount() {
+            return 0;
+          },
+          [Symbol.dispose]() {},
+          async [Symbol.asyncDispose]() {},
+        };
+
+        const strategy = new WorkerExecutionStrategy(pool);
+
+        process.on('unhandledRejection', (error) => {
+          console.error(error instanceof Error ? error.message : String(error));
+          process.exit(1);
+        });
+
+        strategy.onMessage(async () => {
+          throw new Error('handler failed');
+        });
+
+        strategy.startWorkflow({
+          workflowId: 'wf-1',
+          workflowType: 'test',
+          input: null,
+          checkpoint: new ArrayBuffer(0),
+        });
+
+        await Bun.sleep(20);
+
+        for (const listener of worker.listeners.get('message') ?? []) {
+          listener(
+            new MessageEvent('message', {
+              data: {
+                type: 'completed',
+                workflowId: 'wf-1',
+                result: 'done',
+              },
+            }),
+          );
+        }
+
+        await Bun.sleep(50);
+        strategy[Symbol.dispose]();
+        process.exit(0);
+      `;
+
+      const childProcess = Bun.spawn(['bun', '-e', script], {
+        cwd: globalThis.process.cwd(),
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+
+      const exitCode = await childProcess.exited;
+      const stdoutText = await new Response(childProcess.stdout).text();
+      const stderrText = await new Response(childProcess.stderr).text();
+
+      expect(exitCode).toBe(0);
+      expect(stdoutText.trim()).toBe('');
+      expect(stderrText.trim()).toBe('');
     });
   });
 
