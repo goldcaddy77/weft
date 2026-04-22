@@ -90,6 +90,11 @@ describe('LocalClient', () => {
     expect(client.fork).toBeFunction();
     expect(client.getRetentionOverview).toBeFunction();
     expect(client.purge).toBeFunction();
+    expect(client.cancelAll).toBeFunction();
+    expect(client.signalAll).toBeFunction();
+    expect(client.deleteAll).toBeFunction();
+    expect(client.tagAll).toBeFunction();
+    expect(client.untagAll).toBeFunction();
     expect(client.submitCoordinatedUpdate).toBeFunction();
     expect(client.getUpdateResult).toBeFunction();
   });
@@ -147,6 +152,51 @@ describe('LocalClient', () => {
 
       const result = await client.list({ status: 'completed' });
       expect(result.items.every((item) => item.status === 'completed')).toBe(true);
+    });
+  });
+
+  describe('bulk workflow operations', () => {
+    it('delegates the bulk methods to the underlying engine and returns their results', async () => {
+      const delegatedEngine = {
+        cancelAll: mock(async () => ({
+          cancelled: 2,
+          failed: 1,
+          errors: [{ id: 'wf-failed', error: 'boom' }],
+        })),
+        signalAll: mock(async () => ({ signalled: 3, failed: 0 })),
+        deleteAll: mock(async () => ({ deleted: 4 })),
+        tagAll: mock(async () => ({ modified: 5 })),
+        untagAll: mock(async () => ({ modified: 2 })),
+      } as unknown as Engine;
+
+      const delegatedClient = new LocalClient(delegatedEngine);
+
+      expect(await delegatedClient.cancelAll({ status: 'running' })).toEqual({
+        cancelled: 2,
+        failed: 1,
+        errors: [{ id: 'wf-failed', error: 'boom' }],
+      });
+      expect(await delegatedClient.signalAll({ tags: ['nightly'] }, 'continue', 'go')).toEqual({
+        signalled: 3,
+        failed: 0,
+      });
+      expect(await delegatedClient.deleteAll({ status: 'completed' })).toEqual({ deleted: 4 });
+      expect(await delegatedClient.tagAll({ tags: ['nightly'] }, ['bulk'])).toEqual({
+        modified: 5,
+      });
+      expect(await delegatedClient.untagAll({ tags: ['bulk'] }, ['nightly'])).toEqual({
+        modified: 2,
+      });
+
+      expect(delegatedEngine.cancelAll).toHaveBeenCalledWith({ status: 'running' });
+      expect(delegatedEngine.signalAll).toHaveBeenCalledWith(
+        { tags: ['nightly'] },
+        'continue',
+        'go',
+      );
+      expect(delegatedEngine.deleteAll).toHaveBeenCalledWith({ status: 'completed' });
+      expect(delegatedEngine.tagAll).toHaveBeenCalledWith({ tags: ['nightly'] }, ['bulk']);
+      expect(delegatedEngine.untagAll).toHaveBeenCalledWith({ tags: ['bulk'] }, ['nightly']);
     });
   });
 
@@ -599,6 +649,11 @@ describe('LocalClient delegation surface', () => {
         { sequence: 3, value: 'chunk-b' },
       ]),
       fork: mock(async () => resumedHandle),
+      cancelAll: mock(async () => ({ cancelled: 2, failed: 0, errors: [] })),
+      signalAll: mock(async () => ({ signalled: 2, failed: 0 })),
+      deleteAll: mock(async () => ({ deleted: 1 })),
+      tagAll: mock(async () => ({ modified: 2 })),
+      untagAll: mock(async () => ({ modified: 1 })),
       submitCoordinatedUpdate: mock(async () => ({ updateId: 'update-1', result: 'ok' })),
       getUpdateResult: mock(async () => ({ updateId: 'update-1', result: 'done', error: 'none' })),
     } as unknown as Engine;
@@ -686,6 +741,18 @@ describe('LocalClient delegation surface', () => {
     ]);
     const forkHandle = await client.fork('delegated-workflow', { fromStep: 2 });
     expect(await forkHandle.result()).toBe('resumed-result');
+    expect(await client.cancelAll({ status: 'running' })).toEqual({
+      cancelled: 2,
+      failed: 0,
+      errors: [],
+    });
+    expect(await client.signalAll({ tags: ['nightly'] }, 'continue', 'done')).toEqual({
+      signalled: 2,
+      failed: 0,
+    });
+    expect(await client.deleteAll({ status: 'completed' })).toEqual({ deleted: 1 });
+    expect(await client.tagAll({ tags: ['nightly'] }, ['bulk'])).toEqual({ modified: 2 });
+    expect(await client.untagAll({ tags: ['bulk'] }, ['nightly'])).toEqual({ modified: 1 });
     expect(
       await client.submitCoordinatedUpdate(
         'delegated-workflow',
@@ -713,6 +780,11 @@ describe('LocalClient delegation surface', () => {
     expect(engine.updateSchedule).toHaveBeenCalledWith('delegated-schedule', '15 * * * *');
     expect(engine.cancelSchedule).toHaveBeenCalledWith('delegated-schedule');
     expect(engine.fork).toHaveBeenCalledWith('delegated-workflow', { fromStep: 2 });
+    expect(engine.cancelAll).toHaveBeenCalledWith({ status: 'running' });
+    expect(engine.signalAll).toHaveBeenCalledWith({ tags: ['nightly'] }, 'continue', 'done');
+    expect(engine.deleteAll).toHaveBeenCalledWith({ status: 'completed' });
+    expect(engine.tagAll).toHaveBeenCalledWith({ tags: ['nightly'] }, ['bulk']);
+    expect(engine.untagAll).toHaveBeenCalledWith({ tags: ['bulk'] }, ['nightly']);
   });
 
   it('returns null when the engine has no update result', async () => {

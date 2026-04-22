@@ -35,6 +35,7 @@ import { ActivityWorkerDispatcher } from '../workers/activity-worker-dispatcher.
 import { WorkerPool } from '../workers/pool.ts';
 import type { ActivityRegistrationOptions } from './activity-registry.ts';
 import { ActivityRegistry } from './activity-registry.ts';
+import { assertScopedBulkWorkflowFilter } from './bulk-workflow-filter.ts';
 import {
   advanceCheckpoint,
   createCheckpoint,
@@ -117,6 +118,11 @@ import { TenantQuotaManager } from './tenant-quotas.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type {
   AttributeFilter,
+  BulkCancelResult,
+  BulkDeleteResult,
+  BulkOperationError,
+  BulkSignalResult,
+  BulkTagResult,
   Checkpoint,
   CheckpointState,
   CheckpointSummary,
@@ -227,6 +233,23 @@ interface WorkflowStateUpdateResult {
   updatedAt: number;
 }
 
+const BULK_OPERATION_BATCH_SIZE = 1000;
+
+function normalizeBulkFilterNumber(
+  value: unknown,
+  fieldName: 'limit' | 'offset',
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`filter.${fieldName} must be a non-negative number when provided`);
+  }
+
+  return Math.floor(value);
+}
+
 /** Options required when registering an AgentDefinition as a workflow. */
 export interface AgentRegistrationOptions {
   /** The LLM provider to use when running the agent. */
@@ -239,6 +262,23 @@ export class WorkflowAlreadyExistsError extends Error {
   constructor(workflowId: string) {
     super(`Workflow with id "${workflowId}" already exists`);
     this.name = 'WorkflowAlreadyExistsError';
+    this.workflowId = workflowId;
+  }
+}
+
+export class BulkDeleteRequiresTerminalWorkflowsError extends Error {
+  constructor() {
+    super('Bulk delete matches non-terminal workflows');
+    this.name = 'BulkDeleteRequiresTerminalWorkflowsError';
+  }
+}
+
+class WorkflowNotFoundError extends Error {
+  readonly workflowId: string;
+
+  constructor(workflowId: string) {
+    super(`Workflow "${workflowId}" not found`);
+    this.name = 'WorkflowNotFoundError';
     this.workflowId = workflowId;
   }
 }
@@ -2765,6 +2805,92 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
+  async *#streamWorkflowStateBatches(filter?: ListFilter): AsyncGenerator<WorkflowState[]> {
+    let remainingOffset = normalizeBulkFilterNumber(filter?.offset, 'offset') ?? 0;
+    let remainingLimit = normalizeBulkFilterNumber(filter?.limit, 'limit');
+
+    if (remainingLimit === 0) {
+      return;
+    }
+
+    let batch: WorkflowState[] = [];
+
+    for await (const state of this.#streamWorkflowStates(filter)) {
+      if (remainingOffset > 0) {
+        remainingOffset -= 1;
+        continue;
+      }
+
+      batch.push(state);
+
+      if (remainingLimit !== undefined) {
+        remainingLimit -= 1;
+      }
+
+      if (batch.length === BULK_OPERATION_BATCH_SIZE) {
+        yield batch;
+        batch = [];
+      }
+
+      if (remainingLimit === 0) {
+        break;
+      }
+    }
+
+    if (batch.length > 0) {
+      yield batch;
+    }
+  }
+
+  #buildActionableBulkWorkflowFilter(
+    filter: ListFilter,
+    actionableStatuses: WorkflowStatus[],
+  ): ListFilter {
+    const requestedStatuses =
+      filter.status === undefined
+        ? actionableStatuses
+        : Array.isArray(filter.status)
+          ? filter.status
+          : [filter.status];
+    const effectiveStatuses = requestedStatuses.filter((status) =>
+      actionableStatuses.includes(status),
+    );
+
+    if (effectiveStatuses.length === 0) {
+      return {
+        ...filter,
+        status: [],
+      };
+    }
+
+    if (effectiveStatuses.length === 1) {
+      const [effectiveStatus] = effectiveStatuses;
+      if (effectiveStatus === undefined) {
+        return {
+          ...filter,
+          status: [],
+        };
+      }
+
+      return {
+        ...filter,
+        status: effectiveStatus,
+      };
+    }
+
+    return {
+      ...filter,
+      status: effectiveStatuses,
+    };
+  }
+
+  #toBulkOperationError(workflowId: string, error: unknown): BulkOperationError {
+    return {
+      id: workflowId,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
   #buildTerminalWorkflowIndexOperations(
     previousState: WorkflowState,
     nextState: WorkflowState,
@@ -2908,6 +3034,140 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       expiredOnly: false,
       now: this.#options.getNow(),
     });
+  }
+
+  /** Cancel all running or pending workflows that match the provided filter. */
+  async cancelAll(filter: ListFilter): Promise<BulkCancelResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    const actionableFilter = this.#buildActionableBulkWorkflowFilter(filter, [
+      'pending',
+      'running',
+    ]);
+    const workflowIdsToCancel = await this.#snapshotMatchingWorkflowIds(actionableFilter);
+    let cancelled = 0;
+    const errors: BulkOperationError[] = [];
+
+    for (const workflowId of workflowIdsToCancel) {
+      try {
+        await this.cancel(workflowId);
+        const refreshedState = await this.#loadWorkflowState(workflowId);
+        if (refreshedState?.status === 'cancelled') {
+          cancelled += 1;
+          continue;
+        }
+
+        errors.push({
+          id: workflowId,
+          error: 'Workflow no longer cancellable',
+        });
+      } catch (error) {
+        errors.push(this.#toBulkOperationError(workflowId, error));
+      }
+    }
+
+    return {
+      cancelled,
+      failed: errors.length,
+      errors,
+    };
+  }
+
+  /** Send a named signal to every running or pending workflow that matches the provided filter. */
+  async signalAll(filter: ListFilter, name: string, payload?: unknown): Promise<BulkSignalResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    if (name.length === 0) {
+      throw new Error('Field "name" must be a non-empty string');
+    }
+    const actionableFilter = this.#buildActionableBulkWorkflowFilter(filter, [
+      'pending',
+      'running',
+    ]);
+    const workflowIdsToSignal = await this.#snapshotMatchingWorkflowIds(actionableFilter);
+    let signalled = 0;
+    let failed = 0;
+
+    for (const workflowId of workflowIdsToSignal) {
+      try {
+        await this.signal(workflowId, name, payload);
+        signalled += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+
+    return { signalled, failed };
+  }
+
+  /** Delete all matching terminal workflows, rejecting when the filter includes active workflows. */
+  async deleteAll(filter: ListFilter): Promise<BulkDeleteResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    const candidateWorkflowIds: string[] = [];
+
+    for await (const batch of this.#streamWorkflowStateBatches(filter)) {
+      for (const state of batch) {
+        if (!isTerminalWorkflowStatus(state.status)) {
+          throw new BulkDeleteRequiresTerminalWorkflowsError();
+        }
+
+        candidateWorkflowIds.push(state.id);
+      }
+    }
+
+    let deleted = 0;
+    for (
+      let batchStart = 0;
+      batchStart < candidateWorkflowIds.length;
+      batchStart += BULK_OPERATION_BATCH_SIZE
+    ) {
+      const batchWorkflowIds = candidateWorkflowIds.slice(
+        batchStart,
+        batchStart + BULK_OPERATION_BATCH_SIZE,
+      );
+      const workflowStatesToDelete: WorkflowState[] = [];
+
+      for (const workflowId of batchWorkflowIds) {
+        const refreshedState = await this.#loadWorkflowState(workflowId);
+        if (refreshedState === null) {
+          continue;
+        }
+        if (!isTerminalWorkflowStatus(refreshedState.status)) {
+          throw new BulkDeleteRequiresTerminalWorkflowsError();
+        }
+
+        workflowStatesToDelete.push(refreshedState);
+      }
+
+      for (const workflowState of workflowStatesToDelete) {
+        await this.#purgeWorkflow(workflowState);
+        deleted += 1;
+      }
+    }
+
+    return { deleted };
+  }
+
+  /** Add tags to every workflow that matches the provided filter. */
+  async tagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
+    return this.#bulkMutateWorkflowTags(filter, tags, 'add');
+  }
+
+  /** Remove tags from every workflow that matches the provided filter. */
+  async untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
+    return this.#bulkMutateWorkflowTags(filter, tags, 'remove');
+  }
+
+  async #snapshotMatchingWorkflowIds(filter?: ListFilter): Promise<string[]> {
+    const workflowIds: string[] = [];
+
+    // Snapshot ids before mutating workflow state entries so storage scans
+    // cannot skip or re-visit workflows when backends reorder after writes.
+    for await (const batch of this.#streamWorkflowStateBatches(filter)) {
+      for (const state of batch) {
+        workflowIds.push(state.id);
+      }
+    }
+
+    return workflowIds;
   }
 
   #resolvePurgeWindow(
@@ -7947,18 +8207,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     tags: string[],
     mode: 'add' | 'remove',
-  ): Promise<void> {
-    await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+  ): Promise<boolean> {
+    return await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
       const bytes = await this.#storage.get(KEYS.workflow(workflowId));
       if (!bytes) {
-        throw new Error(`Workflow "${workflowId}" not found`);
+        throw new WorkflowNotFoundError(workflowId);
       }
 
       const state = decodeWorkflowState(bytes);
       const currentTags = normalizeWorkflowTags(state.tags) ?? [];
       const requestedTags = this.#normalizeStartWorkflowTags(tags, 'Workflow tags') ?? [];
       if (requestedTags.length === 0) {
-        return;
+        return false;
       }
 
       const nextTagSet = new Set(currentTags);
@@ -7978,7 +8238,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         currentTags.length === (nextTags?.length ?? 0) &&
         currentTags.every((tag, index) => tag === nextTags?.[index]);
       if (unchanged) {
-        return;
+        return false;
       }
 
       const updatedState: WorkflowState = {
@@ -7996,7 +8256,36 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         { type: 'put', key: KEYS.workflow(workflowId), value: encode(updatedState) },
         ...buildWorkflowTagIndexOperations(workflowId, currentTags, nextTags),
       ]);
+
+      return true;
     });
+  }
+
+  async #bulkMutateWorkflowTags(
+    filter: ListFilter,
+    tags: string[],
+    mode: 'add' | 'remove',
+  ): Promise<BulkTagResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    const workflowIdsToMutate = await this.#snapshotMatchingWorkflowIds(filter);
+
+    let modified = 0;
+    for (const workflowId of workflowIdsToMutate) {
+      let changed = false;
+      try {
+        changed = await this.#mutateWorkflowTags(workflowId, tags, mode);
+      } catch (error) {
+        if (!(error instanceof WorkflowNotFoundError)) {
+          throw error;
+        }
+      }
+
+      if (changed) {
+        modified += 1;
+      }
+    }
+
+    return { modified };
   }
   async #loadWorkflowState(workflowId: string): Promise<WorkflowState | null> {
     const bytes = await this.#storage.get(KEYS.workflow(workflowId));

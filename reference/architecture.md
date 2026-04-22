@@ -5650,12 +5650,12 @@ Child workflows exist, but composing them into pipelines, fan-out/fan-in DAGs, o
 
 #### 7g. Bulk operations
 
-- [ ] **`engine.cancelAll(filter)` cancels all workflows matching a filter.** Returns `{ cancelled: number, failed: number, errors: Array<{ id, error }> }`. Filter supports the same shape as `engine.list()` (type, status, attributes, tags).
-- [ ] **`engine.signalAll(filter, name, payload?)` sends a signal to all matching workflows.** Returns `{ signalled: number, failed: number }`.
-- [ ] **`engine.deleteAll(filter)` permanently removes all matching terminal workflows.** Only operates on terminal statuses (completed, failed, cancelled, timed-out). Returns `{ deleted: number }`. Rejects if filter would match running workflows.
-- [ ] **`engine.tagAll(filter, tags)` and `engine.untagAll(filter, tags)` bulk-modify tags.** Returns `{ modified: number }`.
-- [ ] **All bulk operations have HTTP equivalents.** `POST /v1/workflows/bulk/cancel`, `POST /v1/workflows/bulk/signal`, `DELETE /v1/workflows/bulk`, `PATCH /v1/workflows/bulk/tags`.
-- [ ] **Bulk operations are batched internally.** Process in chunks of 1000 to avoid holding storage locks. Progress is observable via returned counts.
+- [x] **`engine.cancelAll(filter)` cancels all workflows matching a filter.** Returns `{ cancelled: number, failed: number, errors: Array<{ id, error }> }`. Filter supports the same shape as `engine.list()` (type, status, attributes, tags).
+- [x] **`engine.signalAll(filter, name, payload?)` sends a signal to all matching workflows.** Returns `{ signalled: number, failed: number }`.
+- [x] **`engine.deleteAll(filter)` permanently removes all matching terminal workflows.** Only operates on terminal statuses (completed, failed, cancelled, timed-out). Returns `{ deleted: number }`. Rejects if filter would match running workflows.
+- [x] **`engine.tagAll(filter, tags)` and `engine.untagAll(filter, tags)` bulk-modify tags.** Returns `{ modified: number }`.
+- [x] **All bulk operations have HTTP equivalents.** `POST /v1/workflows/bulk/cancel`, `POST /v1/workflows/bulk/signal`, `DELETE /v1/workflows/bulk`, `PATCH /v1/workflows/bulk/tags`.
+- [x] **Bulk operations are batched internally.** Process in chunks of 1000 to avoid holding storage locks. Progress is observable via returned counts.
 
 #### 7h. Workflow forking
 

@@ -822,6 +822,30 @@ export interface CoordinatedUpdateResult {
   error?: string;
 }
 
+export type BulkOperationError = {
+  id: WorkflowId;
+  error: string;
+};
+
+export type BulkCancelResult = {
+  cancelled: number;
+  failed: number;
+  errors: BulkOperationError[];
+};
+
+export type BulkSignalResult = {
+  signalled: number;
+  failed: number;
+};
+
+export type BulkDeleteResult = {
+  deleted: number;
+};
+
+export type BulkTagResult = {
+  modified: number;
+};
+
 export interface PurgeResult {
   deleted: number;
 }
