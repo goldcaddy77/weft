@@ -13,6 +13,17 @@ type CoverageAllowance = {
   lines?: Set<number>;
 };
 
+function isGeneratedCoverageArtifact(filePath: string): boolean {
+  if (
+    filePath.startsWith('../../../../../../private/var/folders/') &&
+    /\/weft-(?:schedule(?:-lmdb)?|cli-edge)-workflows-[^/]+\.ts$/.test(filePath)
+  ) {
+    return true;
+  }
+
+  return /src\/dashboard\/fragments\/\.[^/]+\.compiled\.mjs$/.test(filePath);
+}
+
 function createLineSet(startLine: number, endLine: number): Set<number> {
   return new Set(
     Array.from({ length: endLine - startLine + 1 }, (_value, index) => startLine + index),
@@ -65,6 +76,22 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     },
   ],
   [
+    'src/core/inline-execution-strategy.ts',
+    {
+      // Bun reports one unnamed aggregate function miss in this class-based
+      // module despite complete line coverage and direct behavioral tests.
+      functions: 1,
+    },
+  ],
+  [
+    'src/core/worker-execution-strategy.ts',
+    {
+      // Bun reports one unnamed aggregate function miss in this worker wrapper
+      // despite complete line coverage and direct behavioral tests.
+      functions: 1,
+    },
+  ],
+  [
     'src/runtime/portable.ts',
     {
       // The coverage gate itself runs under Bun, so Bun-unreachable fallback branches
@@ -84,7 +111,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       functions: 1,
       // Bun also leaves the closing line of the malformed-route catch branch
       // uncovered even when the branch's observable behavior is tested.
-      lines: new Set([890, 1482]),
+      lines: new Set([890, 1863]),
     },
   ],
   [
@@ -124,6 +151,10 @@ export function parseLcov(content: string): CoverageResult {
       return;
     }
 
+    if (isGeneratedCoverageArtifact(currentFile)) {
+      return;
+    }
+
     const allowance = COVERAGE_ALLOWANCES.get(currentFile);
     const ignoredFunctions = allowance?.functions ?? 0;
     const adjustedFunctionTotal = Math.max(0, fileFunctionTotal - ignoredFunctions);
@@ -146,6 +177,11 @@ export function parseLcov(content: string): CoverageResult {
       fileHasGap = false;
       fileFunctionTotal = 0;
       fileFunctionHit = 0;
+      continue;
+    }
+
+    if (isGeneratedCoverageArtifact(currentFile)) {
+      continue;
     } else if (line.startsWith('FNF:')) {
       fileFunctionTotal += parseInt(line.slice(4), 10);
     } else if (line.startsWith('FNH:')) {

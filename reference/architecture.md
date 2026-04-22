@@ -5603,8 +5603,8 @@ Weft has durable `ctx.sleep()` for delays within a running workflow, but no way 
 - [x] **Overlap policy is configurable.** `{ overlap: 'skip' | 'queue' | 'cancel-running' | 'allow' }`. Default: `'skip'` (if the previous run is still executing, don't start another). `'queue'` waits for the previous run to complete before starting. `'cancel-running'` cancels the previous run. `'allow'` starts regardless.
 - [x] **Schedules support backfill.** If the engine was down and missed 3 ticks, `{ backfill: true }` runs them all on recovery. `{ backfill: false }` (default) skips missed ticks and resumes from the next future tick.
 - [x] **Schedules are listable and queryable.** `engine.listSchedules(filter?)` returns all active schedules with their next fire time, last fire time, and status.
-- [ ] **`GET /v1/schedules` and `POST /v1/schedules` HTTP endpoints.** Full CRUD via REST. Dashboard shows schedule state, history, and next fire time.
-- [ ] **`weft schedule` CLI subcommand.** `weft schedule list`, `weft schedule create`, `weft schedule pause <id>`, `weft schedule cancel <id>`.
+- [x] **`GET /v1/schedules` and `POST /v1/schedules` HTTP endpoints.** Full CRUD via REST. Dashboard shows schedule state, history, and next fire time.
+- [x] **`weft schedule` CLI subcommand.** `weft schedule list`, `weft schedule create`, `weft schedule pause <id>`, `weft schedule cancel <id>`.
 - [x] Tests cover: create/fire/cancel cycle, overlap policies, backfill after downtime, cron edge cases (Feb 29, DST transitions), multi-tenant schedule isolation.
 
 #### 7b. Delayed start

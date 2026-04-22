@@ -281,4 +281,62 @@ describe('ApiClient', () => {
       message: 'Bad Gateway',
     });
   });
+
+  it('serializes schedule filters and returns parsed schedule summaries', async () => {
+    let requestedUrl = '';
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requestedUrl = requestInputToUrl(input);
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 'nightly-maintenance',
+              workflowType: 'echo',
+              cronExpression: '0 * * * *',
+              status: 'active',
+              overlap: 'queue',
+              backfill: true,
+              createdAt: 1,
+              updatedAt: 2,
+              lastFireAt: 3,
+              nextFireAt: 4,
+              queuedRuns: 0,
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 10,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    const schedules = await client.listSchedules({
+      status: ['active', 'paused'],
+      workflowType: 'echo',
+      tenantId: 'acme',
+      limit: 10,
+      offset: 20,
+    });
+
+    expect(requestedUrl).toContain('/v1/schedules?');
+    expect(requestedUrl).toContain('status=active');
+    expect(requestedUrl).toContain('status=paused');
+    expect(requestedUrl).toContain('workflowType=echo');
+    expect(requestedUrl).toContain('tenantId=acme');
+    expect(requestedUrl).toContain('limit=10');
+    expect(requestedUrl).toContain('offset=20');
+    expect(schedules.items).toEqual([
+      expect.objectContaining({
+        id: 'nightly-maintenance',
+        lastFireAt: 3,
+        nextFireAt: 4,
+      }),
+    ]);
+  });
 });

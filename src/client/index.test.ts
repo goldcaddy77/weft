@@ -33,6 +33,293 @@ function requestInputToUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
+type FetchCall = { url: string; init: RequestInit | undefined };
+
+function createFullSurfaceResponses(
+  jsonResponse: (body: unknown, status?: number) => Response,
+): Response[] {
+  return [
+    jsonResponse({ id: 'wf-1' }),
+    jsonResponse({ result: 'hello' }),
+    jsonResponse({ id: 'schedule-1' }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    jsonResponse({
+      id: 'schedule-1',
+      workflowType: 'echo',
+      cronExpression: '0 * * * *',
+      status: 'active',
+      overlap: 'queue',
+      backfill: true,
+      createdAt: 1,
+      updatedAt: 1,
+      nextFireAt: 2,
+      queuedRuns: 0,
+    }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    jsonResponse({ result: 'handle-update' }),
+    jsonResponse({ result: 'handle-query' }),
+    jsonResponse({
+      id: 'schedule-1',
+      workflowType: 'echo',
+      cronExpression: '0 * * * *',
+      status: 'active',
+      overlap: 'queue',
+      backfill: true,
+      createdAt: 1,
+      updatedAt: 1,
+      nextFireAt: 2,
+      queuedRuns: 0,
+    }),
+    jsonResponse({ priority: 'high' }),
+    new Response(null, { status: 204 }),
+    jsonResponse({ id: 'wf-1', status: 'running' }),
+    jsonResponse({
+      items: [
+        {
+          id: 'schedule-1',
+          workflowType: 'echo',
+          cronExpression: '0 * * * *',
+          status: 'active',
+          overlap: 'queue',
+          backfill: true,
+          createdAt: 1,
+          updatedAt: 1,
+          nextFireAt: 2,
+          queuedRuns: 0,
+        },
+      ],
+      total: 1,
+      offset: 0,
+      limit: 100,
+    }),
+    jsonResponse({ items: [], total: 0 }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    jsonResponse({ result: 'client-query' }),
+    jsonResponse({ result: 'client-update' }),
+    jsonResponse({ id: 'wf-2' }),
+    jsonResponse({ recovered: ['wf-3', 'wf-4'] }),
+    new Response(null, { status: 204 }),
+    jsonResponse({ priority: 'high' }),
+    new Response(null, { status: 204 }),
+    jsonResponse({ events: [{ type: 'workflow:started' }] }),
+    jsonResponse({ items: [{ reviewId: 'review-1' }] }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204 }),
+    jsonResponse({ namespace: 'agents', daily: { maxCost: 10 } }),
+    jsonResponse({
+      chunks: [
+        { sequence: 2, value: 'chunk-a' },
+        { sequence: 3, value: 'chunk-b' },
+      ],
+    }),
+    jsonResponse({ id: 'wf-forked' }),
+    jsonResponse({ updateId: 'update-1', result: 'accepted' }),
+    jsonResponse({ status: 'completed', result: 'done', error: 'warn' }),
+  ];
+}
+
+async function exerciseWorkflowHandleAndSchedule(httpClient: HttpClient): Promise<void> {
+  const handle = await httpClient.start('echo', 'hello', { id: 'wf/1', executionTimeout: '5m' });
+  expect(handle.id).toBe('wf-1');
+  expect(await handle.result()).toBe('hello');
+
+  const scheduleHandle = await httpClient.schedule('echo', 'hourly', '0 * * * *', {
+    id: 'schedule-1',
+    overlap: 'queue',
+    backfill: true,
+  });
+  expect(scheduleHandle.id).toBe('schedule-1');
+
+  await scheduleHandle.pause();
+  await scheduleHandle.resume();
+  await scheduleHandle.update('30 * * * *');
+  expect(await scheduleHandle.describe()).toEqual(
+    expect.objectContaining({
+      id: 'schedule-1',
+      cronExpression: '0 * * * *',
+    }),
+  );
+  await scheduleHandle.cancel();
+
+  await handle.cancel();
+  await handle.signal('status', { ok: true });
+  expect(await handle.update('rename', { value: 1 }, { timeout: 50 })).toBe('handle-update');
+  expect(await handle.query('status')).toBe('handle-query');
+  expect(await httpClient.getSchedule('schedule-1')).toEqual(
+    expect.objectContaining({
+      id: 'schedule-1',
+      cronExpression: '0 * * * *',
+    }),
+  );
+  expect(await handle.getAttributes()).toEqual({ priority: 'high' });
+  await handle.setAttributes({ priority: 'critical' });
+}
+
+async function exerciseWorkflowClientRequests(httpClient: HttpClient): Promise<void> {
+  expect(await httpClient.get('wf/1')).toMatchObject({ id: 'wf-1', status: 'running' });
+  expect(
+    await httpClient.listSchedules({ status: 'active', workflowType: 'echo', limit: 5 }),
+  ).toMatchObject({
+    items: [{ id: 'schedule-1' }],
+    total: 1,
+  });
+  await httpClient.list({
+    status: ['running', 'completed'],
+    type: 'echo',
+    limit: 5,
+    offset: 2,
+    attributes: [{ key: 'priority', value: 'high', gt: 1, lt: 9, gte: 2, lte: 8 }],
+  });
+  await httpClient.cancel('wf/1');
+  await httpClient.pauseSchedule('schedule-1');
+  await httpClient.resumeSchedule('schedule-1');
+  await httpClient.updateSchedule('schedule-1', '15 * * * *');
+  await httpClient.cancelSchedule('schedule-1');
+  await httpClient.signal('wf/1', 'status', { ok: true });
+  expect(await httpClient.query('wf/1', 'status')).toBe('client-query');
+  expect(await httpClient.update('wf/1', 'rename', { value: 2 }, { timeout: 10 })).toBe(
+    'client-update',
+  );
+}
+
+async function exerciseRecoveryAndReviewRequests(httpClient: HttpClient): Promise<void> {
+  const resumed = await httpClient.resume('wf/1');
+  expect(resumed.id).toBe('wf-2');
+
+  const recovered = await httpClient.recoverAll();
+  expect(recovered.map((recoveredHandle) => recoveredHandle.id)).toEqual(['wf-3', 'wf-4']);
+
+  await httpClient.timeout('wf/1');
+  expect(await httpClient.getAttributes('wf/1')).toEqual({ priority: 'high' });
+  await httpClient.setAttributes('wf/1', { priority: 'critical' });
+  expect(await httpClient.getEvents('wf/1')).toMatchObject([{ type: 'workflow:started' }]);
+  expect(await httpClient.listReviews()).toEqual([{ reviewId: 'review-1' }]);
+  await httpClient.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
+  await httpClient.setBudgetPolicy({ namespace: 'agents', daily: { maxCost: 10 } });
+  expect(await httpClient.getBudgetPolicy('agents')).toEqual({
+    namespace: 'agents',
+    daily: { maxCost: 10 },
+  });
+  expect(await httpClient.getStreamChunks('wf/1', 'stream/key', { after: 1 })).toEqual([
+    { sequence: 2, value: 'chunk-a' },
+    { sequence: 3, value: 'chunk-b' },
+  ]);
+
+  const forked = await httpClient.fork('wf/1', { fromStep: 2 });
+  expect(forked.id).toBe('wf-forked');
+  expect(
+    await httpClient.submitCoordinatedUpdate(
+      'wf/1',
+      'rename',
+      { value: 3 },
+      {
+        timeout: 20,
+        idempotencyKey: 'idempotent-1',
+      },
+    ),
+  ).toEqual({ updateId: 'update-1', result: 'accepted' });
+  expect(await httpClient.getUpdateResult('update-1')).toEqual({
+    updateId: 'update-1',
+    result: 'done',
+    error: 'warn',
+  });
+}
+
+function assertWorkflowStartCall(fetchCalls: FetchCall[]): void {
+  const startCall = fetchCalls[0]!;
+  expect(startCall.url).toBe('http://example.test/v1/workflows');
+  expect(startCall.init?.method).toBe('POST');
+  expect(new Headers(startCall.init?.headers).get('Authorization')).toBe('Bearer token');
+  expect(new Headers(startCall.init?.headers).get('Content-Type')).toBe('application/json');
+
+  const startBody = startCall.init?.body;
+  expect(typeof startBody).toBe('string');
+  if (typeof startBody !== 'string') {
+    throw new Error('Expected start request body to be a string');
+  }
+
+  expect(JSON.parse(startBody)).toEqual({
+    type: 'echo',
+    input: 'hello',
+    id: 'wf/1',
+    executionTimeout: '5m',
+  });
+}
+
+function assertScheduleCalls(fetchCalls: FetchCall[]): void {
+  const scheduleCreateCall = fetchCalls[2]!;
+  expect(scheduleCreateCall.url).toBe('http://example.test/v1/schedules');
+  expect(scheduleCreateCall.init?.method).toBe('POST');
+
+  const scheduleCreateBody = scheduleCreateCall.init?.body;
+  expect(typeof scheduleCreateBody).toBe('string');
+  if (typeof scheduleCreateBody !== 'string') {
+    throw new Error('Expected schedule request body to be a string');
+  }
+
+  expect(JSON.parse(scheduleCreateBody)).toEqual({
+    type: 'echo',
+    input: 'hourly',
+    cronExpression: '0 * * * *',
+    id: 'schedule-1',
+    overlap: 'queue',
+    backfill: true,
+  });
+
+  const scheduleListCall = fetchCalls[16]!;
+  const scheduleListUrl = new URL(scheduleListCall.url);
+  expect(scheduleListUrl.searchParams.get('status')).toBe('active');
+  expect(scheduleListUrl.searchParams.get('workflowType')).toBe('echo');
+  expect(scheduleListUrl.searchParams.get('limit')).toBe('5');
+}
+
+function assertFilterAndFollowupCalls(fetchCalls: FetchCall[]): void {
+  const listCall = fetchCalls[17]!;
+  const listUrl = new URL(listCall.url);
+  expect(listUrl.searchParams.getAll('status')).toEqual(['running', 'completed']);
+  expect(listUrl.searchParams.get('type')).toBe('echo');
+  expect(listUrl.searchParams.get('limit')).toBe('5');
+  expect(listUrl.searchParams.get('offset')).toBe('2');
+  expect(listUrl.searchParams.get('attr.priority')).toBe('high');
+  expect(listUrl.searchParams.get('attr.priority.gt')).toBe('1');
+  expect(listUrl.searchParams.get('attr.priority.lt')).toBe('9');
+  expect(listUrl.searchParams.get('attr.priority.gte')).toBe('2');
+  expect(listUrl.searchParams.get('attr.priority.lte')).toBe('8');
+
+  expect(fetchCalls[3]?.url).toContain('/schedules/schedule-1/pause');
+  expect(fetchCalls[4]?.url).toContain('/schedules/schedule-1/resume');
+  expect(fetchCalls[5]?.init?.method).toBe('PATCH');
+  expect(fetchCalls[7]?.init?.method).toBe('DELETE');
+  expect(fetchCalls[8]?.init?.method).toBe('DELETE');
+  expect(fetchCalls[9]?.url).toContain('/signal/status');
+  expect(fetchCalls[10]?.url).toContain('/update/rename');
+  expect(fetchCalls[26]?.url).toContain('/resume');
+  expect(fetchCalls[27]?.url).toBe('http://example.test/v1/recover');
+  expect(fetchCalls[36]?.url).toContain('/streams/stream%2Fkey?after=1');
+}
+
+function assertForkCall(fetchCalls: FetchCall[]): void {
+  expect(fetchCalls[37]?.url).toBe('http://example.test/v1/workflows/wf%2F1/fork');
+  expect(fetchCalls[37]?.init?.method).toBe('POST');
+
+  const forkBody = fetchCalls[37]?.init?.body;
+  expect(typeof forkBody).toBe('string');
+  if (typeof forkBody !== 'string') {
+    throw new Error('Expected fork request body to be a string');
+  }
+
+  expect(JSON.parse(forkBody)).toEqual({ fromStep: 2 });
+}
+
 let engine: Engine;
 let server: ReturnType<typeof Bun.serve>;
 let client: WeftClient;
@@ -72,9 +359,16 @@ afterAll(async () => {
 describe('HttpClient', () => {
   it('implements WeftClient', () => {
     expect(client.start).toBeFunction();
+    expect(client.schedule).toBeFunction();
     expect(client.get).toBeFunction();
+    expect(client.getSchedule).toBeFunction();
     expect(client.list).toBeFunction();
+    expect(client.listSchedules).toBeFunction();
     expect(client.cancel).toBeFunction();
+    expect(client.pauseSchedule).toBeFunction();
+    expect(client.resumeSchedule).toBeFunction();
+    expect(client.cancelSchedule).toBeFunction();
+    expect(client.updateSchedule).toBeFunction();
     expect(client.signal).toBeFunction();
     expect(client.query).toBeFunction();
     expect(client.update).toBeFunction();
@@ -193,6 +487,69 @@ describe('HttpClient', () => {
 
       const result = await client.list({ tags: ['nightly', 'v2', 'release-candidate'] });
       expect(result.items.map((item) => item.id)).toEqual(['http-tag-wf-1']);
+    });
+  });
+
+  describe('schedule surface', () => {
+    it('creates, lists, mutates, and describes schedules over HTTP', async () => {
+      const schedule = await client.schedule('echo', { payload: 'hourly' }, '0 * * * *', {
+        id: 'http-schedule',
+        overlap: 'queue',
+        backfill: true,
+      });
+
+      expect(schedule.id).toBe('http-schedule');
+      expect(await schedule.describe()).toEqual(
+        expect.objectContaining({
+          id: 'http-schedule',
+          workflowType: 'echo',
+          cronExpression: '0 * * * *',
+          status: 'active',
+          overlap: 'queue',
+          backfill: true,
+        }),
+      );
+
+      expect(await client.getSchedule('http-schedule')).toEqual(
+        expect.objectContaining({ id: 'http-schedule' }),
+      );
+      const schedules = await client.listSchedules();
+      expect(schedules.items.map((item) => item.id)).toContain('http-schedule');
+
+      await schedule.pause();
+      expect(await client.getSchedule('http-schedule')).toEqual(
+        expect.objectContaining({ status: 'paused' }),
+      );
+
+      await schedule.update('30 * * * *');
+      expect(await schedule.describe()).toEqual(
+        expect.objectContaining({ cronExpression: '30 * * * *' }),
+      );
+
+      await client.resumeSchedule('http-schedule');
+      expect(await client.getSchedule('http-schedule')).toEqual(
+        expect.objectContaining({ status: 'active' }),
+      );
+
+      await schedule.cancel();
+      expect(await client.getSchedule('http-schedule')).toEqual(
+        expect.objectContaining({ status: 'cancelled', nextFireAt: null }),
+      );
+    });
+
+    it('exposes schedule handle describe and dispose helpers over HTTP', async () => {
+      const schedule = await client.schedule('echo', { payload: 'wrapper' }, '0 * * * *', {
+        id: 'http-schedule-wrapper',
+      });
+
+      expect(await schedule.describe()).toEqual(
+        expect.objectContaining({
+          id: 'http-schedule-wrapper',
+          workflowType: 'echo',
+        }),
+      );
+
+      expect(() => schedule[Symbol.dispose]()).not.toThrow();
     });
   });
 
@@ -419,9 +776,16 @@ describe('HttpClient', () => {
       // Both should have the same set of methods
       const clientMethods = [
         'start',
+        'schedule',
         'get',
+        'getSchedule',
         'list',
+        'listSchedules',
         'cancel',
+        'pauseSchedule',
+        'resumeSchedule',
+        'cancelSchedule',
+        'updateSchedule',
         'signal',
         'query',
         'update',
@@ -475,42 +839,8 @@ describe('HttpClient request surface', () => {
   }
 
   it('serializes the full client surface into the expected HTTP requests', async () => {
-    const fetchCalls: Array<{ url: string; init: RequestInit | undefined }> = [];
-    const responses = [
-      jsonResponse({ id: 'wf-1' }),
-      jsonResponse({ result: 'hello' }),
-      new Response(null, { status: 204 }),
-      new Response(null, { status: 204 }),
-      jsonResponse({ result: 'handle-update' }),
-      jsonResponse({ result: 'handle-query' }),
-      jsonResponse({ priority: 'high' }),
-      new Response(null, { status: 204 }),
-      jsonResponse({ id: 'wf-1', status: 'running' }),
-      jsonResponse({ items: [], total: 0 }),
-      new Response(null, { status: 204 }),
-      new Response(null, { status: 204 }),
-      jsonResponse({ result: 'client-query' }),
-      jsonResponse({ result: 'client-update' }),
-      jsonResponse({ id: 'wf-2' }),
-      jsonResponse({ recovered: ['wf-3', 'wf-4'] }),
-      new Response(null, { status: 204 }),
-      jsonResponse({ priority: 'high' }),
-      new Response(null, { status: 204 }),
-      jsonResponse({ events: [{ type: 'workflow:started' }] }),
-      jsonResponse({ items: [{ reviewId: 'review-1' }] }),
-      new Response(null, { status: 204 }),
-      new Response(null, { status: 204 }),
-      jsonResponse({ namespace: 'agents', daily: { maxCost: 10 } }),
-      jsonResponse({
-        chunks: [
-          { sequence: 2, value: 'chunk-a' },
-          { sequence: 3, value: 'chunk-b' },
-        ],
-      }),
-      jsonResponse({ id: 'wf-forked' }),
-      jsonResponse({ updateId: 'update-1', result: 'accepted' }),
-      jsonResponse({ status: 'completed', result: 'done', error: 'warn' }),
-    ];
+    const fetchCalls: FetchCall[] = [];
+    const responses = createFullSurfaceResponses(jsonResponse);
 
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = requestInputToUrl(input);
@@ -527,112 +857,14 @@ describe('HttpClient request surface', () => {
       headers: { Authorization: 'Bearer token' },
     });
 
-    const handle = await httpClient.start('echo', 'hello', { id: 'wf/1', executionTimeout: '5m' });
-    expect(handle.id).toBe('wf-1');
-    expect(await handle.result()).toBe('hello');
-    await handle.cancel();
-    await handle.signal('status', { ok: true });
-    expect(await handle.update('rename', { value: 1 }, { timeout: 50 })).toBe('handle-update');
-    expect(await handle.query('status')).toBe('handle-query');
-    expect(await handle.getAttributes()).toEqual({ priority: 'high' });
-    await handle.setAttributes({ priority: 'critical' });
+    await exerciseWorkflowHandleAndSchedule(httpClient);
+    await exerciseWorkflowClientRequests(httpClient);
+    await exerciseRecoveryAndReviewRequests(httpClient);
 
-    expect(await httpClient.get('wf/1')).toMatchObject({ id: 'wf-1', status: 'running' });
-    await httpClient.list({
-      status: ['running', 'completed'],
-      type: 'echo',
-      limit: 5,
-      offset: 2,
-      attributes: [{ key: 'priority', value: 'high', gt: 1, lt: 9, gte: 2, lte: 8 }],
-    });
-    await httpClient.cancel('wf/1');
-    await httpClient.signal('wf/1', 'status', { ok: true });
-    expect(await httpClient.query('wf/1', 'status')).toBe('client-query');
-    expect(await httpClient.update('wf/1', 'rename', { value: 2 }, { timeout: 10 })).toBe(
-      'client-update',
-    );
-
-    const resumed = await httpClient.resume('wf/1');
-    expect(resumed.id).toBe('wf-2');
-    const recovered = await httpClient.recoverAll();
-    expect(recovered.map((recoveredHandle) => recoveredHandle.id)).toEqual(['wf-3', 'wf-4']);
-    await httpClient.timeout('wf/1');
-    expect(await httpClient.getAttributes('wf/1')).toEqual({ priority: 'high' });
-    await httpClient.setAttributes('wf/1', { priority: 'critical' });
-    expect(await httpClient.getEvents('wf/1')).toMatchObject([{ type: 'workflow:started' }]);
-    expect(await httpClient.listReviews()).toEqual([{ reviewId: 'review-1' }]);
-    await httpClient.submitReview('review-1', { decision: 'approved', reviewer: 'alex' });
-    await httpClient.setBudgetPolicy({ namespace: 'agents', daily: { maxCost: 10 } });
-    expect(await httpClient.getBudgetPolicy('agents')).toEqual({
-      namespace: 'agents',
-      daily: { maxCost: 10 },
-    });
-    expect(await httpClient.getStreamChunks('wf/1', 'stream/key', { after: 1 })).toEqual([
-      { sequence: 2, value: 'chunk-a' },
-      { sequence: 3, value: 'chunk-b' },
-    ]);
-    const forked = await httpClient.fork('wf/1', { fromStep: 2 });
-    expect(forked.id).toBe('wf-forked');
-    expect(
-      await httpClient.submitCoordinatedUpdate(
-        'wf/1',
-        'rename',
-        { value: 3 },
-        {
-          timeout: 20,
-          idempotencyKey: 'idempotent-1',
-        },
-      ),
-    ).toEqual({ updateId: 'update-1', result: 'accepted' });
-    expect(await httpClient.getUpdateResult('update-1')).toEqual({
-      updateId: 'update-1',
-      result: 'done',
-      error: 'warn',
-    });
-
-    const startCall = fetchCalls[0]!;
-    expect(startCall.url).toBe('http://example.test/v1/workflows');
-    expect(startCall.init?.method).toBe('POST');
-    expect(new Headers(startCall.init?.headers).get('Authorization')).toBe('Bearer token');
-    expect(new Headers(startCall.init?.headers).get('Content-Type')).toBe('application/json');
-    const startBody = startCall.init?.body;
-    expect(typeof startBody).toBe('string');
-    if (typeof startBody !== 'string') {
-      throw new Error('Expected start request body to be a string');
-    }
-    expect(JSON.parse(startBody)).toEqual({
-      type: 'echo',
-      input: 'hello',
-      id: 'wf/1',
-      executionTimeout: '5m',
-    });
-
-    const listCall = fetchCalls[9]!;
-    const listUrl = new URL(listCall.url);
-    expect(listUrl.searchParams.getAll('status')).toEqual(['running', 'completed']);
-    expect(listUrl.searchParams.get('type')).toBe('echo');
-    expect(listUrl.searchParams.get('limit')).toBe('5');
-    expect(listUrl.searchParams.get('offset')).toBe('2');
-    expect(listUrl.searchParams.get('attr.priority')).toBe('high');
-    expect(listUrl.searchParams.get('attr.priority.gt')).toBe('1');
-    expect(listUrl.searchParams.get('attr.priority.lt')).toBe('9');
-    expect(listUrl.searchParams.get('attr.priority.gte')).toBe('2');
-    expect(listUrl.searchParams.get('attr.priority.lte')).toBe('8');
-
-    expect(fetchCalls[10]?.init?.method).toBe('DELETE');
-    expect(fetchCalls[11]?.url).toContain('/signal/status');
-    expect(fetchCalls[13]?.url).toContain('/update/rename');
-    expect(fetchCalls[14]?.url).toContain('/resume');
-    expect(fetchCalls[15]?.url).toBe('http://example.test/v1/recover');
-    expect(fetchCalls[24]?.url).toContain('/streams/stream%2Fkey?after=1');
-    expect(fetchCalls[25]?.url).toBe('http://example.test/v1/workflows/wf%2F1/fork');
-    expect(fetchCalls[25]?.init?.method).toBe('POST');
-    const forkBody = fetchCalls[25]?.init?.body;
-    expect(typeof forkBody).toBe('string');
-    if (typeof forkBody !== 'string') {
-      throw new Error('Expected fork request body to be a string');
-    }
-    expect(JSON.parse(forkBody)).toEqual({ fromStep: 2 });
+    assertWorkflowStartCall(fetchCalls);
+    assertScheduleCalls(fetchCalls);
+    assertFilterAndFollowupCalls(fetchCalls);
+    assertForkCall(fetchCalls);
   });
 
   it('serializes startAt in the workflow start payload', async () => {
@@ -840,5 +1072,44 @@ describe('HttpClient request surface', () => {
     handle[Symbol.dispose]();
 
     expect(clearedIntervals).toBe(1);
+  });
+
+  it('exercises HttpScheduleHandle.describe() directly against a mocked remote response', async () => {
+    const originalFetchOverride = globalThis.fetch;
+
+    try {
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          return Response.json({ id: 'schedule-direct' });
+        }
+
+        return Response.json({
+          id: 'schedule-direct',
+          workflowType: 'echo',
+          cronExpression: '0 * * * *',
+          status: 'active',
+          overlap: 'queue',
+          backfill: true,
+          createdAt: 1,
+          updatedAt: 2,
+          nextFireAt: 3,
+          queuedRuns: 0,
+        });
+      }) as typeof fetch;
+
+      const directClient = new HttpClient({ baseUrl: 'http://example.test' });
+      const scheduleHandle = await directClient.schedule('echo', 'payload', '0 * * * *');
+
+      expect(await scheduleHandle.describe()).toEqual(
+        expect.objectContaining({
+          id: 'schedule-direct',
+          cronExpression: '0 * * * *',
+        }),
+      );
+
+      expect(() => scheduleHandle[Symbol.dispose]()).not.toThrow();
+    } finally {
+      globalThis.fetch = originalFetchOverride;
+    }
   });
 });

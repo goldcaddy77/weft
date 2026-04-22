@@ -8,18 +8,21 @@ import {
   type CliCommand,
   DOCTOR_HELP_TEXT,
   HELP_TEXT,
+  SCHEDULE_HELP_TEXT,
   TIMELINE_HELP_TEXT,
   VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
   collectDiffLines,
   createStorage,
   executeDoctor,
+  executeSchedule,
   executeTimeline,
   executeValidate,
   executeVersionCheck,
   parseCliArguments,
 } from './cli.ts';
 import { encode } from './core/codec.ts';
+import type { WorkflowContext } from './core/types.ts';
 import { KEYS } from './storage/interface.ts';
 
 type ServeCommand = Extract<CliCommand, { command: 'serve' }>;
@@ -27,6 +30,12 @@ type DoctorCommand = Extract<CliCommand, { command: 'doctor' }>;
 type VersionCheckCommand = Extract<CliCommand, { command: 'version:check' }>;
 type ValidateCommand = Extract<CliCommand, { command: 'validate' }>;
 type TimelineCommand = Extract<CliCommand, { command: 'timeline' }>;
+type ScheduleListCommand = Extract<CliCommand, { command: 'schedule'; action: 'list' }>;
+type ScheduleCreateCommand = Extract<CliCommand, { command: 'schedule'; action: 'create' }>;
+type ScheduleMutationCommand = Extract<
+  CliCommand,
+  { command: 'schedule'; action: 'pause' | 'resume' | 'cancel' }
+>;
 
 describe('CLI argument parsing', () => {
   describe('default subcommand (serve)', () => {
@@ -449,6 +458,162 @@ describe('CLI argument parsing', () => {
       ).toThrow('--step and --diff cannot be used together');
     });
   });
+
+  describe('schedule subcommand', () => {
+    it('parses schedule list', () => {
+      const result = parseCliArguments(['schedule', 'list']) as ScheduleListCommand;
+      expect(result.command).toBe('schedule');
+      expect(result.action).toBe('list');
+      expect(result.database).toBe('./weft.db');
+      expect(result.storage).toBe('sqlite');
+    });
+
+    it('parses schedule storage backend flags', () => {
+      const createResult = parseCliArguments([
+        'schedule',
+        'create',
+        'echo',
+        '0 * * * *',
+        '--storage',
+        'lmdb',
+      ]) as ScheduleCreateCommand;
+      expect(createResult.storage).toBe('lmdb');
+    });
+
+    it('rejects non-persistent memory storage for schedule commands', () => {
+      expect(() => parseCliArguments(['schedule', 'list', '--storage', 'memory'])).toThrow(
+        "Invalid storage backend 'memory'. Schedule commands support only sqlite and lmdb because data must persist across CLI invocations",
+      );
+    });
+
+    it('allows schedule help to bypass storage validation', () => {
+      const result = parseCliArguments([
+        'schedule',
+        '--help',
+        '--storage',
+        'memory',
+      ]) as ScheduleListCommand;
+
+      expect(result.command).toBe('schedule');
+      expect(result.help).toBe(true);
+    });
+
+    it('parses schedule create with workflow module and cron expression', () => {
+      const result = parseCliArguments([
+        'schedule',
+        'create',
+        'echo',
+        '0 * * * *',
+        '--workflows',
+        './workflows.ts',
+        '--input',
+        '{"payload":"nightly"}',
+        '--id',
+        'nightly-maintenance',
+        '--overlap',
+        'queue',
+        '--backfill',
+      ]) as ScheduleCreateCommand;
+
+      expect(result.command).toBe('schedule');
+      expect(result.action).toBe('create');
+      expect(result.workflowType).toBe('echo');
+      expect(result.cronExpression).toBe('0 * * * *');
+      expect(result.workflows).toBe('./workflows.ts');
+      expect(result.input).toBe('{"payload":"nightly"}');
+      expect(result.id).toBe('nightly-maintenance');
+      expect(result.overlap).toBe('queue');
+      expect(result.backfill).toBe(true);
+    });
+
+    it('rejects invalid schedule overlap policies', () => {
+      expect(() =>
+        parseCliArguments([
+          'schedule',
+          'create',
+          'echo',
+          '0 * * * *',
+          '--workflows',
+          './workflows.ts',
+          '--overlap',
+          'parallel',
+        ]),
+      ).toThrow(
+        "Invalid overlap policy 'parallel'. Must be one of: skip, queue, cancel-running, allow",
+      );
+    });
+
+    it('parses schedule pause, resume, and cancel ids', () => {
+      const pauseResult = parseCliArguments([
+        'schedule',
+        'pause',
+        'schedule-1',
+      ]) as ScheduleMutationCommand;
+      expect(pauseResult.action).toBe('pause');
+      expect(pauseResult.scheduleId).toBe('schedule-1');
+
+      const resumeResult = parseCliArguments([
+        'schedule',
+        'resume',
+        'schedule-1',
+      ]) as ScheduleMutationCommand;
+      expect(resumeResult.action).toBe('resume');
+      expect(resumeResult.scheduleId).toBe('schedule-1');
+
+      const cancelResult = parseCliArguments([
+        'schedule',
+        'cancel',
+        'schedule-2',
+      ]) as ScheduleMutationCommand;
+      expect(cancelResult.action).toBe('cancel');
+      expect(cancelResult.scheduleId).toBe('schedule-2');
+    });
+
+    it('rejects missing or unknown schedule actions', () => {
+      expect(() => parseCliArguments(['schedule'])).toThrow(
+        'Missing schedule action. Expected one of: list, create, pause, resume, cancel',
+      );
+      expect(() => parseCliArguments(['schedule', 'typo'])).toThrow(
+        'Unknown schedule action "typo". Expected one of: list, create, pause, resume, cancel',
+      );
+    });
+
+    it('rejects unexpected list positionals', () => {
+      expect(() => parseCliArguments(['schedule', 'list', 'extra'])).toThrow(
+        'schedule list does not accept positional arguments',
+      );
+    });
+
+    it('rejects extra schedule create and mutation positionals', () => {
+      expect(() => parseCliArguments(['schedule', 'create', 'echo', '0 * * * *', 'extra'])).toThrow(
+        'schedule create expects exactly 2 positional arguments: <workflowType> <cronExpression>',
+      );
+      expect(() => parseCliArguments(['schedule', 'pause', 'schedule-1', 'extra'])).toThrow(
+        'schedule pause expects exactly 1 positional argument: <scheduleId>',
+      );
+      expect(() => parseCliArguments(['schedule', 'resume', 'schedule-1', 'extra'])).toThrow(
+        'schedule resume expects exactly 1 positional argument: <scheduleId>',
+      );
+      expect(() => parseCliArguments(['schedule', 'cancel', 'schedule-1', 'extra'])).toThrow(
+        'schedule cancel expects exactly 1 positional argument: <scheduleId>',
+      );
+    });
+
+    it('rejects missing schedule create and mutation positionals', () => {
+      expect(() => parseCliArguments(['schedule', 'create', 'echo'])).toThrow(
+        'schedule create expects exactly 2 positional arguments: <workflowType> <cronExpression>',
+      );
+      expect(() => parseCliArguments(['schedule', 'pause'])).toThrow(
+        'schedule pause expects exactly 1 positional argument: <scheduleId>',
+      );
+      expect(() => parseCliArguments(['schedule', 'resume'])).toThrow(
+        'schedule resume expects exactly 1 positional argument: <scheduleId>',
+      );
+      expect(() => parseCliArguments(['schedule', 'cancel'])).toThrow(
+        'schedule cancel expects exactly 1 positional argument: <scheduleId>',
+      );
+    });
+  });
 });
 
 describe('help text', () => {
@@ -462,6 +627,10 @@ describe('help text', () => {
 
   it('HELP_TEXT contains timeline subcommand', () => {
     expect(HELP_TEXT).toContain('timeline');
+  });
+
+  it('HELP_TEXT contains schedule subcommand', () => {
+    expect(HELP_TEXT).toContain('schedule');
   });
 
   it('HELP_TEXT contains validate subcommand', () => {
@@ -521,6 +690,18 @@ describe('help text', () => {
     expect(TIMELINE_HELP_TEXT).toContain('--step');
     expect(TIMELINE_HELP_TEXT).toContain('--diff');
     expect(TIMELINE_HELP_TEXT).toContain('--database');
+  });
+
+  it('SCHEDULE_HELP_TEXT contains list, create, pause, resume, and cancel', () => {
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule list');
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule create');
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule pause');
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule resume');
+    expect(SCHEDULE_HELP_TEXT).toContain('schedule cancel');
+    expect(SCHEDULE_HELP_TEXT).toContain('--storage');
+    expect(SCHEDULE_HELP_TEXT).toContain('sqlite, lmdb');
+    expect(SCHEDULE_HELP_TEXT).not.toContain('sqlite, lmdb, memory');
+    expect(SCHEDULE_HELP_TEXT).toContain('--workflows');
   });
 
   it('HELP_TEXT documents --storage flag', () => {
@@ -713,6 +894,23 @@ describe('CLI direct execution', () => {
     expect(stdout).toContain('timeline');
     expect(stdout).toContain('--step');
     expect(stdout).toContain('--diff');
+  });
+
+  it('runs schedule --help and exits 0', async () => {
+    const process = Bun.spawn(['bun', './src/cli-main.ts', 'schedule', '--help'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await process.exited;
+    const stdout = await new Response(process.stdout).text();
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('schedule list');
+    expect(stdout).toContain('schedule create');
+    expect(stdout).toContain('schedule pause');
+    expect(stdout).toContain('schedule resume');
+    expect(stdout).toContain('schedule cancel');
   });
 
   it('runs doctor against an in-memory database and exits 0', async () => {
@@ -1118,6 +1316,360 @@ describe('executeTimeline', () => {
         exitCode: 1,
       });
     } finally {
+      rmSync(database, { force: true });
+    }
+  });
+});
+
+describe('executeSchedule', () => {
+  it('lists, creates, pauses, resumes, and cancels schedules against a SQLite database', async () => {
+    const database = join(tmpdir(), `weft-schedule-${crypto.randomUUID()}.db`);
+    const workflows = join(tmpdir(), `weft-schedule-workflows-${crypto.randomUUID()}.ts`);
+
+    await Bun.write(
+      workflows,
+      [
+        'export default {',
+        '  scheduledEcho: {',
+        '    handler: async function* (_ctx, input) {',
+        '      return input;',
+        '    },',
+        '  },',
+        '};',
+      ].join('\n'),
+    );
+
+    const storage = await createStorage('sqlite', database);
+    const { Engine } = await import('./core/engine.ts');
+    let engine = new Engine({ storage });
+
+    try {
+      engine.register('scheduledEcho', async function* (_ctx: WorkflowContext, input: unknown) {
+        return input;
+      });
+      await engine.schedule('scheduledEcho', { payload: 'existing' }, '0 * * * *', {
+        id: 'existing-schedule',
+      });
+    } finally {
+      await engine[Symbol.asyncDispose]();
+      storage[Symbol.dispose]();
+    }
+
+    try {
+      const listResult = await executeSchedule({
+        command: 'schedule',
+        action: 'list',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+      });
+      expect(listResult.exitCode).toBe(0);
+      expect(listResult.stdout).toContain('existing-schedule');
+      expect(listResult.stdout).toContain('ID | Workflow Type | Status | Cron | Next Fire');
+
+      const createResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows,
+        workflowType: 'scheduledEcho',
+        cronExpression: '15 * * * *',
+        input: '{"payload":"nightly"}',
+        id: 'created-schedule',
+        overlap: 'queue',
+        backfill: true,
+      });
+      expect(createResult.exitCode).toBe(0);
+      expect(createResult.stdout).toContain('created-schedule');
+
+      const pauseResult = await executeSchedule({
+        command: 'schedule',
+        action: 'pause',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        scheduleId: 'created-schedule',
+      });
+      expect(pauseResult.exitCode).toBe(0);
+
+      const resumeResult = await executeSchedule({
+        command: 'schedule',
+        action: 'resume',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        scheduleId: 'created-schedule',
+      });
+      expect(resumeResult.exitCode).toBe(0);
+
+      const cancelResult = await executeSchedule({
+        command: 'schedule',
+        action: 'cancel',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        scheduleId: 'created-schedule',
+      });
+      expect(cancelResult.exitCode).toBe(0);
+
+      const verificationStorage = await createStorage('sqlite', database);
+      engine = new Engine({ storage: verificationStorage });
+      try {
+        const existing = await engine.getSchedule('existing-schedule');
+        const created = await engine.getSchedule('created-schedule');
+        expect(existing).not.toBeNull();
+        expect(created).toEqual(
+          expect.objectContaining({
+            id: 'created-schedule',
+            status: 'cancelled',
+            overlap: 'queue',
+            backfill: true,
+          }),
+        );
+      } finally {
+        await engine[Symbol.asyncDispose]();
+        verificationStorage[Symbol.dispose]();
+      }
+    } finally {
+      rmSync(workflows, { force: true });
+      rmSync(database, { force: true });
+    }
+  });
+
+  it('uses the selected storage backend for schedule commands', async () => {
+    const database = join(tmpdir(), `weft-schedule-lmdb-${crypto.randomUUID()}`);
+    const workflows = join(tmpdir(), `weft-schedule-lmdb-workflows-${crypto.randomUUID()}.ts`);
+
+    await Bun.write(
+      workflows,
+      [
+        'export default {',
+        '  scheduledEcho: {',
+        '    handler: async function* (_ctx, input) {',
+        '      return input;',
+        '    },',
+        '  },',
+        '};',
+      ].join('\n'),
+    );
+
+    try {
+      const createResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'lmdb',
+        help: false,
+        json: false,
+        workflows,
+        workflowType: 'scheduledEcho',
+        cronExpression: '30 * * * *',
+        input: '{"payload":"lmdb"}',
+        id: 'lmdb-schedule',
+        backfill: false,
+      });
+      expect(createResult.exitCode).toBe(0);
+      expect(createResult.stdout).toContain('lmdb-schedule');
+
+      const listResult = await executeSchedule({
+        command: 'schedule',
+        action: 'list',
+        database,
+        storage: 'lmdb',
+        help: false,
+        json: false,
+      });
+      expect(listResult.exitCode).toBe(0);
+      expect(listResult.stdout).toContain('lmdb-schedule');
+
+      const storage = await createStorage('lmdb', database);
+      const { Engine } = await import('./core/engine.ts');
+      const engine = new Engine({ storage });
+
+      try {
+        expect(await engine.getSchedule('lmdb-schedule')).toEqual(
+          expect.objectContaining({
+            id: 'lmdb-schedule',
+            cronExpression: '30 * * * *',
+          }),
+        );
+      } finally {
+        await engine[Symbol.asyncDispose]();
+        storage[Symbol.dispose]();
+      }
+    } finally {
+      rmSync(workflows, { force: true });
+      rmSync(database, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects memory storage for schedule commands before creating a fresh in-memory backend', async () => {
+    const result = await executeSchedule({
+      command: 'schedule',
+      action: 'list',
+      database: ':memory:',
+      storage: 'memory' as never,
+      help: false,
+      json: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe(
+      'Error: --storage memory is not supported for schedule commands because data does not persist across CLI invocations',
+    );
+  });
+
+  it('returns validation errors for incomplete schedule create and mutation commands', async () => {
+    const database = join(tmpdir(), `weft-schedule-validation-${crypto.randomUUID()}.db`);
+
+    try {
+      const missingWorkflowsResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows: '',
+        workflowType: 'scheduledEcho',
+        cronExpression: '0 * * * *',
+        input: 'null',
+        backfill: false,
+      });
+      expect(missingWorkflowsResult).toEqual({
+        stdout: '',
+        stderr: 'Error: --workflows flag is required for schedule create',
+        exitCode: 1,
+      });
+
+      const missingWorkflowTypeResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows: './workflows.ts',
+        cronExpression: '0 * * * *',
+        input: 'null',
+        backfill: false,
+      } as ScheduleCreateCommand);
+      expect(missingWorkflowTypeResult).toEqual({
+        stdout: '',
+        stderr: 'Error: missing required argument <workflowType> for schedule create',
+        exitCode: 1,
+      });
+
+      const missingCronExpressionResult = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows: './workflows.ts',
+        workflowType: 'scheduledEcho',
+        input: 'null',
+        backfill: false,
+      } as ScheduleCreateCommand);
+      expect(missingCronExpressionResult).toEqual({
+        stdout: '',
+        stderr: 'Error: missing required argument <cronExpression> for schedule create',
+        exitCode: 1,
+      });
+
+      const missingScheduleIdResult = await executeSchedule({
+        command: 'schedule',
+        action: 'pause',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+      } as ScheduleMutationCommand);
+      expect(missingScheduleIdResult).toEqual({
+        stdout: '',
+        stderr: 'Error: scheduleId is required for schedule pause',
+        exitCode: 1,
+      });
+    } finally {
+      rmSync(database, { force: true });
+    }
+  });
+
+  it('returns an error when schedule create input is not valid JSON', async () => {
+    const database = join(tmpdir(), `weft-schedule-input-${crypto.randomUUID()}.db`);
+    const workflows = join(tmpdir(), `weft-schedule-input-${crypto.randomUUID()}.ts`);
+
+    await Bun.write(
+      workflows,
+      [
+        'export default {',
+        '  scheduledEcho: {',
+        '    handler: async function* (_ctx, input) {',
+        '      return input;',
+        '    },',
+        '  },',
+        '};',
+      ].join('\n'),
+    );
+
+    try {
+      const result = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows,
+        workflowType: 'scheduledEcho',
+        cronExpression: '0 * * * *',
+        input: '{"payload"',
+        backfill: false,
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toContain('Error: could not parse --input JSON:');
+    } finally {
+      rmSync(workflows, { force: true });
+      rmSync(database, { force: true });
+    }
+  });
+
+  it('surfaces schedule execution failures through the shared schedule error path', async () => {
+    const database = join(tmpdir(), `weft-schedule-error-${crypto.randomUUID()}.db`);
+    const workflows = join(tmpdir(), `weft-schedule-error-${crypto.randomUUID()}.ts`);
+
+    await Bun.write(workflows, 'export default {};');
+
+    try {
+      const result = await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database,
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows,
+        workflowType: 'scheduledEcho',
+        cronExpression: '0 * * * *',
+        input: 'null',
+        backfill: false,
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe('Error: No workflow registered with name "scheduledEcho"');
+    } finally {
+      rmSync(workflows, { force: true });
       rmSync(database, { force: true });
     }
   });

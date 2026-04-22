@@ -203,4 +203,214 @@ describe('handleRequest edge coverage', () => {
     response = await handleRequest(request('POST', '/v1/workflows/wf-1/fork'), engine);
     expect(response.status).toBe(500);
   });
+
+  it('covers schedule validation errors and tenant-claim guards across schedule routes', async () => {
+    const engine = createEngine();
+
+    let response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        input: null,
+        id: '',
+        cronExpression: '* * * * *',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Field "id" must be a non-empty string' });
+
+    response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        input: null,
+        cronExpression: '* * * * *',
+        overlap: 'parallel',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Field "overlap" must be one of skip, queue, cancel-running, allow',
+    });
+
+    response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        input: null,
+        cronExpression: '* * * * *',
+        backfill: 'yes',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Field "backfill" must be a boolean' });
+
+    response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        input: null,
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Missing required field: cronExpression' });
+
+    response = await handleRequest(
+      new Request('http://localhost/v1/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{bad json',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Invalid JSON body' });
+
+    response = await handleRequest(
+      new Request('http://localhost/v1/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '123',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Request body must be a JSON object' });
+
+    response = await handleRequest(
+      request(
+        'GET',
+        '/v1/schedules?status=active&status=paused&workflowType=echo&tenantId=acme&limit=5001&offset=4',
+      ),
+      engine,
+    );
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual({
+      items: [],
+      total: 0,
+      offset: 4,
+      limit: 1000,
+    });
+
+    response = await handleRequest(request('GET', '/v1/schedules?status=active'), engine);
+    expect(response.status).toBe(200);
+    expect(await json(response)).toEqual({
+      items: [],
+      total: 0,
+      offset: 0,
+      limit: 0,
+    });
+
+    const authOptions: HandlerOptions = {
+      authContext: {
+        method: 'jwt',
+        claims: { sub: 'user-123' },
+      },
+    };
+
+    response = await handleRequest(request('GET', '/v1/schedules/schedule-1'), engine, authOptions);
+    expect(response.status).toBe(403);
+
+    response = await handleRequest(
+      request('POST', '/v1/schedules/schedule-1/pause'),
+      engine,
+      authOptions,
+    );
+    expect(response.status).toBe(403);
+
+    response = await handleRequest(
+      request('POST', '/v1/schedules/schedule-1/resume'),
+      engine,
+      authOptions,
+    );
+    expect(response.status).toBe(403);
+
+    response = await handleRequest(
+      request('DELETE', '/v1/schedules/schedule-1'),
+      engine,
+      authOptions,
+    );
+    expect(response.status).toBe(403);
+
+    response = await handleRequest(
+      new Request('http://localhost/v1/schedules/schedule-1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{bad json',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Invalid JSON body' });
+
+    response = await handleRequest(
+      new Request('http://localhost/v1/schedules/schedule-1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: '123',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Request body must be a JSON object' });
+
+    response = await handleRequest(request('PATCH', '/v1/schedules/schedule-1', {}), engine);
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Missing required field: cronExpression' });
+
+    response = await handleRequest(
+      request('PATCH', '/v1/schedules/schedule-1', { cronExpression: '* * * * *' }),
+      engine,
+      authOptions,
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('maps schedule handler engine failures to their HTTP responses', async () => {
+    const engine = createEngine();
+
+    engine.schedule = async () => {
+      throw new Error('schedule already exists');
+    };
+    let response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        input: null,
+        cronExpression: '* * * * *',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(409);
+
+    engine.schedule = async () => {
+      throw new Error('exploded');
+    };
+    response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        input: null,
+        cronExpression: '* * * * *',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(500);
+
+    engine.getSchedule = async () => {
+      throw new Error('lookup exploded');
+    };
+    response = await handleRequest(request('GET', '/v1/schedules/schedule-1'), engine);
+    expect(response.status).toBe(500);
+
+    engine.resumeSchedule = async () => {
+      throw new Error('Schedule cannot be resumed after cancellation');
+    };
+    response = await handleRequest(request('POST', '/v1/schedules/schedule-1/resume'), engine);
+    expect(response.status).toBe(409);
+
+    engine.cancelSchedule = async () => {
+      throw new Error('Authenticated tenant cannot access this schedule');
+    };
+    response = await handleRequest(request('DELETE', '/v1/schedules/schedule-1'), engine);
+    expect(response.status).toBe(403);
+  });
 });

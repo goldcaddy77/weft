@@ -4,7 +4,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { executeTimeline, parseCliArguments } from './cli.ts';
+import { executeSchedule, executeTimeline, parseCliArguments } from './cli.ts';
 import { encode } from './core/codec.ts';
 import { Context } from './core/context.ts';
 import { Engine } from './core/engine.ts';
@@ -153,5 +153,149 @@ describe('CLI edge coverage', () => {
       stdout: 'No timeline entries found for workflow "wf-empty-timeline".',
       exitCode: 0,
     });
+  });
+
+  it('rejects invalid schedule overlap policies during argument parsing', () => {
+    expect(() =>
+      parseCliArguments([
+        'schedule',
+        'create',
+        '--workflows',
+        './workflows.ts',
+        '--overlap',
+        'parallel',
+        'echo',
+        '* * * * *',
+      ]),
+    ).toThrow("Invalid overlap policy 'parallel'");
+  });
+
+  it('returns schedule create and mutation validation errors without touching storage', async () => {
+    expect(
+      await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database: ':memory:',
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows: '',
+        workflowType: 'scheduledEcho',
+        cronExpression: '* * * * *',
+        input: 'null',
+        backfill: false,
+      }),
+    ).toEqual({
+      stdout: '',
+      stderr: 'Error: --workflows flag is required for schedule create',
+      exitCode: 1,
+    });
+
+    expect(
+      await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database: ':memory:',
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows: './workflows.ts',
+        workflowType: '',
+        cronExpression: '* * * * *',
+        input: 'null',
+        backfill: false,
+      }),
+    ).toEqual({
+      stdout: '',
+      stderr: 'Error: missing required argument <workflowType> for schedule create',
+      exitCode: 1,
+    });
+
+    expect(
+      await executeSchedule({
+        command: 'schedule',
+        action: 'create',
+        database: ':memory:',
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        workflows: './workflows.ts',
+        workflowType: 'scheduledEcho',
+        cronExpression: '',
+        input: 'null',
+        backfill: false,
+      }),
+    ).toEqual({
+      stdout: '',
+      stderr: 'Error: missing required argument <cronExpression> for schedule create',
+      exitCode: 1,
+    });
+
+    const workflowsPath = join(tmpdir(), `weft-cli-edge-workflows-${crypto.randomUUID()}.ts`);
+    databasesToDelete.add(workflowsPath);
+    await Bun.write(
+      workflowsPath,
+      [
+        'export default {',
+        '  scheduledEcho: {',
+        '    handler: async function* (_ctx, input) {',
+        '      return input;',
+        '    },',
+        '  },',
+        '};',
+      ].join('\n'),
+    );
+
+    const createWithInvalidJson = await executeSchedule({
+      command: 'schedule',
+      action: 'create',
+      database: ':memory:',
+      storage: 'sqlite',
+      help: false,
+      json: false,
+      workflows: workflowsPath,
+      workflowType: 'scheduledEcho',
+      cronExpression: '* * * * *',
+      input: '{bad json',
+      backfill: false,
+    });
+    expect(createWithInvalidJson.stderr).toContain('Error: could not parse --input JSON:');
+    expect(createWithInvalidJson.exitCode).toBe(1);
+
+    expect(
+      await executeSchedule({
+        command: 'schedule',
+        action: 'pause',
+        database: ':memory:',
+        storage: 'sqlite',
+        help: false,
+        json: false,
+        scheduleId: '',
+      }),
+    ).toEqual({
+      stdout: '',
+      stderr: 'Error: scheduleId is required for schedule pause',
+      exitCode: 1,
+    });
+  });
+
+  it('surfaces executeSchedule setup failures through the shared catch path', async () => {
+    const result = await executeSchedule({
+      command: 'schedule',
+      action: 'create',
+      database: ':memory:',
+      storage: 'sqlite',
+      help: false,
+      json: false,
+      workflows: './missing-workflows.ts',
+      workflowType: 'scheduledEcho',
+      cronExpression: '* * * * *',
+      input: 'null',
+      backfill: false,
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('Error:');
+    expect(result.stderr).toContain('missing-workflows.ts');
   });
 });
