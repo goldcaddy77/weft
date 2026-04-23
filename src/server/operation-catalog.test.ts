@@ -58,10 +58,16 @@ function makeOp<Input, Output>(
 
 function registryFor(operation: ErasedOperation): OperationRegistry {
   return {
-    get: () => operation,
+    get: (name) => (name === operation.name ? operation : undefined),
     list: () => [operation],
   };
 }
+
+const ENGINE_FAILURE_FAULT = {
+  code: 'EngineFailure',
+  message: 'internal error',
+  data: {},
+} satisfies OperationFault;
 
 describe('executeOperation — happy path', () => {
   it('parses input, invokes, returns ok', async () => {
@@ -1013,7 +1019,7 @@ describe('executeOperation — additional coverage', () => {
     expect(Object.isFrozen(stored.access.authenticatedScopes.scopes)).toBe(true);
   });
 
-  it('returns EngineFailure when defensive schema and authorization guards trip', async () => {
+  it('returns EngineFailure when defensive schema guards trip', async () => {
     const baseOperation = makeOp({
       name: 'weft.test.defensive',
       inputSchema: z.object({}),
@@ -1035,7 +1041,7 @@ describe('executeOperation — additional coverage', () => {
       },
     );
     if (result.ok) throw new Error('expected fault');
-    expect(result.fault.code).toBe('EngineFailure');
+    expect(result.fault).toEqual(ENGINE_FAILURE_FAULT);
 
     result = await executeOperation(
       'weft.test.defensive',
@@ -1055,9 +1061,18 @@ describe('executeOperation — additional coverage', () => {
       },
     );
     if (result.ok) throw new Error('expected fault');
-    expect(result.fault.code).toBe('EngineFailure');
+    expect(result.fault).toEqual(ENGINE_FAILURE_FAULT);
+  });
 
-    result = await executeOperation(
+  it('returns EngineFailure when defensive authorization guards trip', async () => {
+    const baseOperation = makeOp({
+      name: 'weft.test.defensive',
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      invoke: async () => ({}),
+    });
+
+    let result = await executeOperation(
       'weft.test.defensive',
       {},
       {
@@ -1076,7 +1091,7 @@ describe('executeOperation — additional coverage', () => {
       },
     );
     if (result.ok) throw new Error('expected fault');
-    expect(result.fault.code).toBe('EngineFailure');
+    expect(result.fault).toEqual(ENGINE_FAILURE_FAULT);
 
     result = await executeOperation(
       'weft.test.defensive',
@@ -1097,7 +1112,7 @@ describe('executeOperation — additional coverage', () => {
       },
     );
     if (result.ok) throw new Error('expected fault');
-    expect(result.fault.code).toBe('EngineFailure');
+    expect(result.fault).toEqual(ENGINE_FAILURE_FAULT);
   });
 
   it('classifies Error instances with non-string message values as EngineFailure', () => {

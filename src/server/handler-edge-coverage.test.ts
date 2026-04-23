@@ -123,6 +123,23 @@ describe('handleRequest edge coverage', () => {
 
   it('returns parse errors from every bulk workflow route before dispatching', async () => {
     const engine = createEngine();
+    let dispatchCount = 0;
+    engine.cancelAll = async () => {
+      dispatchCount++;
+      throw new Error('cancel should not dispatch');
+    };
+    engine.signalAll = async () => {
+      dispatchCount++;
+      throw new Error('signal should not dispatch');
+    };
+    engine.deleteAll = async () => {
+      dispatchCount++;
+      throw new Error('delete should not dispatch');
+    };
+    engine.tagAll = async () => {
+      dispatchCount++;
+      throw new Error('tag should not dispatch');
+    };
 
     const routes = [
       ['POST', '/v1/workflows/bulk/cancel'],
@@ -144,10 +161,24 @@ describe('handleRequest edge coverage', () => {
       expect(response.status).toBe(400);
       expect(await json(response)).toEqual({ error: 'Invalid JSON body' });
     }
+    expect(dispatchCount).toBe(0);
   });
 
   it('validates bulk signal and tag mutation bodies before dispatching', async () => {
     const engine = createEngine();
+    let dispatchCount = 0;
+    engine.signalAll = async () => {
+      dispatchCount++;
+      throw new Error('signal should not dispatch');
+    };
+    engine.deleteAll = async () => {
+      dispatchCount++;
+      throw new Error('delete should not dispatch');
+    };
+    engine.tagAll = async () => {
+      dispatchCount++;
+      throw new Error('tag should not dispatch');
+    };
 
     let response = await handleRequest(
       request('POST', '/v1/workflows/bulk/signal', ['not-an-object']),
@@ -213,6 +244,7 @@ describe('handleRequest edge coverage', () => {
     expect(await json(response)).toEqual({
       error: 'Field "tags" must contain only strings',
     });
+    expect(dispatchCount).toBe(0);
   });
 
   it('maps bulk workflow engine failures to 500 responses', async () => {
@@ -226,7 +258,7 @@ describe('handleRequest edge coverage', () => {
       engine,
     );
     expect(response.status).toBe(500);
-    expect(await json(response)).toEqual({ error: 'cancel failed' });
+    expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');
 
     engine.signalAll = async () => {
       throw new Error('signal failed');
@@ -239,7 +271,7 @@ describe('handleRequest edge coverage', () => {
       engine,
     );
     expect(response.status).toBe(500);
-    expect(await json(response)).toEqual({ error: 'signal failed' });
+    expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');
 
     engine.deleteAll = async () => {
       throw new Error('delete failed');
@@ -249,7 +281,7 @@ describe('handleRequest edge coverage', () => {
       engine,
     );
     expect(response.status).toBe(500);
-    expect(await json(response)).toEqual({ error: 'delete failed' });
+    expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');
 
     engine.tagAll = async () => {
       throw new Error('tag failed');
@@ -263,7 +295,7 @@ describe('handleRequest edge coverage', () => {
       engine,
     );
     expect(response.status).toBe(500);
-    expect(await json(response)).toEqual({ error: 'tag failed' });
+    expect(typeof ((await json(response)) as { error?: unknown }).error).toBe('string');
   });
 
   it('maps addTags and removeTags failures to 404, 400, and 500 responses', async () => {

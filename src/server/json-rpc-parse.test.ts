@@ -162,6 +162,8 @@ describe('parseJsonRpcRequest — batch', () => {
     expect(result.items[0]?.kind).toBe('valid');
     expect(result.items[1]?.kind).toBe('invalid');
     if (result.items[1]?.kind !== 'invalid') throw new Error('shape');
+    expect(result.items[1].code).toBe(JSON_RPC_ERROR_CODES.INVALID_REQUEST);
+    expect(result.items[1].message).toBe('jsonrpc field must be exactly "2.0"');
     expect(result.items[1].id).toBe(2);
   });
 
