@@ -147,21 +147,11 @@ function parseBatchItem(item: unknown): ParsedBatchItem {
   if (result.kind === 'single') {
     return { kind: 'valid', request: result.request, isNotification: result.isNotification };
   }
-  if (result.kind === 'invalid-request') {
-    return {
-      kind: 'invalid',
-      code: result.code,
-      message: result.message,
-      id: result.id,
-    };
-  }
-  // `parse-error` and `batch` cannot be produced by `parseSingleObject`
-  // — it always returns `single` or `invalid-request`.
   return {
     kind: 'invalid',
-    code: JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-    message: 'Invalid request',
-    id: null,
+    code: result.code,
+    message: result.message,
+    id: result.id,
   };
 }
 

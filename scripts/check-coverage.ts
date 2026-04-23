@@ -16,7 +16,7 @@ type CoverageAllowance = {
 function isGeneratedCoverageArtifact(filePath: string): boolean {
   if (
     filePath.startsWith('../../../../../../private/var/folders/') &&
-    /\/weft-(?:schedule(?:-lmdb)?|cli-edge)-workflows-[^/]+\.ts$/.test(filePath)
+    /\/weft-(?:schedule(?:-lmdb)?-(?:workflows|input)|cli-edge-workflows)-[^/]+\.ts$/.test(filePath)
   ) {
     return true;
   }
@@ -111,7 +111,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       functions: 1,
       // Bun also leaves the closing line of the malformed-route catch branch
       // uncovered even when the branch's observable behavior is tested.
-      lines: new Set([890, 1863]),
+      lines: new Set([890, 2011]),
     },
   ],
   [

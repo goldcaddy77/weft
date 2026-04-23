@@ -121,6 +121,151 @@ describe('handleRequest edge coverage', () => {
     });
   });
 
+  it('returns parse errors from every bulk workflow route before dispatching', async () => {
+    const engine = createEngine();
+
+    const routes = [
+      ['POST', '/v1/workflows/bulk/cancel'],
+      ['POST', '/v1/workflows/bulk/signal'],
+      ['DELETE', '/v1/workflows/bulk'],
+      ['PATCH', '/v1/workflows/bulk/tags'],
+    ] as const;
+
+    for (const [method, path] of routes) {
+      const response = await handleRequest(
+        new Request(`http://localhost${path}`, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: '{"filter":',
+        }),
+        engine,
+      );
+
+      expect(response.status).toBe(400);
+      expect(await json(response)).toEqual({ error: 'Invalid JSON body' });
+    }
+  });
+
+  it('validates bulk signal and tag mutation bodies before dispatching', async () => {
+    const engine = createEngine();
+
+    let response = await handleRequest(
+      request('POST', '/v1/workflows/bulk/signal', ['not-an-object']),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Request body must be a JSON object' });
+
+    response = await handleRequest(
+      request('POST', '/v1/workflows/bulk/signal', { filter: {}, name: 'continue' }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+    });
+
+    response = await handleRequest(
+      request('POST', '/v1/workflows/bulk/signal', {
+        filter: { tags: ['selected'] },
+        name: '',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Field "name" must be a non-empty string' });
+
+    response = await handleRequest(request('DELETE', '/v1/workflows/bulk', { filter: {} }), engine);
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+    });
+
+    response = await handleRequest(
+      request('PATCH', '/v1/workflows/bulk/tags', ['not-an-object']),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Request body must be a JSON object' });
+
+    response = await handleRequest(
+      request('PATCH', '/v1/workflows/bulk/tags', {
+        filter: {},
+        tags: ['bulk'],
+        operation: 'add',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Field "filter" must include at least one of status, type, tags, or attributes',
+    });
+
+    response = await handleRequest(
+      request('PATCH', '/v1/workflows/bulk/tags', {
+        filter: { tags: ['selected'] },
+        tags: [42],
+        operation: 'add',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({
+      error: 'Field "tags" must contain only strings',
+    });
+  });
+
+  it('maps bulk workflow engine failures to 500 responses', async () => {
+    const engine = createEngine();
+
+    engine.cancelAll = async () => {
+      throw new Error('cancel failed');
+    };
+    let response = await handleRequest(
+      request('POST', '/v1/workflows/bulk/cancel', { filter: { tags: ['selected'] } }),
+      engine,
+    );
+    expect(response.status).toBe(500);
+    expect(await json(response)).toEqual({ error: 'cancel failed' });
+
+    engine.signalAll = async () => {
+      throw new Error('signal failed');
+    };
+    response = await handleRequest(
+      request('POST', '/v1/workflows/bulk/signal', {
+        filter: { tags: ['selected'] },
+        name: 'continue',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(500);
+    expect(await json(response)).toEqual({ error: 'signal failed' });
+
+    engine.deleteAll = async () => {
+      throw new Error('delete failed');
+    };
+    response = await handleRequest(
+      request('DELETE', '/v1/workflows/bulk', { filter: { tags: ['selected'] } }),
+      engine,
+    );
+    expect(response.status).toBe(500);
+    expect(await json(response)).toEqual({ error: 'delete failed' });
+
+    engine.tagAll = async () => {
+      throw new Error('tag failed');
+    };
+    response = await handleRequest(
+      request('PATCH', '/v1/workflows/bulk/tags', {
+        filter: { tags: ['selected'] },
+        tags: ['bulk'],
+        operation: 'add',
+      }),
+      engine,
+    );
+    expect(response.status).toBe(500);
+    expect(await json(response)).toEqual({ error: 'tag failed' });
+  });
+
   it('maps addTags and removeTags failures to 404, 400, and 500 responses', async () => {
     const engine = createEngine();
 

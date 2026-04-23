@@ -26,6 +26,7 @@ import {
   executeOperation,
   type ErasedOperation,
   type OperationDefinition,
+  type OperationRegistry,
 } from './operation-catalog.ts';
 import type { OperationFault } from './operation-fault.ts';
 import { anonymousPrincipal, principalFromApiKey } from './principal.ts';
@@ -53,6 +54,13 @@ function makeOp<Input, Output>(
     unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
     ...overrides,
   } as unknown as ErasedOperation;
+}
+
+function registryFor(operation: ErasedOperation): OperationRegistry {
+  return {
+    get: () => operation,
+    list: () => [operation],
+  };
 }
 
 describe('executeOperation — happy path', () => {
@@ -1003,6 +1011,108 @@ describe('executeOperation — additional coverage', () => {
     if (stored.access.kind !== 'optionalAuth') throw new Error('expected optionalAuth access');
     expect(Object.isFrozen(stored.access.authenticatedScopes)).toBe(true);
     expect(Object.isFrozen(stored.access.authenticatedScopes.scopes)).toBe(true);
+  });
+
+  it('returns EngineFailure when defensive schema and authorization guards trip', async () => {
+    const baseOperation = makeOp({
+      name: 'weft.test.defensive',
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      invoke: async () => ({}),
+    });
+
+    let result = await executeOperation(
+      'weft.test.defensive',
+      {},
+      {
+        principal: anonymousPrincipal(),
+        engine: fakeEngine,
+        transport: 'http-rest',
+        registry: registryFor({
+          ...baseOperation,
+          inputSchema: z.string(),
+        }),
+      },
+    );
+    if (result.ok) throw new Error('expected fault');
+    expect(result.fault.code).toBe('EngineFailure');
+
+    result = await executeOperation(
+      'weft.test.defensive',
+      {},
+      {
+        principal: anonymousPrincipal(),
+        engine: fakeEngine,
+        transport: 'http-rest',
+        registry: registryFor({
+          ...baseOperation,
+          outputSchema: {
+            safeParse: () => {
+              throw new Error('output parser exploded');
+            },
+          } as unknown as z.ZodType,
+        }),
+      },
+    );
+    if (result.ok) throw new Error('expected fault');
+    expect(result.fault.code).toBe('EngineFailure');
+
+    result = await executeOperation(
+      'weft.test.defensive',
+      {},
+      {
+        principal: anonymousPrincipal(),
+        engine: fakeEngine,
+        transport: 'http-rest',
+        registry: registryFor({
+          ...baseOperation,
+          authorize: async () =>
+            Object.defineProperty({}, 'allowed', {
+              get() {
+                throw new Error('allowed getter exploded');
+              },
+            }) as Awaited<ReturnType<NonNullable<ErasedOperation['authorize']>>>,
+        }),
+      },
+    );
+    if (result.ok) throw new Error('expected fault');
+    expect(result.fault.code).toBe('EngineFailure');
+
+    result = await executeOperation(
+      'weft.test.defensive',
+      {},
+      {
+        principal: anonymousPrincipal(),
+        engine: fakeEngine,
+        transport: 'http-rest',
+        registry: registryFor({
+          ...baseOperation,
+          authorize: async () =>
+            Object.defineProperty({ allowed: false }, 'reason', {
+              get() {
+                throw new Error('reason getter exploded');
+              },
+            }) as Awaited<ReturnType<NonNullable<ErasedOperation['authorize']>>>,
+        }),
+      },
+    );
+    if (result.ok) throw new Error('expected fault');
+    expect(result.fault.code).toBe('EngineFailure');
+  });
+
+  it('classifies Error instances with non-string message values as EngineFailure', () => {
+    const error = new Error('original');
+    Object.defineProperty(error, 'message', {
+      get() {
+        return 42;
+      },
+    });
+
+    expect(classifyEngineError(error)).toEqual({
+      code: 'EngineFailure',
+      message: 'internal error',
+      data: {},
+    });
   });
 });
 
