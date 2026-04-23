@@ -83,6 +83,12 @@ describe('workflow execution timeline helpers', () => {
         after: 0.28,
       }),
     );
+    expect(rows.filter((row) => row.label.includes('weft:tokenCost'))).toEqual([
+      expect.objectContaining({
+        section: 'budget',
+        label: 'budget.weft:tokenCost',
+      }),
+    ]);
     expect(rows).toContainEqual(
       expect.objectContaining({
         section: 'conversation',
@@ -99,6 +105,8 @@ describe('workflow execution timeline helpers', () => {
     expect(formatTimelineDiffValue('approved')).toBe('approved');
     expect(formatTimelineDiffValue(42)).toBe('42');
     expect(formatTimelineDiffValue({ total: 42 })).toBe('{"total":42}');
+    expect(formatTimelineDiffValue(Symbol('phase'))).toBe('Symbol(phase)');
+    expect(formatTimelineDiffValue(() => 'ignored')).toBe('[function]');
   });
 
   it('ignores stale replay responses when rapid step selections resolve out of order', async () => {

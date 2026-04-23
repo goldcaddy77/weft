@@ -85,11 +85,17 @@
     timeline = nextTimeline;
 
     if (nextTimeline.length === 0) {
+      timelineReplayRequests.createRequestToken();
+      timelineDiffRequests.createRequestToken();
       selectedTimelineStep = null;
       selectedTimelineReplay = null;
+      selectedTimelineReplayLoading = false;
+      selectedTimelineReplayError = null;
       timelineDiffFromStep = '';
       timelineDiffToStep = '';
       timelineDiffRows = [];
+      timelineDiffLoading = false;
+      timelineDiffError = null;
       return null;
     }
 
@@ -225,17 +231,23 @@
         event.type === 'workflow:cancelled' ||
         event.type === 'workflow:timed-out'
       ) {
+        const eventGeneration = generation;
         void Promise.all([apiClient.getWorkflow(id), apiClient.getWorkflowTimeline(id)]).then(
           ([updated, timelineResult]) => {
+            if (eventGeneration !== fetchGeneration) return undefined;
             workflow = updated;
             const step = synchronizeTimelineSelection(timelineResult);
             if (step !== null) {
-              void loadTimelineReplay(step);
+              void loadTimelineReplay(step, eventGeneration);
             }
             return undefined;
           },
           (refetchError) => {
-            console.warn('[workflow-detail] Failed to re-fetch workflow on terminal event:', refetchError);
+            if (eventGeneration !== fetchGeneration) return undefined;
+            console.warn(
+              '[workflow-detail] Failed to re-fetch workflow on terminal event:',
+              refetchError,
+            );
             return undefined;
           },
         );

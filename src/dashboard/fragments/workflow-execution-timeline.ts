@@ -30,6 +30,7 @@ type DiffCandidate =
   | { readonly missing: false; readonly value: unknown };
 
 const missingValue: DiffCandidate = { missing: true };
+const dedicatedBudgetSearchAttributeKey = 'weft:tokenCost';
 
 function presentValue(value: unknown): DiffCandidate {
   return { missing: false, value };
@@ -93,6 +94,14 @@ function readNumber(value: unknown): number | null {
   }
 
   return null;
+}
+
+function getGenericSearchAttributes(
+  searchAttributes: WorkflowReplay['checkpoint']['searchAttributes'],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(searchAttributes).filter(([key]) => key !== dedicatedBudgetSearchAttributeKey),
+  );
 }
 
 function addLeafDiff(
@@ -191,8 +200,12 @@ function collectBudgetDiff(
   beforeReplay: WorkflowReplay,
   afterReplay: WorkflowReplay,
 ): WorkflowTimelineDiffRow[] {
-  const beforeTokenCost = readNumber(beforeReplay.checkpoint.searchAttributes['weft:tokenCost']);
-  const afterTokenCost = readNumber(afterReplay.checkpoint.searchAttributes['weft:tokenCost']);
+  const beforeTokenCost = readNumber(
+    beforeReplay.checkpoint.searchAttributes[dedicatedBudgetSearchAttributeKey],
+  );
+  const afterTokenCost = readNumber(
+    afterReplay.checkpoint.searchAttributes[dedicatedBudgetSearchAttributeKey],
+  );
 
   if (
     beforeTokenCost === null ||
@@ -251,8 +264,8 @@ export function buildWorkflowTimelineDiff(
   collectValueDiffs(
     'searchAttributes',
     'searchAttributes',
-    presentValue(beforeReplay.checkpoint.searchAttributes),
-    presentValue(afterReplay.checkpoint.searchAttributes),
+    presentValue(getGenericSearchAttributes(beforeReplay.checkpoint.searchAttributes)),
+    presentValue(getGenericSearchAttributes(afterReplay.checkpoint.searchAttributes)),
     rows,
   );
 
@@ -280,15 +293,18 @@ export function formatTimelineDiffValue(value: unknown): string {
     return String(value);
   }
 
+  if (typeof value === 'bigint' || typeof value === 'symbol') {
+    return value.toString();
+  }
+
+  if (typeof value === 'function') {
+    return '[function]';
+  }
+
   try {
-    return JSON.stringify(value);
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? '[unserializable]' : serialized;
   } catch {
-    if (typeof value === 'bigint' || typeof value === 'symbol') {
-      return value.toString();
-    }
-    if (typeof value === 'function') {
-      return '[function]';
-    }
     return '[unserializable]';
   }
 }
