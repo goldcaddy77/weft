@@ -167,6 +167,21 @@ describe('handleJsonRpcHttpRequest — body-size limit', () => {
     expect(response.status).toBe(413);
   });
 
+  it('returns 400 when content-length is outside the safe integer range', async () => {
+    const response = await handleJsonRpcHttpRequest(
+      new Request('http://localhost/jsonrpc', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(Number.MAX_SAFE_INTEGER + 1),
+        },
+        body: '{}',
+      }),
+      { ...baseContext(), maxBodyBytes: Number.MAX_SAFE_INTEGER },
+    );
+    expect(response.status).toBe(400);
+  });
+
   it('returns 400 for a malformed content-length header (non-canonical integer)', async () => {
     // Negative, fractional, non-numeric, scientific-notation, or
     // leading-zero content-length values are all malformed per
@@ -216,6 +231,28 @@ describe('handleJsonRpcHttpRequest — body-size limit', () => {
       }),
       { ...baseContext(), maxBodyBytes: 1024 * 1024 },
     );
+    expect(response.status).toBe(413);
+  });
+
+  it('aborts streaming reads as soon as a later chunk exceeds the body limit', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"jsonrpc":"2.0",'));
+        controller.enqueue(encoder.encode('"method":"weft.test.echo","id":1}'));
+        controller.close();
+      },
+    });
+
+    const response = await handleJsonRpcHttpRequest(
+      new Request('http://localhost/jsonrpc', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: stream,
+      }),
+      { ...baseContext(), maxBodyBytes: 16 },
+    );
+
     expect(response.status).toBe(413);
   });
 });

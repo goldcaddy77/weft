@@ -81,9 +81,7 @@ export async function handleJsonRpcHttpRequest(
     if (!Number.isSafeInteger(declared) || declared < 0) {
       return textResponse('Bad Request', 400);
     }
-    if (declared > maxBytes) {
-      return textResponse('Payload Too Large', 413);
-    }
+    if (declared > maxBytes) return textResponse('Payload Too Large', 413);
   }
 
   // Stream-bounded body read. Pulls chunks and enforces `maxBytes`
@@ -93,9 +91,7 @@ export async function handleJsonRpcHttpRequest(
   try {
     bodyBytes = await readBodyBounded(request, maxBytes);
   } catch (error) {
-    if (error instanceof BodyTooLargeError) {
-      return textResponse('Payload Too Large', 413);
-    }
+    if (error instanceof BodyTooLargeError) return textResponse('Payload Too Large', 413);
     // Stream error reading the body — treat as transport-level failure.
     return textResponse('Bad Request', 400);
   }

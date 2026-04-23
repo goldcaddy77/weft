@@ -123,6 +123,15 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     },
   ],
   [
+    'src/server/workflow-event-feed.ts',
+    {
+      // Bun maps the closing line of the live-drain generator's intentional
+      // infinite loop as uncovered. Every exit path returns from inside the loop
+      // and is covered by behavioral tests.
+      lines: new Set([376]),
+    },
+  ],
+  [
     'src/storage/indexeddb.ts',
     {
       // Transaction error callbacks on IndexedDB cursors require injected platform

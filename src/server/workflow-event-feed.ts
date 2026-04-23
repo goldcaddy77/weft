@@ -372,6 +372,7 @@ async function* drainLive(
       continue;
     }
     await armed;
+    continue;
   }
 }
 

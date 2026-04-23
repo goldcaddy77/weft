@@ -57,6 +57,12 @@ describe('encodeCursor / decodeCursor', () => {
     }
   });
 
+  it('rejects negative and non-integer sequence numbers', () => {
+    for (const value of [-1, 1.5, Number.NaN]) {
+      expect(() => encodeCursor(value)).toThrow(/non-negative integer/);
+    }
+  });
+
   it('returns null for a malformed cursor (never throws)', () => {
     expect(decodeCursor('garbage')).toBeNull();
     expect(decodeCursor('')).toBeNull();
@@ -410,6 +416,50 @@ describe('WorkflowEventFeed — subscribe (live + replay)', () => {
     controller.abort();
     const second = await iterator.next();
     expect(second.done).toBe(true);
+  });
+
+  it('AbortSignal.abort() wakes a subscriber that is waiting for live events', async () => {
+    const backend = createInMemoryEventBackend();
+    const feed = createWorkflowEventFeed(backend);
+
+    const controller = new AbortController();
+    const iterable = feed.subscribe({
+      workflowId: 'wf-1',
+      selector: 'events',
+      signal: controller.signal,
+    });
+    const iterator = iterable[Symbol.asyncIterator]();
+
+    const pending = iterator.next();
+    await Bun.sleep(0);
+    controller.abort();
+
+    const result = await pending;
+    expect(result.done).toBe(true);
+  });
+
+  it('rechecks abort state after arming the live-event waker', async () => {
+    const backend = createInMemoryEventBackend();
+    const feed = createWorkflowEventFeed(backend);
+    let abortChecks = 0;
+    const signal = {
+      get aborted() {
+        abortChecks += 1;
+        return abortChecks >= 3;
+      },
+      addEventListener() {},
+      removeEventListener() {},
+    } as unknown as AbortSignal;
+
+    const iterable = feed.subscribe({
+      workflowId: 'wf-1',
+      selector: 'events',
+      signal,
+    });
+    const iterator = iterable[Symbol.asyncIterator]();
+
+    const result = await iterator.next();
+    expect(result.done).toBe(true);
   });
 });
 
