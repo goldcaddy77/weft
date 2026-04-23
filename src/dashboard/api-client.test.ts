@@ -248,6 +248,80 @@ describe('ApiClient', () => {
     );
   });
 
+  it('fetches workflow timeline and replay data for dashboard time-travel views', async () => {
+    const requests: string[] = [];
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = requestInputToUrl(input);
+      requests.push(url);
+
+      if (url === '/v1/workflows/workflow%20id/timeline') {
+        return Response.json([
+          {
+            step: 1,
+            operationType: 'activity',
+            operationLabel: 'loadOrder',
+            inputSummary: '{"orderId":"order-1"}',
+            outputSummary: '{"total":42}',
+            duration: 8,
+            timestamp: 1_000,
+            status: 'completed',
+          },
+        ]);
+      }
+
+      if (url === '/v1/workflows/workflow%20id/replay/2') {
+        return Response.json({
+          checkpoint: {
+            step: 2,
+            locals: { approved: true },
+            searchAttributes: { status: 'approved' },
+            version: '1.0.0',
+            createdAt: 2_000,
+          },
+          accumulatedResults: [[1, { total: 42 }]],
+          events: [{ type: 'workflow:checkpoint', timestamp: 2_000, data: { step: 2 } }],
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    const timeline = await client.getWorkflowTimeline('workflow id');
+    const replay = await client.replayWorkflowTo('workflow id', 2);
+
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]?.operationLabel).toBe('loadOrder');
+    expect(replay?.checkpoint.step).toBe(2);
+    expect(replay?.checkpoint.locals).toEqual({ approved: true });
+    expect(requests).toEqual([
+      '/v1/workflows/workflow%20id/timeline',
+      '/v1/workflows/workflow%20id/replay/2',
+    ]);
+  });
+
+  it('returns null when workflow replay checkpoint data is not retained', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = requestInputToUrl(input);
+
+      if (url === '/v1/workflows/workflow%20id/replay/3') {
+        return Response.json(
+          { error: 'Replay not found at step 3 for workflow workflow id' },
+          {
+            status: 404,
+            statusText: 'Not Found',
+          },
+        );
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    const client = new ApiClient();
+    await expect(client.replayWorkflowTo('workflow id', 3)).resolves.toBeNull();
+  });
+
   it('prefers API error payloads and falls back to status text when parsing fails', async () => {
     let callCount = 0;
 
