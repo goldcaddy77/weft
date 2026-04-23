@@ -43,7 +43,19 @@ import {
   type PrometheusExporter,
 } from '../observability/metrics.ts';
 import type { AuthMethod, JWTPayload } from './authentication.ts';
+import { faultToHttpResponse } from './fault-to-http.ts';
 import { generateOpenApiDocument } from './openapi.ts';
+import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
+import {
+  anonymousPrincipal,
+  principalFromApiKey,
+  principalFromJwtClaims,
+  principalFromMutualTls,
+  type Principal,
+} from './principal.ts';
+import { bindingPathMatches } from './rest-binding.ts';
+import type { UnknownRestBinding } from './rest-bindings.ts';
+import { resolveRestDispatchMode, type RestDispatchModeConfig } from './rest-dispatch-mode.ts';
 import { ROUTES, toRegex } from './route-model.ts';
 import { parseOptionalSequenceCursor } from './sequence-cursor.ts';
 
@@ -1993,6 +2005,125 @@ export interface HandlerOptions {
    * path and has lower precedence if both are set.
    */
   metricsCollector?: MetricsCollector;
+  /**
+   * Per-operation REST dispatch-mode config. Controls whether each
+   * operation's REST mount runs through the legacy `handleXxx`
+   * executor or through the `executeOperation` pipeline.
+   */
+  restDispatchMode?: RestDispatchModeConfig;
+  /** Optional operation registry. Required when `restDispatchMode` resolves to 'via-execute-operation' for any route. */
+  operationRegistry?: OperationRegistry;
+  /** Optional list of REST bindings. Required when the registry is passed — the router matches against these first. */
+  restBindings?: ReadonlyArray<UnknownRestBinding>;
+}
+
+/**
+ * Find a REST binding that matches the request's method and path.
+ * Returns null if no binding matches (caller falls back to legacy
+ * dispatch). Delegates path resolution to the canonical
+ * `bindingPathMatches` helper — single source of truth for
+ * segment-and-param matching across router and OpenAPI generator.
+ */
+function matchRestBinding(
+  method: string,
+  pathname: string,
+  bindings: ReadonlyArray<UnknownRestBinding> | undefined,
+): { readonly binding: UnknownRestBinding; readonly pathParams: Record<string, string> } | null {
+  if (bindings === undefined) return null;
+  for (const binding of bindings) {
+    if (binding.method !== method) continue;
+    const params = bindingPathMatches(binding.path, pathname);
+    if (params !== null) return { binding, pathParams: params };
+  }
+  return null;
+}
+
+/**
+ * Dispatch a request through the `executeOperation` pipeline using a
+ * matched `RestBinding`. Returns the shaped response (via
+ * `shapeSuccess` / `shapeFault` overrides, or defaults).
+ */
+async function dispatchViaExecuteOperation(
+  request: Request,
+  engine: Engine,
+  binding: UnknownRestBinding,
+  pathParams: Record<string, string>,
+  registry: OperationRegistry,
+  principal: Principal,
+): Promise<Response> {
+  let input: unknown;
+  try {
+    input = await binding.extractInput(request, pathParams);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResponse(message, 400);
+  }
+  const result = await executeOperation(binding.operationName, input, {
+    principal,
+    engine,
+    transport: 'http-rest',
+    registry,
+  });
+  if (result.ok) {
+    return binding.shapeSuccess
+      ? binding.shapeSuccess(result.value)
+      : defaultShapeSuccess(result.value, binding.success);
+  }
+  return binding.shapeFault ? binding.shapeFault(result.fault) : faultToHttpResponse(result.fault);
+}
+
+/**
+ * Convert the REST transport's `authContext` into a `Principal`. The
+ * authenticator (`serve()`) only reports method + optional claims; this
+ * shim bridges that into the richer `Principal` the pipeline expects.
+ * Returns `anonymousPrincipal()` when no context is provided (public
+ * request).
+ *
+ * JWT: claims → `principalFromJwtClaims` (scope/tenant extraction).
+ *   JWT without claims is an authenticator contract violation — the
+ *   production authenticator always populates claims, and silently
+ *   degrading to anonymous here would let a caller with `authContext:
+ *   { method: 'jwt' }` (no claims) bypass `optionalAuth` scope checks
+ *   by appearing unauthenticated. We throw instead so the bug surfaces
+ *   loudly rather than as a silent security downgrade.
+ * API key / mTLS: identity details are not carried on `authContext`
+ * yet — this shim produces a minimal authenticated principal with no
+ * scopes. Milestone 2 expands authContext to carry full principal info;
+ * until then, scope-protected REST ops run on legacy dispatch per the
+ * per-operation restDispatchMode flag.
+ */
+function authContextToPrincipal(authContext: AuthenticatedRequestContext | undefined): Principal {
+  if (authContext === undefined) return anonymousPrincipal();
+  switch (authContext.method) {
+    case 'jwt': {
+      if (authContext.claims === undefined) {
+        throw new Error(
+          'authContextToPrincipal: jwt authContext reached the pipeline without claims — ' +
+            'authenticator contract violation',
+        );
+      }
+      return principalFromJwtClaims(authContext.claims);
+    }
+    case 'api-key':
+      return principalFromApiKey({ subject: 'api-key-caller', scopes: [] });
+    case 'mtls':
+      return principalFromMutualTls({ subject: 'mtls-caller', scopes: [] });
+    case 'public':
+      // serve() short-circuits public requests before reaching here; if
+      // a direct caller still passes method: 'public', treat as anonymous.
+      return anonymousPrincipal();
+  }
+}
+
+function defaultShapeSuccess(value: unknown, shape: UnknownRestBinding['success']): Response {
+  if (shape.kind === 'empty') return new Response(null, { status: shape.status });
+  if (shape.kind === 'streaming') {
+    // Streaming responses must supply their own `shapeSuccess` — a
+    // default here would bundle the async iterable into a JSON body
+    // and silently break SSE/binary output. Fail loudly instead.
+    throw new Error('streaming RestBinding must provide shapeSuccess');
+  }
+  return jsonResponse(value, shape.status);
 }
 
 /** Pure HTTP request handler. Maps Request to Response. */
@@ -2002,6 +2133,37 @@ export async function handleRequest(
   options?: HandlerOptions,
 ): Promise<Response> {
   const url = new URL(request.url);
+
+  // Try the `RestBinding` path first when bindings + registry are
+  // configured. A binding whose operation resolves to 'legacy' falls
+  // through to the legacy route matcher below.
+  const bindingMatch = matchRestBinding(request.method, url.pathname, options?.restBindings);
+  if (bindingMatch !== null && options?.operationRegistry !== undefined) {
+    const mode = resolveRestDispatchMode(
+      options.restDispatchMode,
+      bindingMatch.binding.operationName,
+    );
+    if (mode === 'via-execute-operation') {
+      try {
+        return await dispatchViaExecuteOperation(
+          request,
+          engine,
+          bindingMatch.binding,
+          bindingMatch.pathParams,
+          options.operationRegistry,
+          authContextToPrincipal(options.authContext),
+        );
+      } catch (error) {
+        console.error('Unhandled error in dispatchViaExecuteOperation', {
+          method: request.method,
+          path: url.pathname,
+          error,
+        });
+        return errorResponse('Internal server error', 500);
+      }
+    }
+  }
+
   let route: RouteMatch | null;
   try {
     route = matchRoute(request.method, url.pathname);
