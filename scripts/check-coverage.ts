@@ -16,7 +16,7 @@ type CoverageAllowance = {
 function isGeneratedCoverageArtifact(filePath: string): boolean {
   if (
     filePath.startsWith('../../../../../../private/var/folders/') &&
-    /\/weft-(?:schedule(?:-lmdb)?|cli-edge)-workflows-[^/]+\.ts$/.test(filePath)
+    /\/weft-(?:schedule(?:-lmdb)?-(?:workflows|input)|cli-edge-workflows)-[^/]+\.ts$/.test(filePath)
   ) {
     return true;
   }
@@ -111,7 +111,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       functions: 1,
       // Bun also leaves the closing line of the malformed-route catch branch
       // uncovered even when the branch's observable behavior is tested.
-      lines: new Set([890, 1863]),
+      lines: new Set([890, 2011]),
     },
   ],
   [
@@ -120,6 +120,15 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // Line coverage is complete; one unnamed function remains unaccounted for
       // in Bun's aggregate function totals.
       functions: 1,
+    },
+  ],
+  [
+    'src/server/workflow-event-feed.ts',
+    {
+      // Bun maps the closing line of the live-drain generator's intentional
+      // infinite loop as uncovered. Every exit path returns from inside the loop
+      // and is covered by behavioral tests.
+      lines: new Set([376]),
     },
   ],
   [
