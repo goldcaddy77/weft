@@ -19,6 +19,13 @@
   import { navigate } from '../router.svelte.ts';
   import { formatRelativeTime, formatTimestamp } from '../utilities/format-date.ts';
   import { formatDuration } from '../utilities/format-duration.ts';
+  import {
+    clearWorkflowTimelineInspectionState,
+    loadTerminalWorkflowDetailRefresh,
+    synchronizeWorkflowTimelineInspectionState,
+    type SynchronizeWorkflowTimelineInspectionOptions,
+    type WorkflowTimelineInspectionState,
+  } from '../utilities/workflow-detail-timeline.ts';
   import Page from '../components/page.svelte';
   import Card from '../components/card.svelte';
   import Button from '../components/button.svelte';
@@ -81,43 +88,57 @@
   // Fetching
   // ---------------------------------------------------------------------------
 
-  function synchronizeTimelineSelection(nextTimeline: WorkflowTimelineEntry[]): number | null {
+  function readTimelineInspectionState(): WorkflowTimelineInspectionState {
+    return {
+      selectedStep: selectedTimelineStep,
+      diffFromStep: timelineDiffFromStep,
+      diffToStep: timelineDiffToStep,
+      diffRows: timelineDiffRows,
+      diffLoading: timelineDiffLoading,
+      diffError: timelineDiffError,
+    };
+  }
+
+  function applyTimelineInspectionState(state: WorkflowTimelineInspectionState): void {
+    selectedTimelineStep = state.selectedStep;
+    timelineDiffFromStep = state.diffFromStep;
+    timelineDiffToStep = state.diffToStep;
+    timelineDiffRows = state.diffRows;
+    timelineDiffLoading = state.diffLoading;
+    timelineDiffError = state.diffError;
+  }
+
+  function resetTimelineInspectionState(): void {
+    timelineReplayRequests.createRequestToken();
+    timelineDiffRequests.createRequestToken();
+    selectedTimelineReplay = null;
+    selectedTimelineReplayLoading = false;
+    selectedTimelineReplayError = null;
+    applyTimelineInspectionState(clearWorkflowTimelineInspectionState());
+  }
+
+  function synchronizeTimelineSelection(
+    nextTimeline: WorkflowTimelineEntry[],
+    options: SynchronizeWorkflowTimelineInspectionOptions = {},
+  ): number | null {
     timeline = nextTimeline;
 
-    if (nextTimeline.length === 0) {
+    if (nextTimeline.length === 0 || options.resetDiff === true) {
       timelineReplayRequests.createRequestToken();
       timelineDiffRequests.createRequestToken();
-      selectedTimelineStep = null;
       selectedTimelineReplay = null;
       selectedTimelineReplayLoading = false;
       selectedTimelineReplayError = null;
-      timelineDiffFromStep = '';
-      timelineDiffToStep = '';
-      timelineDiffRows = [];
-      timelineDiffLoading = false;
-      timelineDiffError = null;
-      return null;
     }
 
-    const availableSteps = new Set(nextTimeline.map((entry) => entry.step));
-    const firstStep = nextTimeline[0]?.step ?? null;
-    const lastStep = nextTimeline.at(-1)?.step ?? null;
-    const nextSelectedStep =
-      selectedTimelineStep !== null && availableSteps.has(selectedTimelineStep)
-        ? selectedTimelineStep
-        : firstStep;
+    const nextState = synchronizeWorkflowTimelineInspectionState(
+      nextTimeline,
+      readTimelineInspectionState(),
+      options,
+    );
 
-    selectedTimelineStep = nextSelectedStep;
-
-    if (timelineDiffFromStep === '' || !availableSteps.has(Number(timelineDiffFromStep))) {
-      timelineDiffFromStep = firstStep === null ? '' : String(firstStep);
-    }
-
-    if (timelineDiffToStep === '' || !availableSteps.has(Number(timelineDiffToStep))) {
-      timelineDiffToStep = lastStep === null ? '' : String(lastStep);
-    }
-
-    return nextSelectedStep;
+    applyTimelineInspectionState(nextState);
+    return nextState.selectedStep;
   }
 
   async function loadTimelineReplay(step: number, generation = fetchGeneration): Promise<void> {
@@ -150,12 +171,15 @@
     }
   }
 
-  async function refreshTimeline(generation: number): Promise<void> {
+  async function refreshTimeline(
+    generation: number,
+    options: SynchronizeWorkflowTimelineInspectionOptions = {},
+  ): Promise<void> {
     try {
       const timelineResult = await apiClient.getWorkflowTimeline(id);
       if (generation !== fetchGeneration) return;
 
-      const step = synchronizeTimelineSelection(timelineResult);
+      const step = synchronizeTimelineSelection(timelineResult, options);
       timelineError = null;
 
       if (step !== null) {
@@ -164,7 +188,7 @@
     } catch (timelineFetchError) {
       if (generation !== fetchGeneration) return;
       timeline = [];
-      selectedTimelineReplay = null;
+      resetTimelineInspectionState();
       timelineError =
         timelineFetchError instanceof Error
           ? timelineFetchError.message
@@ -183,7 +207,7 @@
 
       workflow = workflowResult;
       events = Array.isArray(eventsResult) ? eventsResult : [];
-      void refreshTimeline(generation);
+      void refreshTimeline(generation, { resetDiff: true });
 
       try {
         attributes = await apiClient.getWorkflowAttributes(id);
@@ -214,6 +238,9 @@
 
   $effect(() => {
     loading = true;
+    timeline = [];
+    timelineError = null;
+    resetTimelineInspectionState();
     const generation = ++fetchGeneration;
 
     // Buffer WS events that arrive while the initial fetch is in-flight so they
@@ -232,11 +259,32 @@
         event.type === 'workflow:timed-out'
       ) {
         const eventGeneration = generation;
-        void Promise.all([apiClient.getWorkflow(id), apiClient.getWorkflowTimeline(id)]).then(
-          ([updated, timelineResult]) => {
+        void loadTerminalWorkflowDetailRefresh({
+          loadWorkflow: () => apiClient.getWorkflow(id),
+          loadTimeline: () => apiClient.getWorkflowTimeline(id),
+        }).then(
+          (terminalRefresh) => {
             if (eventGeneration !== fetchGeneration) return undefined;
-            workflow = updated;
-            const step = synchronizeTimelineSelection(timelineResult);
+
+            if (terminalRefresh.status === 'workflow-failed') {
+              console.warn(
+                '[workflow-detail] Failed to re-fetch workflow on terminal event:',
+                terminalRefresh.error,
+              );
+              return undefined;
+            }
+
+            workflow = terminalRefresh.workflow;
+
+            if (terminalRefresh.timeline === null) {
+              timeline = [];
+              resetTimelineInspectionState();
+              timelineError = terminalRefresh.timelineError;
+              return undefined;
+            }
+
+            const step = synchronizeTimelineSelection(terminalRefresh.timeline);
+            timelineError = null;
             if (step !== null) {
               void loadTimelineReplay(step, eventGeneration);
             }
