@@ -33,8 +33,14 @@ import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, AuthContext, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
+import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import { authContextToPrincipal, handleRequest } from './handler.ts';
 import { handleJsonRpcHttpRequest } from './json-rpc-http.ts';
+import {
+  createJsonRpcWebSocketSession,
+  type JsonRpcWebSocketSession,
+} from './json-rpc-websocket.ts';
+import type { Principal } from './principal.ts';
 import { REST_BINDINGS, createLiveOperationRegistry } from './rest-bindings.ts';
 import {
   claimNextSequence,
@@ -50,6 +56,7 @@ import {
   transitionInflightToResolved,
   transitionQueuedToInflight,
 } from './task-state.ts';
+import { createWorkflowEventFeed, type WorkflowEventFeed } from './workflow-event-feed.ts';
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -171,7 +178,7 @@ export interface WeftServer extends AsyncDisposable {
 // Internal types
 // ---------------------------------------------------------------------------
 
-type ConnectionType = 'worker' | 'stream' | 'watch' | 'generic';
+type ConnectionType = 'worker' | 'stream' | 'watch' | 'generic' | 'jsonrpc';
 
 interface WebSocketData {
   pathname: string;
@@ -186,6 +193,8 @@ interface WebSocketData {
   lastDeliveredSequence?: number;
   replayInProgress?: boolean;
   pendingStreamMessages?: Array<{ sequence: number; message: string }>;
+  principal?: Principal;
+  jsonRpcSession?: JsonRpcWebSocketSession;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +305,10 @@ function classifyConnection(
     return queue === null ? null : { connectionType: 'worker', queue };
   }
 
+  if (pathname === '/jsonrpc') {
+    return { connectionType: 'jsonrpc' };
+  }
+
   return { connectionType: 'generic' };
 }
 
@@ -332,6 +345,21 @@ async function getHighestStoredStreamSequence(
   }
 
   return -1;
+}
+
+function handleJsonRpcWebSocketMessage(
+  ws: ServerWebSocket<WebSocketData>,
+  rawMessage: string | Buffer,
+): boolean {
+  if (ws.data.connectionType !== 'jsonrpc') {
+    return false;
+  }
+
+  const text = typeof rawMessage === 'string' ? rawMessage : new TextDecoder().decode(rawMessage);
+  ws.data.jsonRpcSession?.handleMessage(text).catch((error) => {
+    console.error('[weft] /jsonrpc WS message error', error);
+  });
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -891,6 +919,8 @@ export function serve(options: ServeOptions): WeftServer {
   // across requests. Registry contents are immutable after creation,
   // so sharing across concurrent requests is safe.
   const liveOperationRegistry = createLiveOperationRegistry();
+  const eventFeedBackend = createEngineEventFeedBackend(options.engine);
+  const workflowEventFeed: WorkflowEventFeed = createWorkflowEventFeed(eventFeedBackend);
 
   async function authenticateRequest(request: Request): Promise<{
     authContext?: AuthContext;
@@ -954,7 +984,11 @@ export function serve(options: ServeOptions): WeftServer {
     void transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
   }
 
-  function handleWebSocketUpgrade(request: Request, url: URL): Response | undefined | null {
+  function handleWebSocketUpgrade(
+    request: Request,
+    url: URL,
+    principal?: Principal,
+  ): Response | undefined | null {
     if (request.headers.get('upgrade') !== 'websocket') {
       return null;
     }
@@ -978,6 +1012,7 @@ export function serve(options: ServeOptions): WeftServer {
       data: {
         pathname: url.pathname,
         ...classification,
+        ...(principal ? { principal } : {}),
         ...(resumeFrom !== undefined ? { resumeFrom } : {}),
       },
     });
@@ -986,6 +1021,143 @@ export function serve(options: ServeOptions): WeftServer {
     }
 
     return new Response('WebSocket upgrade failed', { status: 400 });
+  }
+
+  function handleWorkerWebSocketMessage(
+    ws: ServerWebSocket<WebSocketData>,
+    rawMessage: string | Buffer,
+  ): void {
+    if (!isWorkerConnection(ws.data.pathname)) return;
+
+    const text = typeof rawMessage === 'string' ? rawMessage : new TextDecoder().decode(rawMessage);
+
+    let parsed: { type: string; [key: string]: unknown };
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return;
+    }
+
+    switch (parsed.type) {
+      case 'register': {
+        const rawWorkerId = parsed['workerId'];
+        const workerId = typeof rawWorkerId === 'string' ? rawWorkerId : '';
+        if (!workerId) return;
+
+        const activities = parsed['activities'];
+        const concurrency = parsed['concurrency'];
+
+        // Validate and cap concurrency to prevent a misconfigured client
+        // from claiming an unbounded number of task slots.
+        const rawConcurrency = typeof concurrency === 'number' ? concurrency : 10;
+        const clampedConcurrency = Math.min(
+          Math.max(1, Math.floor(rawConcurrency)),
+          MAX_WORKER_CONCURRENCY,
+        );
+
+        ws.data.workerId = workerId;
+        registry.register({
+          id: workerId,
+          queue: ws.data.queue ?? 'default',
+          activities: Array.isArray(activities) ? (activities as string[]) : [],
+          concurrency: clampedConcurrency,
+        });
+        workerSockets.set(workerId, ws);
+        break;
+      }
+      case 'taskResult': {
+        const operationId = parsed['operationId'];
+        const resultStatus = parsed['status'];
+        if (typeof operationId === 'string') {
+          // Remove in-flight tracking and decrement the worker's counter.
+          registry.completeTask(operationId);
+          deadlineTracker.remove(operationId);
+          cleanupWorkflowIndex(operationId);
+
+          // Atomically transition inflight → resolved in storage.
+          let resolvedStatus: 'completed' | 'failed';
+          if (resultStatus === 'completed') {
+            resolvedStatus = 'completed';
+          } else if (resultStatus === 'failed' || resultStatus === 'cancelled') {
+            resolvedStatus = 'failed';
+          } else {
+            console.warn(
+              `[weft] taskResult for operation "${operationId}" has unexpected status "${String(
+                resultStatus,
+              )}" — treating as failed`,
+            );
+            resolvedStatus = 'failed';
+          }
+          transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus).catch(
+            (error) => {
+              console.error(
+                `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
+                error,
+              );
+            },
+          );
+        } else {
+          // Fallback: decrement counter by worker ID when operationId is missing.
+          // This path leaks the inflight tracking record — log a warning.
+          const workerId = ws.data.workerId;
+          if (workerId) {
+            console.warn(
+              `[weft] taskResult from worker "${workerId}" is missing operationId — inflight tracking record will leak`,
+            );
+            registry.taskCompleted(workerId);
+          }
+        }
+        break;
+      }
+      case 'heartbeat': {
+        const workerId = ws.data.workerId;
+        if (workerId) {
+          registry.heartbeat(workerId);
+
+          // Extend visibility deadline for all in-flight tasks assigned to this worker.
+          for (const task of registry.getWorkerTasks(workerId)) {
+            const newDeadline = registry.extendVisibility(task.operationId, task.visibilityTimeout);
+
+            // Update persisted storage record and deadline tracker with
+            // the same deadline the registry computed, so all three stay
+            // in sync across restarts and visibility scans.
+            if (newDeadline !== undefined) {
+              deadlineTracker.remove(task.operationId);
+              deadlineTracker.add({ operationId: task.operationId, deadline: newDeadline });
+
+              const opId = task.operationId;
+              const heartbeatWorkerId = ws.data.workerId;
+              void withRetry(async () => {
+                // Guard: if the task completed or was reassigned during the async gap,
+                // skip the write to avoid resurrecting or corrupting another worker's record.
+                if (!registry.isAssigned(opId)) return;
+                const currentTask = registry
+                  .getWorkerTasks(heartbeatWorkerId ?? '')
+                  .find((trackedTask) => trackedTask.operationId === opId);
+                if (!currentTask) return;
+
+                const inflightKey = KEYS.operationInflight(opId);
+                const existing = await options.engine.storage.get(inflightKey);
+                if (existing) {
+                  const decoded = decode(existing);
+                  if (!isInflightRecord(decoded)) {
+                    console.error(
+                      `[weft] Corrupt inflight record for task "${opId}" during heartbeat — skipping visibility extension`,
+                    );
+                    return;
+                  }
+                  const updated = { ...decoded, deadline: newDeadline };
+                  await options.engine.storage.put(inflightKey, encode(updated));
+                }
+              }, `extend visibility for task "${opId}"`).catch((error) => {
+                console.error(`[weft] Failed to extend visibility for task "${opId}":`, error);
+              });
+            }
+          }
+        }
+        break;
+      }
+    }
   }
 
   async function handleTaskPollRequest(request: Request, url: URL): Promise<Response | null> {
@@ -1085,7 +1257,11 @@ export function serve(options: ServeOptions): WeftServer {
         return authentication.response;
       }
 
-      const websocketResponse = handleWebSocketUpgrade(request, url);
+      const websocketResponse = handleWebSocketUpgrade(
+        request,
+        url,
+        authContextToPrincipal(authentication.authContext),
+      );
       if (websocketResponse !== null) {
         return websocketResponse;
       }
@@ -1164,7 +1340,7 @@ export function serve(options: ServeOptions): WeftServer {
         // `publishTokenMessage()` and the `streamSockets` registry instead,
         // while `wireEventBroadcasting()` retains the `server.publish()`
         // fallback for direct callers that manage subscriptions themselves.
-        if (pathname && connectionType !== 'stream') {
+        if (pathname && connectionType !== 'stream' && connectionType !== 'jsonrpc') {
           ws.subscribe(pathname);
         }
 
@@ -1176,147 +1352,29 @@ export function serve(options: ServeOptions): WeftServer {
           addStreamSocket(workflowId, ws);
           void replayTokenStream(ws, workflowId);
         }
+
+        if (connectionType === 'jsonrpc') {
+          ws.data.jsonRpcSession = createJsonRpcWebSocketSession({
+            registry: liveOperationRegistry,
+            engine: options.engine,
+            principal: ws.data.principal ?? { method: 'unauthenticated' },
+            emitter: { send: (message) => ws.send(message) },
+            feed: workflowEventFeed,
+            transport: 'jsonRpcWebSocket',
+          });
+          return;
+        }
       },
       message(ws, rawMessage) {
-        if (!isWorkerConnection(ws.data.pathname)) return;
-
-        const text =
-          typeof rawMessage === 'string' ? rawMessage : new TextDecoder().decode(rawMessage);
-
-        let parsed: { type: string; [key: string]: unknown };
-        try {
-          parsed = JSON.parse(text);
-        } catch {
+        if (handleJsonRpcWebSocketMessage(ws, rawMessage)) return;
+        handleWorkerWebSocketMessage(ws, rawMessage);
+      },
+      close(ws) {
+        if (ws.data.connectionType === 'jsonrpc') {
+          void ws.data.jsonRpcSession?.close();
           return;
         }
 
-        switch (parsed.type) {
-          case 'register': {
-            const rawWorkerId = parsed['workerId'];
-            const workerId = typeof rawWorkerId === 'string' ? rawWorkerId : '';
-            if (!workerId) return;
-
-            const activities = parsed['activities'];
-            const concurrency = parsed['concurrency'];
-
-            // Validate and cap concurrency to prevent a misconfigured client
-            // from claiming an unbounded number of task slots.
-            const rawConcurrency = typeof concurrency === 'number' ? concurrency : 10;
-            const clampedConcurrency = Math.min(
-              Math.max(1, Math.floor(rawConcurrency)),
-              MAX_WORKER_CONCURRENCY,
-            );
-
-            ws.data.workerId = workerId;
-            registry.register({
-              id: workerId,
-              queue: ws.data.queue ?? 'default',
-              activities: Array.isArray(activities) ? (activities as string[]) : [],
-              concurrency: clampedConcurrency,
-            });
-            workerSockets.set(workerId, ws);
-            break;
-          }
-          case 'taskResult': {
-            const operationId = parsed['operationId'];
-            const resultStatus = parsed['status'];
-            if (typeof operationId === 'string') {
-              // Remove in-flight tracking and decrement the worker's counter.
-              registry.completeTask(operationId);
-              deadlineTracker.remove(operationId);
-              cleanupWorkflowIndex(operationId);
-
-              // Atomically transition inflight → resolved in storage.
-              let resolvedStatus: 'completed' | 'failed';
-              if (resultStatus === 'completed') {
-                resolvedStatus = 'completed';
-              } else if (resultStatus === 'failed' || resultStatus === 'cancelled') {
-                resolvedStatus = 'failed';
-              } else {
-                console.warn(
-                  `[weft] taskResult for operation "${operationId}" has unexpected status "${String(
-                    resultStatus,
-                  )}" — treating as failed`,
-                );
-                resolvedStatus = 'failed';
-              }
-              transitionInflightToResolved(
-                options.engine.storage,
-                operationId,
-                resolvedStatus,
-              ).catch((error) => {
-                console.error(
-                  `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
-                  error,
-                );
-              });
-            } else {
-              // Fallback: decrement counter by worker ID when operationId is missing.
-              // This path leaks the inflight tracking record — log a warning.
-              const workerId = ws.data.workerId;
-              if (workerId) {
-                console.warn(
-                  `[weft] taskResult from worker "${workerId}" is missing operationId — inflight tracking record will leak`,
-                );
-                registry.taskCompleted(workerId);
-              }
-            }
-            break;
-          }
-          case 'heartbeat': {
-            const workerId = ws.data.workerId;
-            if (workerId) {
-              registry.heartbeat(workerId);
-
-              // Extend visibility deadline for all in-flight tasks assigned to this worker.
-              for (const task of registry.getWorkerTasks(workerId)) {
-                const newDeadline = registry.extendVisibility(
-                  task.operationId,
-                  task.visibilityTimeout,
-                );
-
-                // Update persisted storage record and deadline tracker with
-                // the same deadline the registry computed, so all three stay
-                // in sync across restarts and visibility scans.
-                if (newDeadline !== undefined) {
-                  deadlineTracker.remove(task.operationId);
-                  deadlineTracker.add({ operationId: task.operationId, deadline: newDeadline });
-
-                  const opId = task.operationId;
-                  const heartbeatWorkerId = ws.data.workerId;
-                  void withRetry(async () => {
-                    // Guard: if the task completed or was reassigned during the async gap,
-                    // skip the write to avoid resurrecting or corrupting another worker's record.
-                    if (!registry.isAssigned(opId)) return;
-                    const currentTask = registry
-                      .getWorkerTasks(heartbeatWorkerId ?? '')
-                      .find((t) => t.operationId === opId);
-                    if (!currentTask) return;
-
-                    const inflightKey = KEYS.operationInflight(opId);
-                    const existing = await options.engine.storage.get(inflightKey);
-                    if (existing) {
-                      const decoded = decode(existing);
-                      if (!isInflightRecord(decoded)) {
-                        console.error(
-                          `[weft] Corrupt inflight record for task "${opId}" during heartbeat — skipping visibility extension`,
-                        );
-                        return;
-                      }
-                      const updated = { ...decoded, deadline: newDeadline };
-                      await options.engine.storage.put(inflightKey, encode(updated));
-                    }
-                  }, `extend visibility for task "${opId}"`).catch((error) => {
-                    console.error(`[weft] Failed to extend visibility for task "${opId}":`, error);
-                  });
-                }
-              }
-            }
-            break;
-          }
-        }
-      },
-      close(ws) {
         if (ws.data.connectionType === 'stream') {
           removeStreamSocket(ws);
         }
@@ -1418,6 +1476,7 @@ export function serve(options: ServeOptions): WeftServer {
 
   // Registered second — disposed second-to-last.
   stack.defer(broadcastingHandle.dispose);
+  stack.defer(() => workflowEventFeed.dispose());
 
   // Clean up per-workflow state when workflows reach a terminal state:
   // both the sticky-routing affinity map and the event-broadcasting sequence
