@@ -2,18 +2,13 @@
  * Tests for the OpenRPC 1.3.2 document generator.
  *
  * `generateOpenRpcDocument` intersects the `OperationRegistry` with the
- * live JSON-RPC transport availability (passed in via
- * `OpenRpcOptions.jsonRpc`; a later phase forwards this from
- * `ServeOptions.jsonRpc`) so a document always describes the
- * actually-running server:
- *   - `jsonRpc.enabled: false` → zero methods.
- *   - `jsonRpc.transports: ['http']` → WS-only subscribe methods are omitted.
+ * requested JSON-RPC transports in `OpenRpcOptions.transports`:
+ *   - `transports: []` → zero methods (and no synthetic rpc.discover).
+ *   - `transports: ['http']` → WS-only subscribe methods are omitted.
  *   - Every listed method carries `paramStructure: 'by-name'` plus both the
  *     per-field `ContentDescriptor` surface and an `x-weft-paramsSchema`
  *     extension (the authoritative top-level object schema with
  *     `additionalProperties` computed from `unknownKeyPolicy.jsonRpc`).
- *
- * Track 8 design decisions 9, 15, and "OpenAPI / OpenRPC generation."
  */
 
 import { describe, expect, it } from 'bun:test';
@@ -70,7 +65,7 @@ describe('generateOpenRpcDocument — basic shape', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http', 'websocket', 'stdio'] },
+      transports: ['http', 'websocket', 'stdio'],
     });
     expect(document['openrpc']).toBe('1.3.2');
     expect(typeof document['info']).toBe('object');
@@ -89,7 +84,7 @@ describe('generateOpenRpcDocument — basic shape', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http', 'websocket'] },
+      transports: ['http', 'websocket'],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     const get = methods.find((m) => m['name'] === 'weft.workflows.get');
@@ -111,7 +106,7 @@ describe('generateOpenRpcDocument — basic shape', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     // 2 domain methods + `rpc.discover`.
@@ -123,7 +118,7 @@ describe('generateOpenRpcDocument — basic shape', () => {
 });
 
 describe('generateOpenRpcDocument — runtime filtering', () => {
-  it('returns zero methods when jsonRpc.enabled is false', () => {
+  it('returns zero methods when transports is empty', () => {
     const registry = createOperationRegistry([
       makeOp({
         name: 'weft.workflows.get',
@@ -133,7 +128,7 @@ describe('generateOpenRpcDocument — runtime filtering', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: false, transports: [] },
+      transports: [],
     });
     expect((document['methods'] as unknown[]).length).toBe(0);
   });
@@ -161,7 +156,7 @@ describe('generateOpenRpcDocument — runtime filtering', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     expect(methods.find((m) => m['name'] === 'weft.http.only')).toBeUndefined();
@@ -177,7 +172,7 @@ describe('generateOpenRpcDocument — runtime filtering', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     expect(methods.find((m) => m['name'] === 'weft.workflows.subscribe')).toBeUndefined();
@@ -208,7 +203,7 @@ describe('generateOpenRpcDocument — runtime filtering', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['websocket', 'stdio'] },
+      transports: ['websocket', 'stdio'],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     expect(methods.find((method) => method['name'] === 'weft.ws.only')).toBeDefined();
@@ -225,7 +220,7 @@ describe('generateOpenRpcDocument — runtime filtering', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['bogus' as never] },
+      transports: ['bogus' as never],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     expect(methods.map((method) => method['name'])).toEqual(['rpc.discover']);
@@ -247,7 +242,7 @@ describe('generateOpenRpcDocument — params schema fidelity', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const method = (document['methods'] as Array<Record<string, unknown>>).find(
       (m) => m['name'] === 'weft.workflows.signal',
@@ -271,7 +266,7 @@ describe('generateOpenRpcDocument — params schema fidelity', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const method = (document['methods'] as Array<Record<string, unknown>>)[0]!;
     const paramsSchema = method['x-weft-paramsSchema'] as Record<string, unknown>;
@@ -297,7 +292,7 @@ describe('generateOpenRpcDocument — params schema fidelity', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const methods = (document['methods'] as Array<Record<string, unknown>>).filter(
       (m) => m['name'] !== 'rpc.discover',
@@ -323,7 +318,7 @@ describe('generateOpenRpcDocument — params schema fidelity', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const method = (document['methods'] as Array<Record<string, unknown>>)[0]!;
     const params = method['params'] as Array<Record<string, unknown>>;
@@ -339,7 +334,7 @@ describe('generateOpenRpcDocument — rpc.discover', () => {
     const registry = createOperationRegistry([]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     expect(methods.find((m) => m['name'] === 'rpc.discover')).toBeDefined();
@@ -349,18 +344,18 @@ describe('generateOpenRpcDocument — rpc.discover', () => {
     const registry = createOperationRegistry([]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     expect(methods.length).toBe(1);
     expect(methods[0]!['name']).toBe('rpc.discover');
   });
 
-  it('rpc.discover is omitted when JSON-RPC is disabled', () => {
+  it('rpc.discover is omitted when transports is empty', () => {
     const registry = createOperationRegistry([]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: false, transports: [] },
+      transports: [],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     expect(methods.length).toBe(0);
@@ -372,7 +367,7 @@ describe('generateOpenRpcDocument — info and servers', () => {
     const registry = createOperationRegistry([]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
       title: 'Weft Custom',
       version: '9.9.9',
     });
@@ -385,7 +380,7 @@ describe('generateOpenRpcDocument — info and servers', () => {
     const registry = createOperationRegistry([]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
       serverUrl: 'https://example.test',
     });
     expect(Array.isArray(document['servers'])).toBe(true);
@@ -397,7 +392,7 @@ describe('generateOpenRpcDocument — info and servers', () => {
     const registry = createOperationRegistry([]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     expect(document['servers']).toBeUndefined();
   });
@@ -414,7 +409,7 @@ describe('generateOpenRpcDocument — result, tags, nested shapes', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const method = (document['methods'] as Array<Record<string, unknown>>).find(
       (m) => m['name'] === 'weft.workflows.get',
@@ -438,7 +433,7 @@ describe('generateOpenRpcDocument — result, tags, nested shapes', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const method = (document['methods'] as Array<Record<string, unknown>>).find(
       (m) => m['name'] === 'weft.tagged.op',
@@ -464,7 +459,7 @@ describe('generateOpenRpcDocument — result, tags, nested shapes', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const method = (document['methods'] as Array<Record<string, unknown>>).find(
       (m) => m['name'] === 'weft.nested.strict',
@@ -493,7 +488,7 @@ describe('generateOpenRpcDocument — Codex regressions', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const method = (document['methods'] as Array<Record<string, unknown>>).find(
       (m) => m['name'] === 'weft.defs.demo',
@@ -519,7 +514,7 @@ describe('generateOpenRpcDocument — Codex regressions', () => {
     ]);
     const document = generateOpenRpcDocument({
       registry,
-      jsonRpc: { enabled: true, transports: ['http'] },
+      transports: ['http'],
     });
     const methods = document['methods'] as Array<Record<string, unknown>>;
     expect(methods).toHaveLength(1);
@@ -538,7 +533,7 @@ describe('generateOpenRpcDocument — Codex regressions', () => {
     expect(() =>
       generateOpenRpcDocument({
         registry,
-        jsonRpc: { enabled: true, transports: ['http'] },
+        transports: ['http'],
       }),
     ).toThrow(/non-object inputSchema/);
   });

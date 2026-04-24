@@ -33,9 +33,9 @@ import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, AuthContext, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
-import { handleRequest } from './handler.ts';
+import { authContextToPrincipal, handleRequest } from './handler.ts';
+import { handleJsonRpcHttpRequest } from './json-rpc-http.ts';
 import { REST_BINDINGS, createLiveOperationRegistry } from './rest-bindings.ts';
-import type { RestDispatchModeConfig } from './rest-dispatch-mode.ts';
 import {
   claimNextSequence,
   evictOldestAffinityEntries,
@@ -121,18 +121,6 @@ export interface ServeOptions {
    * path and has lower precedence if both are set.
    */
   metricsCollector?: MetricsCollector;
-  /**
-   * Per-operation dispatch mode for REST. Controls whether each
-   * operation runs through the hand-rolled legacy executor in
-   * `handler.ts` or through the transport-neutral `executeOperation`
-   * pipeline with its `RestBinding`. Defaults to `'legacy'` everywhere
-   * during Milestone 1 of Track 8.
-   *
-   * Accepts three shapes: omit (all legacy), a bare
-   * `'legacy' | 'via-execute-operation'` (applies to every operation),
-   * or `{ default?, operations? }` for per-operation override.
-   */
-  restDispatchMode?: RestDispatchModeConfig;
 }
 
 export interface TaskDispatch {
@@ -1112,6 +1100,44 @@ export function serve(options: ServeOptions): WeftServer {
         return taskResultResponse;
       }
 
+      // JSON-RPC HTTP endpoint. Claimed here so `handleRequest` doesn't
+      // see `/jsonrpc` and return 404 from its REST route table. The
+      // adapter enforces method (POST only) and content-type internally.
+      //
+      // Wrap `authContextToPrincipal` + the adapter call in a try/catch so
+      // that an authenticator-contract violation (e.g., `{method: 'jwt',
+      // claims: undefined}` reaching the pipeline) maps to a 500 JSON-RPC
+      // error envelope instead of escaping as an uncaught exception.
+      // `handleRequest`'s REST path already does this via its own inner
+      // try/catch; `/jsonrpc` has no such boundary without this wrapping.
+      if (url.pathname === '/jsonrpc') {
+        try {
+          return await handleJsonRpcHttpRequest(request, {
+            registry: liveOperationRegistry,
+            engine: options.engine,
+            principal: authContextToPrincipal(authentication.authContext),
+          });
+        } catch (error) {
+          console.error('Unhandled error in /jsonrpc', { error });
+          // -32603 (InternalError) is the JSON-RPC 2.0 spec code for a
+          // generic internal error. This catch-all covers
+          // authenticator-contract violations and any other unexpected
+          // throw from the adapter — not specifically engine failures,
+          // so -32099 (EngineFailure) would mislabel the cause.
+          return new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              error: { code: -32603, message: 'Internal error' },
+              id: null,
+            }),
+            {
+              status: 500,
+              headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+            },
+          );
+        }
+      }
+
       // API routes via existing platform-agnostic handler. Under
       // `exactOptionalPropertyTypes` we can't spread `undefined` values into
       // an options object whose fields are `T?: U` (not `T?: U | undefined`),
@@ -1125,9 +1151,6 @@ export function serve(options: ServeOptions): WeftServer {
           : {}),
         ...(options.metricsCollector !== undefined
           ? { metricsCollector: options.metricsCollector }
-          : {}),
-        ...(options.restDispatchMode !== undefined
-          ? { restDispatchMode: options.restDispatchMode }
           : {}),
         operationRegistry: liveOperationRegistry,
         restBindings: REST_BINDINGS,

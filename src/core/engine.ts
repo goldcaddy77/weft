@@ -297,7 +297,8 @@ interface ResolvedOptions {
   tenantResolver: import('./tenant.ts').TenantResolver | undefined;
 }
 
-interface WorkflowResultResolver {
+interface WorkflowResultWaiter {
+  promise: Promise<unknown>;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
 }
@@ -333,6 +334,8 @@ type WorkflowHandleEventQueue = {
 type WorkflowHandleIteratorState = {
   done: boolean;
 };
+
+type TrackedWaiterKeys = string | Set<string>;
 
 type PendingTimelineEntry = {
   startedAt: number;
@@ -1273,6 +1276,10 @@ const SCHEDULE_OVERLAP_POLICIES = new Set<ScheduleOverlapPolicy>([
   'cancel-running',
   'allow',
 ]);
+const HANDLE_RESULT_PROMISE = Symbol('handleResultPromise');
+export const ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING = Symbol(
+  'engineParkedWorkflowCountForTesting',
+);
 
 function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | null {
   const [firstSet, ...remainingSets] = idSets;
@@ -1461,16 +1468,17 @@ type RefreshedScheduleState = {
 export class WorkflowHandle extends EventTarget implements AsyncDisposable {
   readonly id: string;
   readonly #engine: Engine;
-  readonly #resultPromise: Promise<unknown>;
+  #resultPromise: Promise<unknown> | undefined;
 
-  constructor(id: string, engine: Engine, resultPromise: Promise<unknown>) {
+  constructor(id: string, engine: Engine) {
     super();
     this.id = id;
     this.#engine = engine;
-    this.#resultPromise = resultPromise;
+    this.#resultPromise = undefined;
   }
 
   async result(): Promise<unknown> {
+    this.#resultPromise ??= this.#engine[HANDLE_RESULT_PROMISE](this.id);
     return this.#resultPromise;
   }
 
@@ -1786,11 +1794,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #inlineStrategy: InlineExecutionStrategy | null;
   #handleCache: Map<string, { ref: WeakRef<WorkflowHandle>; unregisterToken: object }>;
   #finalizationRegistry: FinalizationRegistry<string>;
-  #resultResolvers: Map<string, WorkflowResultResolver>;
+  #resultResolvers: Map<string, WorkflowResultWaiter>;
   #signalWaiters: Map<string, () => void>;
-  #signalWaitersByWorkflow: Map<string, Set<string>>;
+  #signalWaitersByWorkflow: Map<string, TrackedWaiterKeys>;
   #updateWaiters: Map<string, (payload: unknown) => void>;
-  #updateWaitersByWorkflow: Map<string, Set<string>>;
+  #updateWaitersByWorkflow: Map<string, TrackedWaiterKeys>;
   #sleepResolvers: Map<string, () => void>;
   #sleepResolversByWorkflow: Map<string, Set<string>>;
   #interceptors: WorkflowInterceptor[];
@@ -1835,12 +1843,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #defaultModelRouter: import('../ai/model-router.ts').ModelRouter | undefined;
   #reviewCoordinator: ReviewCoordinator;
   #reviewWaiters: Map<string, (decision: HumanReviewResult) => void>;
-  #reviewWaitersByWorkflow: Map<string, Set<string>>;
+  #reviewWaitersByWorkflow: Map<string, TrackedWaiterKeys>;
   #reviewEscalationHandlers: Map<
     string,
     (entry: { id: string; workflowId: string }) => Promise<boolean>
   >;
   #workflowReviewIds: Map<string, Set<string>>;
+  #parkedInlineWorkflows: Set<string>;
+  #terminalizingWorkflows: Set<string>;
   /** Timer IDs scheduled for each review (escalation + timeout), keyed by reviewId. */
   #reviewTimerIds: Map<string, string[]>;
   #pendingWebhooks: Set<AbortController>;
@@ -1932,6 +1942,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#reviewWaitersByWorkflow = new Map();
     this.#reviewEscalationHandlers = new Map();
     this.#workflowReviewIds = new Map();
+    this.#parkedInlineWorkflows = new Set();
+    this.#terminalizingWorkflows = new Set();
     this.#reviewTimerIds = new Map();
     this.#pendingWebhooks = new Set();
     this.#pendingTimelineEntries = new Map();
@@ -2068,24 +2080,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
-  #resolveChainedResult(
-    originalResolve: (value: unknown) => void,
-    chainedResolve: (value: unknown) => void,
-    value: unknown,
-  ): void {
-    originalResolve(value);
-    chainedResolve(value);
-  }
-
-  #rejectChainedResult(
-    originalReject: (reason: unknown) => void,
-    chainedReject: (reason: unknown) => void,
-    reason: unknown,
-  ): void {
-    originalReject(reason);
-    chainedReject(reason);
-  }
-
   #resolveReviewDecision(
     resolve: (result: { ok: true; value: HumanReviewResult }) => void,
     decision: HumanReviewResult,
@@ -2095,28 +2089,57 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   /** Register a waiter key in a workflow-keyed reverse index. */
   #trackWaiterKey(
-    reverseIndex: Map<string, Set<string>>,
+    reverseIndex: Map<string, TrackedWaiterKeys>,
     workflowId: string,
     waiterKey: string,
   ): void {
     let keys = reverseIndex.get(workflowId);
     if (!keys) {
-      keys = new Set();
-      reverseIndex.set(workflowId, keys);
+      reverseIndex.set(workflowId, waiterKey);
+      return;
     }
+
+    if (typeof keys === 'string') {
+      if (keys === waiterKey) {
+        return;
+      }
+
+      reverseIndex.set(workflowId, new Set([keys, waiterKey]));
+      return;
+    }
+
     keys.add(waiterKey);
   }
 
   /** Remove a waiter key from a workflow-keyed reverse index. */
   #untrackWaiterKey(
-    reverseIndex: Map<string, Set<string>>,
+    reverseIndex: Map<string, TrackedWaiterKeys>,
     workflowId: string,
     waiterKey: string,
   ): void {
     const keys = reverseIndex.get(workflowId);
-    if (keys) {
-      keys.delete(waiterKey);
-      if (keys.size === 0) reverseIndex.delete(workflowId);
+    if (!keys) {
+      return;
+    }
+
+    if (typeof keys === 'string') {
+      if (keys === waiterKey) {
+        reverseIndex.delete(workflowId);
+      }
+      return;
+    }
+
+    keys.delete(waiterKey);
+    if (keys.size === 0) {
+      reverseIndex.delete(workflowId);
+      return;
+    }
+
+    if (keys.size === 1) {
+      const [remainingWaiterKey] = keys;
+      if (remainingWaiterKey !== undefined) {
+        reverseIndex.set(workflowId, remainingWaiterKey);
+      }
     }
   }
 
@@ -2689,26 +2712,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (existing) return existing;
     }
 
-    // Create a new handle. We need a result promise.
-    const existingResolver = this.#resultResolvers.get(workflowId);
-    let resultPromise: Promise<unknown>;
-
-    if (existingResolver) {
-      // Workflow is still running; create a new promise that chains off the resolver
-      const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-      const originalResolve = existingResolver.resolve;
-      const originalReject = existingResolver.reject;
-      existingResolver.resolve = this.#resolveChainedResult.bind(this, originalResolve, resolve);
-      existingResolver.reject = this.#rejectChainedResult.bind(this, originalReject, reject);
-      resultPromise = promise;
-    } else {
-      // The workflow may be terminal, actively running, or still pending.
-      // Bootstrap a durable resolver from persisted state so handles created
-      // after a restart can still wait for future completion.
-      resultPromise = this.#createDeferredWorkflowResultPromise(workflowId);
-    }
-
-    return this.#createWorkflowHandleWithResultPromise(workflowId, resultPromise);
+    return this.#createWorkflowHandleWithResultPromise(workflowId);
   }
 
   // -------------------------------------------------------------------------
@@ -3923,53 +3927,62 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   #createWorkflowHandle(workflowId: string): WorkflowHandle {
-    return this.#createWorkflowHandleWithResultPromise(
-      workflowId,
-      this.#createWorkflowResultPromise(workflowId),
-    );
+    return this.#createWorkflowHandleWithResultPromise(workflowId);
   }
 
-  #createWorkflowHandleWithResultPromise(
-    workflowId: string,
-    resultPromise: Promise<unknown>,
-  ): WorkflowHandle {
-    const handle = new WorkflowHandle(workflowId, this, resultPromise);
+  #createWorkflowHandleWithResultPromise(workflowId: string): WorkflowHandle {
+    const handle = new WorkflowHandle(workflowId, this);
     this.#cacheHandle(workflowId, handle);
     return handle;
   }
 
-  #createWorkflowResultPromise(workflowId: string): Promise<unknown> {
+  #createWorkflowResultWaiter(workflowId: string): WorkflowResultWaiter {
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    this.#resultResolvers.set(workflowId, { resolve, reject });
-    // Internal workflow starts can create handles whose result promises are
-    // never observed directly, so mark the promise handled to avoid unhandled
-    // rejection noise while still allowing callers to await the original promise.
+    const waiter = { promise, resolve, reject };
+    this.#resultResolvers.set(workflowId, waiter);
     void promise.catch(() => {});
-    return promise;
+    return waiter;
   }
 
-  #createDeferredWorkflowResultPromise(workflowId: string): Promise<unknown> {
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    const resolver = { resolve, reject };
-    this.#resultResolvers.set(workflowId, resolver);
-    void promise.catch(() => {});
-    void this.#bootstrapWorkflowResultResolver(workflowId, resolver);
-    return promise;
+  #getWorkflowResultPromise(workflowId: string): Promise<unknown> {
+    const existingWaiter = this.#resultResolvers.get(workflowId);
+    if (existingWaiter) {
+      return existingWaiter.promise;
+    }
+
+    const waiter = this.#createWorkflowResultWaiter(workflowId);
+    // Always reconcile the first caller against durable workflow state.
+    // A workflow can become terminal between `start()` returning and the
+    // first `handle.result()` call, or while terminal cleanup is already in
+    // flight. Loading state here closes that race without re-introducing the
+    // eager per-handle promise allocation we removed for Track 3.
+    void this.#bootstrapWorkflowResultResolver(workflowId, waiter);
+    return waiter.promise;
+  }
+
+  [HANDLE_RESULT_PROMISE](workflowId: string): Promise<unknown> {
+    return this.#getWorkflowResultPromise(workflowId);
+  }
+
+  [ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING](): number {
+    return this.#parkedInlineWorkflows.size;
   }
 
   async #bootstrapWorkflowResultResolver(
     workflowId: string,
-    resolver: WorkflowResultResolver,
+    waiter: WorkflowResultWaiter,
   ): Promise<void> {
     try {
       const state = await this.#loadWorkflowState(workflowId);
-      if (this.#resultResolvers.get(workflowId) !== resolver) {
+      const currentWaiter = this.#resultResolvers.get(workflowId);
+      if (currentWaiter !== undefined && currentWaiter !== waiter) {
+        void currentWaiter.promise.then(waiter.resolve, waiter.reject);
         return;
       }
 
       if (!state) {
         this.#resultResolvers.delete(workflowId);
-        resolver.reject(new Error(`Workflow "${workflowId}" not found in storage`));
+        waiter.reject(new Error(`Workflow "${workflowId}" not found in storage`));
         return;
       }
 
@@ -3979,21 +3992,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       try {
         const result = await this.#loadWorkflowResult(workflowId);
-        if (this.#resultResolvers.get(workflowId) === resolver) {
+        if (this.#resultResolvers.get(workflowId) === waiter) {
           this.#resultResolvers.delete(workflowId);
         }
-        resolver.resolve(result);
+        waiter.resolve(result);
       } catch (error) {
-        if (this.#resultResolvers.get(workflowId) === resolver) {
+        if (this.#resultResolvers.get(workflowId) === waiter) {
           this.#resultResolvers.delete(workflowId);
         }
-        resolver.reject(error);
+        waiter.reject(error);
       }
     } catch (error) {
-      if (this.#resultResolvers.get(workflowId) === resolver) {
+      if (this.#resultResolvers.get(workflowId) === waiter) {
         this.#resultResolvers.delete(workflowId);
       }
-      resolver.reject(error);
+      waiter.reject(error);
     }
   }
 
@@ -4236,6 +4249,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.#signalWaiters.delete(waiterKey);
         this.#untrackWaiterKey(this.#signalWaitersByWorkflow, targetWorkflowId, waiterKey);
         waiter();
+      } else if (this.#parkedInlineWorkflows.has(targetWorkflowId)) {
+        void this.#swallowPromiseRejection(this.#resumeParkedInlineWorkflow(targetWorkflowId));
       }
     };
 
@@ -4706,13 +4721,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async resume(workflowId: string): Promise<WorkflowHandle> {
+    return this.#resumeWorkflowFromStorage(workflowId, true);
+  }
+
+  async #resumeWorkflowFromStorage(
+    workflowId: string,
+    dispatchResumedEvent: boolean,
+  ): Promise<WorkflowHandle> {
     // Load workflow state
     const stateBytes = await this.#storage.get(KEYS.workflow(workflowId));
     if (!stateBytes) {
       throw new Error(`Workflow "${workflowId}" not found in storage`);
     }
 
-    let state = decodeWorkflowState(stateBytes);
+    const state = decodeWorkflowState(stateBytes);
     if (state.status !== 'running') {
       throw new Error(
         `Cannot resume workflow "${workflowId}": status is "${state.status}", expected "running"`,
@@ -4735,94 +4757,113 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
     }
 
-    // Agent optimization: track resumed agent workflows for storage-layer optimization.
-    if (registration.isAgent) {
-      this.#agentWorkflowIds.add(workflowId);
-    }
-
     const preparedResumeState = await this.#prepareResumeState(
       workflowId,
       state,
       checkpoint,
       registration,
     );
-    state = preparedResumeState.state;
     const resumeCheckpoint = preparedResumeState.checkpoint;
     const registeredVersionTuple = preparedResumeState.versionTuple;
-
-    // Store checkpoint for future persistence
-    this.#checkpoints.set(workflowId, resumeCheckpoint);
-
-    // Cache the workflow version tuple for forwarding to event-log entries.
-    this.#workflowVersionTuples.set(workflowId, registeredVersionTuple);
 
     // Restore the event log head from storage so that the next appendToBatch()
     // call uses the correct sequence number and prevHash rather than falling
     // back to EMPTY_EVENT_HEAD (sequence -1) and overwriting existing entries.
     const eventLog = new EventLog(this.#storage, workflowId);
     const restoredHead = await eventLog.loadHead();
-    this.#eventLogHeads.set(workflowId, restoredHead);
-    this.#setWorkflowStartHeaders(workflowId, await this.#loadWorkflowStartHeaders(workflowId));
+    const workflowStartHeaders = await this.#loadWorkflowStartHeaders(workflowId);
 
     const handle = this.getHandle(workflowId);
-
-    // Dispatch resumed event
-    this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
-
-    if (this.#inlineStrategy) {
-      // Inline mode: create context and generator, adopt into strategy
-      const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
-      const workflowAbort = new AbortController();
-
-      // Create context with recovery state. Pass the checkpoint's createdAt as
-      // the sleep reference time so that expired sleeps resolve immediately via
-      // the fast path instead of scheduling a brand-new full-duration timer.
-      const context = new Context({
-        workflowId,
-        workflowType: state.type,
-        startedAt: getWorkflowExecutionStartedAt(state),
-        abortController: workflowAbort,
-        getNow: this.#options.getNow,
-        resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
-        accumulatedResults,
-        searchAttributes: resumeCheckpoint.searchAttributes,
-        ...(registration.searchAttributes && {
-          searchAttributeSchema: registration.searchAttributes,
-        }),
-        sleepReferenceTime: resumeCheckpoint.createdAt,
-        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
-        ...(state.tenant !== undefined && { tenant: state.tenant }),
-      });
-
-      if (this.#options.development) {
-        context.explain(true);
+    await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+      if (this.#terminalizingWorkflows.has(workflowId)) {
+        throw new Error(`Cannot resume workflow "${workflowId}": termination is in progress`);
       }
 
-      const generator = registration.handler(context, state.input);
-      this.#inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
+      const latestState = await this.#loadWorkflowState(workflowId);
+      if (this.#terminalizingWorkflows.has(workflowId)) {
+        throw new Error(`Cannot resume workflow "${workflowId}": termination is in progress`);
+      }
 
-      // Drive the generator (non-blocking) via the strategy
-      this.#inlineStrategy.continueWorkflow(workflowId, undefined);
+      if (!latestState) {
+        throw new Error(`Workflow "${workflowId}" not found in storage`);
+      }
 
+      if (latestState.status !== 'running') {
+        throw new Error(
+          `Cannot resume workflow "${workflowId}": status is "${latestState.status}", expected "running"`,
+        );
+      }
+
+      this.#checkpoints.set(workflowId, resumeCheckpoint);
+      this.#workflowVersionTuples.set(workflowId, registeredVersionTuple);
+      this.#eventLogHeads.set(workflowId, restoredHead);
+      this.#setWorkflowStartHeaders(workflowId, workflowStartHeaders);
+      if (registration.isAgent) {
+        this.#agentWorkflowIds.add(workflowId);
+      }
+      this.#parkedInlineWorkflows.delete(workflowId);
+
+      if (this.#inlineStrategy) {
+        // Keep the final running-state check and the re-entry into user code
+        // in the same serialized section so cancel/timeout cannot commit a
+        // terminal state and still let a parked workflow continue.
+        const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
+        const workflowAbort = new AbortController();
+
+        const context = new Context({
+          workflowId,
+          workflowType: latestState.type,
+          startedAt: getWorkflowExecutionStartedAt(latestState),
+          abortController: workflowAbort,
+          getNow: this.#options.getNow,
+          resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
+          accumulatedResults,
+          searchAttributes: resumeCheckpoint.searchAttributes,
+          ...(registration.searchAttributes && {
+            searchAttributeSchema: registration.searchAttributes,
+          }),
+          sleepReferenceTime: resumeCheckpoint.createdAt,
+          ...(latestState.executionDeadline !== undefined && {
+            deadline: latestState.executionDeadline,
+          }),
+          ...(latestState.tenant !== undefined && { tenant: latestState.tenant }),
+        });
+
+        if (this.#options.development) {
+          context.explain(true);
+        }
+
+        const generator = registration.handler(context, latestState.input);
+        this.#inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
+        this.#inlineStrategy.continueWorkflow(workflowId, undefined);
+      } else {
+        const serialized = serializeCheckpoint(resumeCheckpoint);
+        this.#strategy.startWorkflow({
+          workflowId,
+          workflowType: latestState.type,
+          input: latestState.input,
+          checkpoint: serialized,
+          nestingDepth: this.#workflowNestingDepths.get(workflowId) ?? 0,
+          ...(latestState.executionDeadline !== undefined && {
+            deadline: latestState.executionDeadline,
+          }),
+          ...(workflowStartHeaders !== undefined &&
+            workflowStartHeaders.size > 0 && {
+              headers: [...workflowStartHeaders],
+            }),
+          ...(latestState.tenant !== undefined && { tenant: latestState.tenant }),
+        });
+      }
+    });
+
+    if (dispatchResumedEvent) {
+      this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
+    }
+    if (this.#inlineStrategy) {
       // After replay, process any pending coordinated updates that match
       // registered inline handlers. Schedule on next microtask so the
       // generator has a chance to register its onUpdate handlers first.
       queueMicrotask(this.#processPendingUpdatesAfterReplay.bind(this, workflowId));
-    } else {
-      // Worker mode: send run message to the worker with the checkpoint
-      const serialized = serializeCheckpoint(resumeCheckpoint);
-      this.#strategy.startWorkflow({
-        workflowId,
-        workflowType: state.type,
-        input: state.input,
-        checkpoint: serialized,
-        nestingDepth: this.#workflowNestingDepths.get(workflowId) ?? 0,
-        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
-        ...(this.#workflowHeaders.has(workflowId) && {
-          headers: [...this.#workflowHeaders.get(workflowId)!],
-        }),
-        ...(state.tenant !== undefined && { tenant: state.tenant }),
-      });
     }
 
     return handle;
@@ -4875,73 +4916,80 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
+    this.#terminalizingWorkflows.add(workflowId);
     this.#strategy.cancelWorkflow(workflowId);
-    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-    const attributes = attributeBytes
-      ? (decode(attributeBytes) as Record<string, SearchAttributeValue>)
-      : {};
-    const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(attributes);
-    const terminationMessage = status === 'timed-out' ? 'Workflow timed out' : 'Workflow cancelled';
-    const terminationResult = await this.#updateWorkflowState(
-      workflowId,
-      { status },
-      {
-        allowedStatuses: ['running', 'pending'],
-        releaseTenantQuota: true,
-        buildAdditionalOperations: (_previousState, updatedAt) => {
-          this.#finalizePendingTimelineEntry(workflowId, status, terminationMessage, updatedAt);
-          const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
-          return pendingTimelineOperation ? [pendingTimelineOperation] : [];
-        },
-      },
-    );
-    if (!terminationResult) {
-      return;
-    }
-
-    const { previousState, updatedAt } = terminationResult;
-    const elapsed = updatedAt - getWorkflowExecutionStartedAt(previousState);
-    await this.#cleanupAttributeIndex(workflowId, attributes);
-    await this.#writeRetainedTerminalSearchAttributes(workflowId, retainedAttributes);
-    void this.#swallowPromiseRejection(
-      this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
-    );
-    if (previousState.status === 'pending') {
-      void this.#swallowPromiseRejection(
-        this.#scheduler.cancel(`delayed-start:${workflowId}`, workflowId),
-      );
-    }
-
-    const resolver = this.#resultResolvers.get(workflowId);
-    const terminalError =
-      status === 'timed-out'
-        ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
-        : new Error('Workflow cancelled');
 
     try {
-      // Drop in-memory state, release charged operations, and delete durable
-      // workflow-keyed records (reviews, offload, blob, shared, signal).
-      // Cancelled/timed-out workflows have no consumers waiting on output
-      // artifacts, so drop them alongside the internal bookkeeping.
-      await this.#cleanupTerminalWorkflow(workflowId, true);
+      const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+      const attributes = attributeBytes
+        ? (decode(attributeBytes) as Record<string, SearchAttributeValue>)
+        : {};
+      const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(attributes);
+      const terminationMessage =
+        status === 'timed-out' ? 'Workflow timed out' : 'Workflow cancelled';
+      const terminationResult = await this.#updateWorkflowState(
+        workflowId,
+        { status },
+        {
+          allowedStatuses: ['running', 'pending'],
+          releaseTenantQuota: true,
+          buildAdditionalOperations: (_previousState, updatedAt) => {
+            this.#finalizePendingTimelineEntry(workflowId, status, terminationMessage, updatedAt);
+            const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
+            return pendingTimelineOperation ? [pendingTimelineOperation] : [];
+          },
+        },
+      );
+      if (!terminationResult) {
+        return;
+      }
 
-      const event =
+      const { previousState, updatedAt } = terminationResult;
+      const elapsed = updatedAt - getWorkflowExecutionStartedAt(previousState);
+      await this.#cleanupAttributeIndex(workflowId, attributes);
+      await this.#writeRetainedTerminalSearchAttributes(workflowId, retainedAttributes);
+      void this.#swallowPromiseRejection(
+        this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
+      );
+      if (previousState.status === 'pending') {
+        void this.#swallowPromiseRejection(
+          this.#scheduler.cancel(`delayed-start:${workflowId}`, workflowId),
+        );
+      }
+
+      const resolver = this.#resultResolvers.get(workflowId);
+      const terminalError =
         status === 'timed-out'
-          ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed)
-          : new WorkflowCancelledEvent(workflowId);
-      this.dispatchEvent(event);
-      this.#forwardEventToHandle(workflowId, event);
+          ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
+          : new Error('Workflow cancelled');
 
-      if (resolver) resolver.reject(terminalError);
-      // Scheduled queue handoff is best-effort cleanup and must not block
-      // terminal delivery or handle settlement.
-      void this.#finalizeScheduledWorkflowTerminal(workflowId);
-    } catch (cleanupError) {
-      // Settle the resolver so handle.result() callers are not stranded.
-      if (resolver) resolver.reject(terminalError);
-      throw cleanupError;
+      try {
+        // Drop in-memory state, release charged operations, and delete durable
+        // workflow-keyed records (reviews, offload, blob, shared, signal).
+        // Cancelled/timed-out workflows have no consumers waiting on output
+        // artifacts, so drop them alongside the internal bookkeeping.
+        await this.#cleanupTerminalWorkflow(workflowId, true);
+
+        const event =
+          status === 'timed-out'
+            ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed)
+            : new WorkflowCancelledEvent(workflowId);
+        this.dispatchEvent(event);
+        this.#forwardEventToHandle(workflowId, event);
+
+        if (resolver) resolver.reject(terminalError);
+        // Scheduled queue handoff is best-effort cleanup and must not block
+        // terminal delivery or handle settlement.
+        void this.#finalizeScheduledWorkflowTerminal(workflowId);
+      } catch (cleanupError) {
+        // Settle the resolver so handle.result() callers are not stranded.
+        if (resolver) resolver.reject(terminalError);
+        throw cleanupError;
+      } finally {
+        this.#resultResolvers.delete(workflowId);
+      }
     } finally {
-      this.#resultResolvers.delete(workflowId);
+      this.#terminalizingWorkflows.delete(workflowId);
     }
   }
 
@@ -5400,6 +5448,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#reviewWaitersByWorkflow.clear();
     this.#reviewEscalationHandlers.clear();
     this.#workflowReviewIds.clear();
+    this.#parkedInlineWorkflows.clear();
+    this.#terminalizingWorkflows.clear();
     this.#reviewTimerIds.clear();
     for (const controller of this.#pendingWebhooks) {
       controller.abort();
@@ -5477,13 +5527,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (!current) return;
 
       const previousAttributes = { ...current.searchAttributes };
-      const hasPendingAttributeChanges = Object.keys(context.pendingAttributeChanges).length > 0;
-
-      const accumulatedResults = Array.from(context.accumulatedResults.entries());
+      const hasPendingAttributeChanges = context.hasPendingAttributeChanges;
+      const pendingAttributeChanges = context.checkpointPendingAttributeChanges;
+      const accumulatedResults = context.checkpointAccumulatedResults;
       const advanced = advanceCheckpoint(current, current.locals, {
-        searchAttributes: context.pendingAttributeChanges,
         accumulatedResults,
         now: this.#options.getNow(),
+        ...(pendingAttributeChanges !== undefined
+          ? { searchAttributes: pendingAttributeChanges }
+          : {}),
       });
 
       const serialized = serializeCheckpoint(advanced);
@@ -5507,7 +5559,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       }
 
       if (hasPendingAttributeChanges) {
-        this.#validateAttributeValueSizes(context.pendingAttributeChanges);
+        this.#validateAttributeValueSizes(pendingAttributeChanges ?? {});
         operations.push({
           type: 'put',
           key: KEYS.attribute(workflowId),
@@ -5545,9 +5597,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       void this.#swallowPromiseRejection(this.#pruneCheckpointHistory(workflowId, advanced.step));
 
       if (hasPendingAttributeChanges) {
-        this.dispatchEvent(
-          new AttributesChangedEvent(workflowId, { ...context.pendingAttributeChanges }),
-        );
+        const changedAttributes = pendingAttributeChanges ?? {};
+        this.dispatchEvent(new AttributesChangedEvent(workflowId, { ...changedAttributes }));
       }
     } else if (workerCheckpointBytes && workerCheckpointBytes.byteLength > 0) {
       // Worker strategy: persist the checkpoint bytes sent from the worker
@@ -5729,6 +5780,107 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
+  async #hasBufferedSignal(workflowId: string, signalName: string): Promise<boolean> {
+    const prefix = `sig:${encodeStorageKeyComponent(workflowId)}:${signalName}:`;
+    for await (const _entry of this.#storage.scan(prefix, { limit: 1 })) {
+      return true;
+    }
+
+    return false;
+  }
+
+  async #parkInlineWorkflowAfterCheckpoint(
+    workflowId: string,
+    operation: ContextOperationRequest,
+  ): Promise<boolean> {
+    if (operation.type !== 'wait-signal' || this.#inlineStrategy === null) {
+      return false;
+    }
+
+    const inlineStrategy = this.#inlineStrategy;
+    const context = inlineStrategy.getContext(workflowId);
+    if (context?.hasUpdateHandlers || context?.hasExposedAccessors) {
+      return false;
+    }
+
+    if (await this.#hasBufferedSignal(workflowId, operation.signalName)) {
+      return false;
+    }
+
+    // Publish the parked marker in the same serialized section that terminal
+    // state writes use so cancel/timeout cannot clean up before the add lands.
+    const publishedParkedMarker = await this.#runSerializedWorkflowStateWrite(
+      workflowId,
+      async () => {
+        const latestState = await this.#loadWorkflowState(workflowId);
+        if (
+          this.#terminalizingWorkflows.has(workflowId) ||
+          !latestState ||
+          latestState.status !== 'running'
+        ) {
+          return false;
+        }
+
+        inlineStrategy.parkWorkflow(workflowId);
+        this.#parkedInlineWorkflows.add(workflowId);
+        return true;
+      },
+    );
+    if (!publishedParkedMarker) {
+      return false;
+    }
+
+    // Close the race where a signal arrives after the pre-park scan above but
+    // before the workflow becomes visibly parked. Once the parked marker is
+    // published, a second buffered-signal check lets us resume immediately
+    // instead of leaving a durable signal stranded in storage.
+    if (await this.#hasBufferedSignal(workflowId, operation.signalName)) {
+      await this.#resumeParkedInlineWorkflow(workflowId);
+    }
+
+    return true;
+  }
+
+  async #resumeParkedInlineWorkflow(workflowId: string): Promise<void> {
+    if (!this.#parkedInlineWorkflows.has(workflowId)) {
+      return;
+    }
+
+    this.#parkedInlineWorkflows.delete(workflowId);
+    try {
+      await this.#resumeWorkflowFromStorage(workflowId, false);
+    } catch (error) {
+      const resumeDisposition = await this.#getParkedWorkflowResumeDisposition(workflowId);
+      if (resumeDisposition === 'resumable') {
+        this.#parkedInlineWorkflows.add(workflowId);
+        throw error;
+      }
+      if (resumeDisposition === 'corrupt') {
+        throw error;
+      }
+    }
+  }
+
+  async #getParkedWorkflowResumeDisposition(
+    workflowId: string,
+  ): Promise<'resumable' | 'terminal-or-missing' | 'corrupt'> {
+    if (this.#terminalizingWorkflows.has(workflowId)) {
+      return 'terminal-or-missing';
+    }
+
+    const state = await this.#loadWorkflowState(workflowId);
+    if (!state || state.status !== 'running') {
+      return 'terminal-or-missing';
+    }
+
+    const checkpointBytes = await this.#storage.get(KEYS.checkpoint(workflowId));
+    if (!checkpointBytes) {
+      return 'corrupt';
+    }
+
+    return 'resumable';
+  }
+
   // -------------------------------------------------------------------------
   // Private: strategy message handling
   // -------------------------------------------------------------------------
@@ -5768,6 +5920,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         const constraintViolated = await this.#evaluateConstraints(message.workflowId);
         if (constraintViolated) {
           // Violation already handled (event dispatched, error thrown or logged).
+          break;
+        }
+
+        if (await this.#parkInlineWorkflowAfterCheckpoint(message.workflowId, operation)) {
           break;
         }
 
@@ -7721,6 +7877,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#agentWorkflowIds.delete(workflowId);
     this.#eventLogHeads.delete(workflowId);
     this.#pendingTimelineEntries.delete(workflowId);
+    this.#parkedInlineWorkflows.delete(workflowId);
     this.#workflowVersionTuples.delete(workflowId);
     this.#cleanupWaiters(workflowId);
 
@@ -7891,17 +8048,29 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #cleanupWaiters(workflowId: string): void {
     const signalKeys = this.#signalWaitersByWorkflow.get(workflowId);
     if (signalKeys) {
-      for (const key of signalKeys) this.#signalWaiters.delete(key);
+      if (typeof signalKeys === 'string') {
+        this.#signalWaiters.delete(signalKeys);
+      } else {
+        for (const key of signalKeys) this.#signalWaiters.delete(key);
+      }
       this.#signalWaitersByWorkflow.delete(workflowId);
     }
     const updateKeys = this.#updateWaitersByWorkflow.get(workflowId);
     if (updateKeys) {
-      for (const key of updateKeys) this.#updateWaiters.delete(key);
+      if (typeof updateKeys === 'string') {
+        this.#updateWaiters.delete(updateKeys);
+      } else {
+        for (const key of updateKeys) this.#updateWaiters.delete(key);
+      }
       this.#updateWaitersByWorkflow.delete(workflowId);
     }
     const reviewKeys = this.#reviewWaitersByWorkflow.get(workflowId);
     if (reviewKeys) {
-      for (const key of reviewKeys) this.#reviewWaiters.delete(key);
+      if (typeof reviewKeys === 'string') {
+        this.#reviewWaiters.delete(reviewKeys);
+      } else {
+        for (const key of reviewKeys) this.#reviewWaiters.delete(key);
+      }
       this.#reviewWaitersByWorkflow.delete(workflowId);
     }
     const sleepOps = this.#sleepResolversByWorkflow.get(workflowId);

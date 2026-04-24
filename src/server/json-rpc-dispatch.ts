@@ -96,6 +96,10 @@ async function dispatchBatch(
   parsed: Extract<ParseResult, { kind: 'batch' }>,
   context: DispatchJsonRpcContext,
 ): Promise<DispatchJsonRpcResult> {
+  // Batch size cap enforcement lives in `parseJsonRpcRequest` — the
+  // parser rejects batches over `MAX_JSON_RPC_BATCH_ITEMS` (100) with
+  // an `invalid-request` result BEFORE dispatch. Any batch that reaches
+  // this function is already within the cap.
   const responses: JsonRpcResponse[] = [];
   // Sequential dispatch in request order — Track 8 decision 13.
   for (const item of parsed.items) {

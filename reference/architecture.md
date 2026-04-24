@@ -5563,8 +5563,8 @@ The roadmap below carries forward the implementation work derived from that rese
 - [x] `src/ai/prompt-cache.ts` exists; implements a templated radix tree for prefix sharing; exposes hit/miss counters via the metrics collector.
 - [x] `src/benchmarks/prompt-cache.test.ts` shows ≥49% hit rate on a realistic workload and <1ms per-call overhead.
 - [ ] Activity completions benchmark: `benchmarks/throughput.bench.ts` reports ≥20K/sec (up from ~9K/sec; spec is >30K/sec).
-- [ ] Memory per workflow: `benchmarks/memory.bench.ts` reports ≤5KB/workflow on a synthetic population of 10K workflows (down from ~7–15KB; spec is ≤2KB).
-- [ ] `bun run typecheck` and `bun test` both exit 0 after Track 3 lands.
+- [x] Memory per workflow: `benchmarks/memory.bench.ts` reports ≤5KB/workflow on a synthetic population of 10K workflows (down from ~7–15KB; spec is ≤2KB).
+- [x] `bun run typecheck` and `bun test` both exit 0 after Track 3 lands.
 
 ### Track 4 — Multi-agent reliability
 
@@ -5671,8 +5671,8 @@ Weft already has a hash-chained event log — the data is there, but there's no 
 
 - [x] **`engine.getTimeline(workflowId)` returns a structured timeline.** Each entry includes: step number, operation type, input summary, output summary, duration, timestamp, and version tuple. This is a high-level view — not raw events, but a human-readable execution trace.
 - [x] **`engine.replayTo(workflowId, step)` reconstructs workflow state at a historical step.** Returns the checkpoint, accumulated results, and event log up to that point. Read-only — does not modify the workflow.
-- [ ] **Dashboard timeline view.** Visual execution trace showing each step as a node: what operation ran, what it returned, how long it took, and what the checkpoint looked like at that point. Clicking a step shows the full checkpoint state (locals, accumulated results, search attributes).
-- [ ] **Dashboard diff view.** Select two steps and see what changed between them: new locals, changed search attributes, budget consumption delta, conversation growth.
+- [x] **Dashboard timeline view.** Visual execution trace showing each step as a node: what operation ran, what it returned, how long it took, and what the checkpoint looked like at that point. Clicking a step shows the full checkpoint state (locals, accumulated results, search attributes).
+- [x] **Dashboard diff view.** Select two steps and see what changed between them: new locals, changed search attributes, budget consumption delta, conversation growth.
 - [x] **`GET /v1/workflows/:id/timeline` HTTP endpoint.** Returns the structured timeline as JSON.
 - [x] **`weft timeline <workflowId>` CLI subcommand.** Prints the execution trace to stdout. `--step N` shows checkpoint state at step N. `--diff N M` shows the delta between two steps.
 
@@ -5688,7 +5688,7 @@ Weft streams tokens over WebSocket with a reconnection buffer, but if the buffer
 
 #### Final
 
-- [ ] `bun run typecheck` and `bun test` both exit 0 after Track 7 lands.
+- [x] `bun run typecheck` and `bun test` both exit 0 after Track 7 lands.
 
 ### Track 8 — Transport parity, shared contracts, and authorization
 

@@ -7,12 +7,12 @@ import { defineAgent } from '../ai/declaration.ts';
 import { AgentBudgetExceededEvent, AgentBudgetWarningEvent } from '../ai/events.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
-import type { Storage as WeftStorage } from '../storage/interface.ts';
+import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
 import type { Context, StreamReference } from './context.ts';
-import { Engine, WorkflowHandle } from './engine.ts';
+import { Engine, ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING, WorkflowHandle } from './engine.ts';
 import {
   CheckpointSizeWarningEvent,
   DevelopmentWarningEvent,
@@ -297,6 +297,191 @@ describe('Engine', () => {
     const result = await handle.result();
 
     expect(result).toBe('received: hello-signal');
+    engine[Symbol.dispose]();
+  });
+
+  it('does not park a workflow after cancel wins during the pre-park signal scan', async () => {
+    const workflowId = 'parked-pre-park-cancel-race-id';
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const bufferedSignalScanStarted = Promise.withResolvers<void>();
+    const bufferedSignalScanReleased = Promise.withResolvers<void>();
+    const originalScan = storage.scan.bind(storage);
+    const signalPrefix = `sig:${workflowId}:go:`;
+    let holdNextBufferedSignalScan = true;
+
+    storage.scan = async function* (
+      prefix: string,
+      options?: ScanOptions,
+    ): AsyncIterable<[string, Uint8Array]> {
+      if (holdNextBufferedSignalScan && prefix === signalPrefix) {
+        holdNextBufferedSignalScan = false;
+        bufferedSignalScanStarted.resolve();
+        await bufferedSignalScanReleased.promise;
+      }
+
+      yield* originalScan(prefix, options);
+    };
+
+    engine.register('parked-pre-park-cancel-race', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('go');
+      return 'should-not-park';
+    });
+
+    const handle = await engine.start('parked-pre-park-cancel-race', null, { id: workflowId });
+    const resultPromise = handle.result().then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+
+    await bufferedSignalScanStarted.promise;
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+
+    await engine.cancel(workflowId);
+    bufferedSignalScanReleased.resolve();
+    await flush();
+
+    const result = await resultPromise;
+    const workflowState = await engine.get(workflowId);
+    expect(result.status).toBe('rejected');
+    expect(
+      result.status === 'rejected' && result.error instanceof Error
+        ? result.error.message
+        : String(result.status === 'rejected' ? result.error : ''),
+    ).toBe('Workflow cancelled');
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(workflowState?.status).toBe('cancelled');
+    engine[Symbol.dispose]();
+  });
+
+  it('does not resume a parked workflow after cancel writes a terminal state', async () => {
+    const workflowId = 'parked-resume-cancel-race-id';
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    let resumedAfterSignal = false;
+    const checkpointReadStarted = Promise.withResolvers<void>();
+    const checkpointReadReleased = Promise.withResolvers<void>();
+    const originalGet = storage.get.bind(storage);
+    let holdNextCheckpointRead = true;
+
+    storage.get = async (key: string): Promise<Uint8Array | null> => {
+      if (holdNextCheckpointRead && key === KEYS.checkpoint(workflowId)) {
+        holdNextCheckpointRead = false;
+        checkpointReadStarted.resolve();
+        await checkpointReadReleased.promise;
+      }
+
+      return await originalGet(key);
+    };
+
+    engine.register('parked-resume-cancel-race', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('go');
+      resumedAfterSignal = true;
+      return 'should-not-complete';
+    });
+
+    const handle = await engine.start('parked-resume-cancel-race', null, { id: workflowId });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+
+    const resultPromise = handle.result().then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+    await engine.signal(workflowId, 'go', 'resume-now');
+    await checkpointReadStarted.promise;
+
+    await engine.cancel(workflowId);
+    checkpointReadReleased.resolve();
+    await flush();
+
+    const result = await resultPromise;
+    const workflowState = await engine.get(workflowId);
+    expect(result.status).toBe('rejected');
+    expect(
+      result.status === 'rejected' && result.error instanceof Error
+        ? result.error.message
+        : String(result.status === 'rejected' ? result.error : ''),
+    ).toBe('Workflow cancelled');
+    expect(resumedAfterSignal).toBe(false);
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(workflowState?.status).toBe('cancelled');
+    engine[Symbol.dispose]();
+  });
+
+  it('does not let a queued parked resume continue after cancel starts', async () => {
+    const workflowId = 'parked-resume-termination-race-id';
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    let resumedAfterCancellationStarted = false;
+    const serializedResumeStateReadStarted = Promise.withResolvers<void>();
+    const serializedResumeStateReadReleased = Promise.withResolvers<void>();
+    const originalGet = storage.get.bind(storage);
+    let holdSerializedResumeStateRead = false;
+    let workflowStateReadsAfterSignal = 0;
+
+    storage.get = async (key: string): Promise<Uint8Array | null> => {
+      if (holdSerializedResumeStateRead && key === KEYS.workflow(workflowId)) {
+        workflowStateReadsAfterSignal += 1;
+        if (workflowStateReadsAfterSignal === 2) {
+          serializedResumeStateReadStarted.resolve();
+          await serializedResumeStateReadReleased.promise;
+        }
+      }
+
+      return await originalGet(key);
+    };
+
+    engine.register('parked-resume-termination-race', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('go');
+      resumedAfterCancellationStarted = true;
+      yield* (ctx as Context).waitForSignal('never');
+      return 'should-not-complete';
+    });
+
+    const handle = await engine.start('parked-resume-termination-race', null, { id: workflowId });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+
+    holdSerializedResumeStateRead = true;
+    await engine.signal(workflowId, 'go', 'resume-now');
+    await serializedResumeStateReadStarted.promise;
+
+    const cancelPromise = engine.cancel(workflowId);
+    serializedResumeStateReadReleased.resolve();
+    await cancelPromise;
+    await flush();
+
+    const result = await handle.result().then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+    const workflowState = await engine.get(workflowId);
+    expect(result.status).toBe('rejected');
+    expect(
+      result.status === 'rejected' && result.error instanceof Error
+        ? result.error.message
+        : String(result.status === 'rejected' ? result.error : ''),
+    ).toBe('Workflow cancelled');
+    expect(resumedAfterCancellationStarted).toBe(false);
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(workflowState?.status).toBe('cancelled');
     engine[Symbol.dispose]();
   });
 
@@ -675,6 +860,30 @@ describe('Engine', () => {
     const newHandle = engine.getHandle('completed-id');
     const result = await newHandle.result();
     expect(result).toBe('stored-result');
+    engine[Symbol.dispose]();
+  });
+
+  it('handle.result() can be first called after the workflow already completed', async () => {
+    const engine = new Engine();
+    engine.register('completed-before-result', async function* () {
+      return 'late-result';
+    });
+
+    const handle = await engine.start('completed-before-result', null, { id: 'late-result-id' });
+    let completedBeforeSubscription = false;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const state = await engine.get(handle.id);
+      if (state?.status === 'completed') {
+        completedBeforeSubscription = true;
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(completedBeforeSubscription).toBe(true);
+    await expect(handle.result()).resolves.toBe('late-result');
     engine[Symbol.dispose]();
   });
 
