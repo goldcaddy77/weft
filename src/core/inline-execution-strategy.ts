@@ -192,6 +192,10 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     this.#cleanup(workflowId);
   }
 
+  parkWorkflow(workflowId: string): void {
+    this.#cleanup(workflowId);
+  }
+
   // -------------------------------------------------------------------------
   // Context access (for the engine to look up active contexts)
   // -------------------------------------------------------------------------

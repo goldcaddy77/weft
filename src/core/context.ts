@@ -356,6 +356,15 @@ function isActivityCallOptions(value: unknown): value is ActivityCallOptions {
   return false;
 }
 
+function trimCallerStack(stack: string): string {
+  const stackLines = stack.split('\n');
+  if (stackLines.length <= 4) {
+    return stack;
+  }
+
+  return stackLines.slice(0, 4).join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Context options
 // ---------------------------------------------------------------------------
@@ -399,13 +408,13 @@ export class Context implements WorkflowContext {
 
   #abortController: AbortController;
   #stepIndex: number;
-  #accumulatedResults: Map<number, unknown>;
+  #accumulatedResults: Map<number, unknown> | undefined;
   #searchAttributes: Record<string, SearchAttributeValue>;
   #searchAttributeSchema: SearchAttributeSchema | undefined;
-  #pendingAttributeChanges: Record<string, SearchAttributeValue>;
-  #updateHandlers: Map<string, (payload: unknown) => unknown>;
-  #exposedValues: Map<string, () => unknown>;
-  #memoCache: Map<string, unknown>;
+  #pendingAttributeChanges: Record<string, SearchAttributeValue> | undefined;
+  #updateHandlers: Map<string, (payload: unknown) => unknown> | undefined;
+  #exposedValues: Map<string, () => unknown> | undefined;
+  #memoCache: Map<string, unknown> | undefined;
   #deadline: number | undefined;
   #getNow: () => number;
   #sleepReferenceTime: number | undefined;
@@ -417,7 +426,7 @@ export class Context implements WorkflowContext {
 
   #captureCallerStack(): string {
     const error = new Error();
-    return error.stack ?? '';
+    return trimCallerStack(error.stack ?? '');
   }
 
   constructor(options: ContextOptions) {
@@ -428,13 +437,13 @@ export class Context implements WorkflowContext {
     this.signal = options.abortController.signal;
 
     this.#stepIndex = options.initialStep ?? 0;
-    this.#accumulatedResults = options.accumulatedResults ?? new Map();
+    this.#accumulatedResults = options.accumulatedResults;
     this.#searchAttributes = options.searchAttributes ? { ...options.searchAttributes } : {};
     this.#searchAttributeSchema = options.searchAttributeSchema;
-    this.#pendingAttributeChanges = {};
-    this.#updateHandlers = new Map();
-    this.#exposedValues = new Map();
-    this.#memoCache = new Map();
+    this.#pendingAttributeChanges = undefined;
+    this.#updateHandlers = undefined;
+    this.#exposedValues = undefined;
+    this.#memoCache = undefined;
     this.#deadline = options.deadline;
     this.#getNow = options.getNow ?? Date.now;
     this.#sleepReferenceTime = options.sleepReferenceTime;
@@ -473,23 +482,50 @@ export class Context implements WorkflowContext {
   }
 
   get accumulatedResults(): Map<number, unknown> {
+    this.#accumulatedResults ??= new Map();
     return this.#accumulatedResults;
   }
 
   get pendingAttributeChanges(): Record<string, SearchAttributeValue> {
+    this.#pendingAttributeChanges ??= {};
     return this.#pendingAttributeChanges;
   }
 
   get exposedAccessors(): Map<string, () => unknown> {
+    this.#exposedValues ??= new Map();
     return this.#exposedValues;
   }
 
   get updateHandlers(): Map<string, (payload: unknown) => unknown> {
+    this.#updateHandlers ??= new Map();
     return this.#updateHandlers;
   }
 
   get explainEnabled(): boolean {
     return this.#explainMode;
+  }
+
+  get checkpointAccumulatedResults(): Array<[number, unknown]> {
+    return this.#accumulatedResults ? Array.from(this.#accumulatedResults.entries()) : [];
+  }
+
+  get checkpointPendingAttributeChanges(): Record<string, SearchAttributeValue> | undefined {
+    return this.#pendingAttributeChanges ? { ...this.#pendingAttributeChanges } : undefined;
+  }
+
+  get hasPendingAttributeChanges(): boolean {
+    return (
+      this.#pendingAttributeChanges !== undefined &&
+      Object.keys(this.#pendingAttributeChanges).length > 0
+    );
+  }
+
+  get hasUpdateHandlers(): boolean {
+    return this.#updateHandlers !== undefined && this.#updateHandlers.size > 0;
+  }
+
+  get hasExposedAccessors(): boolean {
+    return this.#exposedValues !== undefined && this.#exposedValues.size > 0;
   }
 
   createSpeculativeChild(): Context {
@@ -500,7 +536,9 @@ export class Context implements WorkflowContext {
       abortController: this.#abortController,
       getNow: this.#getNow,
       initialStep: this.#stepIndex,
-      accumulatedResults: new Map(this.#accumulatedResults),
+      ...(this.#accumulatedResults !== undefined
+        ? { accumulatedResults: new Map(this.#accumulatedResults) }
+        : {}),
       searchAttributes: this.#searchAttributes,
       nestingDepth: this.#nestingDepth,
       ...(this.#deadline !== undefined ? { deadline: this.#deadline } : {}),
@@ -517,10 +555,15 @@ export class Context implements WorkflowContext {
     };
     const child = new Context(childOptions);
 
-    child.#pendingAttributeChanges = { ...this.#pendingAttributeChanges };
-    child.#updateHandlers = new Map(this.#updateHandlers);
-    child.#exposedValues = new Map(this.#exposedValues);
-    child.#memoCache = new Map(this.#memoCache);
+    child.#pendingAttributeChanges =
+      this.#pendingAttributeChanges !== undefined
+        ? { ...this.#pendingAttributeChanges }
+        : undefined;
+    child.#updateHandlers =
+      this.#updateHandlers !== undefined ? new Map(this.#updateHandlers) : undefined;
+    child.#exposedValues =
+      this.#exposedValues !== undefined ? new Map(this.#exposedValues) : undefined;
+    child.#memoCache = this.#memoCache !== undefined ? new Map(this.#memoCache) : undefined;
     child.#explainMode = this.#explainMode;
     child.#budgetTracker = this.#budgetTracker?.clone();
 
@@ -529,12 +572,18 @@ export class Context implements WorkflowContext {
 
   commitSpeculativeChild(child: Context): void {
     this.#stepIndex = child.#stepIndex;
-    this.#accumulatedResults = new Map(child.#accumulatedResults);
+    this.#accumulatedResults =
+      child.#accumulatedResults !== undefined ? new Map(child.#accumulatedResults) : undefined;
     this.#searchAttributes = { ...child.#searchAttributes };
-    this.#pendingAttributeChanges = { ...child.#pendingAttributeChanges };
-    this.#updateHandlers = new Map(child.#updateHandlers);
-    this.#exposedValues = new Map(child.#exposedValues);
-    this.#memoCache = new Map(child.#memoCache);
+    this.#pendingAttributeChanges =
+      child.#pendingAttributeChanges !== undefined
+        ? { ...child.#pendingAttributeChanges }
+        : undefined;
+    this.#updateHandlers =
+      child.#updateHandlers !== undefined ? new Map(child.#updateHandlers) : undefined;
+    this.#exposedValues =
+      child.#exposedValues !== undefined ? new Map(child.#exposedValues) : undefined;
+    this.#memoCache = child.#memoCache !== undefined ? new Map(child.#memoCache) : undefined;
     this.#budgetTracker = child.#budgetTracker;
     this.#sleepReferenceTime = child.#sleepReferenceTime;
   }
@@ -556,7 +605,7 @@ export class Context implements WorkflowContext {
 
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       if (this.#explainMode) {
         console.log(
           `[weft] ctx.run(${fn.name || 'anonymous'}) → Returning cached result from step ${step}`,
@@ -585,14 +634,14 @@ export class Context implements WorkflowContext {
       ...(options !== undefined ? { options: options as Record<string, unknown> } : {}),
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as TResult;
   }
 
   *sleep(duration: Duration): Generator<ContextOperationRequest, void, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) return;
+    if (this.#accumulatedResults?.has(step)) return;
 
     const milliseconds = parseDuration(duration);
 
@@ -620,7 +669,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, undefined);
+    this.accumulatedResults.set(step, undefined);
   }
 
   /**
@@ -667,7 +716,7 @@ export class Context implements WorkflowContext {
   *waitForSignal<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as T;
     }
 
@@ -686,7 +735,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as T;
   }
 
@@ -699,7 +748,7 @@ export class Context implements WorkflowContext {
   > {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       // Recovery path: the response was already sent in the original execution.
       // Return the cached payload with a no-op respond function.
       const cached = this.#accumulatedResults.get(step) as { payload: T };
@@ -726,7 +775,7 @@ export class Context implements WorkflowContext {
     // Store only the serializable payload in accumulatedResults (functions
     // cannot survive checkpoint serialization). On recovery, a no-op respond
     // function is provided instead.
-    this.#accumulatedResults.set(step, { payload: envelope.payload });
+    this.accumulatedResults.set(step, { payload: envelope.payload });
     return envelope;
   }
 
@@ -741,7 +790,7 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, HumanReviewResult, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as HumanReviewResult;
     }
 
@@ -760,7 +809,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as HumanReviewResult;
   }
 
@@ -769,7 +818,7 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, unknown[], unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       const cached = this.#accumulatedResults.get(step);
       if (isParallelOperationCacheEntry<unknown[]>(cached)) {
         this.#stepIndex += cached.subOperationCount;
@@ -789,7 +838,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(
+    this.accumulatedResults.set(
       step,
       createParallelOperationCacheEntry(result as unknown[], subOperations.length),
     );
@@ -801,7 +850,7 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, unknown, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       const cached = this.#accumulatedResults.get(step);
       if (isParallelOperationCacheEntry(cached)) {
         this.#stepIndex += cached.subOperationCount;
@@ -821,7 +870,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(
+    this.accumulatedResults.set(
       step,
       createParallelOperationCacheEntry(result, subOperations.length),
     );
@@ -832,13 +881,14 @@ export class Context implements WorkflowContext {
     const step = this.#stepIndex++;
 
     // Check memo cache first (covers repeated calls within the same execution)
-    if (this.#memoCache.has(key)) {
+    if (this.#memoCache?.has(key)) {
       return this.#memoCache.get(key) as T;
     }
 
     // Check accumulated results (recovery path from checkpoint)
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       const cached = this.#accumulatedResults.get(step) as T;
+      this.#memoCache ??= new Map();
       this.#memoCache.set(key, cached);
       return cached;
     }
@@ -853,8 +903,9 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
+    this.#memoCache ??= new Map();
     this.#memoCache.set(key, result);
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as T;
   }
 
@@ -864,7 +915,7 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, OffloadReference, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as OffloadReference;
     }
 
@@ -884,7 +935,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as OffloadReference;
   }
 
@@ -894,7 +945,7 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, StreamReference, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as StreamReference;
     }
 
@@ -914,14 +965,14 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as StreamReference;
   }
 
   *load<T>(reference: OffloadReference): Generator<ContextOperationRequest, T, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as T;
     }
 
@@ -940,14 +991,14 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as T;
   }
 
   *archive(key: string, data: unknown): Generator<ContextOperationRequest, void, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) return;
+    if (this.#accumulatedResults?.has(step)) return;
 
     if (this.#explainMode) {
       console.log(`[weft] ctx.archive("${key}")`);
@@ -965,7 +1016,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, undefined);
+    this.accumulatedResults.set(step, undefined);
   }
 
   *runAll<T extends Record<string, [Function, ...unknown[]]>>(
@@ -973,7 +1024,7 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, Record<keyof T, unknown>, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as Record<keyof T, unknown>;
     }
 
@@ -993,7 +1044,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as Record<keyof T, unknown>;
   }
 
@@ -1111,7 +1162,7 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, TResult, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       if (this.#explainMode) {
         console.log(
           `[weft] ctx.startChild("${workflowType}") → Returning cached result from step ${step}`,
@@ -1138,7 +1189,7 @@ export class Context implements WorkflowContext {
     };
     const result = yield request;
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as TResult;
   }
 
@@ -1369,7 +1420,7 @@ export class Context implements WorkflowContext {
   *agent(options: AgentContextOptions): Generator<ContextOperationRequest, unknown, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       if (this.#explainMode) {
         console.log(
           `[weft] ctx.agent(model="${options.model}") → Returning cached result from step ${step}`,
@@ -1395,7 +1446,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result;
   }
 
@@ -1408,7 +1459,7 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, TResult, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as TResult;
     }
 
@@ -1421,7 +1472,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as TResult;
   }
 
@@ -1433,7 +1484,7 @@ export class Context implements WorkflowContext {
   *handoff(options: HandoffOptions): Generator<ContextOperationRequest, HandoffResult, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as HandoffResult;
     }
 
@@ -1454,7 +1505,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as HandoffResult;
   }
 
@@ -1462,7 +1513,7 @@ export class Context implements WorkflowContext {
   *debate(options: DebateOptions): Generator<ContextOperationRequest, DebateResult, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as DebateResult;
     }
 
@@ -1481,7 +1532,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as DebateResult;
   }
 
@@ -1491,7 +1542,7 @@ export class Context implements WorkflowContext {
   ): Generator<ContextOperationRequest, SuperviseResult, unknown> {
     const step = this.#stepIndex++;
 
-    if (this.#accumulatedResults.has(step)) {
+    if (this.#accumulatedResults?.has(step)) {
       return this.#accumulatedResults.get(step) as SuperviseResult;
     }
 
@@ -1512,7 +1563,7 @@ export class Context implements WorkflowContext {
       callerStack,
     };
 
-    this.#accumulatedResults.set(step, result);
+    this.accumulatedResults.set(step, result);
     return result as SuperviseResult;
   }
 
@@ -1541,7 +1592,7 @@ export class Context implements WorkflowContext {
   setAttribute(key: string, value: SearchAttributeValue): void {
     this.#validateAttribute(key, value);
     this.#searchAttributes[key] = value;
-    this.#pendingAttributeChanges[key] = value;
+    this.pendingAttributeChanges[key] = value;
   }
 
   setAttributes(attributes: Record<string, SearchAttributeValue>): void {
@@ -1551,7 +1602,7 @@ export class Context implements WorkflowContext {
     }
     for (const [key, value] of Object.entries(attributes)) {
       this.#searchAttributes[key] = value;
-      this.#pendingAttributeChanges[key] = value;
+      this.pendingAttributeChanges[key] = value;
     }
   }
 
@@ -1583,12 +1634,12 @@ export class Context implements WorkflowContext {
           `Use a plain function — update handlers run synchronously at checkpoint boundaries and cannot yield.`,
       );
     }
-    this.#updateHandlers.set(name, handler);
+    this.updateHandlers.set(name, handler);
   }
 
   expose(accessors: Record<string, () => unknown>): void {
     for (const [key, accessor] of Object.entries(accessors)) {
-      this.#exposedValues.set(key, accessor);
+      this.exposedAccessors.set(key, accessor);
     }
   }
 

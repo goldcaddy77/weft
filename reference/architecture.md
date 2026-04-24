@@ -5563,8 +5563,8 @@ The roadmap below carries forward the implementation work derived from that rese
 - [x] `src/ai/prompt-cache.ts` exists; implements a templated radix tree for prefix sharing; exposes hit/miss counters via the metrics collector.
 - [x] `src/benchmarks/prompt-cache.test.ts` shows ≥49% hit rate on a realistic workload and <1ms per-call overhead.
 - [ ] Activity completions benchmark: `benchmarks/throughput.bench.ts` reports ≥20K/sec (up from ~9K/sec; spec is >30K/sec).
-- [ ] Memory per workflow: `benchmarks/memory.bench.ts` reports ≤5KB/workflow on a synthetic population of 10K workflows (down from ~7–15KB; spec is ≤2KB).
-- [ ] `bun run typecheck` and `bun test` both exit 0 after Track 3 lands.
+- [x] Memory per workflow: `benchmarks/memory.bench.ts` reports ≤5KB/workflow on a synthetic population of 10K workflows (down from ~7–15KB; spec is ≤2KB).
+- [x] `bun run typecheck` and `bun test` both exit 0 after Track 3 lands.
 
 ### Track 4 — Multi-agent reliability
 
