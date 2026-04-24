@@ -111,7 +111,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       functions: 1,
       // Bun also leaves the closing line of the malformed-route catch branch
       // uncovered even when the branch's observable behavior is tested.
-      lines: new Set([890, 2011]),
+      lines: new Set([890, 2011, 2176]),
     },
   ],
   [
@@ -123,12 +123,43 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     },
   ],
   [
+    'src/server/openrpc.ts',
+    {
+      // Zod 4 currently emits a top-level `$schema` key plus object-shaped
+      // `properties` / `$defs` payloads for every public schema we can
+      // construct here. These fallback branches defend against future or
+      // malformed upstream JSON Schema output rather than repository-controlled
+      // paths.
+      lines: new Set([221, 222, 251, 252, 257, 258]),
+    },
+  ],
+  [
+    'src/server/json-rpc-websocket.ts',
+    {
+      // Line coverage is complete. Bun still reports one unnamed aggregate
+      // function miss in this closure-heavy session adapter after the error,
+      // termination, and subscription branches are exercised directly.
+      functions: 1,
+    },
+  ],
+  [
+    'src/server/stdio-session.ts',
+    {
+      // Bun maps the closing lines of the main framing loops as uncovered even
+      // though the oversize, resync, partial-frame, and chunked-admission paths
+      // all execute. It also leaves one unnamed aggregate function miss in this
+      // adapter after the writer-close and admission helpers are covered.
+      functions: 1,
+      lines: new Set([353, 392]),
+    },
+  ],
+  [
     'src/server/workflow-event-feed.ts',
     {
       // Bun maps the closing line of the live-drain generator's intentional
       // infinite loop as uncovered. Every exit path returns from inside the loop
       // and is covered by behavioral tests.
-      lines: new Set([376]),
+      lines: new Set([379]),
     },
   ],
   [

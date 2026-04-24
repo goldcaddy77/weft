@@ -291,6 +291,81 @@ describe('runStdioSession — admission', () => {
     expect(result.reason).toMatch(/token/i);
   });
 
+  it('startup-token gate: skips blank lines before the authenticate frame', async () => {
+    const token = 'correct';
+    const input = readableFromLines([
+      '\n',
+      '\n',
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.authenticate',
+        params: { token },
+        id: 'auth',
+      }) + '\n',
+    ]);
+    const output = collectingWritable();
+    const result = await runStdioSession({
+      input,
+      output: output.stream,
+      admission: { kind: 'startup-token', token },
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      feed: createWorkflowEventFeed(createInMemoryEventBackend()),
+    });
+    expect(result.exitCode).toBe(0);
+    const response = JSON.parse(output.lines()[0]!);
+    expect(response.id).toBe('auth');
+    expect(response.result).toEqual({});
+  });
+
+  it('startup-token gate: reads an authenticate frame split across chunks', async () => {
+    const encoder = new TextEncoder();
+    const input = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode('{"jsonrpc":"2.0","method":"weft.authenticate","params":{"token":"cor'),
+        );
+        controller.enqueue(encoder.encode('rect"},"id":"auth"}\n'));
+        controller.close();
+      },
+    });
+    const output = collectingWritable();
+    const result = await runStdioSession({
+      input,
+      output: output.stream,
+      admission: { kind: 'startup-token', token: 'correct' },
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      feed: createWorkflowEventFeed(createInMemoryEventBackend()),
+    });
+    expect(result.exitCode).toBe(0);
+    const response = JSON.parse(output.lines()[0]!);
+    expect(response.id).toBe('auth');
+  });
+
+  it('startup-token gate: normalizes invalid request ids to null on auth failure', async () => {
+    const input = readableFromLines([
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.authenticate',
+        params: { token: 'wrongXX' },
+        id: { bad: true },
+      }) + '\n',
+    ]);
+    const output = collectingWritable();
+    const result = await runStdioSession({
+      input,
+      output: output.stream,
+      admission: { kind: 'startup-token', token: 'correct' },
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      feed: createWorkflowEventFeed(createInMemoryEventBackend()),
+    });
+    expect(result.exitCode).toBe(2);
+    const response = JSON.parse(output.lines()[0]!);
+    expect(response.id).toBeNull();
+  });
+
   it('startup-token gate: rejects an oversize authenticate frame before admission', async () => {
     const huge = 'x'.repeat(2000);
     const input = readableFromLines([
@@ -315,6 +390,75 @@ describe('runStdioSession — admission', () => {
     expect(result.reason).toMatch(/maxFrameBytes/i);
     const response = JSON.parse(output.lines()[0]!);
     expect(response.error.code).toBe(-32600);
+  });
+
+  it('startup-token gate: skips blank framing artifacts and accepts a chunked authenticate frame', async () => {
+    const token = 'abc123';
+    const encoder = new TextEncoder();
+    const pingLine = JSON.stringify({ jsonrpc: '2.0', method: 'weft.test.ping', id: 1 }) + '\n';
+    const authenticateLine =
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.authenticate',
+        params: { token },
+        id: 'auth',
+      }) + '\n';
+    const input = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('\n'));
+        controller.enqueue(encoder.encode(authenticateLine.slice(0, 18)));
+        controller.enqueue(encoder.encode(authenticateLine.slice(18)));
+        controller.enqueue(encoder.encode(pingLine));
+        controller.close();
+      },
+    });
+    const output = collectingWritable();
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.test.ping',
+        inputSchema: z.object({}),
+        outputSchema: z.object({ ok: z.boolean() }),
+        invoke: async () => ({ ok: true }),
+      }),
+    ]);
+    const result = await runStdioSession({
+      input,
+      output: output.stream,
+      admission: { kind: 'startup-token', token },
+      registry,
+      engine: fakeEngine,
+      feed: createWorkflowEventFeed(createInMemoryEventBackend()),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const lines = output.lines();
+    expect(JSON.parse(lines[0]!).id).toBe('auth');
+    expect(JSON.parse(lines[1]!).result.ok).toBe(true);
+  });
+
+  it('startup-token gate normalizes invalid authenticate ids to null in error frames', async () => {
+    const input = readableFromLines([
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.authenticate',
+        params: { token: 'wrongXX' },
+        id: { invalid: true },
+      }) + '\n',
+    ]);
+    const output = collectingWritable();
+    const result = await runStdioSession({
+      input,
+      output: output.stream,
+      admission: { kind: 'startup-token', token: 'correct' },
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      feed: createWorkflowEventFeed(createInMemoryEventBackend()),
+    });
+
+    expect(result.exitCode).toBe(2);
+    const response = JSON.parse(output.lines()[0]!);
+    expect(response.id).toBeNull();
+    expect(response.error.code).toBe(-32010);
   });
 });
 
@@ -478,6 +622,52 @@ describe('runStdioSession — dispatch', () => {
     }
   });
 
+  it('main loop: keeps discarding oversize continuation chunks until a newline arrives', async () => {
+    const encoder = new TextEncoder();
+    const input = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('x'.repeat(700)));
+        controller.enqueue(encoder.encode('still-the-same-oversized-frame'));
+        controller.enqueue(
+          encoder.encode(
+            '\n' +
+              JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'weft.test.echo',
+                params: { v: 'after-resync' },
+                id: 7,
+              }) +
+              '\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+    const output = collectingWritable();
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.test.echo',
+        inputSchema: z.object({ v: z.string() }),
+        outputSchema: z.object({ v: z.string() }),
+        invoke: async ({ input: i }) => ({ v: i.v }),
+      }),
+    ]);
+    const result = await runStdioSession({
+      input,
+      output: output.stream,
+      admission: { kind: 'allow-unauthenticated-local-admin' },
+      registry,
+      engine: fakeEngine,
+      feed: createWorkflowEventFeed(createInMemoryEventBackend()),
+      maxFrameBytes: 500,
+    });
+    expect(result.exitCode).toBe(0);
+    const lines = output.lines();
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]!).error.message).toMatch(/maxFrameBytes/i);
+    expect(JSON.parse(lines[1]!).result.v).toBe('after-resync');
+  });
+
   it('main loop: emits ParseError when stream closes with an unterminated partial frame', async () => {
     const partial = JSON.stringify({ jsonrpc: '2.0', method: 'weft.test.ping', id: 1 }); // no trailing \n
     const input = readableFromLines([partial]);
@@ -499,6 +689,64 @@ describe('runStdioSession — dispatch', () => {
     const response = JSON.parse(lines[0]!);
     expect(response.error.code).toBe(-32700);
     expect(response.error.message).toMatch(/unterminated/i);
+  });
+
+  it('main loop keeps discarding oversized continuation chunks until a newline arrives', async () => {
+    const encoder = new TextEncoder();
+    const input = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('x'.repeat(700)));
+        controller.enqueue(
+          encoder.encode(
+            'still-oversized-continuation' +
+              JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'weft.test.echo',
+                params: { v: 'attacker' },
+                id: 99,
+              }),
+          ),
+        );
+        controller.enqueue(
+          encoder.encode(
+            '\n' +
+              JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'weft.test.echo',
+                params: { v: 'legit' },
+                id: 2,
+              }) +
+              '\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+    const output = collectingWritable();
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.test.echo',
+        inputSchema: z.object({ v: z.string() }),
+        outputSchema: z.object({ v: z.string() }),
+        invoke: async ({ input: i }) => ({ v: i.v }),
+      }),
+    ]);
+    const result = await runStdioSession({
+      input,
+      output: output.stream,
+      admission: { kind: 'allow-unauthenticated-local-admin' },
+      registry,
+      engine: fakeEngine,
+      feed: createWorkflowEventFeed(createInMemoryEventBackend()),
+      maxFrameBytes: 500,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const lines = output.lines();
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]!).error.code).toBe(-32600);
+    expect(JSON.parse(lines[1]!).id).toBe(2);
+    expect(lines.some((line) => JSON.parse(line).id === 99)).toBe(false);
   });
 
   it('dispatches with transport identity jsonRpcStdio (Bugbot regression)', async () => {
@@ -613,5 +861,28 @@ describe('runStdioSession — dispatch', () => {
     expect(lines).toHaveLength(2);
     expect(JSON.parse(lines[0]!).id).toBe('auth');
     expect(JSON.parse(lines[1]!).result.ok).toBe(true);
+  });
+
+  it('swallows writer.close failures during shutdown', async () => {
+    let closeCalls = 0;
+    const output = new WritableStream<Uint8Array>({
+      write() {},
+      close() {
+        closeCalls += 1;
+        throw new Error('close failed');
+      },
+    });
+
+    const result = await runStdioSession({
+      input: readableFromLines([]),
+      output,
+      admission: { kind: 'allow-unauthenticated-local-admin' },
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      feed: createWorkflowEventFeed(createInMemoryEventBackend()),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(closeCalls).toBe(1);
   });
 });

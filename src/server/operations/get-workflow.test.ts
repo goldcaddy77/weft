@@ -27,6 +27,7 @@ import type { WorkflowContext, WorkflowState } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { assertFingerprintsMatch, runParity } from '../parity-harness.ts';
 import { getWorkflowOperation, getWorkflowRestBinding } from './get-workflow.ts';
 
@@ -141,5 +142,37 @@ describe('weft.workflows.get — REST parity diff (Phase 15c)', () => {
     expect(spyCalled).toBe(true);
     const body = (await response.json()) as { status?: string };
     expect(body.status).toBe('spy-sentinel');
+  });
+
+  it('maps EngineFailure faults to the legacy 500 response body', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForStatus(engine, handle.id, 'running');
+
+    const failingOperation = {
+      ...getWorkflowOperation,
+      invoke: async () => {
+        const fault: OperationFault = {
+          code: 'EngineFailure',
+          message: 'secret internal detail',
+          data: {},
+        };
+        throw fault;
+      },
+    };
+    const registry = createOperationRegistry([failingOperation]);
+
+    const response = await handleRequest(
+      new Request(`http://localhost/v1/workflows/${handle.id}`, { method: 'GET' }),
+      engine,
+      {
+        restDispatchMode: 'via-execute-operation',
+        operationRegistry: registry,
+        restBindings: [getWorkflowRestBinding],
+      },
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Internal server error' });
   });
 });

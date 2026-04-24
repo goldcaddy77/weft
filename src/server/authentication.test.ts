@@ -381,6 +381,62 @@ describe('createAuthenticator — API keys', () => {
       expect(result.error).toBe('No valid credentials provided');
     }
   });
+
+  it('deep-freezes default API key scopes while preserving ReadonlySet iteration helpers', async () => {
+    const authenticate = await createAuthenticator({
+      apiKeys: [TEST_API_KEY],
+      defaultApiKeyScopes: ['workflows:read', 'workflows:write'],
+    });
+
+    const result = await authenticate(
+      makeRequest('http://localhost/v1/workflows', {
+        Authorization: `Bearer ${TEST_API_KEY}`,
+      }),
+    );
+
+    expect(result.authenticated).toBe(true);
+    if (!result.authenticated || result.principal === undefined) {
+      throw new Error('expected authenticated principal');
+    }
+
+    const seen: Array<{
+      label: string;
+      value: string;
+      value2: string;
+      sameSet: boolean;
+    }> = [];
+    result.principal.scopes.forEach(
+      function (this: { label: string }, value, value2, set) {
+        seen.push({
+          label: this.label,
+          value,
+          value2,
+          sameSet: set === result.principal?.scopes,
+        });
+      },
+      { label: 'iterated' },
+    );
+
+    expect(seen).toEqual([
+      {
+        label: 'iterated',
+        value: 'workflows:read',
+        value2: 'workflows:read',
+        sameSet: true,
+      },
+      {
+        label: 'iterated',
+        value: 'workflows:write',
+        value2: 'workflows:write',
+        sameSet: true,
+      },
+    ]);
+
+    const mutableView = result.principal.scopes as ReadonlySet<string> & {
+      add(value: string): void;
+    };
+    expect(() => mutableView.add('system:read')).toThrow(TypeError);
+  });
 });
 
 // ---------------------------------------------------------------------------

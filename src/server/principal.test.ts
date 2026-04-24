@@ -12,6 +12,7 @@ import {
   principalFromApiKey,
   principalFromJwtClaims,
   principalFromMutualTls,
+  principalFromStdioLocal,
   type Principal,
 } from './principal.ts';
 
@@ -160,6 +161,17 @@ describe('principalFromMutualTls', () => {
       scopes: ['system:read'],
     });
     expect(principal.method).toBe('mtls');
+    expect(principal.hasScope('system:read')).toBe(true);
+  });
+});
+
+describe('principalFromStdioLocal', () => {
+  it('produces a stdio-local principal with admin scopes', () => {
+    const principal = principalFromStdioLocal();
+
+    expect(principal.method).toBe('stdio-local');
+    expect(principal.subject).toBe('stdio-local');
+    expect(principal.hasScope('workflows:read')).toBe(true);
     expect(principal.hasScope('system:read')).toBe(true);
   });
 });

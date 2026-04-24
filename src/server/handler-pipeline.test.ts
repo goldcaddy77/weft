@@ -124,6 +124,47 @@ describe('handler pipeline — streaming binding guard', () => {
     });
     expect(response.status).toBe(500);
   });
+
+  it('returns 400 when extractInput throws during via-execute-operation dispatch', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForRunning(engine, handle.id);
+
+    const operation = defineOperation({
+      name: 'weft.test.extracterror',
+      summary: 'extract error',
+      inputSchema: z.object({ workflowId: z.string() }),
+      outputSchema: z.object({ ok: z.boolean() }),
+      access: { kind: 'public' },
+      transports: { http: true, jsonRpcHttp: false, jsonRpcWebSocket: false, jsonRpcStdio: false },
+      unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+      invoke: async () => ({ ok: true }),
+    });
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/v1/test/extract-error/:id',
+      pathParamNames: ['id'],
+      operationName: 'weft.test.extracterror',
+      inputSources: { workflowId: { kind: 'path', pathParam: 'id' } },
+      extractInput: async () => {
+        throw new Error('extract failed');
+      },
+      success: { kind: 'json', status: 200 },
+    };
+    const registry = createOperationRegistry([operation]);
+
+    const request = new Request(`http://localhost/v1/test/extract-error/${handle.id}`, {
+      method: 'GET',
+    });
+    const response = await handleRequest(request, engine, {
+      restDispatchMode: 'via-execute-operation',
+      operationRegistry: registry,
+      restBindings: [binding],
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'extract failed' });
+  });
 });
 
 describe('handler pipeline — authContextToPrincipal branches', () => {
@@ -277,5 +318,85 @@ describe('handler pipeline — authContextToPrincipal branches', () => {
     });
     expect(response.status).toBe(200);
     expect(captured.principal?.method).toBe('mtls');
+  });
+
+  it('public authContext is treated as anonymous', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForRunning(engine, handle.id);
+
+    const { registry, bindings, captured } = buildPrincipalSpy();
+    const request = new Request(`http://localhost/v1/test/principalspy/${handle.id}`, {
+      method: 'GET',
+    });
+    const response = await handleRequest(request, engine, {
+      restDispatchMode: 'via-execute-operation',
+      operationRegistry: registry,
+      restBindings: bindings,
+      authContext: { method: 'public' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(captured.principal?.method).toBe('unauthenticated');
+  });
+
+  it('returns 400 when legacy route matching sees malformed percent encoding', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/%E0%A4%A', { method: 'GET' }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Malformed route parameter encoding' });
+  });
+
+  it('returns 400 when a matched RestBinding extractInput throws', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForRunning(engine, handle.id);
+
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'weft.test.extractinput',
+        summary: 'extractInput failure path',
+        inputSchema: z.object({ workflowId: z.string() }),
+        outputSchema: z.object({ ok: z.boolean() }),
+        access: { kind: 'public' },
+        transports: {
+          http: true,
+          jsonRpcHttp: false,
+          jsonRpcWebSocket: false,
+          jsonRpcStdio: false,
+        },
+        unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+        invoke: async () => ({ ok: true }),
+      }),
+    ]);
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/v1/test/extractinput/:id',
+      pathParamNames: ['id'],
+      operationName: 'weft.test.extractinput',
+      inputSources: { workflowId: { kind: 'path', pathParam: 'id' } },
+      extractInput: async () => {
+        throw new Error('extract input exploded');
+      },
+      success: { kind: 'json', status: 200 },
+    };
+
+    const response = await handleRequest(
+      new Request(`http://localhost/v1/test/extractinput/${handle.id}`, { method: 'GET' }),
+      engine,
+      {
+        restDispatchMode: 'via-execute-operation',
+        operationRegistry: registry,
+        restBindings: [binding],
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'extract input exploded' });
   });
 });

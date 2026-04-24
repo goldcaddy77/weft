@@ -2171,9 +2171,7 @@ export async function handleRequest(
   try {
     route = matchRoute(request.method, url.pathname);
   } catch (error) {
-    if (error instanceof MalformedRouteParameterError) {
-      return errorResponse(error.message, 400);
-    }
+    if (error instanceof MalformedRouteParameterError) return errorResponse(error.message, 400);
     throw error;
   }
 

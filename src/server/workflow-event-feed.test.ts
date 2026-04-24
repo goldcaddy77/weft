@@ -463,6 +463,26 @@ describe('WorkflowEventFeed — subscribe (live + replay)', () => {
     expect(result.done).toBe(true);
   });
 
+  it('wakes a subscriber that is waiting for a live event and then resumes the loop', async () => {
+    const backend = createInMemoryEventBackend();
+    const feed = createWorkflowEventFeed(backend);
+    const iterable = feed.subscribe({ workflowId: 'wf-1', selector: 'events' });
+    const iterator = iterable[Symbol.asyncIterator]();
+
+    const pending = iterator.next();
+    await Bun.sleep(0);
+    await backend.emitLive(makeEnvelope({ sequence: 0 }));
+
+    const result = await pending;
+    expect(result.done).toBe(false);
+    if (result.done) {
+      throw new Error('expected live event');
+    }
+    expect(result.value.sequence).toBe(0);
+
+    await iterator.return?.();
+  });
+
   it('rechecks abort state after arming the live-event waker', async () => {
     const backend = createInMemoryEventBackend();
     const feed = createWorkflowEventFeed(backend);

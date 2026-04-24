@@ -250,6 +250,44 @@ describe('API-key admission — resolver present', () => {
     expect(result.principal.hasScope('workflows:write')).toBe(false);
   });
 
+  it('admitted principal scope view supports read-only Set iteration helpers', async () => {
+    const config: AuthConfig = {
+      resolveApiKeyPrincipal: async () =>
+        principalFromApiKey({
+          subject: 'iteration-test',
+          scopes: ['workflows:read', 'schedules:write'],
+        }),
+    };
+    const auth = await createAuthenticator(config);
+    const result = await auth(requestWithKey('any-key'));
+
+    expect(result.authenticated).toBe(true);
+    if (!result.authenticated) throw new Error('unreachable');
+    if (result.principal === undefined) throw new Error('expected principal');
+
+    const scopes = result.principal.scopes;
+    const sorted = (values: Iterable<AuthorizationScope>) => [...values].toSorted();
+
+    expect(sorted(scopes)).toEqual(['schedules:write', 'workflows:read']);
+    expect(sorted(scopes.keys())).toEqual(['schedules:write', 'workflows:read']);
+    expect(sorted(scopes.values())).toEqual(['schedules:write', 'workflows:read']);
+    expect([...scopes.entries()].map(([left, right]) => `${left}:${right}`).toSorted()).toEqual([
+      'schedules:write:schedules:write',
+      'workflows:read:workflows:read',
+    ]);
+
+    const callbackThis = { seen: [] as string[] };
+    scopes.forEach(function (this: typeof callbackThis, value, value2, set) {
+      expect(this).toBe(callbackThis);
+      expect(set).toBe(scopes);
+      callbackThis.seen.push(`${value}:${value2}`);
+    }, callbackThis);
+    expect(callbackThis.seen.toSorted()).toEqual([
+      'schedules:write:schedules:write',
+      'workflows:read:workflows:read',
+    ]);
+  });
+
   it('admitted principal claims are deep-cloned so caller mutation does not leak', async () => {
     // Claims are a nested mutable JSON object. Object.freeze + Set
     // guards protect scopes, but a resolver that returns and retains a
