@@ -8,7 +8,13 @@
  */
 
 import { buildScheduleListSearchParams } from '../client/schedule-list-search-params.ts';
-import type { ScheduleFilter, ScheduleSummary, TenantQuotaUsage } from '../core/types.ts';
+import type {
+  ScheduleFilter,
+  ScheduleSummary,
+  TenantQuotaUsage,
+  WorkflowReplay,
+  WorkflowTimelineEntry,
+} from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -88,6 +94,8 @@ export type {
   TenantQuotaMetricUsage,
   TenantQuotaUsage,
   TenantWorkflowCreationRateUsage,
+  WorkflowReplay,
+  WorkflowTimelineEntry,
 } from '../core/types.ts';
 
 export interface WorkflowEvent {
@@ -214,6 +222,26 @@ export class ApiClient {
       `/workflows/${encodeURIComponent(id)}/events`,
     );
     return response.events;
+  }
+
+  /** Get the structured execution timeline for a workflow. */
+  async getWorkflowTimeline(id: string): Promise<WorkflowTimelineEntry[]> {
+    const response = await request<WorkflowTimelineEntry[] | null>(
+      `/workflows/${encodeURIComponent(id)}/timeline`,
+    );
+    return response ?? [];
+  }
+
+  /** Reconstruct workflow state at a historical checkpoint step. */
+  async replayWorkflowTo(id: string, step: number): Promise<WorkflowReplay | null> {
+    try {
+      return await request<WorkflowReplay>(`/workflows/${encodeURIComponent(id)}/replay/${step}`);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   /** Get search attributes for a workflow. */
