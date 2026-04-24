@@ -47,6 +47,24 @@ async function waitForRunning(engine: Engine, workflowId: string): Promise<void>
   throw new Error(`workflow ${workflowId} did not reach running`);
 }
 
+async function recordExpectedConsoleError<T>(run: () => Promise<T>): Promise<{
+  readonly result: T;
+  readonly calls: readonly unknown[][];
+}> {
+  const recordedCalls: unknown[][] = [];
+  const originalError = console.error;
+  console.error = ((...args: unknown[]) => {
+    recordedCalls.push(args);
+  }) as typeof console.error;
+
+  try {
+    const result = await run();
+    return { result, calls: recordedCalls };
+  } finally {
+    console.error = originalError;
+  }
+}
+
 /**
  * Build an operation + binding pair that captures the principal the
  * pipeline hands `invoke`. The captured principal flows back through
@@ -117,12 +135,15 @@ describe('handler pipeline — streaming binding guard', () => {
     const request = new Request(`http://localhost/v1/test/streamnoshape/${handle.id}`, {
       method: 'GET',
     });
-    const response = await handleRequest(request, engine, {
-      restDispatchMode: 'via-execute-operation',
-      operationRegistry: registry,
-      restBindings: [binding],
-    });
+    const { result: response, calls } = await recordExpectedConsoleError(() =>
+      handleRequest(request, engine, {
+        restDispatchMode: 'via-execute-operation',
+        operationRegistry: registry,
+        restBindings: [binding],
+      }),
+    );
     expect(response.status).toBe(500);
+    expect(calls.length).toBeGreaterThan(0);
   });
 
   it('returns 400 when extractInput throws during via-execute-operation dispatch', async () => {
@@ -245,14 +266,17 @@ describe('handler pipeline — authContextToPrincipal branches', () => {
     // missing claims field indicates the caller bypassed the authenticator
     // (a real security concern for `optionalAuth` operations). The pipeline
     // must throw rather than silently downgrade to anonymous.
-    const response = await handleRequest(request, engine, {
-      restDispatchMode: 'via-execute-operation',
-      operationRegistry: registry,
-      restBindings: bindings,
-      authContext: { method: 'jwt' }, // claims intentionally omitted
-    });
+    const { result: response, calls } = await recordExpectedConsoleError(() =>
+      handleRequest(request, engine, {
+        restDispatchMode: 'via-execute-operation',
+        operationRegistry: registry,
+        restBindings: bindings,
+        authContext: { method: 'jwt' }, // claims intentionally omitted
+      }),
+    );
     // handleRequest wraps the throw in the outer try/catch → 500.
     expect(response.status).toBe(500);
+    expect(calls.length).toBeGreaterThan(0);
   });
 
   it('forwarded principal on authContext takes precedence over method reconstruction', async () => {
