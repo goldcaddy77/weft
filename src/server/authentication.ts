@@ -9,6 +9,9 @@
  * @module server/authentication
  */
 
+import type { AuthorizationScope } from './authorization-scope.ts';
+import { principalFromApiKey, type AuthenticatedPrincipal } from './principal.ts';
+
 // ---------------------------------------------------------------------------
 // JWT algorithm types
 // ---------------------------------------------------------------------------
@@ -58,6 +61,26 @@ export type AuthConfig = {
   mtls?: MTLSConfig;
   /** Paths that bypass authentication. Defaults to `['/v1/health', '/v1/metrics']`. */
   publicPaths?: string[];
+  /**
+   * Optional resolver that maps a presented API key to a fully-shaped
+   * `AuthenticatedPrincipal`. When configured, the resolver is
+   * authoritative for the entire API-key space:
+   *   - returns a principal → admitted with that principal entirely
+   *     (scopes authoritative; `defaultApiKeyScopes` IGNORED).
+   *   - returns `null` → key rejected; static `apiKeys` is NOT
+   *     consulted as a fallback.
+   *   - throws → treated as `null` (rejected); server log records the
+   *     throw detail, wire error stays generic.
+   * When not configured, static `apiKeys` admits and the admitted
+   * principal's scopes come from `defaultApiKeyScopes ?? []`.
+   */
+  resolveApiKeyPrincipal?: (key: string) => Promise<AuthenticatedPrincipal | null>;
+  /**
+   * Scopes granted to principals admitted via static `apiKeys`. Ignored
+   * when `resolveApiKeyPrincipal` is configured (the resolver's scopes
+   * are authoritative for keys it admits). Defaults to `[]`.
+   */
+  defaultApiKeyScopes?: ReadonlyArray<AuthorizationScope>;
 };
 
 // ---------------------------------------------------------------------------
@@ -66,8 +89,29 @@ export type AuthConfig = {
 
 export type AuthMethod = 'api-key' | 'jwt' | 'mtls' | 'public';
 
+/**
+ * Shared context carried from the authenticator through the request
+ * pipeline. Single source of truth for the `{ method, claims?,
+ * principal? }` shape — re-used by `AuthResult`,
+ * `HandlerOptions.authContext`, and the handler's internal
+ * `AuthenticatedRequestContext`.
+ *
+ *   - `method`: which admission path succeeded.
+ *   - `claims`: JWT payload when `method === 'jwt'`.
+ *   - `principal`: fully-shaped principal forwarded from the
+ *     authenticator (resolver admission, or static API-key admission
+ *     with `defaultApiKeyScopes`). Downstream pipeline code uses this
+ *     verbatim; when absent, `authContextToPrincipal` reconstructs a
+ *     minimal principal from `method` + `claims`.
+ */
+export type AuthContext = {
+  method: AuthMethod;
+  claims?: JWTPayload;
+  principal?: AuthenticatedPrincipal;
+};
+
 export type AuthResult =
-  | { authenticated: true; method: AuthMethod; claims?: JWTPayload }
+  | ({ authenticated: true } & AuthContext)
   | { authenticated: false; error: string };
 
 export type JWTPayload = Record<string, unknown>;
@@ -310,6 +354,204 @@ function extractApiKey(request: Request): string | null {
   return extractBearerToken(request);
 }
 
+/**
+ * Method-mismatch guard. A resolver can return a principal with any
+ * `method` string; admitting under `method: 'api-key'` while the
+ * principal declares `method: 'jwt'` creates contradictory auth state.
+ * Returns `true` when the principal passes (method === 'api-key');
+ * logs + returns `false` otherwise. Separated from `deepFreezeApiKeyPrincipal`
+ * so each function has one responsibility — guard or copy/freeze.
+ */
+function validateApiKeyPrincipalMethod(principal: AuthenticatedPrincipal): boolean {
+  if (principal.method !== 'api-key') {
+    console.warn(
+      `resolveApiKeyPrincipal returned principal with method "${principal.method}"; expected "api-key". Rejecting.`,
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Throws when a guarded scope set sees a mutation attempt. Named at
+ * module scope so the function is allocated once, not per-set.
+ */
+function rejectScopeSetMutation(name: string): () => never {
+  return () => {
+    throw new TypeError(`Cannot mutate scope set on admitted principal (attempted ${name})`);
+  };
+}
+
+/**
+ * Wrap a scope set so mutation attempts THROW at call time.
+ * `Object.freeze(new Set(...))` only freezes the wrapper object —
+ * `.add`, `.delete`, `.clear` from `Set.prototype` still mutate the
+ * contents. This returns a new frozen object that implements the
+ * `ReadonlySet` read contract (`has`, `size`, iterators) by
+ * delegating to an internal set, while rejecting mutation calls with
+ * a `TypeError` so leaks into admitted auth state fail loudly.
+ *
+ * Implementation note: Set's internal-slot methods (e.g., `size`
+ * getter, `has`) cannot be safely called through a Proxy because they
+ * require the Set brand check against `this`. We build a plain object
+ * that delegates reads to the bound methods of the internal set — no
+ * branded-slot surprises. The final cast to `ReadonlySet` is
+ * structurally safe: the object exposes every member the `ReadonlySet`
+ * interface requires and rejects the mutating methods at call time.
+ */
+function immutableScopeSet(
+  source: ReadonlySet<AuthorizationScope>,
+): ReadonlySet<AuthorizationScope> {
+  const inner = new Set<AuthorizationScope>(source);
+  const guarded = {
+    has: (scope: AuthorizationScope) => inner.has(scope),
+    get size() {
+      return inner.size;
+    },
+    forEach: (
+      callback: (
+        value: AuthorizationScope,
+        value2: AuthorizationScope,
+        set: ReadonlySet<AuthorizationScope>,
+      ) => void,
+      thisArg?: unknown,
+    ) =>
+      inner.forEach((v, v2) =>
+        callback.call(thisArg, v, v2, guarded as unknown as ReadonlySet<AuthorizationScope>),
+      ),
+    keys: () => inner.keys(),
+    values: () => inner.values(),
+    entries: () => inner.entries(),
+    [Symbol.iterator]: () => inner[Symbol.iterator](),
+    // Mutation surface — exposed only so downstream leaks hit a loud
+    // error rather than silently succeeding against an unfrozen Set.
+    add: rejectScopeSetMutation('add'),
+    delete: rejectScopeSetMutation('delete'),
+    clear: rejectScopeSetMutation('clear'),
+  };
+  return Object.freeze(guarded) as unknown as ReadonlySet<AuthorizationScope>;
+}
+
+/**
+ * Deep-clone-and-freeze an optional JWT claims object. Ensures the
+ * admitted principal holds a copy that is isolated from the caller's
+ * reference (structuredClone) AND is itself deeply immutable
+ * (deepFreeze) so downstream handlers cannot mutate admitted auth
+ * state by pushing into a nested array or reassigning a field.
+ *
+ * API-key principals rarely carry claims, but a resolver may populate
+ * them for auditing — this guard covers both directions of the
+ * mutation vector (caller → admitted and admitted → caller).
+ */
+function cloneClaims(claims: JWTPayload | undefined): JWTPayload | undefined {
+  if (claims === undefined) return undefined;
+  return deepFreeze(structuredClone(claims));
+}
+
+/**
+ * Recursively freeze an object tree in place. `Object.freeze` is
+ * shallow; a nested array or object would still accept `.push` or
+ * property assignment. `deepFreeze` walks the tree once post-clone
+ * and seals every own-enumerable descendant.
+ */
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null) return value;
+  // Freeze BEFORE recursion so cyclic references are caught by the
+  // `Object.isFrozen` check on the second visit. If we froze after
+  // recursion instead, a self-referential object would recurse
+  // infinitely before the freeze ever landed.
+  Object.freeze(value);
+  for (const key of Object.keys(value)) {
+    const child = (value as Record<string, unknown>)[key];
+    if (typeof child === 'object' && child !== null && !Object.isFrozen(child)) {
+      deepFreeze(child);
+    }
+  }
+  return value;
+}
+
+/**
+ * Run the API-key admission path for a presented key. Returns:
+ *   - `AuthResult` (authenticated: true OR false) when admission
+ *     resolves — caller must return this to its caller.
+ *   - `'continue'` when no API-key admission applied (e.g., resolver
+ *     absent + static set doesn't contain the key) — caller should
+ *     fall through to the next method block (JWT / mTLS).
+ *
+ * Extracted from `createAuthenticator`'s inner function so the
+ * resolver/static branch doesn't push the outer function's
+ * cyclomatic complexity past the lint threshold.
+ */
+async function tryAdmitApiKey(
+  presentedKey: string,
+  resolver: AuthConfig['resolveApiKeyPrincipal'],
+  apiKeySet: Set<string> | null,
+  defaultApiKeyScopes: ReadonlyArray<AuthorizationScope>,
+): Promise<AuthResult | 'continue'> {
+  if (resolver !== undefined) {
+    let resolved: AuthenticatedPrincipal | null;
+    try {
+      resolved = await resolver(presentedKey);
+    } catch (error) {
+      // Resolver throw: log server-side, reject client. Never leak the
+      // thrown error's message to the wire — it may contain DB queries,
+      // secrets, or other sensitive context.
+      console.warn('resolveApiKeyPrincipal threw:', error instanceof Error ? error.message : error);
+      resolved = null;
+    }
+    if (resolved !== null && validateApiKeyPrincipalMethod(resolved)) {
+      const admitted = deepFreezeApiKeyPrincipal(resolved);
+      return { authenticated: true, method: 'api-key', principal: admitted };
+    }
+    // Resolver returned null, threw, or produced a method-mismatched
+    // principal. Terminal: the resolver is authoritative for any key
+    // space it is configured for. Neither static apiKeys nor JWT
+    // verification may admit this request.
+    return { authenticated: false, error: 'No valid credentials provided' };
+  }
+  if (apiKeySet?.has(presentedKey)) {
+    // `principalFromApiKey` is guaranteed to set method:'api-key',
+    // so the runtime method guard from the resolver path is not
+    // needed here. If that factory invariant ever changes, the
+    // resolver-path method-mismatch test will continue to guard
+    // the boundary from resolver-supplied principals.
+    const principal = principalFromApiKey({
+      subject: 'api-key-caller',
+      scopes: defaultApiKeyScopes,
+    });
+    const admitted = deepFreezeApiKeyPrincipal(principal);
+    return { authenticated: true, method: 'api-key', principal: admitted };
+  }
+  return 'continue';
+}
+
+/**
+ * Deep-freeze an API-key principal for admission. Returns a new
+ * principal whose scope set throws on mutation attempts, whose
+ * `hasScope` delegates to the guarded set, whose `claims` is a
+ * structured clone (so caller-side mutations don't leak), and whose
+ * outer object is `Object.freeze`d. Caller mutations on the original
+ * principal cannot leak into the returned principal, and downstream
+ * code attempting to mutate the admitted principal fails loudly.
+ *
+ * Preconditions: caller must have already run
+ * `validateApiKeyPrincipalMethod(principal) === true`.
+ */
+function deepFreezeApiKeyPrincipal(principal: AuthenticatedPrincipal): AuthenticatedPrincipal {
+  const guardedScopes = immutableScopeSet(principal.scopes);
+  const frozen: AuthenticatedPrincipal = {
+    method: 'api-key',
+    scopes: guardedScopes,
+    claims: cloneClaims(principal.claims),
+    tenantId: principal.tenantId,
+    subject: principal.subject,
+    hasScope(scope) {
+      return guardedScopes.has(scope);
+    },
+  };
+  return Object.freeze(frozen);
+}
+
 // ---------------------------------------------------------------------------
 // Authenticator factory
 // ---------------------------------------------------------------------------
@@ -332,10 +574,26 @@ export function validateAuthConfig(config: AuthConfig): void {
   const hasMethod =
     (config.apiKeys && config.apiKeys.length > 0) ||
     config.jwt !== undefined ||
-    config.mtls !== undefined;
+    config.mtls !== undefined ||
+    config.resolveApiKeyPrincipal !== undefined;
   if (!hasMethod) {
     throw new Error(
-      'AuthConfig must specify at least one authentication method (apiKeys, jwt, or mtls)',
+      'AuthConfig must specify at least one authentication method ' +
+        '(apiKeys, resolveApiKeyPrincipal, jwt, or mtls)',
+    );
+  }
+
+  // `resolveApiKeyPrincipal` + `jwt` is a self-contradictory combination.
+  // `extractApiKey` picks up every `Authorization: Bearer <token>` before
+  // the JWT block runs; when a resolver is configured, resolver rejection
+  // is terminal (no fallthrough), so a valid bearer JWT can never reach
+  // JWT verification. Rejecting the combination at config time makes the
+  // conflict visible instead of silently making JWT unreachable.
+  if (config.resolveApiKeyPrincipal !== undefined && config.jwt !== undefined) {
+    throw new Error(
+      'AuthConfig cannot combine resolveApiKeyPrincipal with jwt: ' +
+        'the resolver consumes every Authorization: Bearer token before JWT verification, ' +
+        'so the JWT method would be unreachable.',
     );
   }
 }
@@ -353,6 +611,8 @@ export async function createAuthenticator(config: AuthConfig): Promise<Authentic
   validateAuthConfig(config);
 
   const apiKeySet = config.apiKeys?.length ? new Set(config.apiKeys) : null;
+  const resolver = config.resolveApiKeyPrincipal;
+  const defaultApiKeyScopes = config.defaultApiKeyScopes ?? [];
   const jwtKey = config.jwt ? await importJWTKey(config.jwt) : null;
   const publicPaths = new Set(config.publicPaths ?? DEFAULT_PUBLIC_PATHS);
 
@@ -368,15 +628,35 @@ export async function createAuthenticator(config: AuthConfig): Promise<Authentic
     // If credentials were provided but invalid, do not fall through to mTLS.
     let explicitAuthAttempted = false;
 
-    // Try API key via X-API-Key header or Bearer token
-    if (apiKeySet) {
-      const key = extractApiKey(request);
-      if (key) {
-        explicitAuthAttempted = true;
-        if (apiKeySet.has(key)) {
-          return { authenticated: true, method: 'api-key' };
-        }
-      }
+    // API-key admission precedence (single ordered rule per Track 8 plan):
+    //   1. resolver configured + returns principal → use that principal.
+    //   2. resolver configured + returns null/throws → rejected. Terminal:
+    //      do NOT fall through to static apiKeys or to JWT (the same
+    //      Bearer token the resolver refused must not be re-tried as a
+    //      JWT — that would let a rejected token get admitted by a
+    //      different code path).
+    //   3. resolver absent → static apiKeys admits; scopes = defaultApiKeyScopes.
+    //      If the key is not in the static set, fall through to the JWT
+    //      block so Bearer JWT tokens (which look like api keys to
+    //      extractApiKey but are actually JWTs) can be verified there.
+    // Only treat the key as an explicit auth attempt when there is an
+    // actual API-key admission path (resolver OR static apiKeySet). An
+    // mTLS-only or jwt+mtls config that happens to receive a stray
+    // `X-API-Key` header should fall through to the mTLS/JWT block as
+    // though the header wasn't present — marking it "attempted" would
+    // suppress the mTLS fallback and return 401 for a request the
+    // previous behavior admitted.
+    const presentedKey = extractApiKey(request);
+    const hasApiKeyPath = resolver !== undefined || apiKeySet !== null;
+    if (presentedKey && hasApiKeyPath) {
+      explicitAuthAttempted = true;
+      const apiKeyOutcome = await tryAdmitApiKey(
+        presentedKey,
+        resolver,
+        apiKeySet,
+        defaultApiKeyScopes,
+      );
+      if (apiKeyOutcome !== 'continue') return apiKeyOutcome;
     }
 
     // Try JWT verification on Bearer tokens that look like JWTs (contain dots).

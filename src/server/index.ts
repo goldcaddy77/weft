@@ -30,10 +30,12 @@ import type { MetricsCollector, PrometheusExporter } from '../observability/metr
 import { KEYS } from '../storage/interface.ts';
 import type { RoutingOptions, RoutingPolicy } from '../worker/registry.ts';
 import { WorkerRegistry } from '../worker/registry.ts';
-import type { AuthConfig, AuthMethod, Authenticator, JWTPayload } from './authentication.ts';
+import type { AuthConfig, AuthContext, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
 import { handleRequest } from './handler.ts';
+import { REST_BINDINGS, createLiveOperationRegistry } from './rest-bindings.ts';
+import type { RestDispatchModeConfig } from './rest-dispatch-mode.ts';
 import {
   claimNextSequence,
   evictOldestAffinityEntries,
@@ -119,6 +121,18 @@ export interface ServeOptions {
    * path and has lower precedence if both are set.
    */
   metricsCollector?: MetricsCollector;
+  /**
+   * Per-operation dispatch mode for REST. Controls whether each
+   * operation runs through the hand-rolled legacy executor in
+   * `handler.ts` or through the transport-neutral `executeOperation`
+   * pipeline with its `RestBinding`. Defaults to `'legacy'` everywhere
+   * during Milestone 1 of Track 8.
+   *
+   * Accepts three shapes: omit (all legacy), a bare
+   * `'legacy' | 'via-execute-operation'` (applies to every operation),
+   * or `{ default?, operations? }` for per-operation override.
+   */
+  restDispatchMode?: RestDispatchModeConfig;
 }
 
 export interface TaskDispatch {
@@ -888,8 +902,14 @@ export function serve(options: ServeOptions): WeftServer {
     routes['/ui/*'] = dashboard;
   }
 
+  // One operation registry per serve() instance — held for the server's
+  // lifetime so `executeOperation` sees the same resolution table
+  // across requests. Registry contents are immutable after creation,
+  // so sharing across concurrent requests is safe.
+  const liveOperationRegistry = createLiveOperationRegistry();
+
   async function authenticateRequest(request: Request): Promise<{
-    authContext?: { method: AuthMethod; claims?: JWTPayload };
+    authContext?: AuthContext;
     response: Response | null;
   }> {
     if (!authenticatorPromise) {
@@ -907,6 +927,7 @@ export function serve(options: ServeOptions): WeftServer {
         authContext: {
           method: authResult.method,
           ...(authResult.claims !== undefined ? { claims: authResult.claims } : {}),
+          ...(authResult.principal !== undefined ? { principal: authResult.principal } : {}),
         },
         response: null,
       };
@@ -1110,6 +1131,11 @@ export function serve(options: ServeOptions): WeftServer {
         ...(options.metricsCollector !== undefined
           ? { metricsCollector: options.metricsCollector }
           : {}),
+        ...(options.restDispatchMode !== undefined
+          ? { restDispatchMode: options.restDispatchMode }
+          : {}),
+        operationRegistry: liveOperationRegistry,
+        restBindings: REST_BINDINGS,
       });
     },
     websocket: {
