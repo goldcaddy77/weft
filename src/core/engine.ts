@@ -1277,6 +1277,9 @@ const SCHEDULE_OVERLAP_POLICIES = new Set<ScheduleOverlapPolicy>([
   'allow',
 ]);
 const HANDLE_RESULT_PROMISE = Symbol('handleResultPromise');
+export const ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING = Symbol(
+  'engineParkedWorkflowCountForTesting',
+);
 
 function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | null {
   const [firstSet, ...remainingSets] = idSets;
@@ -3959,6 +3962,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return this.#getWorkflowResultPromise(workflowId);
   }
 
+  [ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING](): number {
+    return this.#parkedInlineWorkflows.size;
+  }
+
   async #bootstrapWorkflowResultResolver(
     workflowId: string,
     waiter: WorkflowResultWaiter,
@@ -4725,7 +4732,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       throw new Error(`Workflow "${workflowId}" not found in storage`);
     }
 
-    let state = decodeWorkflowState(stateBytes);
+    const state = decodeWorkflowState(stateBytes);
     if (state.status !== 'running') {
       throw new Error(
         `Cannot resume workflow "${workflowId}": status is "${state.status}", expected "running"`,
@@ -4748,96 +4755,105 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       );
     }
 
-    // Agent optimization: track resumed agent workflows for storage-layer optimization.
-    if (registration.isAgent) {
-      this.#agentWorkflowIds.add(workflowId);
-    }
-
     const preparedResumeState = await this.#prepareResumeState(
       workflowId,
       state,
       checkpoint,
       registration,
     );
-    state = preparedResumeState.state;
     const resumeCheckpoint = preparedResumeState.checkpoint;
     const registeredVersionTuple = preparedResumeState.versionTuple;
-
-    // Store checkpoint for future persistence
-    this.#checkpoints.set(workflowId, resumeCheckpoint);
-
-    // Cache the workflow version tuple for forwarding to event-log entries.
-    this.#workflowVersionTuples.set(workflowId, registeredVersionTuple);
 
     // Restore the event log head from storage so that the next appendToBatch()
     // call uses the correct sequence number and prevHash rather than falling
     // back to EMPTY_EVENT_HEAD (sequence -1) and overwriting existing entries.
     const eventLog = new EventLog(this.#storage, workflowId);
     const restoredHead = await eventLog.loadHead();
-    this.#eventLogHeads.set(workflowId, restoredHead);
-    this.#setWorkflowStartHeaders(workflowId, await this.#loadWorkflowStartHeaders(workflowId));
+    const workflowStartHeaders = await this.#loadWorkflowStartHeaders(workflowId);
 
     const handle = this.getHandle(workflowId);
+    await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+      const latestState = await this.#loadWorkflowState(workflowId);
+      if (!latestState) {
+        throw new Error(`Workflow "${workflowId}" not found in storage`);
+      }
+
+      if (latestState.status !== 'running') {
+        throw new Error(
+          `Cannot resume workflow "${workflowId}": status is "${latestState.status}", expected "running"`,
+        );
+      }
+
+      this.#checkpoints.set(workflowId, resumeCheckpoint);
+      this.#workflowVersionTuples.set(workflowId, registeredVersionTuple);
+      this.#eventLogHeads.set(workflowId, restoredHead);
+      this.#setWorkflowStartHeaders(workflowId, workflowStartHeaders);
+      if (registration.isAgent) {
+        this.#agentWorkflowIds.add(workflowId);
+      }
+      this.#parkedInlineWorkflows.delete(workflowId);
+
+      if (this.#inlineStrategy) {
+        // Keep the final running-state check and the re-entry into user code
+        // in the same serialized section so cancel/timeout cannot commit a
+        // terminal state and still let a parked workflow continue.
+        const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
+        const workflowAbort = new AbortController();
+
+        const context = new Context({
+          workflowId,
+          workflowType: latestState.type,
+          startedAt: getWorkflowExecutionStartedAt(latestState),
+          abortController: workflowAbort,
+          getNow: this.#options.getNow,
+          resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
+          accumulatedResults,
+          searchAttributes: resumeCheckpoint.searchAttributes,
+          ...(registration.searchAttributes && {
+            searchAttributeSchema: registration.searchAttributes,
+          }),
+          sleepReferenceTime: resumeCheckpoint.createdAt,
+          ...(latestState.executionDeadline !== undefined && {
+            deadline: latestState.executionDeadline,
+          }),
+          ...(latestState.tenant !== undefined && { tenant: latestState.tenant }),
+        });
+
+        if (this.#options.development) {
+          context.explain(true);
+        }
+
+        const generator = registration.handler(context, latestState.input);
+        this.#inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
+        this.#inlineStrategy.continueWorkflow(workflowId, undefined);
+      } else {
+        const serialized = serializeCheckpoint(resumeCheckpoint);
+        this.#strategy.startWorkflow({
+          workflowId,
+          workflowType: latestState.type,
+          input: latestState.input,
+          checkpoint: serialized,
+          nestingDepth: this.#workflowNestingDepths.get(workflowId) ?? 0,
+          ...(latestState.executionDeadline !== undefined && {
+            deadline: latestState.executionDeadline,
+          }),
+          ...(workflowStartHeaders !== undefined &&
+            workflowStartHeaders.size > 0 && {
+              headers: [...workflowStartHeaders],
+            }),
+          ...(latestState.tenant !== undefined && { tenant: latestState.tenant }),
+        });
+      }
+    });
 
     if (dispatchResumedEvent) {
       this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
     }
-    this.#parkedInlineWorkflows.delete(workflowId);
-
     if (this.#inlineStrategy) {
-      // Inline mode: create context and generator, adopt into strategy
-      const accumulatedResults = new Map<number, unknown>(resumeCheckpoint.accumulatedResults);
-      const workflowAbort = new AbortController();
-
-      // Create context with recovery state. Pass the checkpoint's createdAt as
-      // the sleep reference time so that expired sleeps resolve immediately via
-      // the fast path instead of scheduling a brand-new full-duration timer.
-      const context = new Context({
-        workflowId,
-        workflowType: state.type,
-        startedAt: getWorkflowExecutionStartedAt(state),
-        abortController: workflowAbort,
-        getNow: this.#options.getNow,
-        resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
-        accumulatedResults,
-        searchAttributes: resumeCheckpoint.searchAttributes,
-        ...(registration.searchAttributes && {
-          searchAttributeSchema: registration.searchAttributes,
-        }),
-        sleepReferenceTime: resumeCheckpoint.createdAt,
-        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
-        ...(state.tenant !== undefined && { tenant: state.tenant }),
-      });
-
-      if (this.#options.development) {
-        context.explain(true);
-      }
-
-      const generator = registration.handler(context, state.input);
-      this.#inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
-
-      // Drive the generator (non-blocking) via the strategy
-      this.#inlineStrategy.continueWorkflow(workflowId, undefined);
-
       // After replay, process any pending coordinated updates that match
       // registered inline handlers. Schedule on next microtask so the
       // generator has a chance to register its onUpdate handlers first.
       queueMicrotask(this.#processPendingUpdatesAfterReplay.bind(this, workflowId));
-    } else {
-      // Worker mode: send run message to the worker with the checkpoint
-      const serialized = serializeCheckpoint(resumeCheckpoint);
-      this.#strategy.startWorkflow({
-        workflowId,
-        workflowType: state.type,
-        input: state.input,
-        checkpoint: serialized,
-        nestingDepth: this.#workflowNestingDepths.get(workflowId) ?? 0,
-        ...(state.executionDeadline !== undefined && { deadline: state.executionDeadline }),
-        ...(this.#workflowHeaders.has(workflowId) && {
-          headers: [...this.#workflowHeaders.get(workflowId)!],
-        }),
-        ...(state.tenant !== undefined && { tenant: state.tenant }),
-      });
     }
 
     return handle;
@@ -5795,9 +5811,31 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     try {
       await this.#resumeWorkflowFromStorage(workflowId, false);
     } catch (error) {
-      this.#parkedInlineWorkflows.add(workflowId);
-      throw error;
+      const resumeDisposition = await this.#getParkedWorkflowResumeDisposition(workflowId);
+      if (resumeDisposition === 'resumable') {
+        this.#parkedInlineWorkflows.add(workflowId);
+        throw error;
+      }
+      if (resumeDisposition === 'corrupt') {
+        throw error;
+      }
     }
+  }
+
+  async #getParkedWorkflowResumeDisposition(
+    workflowId: string,
+  ): Promise<'resumable' | 'terminal-or-missing' | 'corrupt'> {
+    const state = await this.#loadWorkflowState(workflowId);
+    if (!state || state.status !== 'running') {
+      return 'terminal-or-missing';
+    }
+
+    const checkpointBytes = await this.#storage.get(KEYS.checkpoint(workflowId));
+    if (!checkpointBytes) {
+      return 'corrupt';
+    }
+
+    return 'resumable';
   }
 
   // -------------------------------------------------------------------------
