@@ -24,7 +24,7 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { handleRequest } from './handler.ts';
 import { createOperationRegistry, type OperationRegistry } from './operation-catalog.ts';
 import { defineOperation } from './operation-registry.ts';
-import type { Principal } from './principal.ts';
+import { principalFromApiKey, type Principal } from './principal.ts';
 import type { RestBinding } from './rest-binding.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
 
@@ -212,6 +212,52 @@ describe('handler pipeline — authContextToPrincipal branches', () => {
     });
     // handleRequest wraps the throw in the outer try/catch → 500.
     expect(response.status).toBe(500);
+  });
+
+  it('forwarded principal on authContext takes precedence over method reconstruction', async () => {
+    // authContext.principal is set when the authenticator already
+    // constructed a principal (e.g., via resolveApiKeyPrincipal). The
+    // pipeline must use that forwarded principal directly — never
+    // rebuild one from method+claims when the authenticator already
+    // decided the answer.
+    const engine = createEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForRunning(engine, handle.id);
+
+    const { registry, bindings, captured } = buildPrincipalSpy();
+    // Use the real factory so the principal's type is authoritative
+    // and `hasScope` doesn't need ad-hoc typed shims.
+    const forwardedPrincipal = principalFromApiKey({
+      subject: 'forwarded-subject',
+      scopes: ['schedules:write'],
+      tenantId: 'tenant-42',
+    });
+
+    const request = new Request(`http://localhost/v1/test/principalspy/${handle.id}`, {
+      method: 'GET',
+    });
+    const response = await handleRequest(request, engine, {
+      restDispatchMode: 'via-execute-operation',
+      operationRegistry: registry,
+      restBindings: bindings,
+      authContext: { method: 'api-key', principal: forwardedPrincipal },
+    });
+    expect(response.status).toBe(200);
+    // The sentinel tenantId proves this principal is the one we
+    // forwarded, not a rebuilt one that would have defaulted to
+    // `{ subject: 'api-key-caller', scopes: [] }` with no tenant.
+    // `toBe` guarantees identity (same object reference): the pipeline
+    // must use the forwarded principal verbatim, not reconstruct it.
+    expect(captured.principal).toBe(forwardedPrincipal);
+    expect(captured.principal?.method).toBe('api-key');
+    // Narrow to AuthenticatedPrincipal before reading tenantId — the
+    // Principal union includes UnauthenticatedPrincipal which has no
+    // tenantId field. The `.toBe(forwardedPrincipal)` above already
+    // proves the object is the authenticated forwarded principal.
+    if (captured.principal === undefined || captured.principal.method === 'unauthenticated') {
+      throw new Error('expected forwarded authenticated principal');
+    }
+    expect(captured.principal.tenantId).toBe('tenant-42');
   });
 
   it('mtls authContext → principalFromMutualTls (method "mtls")', async () => {

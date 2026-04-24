@@ -42,7 +42,7 @@ import {
   type MetricsCollector,
   type PrometheusExporter,
 } from '../observability/metrics.ts';
-import type { AuthMethod, JWTPayload } from './authentication.ts';
+import type { AuthContext, JWTPayload } from './authentication.ts';
 import { faultToHttpResponse } from './fault-to-http.ts';
 import { generateOpenApiDocument } from './openapi.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
@@ -71,10 +71,8 @@ interface RouteMatch {
   params: Record<string, string>;
 }
 
-type AuthenticatedRequestContext = {
-  method: AuthMethod;
-  claims?: JWTPayload;
-};
+/** Alias for `AuthContext` — kept local so handler-internal code reads naturally. */
+type AuthenticatedRequestContext = AuthContext;
 
 class MalformedRouteParameterError extends Error {
   constructor() {
@@ -1983,11 +1981,11 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
 // ---------------------------------------------------------------------------
 
 export interface HandlerOptions {
-  /** Optional authenticated caller context injected by the HTTP server wrapper. */
-  authContext?: {
-    method: AuthMethod;
-    claims?: JWTPayload;
-  };
+  /**
+   * Optional authenticated caller context injected by the HTTP server
+   * wrapper. See `AuthContext` in `authentication.ts` for field docs.
+   */
+  authContext?: AuthContext;
   /**
    * Optional {@link PrometheusExporter} used to produce the body of
    * `/v1/metrics`. When set, it takes precedence over `metricsCollector` —
@@ -2094,6 +2092,11 @@ async function dispatchViaExecuteOperation(
  */
 function authContextToPrincipal(authContext: AuthenticatedRequestContext | undefined): Principal {
   if (authContext === undefined) return anonymousPrincipal();
+  // Forwarded principal from the authenticator (e.g. from
+  // `resolveApiKeyPrincipal` or static api-key admission with
+  // `defaultApiKeyScopes`) takes precedence over method-based
+  // reconstruction.
+  if (authContext.principal !== undefined) return authContext.principal;
   switch (authContext.method) {
     case 'jwt': {
       if (authContext.claims === undefined) {
