@@ -15,7 +15,12 @@ import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
 import { generateOpenRpcDocument } from './openrpc.ts';
-import { createOperationRegistry, type RegistrableOperation } from './operation-catalog.ts';
+import {
+  createOperationRegistry,
+  type ErasedOperation,
+  type OperationRegistry,
+  type RegistrableOperation,
+} from './operation-catalog.ts';
 
 function byString(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -34,6 +39,18 @@ function makeOp(
     unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
     invoke: async () => ({}),
     ...overrides,
+  };
+}
+
+function createRegistryDouble(operations: ReadonlyArray<RegistrableOperation>): OperationRegistry {
+  const erased = operations as unknown as ReadonlyArray<ErasedOperation>;
+  return {
+    get(name) {
+      return erased.find((operation) => operation.name === name);
+    },
+    list() {
+      return erased;
+    },
   };
 }
 
@@ -161,6 +178,52 @@ describe('generateOpenRpcDocument — runtime filtering', () => {
     expect(methods.find((m) => m['name'] === 'weft.workflows.subscribe')).toBeUndefined();
     // `rpc.discover` is always listed when JSON-RPC is enabled.
     expect(methods.find((m) => m['name'] === 'rpc.discover')).toBeDefined();
+  });
+
+  it('includes methods that are live only on websocket or stdio transports', () => {
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.ws.only',
+        transports: {
+          http: false,
+          jsonRpcHttp: false,
+          jsonRpcWebSocket: true,
+          jsonRpcStdio: false,
+        },
+      }),
+      makeOp({
+        name: 'weft.stdio.only',
+        transports: {
+          http: false,
+          jsonRpcHttp: false,
+          jsonRpcWebSocket: false,
+          jsonRpcStdio: true,
+        },
+      }),
+    ]);
+    const document = generateOpenRpcDocument({
+      registry,
+      transports: ['websocket', 'stdio'],
+    });
+    const methods = document['methods'] as Array<Record<string, unknown>>;
+    expect(methods.find((method) => method['name'] === 'weft.ws.only')).toBeDefined();
+    expect(methods.find((method) => method['name'] === 'weft.stdio.only')).toBeDefined();
+  });
+
+  it('treats unknown runtime transports as unavailable without crashing the document generator', () => {
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.workflows.get',
+        inputSchema: z.object({ id: z.string() }),
+        outputSchema: z.object({ id: z.string() }),
+      }),
+    ]);
+    const document = generateOpenRpcDocument({
+      registry,
+      transports: ['bogus' as never],
+    });
+    const methods = document['methods'] as Array<Record<string, unknown>>;
+    expect(methods.map((method) => method['name'])).toEqual(['rpc.discover']);
   });
 });
 
@@ -438,6 +501,41 @@ describe('generateOpenRpcDocument — Codex regressions', () => {
         expect(schema['$defs']).toBeDefined();
       }
     }
+  });
+
+  it('uses a registry-provided rpc.discover once and skips the synthetic duplicate', () => {
+    const registry = createRegistryDouble([
+      makeOp({
+        name: 'rpc.discover',
+        summary: 'custom discover',
+        inputSchema: z.object({}),
+        outputSchema: z.object({ custom: z.boolean() }),
+      }),
+    ]);
+    const document = generateOpenRpcDocument({
+      registry,
+      transports: ['http'],
+    });
+    const methods = document['methods'] as Array<Record<string, unknown>>;
+    expect(methods).toHaveLength(1);
+    expect(methods[0]!['name']).toBe('rpc.discover');
+    expect(methods[0]!['summary']).toBe('custom discover');
+  });
+
+  it('throws when a registry entry violates the object-input invariant at runtime', () => {
+    const registry = createRegistryDouble([
+      makeOp({
+        name: 'weft.invalid.input',
+        inputSchema: z.string() as unknown as RegistrableOperation['inputSchema'],
+        outputSchema: z.object({}),
+      }),
+    ]);
+    expect(() =>
+      generateOpenRpcDocument({
+        registry,
+        transports: ['http'],
+      }),
+    ).toThrow(/non-object inputSchema/);
   });
 
   it('the registry cannot admit an rpc.discover operation — name collision is structurally impossible', () => {

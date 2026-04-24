@@ -15,6 +15,7 @@ import type { WorkflowContext } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { handleRequest } from '../handler.ts';
 import { createOperationRegistry } from '../operation-catalog.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { getWorkflowOperation, getWorkflowRestBinding } from './get-workflow.ts';
 
 function createEngine(): Engine {
@@ -73,5 +74,36 @@ describe('weft.workflows.get', () => {
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: 'Workflow "does-not-exist" not found' });
+  });
+
+  it('maps EngineFailure faults to the legacy 500 response body', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForStatus(engine, handle.id, 'running');
+
+    const failingOperation = {
+      ...getWorkflowOperation,
+      invoke: async () => {
+        const fault: OperationFault = {
+          code: 'EngineFailure',
+          message: 'secret internal detail',
+          data: {},
+        };
+        throw fault;
+      },
+    };
+    const failingRegistry = createOperationRegistry([failingOperation]);
+
+    const response = await handleRequest(
+      new Request(`http://localhost/v1/workflows/${handle.id}`, { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: failingRegistry,
+        restBindings: [getWorkflowRestBinding],
+      },
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Internal server error' });
   });
 });

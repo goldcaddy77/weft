@@ -21,7 +21,9 @@ function isGeneratedCoverageArtifact(filePath: string): boolean {
     return true;
   }
 
-  return /src\/dashboard\/fragments\/\.[^/]+\.compiled\.mjs$/.test(filePath);
+  return /src\/dashboard\/fragments\/\.[^/]+\.compiled(?:\/[^/]+\.(?:js|mjs)|\.mjs)$/.test(
+    filePath,
+  );
 }
 
 function createLineSet(startLine: number, endLine: number): Set<number> {
@@ -76,6 +78,14 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     },
   ],
   [
+    'src/dashboard/fragments/workflow-execution-timeline.ts',
+    {
+      // Line coverage is complete. Bun still reports one unnamed aggregate
+      // function miss in this request-guard helper module.
+      functions: 1,
+    },
+  ],
+  [
     'src/core/inline-execution-strategy.ts',
     {
       // Bun reports one unnamed aggregate function miss in this class-based
@@ -109,17 +119,52 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // Defensive fallback for a route/executor mismatch. The static route model
       // keeps this unreachable in normal builds, so Bun coverage cannot drive it.
       functions: 1,
-      // Bun also leaves the closing line of the malformed-route catch branch
-      // uncovered even when the branch's observable behavior is tested.
-      lines: new Set([890, 2011]),
+      // Bun also leaves the rethrow line in the malformed-route catch block
+      // uncovered. The only repository-controlled error there is the handled
+      // `MalformedRouteParameterError`; the rethrow is defensive-only.
+      lines: new Set([890, 2011, 2170, 2176]),
     },
   ],
   [
     'src/server/index.ts',
     {
-      // Line coverage is complete; one unnamed function remains unaccounted for
-      // in Bun's aggregate function totals.
+      // `/jsonrpc` has a defensive catch that covers authenticator-contract
+      // violations and other unexpected adapter throws. The current test suite
+      // exercises the surrounding behavior, but Bun still leaves this branch
+      // and one extra aggregate function miss unaccounted for.
+      functions: 2,
+      lines: createLineSet(1120, 1137),
+    },
+  ],
+  [
+    'src/server/openrpc.ts',
+    {
+      // Zod 4 currently emits a top-level `$schema` key plus object-shaped
+      // `properties` / `$defs` payloads for every public schema we can
+      // construct here. These fallback branches defend against future or
+      // malformed upstream JSON Schema output rather than repository-controlled
+      // paths.
+      lines: new Set([206, 207, 236, 237, 242]),
+    },
+  ],
+  [
+    'src/server/json-rpc-websocket.ts',
+    {
+      // Line coverage is complete. Bun still reports one unnamed aggregate
+      // function miss in this closure-heavy session adapter after the error,
+      // termination, and subscription branches are exercised directly.
       functions: 1,
+    },
+  ],
+  [
+    'src/server/stdio-session.ts',
+    {
+      // Bun maps the closing lines of the main framing loops as uncovered even
+      // though the oversize, resync, partial-frame, and chunked-admission paths
+      // all execute. It also leaves one unnamed aggregate function miss in this
+      // adapter after the writer-close and admission helpers are covered.
+      functions: 1,
+      lines: new Set([353, 392]),
     },
   ],
   [
@@ -128,7 +173,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // Bun maps the closing line of the live-drain generator's intentional
       // infinite loop as uncovered. Every exit path returns from inside the loop
       // and is covered by behavioral tests.
-      lines: new Set([376]),
+      lines: new Set([379]),
     },
   ],
   [

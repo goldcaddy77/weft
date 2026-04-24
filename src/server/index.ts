@@ -801,21 +801,18 @@ export function serve(options: ServeOptions): WeftServer {
           }),
         );
       }
-      /* c8 ignore start -- replay failures require injected storage scan faults */
     } catch (error) {
       console.error(`[weft] Failed to replay token stream for workflow "${workflowId}":`, error);
     } finally {
       ws.data.replayInProgress = false;
       flushPendingStreamMessages(ws);
     }
-    /* c8 ignore stop */
   }
 
   /** Schedule a delayed dispatch, tracking the timer for cleanup on shutdown. */
   function scheduleDelayedDispatch(task: TaskDispatch, delay: number): void {
     const timer = setTimeout(() => {
       pendingTimers.delete(timer);
-      /* c8 ignore next 3 -- delayed redispatch failure requires injected storage faults */
       void dispatchTaskImpl(task).catch((err) =>
         console.error(`[weft] Delayed redispatch failed for "${task.operationId}":`, err),
       );
@@ -877,7 +874,6 @@ export function serve(options: ServeOptions): WeftServer {
       const delay = calculateBackoff(record.attempt ?? 1, policy);
       scheduleDelayedDispatch(taskDispatch, delay);
     } else {
-      /* c8 ignore next 3 -- immediate redispatch failure requires injected storage faults */
       void dispatchTaskImpl(taskDispatch).catch((err) =>
         console.error(`[weft] Redispatch failed for "${record.operationId}":`, err),
       );
@@ -1063,7 +1059,6 @@ export function serve(options: ServeOptions): WeftServer {
 
     deadlineTracker.remove(operationId);
     const resolvedStatus = status === 'failed' ? 'failed' : ('completed' as const);
-    /* c8 ignore next 8 -- only trips when resolved-state persistence is forced to fail */
     transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus).catch(
       (error) => {
         console.error(
@@ -1249,7 +1244,6 @@ export function serve(options: ServeOptions): WeftServer {
                 options.engine.storage,
                 operationId,
                 resolvedStatus,
-                /* c8 ignore next 6 -- only trips when resolved-state persistence is forced to fail */
               ).catch((error) => {
                 console.error(
                   `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
@@ -1303,7 +1297,6 @@ export function serve(options: ServeOptions): WeftServer {
                     const existing = await options.engine.storage.get(inflightKey);
                     if (existing) {
                       const decoded = decode(existing);
-                      /* c8 ignore next 5 -- corrupt-record handling is defensive */
                       if (!isInflightRecord(decoded)) {
                         console.error(
                           `[weft] Corrupt inflight record for task "${opId}" during heartbeat — skipping visibility extension`,
@@ -1313,7 +1306,6 @@ export function serve(options: ServeOptions): WeftServer {
                       const updated = { ...decoded, deadline: newDeadline };
                       await options.engine.storage.put(inflightKey, encode(updated));
                     }
-                    /* c8 ignore next 3 -- write-failure handling is defensive */
                   }, `extend visibility for task "${opId}"`).catch((error) => {
                     console.error(`[weft] Failed to extend visibility for task "${opId}":`, error);
                   });
@@ -1376,7 +1368,6 @@ export function serve(options: ServeOptions): WeftServer {
 
                 if (existing) {
                   const record = decode(existing);
-                  /* c8 ignore next 5 -- corrupt inflight records require inconsistent storage state */
                   if (!isInflightRecord(record)) {
                     console.error(
                       `[weft] Corrupt inflight record for task "${task.operationId}" — skipping reassignment`,
@@ -1386,13 +1377,11 @@ export function serve(options: ServeOptions): WeftServer {
                   await reassignOrExpireTask(task.operationId, record);
                 } else {
                   // Storage write hadn't committed — clean up the key just in case.
-                  /* c8 ignore next 4 -- missing inflight records require inconsistent storage state */
                   console.warn(
                     `[weft] No inflight record found in storage for task "${task.operationId}" — skipping reassignment`,
                   );
                   await options.engine.storage.delete(inflightKey);
                 }
-                /* c8 ignore next 5 -- reassignment failure handling is defensive */
               } catch (error) {
                 console.error(
                   `[weft] Failed to reassign task "${task.operationId}" from worker "${workerId}":`,
@@ -1422,12 +1411,10 @@ export function serve(options: ServeOptions): WeftServer {
     broadcastingHandle = wireEventBroadcasting(options.engine, server, {
       publishTokenMessage,
     });
-    /* c8 ignore start -- initialization failure requires injected broadcaster setup faults */
   } catch (error) {
     void stack[Symbol.asyncDispose]();
     throw error;
   }
-  /* c8 ignore stop */
 
   // Registered second — disposed second-to-last.
   stack.defer(broadcastingHandle.dispose);

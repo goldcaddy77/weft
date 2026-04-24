@@ -52,12 +52,68 @@ function makeOp<I, O>(
   } as unknown as ErasedOperation;
 }
 
-function makeEmitter(): JsonRpcWebSocketEmitter & { sent: string[] } {
+function makeEmitter(): JsonRpcWebSocketEmitter & {
+  sent: string[];
+  waitForSentCount(count: number): Promise<void>;
+  waitForParsedMessage(
+    description: string,
+    predicate: (message: Record<string, unknown>) => boolean,
+  ): Promise<void>;
+} {
   const sent: string[] = [];
+  type PendingWaiter = {
+    readonly description: string;
+    readonly resolve: () => void;
+    readonly reject: (error: Error) => void;
+    readonly isSatisfied: () => boolean;
+    readonly timeout: ReturnType<typeof setTimeout>;
+  };
+  const pendingWaiters: PendingWaiter[] = [];
+
+  function flushPendingWaiters(): void {
+    for (let index = pendingWaiters.length - 1; index >= 0; index -= 1) {
+      const waiter = pendingWaiters[index];
+      if (!waiter?.isSatisfied()) continue;
+      clearTimeout(waiter.timeout);
+      pendingWaiters.splice(index, 1);
+      waiter.resolve();
+    }
+  }
+
+  function waitFor(description: string, isSatisfied: () => boolean): Promise<void> {
+    if (isSatisfied()) return Promise.resolve();
+
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const waiterIndex = pendingWaiters.findIndex((waiter) => waiter.timeout === timeout);
+        if (waiterIndex >= 0) pendingWaiters.splice(waiterIndex, 1);
+        reject(
+          new Error(
+            `${description} within 500ms; saw ${sent.length} frame${sent.length === 1 ? '' : 's'}`,
+          ),
+        );
+      }, 500);
+
+      pendingWaiters.push({ description, resolve, reject, isSatisfied, timeout });
+    });
+  }
+
   return {
     sent,
     send(message) {
       sent.push(message);
+      flushPendingWaiters();
+    },
+    waitForSentCount(count: number) {
+      return waitFor(`expected at least ${count} emitted frames`, () => sent.length >= count);
+    },
+    waitForParsedMessage(
+      description: string,
+      predicate: (message: Record<string, unknown>) => boolean,
+    ) {
+      return waitFor(description, () =>
+        sent.some((frame) => predicate(JSON.parse(frame) as Record<string, unknown>)),
+      );
     },
   };
 }
@@ -219,8 +275,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 'sub-1',
       }),
     );
-    // Wait a microtask for the subscribe handler to flush.
-    await Bun.sleep(10);
+    await emitter.waitForSentCount(1);
     // The first message is the success response; subsequent are deliver notifications.
     const response = JSON.parse(emitter.sent[0]!);
     expect(response.id).toBe('sub-1');
@@ -283,7 +338,13 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 'resume',
       }),
     );
-    await Bun.sleep(10);
+    await emitter2.waitForParsedMessage('replayed sequence 0 delivery', (message) => {
+      return (
+        message['method'] === 'weft.events.deliver' &&
+        (message['params'] as { envelope?: { sequence?: number } } | undefined)?.envelope
+          ?.sequence === 0
+      );
+    });
     const sequences = emitter2.sent
       .slice(1)
       .map((s) => JSON.parse(s))
@@ -370,7 +431,6 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         params: { workflowId: 'wf-1', selector: 'events' },
       }),
     );
-    await Bun.sleep(10);
     expect(emitter.sent).toHaveLength(0);
 
     await session.handleMessage(
@@ -381,7 +441,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 'sub-1',
       }),
     );
-    await Bun.sleep(10);
+    await emitter.waitForSentCount(1);
     const subscribeResponse = JSON.parse(emitter.sent[0]!);
     const subscriptionId = subscribeResponse.result.subscriptionId;
 
@@ -393,7 +453,9 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         params: { subscriptionId },
       }),
     );
-    await Bun.sleep(10);
+    await emitter.waitForParsedMessage('unsubscribe termination notification', (message) => {
+      return message['method'] === 'weft.events.terminated';
+    });
     const notificationMessages = emitter.sent
       .slice(messageCountBeforeNotification)
       .map((message) => JSON.parse(message));
@@ -423,9 +485,15 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 'sub-1',
       }),
     );
-    await Bun.sleep(10);
+    await emitter.waitForSentCount(1);
     await backend.append(makeEnvelope(0));
-    await Bun.sleep(10);
+    await emitter.waitForParsedMessage('live delivery notification', (message) => {
+      return (
+        message['method'] === 'weft.events.deliver' &&
+        (message['params'] as { envelope?: { sequence?: number } } | undefined)?.envelope
+          ?.sequence === 0
+      );
+    });
     // Expect: 1 response + 1 deliver notification.
     expect(emitter.sent.length).toBeGreaterThanOrEqual(2);
     const deliveries = emitter.sent
@@ -456,7 +524,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 'sub-1',
       }),
     );
-    await Bun.sleep(10);
+    await emitter.waitForSentCount(1);
     const subResult = JSON.parse(emitter.sent[0]!);
     const subscriptionId = subResult.result.subscriptionId;
 
@@ -468,7 +536,9 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 'unsub-1',
       }),
     );
-    await Bun.sleep(10);
+    await emitter.waitForParsedMessage('client-unsubscribed termination', (message) => {
+      return message['method'] === 'weft.events.terminated';
+    });
 
     const messages = emitter.sent.map((s) => JSON.parse(s));
     const terminated = messages.find((m) => m.method === 'weft.events.terminated');
@@ -528,7 +598,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 'sub-1',
       }),
     );
-    await Bun.sleep(10);
+    await emitter.waitForSentCount(1);
     const subscribeResponse = JSON.parse(emitter.sent[0]!);
     const subscriptionId = subscribeResponse.result.subscriptionId;
 
@@ -546,7 +616,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const closePromise = session.close().then(() => {
       closeSettled = true;
     });
-    await Bun.sleep(10);
+    await Promise.resolve();
     expect(closeSettled).toBe(false);
 
     releaseCleanup();
@@ -573,15 +643,13 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 'sub-1',
       }),
     );
-    await Bun.sleep(10);
+    await emitter.waitForSentCount(1);
     const countBeforeClose = emitter.sent.length;
 
     await session.close();
-    await Bun.sleep(10);
 
     // After close, new live events must NOT reach the emitter.
     await backend.append(makeEnvelope(0));
-    await Bun.sleep(10);
     expect(emitter.sent.length).toBe(countBeforeClose);
   });
 
@@ -605,6 +673,30 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     );
     const response = JSON.parse(emitter.sent[0]!);
     expect(response.error.code).toBe(-32020); // NotFound
+    await session.close();
+  });
+
+  it('rejects unsubscribe with a non-string subscriptionId', async () => {
+    const emitter = makeEmitter();
+    const feed = createWorkflowEventFeed(createInMemoryEventBackend());
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      principal: anonymousPrincipal(),
+      emitter,
+      feed,
+    });
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.workflows.unsubscribe',
+        params: { subscriptionId: 42 },
+        id: 'u-bad',
+      }),
+    );
+    const response = JSON.parse(emitter.sent[0]!);
+    expect(response.error.code).toBe(-32602);
+    expect(response.error.message).toMatch(/subscriptionId/);
     await session.close();
   });
 
@@ -698,12 +790,108 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         }),
       );
     }
-    await Bun.sleep(10);
+    await emitter.waitForSentCount(3);
     const responses = emitter.sent.map((s) => JSON.parse(s));
     // Third subscribe should come back as an error response.
     const third = responses.find((m) => m.id === 's2');
     expect(third?.error?.code).toBe(-32600);
     expect(third?.error?.message).toMatch(/subscriptions/i);
+    await session.close();
+  });
+
+  it('emits server-closed when a subscription finishes naturally', async () => {
+    const emitter = makeEmitter();
+    const feed: WorkflowEventFeed = {
+      replay: async function* () {},
+      subscribe() {
+        async function* subscription(): AsyncIterable<ReturnType<typeof makeEnvelope>> {
+          yield makeEnvelope(0);
+        }
+
+        return subscription();
+      },
+      dispose() {},
+    };
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      principal: anonymousPrincipal(),
+      emitter,
+      feed,
+    });
+
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 'wf-1', selector: 'events' },
+        id: 'sub-1',
+      }),
+    );
+    await emitter.waitForParsedMessage('natural deliver notification', (message) => {
+      return message['method'] === 'weft.events.deliver';
+    });
+    await emitter.waitForParsedMessage(
+      'server-closed termination after natural completion',
+      (message) => {
+        return message['method'] === 'weft.events.terminated';
+      },
+    );
+
+    const messages = emitter.sent.map((message) => JSON.parse(message));
+    expect(messages.some((message) => message.method === 'weft.events.deliver')).toBe(true);
+    const terminated = messages.find((message) => message.method === 'weft.events.terminated');
+    expect(terminated?.params.reason).toBe('server-closed');
+
+    await session.close();
+  });
+
+  it('emits a generic server-closed fault when the subscription pump throws', async () => {
+    const emitter = makeEmitter();
+    const feed: WorkflowEventFeed = {
+      replay: async function* () {},
+      subscribe() {
+        async function* subscription(): AsyncIterable<ReturnType<typeof makeEnvelope>> {
+          throw new Error('boom');
+        }
+
+        return subscription();
+      },
+      dispose() {},
+    };
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      principal: anonymousPrincipal(),
+      emitter,
+      feed,
+    });
+
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 'wf-1', selector: 'events' },
+        id: 'sub-1',
+      }),
+    );
+    await emitter.waitForParsedMessage(
+      'server-closed termination after pump failure',
+      (message) => {
+        return message['method'] === 'weft.events.terminated';
+      },
+    );
+
+    const terminated = emitter.sent
+      .map((message) => JSON.parse(message))
+      .find((message) => message.method === 'weft.events.terminated');
+    expect(terminated?.params.reason).toBe('server-closed');
+    expect(terminated?.params.fault).toEqual({
+      code: 'EngineFailure',
+      message: 'internal error',
+      data: {},
+    });
+
     await session.close();
   });
 
@@ -735,8 +923,39 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     // pump would keep iterating the feed indefinitely. Fix split
     // the concerns: `emitterBroken` suppresses output; `disposed`
     // gates `close()`'s teardown.
-    const backend = createInMemoryEventBackend();
-    const feed = createWorkflowEventFeed(backend);
+    let releaseSubscription: () => void = () => {};
+    const subscriptionClosed = new Promise<void>((resolve) => {
+      releaseSubscription = resolve;
+    });
+    let subscriptionAborted = false;
+    const feed: WorkflowEventFeed = {
+      replay: async function* () {},
+      subscribe(options) {
+        async function* subscription(): AsyncIterable<ReturnType<typeof makeEnvelope>> {
+          yield makeEnvelope(0);
+          await new Promise<void>((resolve) => {
+            if (options.signal?.aborted) {
+              subscriptionAborted = true;
+              resolve();
+              return;
+            }
+
+            options.signal?.addEventListener(
+              'abort',
+              () => {
+                subscriptionAborted = true;
+                resolve();
+              },
+              { once: true },
+            );
+          });
+          releaseSubscription();
+        }
+
+        return subscription();
+      },
+      dispose() {},
+    };
     let sendThrew = false;
     const emitter: JsonRpcWebSocketEmitter = {
       send() {
@@ -760,17 +979,12 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 'sub-1',
       }),
     );
-    await Bun.sleep(10);
-    // Trigger an emit failure by appending an envelope (deliver throws).
-    await backend.append(makeEnvelope(0));
-    await Bun.sleep(10);
+    await Promise.resolve();
     // `close()` must still abort the subscription pump even though
     // the emitter is broken.
     await session.close();
-    // Appending more events after close must be a no-op (pump gone).
-    await backend.append(makeEnvelope(1));
-    // No assertion beyond: close() did not hang and no unhandled
-    // rejection surfaced. Implicit pass.
+    await subscriptionClosed;
+    expect(subscriptionAborted).toBe(true);
   });
 
   it('rejects frames whose UTF-8 byte length exceeds maxFrameBytes (not string length)', async () => {
@@ -802,6 +1016,46 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     await session.close();
   });
 
+  it('emits server-closed when a subscription pump ends naturally', async () => {
+    const emitter = makeEmitter();
+    const feed: WorkflowEventFeed = {
+      replay: createWorkflowEventFeed(createInMemoryEventBackend()).replay,
+      subscribe() {
+        async function* subscription() {
+          return;
+        }
+        return subscription();
+      },
+      dispose() {},
+    };
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      principal: anonymousPrincipal(),
+      emitter,
+      feed,
+    });
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 'wf-1', selector: 'events' },
+        id: 'sub-natural',
+      }),
+    );
+    await emitter.waitForParsedMessage(
+      'server-closed termination after empty subscription',
+      (message) => {
+        return message['method'] === 'weft.events.terminated';
+      },
+    );
+    const terminated = emitter.sent
+      .map((message) => JSON.parse(message))
+      .find((message) => message.method === 'weft.events.terminated');
+    expect(terminated?.params.reason).toBe('server-closed');
+    await session.close();
+  });
+
   it('two concurrent subscriptions on one session deliver to correct correlation IDs', async () => {
     const emitter = makeEmitter();
     const backend = createInMemoryEventBackend();
@@ -829,7 +1083,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
         id: 's-b',
       }),
     );
-    await Bun.sleep(10);
+    await emitter.waitForSentCount(2);
     const subA = JSON.parse(emitter.sent[0]!);
     const subB = JSON.parse(emitter.sent[1]!);
     const idA = subA.result.subscriptionId;
@@ -838,7 +1092,15 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
 
     await backend.append(makeEnvelope(0, 'wf-A'));
     await backend.append(makeEnvelope(0, 'wf-B'));
-    await Bun.sleep(10);
+    await emitter.waitForParsedMessage('delivery for subscription A', (message) => {
+      return (
+        message['method'] === 'weft.events.deliver' &&
+        message['params'] !== null &&
+        typeof message['params'] === 'object' &&
+        Object.hasOwn(message['params'], 'subscriptionId')
+      );
+    });
+    await emitter.waitForSentCount(4);
 
     const deliveries = emitter.sent
       .slice(2)
@@ -849,6 +1111,54 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
       .toSorted((a: string, b: string) => a.localeCompare(b));
     expect(correlations).toContain(idA);
     expect(correlations).toContain(idB);
+    await session.close();
+  });
+
+  it('rejects frames whose parsed JSON value is not an object', async () => {
+    const emitter = makeEmitter();
+    const feed = createWorkflowEventFeed(createInMemoryEventBackend());
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      principal: anonymousPrincipal(),
+      emitter,
+      feed,
+    });
+
+    await session.handleMessage('true');
+
+    const response = JSON.parse(emitter.sent[0]!);
+    expect(response.error.code).toBe(-32600);
+    expect(response.error.message).toMatch(/JSON object/);
+
+    await session.close();
+  });
+
+  it('rejects session-primitive frames with an invalid request id type', async () => {
+    const emitter = makeEmitter();
+    const feed = createWorkflowEventFeed(createInMemoryEventBackend());
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      principal: anonymousPrincipal(),
+      emitter,
+      feed,
+    });
+
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 'wf-1', selector: 'events' },
+        id: { bad: true },
+      }),
+    );
+
+    const response = JSON.parse(emitter.sent[0]!);
+    expect(response.error.code).toBe(-32600);
+    expect(response.error.message).toMatch(/id must be a string, number, null, or absent/i);
+    expect(response.id).toBeNull();
+
     await session.close();
   });
 });

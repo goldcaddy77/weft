@@ -47,6 +47,24 @@ async function waitForRunning(engine: Engine, workflowId: string): Promise<void>
   throw new Error(`workflow ${workflowId} did not reach running`);
 }
 
+async function recordExpectedConsoleError<T>(run: () => Promise<T>): Promise<{
+  readonly result: T;
+  readonly calls: readonly unknown[][];
+}> {
+  const recordedCalls: unknown[][] = [];
+  const originalError = console.error;
+  console.error = ((...args: unknown[]) => {
+    recordedCalls.push(args);
+  }) as typeof console.error;
+
+  try {
+    const result = await run();
+    return { result, calls: recordedCalls };
+  } finally {
+    console.error = originalError;
+  }
+}
+
 /**
  * Build an operation + binding pair that captures the principal the
  * pipeline hands `invoke`. The captured principal flows back through
@@ -156,11 +174,54 @@ describe('handler pipeline — streaming binding guard', () => {
     const request = new Request(`http://localhost/v1/test/streamnoshape/${handle.id}`, {
       method: 'GET',
     });
+    const { result: response, calls } = await recordExpectedConsoleError(() =>
+      handleRequest(request, engine, {
+        operationRegistry: registry,
+        restBindings: [binding],
+      }),
+    );
+    expect(response.status).toBe(500);
+    expect(calls.length).toBeGreaterThan(0);
+  });
+
+  it('returns 400 when extractInput throws during via-execute-operation dispatch', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForRunning(engine, handle.id);
+
+    const operation = defineOperation({
+      name: 'weft.test.extracterror',
+      summary: 'extract error',
+      inputSchema: z.object({ workflowId: z.string() }),
+      outputSchema: z.object({ ok: z.boolean() }),
+      access: { kind: 'public' },
+      transports: { http: true, jsonRpcHttp: false, jsonRpcWebSocket: false, jsonRpcStdio: false },
+      unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+      invoke: async () => ({ ok: true }),
+    });
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/v1/test/extract-error/:id',
+      pathParamNames: ['id'],
+      operationName: 'weft.test.extracterror',
+      inputSources: { workflowId: { kind: 'path', pathParam: 'id' } },
+      extractInput: async () => {
+        throw new Error('extract failed');
+      },
+      success: { kind: 'json', status: 200 },
+    };
+    const registry = createOperationRegistry([operation]);
+
+    const request = new Request(`http://localhost/v1/test/extract-error/${handle.id}`, {
+      method: 'GET',
+    });
     const response = await handleRequest(request, engine, {
       operationRegistry: registry,
       restBindings: [binding],
     });
-    expect(response.status).toBe(500);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'extract failed' });
   });
 });
 
@@ -239,13 +300,16 @@ describe('handler pipeline — authContextToPrincipal branches', () => {
     // missing claims field indicates the caller bypassed the authenticator
     // (a real security concern for `optionalAuth` operations). The pipeline
     // must throw rather than silently downgrade to anonymous.
-    const response = await handleRequest(request, engine, {
-      operationRegistry: registry,
-      restBindings: bindings,
-      authContext: { method: 'jwt' }, // claims intentionally omitted
-    });
+    const { result: response, calls } = await recordExpectedConsoleError(() =>
+      handleRequest(request, engine, {
+        operationRegistry: registry,
+        restBindings: bindings,
+        authContext: { method: 'jwt' }, // claims intentionally omitted
+      }),
+    );
     // handleRequest wraps the throw in the outer try/catch → 500.
     expect(response.status).toBe(500);
+    expect(calls.length).toBeGreaterThan(0);
   });
 
   it('forwarded principal on authContext takes precedence over method reconstruction', async () => {
@@ -309,5 +373,83 @@ describe('handler pipeline — authContextToPrincipal branches', () => {
     });
     expect(response.status).toBe(200);
     expect(captured.principal?.method).toBe('mtls');
+  });
+
+  it('public authContext is treated as anonymous', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForRunning(engine, handle.id);
+
+    const { registry, bindings, captured } = buildPrincipalSpy();
+    const request = new Request(`http://localhost/v1/test/principalspy/${handle.id}`, {
+      method: 'GET',
+    });
+    const response = await handleRequest(request, engine, {
+      operationRegistry: registry,
+      restBindings: bindings,
+      authContext: { method: 'public' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(captured.principal?.method).toBe('unauthenticated');
+  });
+
+  it('returns 400 when legacy route matching sees malformed percent encoding', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/%E0%A4%A', { method: 'GET' }),
+      engine,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Malformed route parameter encoding' });
+  });
+
+  it('returns 400 when a matched RestBinding extractInput throws', async () => {
+    const engine = createEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForRunning(engine, handle.id);
+
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'weft.test.extractinput',
+        summary: 'extractInput failure path',
+        inputSchema: z.object({ workflowId: z.string() }),
+        outputSchema: z.object({ ok: z.boolean() }),
+        access: { kind: 'public' },
+        transports: {
+          http: true,
+          jsonRpcHttp: false,
+          jsonRpcWebSocket: false,
+          jsonRpcStdio: false,
+        },
+        unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+        invoke: async () => ({ ok: true }),
+      }),
+    ]);
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/v1/test/extractinput/:id',
+      pathParamNames: ['id'],
+      operationName: 'weft.test.extractinput',
+      inputSources: { workflowId: { kind: 'path', pathParam: 'id' } },
+      extractInput: async () => {
+        throw new Error('extract input exploded');
+      },
+      success: { kind: 'json', status: 200 },
+    };
+
+    const response = await handleRequest(
+      new Request(`http://localhost/v1/test/extractinput/${handle.id}`, { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: [binding],
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'extract input exploded' });
   });
 });
