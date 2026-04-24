@@ -33,8 +33,14 @@ import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, AuthContext, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
+import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import { authContextToPrincipal, handleRequest } from './handler.ts';
 import { handleJsonRpcHttpRequest } from './json-rpc-http.ts';
+import {
+  createJsonRpcWebSocketSession,
+  type JsonRpcWebSocketSession,
+} from './json-rpc-websocket.ts';
+import { anonymousPrincipal, type Principal } from './principal.ts';
 import { REST_BINDINGS, createLiveOperationRegistry } from './rest-bindings.ts';
 import {
   claimNextSequence,
@@ -50,6 +56,7 @@ import {
   transitionInflightToResolved,
   transitionQueuedToInflight,
 } from './task-state.ts';
+import { createWorkflowEventFeed, type WorkflowEventFeed } from './workflow-event-feed.ts';
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -171,7 +178,7 @@ export interface WeftServer extends AsyncDisposable {
 // Internal types
 // ---------------------------------------------------------------------------
 
-type ConnectionType = 'worker' | 'stream' | 'watch' | 'generic';
+type ConnectionType = 'worker' | 'stream' | 'watch' | 'generic' | 'jsonrpc';
 
 interface WebSocketData {
   pathname: string;
@@ -186,6 +193,8 @@ interface WebSocketData {
   lastDeliveredSequence?: number;
   replayInProgress?: boolean;
   pendingStreamMessages?: Array<{ sequence: number; message: string }>;
+  principal?: Principal;
+  jsonRpcSession?: JsonRpcWebSocketSession;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +305,10 @@ function classifyConnection(
     return queue === null ? null : { connectionType: 'worker', queue };
   }
 
+  if (pathname === '/jsonrpc') {
+    return { connectionType: 'jsonrpc' };
+  }
+
   return { connectionType: 'generic' };
 }
 
@@ -332,6 +345,30 @@ async function getHighestStoredStreamSequence(
   }
 
   return -1;
+}
+
+function handleJsonRpcWebSocketMessage(
+  ws: ServerWebSocket<WebSocketData>,
+  rawMessage: string | Buffer,
+): void {
+  // Defensive guard: every jsonrpc-classified connection MUST have a
+  // session attached in `websocket.open`. An undefined session here
+  // means either session construction threw (already logged + close
+  // initiated) or the open handler raced with the first frame (Bun
+  // guarantees `open` before `message`, so this shouldn't happen).
+  // Close the socket with an internal-error code so the client sees
+  // protocol-level feedback rather than frames silently disappearing.
+  const session = ws.data.jsonRpcSession;
+  if (!session) {
+    console.error('[weft] /jsonrpc WS frame received with no session attached — closing');
+    ws.close(1011, 'no jsonrpc session attached');
+    return;
+  }
+
+  const text = typeof rawMessage === 'string' ? rawMessage : new TextDecoder().decode(rawMessage);
+  session.handleMessage(text).catch((error) => {
+    console.error('[weft] /jsonrpc WS message error', error);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -891,6 +928,14 @@ export function serve(options: ServeOptions): WeftServer {
   // across requests. Registry contents are immutable after creation,
   // so sharing across concurrent requests is safe.
   const liveOperationRegistry = createLiveOperationRegistry();
+  const eventFeedBackend = createEngineEventFeedBackend(options.engine);
+  const workflowEventFeed: WorkflowEventFeed = createWorkflowEventFeed(eventFeedBackend);
+  // Track every live `/jsonrpc` session so shutdown can await their
+  // close BEFORE `workflowEventFeed.dispose()` runs. Without this,
+  // the AsyncDisposableStack tears the shared feed down while
+  // subscription pumps are still draining, producing noisy
+  // post-dispose callbacks on the engine's listener registry.
+  const activeJsonRpcSessions = new Set<JsonRpcWebSocketSession>();
 
   async function authenticateRequest(request: Request): Promise<{
     authContext?: AuthContext;
@@ -954,7 +999,11 @@ export function serve(options: ServeOptions): WeftServer {
     void transitionQueuedToInflight(options.engine.storage, task.operationId, inflightRecord);
   }
 
-  function handleWebSocketUpgrade(request: Request, url: URL): Response | undefined | null {
+  function handleWebSocketUpgrade(
+    request: Request,
+    url: URL,
+    authContext?: AuthContext,
+  ): Response | undefined | null {
     if (request.headers.get('upgrade') !== 'websocket') {
       return null;
     }
@@ -962,6 +1011,24 @@ export function serve(options: ServeOptions): WeftServer {
     const classification = classifyConnection(url);
     if (classification === null) {
       return new Response('Invalid encoded WebSocket path', { status: 400 });
+    }
+
+    // Resolve the principal ONLY for /jsonrpc connections. Other WS
+    // endpoints (`/v1/workflows/:id/stream`, `/watch`, `/v1/tasks/:q/stream`)
+    // do not consume a `Principal`, so running `authContextToPrincipal`
+    // for them would convert a client-side auth error (e.g.,
+    // malformed JWT) into a spurious failure on paths that never
+    // needed the principal in the first place. A resolver throw is
+    // an authentication failure — return 401 so clients with
+    // retry-on-5xx logic don't loop.
+    let principal: Principal | undefined;
+    if (classification.connectionType === 'jsonrpc' && authContext !== undefined) {
+      try {
+        principal = authContextToPrincipal(authContext);
+      } catch (error) {
+        console.error('[weft] /jsonrpc WS upgrade principal resolution failed', error);
+        return new Response('Authentication context invalid', { status: 401 });
+      }
     }
 
     const resumeFromParam = url.searchParams.get('resumeFrom');
@@ -978,6 +1045,7 @@ export function serve(options: ServeOptions): WeftServer {
       data: {
         pathname: url.pathname,
         ...classification,
+        ...(principal ? { principal } : {}),
         ...(resumeFrom !== undefined ? { resumeFrom } : {}),
       },
     });
@@ -986,6 +1054,143 @@ export function serve(options: ServeOptions): WeftServer {
     }
 
     return new Response('WebSocket upgrade failed', { status: 400 });
+  }
+
+  function handleWorkerWebSocketMessage(
+    ws: ServerWebSocket<WebSocketData>,
+    rawMessage: string | Buffer,
+  ): void {
+    if (!isWorkerConnection(ws.data.pathname)) return;
+
+    const text = typeof rawMessage === 'string' ? rawMessage : new TextDecoder().decode(rawMessage);
+
+    let parsed: { type: string; [key: string]: unknown };
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return;
+    }
+
+    switch (parsed.type) {
+      case 'register': {
+        const rawWorkerId = parsed['workerId'];
+        const workerId = typeof rawWorkerId === 'string' ? rawWorkerId : '';
+        if (!workerId) return;
+
+        const activities = parsed['activities'];
+        const concurrency = parsed['concurrency'];
+
+        // Validate and cap concurrency to prevent a misconfigured client
+        // from claiming an unbounded number of task slots.
+        const rawConcurrency = typeof concurrency === 'number' ? concurrency : 10;
+        const clampedConcurrency = Math.min(
+          Math.max(1, Math.floor(rawConcurrency)),
+          MAX_WORKER_CONCURRENCY,
+        );
+
+        ws.data.workerId = workerId;
+        registry.register({
+          id: workerId,
+          queue: ws.data.queue ?? 'default',
+          activities: Array.isArray(activities) ? (activities as string[]) : [],
+          concurrency: clampedConcurrency,
+        });
+        workerSockets.set(workerId, ws);
+        break;
+      }
+      case 'taskResult': {
+        const operationId = parsed['operationId'];
+        const resultStatus = parsed['status'];
+        if (typeof operationId === 'string') {
+          // Remove in-flight tracking and decrement the worker's counter.
+          registry.completeTask(operationId);
+          deadlineTracker.remove(operationId);
+          cleanupWorkflowIndex(operationId);
+
+          // Atomically transition inflight → resolved in storage.
+          let resolvedStatus: 'completed' | 'failed';
+          if (resultStatus === 'completed') {
+            resolvedStatus = 'completed';
+          } else if (resultStatus === 'failed' || resultStatus === 'cancelled') {
+            resolvedStatus = 'failed';
+          } else {
+            console.warn(
+              `[weft] taskResult for operation "${operationId}" has unexpected status "${String(
+                resultStatus,
+              )}" — treating as failed`,
+            );
+            resolvedStatus = 'failed';
+          }
+          transitionInflightToResolved(options.engine.storage, operationId, resolvedStatus).catch(
+            (error) => {
+              console.error(
+                `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
+                error,
+              );
+            },
+          );
+        } else {
+          // Fallback: decrement counter by worker ID when operationId is missing.
+          // This path leaks the inflight tracking record — log a warning.
+          const workerId = ws.data.workerId;
+          if (workerId) {
+            console.warn(
+              `[weft] taskResult from worker "${workerId}" is missing operationId — inflight tracking record will leak`,
+            );
+            registry.taskCompleted(workerId);
+          }
+        }
+        break;
+      }
+      case 'heartbeat': {
+        const workerId = ws.data.workerId;
+        if (workerId) {
+          registry.heartbeat(workerId);
+
+          // Extend visibility deadline for all in-flight tasks assigned to this worker.
+          for (const task of registry.getWorkerTasks(workerId)) {
+            const newDeadline = registry.extendVisibility(task.operationId, task.visibilityTimeout);
+
+            // Update persisted storage record and deadline tracker with
+            // the same deadline the registry computed, so all three stay
+            // in sync across restarts and visibility scans.
+            if (newDeadline !== undefined) {
+              deadlineTracker.remove(task.operationId);
+              deadlineTracker.add({ operationId: task.operationId, deadline: newDeadline });
+
+              const opId = task.operationId;
+              const heartbeatWorkerId = ws.data.workerId;
+              void withRetry(async () => {
+                // Guard: if the task completed or was reassigned during the async gap,
+                // skip the write to avoid resurrecting or corrupting another worker's record.
+                if (!registry.isAssigned(opId)) return;
+                const currentTask = registry
+                  .getWorkerTasks(heartbeatWorkerId ?? '')
+                  .find((trackedTask) => trackedTask.operationId === opId);
+                if (!currentTask) return;
+
+                const inflightKey = KEYS.operationInflight(opId);
+                const existing = await options.engine.storage.get(inflightKey);
+                if (existing) {
+                  const decoded = decode(existing);
+                  if (!isInflightRecord(decoded)) {
+                    console.error(
+                      `[weft] Corrupt inflight record for task "${opId}" during heartbeat — skipping visibility extension`,
+                    );
+                    return;
+                  }
+                  const updated = { ...decoded, deadline: newDeadline };
+                  await options.engine.storage.put(inflightKey, encode(updated));
+                }
+              }, `extend visibility for task "${opId}"`).catch((error) => {
+                console.error(`[weft] Failed to extend visibility for task "${opId}":`, error);
+              });
+            }
+          }
+        }
+        break;
+      }
+    }
   }
 
   async function handleTaskPollRequest(request: Request, url: URL): Promise<Response | null> {
@@ -1085,7 +1290,14 @@ export function serve(options: ServeOptions): WeftServer {
         return authentication.response;
       }
 
-      const websocketResponse = handleWebSocketUpgrade(request, url);
+      // `handleWebSocketUpgrade` resolves the principal only for
+      // `/jsonrpc` connections and only after the Upgrade-header
+      // check. This keeps jwt-without-claims throws out of the HTTP
+      // POST `/jsonrpc` path (which has its own try/catch that maps
+      // the failure to a -32603 error envelope) and prevents an
+      // auth-context failure on unrelated WS endpoints (`/stream`,
+      // `/watch`, `/workers`) from returning a spurious 5xx.
+      const websocketResponse = handleWebSocketUpgrade(request, url, authentication.authContext);
       if (websocketResponse !== null) {
         return websocketResponse;
       }
@@ -1164,7 +1376,7 @@ export function serve(options: ServeOptions): WeftServer {
         // `publishTokenMessage()` and the `streamSockets` registry instead,
         // while `wireEventBroadcasting()` retains the `server.publish()`
         // fallback for direct callers that manage subscriptions themselves.
-        if (pathname && connectionType !== 'stream') {
+        if (pathname && connectionType !== 'stream' && connectionType !== 'jsonrpc') {
           ws.subscribe(pathname);
         }
 
@@ -1176,147 +1388,69 @@ export function serve(options: ServeOptions): WeftServer {
           addStreamSocket(workflowId, ws);
           void replayTokenStream(ws, workflowId);
         }
-      },
-      message(ws, rawMessage) {
-        if (!isWorkerConnection(ws.data.pathname)) return;
 
-        const text =
-          typeof rawMessage === 'string' ? rawMessage : new TextDecoder().decode(rawMessage);
-
-        let parsed: { type: string; [key: string]: unknown };
-        try {
-          parsed = JSON.parse(text);
-        } catch {
+        if (connectionType === 'jsonrpc') {
+          // Wrap session construction so a throw here doesn't leave a
+          // half-open socket that silently black-holes every
+          // subsequent frame. Closing with an internal-error code is
+          // the clearest protocol-level signal we can give the client
+          // (they won't parse a JSON-RPC envelope off a raw close,
+          // but the close code + log is enough for triage).
+          try {
+            const session = createJsonRpcWebSocketSession({
+              registry: liveOperationRegistry,
+              engine: options.engine,
+              principal: ws.data.principal ?? anonymousPrincipal(),
+              emitter: { send: (message) => ws.send(message) },
+              feed: workflowEventFeed,
+              transport: 'jsonRpcWebSocket',
+            });
+            ws.data.jsonRpcSession = session;
+            activeJsonRpcSessions.add(session);
+          } catch (error) {
+            console.error('[weft] /jsonrpc WS session construction failed', error);
+            // 1011 = Internal Error, per RFC 6455 §7.4.1.
+            ws.close(1011, 'session construction failed');
+          }
           return;
         }
-
-        switch (parsed.type) {
-          case 'register': {
-            const rawWorkerId = parsed['workerId'];
-            const workerId = typeof rawWorkerId === 'string' ? rawWorkerId : '';
-            if (!workerId) return;
-
-            const activities = parsed['activities'];
-            const concurrency = parsed['concurrency'];
-
-            // Validate and cap concurrency to prevent a misconfigured client
-            // from claiming an unbounded number of task slots.
-            const rawConcurrency = typeof concurrency === 'number' ? concurrency : 10;
-            const clampedConcurrency = Math.min(
-              Math.max(1, Math.floor(rawConcurrency)),
-              MAX_WORKER_CONCURRENCY,
-            );
-
-            ws.data.workerId = workerId;
-            registry.register({
-              id: workerId,
-              queue: ws.data.queue ?? 'default',
-              activities: Array.isArray(activities) ? (activities as string[]) : [],
-              concurrency: clampedConcurrency,
-            });
-            workerSockets.set(workerId, ws);
-            break;
-          }
-          case 'taskResult': {
-            const operationId = parsed['operationId'];
-            const resultStatus = parsed['status'];
-            if (typeof operationId === 'string') {
-              // Remove in-flight tracking and decrement the worker's counter.
-              registry.completeTask(operationId);
-              deadlineTracker.remove(operationId);
-              cleanupWorkflowIndex(operationId);
-
-              // Atomically transition inflight → resolved in storage.
-              let resolvedStatus: 'completed' | 'failed';
-              if (resultStatus === 'completed') {
-                resolvedStatus = 'completed';
-              } else if (resultStatus === 'failed' || resultStatus === 'cancelled') {
-                resolvedStatus = 'failed';
-              } else {
-                console.warn(
-                  `[weft] taskResult for operation "${operationId}" has unexpected status "${String(
-                    resultStatus,
-                  )}" — treating as failed`,
-                );
-                resolvedStatus = 'failed';
-              }
-              transitionInflightToResolved(
-                options.engine.storage,
-                operationId,
-                resolvedStatus,
-              ).catch((error) => {
-                console.error(
-                  `[weft] Failed to transition task "${operationId}" to resolved — inflight record may leak:`,
-                  error,
-                );
-              });
-            } else {
-              // Fallback: decrement counter by worker ID when operationId is missing.
-              // This path leaks the inflight tracking record — log a warning.
-              const workerId = ws.data.workerId;
-              if (workerId) {
-                console.warn(
-                  `[weft] taskResult from worker "${workerId}" is missing operationId — inflight tracking record will leak`,
-                );
-                registry.taskCompleted(workerId);
-              }
-            }
-            break;
-          }
-          case 'heartbeat': {
-            const workerId = ws.data.workerId;
-            if (workerId) {
-              registry.heartbeat(workerId);
-
-              // Extend visibility deadline for all in-flight tasks assigned to this worker.
-              for (const task of registry.getWorkerTasks(workerId)) {
-                const newDeadline = registry.extendVisibility(
-                  task.operationId,
-                  task.visibilityTimeout,
-                );
-
-                // Update persisted storage record and deadline tracker with
-                // the same deadline the registry computed, so all three stay
-                // in sync across restarts and visibility scans.
-                if (newDeadline !== undefined) {
-                  deadlineTracker.remove(task.operationId);
-                  deadlineTracker.add({ operationId: task.operationId, deadline: newDeadline });
-
-                  const opId = task.operationId;
-                  const heartbeatWorkerId = ws.data.workerId;
-                  void withRetry(async () => {
-                    // Guard: if the task completed or was reassigned during the async gap,
-                    // skip the write to avoid resurrecting or corrupting another worker's record.
-                    if (!registry.isAssigned(opId)) return;
-                    const currentTask = registry
-                      .getWorkerTasks(heartbeatWorkerId ?? '')
-                      .find((t) => t.operationId === opId);
-                    if (!currentTask) return;
-
-                    const inflightKey = KEYS.operationInflight(opId);
-                    const existing = await options.engine.storage.get(inflightKey);
-                    if (existing) {
-                      const decoded = decode(existing);
-                      if (!isInflightRecord(decoded)) {
-                        console.error(
-                          `[weft] Corrupt inflight record for task "${opId}" during heartbeat — skipping visibility extension`,
-                        );
-                        return;
-                      }
-                      const updated = { ...decoded, deadline: newDeadline };
-                      await options.engine.storage.put(inflightKey, encode(updated));
-                    }
-                  }, `extend visibility for task "${opId}"`).catch((error) => {
-                    console.error(`[weft] Failed to extend visibility for task "${opId}":`, error);
-                  });
-                }
-              }
-            }
-            break;
-          }
+      },
+      message(ws, rawMessage) {
+        // Explicit dispatch on connection type so control flow is
+        // visible in the handler (rather than threaded through
+        // helper bool returns). `stream`/`watch`/`generic`
+        // connections do not receive client → server messages — the
+        // stream/watch paths are unidirectional server → client —
+        // so there's no branch for them.
+        switch (ws.data.connectionType) {
+          case 'jsonrpc':
+            handleJsonRpcWebSocketMessage(ws, rawMessage);
+            return;
+          case 'worker':
+            handleWorkerWebSocketMessage(ws, rawMessage);
+            return;
+          case 'stream':
+          case 'watch':
+          case 'generic':
+            return;
         }
       },
       close(ws) {
+        if (ws.data.connectionType === 'jsonrpc') {
+          // Fire-and-forget with explicit rejection handling: if
+          // `session.close()` rejects (an in-flight subscription pump
+          // threw), the bare `void` would leak the rejection to the
+          // process's unhandled-rejection listener. Log instead.
+          const session = ws.data.jsonRpcSession;
+          if (session) {
+            activeJsonRpcSessions.delete(session);
+            void session.close().catch((error) => {
+              console.error('[weft] /jsonrpc WS session close error', error);
+            });
+          }
+          return;
+        }
+
         if (ws.data.connectionType === 'stream') {
           removeStreamSocket(ws);
         }
@@ -1418,6 +1552,25 @@ export function serve(options: ServeOptions): WeftServer {
 
   // Registered second — disposed second-to-last.
   stack.defer(broadcastingHandle.dispose);
+  stack.defer(() => workflowEventFeed.dispose());
+  // Registered last — disposed FIRST. Close every active
+  // `/jsonrpc` WS session and wait for its subscription pumps to
+  // drain before the shared `WorkflowEventFeed` disposes or the
+  // server force-closes sockets. Without this, `server.stop(true)`
+  // would tear down sockets mid-pump, which produces noisy
+  // post-dispose callbacks on the engine's listener registry.
+  stack.defer(async () => {
+    const closes: Array<Promise<void>> = [];
+    for (const session of activeJsonRpcSessions) {
+      closes.push(
+        session.close().catch((error) => {
+          console.error('[weft] /jsonrpc WS session close error during shutdown', error);
+        }),
+      );
+    }
+    activeJsonRpcSessions.clear();
+    await Promise.allSettled(closes);
+  });
 
   // Clean up per-workflow state when workflows reach a terminal state:
   // both the sticky-routing affinity map and the event-broadcasting sequence
