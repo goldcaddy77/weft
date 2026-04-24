@@ -40,7 +40,7 @@ import {
   createJsonRpcWebSocketSession,
   type JsonRpcWebSocketSession,
 } from './json-rpc-websocket.ts';
-import type { Principal } from './principal.ts';
+import { anonymousPrincipal, type Principal } from './principal.ts';
 import { REST_BINDINGS, createLiveOperationRegistry } from './rest-bindings.ts';
 import {
   claimNextSequence,
@@ -355,8 +355,22 @@ function handleJsonRpcWebSocketMessage(
     return false;
   }
 
+  // Defensive guard: every jsonrpc-classified connection MUST have a
+  // session attached in `websocket.open`. An undefined session here
+  // means either session construction threw (already logged + close
+  // initiated) or the open handler raced with the first frame (Bun
+  // guarantees `open` before `message`, so this shouldn't happen).
+  // Close the socket with an internal-error code so the client sees
+  // protocol-level feedback rather than frames silently disappearing.
+  const session = ws.data.jsonRpcSession;
+  if (!session) {
+    console.error('[weft] /jsonrpc WS frame received with no session attached — closing');
+    ws.close(1011, 'no jsonrpc session attached');
+    return true;
+  }
+
   const text = typeof rawMessage === 'string' ? rawMessage : new TextDecoder().decode(rawMessage);
-  ws.data.jsonRpcSession?.handleMessage(text).catch((error) => {
+  session.handleMessage(text).catch((error) => {
     console.error('[weft] /jsonrpc WS message error', error);
   });
   return true;
@@ -987,10 +1001,23 @@ export function serve(options: ServeOptions): WeftServer {
   function handleWebSocketUpgrade(
     request: Request,
     url: URL,
-    principal?: Principal,
+    resolvePrincipal?: () => Principal,
   ): Response | undefined | null {
     if (request.headers.get('upgrade') !== 'websocket') {
       return null;
+    }
+    // Resolve the principal AFTER confirming this is an upgrade so
+    // that a `resolvePrincipal()` throw (e.g., jwt-without-claims)
+    // does not leak into the HTTP path that falls through to the
+    // REST router + JSON-RPC HTTP adapter.
+    let principal: Principal | undefined;
+    if (resolvePrincipal) {
+      try {
+        principal = resolvePrincipal();
+      } catch (error) {
+        console.error('[weft] /jsonrpc WS upgrade principal resolution failed', error);
+        return new Response('Authentication context invalid', { status: 500 });
+      }
     }
 
     const classification = classifyConnection(url);
@@ -1257,9 +1284,14 @@ export function serve(options: ServeOptions): WeftServer {
         return authentication.response;
       }
 
-      const websocketResponse = handleWebSocketUpgrade(
-        request,
-        url,
+      // Defer `authContextToPrincipal` until AFTER the upgrade-header
+      // check so the HTTP POST `/jsonrpc` path is not affected by a
+      // jwt-without-claims authenticator-contract violation (which
+      // throws synchronously in `authContextToPrincipal`). The HTTP
+      // adapter has its own try/catch and maps such failures to a
+      // -32603 error envelope; letting the conversion escape from
+      // `fetch()` would short-circuit that boundary.
+      const websocketResponse = handleWebSocketUpgrade(request, url, () =>
         authContextToPrincipal(authentication.authContext),
       );
       if (websocketResponse !== null) {
@@ -1354,14 +1386,26 @@ export function serve(options: ServeOptions): WeftServer {
         }
 
         if (connectionType === 'jsonrpc') {
-          ws.data.jsonRpcSession = createJsonRpcWebSocketSession({
-            registry: liveOperationRegistry,
-            engine: options.engine,
-            principal: ws.data.principal ?? { method: 'unauthenticated' },
-            emitter: { send: (message) => ws.send(message) },
-            feed: workflowEventFeed,
-            transport: 'jsonRpcWebSocket',
-          });
+          // Wrap session construction so a throw here doesn't leave a
+          // half-open socket that silently black-holes every
+          // subsequent frame. Closing with an internal-error code is
+          // the clearest protocol-level signal we can give the client
+          // (they won't parse a JSON-RPC envelope off a raw close,
+          // but the close code + log is enough for triage).
+          try {
+            ws.data.jsonRpcSession = createJsonRpcWebSocketSession({
+              registry: liveOperationRegistry,
+              engine: options.engine,
+              principal: ws.data.principal ?? anonymousPrincipal(),
+              emitter: { send: (message) => ws.send(message) },
+              feed: workflowEventFeed,
+              transport: 'jsonRpcWebSocket',
+            });
+          } catch (error) {
+            console.error('[weft] /jsonrpc WS session construction failed', error);
+            // 1011 = Internal Error, per RFC 6455 §7.4.1.
+            ws.close(1011, 'session construction failed');
+          }
           return;
         }
       },
@@ -1371,7 +1415,13 @@ export function serve(options: ServeOptions): WeftServer {
       },
       close(ws) {
         if (ws.data.connectionType === 'jsonrpc') {
-          void ws.data.jsonRpcSession?.close();
+          // Fire-and-forget with explicit rejection handling: if
+          // `session.close()` rejects (an in-flight subscription pump
+          // threw), the bare `void` would leak the rejection to the
+          // process's unhandled-rejection listener. Log instead.
+          void ws.data.jsonRpcSession?.close().catch((error) => {
+            console.error('[weft] /jsonrpc WS session close error', error);
+          });
           return;
         }
 

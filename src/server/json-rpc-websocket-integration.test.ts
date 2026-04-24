@@ -155,6 +155,13 @@ describe('serve() — WebSocket /jsonrpc', () => {
     expect(delivered.params.subscriptionId).toBe(subscriptionId);
     expect(delivered.params.envelope).toBeDefined();
     expect(delivered.params.envelope.workflowId).toBe(handle.id);
+    // Tighten the assertion so a wrong-selector listener cannot
+    // silently pass by hitting the `workflowId` check alone.
+    expect(delivered.params.envelope.selector).toBe('events');
+    expect(typeof delivered.params.envelope.kind).toBe('string');
+    expect(typeof delivered.params.envelope.sequence).toBe('number');
+    expect(delivered.params.envelope.sequence).toBeGreaterThanOrEqual(0);
+    expect(typeof delivered.params.envelope.cursor).toBe('string');
 
     ws.close();
   });
@@ -217,8 +224,22 @@ describe('serve() — WebSocket /jsonrpc', () => {
 
     expect(deliveredAfterUnsubscribe).toBe(false);
 
-    ws.close();
-    await Bun.sleep(50);
+    // Close the socket and guard against silently-swallowed errors
+    // from `session.close()` — the close handler fires it fire-and-
+    // forget with a `.catch(console.error)`, so a throw here would
+    // surface only via `process.on('unhandledRejection')` otherwise.
+    let leakedRejection: unknown = null;
+    const rejectionHandler = (reason: unknown) => {
+      leakedRejection = reason;
+    };
+    process.on('unhandledRejection', rejectionHandler);
+    try {
+      ws.close();
+      await Bun.sleep(50);
+    } finally {
+      process.off('unhandledRejection', rejectionHandler);
+    }
+    expect(leakedRejection).toBeNull();
   });
 
   it('test d: missing Upgrade header still routes POST /jsonrpc through the HTTP adapter', async () => {
@@ -279,5 +300,112 @@ describe('serve() — WebSocket /jsonrpc', () => {
       }),
     });
     expect(response.status).toBe(401);
+  });
+
+  it('test f: close without explicit unsubscribe tears down without unhandled rejections', async () => {
+    // Adversarial: the client drops the connection without ever
+    // calling `weft.workflows.unsubscribe`. The server's
+    // `websocket.close` must invoke `session.close()`, which in
+    // turn must abort the subscription pump and unregister the
+    // engine listener — all without surfacing a process-level
+    // unhandled-rejection event (from a late `emitter.send()` on a
+    // closed socket, for example).
+    engine = createHoldEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForStatus(engine, handle.id, 'running');
+
+    server = serve({ engine, port: 0 });
+    const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
+    const ws = await openWebSocket(wsUrl);
+
+    const subscribeResponsePromise = waitForMessage(
+      ws,
+      (parsed: any) => parsed?.id === 1 && parsed?.result?.subscriptionId,
+    );
+    ws.send(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: handle.id, selector: 'events' },
+      }),
+    );
+    await subscribeResponsePromise;
+
+    let leakedRejection: unknown = null;
+    const rejectionHandler = (reason: unknown) => {
+      leakedRejection = reason;
+    };
+    process.on('unhandledRejection', rejectionHandler);
+
+    try {
+      // Close without unsubscribing — the session should tear down
+      // cleanly on the server side.
+      ws.close();
+
+      // Trigger commits AFTER close so any late emitter.send() on a
+      // closed socket would either fire (expected: swallowed by the
+      // session's try/catch) or leak as an unhandled rejection.
+      await engine.signal(handle.id, 'release', 'done');
+      await Bun.sleep(50);
+    } finally {
+      process.off('unhandledRejection', rejectionHandler);
+    }
+
+    expect(leakedRejection).toBeNull();
+  });
+
+  it('test g: authenticated principal survives the WS upgrade boundary', async () => {
+    // Regression guard: Bun's `server.upgrade({ data })` stores the
+    // `WebSocketData` object by reference, preserving methods and
+    // identity. If a future change (or Bun version) ever structure-
+    // cloned the upgrade data, an `AuthenticatedPrincipal`'s
+    // `hasScope` method would become undefined after upgrade and
+    // scope-gated operations would fail silently.
+    //
+    // We verify indirectly: configure api-key auth with a default
+    // scope set, upgrade a WS connection with the valid key, and
+    // call `weft.workflows.get` — which requires a principal. If
+    // the principal did not survive the upgrade, dispatch would
+    // reject with an authorization error instead of returning the
+    // workflow.
+    engine = createHoldEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForStatus(engine, handle.id, 'running');
+
+    const apiKey = 'weft_key_valid123456789012345678901';
+    server = serve({
+      engine,
+      port: 0,
+      auth: {
+        apiKeys: [apiKey],
+      },
+    });
+
+    const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
+    const ws = await new Promise<WebSocket>((resolve, reject) => {
+      const socket = new WebSocket(wsUrl, {
+        headers: { authorization: `Bearer ${apiKey}` },
+        // oxlint-disable-next-line typescript/no-explicit-any -- Bun's WebSocket accepts a headers init option not in the lib.dom type.
+      } as any);
+      socket.addEventListener('open', () => resolve(socket));
+      socket.addEventListener('error', (event: Event) => reject(event));
+    });
+
+    const responsePromise = waitForMessage(ws, (parsed: any) => parsed?.id === 1);
+    ws.send(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'weft.workflows.get',
+        params: { workflowId: handle.id },
+      }),
+    );
+
+    const response = (await responsePromise) as any;
+    expect(response.result).toBeDefined();
+    expect(response.result.id).toBe(handle.id);
+
+    ws.close();
   });
 });
