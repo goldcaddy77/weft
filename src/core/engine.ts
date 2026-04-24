@@ -342,6 +342,69 @@ type PendingTimelineEntry = {
   entry: WorkflowTimelineEntry;
 };
 
+/**
+ * Discriminator for `replayWorkflowFeed` / `snapshotWorkflowFeedTail`
+ * / `subscribeWorkflowFeedCommits`. Mirrored by `EventSelector` in
+ * `src/server/workflow-event-feed.ts` so the core engine takes no
+ * dependency on the server package.
+ */
+export type WorkflowFeedSelector = 'events' | 'tokens';
+
+/**
+ * Hard-coded stream key for the `tokens` selector. Matches the
+ * legacy REST SSE endpoint's key so resumption cursors round-trip
+ * across transports.
+ */
+const TOKENS_STREAM_KEY = 'tokens';
+
+/** Record `kind` for every token stream chunk emitted by the feed. */
+const STREAM_CHUNK_KIND = 'stream:chunk';
+
+/**
+ * Build the unified `#workflowFeedListeners` map key. Uses `\0` as
+ * the separator: workflow ID validation (`assertValidWorkflowId`)
+ * rejects control characters, so no legal workflow ID can contain
+ * NUL, and the selector is a fixed two-member union, so no legal
+ * input can collide.
+ */
+function workflowFeedListenerKey(workflowId: string, selector: WorkflowFeedSelector): string {
+  return `${workflowId}\0${selector}`;
+}
+
+/**
+ * A committed workflow-feed record surfaced to subscribers of
+ * `subscribeWorkflowFeedCommits()`. Fires after `storage.batch()`
+ * (events) or `storage.put()` (tokens) resolves, so replay and live
+ * delivery share the same committed sequence authority. The same
+ * shape covers both selectors — consumers filter on `selector`
+ * before interpreting `payload`.
+ *
+ *   - `events` selector: `kind` is the durable log entry type
+ *     (e.g. `'workflow:checkpoint'`). `sequence` / `timestamp` come
+ *     from the `WorkflowLogEntry` written inside the batch.
+ *   - `tokens` selector: `kind` is always `'stream:chunk'`.
+ *     `sequence` is the chunk index; `timestamp` is wall-clock at
+ *     write time.
+ */
+export type WorkflowFeedRecord = {
+  readonly workflowId: string;
+  readonly selector: WorkflowFeedSelector;
+  readonly kind: string;
+  readonly sequence: number;
+  readonly timestamp: number;
+  readonly payload: unknown;
+};
+
+/**
+ * Listener signature for `subscribeWorkflowFeedCommits()`. Returning
+ * `void | Promise<void>` is explicit: an async listener's rejected
+ * promise is caught by the notifier and discarded, exactly like a
+ * sync throw. This is the only correct shape for a notifier called
+ * from a hot path — an escaped unhandled rejection would surface as
+ * a test-runner or Node process-level crash.
+ */
+export type WorkflowFeedListener = (record: WorkflowFeedRecord) => void | Promise<void>;
+
 class SpeculativeExecutionState implements VerificationRecorder {
   readonly #verifications: Array<Promise<{ failed: false } | { failed: true; error: unknown }>>;
   readonly #compensations: Array<() => Promise<void>>;
@@ -1863,6 +1926,26 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * sequence number and hash in memory. Cleared when a workflow is cleaned up.
    */
   #eventLogHeads: Map<string, Readonly<EventHeadRecord>> = new Map();
+  /**
+   * Unified post-commit listener registry keyed by
+   * `${workflowId}\0${selector}`. Populated by
+   * `subscribeWorkflowFeedCommits()` — the production
+   * `WorkflowEventFeedBackend` registers here so that replay and live
+   * emission share the same committed sequence authority.
+   *
+   * Invoked from `#processContextOperation` after `storage.batch()`
+   * resolves (events selector) and from `#writeStreamChunks` after
+   * each `storage.put()` resolves (tokens selector). Listener
+   * exceptions — sync throws and async rejections — are trapped so a
+   * misbehaving subscriber cannot corrupt the checkpoint or stream-
+   * write hot paths.
+   *
+   * NUL (`\0`) is a safe key separator: workflow ID validation
+   * (`assertValidWorkflowId`) rejects control characters, so no
+   * legal workflow ID can contain `\0`, and selectors are a fixed
+   * two-member union.
+   */
+  #workflowFeedListeners: Map<string, Set<WorkflowFeedListener>> = new Map();
   /**
    * In-memory cache of the workflow version tuple for each active workflow.
    * Populated at start/resume time and forwarded to event-log entries so every
@@ -5138,6 +5221,193 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return events;
   }
 
+  /**
+   * Iterate over the workflow's post-commit records for a given
+   * selector whose `sequence` is strictly greater than
+   * `afterSequence`. Yields the unified `WorkflowFeedRecord` shape —
+   * the same shape `subscribeWorkflowFeedCommits()` delivers to live
+   * listeners — so replay and live share one committed sequence
+   * authority. A feed backend can switch between the two paths
+   * without the envelope shape changing.
+   *
+   *   - `selector: 'events'` reads the durable `EventLog` via
+   *     `scan({fromSequence})`. Unlike `getEvents()` (which drops
+   *     sequence and repackages into the shallow `WorkflowEvent`),
+   *     this method preserves sequence so the caller can emit a
+   *     durable cursor.
+   *   - `selector: 'tokens'` reads stored stream chunks for the
+   *     hard-coded `'tokens'` stream key — the key the legacy REST
+   *     SSE endpoint has always written to, so resumption cursors
+   *     round-trip across transports.
+   *
+   * `afterSequence: -1` means "from the beginning" for both paths.
+   */
+  async *replayWorkflowFeed(
+    workflowId: string,
+    selector: WorkflowFeedSelector,
+    afterSequence: number,
+  ): AsyncIterable<WorkflowFeedRecord> {
+    if (selector === 'events') {
+      yield* this.#replayWorkflowEventLog(workflowId, afterSequence);
+      return;
+    }
+    yield* this.#replayWorkflowTokens(workflowId, afterSequence);
+  }
+
+  /**
+   * Snapshot the current tail sequence for the selector. Returns -1
+   * when nothing has been committed yet. Paired with
+   * `subscribeWorkflowFeedCommits()` by feed backends implementing
+   * the atomic-handoff protocol.
+   *
+   * The `events` path reads the in-memory head cache first and falls
+   * back to `EventLog.loadHead()` so a fresh engine instance (post-
+   * restart, before the workflow re-hydrates) still reports the
+   * durable tail correctly.
+   */
+  async snapshotWorkflowFeedTail(
+    workflowId: string,
+    selector: WorkflowFeedSelector,
+  ): Promise<number> {
+    if (selector === 'events') {
+      const head = this.#eventLogHeads.get(workflowId);
+      if (head) return head.sequence;
+      const eventLog = new EventLog(this.#storage, workflowId);
+      const loaded = await eventLog.loadHead();
+      return loaded.sequence;
+    }
+    // `tokens` — scan is O(n) in stored chunks. The legacy stream-
+    // chunk storage model does not persist a tail record, so a full
+    // prefix iteration is unavoidable without a schema change.
+    // Acceptable for now; the typical token stream is short-lived
+    // and reconnect frequency is low.
+    const chunks = await this.getStreamChunks(workflowId, TOKENS_STREAM_KEY);
+    if (chunks.length === 0) return -1;
+    let max = -1;
+    for (const chunk of chunks) {
+      if (chunk.sequence > max) max = chunk.sequence;
+    }
+    return max;
+  }
+
+  /**
+   * Subscribe to post-commit workflow-feed notifications. Listeners
+   * fire only after `storage.batch()` (events) or `storage.put()`
+   * (tokens) has resolved, so every delivered record is durably
+   * present in storage.
+   *
+   * Returns an unsubscribe function. Both sync throws and async
+   * rejections from the listener are trapped so a misbehaving
+   * subscriber cannot derail the commit path. Register and
+   * unregister are safe to call during notification — the notifier
+   * snapshots listener membership before dispatch.
+   *
+   * The unified registry is keyed by `${workflowId}\0${selector}`.
+   * NUL is a safe separator: `assertValidWorkflowId` rejects control
+   * characters (so no legal workflow ID can contain `\0`), and
+   * `selector` is a fixed two-member union.
+   */
+  subscribeWorkflowFeedCommits(
+    workflowId: string,
+    selector: WorkflowFeedSelector,
+    listener: WorkflowFeedListener,
+  ): () => void {
+    const key = workflowFeedListenerKey(workflowId, selector);
+    let bucket = this.#workflowFeedListeners.get(key);
+    if (!bucket) {
+      bucket = new Set();
+      this.#workflowFeedListeners.set(key, bucket);
+    }
+    bucket.add(listener);
+    return () => {
+      const set = this.#workflowFeedListeners.get(key);
+      if (!set) return;
+      set.delete(listener);
+      if (set.size === 0) this.#workflowFeedListeners.delete(key);
+    };
+  }
+
+  async *#replayWorkflowEventLog(
+    workflowId: string,
+    afterSequence: number,
+  ): AsyncIterable<WorkflowFeedRecord> {
+    const eventLog = new EventLog(this.#storage, workflowId);
+    const fromSequence = afterSequence < 0 ? 0 : afterSequence + 1;
+    for await (const entry of eventLog.scan({ fromSequence })) {
+      yield {
+        workflowId,
+        selector: 'events',
+        kind: entry.type,
+        sequence: entry.sequence,
+        timestamp: entry.timestamp,
+        payload: entry.payload,
+      };
+    }
+  }
+
+  async *#replayWorkflowTokens(
+    workflowId: string,
+    afterSequence: number,
+  ): AsyncIterable<WorkflowFeedRecord> {
+    const chunks =
+      afterSequence >= 0
+        ? await this.getStreamChunks(workflowId, TOKENS_STREAM_KEY, {
+            after: afterSequence,
+          })
+        : await this.getStreamChunks(workflowId, TOKENS_STREAM_KEY);
+    // Stream chunks carry no persisted timestamp — the replay path
+    // stamps the wallclock at iteration time so consumers always see
+    // a populated `timestamp`. Live chunks stamp the same way at
+    // commit time for symmetry.
+    const timestamp = Date.now();
+    for (const chunk of chunks) {
+      yield {
+        workflowId,
+        selector: 'tokens',
+        kind: STREAM_CHUNK_KIND,
+        sequence: chunk.sequence,
+        timestamp,
+        payload: chunk.value,
+      };
+    }
+  }
+
+  /**
+   * Dispatch a committed record to every listener registered for
+   * `(workflowId, selector)`. Called at the two `appendToBatch`
+   * commit sites (events) and after each stream chunk put (tokens).
+   *
+   * **Iteration snapshot.** Listener membership is snapshotted before
+   * dispatch. A listener's callback can synchronously register or
+   * unregister other listeners; those changes take effect on the
+   * next notify, not the current one. This preserves the "future
+   * commits only" contract of `subscribe`.
+   *
+   * **Error isolation.** Both sync throws and async rejections are
+   * swallowed so the commit path stays resilient.
+   */
+  #notifyWorkflowFeedCommit(
+    workflowId: string,
+    selector: WorkflowFeedSelector,
+    record: WorkflowFeedRecord,
+  ): void {
+    const bucket = this.#workflowFeedListeners.get(workflowFeedListenerKey(workflowId, selector));
+    if (!bucket || bucket.size === 0) return;
+    const listeners = [...bucket];
+    for (const listener of listeners) {
+      try {
+        const result = listener(record);
+        if (result && typeof result.then === 'function') {
+          // Async listener: its promise may reject after the sync
+          // return. Catch so the rejection does not surface as a
+          // Node-level unhandled-rejection event.
+          void result.catch(() => {});
+        }
+      } catch {
+        // Sync throw from the listener must not corrupt the commit path.
+      }
+    }
+  }
   // -------------------------------------------------------------------------
   // Public: checkpoint history (time-travel debugging)
   // -------------------------------------------------------------------------
@@ -5468,6 +5738,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#eventLogHeads.clear();
     this.#pendingTimelineEntries.clear();
     this.#workflowVersionTuples.clear();
+    this.#workflowFeedListeners.clear();
     this.#broadcastChannel?.close();
     this.#broadcastChannel = null;
   }
@@ -5581,7 +5852,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // Co-write event log entry in the same batch so checkpoint and log never diverge.
       // appendToBatch() is synchronous — no storage reads, no extra await.
       const eventLog = new EventLog(this.#storage, workflowId);
-      const newHead = eventLog.appendToBatch(
+      const { newHead, timestamp } = eventLog.appendToBatch(
         { type: 'workflow:checkpoint', payload: { step: advanced.step } },
         operations,
         this.#eventLogHeads.get(workflowId) ?? EMPTY_EVENT_HEAD,
@@ -5592,6 +5863,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#pendingTimelineEntries.set(workflowId, nextPendingTimelineEntry);
       this.#checkpoints.set(workflowId, advanced);
       this.#eventLogHeads.set(workflowId, newHead);
+      this.#notifyWorkflowFeedCommit(workflowId, 'events', {
+        workflowId,
+        selector: 'events',
+        kind: 'workflow:checkpoint',
+        sequence: newHead.sequence,
+        timestamp,
+        payload: { step: advanced.step },
+      });
       // Fire-and-forget: pruning is idempotent and non-critical, so deferring
       // it avoids blocking the checkpoint persist path.
       void this.#swallowPromiseRejection(this.#pruneCheckpointHistory(workflowId, advanced.step));
@@ -5634,7 +5913,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // Co-write event log entry in the same batch so checkpoint and log never diverge.
       // appendToBatch() is synchronous — no storage reads, no extra await.
       const eventLog = new EventLog(this.#storage, workflowId);
-      const newHead = eventLog.appendToBatch(
+      const { newHead, timestamp } = eventLog.appendToBatch(
         { type: 'workflow:checkpoint', payload: { step: checkpoint.step } },
         operations,
         this.#eventLogHeads.get(workflowId) ?? EMPTY_EVENT_HEAD,
@@ -5645,6 +5924,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#pendingTimelineEntries.set(workflowId, nextPendingTimelineEntry);
       this.#checkpoints.set(workflowId, checkpoint);
       this.#eventLogHeads.set(workflowId, newHead);
+      this.#notifyWorkflowFeedCommit(workflowId, 'events', {
+        workflowId,
+        selector: 'events',
+        kind: 'workflow:checkpoint',
+        sequence: newHead.sequence,
+        timestamp,
+        payload: { step: checkpoint.step },
+      });
       void this.#swallowPromiseRejection(this.#pruneCheckpointHistory(workflowId, checkpoint.step));
     }
   }
@@ -6615,11 +6902,35 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     for await (const chunk of asyncGenerator) {
       const encoded = encode(chunk);
-      const chunkKey = KEYS.streamChunk(workflowId, operation.key, chunkCount);
+      const sequence = chunkCount;
+      const chunkKey = KEYS.streamChunk(workflowId, operation.key, sequence);
       await this.#storage.put(chunkKey, encoded);
       writtenKeys.push(chunkKey);
       totalSizeBytes += encoded.byteLength;
       chunkCount++;
+      // Use wallclock `Date.now()` rather than the engine's `getNow`
+      // hook: stream chunks carry no durable timestamp, and perturbing
+      // the injected clock that tests use to assert timeline durations
+      // would silently affect unrelated test expectations.
+      // Only the `tokens` stream key is surfaced through the feed
+      // backend's `tokens` selector. Other stream keys are internal
+      // to the workflow (e.g., agent-specific chunk buffers) and
+      // don't have a feed mount, so firing notifications for them
+      // would just burn CPU walking empty listener buckets.
+      if (operation.key === TOKENS_STREAM_KEY) {
+        this.#notifyWorkflowFeedCommit(workflowId, 'tokens', {
+          workflowId,
+          selector: 'tokens',
+          kind: STREAM_CHUNK_KIND,
+          sequence,
+          // Stream chunks carry no durable timestamp. `Date.now()`
+          // rather than `this.#options.getNow()` avoids perturbing
+          // the injected clock that tests use to assert timeline
+          // durations.
+          timestamp: Date.now(),
+          payload: chunk,
+        });
+      }
     }
 
     return { chunkCount, totalSizeBytes };
@@ -7879,6 +8190,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#pendingTimelineEntries.delete(workflowId);
     this.#parkedInlineWorkflows.delete(workflowId);
     this.#workflowVersionTuples.delete(workflowId);
+    // Drop any remaining feed-listener buckets for this workflow.
+    // Transports normally unsubscribe when their subscription ends,
+    // but a crashed or leaked connection would otherwise retain its
+    // closure for the engine's lifetime. Per-workflow cleanup here
+    // matches the other maps above and prevents unbounded growth.
+    this.#workflowFeedListeners.delete(workflowFeedListenerKey(workflowId, 'events'));
+    this.#workflowFeedListeners.delete(workflowFeedListenerKey(workflowId, 'tokens'));
     this.#cleanupWaiters(workflowId);
 
     // Release the workflow's agent operation dedup entries via the reverse

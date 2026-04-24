@@ -27,8 +27,36 @@
 
 import type { WeftEventMap } from '../core/events.ts';
 
-/** Any key of the `WeftEventMap` interface — the canonical event-kind string. */
-type WeftEventKind = keyof WeftEventMap;
+/**
+ * Discriminator string carried on every envelope. The union covers:
+ *
+ *   - Dispatched `WeftEventMap` event names (`workflow:started`,
+ *     `activity:completed`, `agent:token`, …) — emitted when a
+ *     future log entry type corresponds to a runtime `Event`.
+ *   - Durable log entry types not in `WeftEventMap`
+ *     (`workflow:checkpoint` — the only one today; add others here
+ *     as new log kinds land).
+ *   - Selector-scoped synthetic kinds (`stream:chunk`) for records
+ *     that are not dispatched `Event` objects at all.
+ *   - An open `(string & {})` tail so third-party event kinds don't
+ *     fail typechecking at the envelope construction site while
+ *     IntelliSense still suggests the known literals.
+ *
+ * Cross-transport consumers match on `selector` first, then on
+ * `kind` within that selector. This union is extensible and preserves
+ * completion for known kinds, but the open-string tail means it does
+ * not by itself reject arbitrary or misspelled string literals.
+ */
+export type FeedEventKind =
+  | keyof WeftEventMap
+  | 'workflow:checkpoint'
+  | 'stream:chunk'
+  // The `& {}` trick preserves literal autocompletion while keeping
+  // the union open — without it, TypeScript widens `FeedEventKind`
+  // to `string` in most contexts and the literals disappear from
+  // completion lists.
+  // oxlint-disable-next-line typescript/no-restricted-types
+  | (string & {});
 
 // ---------------------------------------------------------------------------
 // Cursor (opaque)
@@ -79,7 +107,7 @@ export type EventSelector = 'events' | 'tokens';
  * caller code via discriminated-union typing.
  */
 export type EventEnvelope = {
-  readonly kind: WeftEventKind;
+  readonly kind: FeedEventKind;
   readonly workflowId: string;
   readonly selector: EventSelector;
   readonly sequence: number;
