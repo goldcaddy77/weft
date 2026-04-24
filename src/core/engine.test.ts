@@ -678,6 +678,27 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('handle.result() can be first called after the workflow already completed', async () => {
+    const engine = new Engine();
+    engine.register('completed-before-result', async function* () {
+      return 'late-result';
+    });
+
+    const handle = await engine.start('completed-before-result', null, { id: 'late-result-id' });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const state = await engine.get(handle.id);
+      if (state?.status === 'completed') {
+        break;
+      }
+
+      await flush();
+    }
+
+    await expect(handle.result()).resolves.toBe('late-result');
+    engine[Symbol.dispose]();
+  });
+
   it('getHandle() for a non-existent workflow throws', async () => {
     const engine = new Engine();
 
