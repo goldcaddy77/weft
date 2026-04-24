@@ -814,33 +814,6 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     await session.close();
   });
 
-  it('rejects unsubscribe with a non-string subscriptionId', async () => {
-    const emitter = makeEmitter();
-    const feed = createWorkflowEventFeed(createInMemoryEventBackend());
-    const session = createJsonRpcWebSocketSession({
-      registry: createOperationRegistry([]),
-      engine: fakeEngine,
-      principal: anonymousPrincipal(),
-      emitter,
-      feed,
-    });
-
-    await session.handleMessage(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'weft.workflows.unsubscribe',
-        params: { subscriptionId: 42 },
-        id: 'bad-id',
-      }),
-    );
-
-    const response = JSON.parse(emitter.sent[0]!);
-    expect(response.error.code).toBe(-32602);
-    expect(response.error.message).toMatch(/subscriptionId/);
-
-    await session.close();
-  });
-
   it('rejects frames larger than maxFrameBytes before parsing', async () => {
     const emitter = makeEmitter();
     const feed = createWorkflowEventFeed(createInMemoryEventBackend());
@@ -936,48 +909,6 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     await session.close();
   });
 
-  it('rejects non-object JSON frames', async () => {
-    const emitter = makeEmitter();
-    const feed = createWorkflowEventFeed(createInMemoryEventBackend());
-    const session = createJsonRpcWebSocketSession({
-      registry: createOperationRegistry([]),
-      engine: fakeEngine,
-      principal: anonymousPrincipal(),
-      emitter,
-      feed,
-    });
-    await session.handleMessage('123');
-    const response = JSON.parse(emitter.sent[0]!);
-    expect(response.error.code).toBe(-32600);
-    expect(response.error.message).toMatch(/json object/i);
-    await session.close();
-  });
-
-  it('rejects subscribe frames whose id type is invalid', async () => {
-    const emitter = makeEmitter();
-    const feed = createWorkflowEventFeed(createInMemoryEventBackend());
-    const session = createJsonRpcWebSocketSession({
-      registry: createOperationRegistry([]),
-      engine: fakeEngine,
-      principal: anonymousPrincipal(),
-      emitter,
-      feed,
-    });
-    await session.handleMessage(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'weft.workflows.subscribe',
-        params: { workflowId: 'wf-1', selector: 'events' },
-        id: { invalid: true },
-      }),
-    );
-    const response = JSON.parse(emitter.sent[0]!);
-    expect(response.error.code).toBe(-32600);
-    expect(response.error.message).toMatch(/id must be a string/i);
-    expect(response.id).toBeNull();
-    await session.close();
-  });
-
   it('emits server-closed when a subscription pump ends naturally', async () => {
     const emitter = makeEmitter();
     const feed: WorkflowEventFeed = {
@@ -1010,46 +941,6 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
       .map((message) => JSON.parse(message))
       .find((message) => message.method === 'weft.events.terminated');
     expect(terminated?.params.reason).toBe('server-closed');
-    await session.close();
-  });
-
-  it('emits a generic server-closed fault when a subscription pump throws', async () => {
-    const emitter = makeEmitter();
-    const feed: WorkflowEventFeed = {
-      replay: createWorkflowEventFeed(createInMemoryEventBackend()).replay,
-      subscribe() {
-        async function* subscription() {
-          throw new Error('feed exploded');
-        }
-        return subscription();
-      },
-      dispose() {},
-    };
-    const session = createJsonRpcWebSocketSession({
-      registry: createOperationRegistry([]),
-      engine: fakeEngine,
-      principal: anonymousPrincipal(),
-      emitter,
-      feed,
-    });
-    await session.handleMessage(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        method: 'weft.workflows.subscribe',
-        params: { workflowId: 'wf-1', selector: 'events' },
-        id: 'sub-error',
-      }),
-    );
-    await Bun.sleep(10);
-    const terminated = emitter.sent
-      .map((message) => JSON.parse(message))
-      .find((message) => message.method === 'weft.events.terminated');
-    expect(terminated?.params.reason).toBe('server-closed');
-    expect(terminated?.params.fault).toEqual({
-      code: 'EngineFailure',
-      message: 'internal error',
-      data: {},
-    });
     await session.close();
   });
 

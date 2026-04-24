@@ -109,8 +109,9 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // Defensive fallback for a route/executor mismatch. The static route model
       // keeps this unreachable in normal builds, so Bun coverage cannot drive it.
       functions: 1,
-      // Bun also leaves the closing line of the malformed-route catch branch
-      // uncovered even when the branch's observable behavior is tested.
+      // Bun also leaves the rethrow line in the malformed-route catch block
+      // uncovered. The only repository-controlled error there is the handled
+      // `MalformedRouteParameterError`; the rethrow is defensive-only.
       lines: new Set([890, 2011, 2176]),
     },
   ],
