@@ -7,7 +7,7 @@ import { defineAgent } from '../ai/declaration.ts';
 import { AgentBudgetExceededEvent, AgentBudgetWarningEvent } from '../ai/events.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
-import type { Storage as WeftStorage } from '../storage/interface.ts';
+import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
@@ -297,6 +297,60 @@ describe('Engine', () => {
     const result = await handle.result();
 
     expect(result).toBe('received: hello-signal');
+    engine[Symbol.dispose]();
+  });
+
+  it('does not park a workflow after cancel wins during the pre-park signal scan', async () => {
+    const workflowId = 'parked-pre-park-cancel-race-id';
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const bufferedSignalScanStarted = Promise.withResolvers<void>();
+    const bufferedSignalScanReleased = Promise.withResolvers<void>();
+    const originalScan = storage.scan.bind(storage);
+    const signalPrefix = `sig:${workflowId}:go:`;
+    let holdNextBufferedSignalScan = true;
+
+    storage.scan = async function* (
+      prefix: string,
+      options?: ScanOptions,
+    ): AsyncIterable<[string, Uint8Array]> {
+      if (holdNextBufferedSignalScan && prefix === signalPrefix) {
+        holdNextBufferedSignalScan = false;
+        bufferedSignalScanStarted.resolve();
+        await bufferedSignalScanReleased.promise;
+      }
+
+      yield* originalScan(prefix, options);
+    };
+
+    engine.register('parked-pre-park-cancel-race', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('go');
+      return 'should-not-park';
+    });
+
+    const handle = await engine.start('parked-pre-park-cancel-race', null, { id: workflowId });
+    const resultPromise = handle.result().then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+
+    await bufferedSignalScanStarted.promise;
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+
+    await engine.cancel(workflowId);
+    bufferedSignalScanReleased.resolve();
+    await flush();
+
+    const result = await resultPromise;
+    const workflowState = await engine.get(workflowId);
+    expect(result.status).toBe('rejected');
+    expect(
+      result.status === 'rejected' && result.error instanceof Error
+        ? result.error.message
+        : String(result.status === 'rejected' ? result.error : ''),
+    ).toBe('Workflow cancelled');
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(workflowState?.status).toBe('cancelled');
     engine[Symbol.dispose]();
   });
 

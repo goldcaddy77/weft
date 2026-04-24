@@ -5779,7 +5779,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return false;
     }
 
-    const context = this.#inlineStrategy.getContext(workflowId);
+    const inlineStrategy = this.#inlineStrategy;
+    const context = inlineStrategy.getContext(workflowId);
     if (context?.hasUpdateHandlers || context?.hasExposedAccessors) {
       return false;
     }
@@ -5788,8 +5789,24 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return false;
     }
 
-    this.#inlineStrategy.parkWorkflow(workflowId);
-    this.#parkedInlineWorkflows.add(workflowId);
+    // Publish the parked marker in the same serialized section that terminal
+    // state writes use so cancel/timeout cannot clean up before the add lands.
+    const publishedParkedMarker = await this.#runSerializedWorkflowStateWrite(
+      workflowId,
+      async () => {
+        const latestState = await this.#loadWorkflowState(workflowId);
+        if (!latestState || latestState.status !== 'running') {
+          return false;
+        }
+
+        inlineStrategy.parkWorkflow(workflowId);
+        this.#parkedInlineWorkflows.add(workflowId);
+        return true;
+      },
+    );
+    if (!publishedParkedMarker) {
+      return false;
+    }
 
     // Close the race where a signal arrives after the pre-park scan above but
     // before the workflow becomes visibly parked. Once the parked marker is
