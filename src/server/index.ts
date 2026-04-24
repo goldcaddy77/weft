@@ -33,7 +33,8 @@ import { WorkerRegistry } from '../worker/registry.ts';
 import type { AuthConfig, AuthContext, Authenticator } from './authentication.ts';
 import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './authentication.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
-import { handleRequest } from './handler.ts';
+import { authContextToPrincipal, handleRequest } from './handler.ts';
+import { handleJsonRpcHttpRequest } from './json-rpc-http.ts';
 import { REST_BINDINGS, createLiveOperationRegistry } from './rest-bindings.ts';
 import {
   claimNextSequence,
@@ -1102,6 +1103,44 @@ export function serve(options: ServeOptions): WeftServer {
       const taskResultResponse = await handleTaskResultRequest(request, url);
       if (taskResultResponse !== null) {
         return taskResultResponse;
+      }
+
+      // JSON-RPC HTTP endpoint. Claimed here so `handleRequest` doesn't
+      // see `/jsonrpc` and return 404 from its REST route table. The
+      // adapter enforces method (POST only) and content-type internally.
+      //
+      // Wrap `authContextToPrincipal` + the adapter call in a try/catch so
+      // that an authenticator-contract violation (e.g., `{method: 'jwt',
+      // claims: undefined}` reaching the pipeline) maps to a 500 JSON-RPC
+      // error envelope instead of escaping as an uncaught exception.
+      // `handleRequest`'s REST path already does this via its own inner
+      // try/catch; `/jsonrpc` has no such boundary without this wrapping.
+      if (url.pathname === '/jsonrpc') {
+        try {
+          return await handleJsonRpcHttpRequest(request, {
+            registry: liveOperationRegistry,
+            engine: options.engine,
+            principal: authContextToPrincipal(authentication.authContext),
+          });
+        } catch (error) {
+          console.error('Unhandled error in /jsonrpc', { error });
+          // -32603 (InternalError) is the JSON-RPC 2.0 spec code for a
+          // generic internal error. This catch-all covers
+          // authenticator-contract violations and any other unexpected
+          // throw from the adapter — not specifically engine failures,
+          // so -32099 (EngineFailure) would mislabel the cause.
+          return new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              error: { code: -32603, message: 'Internal error' },
+              id: null,
+            }),
+            {
+              status: 500,
+              headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+            },
+          );
+        }
       }
 
       // API routes via existing platform-agnostic handler. Under
