@@ -202,27 +202,32 @@ describe('serve() — WebSocket /jsonrpc', () => {
     const unsubscribeResponse = (await unsubscribeResponsePromise) as any;
     expect(unsubscribeResponse.result).toBeDefined();
 
-    let deliveredAfterUnsubscribe = false;
-    ws.addEventListener('message', (event: MessageEvent) => {
-      let parsed: any;
-      try {
-        parsed = JSON.parse(String(event.data));
-      } catch {
-        return;
-      }
-
-      if (
+    // Wait for `weft.events.deliver` to arrive AND expect it to
+    // time out. This is stronger than `Bun.sleep + boolean check`:
+    // a timing regression where deliveries lag would previously
+    // pass the sleep-based assertion vacuously; here the test only
+    // passes if the promise explicitly times out.
+    const deliverPromise = waitForMessage(
+      ws,
+      (parsed: any) =>
         parsed?.method === 'weft.events.deliver' &&
-        parsed?.params?.subscriptionId === subscriptionId
-      ) {
-        deliveredAfterUnsubscribe = true;
-      }
-    });
+        parsed?.params?.subscriptionId === subscriptionId,
+      200,
+    );
 
     await engine.signal(handle.id, 'release', 'done');
-    await Bun.sleep(100);
 
-    expect(deliveredAfterUnsubscribe).toBe(false);
+    let timedOut = false;
+    try {
+      await deliverPromise;
+    } catch (error) {
+      if (error instanceof Error && /timed out/i.test(error.message)) {
+        timedOut = true;
+      } else {
+        throw error;
+      }
+    }
+    expect(timedOut).toBe(true);
 
     // Close the socket and guard against silently-swallowed errors
     // from `session.close()` — the close handler fires it fire-and-
@@ -235,6 +240,10 @@ describe('serve() — WebSocket /jsonrpc', () => {
     process.on('unhandledRejection', rejectionHandler);
     try {
       ws.close();
+      // Give Bun's close handler a turn so session.close() actually
+      // runs. This short sleep is a cross-handler handoff, not a
+      // correctness assertion — the test's real assertion is on
+      // `leakedRejection`.
       await Bun.sleep(50);
     } finally {
       process.off('unhandledRejection', rejectionHandler);
@@ -267,7 +276,7 @@ describe('serve() — WebSocket /jsonrpc', () => {
     expect(body.result?.id).toBe(handle.id);
   });
 
-  it('test e: auth failure before upgrade returns 401 and does not attempt WS upgrade', async () => {
+  it('test e: auth failure before upgrade returns 401 on the upgrade request itself', async () => {
     engine = createHoldEngine();
     server = serve({
       engine,
@@ -277,19 +286,27 @@ describe('serve() — WebSocket /jsonrpc', () => {
       },
     });
 
-    const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-    const ws = new WebSocket(wsUrl);
-
-    const errorOrClose = await new Promise<{ type: string; code?: number }>((resolve) => {
-      ws.addEventListener('error', () => resolve({ type: 'error' }));
-      ws.addEventListener('close', (event: CloseEvent) =>
-        resolve({ type: 'close', code: event.code }),
-      );
+    // Send the WS upgrade as a plain HTTP request (with the
+    // `Upgrade: websocket` handshake headers) and assert the server
+    // returns 401. This is stronger than opening a `new WebSocket`
+    // and matching `/error|close/` — that pattern is trivially
+    // satisfied by any abnormal termination including, say, the
+    // browser rejecting a self-signed cert. Here the 401 comes
+    // directly from the auth gate BEFORE `handleWebSocketUpgrade`
+    // is even called, so the test verifies what it claims to.
+    const upgradeResponse = await fetch(`${server.url}/jsonrpc`, {
+      method: 'GET',
+      headers: {
+        upgrade: 'websocket',
+        connection: 'Upgrade',
+        'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+        'sec-websocket-version': '13',
+      },
     });
+    expect(upgradeResponse.status).toBe(401);
 
-    expect(errorOrClose.type).toMatch(/error|close/);
-
-    const response = await fetch(`${server.url}/jsonrpc`, {
+    // Sanity: plain POST also rejected without the auth header.
+    const postResponse = await fetch(`${server.url}/jsonrpc`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -299,7 +316,7 @@ describe('serve() — WebSocket /jsonrpc', () => {
         params: {},
       }),
     });
-    expect(response.status).toBe(401);
+    expect(postResponse.status).toBe(401);
   });
 
   it('test f: close without explicit unsubscribe tears down without unhandled rejections', async () => {
@@ -347,7 +364,16 @@ describe('serve() — WebSocket /jsonrpc', () => {
       // closed socket would either fire (expected: swallowed by the
       // session's try/catch) or leak as an unhandled rejection.
       await engine.signal(handle.id, 'release', 'done');
-      await Bun.sleep(50);
+
+      // Wait for the workflow to actually reach a terminal state
+      // (proving the commit path ran to completion) so the assertion
+      // below is not racing with a still-in-flight commit.
+      await waitForStatus(engine, handle.id, 'completed');
+
+      // One final microtask flush so any promise rejections queued
+      // by the emitter.send() → close() sequence have a turn.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
     } finally {
       process.off('unhandledRejection', rejectionHandler);
     }
@@ -407,5 +433,129 @@ describe('serve() — WebSocket /jsonrpc', () => {
     expect(response.result.id).toBe(handle.id);
 
     ws.close();
+  });
+
+  it('test h: two concurrent clients share the feed; unsubscribing one does not starve the other', async () => {
+    // The shared `WorkflowEventFeed` at `serve()` scope is a real
+    // multiplexer: two clients subscribed to the same workflow each
+    // register their own engine listener. This test proves that
+    // closing one subscription does not drop deliveries for the
+    // other — a regression that would be invisible in any of the
+    // single-client tests above.
+    engine = createHoldEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForStatus(engine, handle.id, 'running');
+
+    server = serve({ engine, port: 0 });
+    const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
+
+    const [wsA, wsB] = await Promise.all([openWebSocket(wsUrl), openWebSocket(wsUrl)]);
+
+    async function subscribeAndAwaitId(ws: WebSocket, correlationId: number): Promise<string> {
+      const responsePromise = waitForMessage(
+        ws,
+        (parsed: any) => parsed?.id === correlationId && parsed?.result?.subscriptionId,
+      );
+      ws.send(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: correlationId,
+          method: 'weft.workflows.subscribe',
+          params: { workflowId: handle.id, selector: 'events' },
+        }),
+      );
+      const response = (await responsePromise) as any;
+      return response.result.subscriptionId as string;
+    }
+
+    const [subscriptionA, subscriptionB] = await Promise.all([
+      subscribeAndAwaitId(wsA, 10),
+      subscribeAndAwaitId(wsB, 20),
+    ]);
+
+    // Close A — B must keep receiving deliveries.
+    wsA.close();
+    await Bun.sleep(20);
+
+    const deliverBPromise = waitForMessage(
+      wsB,
+      (parsed: any) =>
+        parsed?.method === 'weft.events.deliver' &&
+        parsed?.params?.subscriptionId === subscriptionB,
+      1_000,
+    );
+
+    await engine.signal(handle.id, 'release', 'done');
+
+    const delivered = (await deliverBPromise) as any;
+    expect(delivered.params.subscriptionId).toBe(subscriptionB);
+    expect(delivered.params.envelope.workflowId).toBe(handle.id);
+    // Subscription IDs are session-scoped, so `subscriptionA` and
+    // `subscriptionB` may share a textual form across different
+    // sessions. The meaningful assertion is that wsB receives the
+    // delivery keyed by its OWN session's id after wsA has closed —
+    // if the feed's per-workflow listener set had been corrupted by
+    // A's unsubscribe, B would never see this delivery.
+    void subscriptionA;
+
+    wsB.close();
+  });
+
+  it('test i: server.stop with an active subscription drains sessions cleanly', async () => {
+    // Shutdown-ordering regression guard. The shared
+    // `WorkflowEventFeed` is registered in the AsyncDisposableStack
+    // after the active-session close hook, so disposal runs:
+    //   1. close every active /jsonrpc session (await)
+    //   2. feed.dispose()
+    //   3. broadcastingHandle.dispose()
+    //   4. server.stop(true)
+    //
+    // Without step 1, the feed would dispose while subscription
+    // pumps were mid-drain, producing noisy post-dispose callbacks.
+    engine = createHoldEngine();
+    const handle = await engine.start('hold', {}, {});
+    await waitForStatus(engine, handle.id, 'running');
+
+    server = serve({ engine, port: 0 });
+    const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
+    const ws = await openWebSocket(wsUrl);
+
+    const subscribeResponsePromise = waitForMessage(
+      ws,
+      (parsed: any) => parsed?.id === 1 && parsed?.result?.subscriptionId,
+    );
+    ws.send(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: handle.id, selector: 'events' },
+      }),
+    );
+    await subscribeResponsePromise;
+
+    let leakedRejection: unknown = null;
+    const rejectionHandler = (reason: unknown) => {
+      leakedRejection = reason;
+    };
+    process.on('unhandledRejection', rejectionHandler);
+
+    try {
+      // Stop the server WITHOUT closing the client WS first. This
+      // exercises the active-session-close defer: the stack must
+      // await every session's close before the feed disposes.
+      await server.stop();
+      // Mark the afterEach cleanup as already done.
+      server = undefined;
+
+      // Flush microtasks so any late rejections land before the
+      // assertion below.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', rejectionHandler);
+    }
+
+    expect(leakedRejection).toBeNull();
   });
 });
