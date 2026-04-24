@@ -417,6 +417,74 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('does not let a queued parked resume continue after cancel starts', async () => {
+    const workflowId = 'parked-resume-termination-race-id';
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    let resumedAfterCancellationStarted = false;
+    const serializedResumeStateReadStarted = Promise.withResolvers<void>();
+    const serializedResumeStateReadReleased = Promise.withResolvers<void>();
+    const originalGet = storage.get.bind(storage);
+    let holdSerializedResumeStateRead = false;
+    let workflowStateReadsAfterSignal = 0;
+
+    storage.get = async (key: string): Promise<Uint8Array | null> => {
+      if (holdSerializedResumeStateRead && key === KEYS.workflow(workflowId)) {
+        workflowStateReadsAfterSignal += 1;
+        if (workflowStateReadsAfterSignal === 2) {
+          serializedResumeStateReadStarted.resolve();
+          await serializedResumeStateReadReleased.promise;
+        }
+      }
+
+      return await originalGet(key);
+    };
+
+    engine.register('parked-resume-termination-race', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('go');
+      resumedAfterCancellationStarted = true;
+      yield* (ctx as Context).waitForSignal('never');
+      return 'should-not-complete';
+    });
+
+    const handle = await engine.start('parked-resume-termination-race', null, { id: workflowId });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+
+    holdSerializedResumeStateRead = true;
+    await engine.signal(workflowId, 'go', 'resume-now');
+    await serializedResumeStateReadStarted.promise;
+
+    const cancelPromise = engine.cancel(workflowId);
+    serializedResumeStateReadReleased.resolve();
+    await cancelPromise;
+    await flush();
+
+    const result = await handle.result().then(
+      () => ({ status: 'resolved' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    );
+    const workflowState = await engine.get(workflowId);
+    expect(result.status).toBe('rejected');
+    expect(
+      result.status === 'rejected' && result.error instanceof Error
+        ? result.error.message
+        : String(result.status === 'rejected' ? result.error : ''),
+    ).toBe('Workflow cancelled');
+    expect(resumedAfterCancellationStarted).toBe(false);
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(workflowState?.status).toBe('cancelled');
+    engine[Symbol.dispose]();
+  });
+
   it('list() returns workflows', async () => {
     const engine = new Engine();
     engine.register('listable', async function* () {

@@ -1850,6 +1850,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   >;
   #workflowReviewIds: Map<string, Set<string>>;
   #parkedInlineWorkflows: Set<string>;
+  #terminalizingWorkflows: Set<string>;
   /** Timer IDs scheduled for each review (escalation + timeout), keyed by reviewId. */
   #reviewTimerIds: Map<string, string[]>;
   #pendingWebhooks: Set<AbortController>;
@@ -1942,6 +1943,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#reviewEscalationHandlers = new Map();
     this.#workflowReviewIds = new Map();
     this.#parkedInlineWorkflows = new Set();
+    this.#terminalizingWorkflows = new Set();
     this.#reviewTimerIds = new Map();
     this.#pendingWebhooks = new Set();
     this.#pendingTimelineEntries = new Map();
@@ -4773,7 +4775,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const handle = this.getHandle(workflowId);
     await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
+      if (this.#terminalizingWorkflows.has(workflowId)) {
+        throw new Error(`Cannot resume workflow "${workflowId}": termination is in progress`);
+      }
+
       const latestState = await this.#loadWorkflowState(workflowId);
+      if (this.#terminalizingWorkflows.has(workflowId)) {
+        throw new Error(`Cannot resume workflow "${workflowId}": termination is in progress`);
+      }
+
       if (!latestState) {
         throw new Error(`Workflow "${workflowId}" not found in storage`);
       }
@@ -4906,73 +4916,80 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
+    this.#terminalizingWorkflows.add(workflowId);
     this.#strategy.cancelWorkflow(workflowId);
-    const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-    const attributes = attributeBytes
-      ? (decode(attributeBytes) as Record<string, SearchAttributeValue>)
-      : {};
-    const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(attributes);
-    const terminationMessage = status === 'timed-out' ? 'Workflow timed out' : 'Workflow cancelled';
-    const terminationResult = await this.#updateWorkflowState(
-      workflowId,
-      { status },
-      {
-        allowedStatuses: ['running', 'pending'],
-        releaseTenantQuota: true,
-        buildAdditionalOperations: (_previousState, updatedAt) => {
-          this.#finalizePendingTimelineEntry(workflowId, status, terminationMessage, updatedAt);
-          const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
-          return pendingTimelineOperation ? [pendingTimelineOperation] : [];
-        },
-      },
-    );
-    if (!terminationResult) {
-      return;
-    }
-
-    const { previousState, updatedAt } = terminationResult;
-    const elapsed = updatedAt - getWorkflowExecutionStartedAt(previousState);
-    await this.#cleanupAttributeIndex(workflowId, attributes);
-    await this.#writeRetainedTerminalSearchAttributes(workflowId, retainedAttributes);
-    void this.#swallowPromiseRejection(
-      this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
-    );
-    if (previousState.status === 'pending') {
-      void this.#swallowPromiseRejection(
-        this.#scheduler.cancel(`delayed-start:${workflowId}`, workflowId),
-      );
-    }
-
-    const resolver = this.#resultResolvers.get(workflowId);
-    const terminalError =
-      status === 'timed-out'
-        ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
-        : new Error('Workflow cancelled');
 
     try {
-      // Drop in-memory state, release charged operations, and delete durable
-      // workflow-keyed records (reviews, offload, blob, shared, signal).
-      // Cancelled/timed-out workflows have no consumers waiting on output
-      // artifacts, so drop them alongside the internal bookkeeping.
-      await this.#cleanupTerminalWorkflow(workflowId, true);
+      const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+      const attributes = attributeBytes
+        ? (decode(attributeBytes) as Record<string, SearchAttributeValue>)
+        : {};
+      const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(attributes);
+      const terminationMessage =
+        status === 'timed-out' ? 'Workflow timed out' : 'Workflow cancelled';
+      const terminationResult = await this.#updateWorkflowState(
+        workflowId,
+        { status },
+        {
+          allowedStatuses: ['running', 'pending'],
+          releaseTenantQuota: true,
+          buildAdditionalOperations: (_previousState, updatedAt) => {
+            this.#finalizePendingTimelineEntry(workflowId, status, terminationMessage, updatedAt);
+            const pendingTimelineOperation = this.#buildPendingTimelineOperation(workflowId);
+            return pendingTimelineOperation ? [pendingTimelineOperation] : [];
+          },
+        },
+      );
+      if (!terminationResult) {
+        return;
+      }
 
-      const event =
+      const { previousState, updatedAt } = terminationResult;
+      const elapsed = updatedAt - getWorkflowExecutionStartedAt(previousState);
+      await this.#cleanupAttributeIndex(workflowId, attributes);
+      await this.#writeRetainedTerminalSearchAttributes(workflowId, retainedAttributes);
+      void this.#swallowPromiseRejection(
+        this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
+      );
+      if (previousState.status === 'pending') {
+        void this.#swallowPromiseRejection(
+          this.#scheduler.cancel(`delayed-start:${workflowId}`, workflowId),
+        );
+      }
+
+      const resolver = this.#resultResolvers.get(workflowId);
+      const terminalError =
         status === 'timed-out'
-          ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed)
-          : new WorkflowCancelledEvent(workflowId);
-      this.dispatchEvent(event);
-      this.#forwardEventToHandle(workflowId, event);
+          ? new WorkflowTimeoutError(workflowId, 'execution', elapsed)
+          : new Error('Workflow cancelled');
 
-      if (resolver) resolver.reject(terminalError);
-      // Scheduled queue handoff is best-effort cleanup and must not block
-      // terminal delivery or handle settlement.
-      void this.#finalizeScheduledWorkflowTerminal(workflowId);
-    } catch (cleanupError) {
-      // Settle the resolver so handle.result() callers are not stranded.
-      if (resolver) resolver.reject(terminalError);
-      throw cleanupError;
+      try {
+        // Drop in-memory state, release charged operations, and delete durable
+        // workflow-keyed records (reviews, offload, blob, shared, signal).
+        // Cancelled/timed-out workflows have no consumers waiting on output
+        // artifacts, so drop them alongside the internal bookkeeping.
+        await this.#cleanupTerminalWorkflow(workflowId, true);
+
+        const event =
+          status === 'timed-out'
+            ? new WorkflowTimedOutEvent(workflowId, 'execution', elapsed)
+            : new WorkflowCancelledEvent(workflowId);
+        this.dispatchEvent(event);
+        this.#forwardEventToHandle(workflowId, event);
+
+        if (resolver) resolver.reject(terminalError);
+        // Scheduled queue handoff is best-effort cleanup and must not block
+        // terminal delivery or handle settlement.
+        void this.#finalizeScheduledWorkflowTerminal(workflowId);
+      } catch (cleanupError) {
+        // Settle the resolver so handle.result() callers are not stranded.
+        if (resolver) resolver.reject(terminalError);
+        throw cleanupError;
+      } finally {
+        this.#resultResolvers.delete(workflowId);
+      }
     } finally {
-      this.#resultResolvers.delete(workflowId);
+      this.#terminalizingWorkflows.delete(workflowId);
     }
   }
 
@@ -5432,6 +5449,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#reviewEscalationHandlers.clear();
     this.#workflowReviewIds.clear();
     this.#parkedInlineWorkflows.clear();
+    this.#terminalizingWorkflows.clear();
     this.#reviewTimerIds.clear();
     for (const controller of this.#pendingWebhooks) {
       controller.abort();
@@ -5795,7 +5813,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       workflowId,
       async () => {
         const latestState = await this.#loadWorkflowState(workflowId);
-        if (!latestState || latestState.status !== 'running') {
+        if (
+          this.#terminalizingWorkflows.has(workflowId) ||
+          !latestState ||
+          latestState.status !== 'running'
+        ) {
           return false;
         }
 
@@ -5842,6 +5864,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async #getParkedWorkflowResumeDisposition(
     workflowId: string,
   ): Promise<'resumable' | 'terminal-or-missing' | 'corrupt'> {
+    if (this.#terminalizingWorkflows.has(workflowId)) {
+      return 'terminal-or-missing';
+    }
+
     const state = await this.#loadWorkflowState(workflowId);
     if (!state || state.status !== 'running') {
       return 'terminal-or-missing';
