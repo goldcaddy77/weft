@@ -100,6 +100,39 @@ describe('workflow execution timeline helpers', () => {
     );
   });
 
+  it('keeps budget attribute additions and removals in the dedicated budget section', () => {
+    const withoutBudget = makeReplay(1, {}, { status: 'pending' });
+    const withBudget = makeReplay(2, {}, { status: 'pending', 'weft:tokenCost': 0.28 });
+
+    expect(
+      buildWorkflowTimelineDiff(withoutBudget, withBudget).filter((row) =>
+        row.label.includes('weft:tokenCost'),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        section: 'budget',
+        label: 'budget.weft:tokenCost',
+        change: 'added',
+        before: undefined,
+        after: 0.28,
+      }),
+    ]);
+
+    expect(
+      buildWorkflowTimelineDiff(withBudget, withoutBudget).filter((row) =>
+        row.label.includes('weft:tokenCost'),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        section: 'budget',
+        label: 'budget.weft:tokenCost',
+        change: 'removed',
+        before: 0.28,
+        after: undefined,
+      }),
+    ]);
+  });
+
   it('formats primitive, object, and missing diff values for compact tables', () => {
     expect(formatTimelineDiffValue(undefined)).toBe('-');
     expect(formatTimelineDiffValue('approved')).toBe('approved');

@@ -207,11 +207,35 @@ function collectBudgetDiff(
     afterReplay.checkpoint.searchAttributes[dedicatedBudgetSearchAttributeKey],
   );
 
-  if (
-    beforeTokenCost === null ||
-    afterTokenCost === null ||
-    Object.is(beforeTokenCost, afterTokenCost)
-  ) {
+  if (beforeTokenCost === null && afterTokenCost === null) {
+    return [];
+  }
+
+  if (beforeTokenCost === null) {
+    return [
+      {
+        section: 'budget',
+        label: 'budget.weft:tokenCost',
+        change: 'added',
+        before: undefined,
+        after: afterTokenCost,
+      },
+    ];
+  }
+
+  if (afterTokenCost === null) {
+    return [
+      {
+        section: 'budget',
+        label: 'budget.weft:tokenCost',
+        change: 'removed',
+        before: beforeTokenCost,
+        after: undefined,
+      },
+    ];
+  }
+
+  if (Object.is(beforeTokenCost, afterTokenCost)) {
     return [];
   }
 
