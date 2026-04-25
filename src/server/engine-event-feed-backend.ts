@@ -79,10 +79,14 @@ export function createEngineEventFeedBackend(engine: Engine): WorkflowEventFeedB
  * error here instead of a silent fall-through in a switch.
  */
 function toCoreSelector(selector: EventSelector): WorkflowFeedSelector {
-  if (selector === 'events') return 'events';
-  if (selector === 'tokens') return 'tokens';
-  selector satisfies never;
-  throw new Error(`Unhandled EventSelector: ${String(selector)}`);
+  switch (selector) {
+    case 'events':
+      return 'events';
+    case 'tokens':
+      return 'tokens';
+    default:
+      throw new Error(`Unhandled EventSelector: ${String(selector)}`);
+  }
 }
 
 function recordToEnvelope(record: WorkflowFeedRecord): EventEnvelope {

@@ -35,12 +35,19 @@ import { buildTLSOptions, createAuthenticator, validateAuthConfig } from './auth
 import { DeadlineTracker } from './deadline-tracker.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
 import { authContextToPrincipal, handleRequest } from './handler.ts';
-import { handleJsonRpcHttpRequest } from './json-rpc-http.ts';
 import {
-  createJsonRpcWebSocketSession,
-  type JsonRpcWebSocketSession,
-} from './json-rpc-websocket.ts';
-import { anonymousPrincipal, type Principal } from './principal.ts';
+  finalizeWebSocketUpgrade,
+  handleJsonRpcHttpRequestSafely,
+} from './json-rpc-transport-helpers.ts';
+import {
+  closeJsonRpcSessionsForShutdown,
+  closeJsonRpcWebSocketSession,
+  handleJsonRpcWebSocketMessage,
+  openJsonRpcWebSocketSession,
+  type WebSocketData,
+} from './json-rpc-websocket-runtime.ts';
+import type { JsonRpcWebSocketSession } from './json-rpc-websocket.ts';
+import type { Principal } from './principal.ts';
 import { REST_BINDINGS, createLiveOperationRegistry } from './rest-bindings.ts';
 import {
   claimNextSequence,
@@ -172,29 +179,6 @@ export interface WeftServer extends AsyncDisposable {
   shutdownAllWorkers(options?: { timeoutMs?: number }): Promise<void>;
   /** Send a cancel message for a specific operation to the worker handling it. Returns true if the worker was found. */
   cancelTask(operationId: string): boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Internal types
-// ---------------------------------------------------------------------------
-
-type ConnectionType = 'worker' | 'stream' | 'watch' | 'generic' | 'jsonrpc';
-
-interface WebSocketData {
-  pathname: string;
-  connectionType: ConnectionType;
-  /** Workflow ID extracted from the URL for stream/watch connections. */
-  workflowId?: string;
-  /** Optional starting sequence for stream replay. */
-  resumeFrom?: number;
-  /** Queue name extracted from the URL for worker connections. */
-  queue?: string;
-  workerId?: string;
-  lastDeliveredSequence?: number;
-  replayInProgress?: boolean;
-  pendingStreamMessages?: Array<{ sequence: number; message: string }>;
-  principal?: Principal;
-  jsonRpcSession?: JsonRpcWebSocketSession;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,30 +329,6 @@ async function getHighestStoredStreamSequence(
   }
 
   return -1;
-}
-
-function handleJsonRpcWebSocketMessage(
-  ws: ServerWebSocket<WebSocketData>,
-  rawMessage: string | Buffer,
-): void {
-  // Defensive guard: every jsonrpc-classified connection MUST have a
-  // session attached in `websocket.open`. An undefined session here
-  // means either session construction threw (already logged + close
-  // initiated) or the open handler raced with the first frame (Bun
-  // guarantees `open` before `message`, so this shouldn't happen).
-  // Close the socket with an internal-error code so the client sees
-  // protocol-level feedback rather than frames silently disappearing.
-  const session = ws.data.jsonRpcSession;
-  if (!session) {
-    console.error('[weft] /jsonrpc WS frame received with no session attached — closing');
-    ws.close(1011, 'no jsonrpc session attached');
-    return;
-  }
-
-  const text = typeof rawMessage === 'string' ? rawMessage : new TextDecoder().decode(rawMessage);
-  session.handleMessage(text).catch((error) => {
-    console.error('[weft] /jsonrpc WS message error', error);
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,19 +1001,12 @@ export function serve(options: ServeOptions): WeftServer {
     }
     const resumeFrom = resumeFromResult.value;
 
-    const upgraded = server.upgrade(request, {
-      data: {
-        pathname: url.pathname,
-        ...classification,
-        ...(principal ? { principal } : {}),
-        ...(resumeFrom !== undefined ? { resumeFrom } : {}),
-      },
+    return finalizeWebSocketUpgrade(server, request, {
+      pathname: url.pathname,
+      ...classification,
+      ...(principal ? { principal } : {}),
+      ...(resumeFrom !== undefined ? { resumeFrom } : {}),
     });
-    if (upgraded) {
-      return undefined;
-    }
-
-    return new Response('WebSocket upgrade failed', { status: 400 });
   }
 
   function handleWorkerWebSocketMessage(
@@ -1323,31 +1276,12 @@ export function serve(options: ServeOptions): WeftServer {
       // `handleRequest`'s REST path already does this via its own inner
       // try/catch; `/jsonrpc` has no such boundary without this wrapping.
       if (url.pathname === '/jsonrpc') {
-        try {
-          return await handleJsonRpcHttpRequest(request, {
-            registry: liveOperationRegistry,
-            engine: options.engine,
-            principal: authContextToPrincipal(authentication.authContext),
-          });
-        } catch (error) {
-          console.error('Unhandled error in /jsonrpc', { error });
-          // -32603 (InternalError) is the JSON-RPC 2.0 spec code for a
-          // generic internal error. This catch-all covers
-          // authenticator-contract violations and any other unexpected
-          // throw from the adapter — not specifically engine failures,
-          // so -32099 (EngineFailure) would mislabel the cause.
-          return new Response(
-            JSON.stringify({
-              jsonrpc: '2.0',
-              error: { code: -32603, message: 'Internal error' },
-              id: null,
-            }),
-            {
-              status: 500,
-              headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
-            },
-          );
-        }
+        return handleJsonRpcHttpRequestSafely({
+          request,
+          registry: liveOperationRegistry,
+          engine: options.engine,
+          authContext: authentication.authContext,
+        });
       }
 
       // API routes via existing platform-agnostic handler. Under
@@ -1390,28 +1324,13 @@ export function serve(options: ServeOptions): WeftServer {
         }
 
         if (connectionType === 'jsonrpc') {
-          // Wrap session construction so a throw here doesn't leave a
-          // half-open socket that silently black-holes every
-          // subsequent frame. Closing with an internal-error code is
-          // the clearest protocol-level signal we can give the client
-          // (they won't parse a JSON-RPC envelope off a raw close,
-          // but the close code + log is enough for triage).
-          try {
-            const session = createJsonRpcWebSocketSession({
-              registry: liveOperationRegistry,
-              engine: options.engine,
-              principal: ws.data.principal ?? anonymousPrincipal(),
-              emitter: { send: (message) => ws.send(message) },
-              feed: workflowEventFeed,
-              transport: 'jsonRpcWebSocket',
-            });
-            ws.data.jsonRpcSession = session;
-            activeJsonRpcSessions.add(session);
-          } catch (error) {
-            console.error('[weft] /jsonrpc WS session construction failed', error);
-            // 1011 = Internal Error, per RFC 6455 §7.4.1.
-            ws.close(1011, 'session construction failed');
-          }
+          openJsonRpcWebSocketSession({
+            ws,
+            registry: liveOperationRegistry,
+            engine: options.engine,
+            feed: workflowEventFeed,
+            activeSessions: activeJsonRpcSessions,
+          });
           return;
         }
       },
@@ -1437,17 +1356,10 @@ export function serve(options: ServeOptions): WeftServer {
       },
       close(ws) {
         if (ws.data.connectionType === 'jsonrpc') {
-          // Fire-and-forget with explicit rejection handling: if
-          // `session.close()` rejects (an in-flight subscription pump
-          // threw), the bare `void` would leak the rejection to the
-          // process's unhandled-rejection listener. Log instead.
-          const session = ws.data.jsonRpcSession;
-          if (session) {
-            activeJsonRpcSessions.delete(session);
-            void session.close().catch((error) => {
-              console.error('[weft] /jsonrpc WS session close error', error);
-            });
-          }
+          closeJsonRpcWebSocketSession({
+            session: ws.data.jsonRpcSession,
+            activeSessions: activeJsonRpcSessions,
+          });
           return;
         }
 
@@ -1560,16 +1472,7 @@ export function serve(options: ServeOptions): WeftServer {
   // would tear down sockets mid-pump, which produces noisy
   // post-dispose callbacks on the engine's listener registry.
   stack.defer(async () => {
-    const closes: Array<Promise<void>> = [];
-    for (const session of activeJsonRpcSessions) {
-      closes.push(
-        session.close().catch((error) => {
-          console.error('[weft] /jsonrpc WS session close error during shutdown', error);
-        }),
-      );
-    }
-    activeJsonRpcSessions.clear();
-    await Promise.allSettled(closes);
+    await closeJsonRpcSessionsForShutdown(activeJsonRpcSessions);
   });
 
   // Clean up per-workflow state when workflows reach a terminal state:

@@ -386,8 +386,7 @@ async function* drainLive(
 ): AsyncIterable<EventEnvelope> {
   let lastDelivered = snapshot;
   while (true) {
-    if (signal?.aborted) return;
-    if (overflowed()) return;
+    if (signal?.aborted || overflowed()) return;
     const head = buffer.shift();
     if (head !== undefined) {
       if (head.sequence <= lastDelivered) continue;
@@ -403,7 +402,6 @@ async function* drainLive(
       continue;
     }
     await armed;
-    continue;
   }
 }
 

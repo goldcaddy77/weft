@@ -128,12 +128,14 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
   [
     'src/server/index.ts',
     {
-      // `/jsonrpc` has a defensive catch that covers authenticator-contract
-      // violations and other unexpected adapter throws. The current test suite
-      // exercises the surrounding behavior, but Bun still leaves this branch
-      // and one extra aggregate function miss unaccounted for.
+      // `/jsonrpc` still carries one defensive WebSocket upgrade catch for an
+      // authenticator-contract violation (`method: 'jwt'` without claims) that
+      // the public auth configuration cannot produce. After the JSON-RPC HTTP
+      // transport was extracted into dedicated helpers, Bun also attributes the
+      // already-covered hand-off back onto the surrounding `fetch` block in
+      // this file instead of the helper module that the tests drive directly.
       functions: 2,
-      lines: createLineSet(1120, 1137),
+      lines: createLineSet(988, 989),
     },
   ],
   [
@@ -173,7 +175,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // Bun maps the closing line of the live-drain generator's intentional
       // infinite loop as uncovered. Every exit path returns from inside the loop
       // and is covered by behavioral tests.
-      lines: new Set([379]),
+      lines: new Set([405]),
     },
   ],
   [
