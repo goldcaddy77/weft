@@ -1,5 +1,7 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 
+import { Engine } from '../core/engine.ts';
+import { MemoryStorage } from '../storage/memory.ts';
 import * as handlerModule from './handler.ts';
 import * as jsonRpcHttpModule from './json-rpc-http.ts';
 import {
@@ -8,6 +10,8 @@ import {
 } from './json-rpc-transport-helpers.ts';
 
 describe('json-rpc transport helpers', () => {
+  const engine = new Engine({ storage: new MemoryStorage() });
+
   it('returns undefined when the websocket upgrade succeeds', () => {
     const response = finalizeWebSocketUpgrade(
       {
@@ -50,7 +54,7 @@ describe('json-rpc transport helpers', () => {
           body: '{}',
         }),
         registry: {} as never,
-        engine: {},
+        engine,
         authContext: undefined,
       });
 
@@ -76,7 +80,7 @@ describe('json-rpc transport helpers', () => {
           body: '{}',
         }),
         registry: {} as never,
-        engine: {},
+        engine,
         authContext: { method: 'jwt' } as never,
       });
 
@@ -111,7 +115,7 @@ describe('json-rpc transport helpers', () => {
           body: '{}',
         }),
         registry: {} as never,
-        engine: {},
+        engine,
         authContext: undefined,
       });
 
