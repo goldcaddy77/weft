@@ -94,10 +94,6 @@ describe('json-rpc websocket runtime helpers', () => {
   it('attaches a session, uses the websocket emitter, and tracks the active session', async () => {
     const { ws, sent } = createWebSocket();
     const activeSessions = new Set<JsonRpcWebSocketSession>();
-    const runtimeModule = await import('./json-rpc-websocket-runtime.ts');
-    const createSessionSpy = spyOn(runtimeModule, 'openJsonRpcWebSocketSession');
-
-    createSessionSpy.mockRestore();
     const jsonRpcModule = await import('./json-rpc-websocket.ts');
     const session: JsonRpcWebSocketSession = {
       async handleMessage() {},

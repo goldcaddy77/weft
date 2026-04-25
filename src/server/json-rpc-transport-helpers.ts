@@ -1,3 +1,4 @@
+import type { Engine } from '../core/engine.ts';
 import type { AuthContext } from './authentication.ts';
 import { authContextToPrincipal } from './handler.ts';
 import { handleJsonRpcHttpRequest } from './json-rpc-http.ts';
@@ -24,7 +25,7 @@ export function finalizeWebSocketUpgrade(
 export async function handleJsonRpcHttpRequestSafely(args: {
   request: Request;
   registry: OperationRegistry;
-  engine: unknown;
+  engine: Engine;
   authContext: AuthContext | undefined;
 }): Promise<Response> {
   try {
