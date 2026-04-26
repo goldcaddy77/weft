@@ -9,6 +9,7 @@
  * @module cli
  */
 
+import { isAbsolute, join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { isRecord, safeDebugStringify } from './core/debug-output.ts';
@@ -618,6 +619,26 @@ function isGlobPattern(value: string): boolean {
   return value.includes('*') || value.includes('?') || value.includes('[');
 }
 
+function splitGlobPattern(entryPath: string): { scanRoot: string; pattern: string } {
+  const firstGlobIndex = Array.from(entryPath).findIndex((character) =>
+    ['*', '?', '['].includes(character),
+  );
+
+  if (firstGlobIndex === -1) {
+    return { scanRoot: '.', pattern: entryPath };
+  }
+
+  const separatorIndex = entryPath.lastIndexOf('/', firstGlobIndex);
+  if (separatorIndex === -1) {
+    return { scanRoot: '.', pattern: entryPath };
+  }
+
+  const scanRoot = entryPath.slice(0, separatorIndex) || (isAbsolute(entryPath) ? '/' : '.');
+  const pattern = entryPath.slice(separatorIndex + 1);
+
+  return { scanRoot, pattern };
+}
+
 async function expandValidateEntryPaths(entryPaths: string[]): Promise<string[]> {
   const expandedEntryPaths: string[] = [];
 
@@ -627,7 +648,9 @@ async function expandValidateEntryPaths(entryPaths: string[]): Promise<string[]>
       continue;
     }
 
-    const matches = await Array.fromAsync(new Bun.Glob(entryPath).scan('.'));
+    const { scanRoot, pattern } = splitGlobPattern(entryPath);
+    const matchedPaths = await Array.fromAsync(new Bun.Glob(pattern).scan(scanRoot));
+    const matches = matchedPaths.map((match) => join(scanRoot, match)).toSorted();
     expandedEntryPaths.push(...(matches.length === 0 ? [entryPath] : matches));
   }
 

@@ -1219,8 +1219,22 @@ describe('executeValidate', () => {
     });
 
     expect(result.exitCode).toBe(0);
+    expect(result.stdout.indexOf('examples/customer-profile.ts')).toBeLessThan(
+      result.stdout.indexOf('examples/hello-world.ts'),
+    );
     expect(result.stdout).toContain('examples/hello-world.ts');
     expect(result.stdout).toContain('examples/customer-profile.ts');
+  });
+
+  it('expands absolute glob patterns for bundled example validation', async () => {
+    const result = await executeValidate({
+      entryPaths: [join(process.cwd(), 'examples/**/*.ts')],
+      json: false,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(join(process.cwd(), 'examples/customer-profile.ts'));
+    expect(result.stdout).toContain(join(process.cwd(), 'examples/hello-world.ts'));
   });
 
   it('returns exitCode 2 when a clean entry and a missing entry are validated together', async () => {
