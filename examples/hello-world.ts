@@ -3,8 +3,8 @@ import { activity, type Context, type WorkflowRegistration } from '../src/index.
 export const formatGreetingActivity = activity({
   name: 'formatGreeting',
   idempotent: true,
-  execute: async (input: string | undefined) => {
-    const subject = input?.trim() ? input : 'world';
+  execute: async (input: unknown) => {
+    const subject = typeof input === 'string' ? input.trim() || 'world' : 'world';
     return {
       greeting: `hello ${subject}`,
     };
