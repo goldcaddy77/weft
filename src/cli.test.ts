@@ -20,6 +20,7 @@ import {
   executeValidate,
   executeVersionCheck,
   parseCliArguments,
+  splitGlobPattern,
 } from './cli.ts';
 import { encode } from './core/codec.ts';
 import type { WorkflowContext } from './core/types.ts';
@@ -623,6 +624,15 @@ describe('CLI argument parsing', () => {
       expect(() => parseCliArguments(['schedule', 'cancel'])).toThrow(
         'schedule cancel expects exactly 1 positional argument: <scheduleId>',
       );
+    });
+  });
+});
+
+describe('splitGlobPattern', () => {
+  it('splits Windows-style absolute glob patterns into scan root and pattern', () => {
+    expect(splitGlobPattern(String.raw`C:\work\examples\**\*.ts`)).toEqual({
+      scanRoot: 'C:/work/examples',
+      pattern: '**/*.ts',
     });
   });
 });
@@ -1235,6 +1245,17 @@ describe('executeValidate', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(join(process.cwd(), 'examples/customer-profile.ts'));
     expect(result.stdout).toContain(join(process.cwd(), 'examples/hello-world.ts'));
+  });
+
+  it('normalizes Windows-style glob separators for bundled example validation', async () => {
+    const result = await executeValidate({
+      entryPaths: [String.raw`examples\**\*.ts`],
+      json: false,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('examples/customer-profile.ts');
+    expect(result.stdout).toContain('examples/hello-world.ts');
   });
 
   it('returns exitCode 2 when a clean entry and a missing entry are validated together', async () => {

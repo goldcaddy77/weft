@@ -9,7 +9,7 @@
  * @module cli
  */
 
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { isRecord, safeDebugStringify } from './core/debug-output.ts';
@@ -619,22 +619,34 @@ function isGlobPattern(value: string): boolean {
   return value.includes('*') || value.includes('?') || value.includes('[');
 }
 
-function splitGlobPattern(entryPath: string): { scanRoot: string; pattern: string } {
-  const firstGlobIndex = Array.from(entryPath).findIndex((character) =>
+function normalizeGlobPatternPath(entryPath: string): string {
+  return entryPath.replaceAll('\\', '/');
+}
+
+export function splitGlobPattern(entryPath: string): { scanRoot: string; pattern: string } {
+  const normalizedEntryPath = normalizeGlobPatternPath(entryPath);
+  const firstGlobIndex = Array.from(normalizedEntryPath).findIndex((character) =>
     ['*', '?', '['].includes(character),
   );
 
   if (firstGlobIndex === -1) {
-    return { scanRoot: '.', pattern: entryPath };
+    return { scanRoot: '.', pattern: normalizedEntryPath };
   }
 
-  const separatorIndex = entryPath.lastIndexOf('/', firstGlobIndex);
+  const separatorIndex = normalizedEntryPath.lastIndexOf('/', firstGlobIndex);
   if (separatorIndex === -1) {
-    return { scanRoot: '.', pattern: entryPath };
+    return { scanRoot: '.', pattern: normalizedEntryPath };
   }
 
-  const scanRoot = entryPath.slice(0, separatorIndex) || (isAbsolute(entryPath) ? '/' : '.');
-  const pattern = entryPath.slice(separatorIndex + 1);
+  const scanRootCandidate = normalizedEntryPath.slice(0, separatorIndex);
+  const scanRoot =
+    scanRootCandidate === ''
+      ? '/'
+      : /^[A-Za-z]:\//.test(normalizedEntryPath) &&
+          scanRootCandidate === normalizedEntryPath.slice(0, 2)
+        ? `${scanRootCandidate}/`
+        : scanRootCandidate;
+  const pattern = normalizedEntryPath.slice(separatorIndex + 1);
 
   return { scanRoot, pattern };
 }
