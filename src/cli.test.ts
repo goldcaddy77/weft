@@ -385,12 +385,21 @@ describe('CLI argument parsing', () => {
     it('parses entry path as first positional argument', () => {
       const result = parseCliArguments(['validate', './my-workflow.ts']) as ValidateCommand;
       expect(result.command).toBe('validate');
-      expect(result.entryPath).toBe('./my-workflow.ts');
+      expect(result.entryPaths).toEqual(['./my-workflow.ts']);
     });
 
-    it('defaults entryPath to empty string when no positional is given', () => {
+    it('parses multiple entry paths in order', () => {
+      const result = parseCliArguments([
+        'validate',
+        './examples/one.ts',
+        './examples/two.ts',
+      ]) as ValidateCommand;
+      expect(result.entryPaths).toEqual(['./examples/one.ts', './examples/two.ts']);
+    });
+
+    it('defaults entryPaths to an empty list when no positional is given', () => {
       const result = parseCliArguments(['validate']) as ValidateCommand;
-      expect(result.entryPath).toBe('');
+      expect(result.entryPaths).toEqual([]);
     });
 
     it('parses --json flag', () => {
@@ -1033,8 +1042,8 @@ describe('CLI direct execution', () => {
 });
 
 describe('executeValidate', () => {
-  it('returns exitCode 2 and stderr when entryPath is empty', async () => {
-    const result = await executeValidate({ entryPath: '', json: false });
+  it('returns exitCode 2 and stderr when no entry paths are provided', async () => {
+    const result = await executeValidate({ entryPaths: [], json: false });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain('entry file path is required');
     expect(result.stdout).toBe('');
@@ -1042,7 +1051,7 @@ describe('executeValidate', () => {
 
   it('returns exitCode 2 and stderr when entry file does not exist', async () => {
     const result = await executeValidate({
-      entryPath: '/does/not/exist/entry.ts',
+      entryPaths: ['/does/not/exist/entry.ts'],
       json: false,
     });
     expect(result.exitCode).toBe(2);
@@ -1063,7 +1072,7 @@ describe('executeValidate', () => {
         ].join('\n'),
       );
 
-      const result = await executeValidate({ entryPath, json: false });
+      const result = await executeValidate({ entryPaths: [entryPath], json: false });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('No issues found.');
       const loaded = await loadRegistrationsFromModule(entryPath);
@@ -1091,7 +1100,7 @@ describe('executeValidate', () => {
         ].join('\n'),
       );
 
-      const result = await executeValidate({ entryPath, json: false });
+      const result = await executeValidate({ entryPaths: [entryPath], json: false });
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toContain('unbounded-retry');
       const loaded = await loadRegistrationsFromModule(entryPath);
@@ -1115,7 +1124,7 @@ describe('executeValidate', () => {
         ].join('\n'),
       );
 
-      const result = await executeValidate({ entryPath, json: true });
+      const result = await executeValidate({ entryPaths: [entryPath], json: true });
       expect(result.exitCode).toBe(0);
       const parsed = JSON.parse(result.stdout);
       expect(parsed).toMatchObject({ valid: true, issues: [], workflowCount: expect.any(Number) });
@@ -1125,6 +1134,56 @@ describe('executeValidate', () => {
     } finally {
       rmSync(entryPath, { force: true });
     }
+  });
+
+  it('returns exitCode 0 when multiple clean entry files validate', async () => {
+    const firstEntryPath = join(tmpdir(), `weft-validate-multi-a-${crypto.randomUUID()}.ts`);
+    const secondEntryPath = join(tmpdir(), `weft-validate-multi-b-${crypto.randomUUID()}.ts`);
+
+    try {
+      await Bun.write(
+        firstEntryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'export const firstWorkflow: WorkflowRegistration = {',
+          '  handler: async function* () { return "first"; },',
+          '};',
+        ].join('\n'),
+      );
+      await Bun.write(
+        secondEntryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'export const secondWorkflow: WorkflowRegistration = {',
+          '  handler: async function* () { return "second"; },',
+          '};',
+        ].join('\n'),
+      );
+
+      const result = await executeValidate({
+        entryPaths: [firstEntryPath, secondEntryPath],
+        json: false,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(firstEntryPath);
+      expect(result.stdout).toContain(secondEntryPath);
+      expect(result.stdout).toContain('No issues found.');
+    } finally {
+      rmSync(firstEntryPath, { force: true });
+      rmSync(secondEntryPath, { force: true });
+    }
+  });
+
+  it('returns exitCode 0 for the bundled examples validation gate', async () => {
+    const exampleEntryPaths = await Array.fromAsync(new Bun.Glob('examples/**/*.ts').scan('.'));
+    const result = await executeValidate({
+      entryPaths: exampleEntryPaths,
+      json: false,
+    });
+
+    expect(exampleEntryPaths.length).toBeGreaterThan(0);
+    expect(result.exitCode).toBe(0);
   });
 });
 

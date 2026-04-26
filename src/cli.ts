@@ -45,7 +45,7 @@ export type CliCommand =
       help: boolean;
       json: boolean;
     }
-  | { command: 'validate'; entryPath: string; help: boolean; json: boolean }
+  | { command: 'validate'; entryPaths: string[]; help: boolean; json: boolean }
   | {
       command: 'timeline';
       database: string;
@@ -281,7 +281,7 @@ function parseValidateArguments(args: string[]): CliCommand {
 
   return {
     command: 'validate',
-    entryPath: positionals[0] ?? '',
+    entryPaths: positionals,
     help: values.help ?? false,
     json: values.json ?? false,
   };
@@ -580,10 +580,10 @@ Options:
 export const VALIDATE_HELP_TEXT = `
 weft validate - Lint workflow registrations for design-time anti-patterns
 
-Usage: weft validate <entry.ts> [options]
+Usage: weft validate <entry.ts>... [options]
 
 Arguments:
-  <entry.ts>              Path to a TypeScript module that exports workflow
+  <entry.ts>...           One or more TypeScript modules that export workflow
                           registrations and/or activity definitions.
 
 Options:
@@ -661,10 +661,10 @@ export async function executeVersionCheck(options: {
 }
 
 export async function executeValidate(options: {
-  entryPath: string;
+  entryPaths: string[];
   json: boolean;
 }): Promise<CommandOutput> {
-  if (!options.entryPath) {
+  if (options.entryPaths.length === 0) {
     return {
       stdout: '',
       stderr: 'Error: entry file path is required for validate',
@@ -675,29 +675,86 @@ export async function executeValidate(options: {
   const { loadRegistrationsFromModule, validateRegistrations, formatValidationReport } =
     await import('./diagnostics/validate.ts');
 
-  let registrations: Record<string, WorkflowRegistration>;
-  let activities: ActivityDefinition[];
+  const reports: Array<{
+    entryPath: string;
+    report?: ReturnType<typeof validateRegistrations>;
+    loadError?: string;
+  }> = [];
+  let hasValidationErrors = false;
+  let hasLoadErrors = false;
 
-  try {
-    const loaded = await loadRegistrationsFromModule(options.entryPath);
-    registrations = loaded.registrations;
-    activities = loaded.activities;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  for (const entryPath of options.entryPaths) {
+    let registrations: Record<string, WorkflowRegistration>;
+    let activities: ActivityDefinition[];
+
+    try {
+      const loaded = await loadRegistrationsFromModule(entryPath);
+      registrations = loaded.registrations;
+      activities = loaded.activities;
+    } catch (err) {
+      hasLoadErrors = true;
+      reports.push({
+        entryPath,
+        loadError: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+
+    const report = validateRegistrations(registrations, activities);
+    if (!report.valid) {
+      hasValidationErrors = true;
+    }
+    reports.push({ entryPath, report });
+  }
+
+  if (options.json) {
+    if (reports.length === 1 && reports[0]?.report && reports[0].loadError === undefined) {
+      return {
+        stdout: JSON.stringify(reports[0].report, null, 2),
+        exitCode: hasLoadErrors ? 2 : hasValidationErrors ? 1 : 0,
+      };
+    }
+
     return {
-      stdout: '',
-      stderr: `Error: could not load entry file '${options.entryPath}': ${message}`,
-      exitCode: 2,
+      stdout: JSON.stringify(
+        reports.map((entry) => {
+          if (entry.loadError !== undefined) {
+            return {
+              entryPath: entry.entryPath,
+              loadError: entry.loadError,
+            };
+          }
+
+          if (entry.report === undefined) {
+            throw new Error(`Missing validation report for '${entry.entryPath}'.`);
+          }
+
+          return {
+            entryPath: entry.entryPath,
+            ...entry.report,
+          };
+        }),
+        null,
+        2,
+      ),
+      exitCode: hasLoadErrors ? 2 : hasValidationErrors ? 1 : 0,
     };
   }
 
-  const report = validateRegistrations(registrations, activities);
+  const stdout = reports
+    .filter((entry) => entry.report !== undefined)
+    .map((entry) => formatValidationReport(entry.report!, entry.entryPath))
+    .join('\n\n');
+  const stderr = reports
+    .filter((entry) => entry.loadError !== undefined)
+    .map((entry) => `Error: could not load entry file '${entry.entryPath}': ${entry.loadError}`)
+    .join('\n');
 
-  const stdout = options.json
-    ? JSON.stringify(report, null, 2)
-    : formatValidationReport(report, options.entryPath);
-
-  return { stdout, exitCode: report.valid ? 0 : 1 };
+  return {
+    stdout,
+    ...(stderr ? { stderr } : {}),
+    exitCode: hasLoadErrors ? 2 : hasValidationErrors ? 1 : 0,
+  };
 }
 
 function formatTimelineLine(entry: {

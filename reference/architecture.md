@@ -5742,5 +5742,5 @@ Track 8 extends the runtime surface without creating a second execution system. 
 - [ ] `bun run lint` (oxlint) exits 0.
 - [ ] `bun run build` succeeds.
 - [ ] `bun build --compile src/cli-main.ts --outfile weft` produces a working binary.
-- [ ] `weft validate examples/**/*.ts` exits 0 on the bundled examples.
+- [x] `weft validate examples/**/*.ts` exits 0 on the bundled examples.
 - [ ] Every new primitive from this document has a dedicated test file under `src/**/__tests__/` and every acceptance criterion above is covered by at least one `test(...)` call whose failure message names the criterion.
