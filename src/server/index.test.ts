@@ -13,6 +13,7 @@ import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { DeadlineTracker } from './deadline-tracker.ts';
+import * as handlerModule from './handler.ts';
 import type { WeftServer } from './index.ts';
 import { serve, wireEventBroadcasting } from './index.ts';
 
@@ -286,6 +287,45 @@ describe('serve', () => {
     // (or Bun may strip the upgrade header in fetch — either way, the server
     // should not crash)
     expect(response.status).toBeDefined();
+  });
+
+  it('returns 401 when principal resolution throws during a JSON-RPC WebSocket upgrade', async () => {
+    engine = createEngine();
+    server = serve({
+      engine,
+      port: 0,
+      auth: {
+        apiKeys: ['weft_key_valid123456789012345678901'],
+      },
+    });
+
+    const principalSpy = spyOn(handlerModule, 'authContextToPrincipal').mockImplementation(() => {
+      throw new Error('invalid auth context');
+    });
+    const errorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const response = await fetch(`${server.url}/jsonrpc`, {
+        method: 'GET',
+        headers: {
+          upgrade: 'websocket',
+          connection: 'Upgrade',
+          'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+          'sec-websocket-version': '13',
+          'x-api-key': 'weft_key_valid123456789012345678901',
+        },
+      });
+
+      expect(response.status).toBe(401);
+      expect(await response.text()).toBe('Authentication context invalid');
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[weft] /jsonrpc WS upgrade principal resolution failed',
+        expect.any(Error),
+      );
+    } finally {
+      principalSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it('accepts a WebSocket connection and subscribes to pathname channel', async () => {

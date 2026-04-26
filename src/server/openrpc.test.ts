@@ -11,7 +11,7 @@
  *     `additionalProperties` computed from `unknownKeyPolicy.jsonRpc`).
  */
 
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { z } from 'zod';
 
 import { generateOpenRpcDocument } from './openrpc.ts';
@@ -473,6 +473,95 @@ describe('generateOpenRpcDocument — result, tags, nested shapes', () => {
 });
 
 describe('generateOpenRpcDocument — Codex regressions', () => {
+  it('tolerates Zod JSON Schema output without $schema and ignores non-object properties/$defs payloads', () => {
+    const toJsonSchemaSpy = spyOn(z, 'toJSONSchema').mockImplementation((() => {
+      return {
+        type: 'object',
+        properties: [],
+        required: ['id'],
+        $defs: [],
+      } as unknown as ReturnType<typeof z.toJSONSchema>;
+    }) as never);
+
+    try {
+      const registry = createOperationRegistry([
+        makeOp({
+          name: 'weft.schema.fallbacks',
+          inputSchema: z.object({ id: z.string() }),
+          outputSchema: z.object({}),
+        }),
+      ]);
+      const document = generateOpenRpcDocument({
+        registry,
+        transports: ['http'],
+      });
+
+      const method = (document['methods'] as Array<Record<string, unknown>>).find(
+        (candidate) => candidate['name'] === 'weft.schema.fallbacks',
+      )!;
+      expect(method['params']).toEqual([]);
+      expect(method['x-weft-paramsSchema']).toMatchObject({
+        type: 'object',
+        properties: [],
+        required: ['id'],
+      });
+    } finally {
+      toJsonSchemaSpy.mockRestore();
+    }
+  });
+
+  it('propagates object-shaped mocked $defs payloads onto emitted content descriptors', () => {
+    const toJsonSchemaSpy = spyOn(z, 'toJSONSchema').mockImplementation((() => {
+      return {
+        type: 'object',
+        properties: {
+          shared: { $ref: '#/$defs/Shared' },
+        },
+        required: ['shared'],
+        $defs: {
+          Shared: {
+            type: 'object',
+            properties: {
+              value: { type: 'string' },
+            },
+            required: ['value'],
+          },
+        },
+      } as unknown as ReturnType<typeof z.toJSONSchema>;
+    }) as never);
+
+    try {
+      const registry = createOperationRegistry([
+        makeOp({
+          name: 'weft.schema.mockeddefs',
+          inputSchema: z.object({ shared: z.string() }),
+          outputSchema: z.object({}),
+        }),
+      ]);
+      const document = generateOpenRpcDocument({
+        registry,
+        transports: ['http'],
+      });
+
+      const method = (document['methods'] as Array<Record<string, unknown>>).find(
+        (candidate) => candidate['name'] === 'weft.schema.mockeddefs',
+      )!;
+      const params = method['params'] as Array<Record<string, unknown>>;
+      expect(params).toHaveLength(1);
+      expect((params[0]!['schema'] as Record<string, unknown>)['$defs']).toEqual({
+        Shared: {
+          type: 'object',
+          properties: {
+            value: { type: 'string' },
+          },
+          required: ['value'],
+        },
+      });
+    } finally {
+      toJsonSchemaSpy.mockRestore();
+    }
+  });
+
   it('propagates $defs onto each ContentDescriptor so $ref resolves', () => {
     // A nested object schema reused between two fields causes zod to
     // emit a `$ref` pointing into the parent's `$defs`. Without the
