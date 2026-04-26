@@ -666,7 +666,7 @@ async function expandValidateEntryPaths(entryPaths: string[]): Promise<string[]>
     expandedEntryPaths.push(...(matches.length === 0 ? [entryPath] : matches));
   }
 
-  return expandedEntryPaths;
+  return Array.from(new Set(expandedEntryPaths));
 }
 
 export async function executeDoctor(options: {

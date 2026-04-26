@@ -1258,6 +1258,32 @@ describe('executeValidate', () => {
     expect(result.stdout).toContain('examples/hello-world.ts');
   });
 
+  it('deduplicates validate entries when a glob and explicit path match the same file', async () => {
+    const result = await executeValidate({
+      entryPaths: ['examples/**/*.ts', 'examples/hello-world.ts'],
+      json: true,
+    });
+
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout) as {
+      entries: Array<{ entryPath: string }>;
+      valid: boolean;
+      hasLoadErrors: boolean;
+      hasValidationErrors: boolean;
+    };
+
+    expect(parsed).toMatchObject({
+      valid: true,
+      hasLoadErrors: false,
+      hasValidationErrors: false,
+    });
+    expect(parsed.entries.map((entry) => entry.entryPath)).toEqual([
+      'examples/customer-profile.ts',
+      'examples/hello-world.ts',
+    ]);
+  });
+
   it('returns exitCode 2 when a clean entry and a missing entry are validated together', async () => {
     const cleanEntryPath = join(tmpdir(), `weft-validate-mixed-clean-${crypto.randomUUID()}.ts`);
 
