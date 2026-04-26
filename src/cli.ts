@@ -583,8 +583,9 @@ weft validate - Lint workflow registrations for design-time anti-patterns
 Usage: weft validate <entry.ts>... [options]
 
 Arguments:
-  <entry.ts>...           One or more TypeScript modules that export workflow
-                          registrations and/or activity definitions.
+  <entry.ts>...           One or more TypeScript modules or glob patterns that
+                          resolve to workflow registrations and/or activity
+                          definitions.
 
 Options:
   -j, --json              Output results as JSON
@@ -593,7 +594,10 @@ Options:
 Exit codes:
   0   No errors (warnings may be present)
   1   One or more errors detected
-  2   Entry file could not be loaded
+  2   Entry file could not be loaded (takes precedence over validation errors)
+
+JSON output:
+  { entries, valid, hasLoadErrors, hasValidationErrors }
 
 Checks performed:
   unbounded-retry               Activity retry.maxAttempts is Infinity
@@ -608,6 +612,26 @@ export interface CommandOutput {
   stdout: string;
   exitCode: number;
   stderr?: string;
+}
+
+function isGlobPattern(value: string): boolean {
+  return value.includes('*') || value.includes('?') || value.includes('[');
+}
+
+async function expandValidateEntryPaths(entryPaths: string[]): Promise<string[]> {
+  const expandedEntryPaths: string[] = [];
+
+  for (const entryPath of entryPaths) {
+    if (!isGlobPattern(entryPath)) {
+      expandedEntryPaths.push(entryPath);
+      continue;
+    }
+
+    const matches = await Array.fromAsync(new Bun.Glob(entryPath).scan('.'));
+    expandedEntryPaths.push(...(matches.length === 0 ? [entryPath] : matches));
+  }
+
+  return expandedEntryPaths;
 }
 
 export async function executeDoctor(options: {
@@ -672,6 +696,8 @@ export async function executeValidate(options: {
     };
   }
 
+  const expandedEntryPaths = await expandValidateEntryPaths(options.entryPaths);
+
   const { loadRegistrationsFromModule, validateRegistrations, formatValidationReport } =
     await import('./diagnostics/validate.ts');
 
@@ -683,7 +709,7 @@ export async function executeValidate(options: {
   let hasValidationErrors = false;
   let hasLoadErrors = false;
 
-  for (const entryPath of options.entryPaths) {
+  for (const entryPath of expandedEntryPaths) {
     let registrations: Record<string, WorkflowRegistration>;
     let activities: ActivityDefinition[];
 
@@ -707,37 +733,39 @@ export async function executeValidate(options: {
     reports.push({ entryPath, report });
   }
 
+  const exitCode = hasLoadErrors ? 2 : hasValidationErrors ? 1 : 0;
+
   if (options.json) {
-    if (reports.length === 1 && reports[0]?.report && reports[0].loadError === undefined) {
+    const entries = reports.map((entry) => {
+      if (entry.loadError !== undefined) {
+        return {
+          entryPath: entry.entryPath,
+          loadError: entry.loadError,
+        };
+      }
+
+      if (entry.report === undefined) {
+        throw new Error(`Missing validation report for '${entry.entryPath}'.`);
+      }
+
       return {
-        stdout: JSON.stringify(reports[0].report, null, 2),
-        exitCode: hasLoadErrors ? 2 : hasValidationErrors ? 1 : 0,
+        entryPath: entry.entryPath,
+        ...entry.report,
       };
-    }
+    });
 
     return {
       stdout: JSON.stringify(
-        reports.map((entry) => {
-          if (entry.loadError !== undefined) {
-            return {
-              entryPath: entry.entryPath,
-              loadError: entry.loadError,
-            };
-          }
-
-          if (entry.report === undefined) {
-            throw new Error(`Missing validation report for '${entry.entryPath}'.`);
-          }
-
-          return {
-            entryPath: entry.entryPath,
-            ...entry.report,
-          };
-        }),
+        {
+          entries,
+          valid: !hasLoadErrors && !hasValidationErrors,
+          hasLoadErrors,
+          hasValidationErrors,
+        },
         null,
         2,
       ),
-      exitCode: hasLoadErrors ? 2 : hasValidationErrors ? 1 : 0,
+      exitCode,
     };
   }
 
@@ -753,7 +781,7 @@ export async function executeValidate(options: {
   return {
     stdout,
     ...(stderr ? { stderr } : {}),
-    exitCode: hasLoadErrors ? 2 : hasValidationErrors ? 1 : 0,
+    exitCode,
   };
 }
 

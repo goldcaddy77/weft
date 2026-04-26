@@ -1,6 +1,4 @@
-import type { Context } from '../src/core/context.ts';
-import type { WorkflowRegistration } from '../src/core/types.ts';
-import { activity } from '../src/index.ts';
+import { activity, type Context, type WorkflowRegistration } from '../src/index.ts';
 
 export const formatGreetingActivity = activity({
   name: 'formatGreeting',
