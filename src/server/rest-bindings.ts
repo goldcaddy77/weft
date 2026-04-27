@@ -11,6 +11,22 @@
 
 import { createOperationRegistry, type OperationRegistry } from './operation-catalog.ts';
 import {
+  bulkCancelWorkflowsOperation,
+  bulkCancelWorkflowsRestBinding,
+} from './operations/bulk-cancel-workflows.ts';
+import {
+  bulkDeleteWorkflowsOperation,
+  bulkDeleteWorkflowsRestBinding,
+} from './operations/bulk-delete-workflows.ts';
+import {
+  bulkMutateWorkflowTagsOperation,
+  bulkMutateWorkflowTagsRestBinding,
+} from './operations/bulk-mutate-workflow-tags.ts';
+import {
+  bulkSignalWorkflowsOperation,
+  bulkSignalWorkflowsRestBinding,
+} from './operations/bulk-signal-workflows.ts';
+import {
   getWorkflowAttributesOperation,
   getWorkflowAttributesRestBinding,
 } from './operations/get-workflow-attributes.ts';
@@ -24,6 +40,10 @@ import {
 } from './operations/get-workflow-result.ts';
 import { getWorkflowOperation, getWorkflowRestBinding } from './operations/get-workflow.ts';
 import { listWorkflowsOperation, listWorkflowsRestBinding } from './operations/list-workflows.ts';
+import {
+  purgeWorkflowsOperation,
+  purgeWorkflowsRestBinding,
+} from './operations/purge-workflows.ts';
 import { queryWorkflowOperation, queryWorkflowRestBinding } from './operations/query-workflow.ts';
 import type { RestBinding } from './rest-binding.ts';
 
@@ -50,6 +70,11 @@ export type UnknownRestBinding = RestBinding<any, any>;
  */
 export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   listWorkflowsRestBinding,
+  purgeWorkflowsRestBinding,
+  bulkCancelWorkflowsRestBinding,
+  bulkSignalWorkflowsRestBinding,
+  bulkDeleteWorkflowsRestBinding,
+  bulkMutateWorkflowTagsRestBinding,
   getWorkflowRestBinding,
   getWorkflowResultRestBinding,
   getWorkflowAttributesRestBinding,
@@ -70,6 +95,11 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
 export function createLiveOperationRegistry(): OperationRegistry {
   return createOperationRegistry([
     listWorkflowsOperation,
+    purgeWorkflowsOperation,
+    bulkCancelWorkflowsOperation,
+    bulkSignalWorkflowsOperation,
+    bulkDeleteWorkflowsOperation,
+    bulkMutateWorkflowTagsOperation,
     getWorkflowOperation,
     getWorkflowResultOperation,
     getWorkflowAttributesOperation,
