@@ -130,6 +130,21 @@ class BulkSignalFailureStorage extends MemoryStorage {
 
     await super.put(key, value);
   }
+
+  override async batch(operations: BatchOperation[]): Promise<void> {
+    if (
+      this.workflowIdToFail !== null &&
+      operations.some(
+        (operation) =>
+          operation.type === 'put' &&
+          operation.key.startsWith(`sig:${encodeStorageKeyComponent(this.workflowIdToFail!)}:`),
+      )
+    ) {
+      throw new Error(`simulated bulk signal failure for ${this.workflowIdToFail}`);
+    }
+
+    await super.batch(operations);
+  }
 }
 
 class BulkWorkflowReorderingScanStorage extends MemoryStorage {

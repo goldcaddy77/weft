@@ -221,6 +221,8 @@ export const KEYS = {
     `sig:${encodeStorageKeyComponent(workflowId)}:${name}:${id}`,
   deadline: (deadline: number, workflowId: string) =>
     `wf-deadline:${formatSortableTimestamp(deadline)}:${encodeStorageKeyComponent(workflowId)}`,
+  terminalCleanup: (fireAt: number, timerId: string) =>
+    `wf-cleanup:${formatSortableTimestamp(fireAt)}:${encodeStorageKeyComponent(timerId)}`,
   delayedStart: (startAt: number, workflowId: string) =>
     `wf-delayed:${formatSortableTimestamp(startAt)}:${encodeStorageKeyComponent(workflowId)}`,
   terminalWorkflowPrefix: () => 'wf-terminal:',
@@ -248,6 +250,8 @@ export const KEYS = {
   review: (workflowId: string, reviewId: string) =>
     `review:${encodeStorageKeyComponent(workflowId)}:${reviewId}`,
   workflowHeaders: (workflowId: string) => `wf-headers:${encodeStorageKeyComponent(workflowId)}`,
+  terminalCleanupNeeded: (workflowId: string) =>
+    `wf-cleanup-needed:${encodeStorageKeyComponent(workflowId)}`,
   offload: (workflowId: string, key: string) =>
     `offload:${encodeStorageKeyComponent(workflowId)}:${key}`,
   archive: (workflowId: string, key: string) =>

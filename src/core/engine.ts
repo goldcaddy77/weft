@@ -27,6 +27,7 @@ import type { BatchOperation, Storage as WeftStorage } from '../storage/interfac
 import {
   KEYS,
   encodeStorageKeyComponent,
+  storageHas,
   storageKeys,
   tryDecodeStorageKeyComponent,
 } from '../storage/interface.ts';
@@ -1504,6 +1505,54 @@ function createScheduleTimerId(scheduleId: string): string {
   return `schedule:${scheduleId}`;
 }
 
+const PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX = 'terminal-cleanup:preserve-output:';
+const FULL_TERMINAL_CLEANUP_TIMER_PREFIX = 'terminal-cleanup:full:';
+const TERMINAL_CLEANUP_DELAY_MS = 60_000;
+
+function createTerminalCleanupTimerId(
+  workflowId: string,
+  includeOutputArtifacts: boolean,
+  terminalizedAt: number,
+): string {
+  return includeOutputArtifacts
+    ? `${FULL_TERMINAL_CLEANUP_TIMER_PREFIX}${String(terminalizedAt)}:${workflowId}`
+    : `${PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX}${String(terminalizedAt)}:${workflowId}`;
+}
+
+function parseTerminalCleanupTimerId(
+  timerId: string,
+): { includeOutputArtifacts: boolean; terminalizedAt: number } | null {
+  const parseTerminalizedAt = (prefix: string): number | null => {
+    const separatorIndex = timerId.indexOf(':', prefix.length);
+    if (separatorIndex === -1) {
+      return null;
+    }
+
+    const terminalizedAtValue = Number(timerId.slice(prefix.length, separatorIndex));
+    if (
+      !Number.isFinite(terminalizedAtValue) ||
+      terminalizedAtValue < 0 ||
+      !Number.isSafeInteger(terminalizedAtValue)
+    ) {
+      return null;
+    }
+
+    return terminalizedAtValue;
+  };
+
+  if (timerId.startsWith(FULL_TERMINAL_CLEANUP_TIMER_PREFIX)) {
+    const terminalizedAt = parseTerminalizedAt(FULL_TERMINAL_CLEANUP_TIMER_PREFIX);
+    return terminalizedAt === null ? null : { includeOutputArtifacts: true, terminalizedAt };
+  }
+
+  if (timerId.startsWith(PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX)) {
+    const terminalizedAt = parseTerminalizedAt(PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX);
+    return terminalizedAt === null ? null : { includeOutputArtifacts: false, terminalizedAt };
+  }
+
+  return null;
+}
+
 function canAccessSchedule(
   state: ScheduleState,
   accessOptions: ScheduleAccessOptions | undefined,
@@ -1886,7 +1935,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   /**
    * Dedup set for recorded agent operation budget costs. Entries live here
    * for the lifetime of their parent workflow and are removed in
-   * `#cleanupTerminalWorkflow` so the set does not grow unbounded.
+   * `#cleanupTerminalWorkflowMemory` so the set does not grow unbounded.
    *
    * Removal is O(1) per workflow because `#chargedAgentOperationsByWorkflow`
    * keeps a reverse index — see `#recordAgentBudgetCost` for the write path.
@@ -1899,6 +1948,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    * the engine-wide `#chargedAgentOperations` set.
    */
   #chargedAgentOperationsByWorkflow: Map<string, Set<string>>;
+  #workflowsNeedingTerminalCleanup: Set<string>;
   #cleanupInterval: ReturnType<typeof setInterval> | null;
   #retentionSweepInterval: ReturnType<typeof setInterval> | null;
   #retentionSweepInFlight: Promise<void> | null;
@@ -2020,6 +2070,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#pendingScheduleCreations = new Set();
     this.#chargedAgentOperations = new Set();
     this.#chargedAgentOperationsByWorkflow = new Map();
+    this.#workflowsNeedingTerminalCleanup = new Set();
     this.#reviewCoordinator = new ReviewCoordinator(storage, getNow);
     this.#reviewWaiters = new Map();
     this.#reviewWaitersByWorkflow = new Map();
@@ -3360,6 +3411,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       KEYS.workflow(workflowId),
       KEYS.checkpoint(workflowId),
       KEYS.workflowHeaders(workflowId),
+      KEYS.terminalCleanupNeeded(workflowId),
       KEYS.attribute(workflowId),
       KEYS.terminalWorkflow(state.updatedAt, workflowId),
     ]);
@@ -3368,6 +3420,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       deleteKeys.add(KEYS.deadline(state.executionDeadline, workflowId));
       deleteKeys.add(`timer-idx:deadline:${workflowId}`);
     }
+
+    const cleanupIncludesOutputArtifacts =
+      state.status === 'cancelled' || state.status === 'timed-out';
+    const terminalCleanupTimerId = createTerminalCleanupTimerId(
+      workflowId,
+      cleanupIncludesOutputArtifacts,
+      state.updatedAt,
+    );
+    deleteKeys.add(
+      KEYS.terminalCleanup(state.updatedAt + TERMINAL_CLEANUP_DELAY_MS, terminalCleanupTimerId),
+    );
 
     if (attributeBytes) {
       const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
@@ -3908,6 +3971,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
               key: KEYS.workflowHeaders(workflowId),
               value: encodeWorkflowStartHeaders(workflowStartHeaders),
             },
+            {
+              type: 'put' as const,
+              key: KEYS.terminalCleanupNeeded(workflowId),
+              value: EMPTY_STORAGE_VALUE,
+            },
           ]
         : []),
       ...(additionalOperations ?? []),
@@ -3932,6 +4000,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     return operations;
+  }
+
+  #buildTerminalCleanupTimerOperations(
+    workflowId: string,
+    includeOutputArtifacts: boolean,
+    terminalizedAt: number,
+  ): import('../storage/interface.ts').BatchOperation[] {
+    return buildTimerBatchOperations({
+      id: createTerminalCleanupTimerId(workflowId, includeOutputArtifacts, terminalizedAt),
+      workflowId,
+      fireAt: terminalizedAt + TERMINAL_CLEANUP_DELAY_MS,
+      kind: 'terminal-cleanup',
+    });
   }
 
   #buildInitialSearchAttributeOperations(
@@ -4100,6 +4181,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     this.#workflowHeaders.set(workflowId, new Map(headers));
+    this.#workflowsNeedingTerminalCleanup.add(workflowId);
   }
 
   async #loadWorkflowStartHeaders(workflowId: string): Promise<Map<string, string> | undefined> {
@@ -4109,6 +4191,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     return decodeWorkflowStartHeaders(bytes);
+  }
+
+  async #ensureTerminalCleanupTracked(workflowId: string): Promise<void> {
+    if (this.#workflowsNeedingTerminalCleanup.has(workflowId)) {
+      return;
+    }
+
+    this.#workflowsNeedingTerminalCleanup.add(workflowId);
+    await this.#storage.put(KEYS.terminalCleanupNeeded(workflowId), EMPTY_STORAGE_VALUE);
+  }
+
+  async #loadTerminalCleanupTrackedState(workflowId: string): Promise<void> {
+    if (await storageHas(this.#storage, KEYS.terminalCleanupNeeded(workflowId))) {
+      this.#workflowsNeedingTerminalCleanup.add(workflowId);
+    }
   }
 
   /**
@@ -4319,7 +4416,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     ): Promise<void> => {
       const signalId = crypto.randomUUID();
       const signalKey = KEYS.signal(targetWorkflowId, signalName, signalId);
-      await this.#storage.put(signalKey, encode(signalPayload));
+      const operations: BatchOperation[] = [
+        { type: 'put', key: signalKey, value: encode(signalPayload) },
+      ];
+      if (!this.#workflowsNeedingTerminalCleanup.has(targetWorkflowId)) {
+        this.#workflowsNeedingTerminalCleanup.add(targetWorkflowId);
+        operations.push({
+          type: 'put',
+          key: KEYS.terminalCleanupNeeded(targetWorkflowId),
+          value: EMPTY_STORAGE_VALUE,
+        });
+      }
+      await this.#storage.batch(operations);
 
       this.dispatchEvent(new SignalReceivedEvent(targetWorkflowId, signalName, signalPayload));
 
@@ -4631,11 +4739,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
 
     if (workflowStartHeaders && workflowStartHeaders.size > 0) {
-      operations.push({
-        type: 'put',
-        key: KEYS.workflowHeaders(workflowId),
-        value: encodeWorkflowStartHeaders(workflowStartHeaders),
-      });
+      operations.push(
+        {
+          type: 'put',
+          key: KEYS.workflowHeaders(workflowId),
+          value: encodeWorkflowStartHeaders(workflowStartHeaders),
+        },
+        {
+          type: 'put',
+          key: KEYS.terminalCleanupNeeded(workflowId),
+          value: EMPTY_STORAGE_VALUE,
+        },
+      );
     }
 
     return operations;
@@ -4855,6 +4970,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const eventLog = new EventLog(this.#storage, workflowId);
     const restoredHead = await eventLog.loadHead();
     const workflowStartHeaders = await this.#loadWorkflowStartHeaders(workflowId);
+    await this.#loadTerminalCleanupTrackedState(workflowId);
 
     const handle = this.getHandle(workflowId);
     await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
@@ -5047,11 +5163,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           : new Error('Workflow cancelled');
 
       try {
-        // Drop in-memory state, release charged operations, and delete durable
-        // workflow-keyed records (reviews, offload, blob, shared, signal).
-        // Cancelled/timed-out workflows have no consumers waiting on output
-        // artifacts, so drop them alongside the internal bookkeeping.
-        await this.#cleanupTerminalWorkflow(workflowId, true);
+        await this.#cleanupTerminalWorkflowSynchronously(workflowId, true);
 
         const event =
           status === 'timed-out'
@@ -5065,7 +5177,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         // terminal delivery or handle settlement.
         void this.#finalizeScheduledWorkflowTerminal(workflowId);
       } catch (cleanupError) {
-        // Settle the resolver so handle.result() callers are not stranded.
         if (resolver) resolver.reject(terminalError);
         throw cleanupError;
       } finally {
@@ -6994,6 +7105,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       operation,
       budgetOptions,
     );
+    await this.#ensureTerminalCleanupTracked(workflowId);
     const resolvedBudgetNamespace = this.#resolveAgentBudgetNamespace(budgetNamespace);
     await this.#checkAgentBudgetPolicy(workflowId, budgetOptions, resolvedBudgetNamespace);
 
@@ -7598,6 +7710,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           operation,
           budgetOptions,
         );
+        await this.#ensureTerminalCleanupTracked(workflowId);
 
         // Enforce organization-level budget policy before starting the agent
         // loop so that agents embedded in ctx.all()/ctx.race() collectively
@@ -8037,6 +8150,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return;
     }
 
+    if (entry.kind === 'terminal-cleanup') {
+      await this.#runDeferredTerminalCleanup(entry.workflowId, entry.id);
+      return;
+    }
+
     if (entry.kind === 'schedule') {
       await this.#handleScheduleTimer(entry);
       return;
@@ -8077,6 +8195,37 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
+  async #runDeferredTerminalCleanup(workflowId: string, timerId: string): Promise<void> {
+    const parsedTimer = parseTerminalCleanupTimerId(timerId);
+    if (!parsedTimer) {
+      this.#handleCleanupError(
+        'cleanupTerminalWorkflowDurableState',
+        new Error(`Ignoring malformed terminal cleanup timer id "${timerId}"`),
+        workflowId,
+      );
+      return;
+    }
+
+    const state = await this.#loadWorkflowState(workflowId);
+    if (!state || !isTerminalWorkflowStatus(state.status)) {
+      return;
+    }
+
+    if (state.updatedAt !== parsedTimer.terminalizedAt) {
+      return;
+    }
+
+    try {
+      await this.#cleanupTerminalWorkflowDurableState(
+        workflowId,
+        parsedTimer.includeOutputArtifacts,
+      );
+    } catch (error) {
+      this.#handleCleanupError('cleanupTerminalWorkflowDurableState', error, workflowId);
+      throw error;
+    }
+  }
+
   /**
    * Remove durable records keyed by `workflowId` that otherwise leak after a
    * workflow reaches a terminal state.
@@ -8094,11 +8243,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    *
    * Concurrency note: we assume all writers for a workflow's prefixed keys
    * originate from that workflow's own execution. By the time this runs, the
-   * workflow is already terminal and cannot schedule new writes —
-   * `#completeWorkflow`, `#failWorkflow`, and `#terminateWorkflow` all await
-   * this method before returning. Any write that races the scan must have
-   * come from a background task that itself holds a handle to the terminal
-   * workflow, and those are caller-level bugs we don't try to paper over here.
+   * workflow is already terminal and cannot schedule new writes. The
+   * persisted `terminal-cleanup` timer invokes this after terminalization, so
+   * any write that races the scan must have come from a background task that
+   * itself still holds a handle to the terminal workflow. Those are
+   * caller-level bugs we don't try to paper over here.
    *
    * Scale note: deletes are flushed in batches of `CLEANUP_BATCH_SIZE` so
    * workflows with many blobs/signals do not allocate a single oversized
@@ -8165,24 +8314,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   /**
-   * Shared cleanup invoked from every terminal-state transition (complete,
-   * fail, cancel, timeout). Drops in-memory state (checkpoints, heartbeat
-   * details, agent workflow membership, waiters) and deletes durable records
-   * under workflow-keyed storage prefixes. Also releases the per-workflow
-   * set of charged agent operation IDs so `#chargedAgentOperations` cannot
-   * grow unbounded across the engine's lifetime.
+   * Shared synchronous cleanup invoked from every terminal-state transition
+   * before result delivery. Drops only in-memory state so workflow resolution
+   * is no longer blocked on storage cleanup. Durable scratch cleanup is
+   * retried later through a persisted `terminal-cleanup` timer.
    *
-   * `includeOutputArtifacts` controls whether the caller has any consumers
-   * still waiting to read streams/offload/shared state from the terminal
-   * workflow. `#completeWorkflow` and `#failWorkflow` pass `false` so those
-   * artifacts remain queryable after `handle.result()` resolves; only
-   * `#terminateWorkflow` (cancel/timeout) passes `true`.
+   * Returns the storage deletes for non-workflow-scoped
+   * `budget-charged:{operationId}` keys. Those keys are optional agent-only
+   * scratch state, so their durable deletion is best-effort and must not
+   * affect workflow completion.
    */
-  async #cleanupTerminalWorkflow(
+  #cleanupTerminalWorkflowMemory(
     workflowId: string,
-    includeOutputArtifacts: boolean,
-  ): Promise<void> {
-    // In-memory state
+  ): import('../storage/interface.ts').BatchOperation[] {
+    this.#workflowsNeedingTerminalCleanup.delete(workflowId);
     this.#checkpoints.delete(workflowId);
     this.#heartbeatDetails.delete(workflowId);
     this.#agentWorkflowIds.delete(workflowId);
@@ -8207,14 +8352,38 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // Also queue the per-operation `budget-charged:{operationId}` durable
     // keys for deletion. These are not workflow-scoped in storage, so we
     // have to build the batch from the reverse index before dropping it.
-    const budgetChargedDeletes = this.#releaseChargedAgentOperations(workflowId);
+    return this.#releaseChargedAgentOperations(workflowId);
+  }
 
-    // Durable records
-    await this.#cleanupReviews(workflowId);
-    await this.#cleanupWorkflowStorage(workflowId, includeOutputArtifacts);
+  #cleanupTerminalWorkflowImmediately(workflowId: string): void {
+    const budgetChargedDeletes = this.#cleanupTerminalWorkflowMemory(workflowId);
+    if (budgetChargedDeletes.length === 0) {
+      return;
+    }
+
+    void this.#storage.batch(budgetChargedDeletes).catch((error: unknown) => {
+      this.#handleCleanupError('cleanupBudgetChargedOperations', error, workflowId);
+    });
+  }
+
+  async #cleanupTerminalWorkflowSynchronously(
+    workflowId: string,
+    includeOutputArtifacts: boolean,
+  ): Promise<void> {
+    const budgetChargedDeletes = this.#cleanupTerminalWorkflowMemory(workflowId);
+    await this.#cleanupTerminalWorkflowDurableState(workflowId, includeOutputArtifacts);
     if (budgetChargedDeletes.length > 0) {
       await this.#storage.batch(budgetChargedDeletes);
     }
+  }
+
+  async #cleanupTerminalWorkflowDurableState(
+    workflowId: string,
+    includeOutputArtifacts: boolean,
+  ): Promise<void> {
+    await this.#cleanupReviews(workflowId);
+    await this.#cleanupWorkflowStorage(workflowId, includeOutputArtifacts);
+    await this.#storage.delete(KEYS.terminalCleanupNeeded(workflowId));
   }
 
   /**
@@ -8224,6 +8393,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    */
   async #processReviewOperation(workflowId: string, options: HumanReviewOptions): Promise<void> {
     const now = this.#options.getNow();
+    await this.#ensureTerminalCleanupTracked(workflowId);
 
     // Create a review request in storage
     const reviewOptions: import('../ai/human-review.ts').ReviewOptions = {
@@ -8495,6 +8665,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         }
       }
 
+      if (this.#workflowsNeedingTerminalCleanup.has(workflowId)) {
+        completionOperations.push(
+          ...this.#buildTerminalCleanupTimerOperations(workflowId, false, now),
+        );
+      }
+
       await this.#commitWorkflowStateOperations(state, completionOperations, {
         releaseTenantQuota: true,
       });
@@ -8510,31 +8686,23 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.#scheduler.cancel(`deadline:${workflowId}`, workflowId),
     );
 
-    // Drop in-memory state, release charged operations, and delete durable
-    // workflow-keyed records (reviews, pending signals, per-workflow dedup).
-    // Output artifacts (offload, blob, shared, events) are preserved so
-    // consumers can still read them after `handle.result()` resolves.
+    // Drop in-memory state immediately so the hot path releases engine memory
+    // before result delivery. Durable scratch cleanup is handled by the
+    // persisted terminal-cleanup timer written in the same state batch above.
     const resolver = this.#resultResolvers.get(workflowId);
-    try {
-      await this.#cleanupTerminalWorkflow(workflowId, false);
+    this.#cleanupTerminalWorkflowImmediately(workflowId);
 
-      const event = new WorkflowCompletedEvent(workflowId, result, duration);
-      this.dispatchEvent(event);
-      this.#forwardEventToHandle(workflowId, event);
+    const event = new WorkflowCompletedEvent(workflowId, result, duration);
+    this.dispatchEvent(event);
+    this.#forwardEventToHandle(workflowId, event);
 
-      this.#broadcast({ type: 'workflow:completed', workflowId });
+    this.#broadcast({ type: 'workflow:completed', workflowId });
 
-      if (resolver) resolver.resolve(result);
-      // Scheduled queue handoff is best-effort cleanup and must not block
-      // terminal delivery or handle settlement.
-      void this.#finalizeScheduledWorkflowTerminal(workflowId);
-    } catch (cleanupError) {
-      // Settle the resolver so handle.result() callers are not stranded.
-      if (resolver) resolver.resolve(result);
-      throw cleanupError;
-    } finally {
-      this.#resultResolvers.delete(workflowId);
-    }
+    if (resolver) resolver.resolve(result);
+    // Scheduled queue handoff is best-effort cleanup and must not block
+    // terminal delivery or handle settlement.
+    void this.#finalizeScheduledWorkflowTerminal(workflowId);
+    this.#resultResolvers.delete(workflowId);
   }
 
   async #failWorkflow(
@@ -8582,13 +8750,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // after the user-defined search attributes have been removed.
     await this.#writeRetainedTerminalSearchAttributes(workflowId, retainedAttributes);
 
-    // Drop in-memory state, release charged operations, and delete durable
-    // workflow-keyed records (reviews, pending signals, per-workflow dedup).
-    // Output artifacts (offload, blob, shared, events) are preserved so
-    // consumers can still read them after `handle.result()` rejects.
     const resolver = this.#resultResolvers.get(workflowId);
     try {
-      await this.#cleanupTerminalWorkflow(workflowId, false);
+      await this.#cleanupTerminalWorkflowSynchronously(workflowId, false);
 
       const event = new WorkflowFailedEvent(workflowId, error);
       this.dispatchEvent(event);
@@ -8599,7 +8763,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       // terminal delivery or handle settlement.
       void this.#finalizeScheduledWorkflowTerminal(workflowId);
     } catch (cleanupError) {
-      // Settle the resolver so handle.result() callers are not stranded.
       if (resolver) resolver.reject(error);
       throw cleanupError;
     } finally {

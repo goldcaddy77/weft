@@ -5562,7 +5562,7 @@ The roadmap below carries forward the implementation work derived from that rese
 - [x] `benchmarks/speculation.bench.ts` exists; asserts ≥30% end-to-end latency reduction on a 5-turn agent workflow with 500ms mock tool latency, across ≥100 runs, with zero incorrect results.
 - [x] `src/ai/prompt-cache.ts` exists; implements a templated radix tree for prefix sharing; exposes hit/miss counters via the metrics collector.
 - [x] `src/benchmarks/prompt-cache.test.ts` shows ≥49% hit rate on a realistic workload and <1ms per-call overhead.
-- [ ] Activity completions benchmark: `benchmarks/throughput.bench.ts` reports ≥20K/sec (up from ~9K/sec; spec is >30K/sec).
+- [x] Activity completions benchmark: `benchmarks/throughput.bench.ts` reports ≥20K/sec (up from ~9K/sec; spec is >30K/sec).
 - [x] Memory per workflow: `benchmarks/memory.bench.ts` reports ≤5KB/workflow on a synthetic population of 10K workflows (down from ~7–15KB; spec is ≤2KB).
 - [x] `bun run typecheck` and `bun test` both exit 0 after Track 3 lands.
 

@@ -403,7 +403,13 @@ export interface TimerEntry {
   id: string;
   workflowId: WorkflowId;
   fireAt: number;
-  kind: 'sleep' | 'visibility-timeout' | 'execution-deadline' | 'delayed-start' | 'schedule';
+  kind:
+    | 'sleep'
+    | 'visibility-timeout'
+    | 'execution-deadline'
+    | 'delayed-start'
+    | 'schedule'
+    | 'terminal-cleanup';
   executionTimeoutMs?: number;
 }
 
