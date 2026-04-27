@@ -10,7 +10,21 @@
  */
 
 import { createOperationRegistry, type OperationRegistry } from './operation-catalog.ts';
+import {
+  getWorkflowAttributesOperation,
+  getWorkflowAttributesRestBinding,
+} from './operations/get-workflow-attributes.ts';
+import {
+  getWorkflowEventsOperation,
+  getWorkflowEventsRestBinding,
+} from './operations/get-workflow-events.ts';
+import {
+  getWorkflowResultOperation,
+  getWorkflowResultRestBinding,
+} from './operations/get-workflow-result.ts';
 import { getWorkflowOperation, getWorkflowRestBinding } from './operations/get-workflow.ts';
+import { listWorkflowsOperation, listWorkflowsRestBinding } from './operations/list-workflows.ts';
+import { queryWorkflowOperation, queryWorkflowRestBinding } from './operations/query-workflow.ts';
 import type { RestBinding } from './rest-binding.ts';
 
 /**
@@ -34,7 +48,14 @@ export type UnknownRestBinding = RestBinding<any, any>;
  * one entry. Exported `readonly` so the router cannot mutate it at
  * runtime.
  */
-export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [getWorkflowRestBinding];
+export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
+  listWorkflowsRestBinding,
+  getWorkflowRestBinding,
+  getWorkflowResultRestBinding,
+  getWorkflowAttributesRestBinding,
+  getWorkflowEventsRestBinding,
+  queryWorkflowRestBinding,
+];
 
 /**
  * Live operation registry — populated with every operation that has a
@@ -47,5 +68,12 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [getWorkflowRest
  * `operation-catalog.ts` — no `as ErasedOperation` cast is needed.
  */
 export function createLiveOperationRegistry(): OperationRegistry {
-  return createOperationRegistry([getWorkflowOperation]);
+  return createOperationRegistry([
+    listWorkflowsOperation,
+    getWorkflowOperation,
+    getWorkflowResultOperation,
+    getWorkflowAttributesOperation,
+    getWorkflowEventsOperation,
+    queryWorkflowOperation,
+  ]);
 }
