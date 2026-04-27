@@ -95,6 +95,30 @@ describe('weft.workflows.checkpoints.list', () => {
     expect(decoded).toEqual(expected);
   });
 
+  it('returns 200 with an empty array for an unknown workflow id', async () => {
+    // Legacy `engine.listCheckpoints` returns `[]` rather than throwing
+    // when the workflow does not exist — the migrated operation
+    // preserves that contract verbatim. This test pins the behavior
+    // so a future change in the engine can't silently flip the API
+    // contract from "always 200, possibly empty" to "404 on missing".
+    engine = createEngine();
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/does-not-exist/checkpoints', {
+        method: 'GET',
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: [listCheckpointsRestBinding],
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(await response.json()).toEqual([]);
+  });
+
   it('maps EngineFailure faults to the legacy 500 response body', async () => {
     engine = createEngine();
 

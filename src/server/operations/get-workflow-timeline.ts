@@ -9,15 +9,11 @@ import type { UnknownRestBinding } from '../rest-bindings.ts';
 
 const getWorkflowTimelineInput = z.object({
   workflowId: z.string().min(1),
-  acceptMsgpack: z.boolean().optional(),
 });
 const getWorkflowTimelineOutput = z.unknown();
 
 export type GetWorkflowTimelineInput = z.infer<typeof getWorkflowTimelineInput>;
-export type GetWorkflowTimelineOutput = {
-  timeline: WorkflowTimelineEntry[];
-  acceptMsgpack: boolean;
-};
+export type GetWorkflowTimelineOutput = WorkflowTimelineEntry[];
 
 export const getWorkflowTimelineOperation = defineOperation<
   GetWorkflowTimelineInput,
@@ -31,6 +27,10 @@ export const getWorkflowTimelineOperation = defineOperation<
   access: { kind: 'public' },
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+  // Operation contract is transport-neutral: returns the array of
+  // timeline entries directly. Accept-header negotiation between
+  // json and msgpack is REST-specific and lives in the binding's
+  // `shapeSuccess`, not on the operation output type.
   invoke: async ({ input, engine }): Promise<GetWorkflowTimelineOutput> => {
     const e = engine as Engine;
     const state = await e.get(input.workflowId);
@@ -42,23 +42,26 @@ export const getWorkflowTimelineOperation = defineOperation<
       };
       throw fault;
     }
-
-    return {
-      timeline: await e.getTimeline(input.workflowId),
-      acceptMsgpack: input.acceptMsgpack ?? false,
-    };
+    return e.getTimeline(input.workflowId);
   },
 });
 
-function shapeGetWorkflowTimelineSuccess(result: GetWorkflowTimelineOutput): Response {
-  if (result.acceptMsgpack) {
-    return new Response(encode(result.timeline), {
+function shapeGetWorkflowTimelineSuccess(
+  result: GetWorkflowTimelineOutput,
+  request: Request,
+): Response {
+  // Match legacy `negotiatedResponse` behavior verbatim: substring
+  // match on `Accept`, no q-value parsing. RFC-7231 negotiation is
+  // a deliberate behavior change for a follow-up PR.
+  const accept = request.headers.get('Accept') ?? '';
+  if (accept.includes('application/msgpack')) {
+    return new Response(encode(result), {
       status: 200,
       headers: { 'Content-Type': 'application/msgpack' },
     });
   }
 
-  return new Response(JSON.stringify(result.timeline), {
+  return new Response(JSON.stringify(result), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -86,11 +89,11 @@ export const getWorkflowTimelineRestBinding: UnknownRestBinding = {
   inputSources: {
     workflowId: { kind: 'path', pathParam: 'id' },
   },
-  extractInput: async (request, pathParams) => ({
+  extractInput: async (_request, pathParams) => ({
     workflowId: pathParams['id'] ?? '',
-    acceptMsgpack: request.headers.get('Accept')?.includes('application/msgpack') ?? false,
   }),
   success: { kind: 'json', status: 200 },
-  shapeSuccess: (output: GetWorkflowTimelineOutput) => shapeGetWorkflowTimelineSuccess(output),
+  shapeSuccess: (output: GetWorkflowTimelineOutput, request: Request) =>
+    shapeGetWorkflowTimelineSuccess(output, request),
   shapeFault: shapeGetWorkflowTimelineFault,
 };

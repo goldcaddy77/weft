@@ -1445,7 +1445,7 @@ async function dispatchViaExecuteOperation(
   });
   if (result.ok) {
     return binding.shapeSuccess
-      ? binding.shapeSuccess(result.value)
+      ? binding.shapeSuccess(result.value, request)
       : defaultShapeSuccess(result.value, binding.success);
   }
   return binding.shapeFault ? binding.shapeFault(result.fault) : faultToHttpResponse(result.fault);

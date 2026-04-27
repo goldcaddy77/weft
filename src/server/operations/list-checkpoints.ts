@@ -9,15 +9,11 @@ import type { UnknownRestBinding } from '../rest-bindings.ts';
 
 const listCheckpointsInput = z.object({
   workflowId: z.string().min(1),
-  acceptMsgpack: z.boolean().optional(),
 });
 const listCheckpointsOutput = z.unknown();
 
 export type ListCheckpointsInput = z.infer<typeof listCheckpointsInput>;
-export type ListCheckpointsOutput = {
-  summaries: CheckpointSummary[];
-  acceptMsgpack: boolean;
-};
+export type ListCheckpointsOutput = CheckpointSummary[];
 
 export const listCheckpointsOperation = defineOperation<
   ListCheckpointsInput,
@@ -31,24 +27,32 @@ export const listCheckpointsOperation = defineOperation<
   access: { kind: 'public' },
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+  // Operation contract is transport-neutral: it returns the array of
+  // summaries directly. JSON-RPC HTTP/WS/stdio clients receive the
+  // canonical envelope around this value. The REST binding's
+  // `shapeSuccess` does `Accept` negotiation (json vs msgpack) on
+  // top of it — that representation choice is HTTP-specific and
+  // does not belong on the operation's `Output` type.
   invoke: async ({ input, engine }): Promise<ListCheckpointsOutput> => {
     const e = engine as Engine;
-    return {
-      summaries: await e.listCheckpoints(input.workflowId),
-      acceptMsgpack: input.acceptMsgpack ?? false,
-    };
+    return e.listCheckpoints(input.workflowId);
   },
 });
 
-function shapeListCheckpointsSuccess(result: ListCheckpointsOutput): Response {
-  if (result.acceptMsgpack) {
-    return new Response(encode(result.summaries), {
+function shapeListCheckpointsSuccess(result: ListCheckpointsOutput, request: Request): Response {
+  // Match legacy `negotiatedResponse` behavior verbatim: a substring
+  // match on `Accept`, no q-value parsing. Real RFC-7231 negotiation
+  // is a deliberate behavior change for a follow-up PR; this PR
+  // preserves byte-for-byte parity with the legacy handler.
+  const accept = request.headers.get('Accept') ?? '';
+  if (accept.includes('application/msgpack')) {
+    return new Response(encode(result), {
       status: 200,
       headers: { 'Content-Type': 'application/msgpack' },
     });
   }
 
-  return new Response(JSON.stringify(result.summaries), {
+  return new Response(JSON.stringify(result), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -76,11 +80,11 @@ export const listCheckpointsRestBinding: UnknownRestBinding = {
   inputSources: {
     workflowId: { kind: 'path', pathParam: 'id' },
   },
-  extractInput: async (request, pathParams) => ({
+  extractInput: async (_request, pathParams) => ({
     workflowId: pathParams['id'] ?? '',
-    acceptMsgpack: request.headers.get('Accept')?.includes('application/msgpack') ?? false,
   }),
   success: { kind: 'json', status: 200 },
-  shapeSuccess: (output: ListCheckpointsOutput) => shapeListCheckpointsSuccess(output),
+  shapeSuccess: (output: ListCheckpointsOutput, request: Request) =>
+    shapeListCheckpointsSuccess(output, request),
   shapeFault: shapeListCheckpointsFault,
 };

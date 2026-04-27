@@ -79,6 +79,29 @@ describe('weft.updates.result.get', () => {
     });
   });
 
+  it('returns 202 pending for a completely unknown update id', async () => {
+    // Legacy `handleGetUpdateResult` returned `202 {status:'pending'}`
+    // for both "update created, no response yet" AND "update id has
+    // never existed" — the engine surfaces both as a `null` result.
+    // Pin that behavior here so a future change can't silently flip
+    // unknown ids to 404 without an explicit test failure.
+    const setup = createEngineWithStorage();
+    engine = setup.engine;
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/updates/does-not-exist-anywhere', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: [getUpdateResultRestBinding],
+      },
+    );
+
+    expect(response.status).toBe(202);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(await response.json()).toEqual({ status: 'pending' });
+  });
+
   it('maps EngineFailure faults to the legacy 500 response body', async () => {
     const setup = createEngineWithStorage();
     engine = setup.engine;

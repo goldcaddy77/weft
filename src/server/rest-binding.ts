@@ -90,8 +90,16 @@ export type RestBinding<Input, Output> = {
    * adapters default to `Response.json(output, { status: success.status })`
    * (or `new Response(null, { status })` for `empty`). Provide this
    * when the wire representation differs from `output` verbatim.
+   *
+   * Receives the original `Request` so REST-only response shaping —
+   * `Accept` header negotiation (json vs msgpack), redirect URL
+   * construction, etc. — can stay in the binding without leaking
+   * HTTP-specific state into the operation's `Output` type. Other
+   * transports (JSON-RPC HTTP/WS/stdio) never call `shapeSuccess`;
+   * they emit `output` directly via the canonical envelope, so the
+   * operation contract stays transport-neutral.
    */
-  readonly shapeSuccess?: (output: Output) => Response;
+  readonly shapeSuccess?: (output: Output, request: Request) => Response;
   /**
    * Optional override for fault → HTTP response mapping. When absent,
    * the transport adapter falls back to `faultToHttpResponse` (the

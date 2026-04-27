@@ -10,15 +10,11 @@ import type { UnknownRestBinding } from '../rest-bindings.ts';
 const getCheckpointAtInput = z.object({
   workflowId: z.string().min(1),
   step: z.number().int().nonnegative(),
-  acceptMsgpack: z.boolean().optional(),
 });
 const getCheckpointAtOutput = z.unknown();
 
 export type GetCheckpointAtInput = z.infer<typeof getCheckpointAtInput>;
-export type GetCheckpointAtOutput = {
-  state: CheckpointState;
-  acceptMsgpack: boolean;
-};
+export type GetCheckpointAtOutput = CheckpointState;
 
 export const getCheckpointAtOperation = defineOperation<
   GetCheckpointAtInput,
@@ -32,6 +28,11 @@ export const getCheckpointAtOperation = defineOperation<
   access: { kind: 'public' },
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+  // Operation contract is transport-neutral: returns the
+  // `CheckpointState` directly. Accept-header negotiation between
+  // json and msgpack happens in the REST binding's `shapeSuccess`,
+  // not in the operation output, so JSON-RPC clients receive a
+  // clean canonical envelope.
   invoke: async ({ input, engine }): Promise<GetCheckpointAtOutput> => {
     const e = engine as Engine;
     const state = await e.getCheckpointAt(input.workflowId, input.step);
@@ -43,23 +44,23 @@ export const getCheckpointAtOperation = defineOperation<
       };
       throw fault;
     }
-
-    return {
-      state,
-      acceptMsgpack: input.acceptMsgpack ?? false,
-    };
+    return state;
   },
 });
 
-function shapeGetCheckpointAtSuccess(result: GetCheckpointAtOutput): Response {
-  if (result.acceptMsgpack) {
-    return new Response(encode(result.state), {
+function shapeGetCheckpointAtSuccess(result: GetCheckpointAtOutput, request: Request): Response {
+  // Match legacy `negotiatedResponse` behavior verbatim: a substring
+  // match on `Accept`, no q-value parsing. Real RFC-7231 negotiation
+  // is a deliberate behavior change for a follow-up PR.
+  const accept = request.headers.get('Accept') ?? '';
+  if (accept.includes('application/msgpack')) {
+    return new Response(encode(result), {
       status: 200,
       headers: { 'Content-Type': 'application/msgpack' },
     });
   }
 
-  return new Response(JSON.stringify(result.state), {
+  return new Response(JSON.stringify(result), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -95,10 +96,26 @@ export const getCheckpointAtRestBinding: UnknownRestBinding = {
     workflowId: { kind: 'path', pathParam: 'id' },
     step: { kind: 'path', pathParam: 'step' },
   },
-  extractInput: async (request, pathParams) => {
+  extractInput: async (_request, pathParams) => {
     const stepParam = pathParams['step'] ?? '';
-    const step = Number(stepParam);
 
+    // Match the legacy route regex `(\d+)` exactly: only canonical
+    // decimal digits, no leading sign, no scientific notation, no
+    // hex prefix. `Number()` would happily coerce `1e2` to 100 and
+    // `0x10` to 16, accepting URLs the legacy regex rejected — a
+    // silent parity drift on top of the documented 404→400 shift.
+    if (!/^\d+$/.test(stepParam)) {
+      const fault: OperationFault = {
+        code: 'InvalidParams',
+        message: `Invalid step: ${stepParam}`,
+        data: {
+          issues: [{ path: ['step'], message: `Invalid step: ${stepParam}`, code: 'custom' }],
+        },
+      };
+      throw fault;
+    }
+
+    const step = Number(stepParam);
     if (!Number.isSafeInteger(step) || step < 0) {
       const fault: OperationFault = {
         code: 'InvalidParams',
@@ -113,10 +130,10 @@ export const getCheckpointAtRestBinding: UnknownRestBinding = {
     return {
       workflowId: pathParams['id'] ?? '',
       step,
-      acceptMsgpack: request.headers.get('Accept')?.includes('application/msgpack') ?? false,
     };
   },
   success: { kind: 'json', status: 200 },
-  shapeSuccess: (output: GetCheckpointAtOutput) => shapeGetCheckpointAtSuccess(output),
+  shapeSuccess: (output: GetCheckpointAtOutput, request: Request) =>
+    shapeGetCheckpointAtSuccess(output, request),
   shapeFault: shapeGetCheckpointAtFault,
 };
