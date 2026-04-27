@@ -27,6 +27,23 @@ import {
   bulkSignalWorkflowsRestBinding,
 } from './operations/bulk-signal-workflows.ts';
 import {
+  getBudgetPolicyOperation,
+  getBudgetPolicyRestBinding,
+} from './operations/get-budget-policy.ts';
+import {
+  getCheckpointAtOperation,
+  getCheckpointAtRestBinding,
+} from './operations/get-checkpoint-at.ts';
+import {
+  getRetentionOverviewOperation,
+  getRetentionOverviewRestBinding,
+} from './operations/get-retention-overview.ts';
+import { getReviewOperation, getReviewRestBinding } from './operations/get-review.ts';
+import {
+  getUpdateResultOperation,
+  getUpdateResultRestBinding,
+} from './operations/get-update-result.ts';
+import {
   getWorkflowAttributesOperation,
   getWorkflowAttributesRestBinding,
 } from './operations/get-workflow-attributes.ts';
@@ -38,7 +55,16 @@ import {
   getWorkflowResultOperation,
   getWorkflowResultRestBinding,
 } from './operations/get-workflow-result.ts';
+import {
+  getWorkflowTimelineOperation,
+  getWorkflowTimelineRestBinding,
+} from './operations/get-workflow-timeline.ts';
 import { getWorkflowOperation, getWorkflowRestBinding } from './operations/get-workflow.ts';
+import {
+  listCheckpointsOperation,
+  listCheckpointsRestBinding,
+} from './operations/list-checkpoints.ts';
+import { listReviewsOperation, listReviewsRestBinding } from './operations/list-reviews.ts';
 import { listWorkflowsOperation, listWorkflowsRestBinding } from './operations/list-workflows.ts';
 import {
   purgeWorkflowsOperation,
@@ -80,6 +106,14 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   getWorkflowAttributesRestBinding,
   getWorkflowEventsRestBinding,
   queryWorkflowRestBinding,
+  getRetentionOverviewRestBinding,
+  getBudgetPolicyRestBinding,
+  getUpdateResultRestBinding,
+  listReviewsRestBinding,
+  getReviewRestBinding,
+  listCheckpointsRestBinding,
+  getCheckpointAtRestBinding,
+  getWorkflowTimelineRestBinding,
 ];
 
 /**
@@ -105,5 +139,13 @@ export function createLiveOperationRegistry(): OperationRegistry {
     getWorkflowAttributesOperation,
     getWorkflowEventsOperation,
     queryWorkflowOperation,
+    getRetentionOverviewOperation,
+    getBudgetPolicyOperation,
+    getUpdateResultOperation,
+    listReviewsOperation,
+    getReviewOperation,
+    listCheckpointsOperation,
+    getCheckpointAtOperation,
+    getWorkflowTimelineOperation,
   ]);
 }

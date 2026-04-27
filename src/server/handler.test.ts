@@ -3927,7 +3927,7 @@ describe('handleRequest', () => {
     expect(response.status).toBe(404);
   });
 
-  it('GET /v1/workflows/:id/checkpoints/:step returns 404 for non-numeric step', async () => {
+  it('GET /v1/workflows/:id/checkpoints/:step returns 400 for non-numeric step', async () => {
     engine = createEngine();
 
     const response = await handleRequest(
@@ -3935,8 +3935,8 @@ describe('handleRequest', () => {
       engine,
     );
 
-    // Route pattern only matches digits, so this is a 404 (not found)
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(400);
+    expect(await json(response)).toEqual({ error: 'Invalid step: abc' });
   });
 
   it('returns 400 for malformed percent-encoding in route parameters', async () => {

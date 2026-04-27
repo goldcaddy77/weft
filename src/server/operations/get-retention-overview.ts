@@ -1,0 +1,64 @@
+import { z } from 'zod';
+
+import type { Engine } from '../../core/engine.ts';
+import type { RetentionOverview } from '../../core/types.ts';
+import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import { defineOperation } from '../operation-registry.ts';
+import type { UnknownRestBinding } from '../rest-bindings.ts';
+
+const getRetentionOverviewInput = z.object({});
+const getRetentionOverviewOutput = z.unknown();
+
+export type GetRetentionOverviewInput = z.infer<typeof getRetentionOverviewInput>;
+export type GetRetentionOverviewOutput = RetentionOverview;
+
+export const getRetentionOverviewOperation = defineOperation<
+  GetRetentionOverviewInput,
+  GetRetentionOverviewOutput
+>({
+  name: 'weft.retention.get',
+  summary: 'Get retention policy overview',
+  tags: ['System'],
+  inputSchema: getRetentionOverviewInput,
+  outputSchema: getRetentionOverviewOutput as z.ZodType<GetRetentionOverviewOutput>,
+  access: { kind: 'public' },
+  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+  unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+  invoke: async ({ engine }): Promise<GetRetentionOverviewOutput> => {
+    const e = engine as Engine;
+    return e.getRetentionOverview();
+  },
+});
+
+function shapeGetRetentionOverviewSuccess(result: GetRetentionOverviewOutput): Response {
+  return new Response(JSON.stringify(result), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function shapeGetRetentionOverviewFault(fault: OperationFault): Response {
+  if (fault.code === 'EngineFailure') {
+    return new Response(JSON.stringify({ error: 'Internal server error' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify({ error: fault.message }), {
+    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export const getRetentionOverviewRestBinding: UnknownRestBinding = {
+  method: 'GET',
+  path: '/v1/retention',
+  pathParamNames: [],
+  operationName: 'weft.retention.get',
+  inputSources: {},
+  extractInput: async () => ({}),
+  success: { kind: 'json', status: 200 },
+  shapeSuccess: (output: GetRetentionOverviewOutput) => shapeGetRetentionOverviewSuccess(output),
+  shapeFault: shapeGetRetentionOverviewFault,
+};

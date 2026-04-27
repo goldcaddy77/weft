@@ -540,10 +540,6 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
   }
 }
 
-async function handleGetRetentionOverview(engine: Engine): Promise<Response> {
-  return jsonResponse(engine.getRetentionOverview());
-}
-
 async function handleListSchedules(
   request: Request,
   engine: Engine,
@@ -807,20 +803,6 @@ async function handleUpdateWorkflow(
   }
 }
 
-async function handleGetUpdateResult(engine: Engine, updateId: string): Promise<Response> {
-  const response = await engine.getUpdateResult(updateId);
-
-  if (response === null) {
-    return jsonResponse({ status: 'pending' }, 202);
-  }
-
-  return jsonResponse({
-    status: 'completed',
-    result: response.result,
-    ...(response.error !== undefined ? { error: response.error } : {}),
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Attributes routes — engine.getAttributes() / engine.setAttributes()
 // ---------------------------------------------------------------------------
@@ -924,23 +906,6 @@ async function handleRemoveWorkflowTags(
 // ---------------------------------------------------------------------------
 // Reviews routes — engine.listReviews() / engine.submitReview()
 // ---------------------------------------------------------------------------
-
-async function handleListReviews(engine: Engine): Promise<Response> {
-  const reviews = await engine.listReviews();
-  return jsonResponse({ items: reviews });
-}
-
-async function handleGetReview(
-  engine: Engine,
-  workflowId: string,
-  reviewId: string,
-): Promise<Response> {
-  const review = await engine.getReview(workflowId, reviewId);
-  if (review === null) {
-    return errorResponse(`Review "${reviewId}" not found for workflow "${workflowId}"`, 404);
-  }
-  return jsonResponse(review);
-}
 
 const VALID_DECISIONS = ['approved', 'rejected', 'needs-changes'] as const;
 
@@ -1149,14 +1114,6 @@ async function handleSetBudgetPolicy(request: Request, engine: Engine): Promise<
 // Budget policy read route — engine.getBudgetPolicy()
 // ---------------------------------------------------------------------------
 
-async function handleGetBudgetPolicy(engine: Engine, namespace: string): Promise<Response> {
-  const policy = await engine.getBudgetPolicy(namespace);
-  if (policy === null) {
-    return errorResponse(`Budget policy for namespace "${namespace}" not found`, 404);
-  }
-  return jsonResponse(policy);
-}
-
 async function handleGetTenantQuota(
   engine: Engine,
   tenantId: string,
@@ -1285,47 +1242,6 @@ async function handleStreamSSE(
 // Checkpoint history routes
 // ---------------------------------------------------------------------------
 
-async function handleListCheckpoints(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-): Promise<Response> {
-  const summaries = await engine.listCheckpoints(workflowId);
-  return negotiatedResponse(request, summaries);
-}
-
-async function handleGetCheckpointAt(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-  stepParam: string,
-): Promise<Response> {
-  const step = Number(stepParam);
-  if (!Number.isSafeInteger(step) || step < 0) {
-    return errorResponse(`Invalid step: ${stepParam}`, 400);
-  }
-  const state = await engine.getCheckpointAt(workflowId, step);
-  if (!state) {
-    return errorResponse(`Checkpoint not found at step ${step} for workflow ${workflowId}`, 404);
-  }
-
-  return negotiatedResponse(request, state);
-}
-
-async function handleGetTimeline(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-): Promise<Response> {
-  const state = await engine.get(workflowId);
-  if (state === null) {
-    return errorResponse(`Workflow "${workflowId}" not found`, 404);
-  }
-
-  const timeline = await engine.getTimeline(workflowId);
-  return negotiatedResponse(request, timeline);
-}
-
 async function handleReplayWorkflowToStep(
   request: Request,
   engine: Engine,
@@ -1390,7 +1306,6 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
   recoverAll: async ({ engine }) => handleRecoverAll(engine),
-  getRetentionOverview: async ({ engine }) => handleGetRetentionOverview(engine),
   listSchedules: async ({ request, engine, options }) =>
     handleListSchedules(request, engine, options?.authContext),
   createSchedule: async ({ request, engine, options }) =>
@@ -1406,7 +1321,6 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   resumeSchedule: async ({ engine, options, param }) =>
     handleResumeSchedule(engine, param('id'), options?.authContext),
   setBudgetPolicy: async ({ request, engine }) => handleSetBudgetPolicy(request, engine),
-  getBudgetPolicy: async ({ engine, param }) => handleGetBudgetPolicy(engine, param('namespace')),
   getTenantQuota: async ({ engine, options, param }) =>
     handleGetTenantQuota(engine, param('id'), options?.authContext),
   getStreamChunks: async ({ request, engine, param }) =>
@@ -1419,7 +1333,6 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     handleSignalWorkflow(request, engine, param('id'), param('name')),
   updateWorkflow: async ({ request, engine, param }) =>
     handleUpdateWorkflow(request, engine, param('id'), param('name')),
-  getUpdateResult: async ({ engine, param }) => handleGetUpdateResult(engine, param('updateId')),
   setAttributes: async ({ request, engine, param }) =>
     handleSetAttributes(request, engine, param('id')),
   addWorkflowTags: async ({ request, engine, param }) =>
@@ -1428,17 +1341,9 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     handleRemoveWorkflowTags(request, engine, param('id')),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
-  listReviews: async ({ engine }) => handleListReviews(engine),
   submitReviewDecision: async ({ request, engine, param }) =>
     handleSubmitReviewDecision(request, engine, param('reviewId')),
-  getReview: async ({ engine, param }) => handleGetReview(engine, param('id'), param('reviewId')),
   streamSSE: async ({ request, engine, param }) => handleStreamSSE(request, engine, param('id')),
-  listCheckpoints: async ({ request, engine, param }) =>
-    handleListCheckpoints(request, engine, param('id')),
-  getCheckpointAt: async ({ request, engine, param }) =>
-    handleGetCheckpointAt(request, engine, param('id'), param('step')),
-  getTimeline: async ({ request, engine, param }) =>
-    handleGetTimeline(request, engine, param('id')),
   replayWorkflowToStep: async ({ request, engine, param }) =>
     handleReplayWorkflowToStep(request, engine, param('id'), param('step')),
   cancelWorkflow: async ({ engine, param }) => handleCancelWorkflow(engine, param('id')),
@@ -1540,7 +1445,7 @@ async function dispatchViaExecuteOperation(
   });
   if (result.ok) {
     return binding.shapeSuccess
-      ? binding.shapeSuccess(result.value)
+      ? binding.shapeSuccess(result.value, request)
       : defaultShapeSuccess(result.value, binding.success);
   }
   return binding.shapeFault ? binding.shapeFault(result.fault) : faultToHttpResponse(result.fault);
