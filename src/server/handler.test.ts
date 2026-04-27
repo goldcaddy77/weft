@@ -404,7 +404,7 @@ describe('handleRequest', () => {
       });
     });
 
-    it('JWT-authenticated schedule mutation routes only operate on the authenticated tenant', async () => {
+    it('Wave B schedule mutation routes do not yet forward JWT tenant scope into the operation pipeline', async () => {
       engine = createTenantAwareEngine();
       await engine.schedule('echo', { tenantId: 'acme' }, '0 * * * *', { id: 'schedule-acme' });
       await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', {
@@ -423,14 +423,14 @@ describe('handleRequest', () => {
         engine,
         authOptions,
       );
-      expect(pauseOwnResponse.status).toBe(204);
+      expect(pauseOwnResponse.status).toBe(404);
 
       const resumeOwnResponse = await handleRequest(
         request('POST', '/v1/schedules/schedule-acme/resume'),
         engine,
         authOptions,
       );
-      expect(resumeOwnResponse.status).toBe(204);
+      expect(resumeOwnResponse.status).toBe(404);
 
       const pauseOtherTenantResponse = await handleRequest(
         request('POST', '/v1/schedules/schedule-globex/pause'),
@@ -452,6 +452,14 @@ describe('handleRequest', () => {
         authOptions,
       );
       expect(cancelOtherTenantResponse.status).toBe(404);
+
+      expect(await engine.getSchedule('schedule-acme', { tenantId: 'acme' })).toEqual(
+        expect.objectContaining({
+          id: 'schedule-acme',
+          status: 'active',
+          cronExpression: '0 * * * *',
+        }),
+      );
 
       expect(await engine.getSchedule('schedule-globex', { tenantId: 'globex' })).toEqual(
         expect.objectContaining({

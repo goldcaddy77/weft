@@ -110,7 +110,7 @@ function emitRoutes(
     };
     if (parameters.length > 0) entry['parameters'] = parameters;
 
-    if (route.method === 'POST' || route.method === 'PUT' || route.method === 'PATCH') {
+    if (route.method !== 'GET' && route.method !== 'DELETE') {
       entry['requestBody'] = {
         content: { 'application/json': { schema: { type: 'object' } } },
       };

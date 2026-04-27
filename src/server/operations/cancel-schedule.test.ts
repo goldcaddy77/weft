@@ -1,0 +1,109 @@
+import { describe, expect, it } from 'bun:test';
+
+import { Engine } from '../../core/engine.ts';
+import type { WorkflowContext } from '../../core/types.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
+import { handleRequest } from '../handler.ts';
+import { createOperationRegistry } from '../operation-catalog.ts';
+import { cancelScheduleOperation, cancelScheduleRestBinding } from './cancel-schedule.ts';
+
+function createEngine(): Engine {
+  const storage = new MemoryStorage();
+  const engine = new Engine({ storage });
+  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    return input;
+  });
+  return engine;
+}
+
+const registry = createOperationRegistry([cancelScheduleOperation]);
+const bindings = [cancelScheduleRestBinding];
+
+describe('weft.schedules.cancel', () => {
+  it('cancels a schedule and returns 204', async () => {
+    const engine = createEngine();
+    await engine.schedule('echo', 'payload', '0 * * * *', { id: 'schedule-cancel-success' });
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/schedules/schedule-cancel-success', {
+        method: 'DELETE',
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(response.status).toBe(204);
+    expect(await engine.getSchedule('schedule-cancel-success')).toEqual(
+      expect.objectContaining({ status: 'cancelled' }),
+    );
+  });
+
+  it('returns 404 when the schedule does not exist', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/schedules/does-not-exist', { method: 'DELETE' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Schedule "does-not-exist" not found' });
+  });
+
+  it('maps authenticated-tenant errors to 403', async () => {
+    const engine = createEngine();
+    const originalCancelSchedule = engine.cancelSchedule.bind(engine);
+    engine.cancelSchedule = async () => {
+      throw new Error('Authenticated tenant cannot access this schedule');
+    };
+
+    try {
+      const response = await handleRequest(
+        new Request('http://localhost/v1/schedules/schedule-1', { method: 'DELETE' }),
+        engine,
+        {
+          operationRegistry: registry,
+          restBindings: bindings,
+        },
+      );
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: 'Authenticated tenant cannot access this schedule',
+      });
+    } finally {
+      engine.cancelSchedule = originalCancelSchedule;
+    }
+  });
+
+  it('returns the raw engine message for unexpected 500 failures', async () => {
+    const engine = createEngine();
+    const originalCancelSchedule = engine.cancelSchedule.bind(engine);
+    engine.cancelSchedule = async () => {
+      throw new Error('exploded');
+    };
+
+    try {
+      const response = await handleRequest(
+        new Request('http://localhost/v1/schedules/schedule-1', { method: 'DELETE' }),
+        engine,
+        {
+          operationRegistry: registry,
+          restBindings: bindings,
+        },
+      );
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: 'exploded' });
+    } finally {
+      engine.cancelSchedule = originalCancelSchedule;
+    }
+  });
+});

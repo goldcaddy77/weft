@@ -11,6 +11,10 @@
 
 import { createOperationRegistry, type OperationRegistry } from './operation-catalog.ts';
 import {
+  addWorkflowTagsOperation,
+  addWorkflowTagsRestBinding,
+} from './operations/add-workflow-tags.ts';
+import {
   bulkCancelWorkflowsOperation,
   bulkCancelWorkflowsRestBinding,
 } from './operations/bulk-cancel-workflows.ts';
@@ -26,6 +30,14 @@ import {
   bulkSignalWorkflowsOperation,
   bulkSignalWorkflowsRestBinding,
 } from './operations/bulk-signal-workflows.ts';
+import {
+  cancelScheduleOperation,
+  cancelScheduleRestBinding,
+} from './operations/cancel-schedule.ts';
+import {
+  cancelWorkflowOperation,
+  cancelWorkflowRestBinding,
+} from './operations/cancel-workflow.ts';
 import {
   getBudgetPolicyOperation,
   getBudgetPolicyRestBinding,
@@ -66,11 +78,36 @@ import {
 } from './operations/list-checkpoints.ts';
 import { listReviewsOperation, listReviewsRestBinding } from './operations/list-reviews.ts';
 import { listWorkflowsOperation, listWorkflowsRestBinding } from './operations/list-workflows.ts';
+import { pauseScheduleOperation, pauseScheduleRestBinding } from './operations/pause-schedule.ts';
 import {
   purgeWorkflowsOperation,
   purgeWorkflowsRestBinding,
 } from './operations/purge-workflows.ts';
 import { queryWorkflowOperation, queryWorkflowRestBinding } from './operations/query-workflow.ts';
+import {
+  removeWorkflowTagsOperation,
+  removeWorkflowTagsRestBinding,
+} from './operations/remove-workflow-tags.ts';
+import {
+  resumeScheduleOperation,
+  resumeScheduleRestBinding,
+} from './operations/resume-schedule.ts';
+import {
+  setBudgetPolicyOperation,
+  setBudgetPolicyRestBinding,
+} from './operations/set-budget-policy.ts';
+import {
+  setWorkflowAttributesOperation,
+  setWorkflowAttributesRestBinding,
+} from './operations/set-workflow-attributes.ts';
+import {
+  signalWorkflowOperation,
+  signalWorkflowRestBinding,
+} from './operations/signal-workflow.ts';
+import {
+  submitReviewDecisionOperation,
+  submitReviewDecisionRestBinding,
+} from './operations/submit-review-decision.ts';
 import type { RestBinding } from './rest-binding.ts';
 
 /**
@@ -102,9 +139,12 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   bulkDeleteWorkflowsRestBinding,
   bulkMutateWorkflowTagsRestBinding,
   getWorkflowRestBinding,
+  cancelWorkflowRestBinding,
   getWorkflowResultRestBinding,
   getWorkflowAttributesRestBinding,
   getWorkflowEventsRestBinding,
+  setWorkflowAttributesRestBinding,
+  signalWorkflowRestBinding,
   queryWorkflowRestBinding,
   getRetentionOverviewRestBinding,
   getBudgetPolicyRestBinding,
@@ -114,6 +154,13 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   listCheckpointsRestBinding,
   getCheckpointAtRestBinding,
   getWorkflowTimelineRestBinding,
+  addWorkflowTagsRestBinding,
+  removeWorkflowTagsRestBinding,
+  submitReviewDecisionRestBinding,
+  setBudgetPolicyRestBinding,
+  cancelScheduleRestBinding,
+  pauseScheduleRestBinding,
+  resumeScheduleRestBinding,
 ];
 
 /**
@@ -135,9 +182,12 @@ export function createLiveOperationRegistry(): OperationRegistry {
     bulkDeleteWorkflowsOperation,
     bulkMutateWorkflowTagsOperation,
     getWorkflowOperation,
+    cancelWorkflowOperation,
     getWorkflowResultOperation,
     getWorkflowAttributesOperation,
     getWorkflowEventsOperation,
+    setWorkflowAttributesOperation,
+    signalWorkflowOperation,
     queryWorkflowOperation,
     getRetentionOverviewOperation,
     getBudgetPolicyOperation,
@@ -147,5 +197,12 @@ export function createLiveOperationRegistry(): OperationRegistry {
     listCheckpointsOperation,
     getCheckpointAtOperation,
     getWorkflowTimelineOperation,
+    addWorkflowTagsOperation,
+    removeWorkflowTagsOperation,
+    submitReviewDecisionOperation,
+    setBudgetPolicyOperation,
+    cancelScheduleOperation,
+    pauseScheduleOperation,
+    resumeScheduleOperation,
   ]);
 }
