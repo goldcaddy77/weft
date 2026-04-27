@@ -1880,11 +1880,25 @@ function isOperationFaultLike(value: unknown): value is OperationFault {
   }
 
   const candidate = value as Record<string, unknown>;
+  const code = candidate['code'];
+  // `data` must be a non-null object: every member of the
+  // `OperationFault` discriminated union types `data` as an object
+  // shape (never `undefined`, never `null`). Accepting a fault with
+  // `data: undefined` here would produce a `value as OperationFault`
+  // narrowing the union does not actually permit, leaking an
+  // unsound cast through to `binding.shapeFault`.
+  //
+  // `Object.hasOwn` (not `in`) so we don't accidentally promote a
+  // foreign object whose `code` is `'__proto__'`, `'constructor'`,
+  // or any other inherited property of `FAULT_CODE_TO_HTTP_STATUS`
+  // — those would walk the prototype chain via `in` and let an
+  // arbitrary thrown object impersonate a fault.
   return (
-    typeof candidate['code'] === 'string' &&
-    candidate['code'] in FAULT_CODE_TO_HTTP_STATUS &&
+    typeof code === 'string' &&
+    Object.hasOwn(FAULT_CODE_TO_HTTP_STATUS, code) &&
     typeof candidate['message'] === 'string' &&
-    'data' in candidate
+    typeof candidate['data'] === 'object' &&
+    candidate['data'] !== null
   );
 }
 

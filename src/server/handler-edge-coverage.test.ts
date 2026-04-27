@@ -114,11 +114,14 @@ describe('handleRequest edge coverage', () => {
       expect(await json(response)).toEqual({ error: message });
     }
 
+    // Tag validation moved from `extractInput` (REST-only) into the
+    // operation's `invoke` so every transport runs the same check.
+    // The error message now references the operation field name
+    // (`tags`) instead of the REST query-parameter name.
     const malformedTagResponse = await handleRequest(request('GET', '/v1/workflows?tag='), engine);
     expect(malformedTagResponse.status).toBe(400);
-    expect(await json(malformedTagResponse)).toEqual({
-      error: 'Query parameter "tag" must not contain empty tags',
-    });
+    const malformedBody = (await json(malformedTagResponse)) as { error: string };
+    expect(malformedBody.error).toContain('empty tags');
   });
 
   it('returns parse errors from every bulk workflow route before dispatching', async () => {

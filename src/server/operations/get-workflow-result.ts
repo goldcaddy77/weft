@@ -87,9 +87,14 @@ export const getWorkflowResultOperation = defineOperation<
         throw fault;
       }
 
+      // Pass the original error message through to `shapeFault` so the
+      // legacy 500 body (raw engine message) is preserved byte-for-byte.
+      // Sanitizing internal error strings is a defensible improvement
+      // but lands as a deliberate behavior shift in a separate PR, not
+      // piecemeal as part of an op-by-op migration.
       const fault: OperationFault = {
         code: 'EngineFailure',
-        message: 'internal error',
+        message,
         data: {},
       };
       throw fault;
@@ -123,12 +128,12 @@ function shapeGetWorkflowResultFault(fault: OperationFault): Response {
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: 'Internal server error' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  // Preserve the legacy 500 body verbatim (raw engine error
+  // message). Sanitizing internal errors is a deliberate behavior
+  // shift that lands in a follow-up PR, not piecemeal as part of
+  // operation migration. EngineFailure has no special override
+  // here — it falls through to the generic `error: fault.message`
+  // shape with the canonical 500 status from the fault map.
   return new Response(JSON.stringify({ error: fault.message }), {
     status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
     headers: { 'Content-Type': 'application/json' },

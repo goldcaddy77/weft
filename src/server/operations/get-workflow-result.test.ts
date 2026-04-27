@@ -190,6 +190,13 @@ describe('weft.workflows.result.get', () => {
   });
 
   it('maps EngineFailure faults to the legacy 500 response body', async () => {
+    // Legacy `handleGetWorkflowResult` echoed the raw engine error
+    // string directly into the 500 body via `errorResponse(message, 500)`.
+    // The migrated path preserves that byte-for-byte: `EngineFailure`
+    // falls through `shapeFault` to the generic `{error: fault.message}`
+    // shape with the canonical 500 status. Sanitizing internal error
+    // strings is a deliberate behavior shift that lands in a separate
+    // PR — see commit message.
     const { engine } = createEngineWithStorage();
     const failingOperation = {
       ...getWorkflowResultOperation,
@@ -215,6 +222,6 @@ describe('weft.workflows.result.get', () => {
 
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).toBe('application/json');
-    expect(await response.json()).toEqual({ error: 'Internal server error' });
+    expect(await response.json()).toEqual({ error: 'secret internal detail' });
   });
 });

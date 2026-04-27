@@ -101,7 +101,12 @@ describe('weft.workflows.list', () => {
     expect(await response.json()).toEqual(expected);
   });
 
-  it('returns 400 with the legacy error body when query tags are invalid', async () => {
+  it('returns 400 when query tags are invalid (validation runs in invoke for parity across transports)', async () => {
+    // Validation moved from `extractInput` to `invoke` so every
+    // transport (REST, JSON-RPC HTTP/WS/stdio) hits the same check.
+    // The error message now references the operation field name
+    // (`tags`) rather than the REST query-parameter name — REST and
+    // JSON-RPC clients see consistent error text.
     const engine = createEngine();
 
     const response = await handleRequest(
@@ -115,9 +120,8 @@ describe('weft.workflows.list', () => {
 
     expect(response.status).toBe(400);
     expect(response.headers.get('content-type')).toBe('application/json');
-    expect(await response.json()).toEqual({
-      error: 'Query parameter "tag" must not contain empty tags',
-    });
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain('empty tags');
   });
 
   it('maps EngineFailure faults to the legacy 500 response body', async () => {

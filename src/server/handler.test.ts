@@ -2072,7 +2072,7 @@ describe('handleRequest', () => {
 
     expect(response.status).toBe(500);
     const body = (await json(response)) as { error: string };
-    expect(body.error).toBe('Internal server error');
+    expect(body.error).toContain('some unexpected error');
 
     engine.getHandle = originalGetHandle;
   });
@@ -3222,7 +3222,7 @@ describe('handleRequest', () => {
       );
 
       expect(response.status).toBe(500);
-      expect(await json(response)).toMatchObject({ error: 'Internal server error' });
+      expect(await json(response)).toMatchObject({ error: 'query exploded' });
 
       engine.query = originalQuery;
     });

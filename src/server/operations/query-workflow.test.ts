@@ -139,8 +139,13 @@ describe('weft.workflows.query', () => {
       },
     );
 
+    // Legacy `handleQueryWorkflow` echoed the raw engine error
+    // string into the 500 body via `errorResponse(message, 500)`.
+    // The migrated path preserves that byte-for-byte. Sanitizing
+    // internal errors is a deliberate behavior shift that lands in
+    // a follow-up PR.
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).toBe('application/json');
-    expect(await response.json()).toEqual({ error: 'Internal server error' });
+    expect(await response.json()).toEqual({ error: 'secret internal detail' });
   });
 });
