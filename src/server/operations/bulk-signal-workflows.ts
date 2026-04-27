@@ -15,7 +15,6 @@ import {
   listFilterFromBulkInput,
   parseBulkListFilterFromBody,
   readOptionalJsonBody,
-  unprocessableFault,
   type BulkListFilterInput,
 } from './bulk-filter-helpers.ts';
 
@@ -48,7 +47,7 @@ export const bulkSignalWorkflowsOperation = defineOperation<
       try {
         validatedTags = coerceStartWorkflowTags(input.tags, 'Field "filter.tags"');
       } catch (error) {
-        throw unprocessableFault(faultMessage(error));
+        throw invalidParamsFault(faultMessage(error));
       }
     }
 
@@ -61,7 +60,7 @@ export const bulkSignalWorkflowsOperation = defineOperation<
     try {
       assertScopedBulkWorkflowFilter(filter);
     } catch (error) {
-      throw unprocessableFault(faultMessage(error));
+      throw invalidParamsFault(faultMessage(error));
     }
 
     try {
@@ -80,20 +79,9 @@ function shapeBulkSignalWorkflowsSuccess(result: BulkSignalWorkflowsOutput): Res
 }
 
 function shapeBulkSignalWorkflowsFault(fault: OperationFault): Response {
-  if (fault.code === 'Unprocessable') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  if (fault.code === 'EngineFailure') {
-    return new Response(JSON.stringify({ error: fault.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
+  // `InvalidParams` (caller mistakes — bad body, scope assertion,
+  // tag validation) maps canonically to 400. `EngineFailure` echoes
+  // raw engine message at 500 (legacy parity).
   return new Response(JSON.stringify({ error: fault.message }), {
     status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
     headers: { 'Content-Type': 'application/json' },

@@ -108,3 +108,4 @@ tmp/
 weft.db
 weft.db-shm
 weft.db-wal
+.codex-worktrees/
