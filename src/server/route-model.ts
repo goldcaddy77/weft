@@ -71,14 +71,6 @@ export const ROUTES = [
     tags: ['Workflows'],
   },
   {
-    method: 'GET',
-    path: '/v1/workflows',
-    handler: 'listWorkflows',
-    paramNames: [],
-    summary: 'List workflows',
-    tags: ['Workflows'],
-  },
-  {
     method: 'POST',
     path: '/v1/workflows/bulk/cancel',
     handler: 'bulkCancelWorkflows',
@@ -209,18 +201,11 @@ export const ROUTES = [
   {
     method: 'GET',
     path: '/v1/workflows/:id/streams/:key',
+    // Deferred to Piece 4 Wave E (SSE branch requires streaming migration).
     handler: 'getStreamChunks',
     paramNames: ['id', 'key'],
     summary: 'Get stream chunks for a workflow',
     tags: ['Streams'],
-  },
-  {
-    method: 'GET',
-    path: '/v1/workflows/:id/query/:name',
-    handler: 'queryWorkflow',
-    paramNames: ['id', 'name'],
-    summary: 'Query a workflow',
-    tags: ['Workflows'],
   },
   {
     method: 'POST',
@@ -247,14 +232,6 @@ export const ROUTES = [
     tags: ['Workflows'],
   },
   {
-    method: 'GET',
-    path: '/v1/workflows/:id/result',
-    handler: 'getWorkflowResult',
-    paramNames: ['id'],
-    summary: 'Get the result of a completed workflow',
-    tags: ['Workflows'],
-  },
-  {
     method: 'POST',
     path: '/v1/workflows/:id/signal/:name',
     handler: 'signalWorkflow',
@@ -277,14 +254,6 @@ export const ROUTES = [
     paramNames: ['updateId'],
     summary: 'Get the result of an update request',
     tags: ['Updates'],
-  },
-  {
-    method: 'GET',
-    path: '/v1/workflows/:id/attributes',
-    handler: 'getAttributes',
-    paramNames: ['id'],
-    summary: 'Get search attributes for a workflow',
-    tags: ['Attributes'],
   },
   {
     method: 'PATCH',
@@ -317,14 +286,6 @@ export const ROUTES = [
     paramNames: [],
     summary: 'Prometheus metrics export',
     tags: ['Observability'],
-  },
-  {
-    method: 'GET',
-    path: '/v1/workflows/:id/events',
-    handler: 'getWorkflowEvents',
-    paramNames: ['id'],
-    summary: 'Get event log for a workflow',
-    tags: ['Events'],
   },
   {
     method: 'GET',

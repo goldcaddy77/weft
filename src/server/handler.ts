@@ -46,6 +46,8 @@ import type { AuthContext, JWTPayload } from './authentication.ts';
 import { faultToHttpResponse } from './fault-to-http.ts';
 import { generateOpenApiDocument } from './openapi.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
+import type { OperationFault } from './operation-fault.ts';
+import { FAULT_CODE_TO_HTTP_STATUS } from './operation-fault.ts';
 import {
   anonymousPrincipal,
   principalFromApiKey,
@@ -542,58 +544,6 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
   }
 }
 
-function parseAttributeFilters(params: URLSearchParams): AttributeFilter[] {
-  const filterMap = new Map<string, AttributeFilter>();
-
-  for (const [key, value] of params) {
-    if (!key.startsWith('attr.')) continue;
-
-    const rest = key.slice(5); // strip "attr."
-    const dotIndex = rest.indexOf('.');
-
-    if (dotIndex === -1) {
-      // Exact match: attr.{name}={value}
-      const name = rest;
-      const existing = filterMap.get(name) ?? { key: name };
-      existing.value = inferAttributeValue(value);
-      filterMap.set(name, existing);
-    } else {
-      // Range: attr.{name}.gte={value} or attr.{name}.lte={value}
-      const name = rest.slice(0, dotIndex);
-      const operator = rest.slice(dotIndex + 1);
-      const existing = filterMap.get(name) ?? { key: name };
-
-      if (operator === 'gt') {
-        existing.gt = inferAttributeValue(value);
-        filterMap.set(name, existing);
-      } else if (operator === 'lt') {
-        existing.lt = inferAttributeValue(value);
-        filterMap.set(name, existing);
-      } else if (operator === 'gte') {
-        existing.gte = inferAttributeValue(value);
-        filterMap.set(name, existing);
-      } else if (operator === 'lte') {
-        existing.lte = inferAttributeValue(value);
-        filterMap.set(name, existing);
-      }
-      // Unknown operators are silently skipped to avoid unconstrained range scans.
-    }
-  }
-
-  return [...filterMap.values()];
-}
-
-/** Infer the type of an attribute value from its string representation. */
-function inferAttributeValue(raw: string): SearchAttributeValue {
-  if (raw === 'true') return true;
-  if (raw === 'false') return false;
-
-  const asNumber = Number(raw);
-  if (!Number.isNaN(asNumber) && raw.trim() !== '') return asNumber;
-
-  return raw;
-}
-
 function isJsonSearchAttributeValue(value: unknown): value is SearchAttributeValue {
   if (typeof value === 'string' || typeof value === 'boolean') {
     return true;
@@ -770,58 +720,6 @@ async function parseOptionalJsonBody(request: Request): Promise<Response | Parse
 
 function parseRequiredBulkWorkflowFilter(body: unknown): ListFilter {
   return assertScopedBulkWorkflowFilter(parseListFilterBody(body));
-}
-
-async function handleListWorkflows(request: Request, engine: Engine): Promise<Response> {
-  const url = new URL(request.url);
-  const filter: ListFilter = {};
-
-  const statuses = url.searchParams.getAll('status') as WorkflowStatus[];
-  if (statuses.length === 1) {
-    filter.status = statuses[0]!;
-  } else if (statuses.length > 1) {
-    filter.status = statuses;
-  }
-
-  const type = url.searchParams.get('type');
-  if (type !== null) {
-    filter.type = type;
-  }
-
-  const tags = url.searchParams.getAll('tag');
-  if (tags.length > 0) {
-    try {
-      filter.tags = coerceStartWorkflowTags(tags, 'Query parameter "tag"');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return errorResponse(message, 400);
-    }
-  }
-
-  const limit = url.searchParams.get('limit');
-  if (limit !== null) {
-    const parsed = Number(limit);
-    if (Number.isFinite(parsed) && parsed >= 1) {
-      filter.limit = Math.min(Math.floor(parsed), 1000);
-    }
-  }
-
-  const offset = url.searchParams.get('offset');
-  if (offset !== null) {
-    const parsed = Number(offset);
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      filter.offset = Math.floor(parsed);
-    }
-  }
-
-  // Parse attribute filters: attr.{name}={value}, attr.{name}.gte={value}, attr.{name}.lte={value}
-  const attributeFilters = parseAttributeFilters(url.searchParams);
-  if (attributeFilters.length > 0) {
-    filter.attributes = attributeFilters;
-  }
-
-  const result = await engine.list(filter);
-  return jsonResponse(result);
 }
 
 async function handleGetRetentionOverview(engine: Engine): Promise<Response> {
@@ -1172,51 +1070,6 @@ async function handleSignalWorkflow(
   }
 }
 
-async function handleGetWorkflowResult(engine: Engine, workflowId: string): Promise<Response> {
-  const state = await engine.get(workflowId);
-  if (state === null) {
-    return errorResponse(`Workflow "${workflowId}" not found`, 404);
-  }
-
-  if (state.status === 'completed') {
-    return jsonResponse({ result: state.result });
-  }
-
-  if (state.status === 'failed') {
-    return errorResponse(state.error ?? 'Workflow failed', 422);
-  }
-
-  if (state.status === 'cancelled') {
-    return errorResponse('Workflow cancelled', 422);
-  }
-
-  // Workflow is still running -- await with a timeout
-  const handle = engine.getHandle(workflowId);
-  const timeoutMilliseconds = 30_000;
-
-  try {
-    const result = await Promise.race([
-      handle.result(),
-      new Promise<never>((_resolve, reject) => {
-        setTimeout(
-          () => reject(new Error('Timeout waiting for workflow result')),
-          timeoutMilliseconds,
-        );
-      }),
-    ]);
-
-    return jsonResponse({ result });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-
-    if (message.includes('Timeout')) {
-      return errorResponse('Timeout waiting for workflow result', 408);
-    }
-
-    return errorResponse(message, 500);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Update routes — engine.submitCoordinatedUpdate() / engine.getUpdateResult()
 // ---------------------------------------------------------------------------
@@ -1293,15 +1146,6 @@ async function handleGetUpdateResult(engine: Engine, updateId: string): Promise<
 // ---------------------------------------------------------------------------
 // Attributes routes — engine.getAttributes() / engine.setAttributes()
 // ---------------------------------------------------------------------------
-
-async function handleGetAttributes(engine: Engine, workflowId: string): Promise<Response> {
-  const attributes = await engine.getAttributes(workflowId);
-  if (attributes === null) {
-    return errorResponse(`Attributes for workflow "${workflowId}" not found`, 404);
-  }
-
-  return jsonResponse(attributes);
-}
 
 async function handleSetAttributes(
   request: Request,
@@ -1399,16 +1243,6 @@ async function handleRemoveWorkflowTags(
 // Events route — engine.getEvents()
 // ---------------------------------------------------------------------------
 
-async function handleGetWorkflowEvents(engine: Engine, workflowId: string): Promise<Response> {
-  const state = await engine.get(workflowId);
-  if (state === null) {
-    return errorResponse(`Workflow "${workflowId}" not found`, 404);
-  }
-
-  const events = await engine.getEvents(workflowId);
-  return jsonResponse({ events });
-}
-
 // ---------------------------------------------------------------------------
 // Reviews routes — engine.listReviews() / engine.submitReview()
 // ---------------------------------------------------------------------------
@@ -1491,23 +1325,6 @@ async function handleSubmitReviewDecision(
 // ---------------------------------------------------------------------------
 // Query route — engine.query()
 // ---------------------------------------------------------------------------
-
-async function handleQueryWorkflow(
-  engine: Engine,
-  workflowId: string,
-  queryName: string,
-): Promise<Response> {
-  try {
-    const result = await engine.query(workflowId, queryName);
-    return jsonResponse({ result: result ?? null });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('not supported')) {
-      return errorResponse(message, 501);
-    }
-    return errorResponse(message, 500);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Resume route — engine.resume()
@@ -1895,7 +1712,6 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
   purgeWorkflows: async ({ request, engine }) => handlePurgeWorkflows(request, engine),
-  listWorkflows: async ({ request, engine }) => handleListWorkflows(request, engine),
   bulkCancelWorkflows: async ({ request, engine }) => handleBulkCancelWorkflows(request, engine),
   bulkSignalWorkflows: async ({ request, engine }) => handleBulkSignalWorkflows(request, engine),
   bulkDeleteWorkflows: async ({ request, engine }) => handleBulkDeleteWorkflows(request, engine),
@@ -1923,19 +1739,15 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     handleGetTenantQuota(engine, param('id'), options?.authContext),
   getStreamChunks: async ({ request, engine, param }) =>
     handleGetStreamChunks(request, engine, param('id'), param('key')),
-  queryWorkflow: async ({ engine, param }) =>
-    handleQueryWorkflow(engine, param('id'), param('name')),
   resumeWorkflow: async ({ engine, param }) => handleResumeWorkflow(engine, param('id')),
   forkWorkflow: async ({ request, engine, param }) =>
     handleForkWorkflow(request, engine, param('id')),
   timeoutWorkflow: async ({ engine, param }) => handleTimeoutWorkflow(engine, param('id')),
-  getWorkflowResult: async ({ engine, param }) => handleGetWorkflowResult(engine, param('id')),
   signalWorkflow: async ({ request, engine, param }) =>
     handleSignalWorkflow(request, engine, param('id'), param('name')),
   updateWorkflow: async ({ request, engine, param }) =>
     handleUpdateWorkflow(request, engine, param('id'), param('name')),
   getUpdateResult: async ({ engine, param }) => handleGetUpdateResult(engine, param('updateId')),
-  getAttributes: async ({ engine, param }) => handleGetAttributes(engine, param('id')),
   setAttributes: async ({ request, engine, param }) =>
     handleSetAttributes(request, engine, param('id')),
   addWorkflowTags: async ({ request, engine, param }) =>
@@ -1944,7 +1756,6 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     handleRemoveWorkflowTags(request, engine, param('id')),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
-  getWorkflowEvents: async ({ engine, param }) => handleGetWorkflowEvents(engine, param('id')),
   listReviews: async ({ engine }) => handleListReviews(engine),
   submitReviewDecision: async ({ request, engine, param }) =>
     handleSubmitReviewDecision(request, engine, param('reviewId')),
@@ -2043,6 +1854,9 @@ async function dispatchViaExecuteOperation(
   try {
     input = await binding.extractInput(request, pathParams);
   } catch (error) {
+    if (isOperationFaultLike(error)) {
+      return binding.shapeFault ? binding.shapeFault(error) : faultToHttpResponse(error);
+    }
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 400);
   }
@@ -2058,6 +1872,34 @@ async function dispatchViaExecuteOperation(
       : defaultShapeSuccess(result.value, binding.success);
   }
   return binding.shapeFault ? binding.shapeFault(result.fault) : faultToHttpResponse(result.fault);
+}
+
+function isOperationFaultLike(value: unknown): value is OperationFault {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const code = candidate['code'];
+  // `data` must be a non-null object: every member of the
+  // `OperationFault` discriminated union types `data` as an object
+  // shape (never `undefined`, never `null`). Accepting a fault with
+  // `data: undefined` here would produce a `value as OperationFault`
+  // narrowing the union does not actually permit, leaking an
+  // unsound cast through to `binding.shapeFault`.
+  //
+  // `Object.hasOwn` (not `in`) so we don't accidentally promote a
+  // foreign object whose `code` is `'__proto__'`, `'constructor'`,
+  // or any other inherited property of `FAULT_CODE_TO_HTTP_STATUS`
+  // — those would walk the prototype chain via `in` and let an
+  // arbitrary thrown object impersonate a fault.
+  return (
+    typeof code === 'string' &&
+    Object.hasOwn(FAULT_CODE_TO_HTTP_STATUS, code) &&
+    typeof candidate['message'] === 'string' &&
+    typeof candidate['data'] === 'object' &&
+    candidate['data'] !== null
+  );
 }
 
 /**
