@@ -153,6 +153,19 @@ describe('createEngineEventFeedBackend — snapshotTailSequence(events)', () => 
 
     expect(await backend.snapshotTailSequence(handle.id, 'events')).toBe(expectedTail);
   });
+
+  it('throws for an unhandled selector value instead of silently falling through', async () => {
+    const engine = createEngineWithSignalWorkflow();
+    const backend = createEngineEventFeedBackend(engine);
+
+    expect(() =>
+      backend.snapshotTailSequence(
+        'never-started',
+        // Deliberately bypass the type system to prove the runtime guard holds.
+        'invalid-selector' as never,
+      ),
+    ).toThrow('Unhandled EventSelector: invalid-selector');
+  });
 });
 
 describe('createEngineEventFeedBackend — subscribeLive(events)', () => {

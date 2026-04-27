@@ -61,12 +61,11 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
   [
     'src/core/schedule.ts',
     {
-      // These paths are either Intl corruption fallbacks (`timeZoneName` /
-      // weekday extraction), Bun line-mapping noise on a fully tested branch,
-      // or the bounded search guard that would require forcing 100,000 failed
-      // cron iterations without any matching date.
+      // The remaining misses are Bun line-mapping noise on fully tested
+      // branches plus the bounded search guard that would require forcing
+      // 100,000 failed cron iterations without any matching date.
       functions: 1,
-      lines: new Set([218, 234, 356, 530]),
+      lines: new Set([356, 530]),
     },
   ],
   [
@@ -102,49 +101,21 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     },
   ],
   [
-    'src/runtime/portable.ts',
-    {
-      // The coverage gate itself runs under Bun, so Bun-unreachable fallback branches
-      // for runtime detection and Node built-in loading cannot execute in-process.
-      functions: 2,
-      lines: new Set([
-        22, 23, 24, 112, 134, 136, 137, 138, 139, 141, 142, 144, 145, 146, 148, 149, 150, 151, 152,
-        153, 154, 155, 156, 164, 165, 166, 167, 168, 169, 170, 171, 184, 197,
-      ]),
-    },
-  ],
-  [
     'src/server/handler.ts',
     {
-      // Defensive fallback for a route/executor mismatch. The static route model
-      // keeps this unreachable in normal builds, so Bun coverage cannot drive it.
-      functions: 1,
-      // Bun also leaves the rethrow line in the malformed-route catch block
+      // Bun leaves the rethrow line in the malformed-route catch block
       // uncovered. The only repository-controlled error there is the handled
       // `MalformedRouteParameterError`; the rethrow is defensive-only.
-      lines: new Set([890, 2011, 2170, 2176]),
+      lines: new Set([2170]),
     },
   ],
   [
     'src/server/index.ts',
     {
-      // `/jsonrpc` has a defensive catch that covers authenticator-contract
-      // violations and other unexpected adapter throws. The current test suite
-      // exercises the surrounding behavior, but Bun still leaves this branch
-      // and one extra aggregate function miss unaccounted for.
-      functions: 2,
-      lines: createLineSet(1120, 1137),
-    },
-  ],
-  [
-    'src/server/openrpc.ts',
-    {
-      // Zod 4 currently emits a top-level `$schema` key plus object-shaped
-      // `properties` / `$defs` payloads for every public schema we can
-      // construct here. These fallback branches defend against future or
-      // malformed upstream JSON Schema output rather than repository-controlled
-      // paths.
-      lines: new Set([206, 207, 236, 237, 242]),
+      // Line coverage is complete. Bun still reports one unnamed aggregate
+      // function miss in the surrounding fetch/websocket adapter despite the
+      // JSON-RPC hand-off and auth-contract error path being exercised directly.
+      functions: 1,
     },
   ],
   [
@@ -173,16 +144,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // Bun maps the closing line of the live-drain generator's intentional
       // infinite loop as uncovered. Every exit path returns from inside the loop
       // and is covered by behavioral tests.
-      lines: new Set([379]),
-    },
-  ],
-  [
-    'src/storage/indexeddb.ts',
-    {
-      // Transaction error callbacks on IndexedDB cursors require injected platform
-      // faults that fake-indexeddb does not surface through normal test flows.
-      functions: 2,
-      lines: new Set([61]),
+      lines: new Set([405]),
     },
   ],
 ]);
