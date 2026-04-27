@@ -21,9 +21,10 @@ import {
   WorkflowStartedEvent,
   WorkflowTimedOutEvent,
 } from './events.ts';
+import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
-import type { WorkflowContext, WorkflowState } from './types.ts';
+import type { WorkerOutboundMessage, WorkflowContext, WorkflowState } from './types.ts';
 import { activity } from './types.ts';
 
 // ---------------------------------------------------------------------------
@@ -229,6 +230,61 @@ describe('Engine', () => {
     expect(await storage.get(KEYS.terminalCleanupNeeded(handle.id))).toBeNull();
 
     consoleErrorSpy.mockRestore();
+    engine[Symbol.dispose]();
+  });
+
+  it('resolves handle.result() even when completion event dispatch throws', async () => {
+    const capturedCompletionErrors: unknown[] = [];
+    const onMessageSpy = spyOn(InlineExecutionStrategy.prototype, 'onMessage').mockImplementation(
+      function (
+        this: InlineExecutionStrategy,
+        handler: (message: WorkerOutboundMessage) => void | Promise<void>,
+      ) {
+        onMessageSpy.mockRestore();
+
+        const wrappedHandler = (message: WorkerOutboundMessage): void => {
+          const result = handler(message);
+          if (result instanceof Promise) {
+            result.catch((error: unknown) => {
+              capturedCompletionErrors.push(error);
+            });
+          }
+        };
+
+        InlineExecutionStrategy.prototype.onMessage.call(this, wrappedHandler);
+      },
+    );
+
+    const engine = new Engine();
+    const originalDispatchEvent = engine.dispatchEvent.bind(engine);
+
+    engine.register('dispatch-throws-on-complete', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('finish');
+      return 'expected-result';
+    });
+
+    engine.dispatchEvent = ((event: Event): boolean => {
+      if (event.type === WorkflowCompletedEvent.type) {
+        throw new Error('simulated completion dispatch failure');
+      }
+
+      return originalDispatchEvent(event);
+    }) as typeof engine.dispatchEvent;
+
+    const handle = await engine.start('dispatch-throws-on-complete', null);
+    await flush();
+
+    const resultPromise = handle.result();
+    await engine.signal(handle.id, 'finish', null);
+
+    await expect(resultPromise).resolves.toBe('expected-result');
+    await flush();
+
+    expect(capturedCompletionErrors).toHaveLength(1);
+    expect((capturedCompletionErrors[0] as Error).message).toBe(
+      'simulated completion dispatch failure',
+    );
+
     engine[Symbol.dispose]();
   });
 

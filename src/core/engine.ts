@@ -8708,19 +8708,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     // before result delivery. Durable scratch cleanup is handled by the
     // persisted terminal-cleanup timer written in the same state batch above.
     const resolver = this.#resultResolvers.get(workflowId);
-    this.#cleanupTerminalWorkflowImmediately(workflowId);
+    try {
+      this.#cleanupTerminalWorkflowImmediately(workflowId);
 
-    const event = new WorkflowCompletedEvent(workflowId, result, duration);
-    this.dispatchEvent(event);
-    this.#forwardEventToHandle(workflowId, event);
+      const event = new WorkflowCompletedEvent(workflowId, result, duration);
+      this.dispatchEvent(event);
+      this.#forwardEventToHandle(workflowId, event);
 
-    this.#broadcast({ type: 'workflow:completed', workflowId });
+      this.#broadcast({ type: 'workflow:completed', workflowId });
 
-    if (resolver) resolver.resolve(result);
-    // Scheduled queue handoff is best-effort cleanup and must not block
-    // terminal delivery or handle settlement.
-    void this.#finalizeScheduledWorkflowTerminal(workflowId);
-    this.#resultResolvers.delete(workflowId);
+      if (resolver) resolver.resolve(result);
+      // Scheduled queue handoff is best-effort cleanup and must not block
+      // terminal delivery or handle settlement.
+      void this.#finalizeScheduledWorkflowTerminal(workflowId);
+    } catch (completionError) {
+      if (resolver) resolver.resolve(result);
+      throw completionError;
+    } finally {
+      this.#resultResolvers.delete(workflowId);
+    }
   }
 
   async #failWorkflow(
