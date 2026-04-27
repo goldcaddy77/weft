@@ -26,8 +26,9 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
  * that durable cleanup behind the scheduler.
  *
  * Coverage mode keeps a lower floor because instrumentation overhead changes
- * the absolute number materially. The non-coverage path enforces the Track 3
- * acceptance target.
+ * the absolute number materially. CI enforces the full Track 3 acceptance
+ * target; local developer runs allow a small amount of host-noise slack so
+ * background load on laptops does not make the gate flaky.
  *
  * The harness intentionally amortizes workflow-start overhead by distributing
  * many activity completions across fewer workflows. It also aggregates several
@@ -37,7 +38,7 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
  */
 
 const SAMPLES = 5;
-const BASELINE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 15_000 : 18_000;
+const BASELINE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 20_000 : 19_000;
 const COVERAGE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 10_000 : 12_000;
 const TOTAL_WORKFLOWS = 250;
 const ACTIVITIES_PER_WORKFLOW = 30;

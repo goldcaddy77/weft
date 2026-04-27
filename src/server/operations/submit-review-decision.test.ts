@@ -1,0 +1,148 @@
+import { describe, expect, it } from 'bun:test';
+
+import { Engine } from '../../core/engine.ts';
+import type { WorkflowContext } from '../../core/types.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
+import { handleRequest } from '../handler.ts';
+import { createOperationRegistry } from '../operation-catalog.ts';
+import {
+  submitReviewDecisionOperation,
+  submitReviewDecisionRestBinding,
+} from './submit-review-decision.ts';
+
+function createEngine(): Engine {
+  const storage = new MemoryStorage();
+  const engine = new Engine({ storage });
+  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    return input;
+  });
+  return engine;
+}
+
+const registry = createOperationRegistry([submitReviewDecisionOperation]);
+const bindings = [submitReviewDecisionRestBinding];
+
+describe('weft.reviews.decision.submit', () => {
+  it('submits a review decision and returns the legacy ok response', async () => {
+    const engine = createEngine();
+    let capturedReviewId = '';
+    let capturedOptions: unknown;
+    const originalSubmitReview = engine.submitReview.bind(engine);
+    engine.submitReview = async (reviewId, options) => {
+      capturedReviewId = reviewId;
+      capturedOptions = options;
+    };
+
+    try {
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-1/decision', {
+          decision: 'approved',
+          reviewer: 'alice',
+          feedback: 'Looks good',
+          workflowId: 'wf-1',
+        }),
+        engine,
+        {
+          operationRegistry: registry,
+          restBindings: bindings,
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(capturedReviewId).toBe('rev-1');
+      expect(capturedOptions).toEqual({
+        decision: 'approved',
+        reviewer: 'alice',
+        feedback: 'Looks good',
+        workflowId: 'wf-1',
+      });
+    } finally {
+      engine.submitReview = originalSubmitReview;
+    }
+  });
+
+  it('returns 400 for validation failures', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/reviews/rev-1/decision', {
+        decision: 'maybe',
+        reviewer: 'alice',
+      }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Invalid decision "maybe". Must be one of: approved, rejected, needs-changes',
+    });
+  });
+
+  it('returns 404 when the engine reports that the review was not found', async () => {
+    const engine = createEngine();
+    const originalSubmitReview = engine.submitReview.bind(engine);
+    engine.submitReview = async () => {
+      throw new Error('review not found');
+    };
+
+    try {
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-missing/decision', {
+          decision: 'approved',
+          reviewer: 'alice',
+        }),
+        engine,
+        {
+          operationRegistry: registry,
+          restBindings: bindings,
+        },
+      );
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: 'review not found' });
+    } finally {
+      engine.submitReview = originalSubmitReview;
+    }
+  });
+
+  it('returns the raw engine message for unexpected 500 failures', async () => {
+    const engine = createEngine();
+    const originalSubmitReview = engine.submitReview.bind(engine);
+    engine.submitReview = async () => {
+      throw new Error('review submission failed');
+    };
+
+    try {
+      const response = await handleRequest(
+        request('POST', '/v1/reviews/rev-1/decision', {
+          decision: 'approved',
+          reviewer: 'alice',
+        }),
+        engine,
+        {
+          operationRegistry: registry,
+          restBindings: bindings,
+        },
+      );
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: 'review submission failed' });
+    } finally {
+      engine.submitReview = originalSubmitReview;
+    }
+  });
+});
+
+function request(method: string, path: string, body?: unknown): Request {
+  const init: RequestInit = { method };
+  if (body !== undefined) {
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(body);
+  }
+  return new Request(`http://localhost${path}`, init);
+}

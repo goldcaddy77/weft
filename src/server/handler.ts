@@ -8,7 +8,6 @@
  * @module server/handler
  */
 
-import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import { formatSSE } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
@@ -24,12 +23,10 @@ import {
 import { QuotaExceededError } from '../core/tenant-quotas.ts';
 import type {
   ForkOptions,
-  ReviewDecision,
   ScheduleAccessOptions,
   ScheduleFilter,
   ScheduleOptions,
   ScheduleStatus,
-  SearchAttributeValue,
   StartOptions,
 } from '../core/types.ts';
 import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
@@ -70,6 +67,7 @@ type HandlerName = (typeof ROUTES)[number]['handler'];
 interface RouteMatch {
   handler: HandlerName;
   params: Record<string, string>;
+  path: string;
 }
 
 /** Alias for `AuthContext` — kept local so handler-internal code reads naturally. */
@@ -83,6 +81,7 @@ const ROUTE_PATTERNS: Array<{
   method: (typeof ROUTES)[number]['method'];
   pattern: RegExp;
   handler: HandlerName;
+  path: string;
   paramNames: readonly string[];
 }> = [];
 const textEncoder = new TextEncoder();
@@ -92,6 +91,7 @@ for (const route of ROUTES) {
     method: route.method,
     pattern: toRegex(route.path),
     handler: route.handler,
+    path: route.path,
     paramNames: route.paramNames,
   });
 }
@@ -116,7 +116,7 @@ function matchRoute(method: string, pathname: string): RouteMatch | null {
       }
     }
 
-    return { handler: route.handler, params };
+    return { handler: route.handler, params, path: route.path };
   }
 
   return null;
@@ -614,60 +614,6 @@ async function handleGetSchedule(
   }
 }
 
-async function handlePauseSchedule(
-  engine: Engine,
-  scheduleId: string,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  try {
-    const accessOptions = getScheduleAccessOptions(authContext);
-    if (accessOptions instanceof Response) {
-      return accessOptions;
-    }
-
-    await engine.pauseSchedule(scheduleId, accessOptions);
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    return scheduleErrorResponse(error);
-  }
-}
-
-async function handleResumeSchedule(
-  engine: Engine,
-  scheduleId: string,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  try {
-    const accessOptions = getScheduleAccessOptions(authContext);
-    if (accessOptions instanceof Response) {
-      return accessOptions;
-    }
-
-    await engine.resumeSchedule(scheduleId, accessOptions);
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    return scheduleErrorResponse(error);
-  }
-}
-
-async function handleCancelSchedule(
-  engine: Engine,
-  scheduleId: string,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  try {
-    const accessOptions = getScheduleAccessOptions(authContext);
-    if (accessOptions instanceof Response) {
-      return accessOptions;
-    }
-
-    await engine.cancelSchedule(scheduleId, accessOptions);
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    return scheduleErrorResponse(error);
-  }
-}
-
 async function handleUpdateSchedule(
   request: Request,
   engine: Engine,
@@ -700,47 +646,6 @@ async function handleUpdateSchedule(
     return new Response(null, { status: 204 });
   } catch (error) {
     return scheduleErrorResponse(error);
-  }
-}
-
-async function handleCancelWorkflow(engine: Engine, workflowId: string): Promise<Response> {
-  try {
-    await engine.cancel(workflowId);
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('not found')) {
-      return errorResponse(message, 404);
-    }
-    return errorResponse(message, 500);
-  }
-}
-
-async function handleSignalWorkflow(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-  signalName: string,
-): Promise<Response> {
-  let payload: unknown;
-  try {
-    const body = (await request.json()) as Record<string, unknown>;
-    payload = body['payload'];
-  } catch {
-    // No body or invalid JSON is fine for signals -- payload is optional
-  }
-
-  try {
-    await engine.signal(workflowId, signalName, payload);
-    return jsonResponse({ ok: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-
-    if (message.includes('not found')) {
-      return errorResponse(message, 404);
-    }
-
-    return errorResponse(message, 500);
   }
 }
 
@@ -804,166 +709,12 @@ async function handleUpdateWorkflow(
 }
 
 // ---------------------------------------------------------------------------
-// Attributes routes — engine.getAttributes() / engine.setAttributes()
-// ---------------------------------------------------------------------------
-
-async function handleSetAttributes(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-): Promise<Response> {
-  let incoming: Record<string, unknown>;
-  try {
-    const body = (await request.json()) as Record<string, unknown>;
-    incoming = (body['attributes'] as Record<string, unknown>) ?? {};
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  await engine.setAttributes(workflowId, incoming as Record<string, SearchAttributeValue>);
-
-  return jsonResponse({ ok: true });
-}
-
-function getWorkflowTagBodyValue(body: Record<string, unknown>): string[] {
-  return coerceStartWorkflowTags(body['tags'], 'Field "tags"');
-}
-
-function parseJsonRecordBody(body: unknown): Record<string, unknown> | null {
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    return null;
-  }
-
-  return body as Record<string, unknown>;
-}
-
-async function handleAddWorkflowTags(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-): Promise<Response> {
-  let body: Record<string, unknown>;
-  try {
-    const parsedBody = parseJsonRecordBody((await request.json()) as unknown);
-    if (!parsedBody) {
-      return errorResponse('Invalid JSON body', 400);
-    }
-    body = parsedBody;
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  try {
-    await engine.addTags(workflowId, ...getWorkflowTagBodyValue(body));
-    return jsonResponse({ ok: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('not found')) {
-      return errorResponse(message, 404);
-    }
-    if (error instanceof StartWorkflowValidationError) {
-      return errorResponse(message, 400);
-    }
-    return errorResponse(message, 500);
-  }
-}
-
-async function handleRemoveWorkflowTags(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-): Promise<Response> {
-  let body: Record<string, unknown>;
-  try {
-    const parsedBody = parseJsonRecordBody((await request.json()) as unknown);
-    if (!parsedBody) {
-      return errorResponse('Invalid JSON body', 400);
-    }
-    body = parsedBody;
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  try {
-    await engine.removeTags(workflowId, ...getWorkflowTagBodyValue(body));
-    return jsonResponse({ ok: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('not found')) {
-      return errorResponse(message, 404);
-    }
-    if (error instanceof StartWorkflowValidationError) {
-      return errorResponse(message, 400);
-    }
-    return errorResponse(message, 500);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Events route — engine.getEvents()
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Reviews routes — engine.listReviews() / engine.submitReview()
 // ---------------------------------------------------------------------------
-
-const VALID_DECISIONS = ['approved', 'rejected', 'needs-changes'] as const;
-
-async function handleSubmitReviewDecision(
-  request: Request,
-  engine: Engine,
-  reviewId: string,
-): Promise<Response> {
-  let body: Record<string, unknown>;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  const decision = body['decision'];
-  const reviewer = body['reviewer'];
-  const feedback = body['feedback'];
-  const workflowId = body['workflowId'];
-
-  if (typeof decision !== 'string' || typeof reviewer !== 'string') {
-    return errorResponse('Missing required fields: decision, reviewer', 400);
-  }
-
-  if (!VALID_DECISIONS.includes(decision as (typeof VALID_DECISIONS)[number])) {
-    return errorResponse(
-      `Invalid decision "${decision}". Must be one of: ${VALID_DECISIONS.join(', ')}`,
-      400,
-    );
-  }
-
-  if (feedback !== undefined && typeof feedback !== 'string') {
-    return errorResponse('Field "feedback" must be a string when provided', 400);
-  }
-
-  try {
-    const reviewOptions: import('../core/types.ts').SubmitReviewOptions = {
-      decision: decision as ReviewDecision,
-      reviewer,
-    };
-    if (typeof feedback === 'string') {
-      reviewOptions.feedback = feedback;
-    }
-    if (typeof workflowId === 'string') {
-      reviewOptions.workflowId = workflowId;
-    }
-
-    await engine.submitReview(reviewId, reviewOptions);
-
-    return jsonResponse({ ok: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('not found')) {
-      return errorResponse(message, 404);
-    }
-    return errorResponse(message, 500);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Query route — engine.query()
@@ -1074,41 +825,6 @@ async function handleTimeoutWorkflow(engine: Engine, workflowId: string): Promis
 // ---------------------------------------------------------------------------
 // Budget policy route — engine.setBudgetPolicy()
 // ---------------------------------------------------------------------------
-
-async function handleSetBudgetPolicy(request: Request, engine: Engine): Promise<Response> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  if (typeof body !== 'object' || body === null) {
-    return errorResponse('Request body must be a JSON object', 400);
-  }
-
-  const { namespace, daily, monthly } = body as Record<string, unknown>;
-
-  if (typeof namespace !== 'string' || namespace.length === 0) {
-    return errorResponse('Missing required field: namespace', 400);
-  }
-
-  const options: BudgetPolicyOptions = { namespace };
-  if (daily !== undefined && typeof daily === 'object' && daily !== null) {
-    options.daily = daily as { maxCost: number };
-  }
-  if (monthly !== undefined && typeof monthly === 'object' && monthly !== null) {
-    options.monthly = monthly as { maxCost: number };
-  }
-
-  try {
-    await engine.setBudgetPolicy(options);
-    return jsonResponse({ ok: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 500);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Budget policy read route — engine.getBudgetPolicy()
@@ -1314,13 +1030,6 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     handleGetSchedule(engine, param('id'), options?.authContext),
   updateSchedule: async ({ request, engine, options, param }) =>
     handleUpdateSchedule(request, engine, param('id'), options?.authContext),
-  cancelSchedule: async ({ engine, options, param }) =>
-    handleCancelSchedule(engine, param('id'), options?.authContext),
-  pauseSchedule: async ({ engine, options, param }) =>
-    handlePauseSchedule(engine, param('id'), options?.authContext),
-  resumeSchedule: async ({ engine, options, param }) =>
-    handleResumeSchedule(engine, param('id'), options?.authContext),
-  setBudgetPolicy: async ({ request, engine }) => handleSetBudgetPolicy(request, engine),
   getTenantQuota: async ({ engine, options, param }) =>
     handleGetTenantQuota(engine, param('id'), options?.authContext),
   getStreamChunks: async ({ request, engine, param }) =>
@@ -1329,24 +1038,13 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   forkWorkflow: async ({ request, engine, param }) =>
     handleForkWorkflow(request, engine, param('id')),
   timeoutWorkflow: async ({ engine, param }) => handleTimeoutWorkflow(engine, param('id')),
-  signalWorkflow: async ({ request, engine, param }) =>
-    handleSignalWorkflow(request, engine, param('id'), param('name')),
   updateWorkflow: async ({ request, engine, param }) =>
     handleUpdateWorkflow(request, engine, param('id'), param('name')),
-  setAttributes: async ({ request, engine, param }) =>
-    handleSetAttributes(request, engine, param('id')),
-  addWorkflowTags: async ({ request, engine, param }) =>
-    handleAddWorkflowTags(request, engine, param('id')),
-  removeWorkflowTags: async ({ request, engine, param }) =>
-    handleRemoveWorkflowTags(request, engine, param('id')),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
-  submitReviewDecision: async ({ request, engine, param }) =>
-    handleSubmitReviewDecision(request, engine, param('reviewId')),
   streamSSE: async ({ request, engine, param }) => handleStreamSSE(request, engine, param('id')),
   replayWorkflowToStep: async ({ request, engine, param }) =>
     handleReplayWorkflowToStep(request, engine, param('id'), param('step')),
-  cancelWorkflow: async ({ engine, param }) => handleCancelWorkflow(engine, param('id')),
   openApiDocument: async () => jsonResponse(generateOpenApiDocument()),
 };
 
@@ -1412,6 +1110,32 @@ function matchRestBinding(
     if (params !== null) return { binding, pathParams: params };
   }
   return null;
+}
+
+function countPathParameters(pathPattern: string): number {
+  return pathPattern.split('/').filter((segment) => segment.startsWith(':')).length;
+}
+
+function countLiteralSegments(pathPattern: string): number {
+  return pathPattern.split('/').filter((segment) => segment.length > 0 && !segment.startsWith(':'))
+    .length;
+}
+
+function shouldPreferLegacyRoute(
+  bindingMatch: { readonly binding: UnknownRestBinding } | null,
+  routeMatch: RouteMatch | null,
+): boolean {
+  if (bindingMatch === null || routeMatch === null) {
+    return false;
+  }
+
+  const bindingParameterCount = countPathParameters(bindingMatch.binding.path);
+  const routeParameterCount = countPathParameters(routeMatch.path);
+  if (routeParameterCount !== bindingParameterCount) {
+    return routeParameterCount < bindingParameterCount;
+  }
+
+  return countLiteralSegments(routeMatch.path) > countLiteralSegments(bindingMatch.binding.path);
 }
 
 /**
@@ -1589,7 +1313,16 @@ export async function handleRequest(
     }
     throw error;
   }
-  if (bindingMatch !== null) {
+
+  let route: RouteMatch | null;
+  try {
+    route = matchRoute(request.method, url.pathname);
+  } catch (error) {
+    if (error instanceof MalformedRouteParameterError) return errorResponse(error.message, 400);
+    throw error;
+  }
+
+  if (bindingMatch !== null && !shouldPreferLegacyRoute(bindingMatch, route)) {
     try {
       return await dispatchViaExecuteOperation(
         request,
@@ -1607,14 +1340,6 @@ export async function handleRequest(
       });
       return errorResponse('Internal server error', 500);
     }
-  }
-
-  let route: RouteMatch | null;
-  try {
-    route = matchRoute(request.method, url.pathname);
-  } catch (error) {
-    if (error instanceof MalformedRouteParameterError) return errorResponse(error.message, 400);
-    throw error;
   }
 
   if (route === null) {
