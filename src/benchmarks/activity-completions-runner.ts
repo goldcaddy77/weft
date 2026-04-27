@@ -7,15 +7,17 @@ export type ActivityCompletionMeasurement = {
   completionsPerSecond: number;
 };
 
+const WARMUP_WORKFLOWS = 100;
+
 function echo(value: unknown): unknown {
   return value;
 }
 
-export async function measureActivityCompletions(
+async function measureActivityCompletionRound(
   totalWorkflows: number,
   activitiesPerWorkflow: number,
   startBatchSize: number,
-): Promise<ActivityCompletionMeasurement> {
+): Promise<number> {
   const storage = new BunSQLiteStorage(':memory:');
   const engine = new Engine({ storage });
 
@@ -30,7 +32,7 @@ export async function measureActivityCompletions(
       return result;
     });
 
-    for (let index = 0; index < 25; index += 1) {
+    for (let index = 0; index < WARMUP_WORKFLOWS; index += 1) {
       const handle = await engine.start('with-activity', index);
       await handle.result();
     }
@@ -52,20 +54,41 @@ export async function measureActivityCompletions(
 
     await Promise.all(handles.map((handle) => handle.result()));
 
-    const elapsed = performance.now() - start;
-    return {
-      completionsPerSecond: Math.round(((totalWorkflows * activitiesPerWorkflow) / elapsed) * 1000),
-    };
+    return performance.now() - start;
   } finally {
     engine[Symbol.dispose]();
     storage[Symbol.dispose]();
   }
 }
 
+export async function measureActivityCompletions(
+  totalWorkflows: number,
+  activitiesPerWorkflow: number,
+  startBatchSize: number,
+  measurementRounds = 1,
+): Promise<ActivityCompletionMeasurement> {
+  let totalElapsed = 0;
+
+  for (let round = 0; round < measurementRounds; round += 1) {
+    totalElapsed += await measureActivityCompletionRound(
+      totalWorkflows,
+      activitiesPerWorkflow,
+      startBatchSize,
+    );
+  }
+
+  return {
+    completionsPerSecond: Math.round(
+      ((totalWorkflows * activitiesPerWorkflow * measurementRounds) / totalElapsed) * 1000,
+    ),
+  };
+}
+
 if (import.meta.main) {
   const totalWorkflows = Number(Bun.argv[2] ?? '250');
-  const activitiesPerWorkflow = Number(Bun.argv[3] ?? '40');
+  const activitiesPerWorkflow = Number(Bun.argv[3] ?? '30');
   const startBatchSize = Number(Bun.argv[4] ?? '250');
+  const measurementRounds = Number(Bun.argv[5] ?? '1');
 
   if (
     !Number.isInteger(totalWorkflows) ||
@@ -73,9 +96,13 @@ if (import.meta.main) {
     !Number.isInteger(activitiesPerWorkflow) ||
     activitiesPerWorkflow <= 0 ||
     !Number.isInteger(startBatchSize) ||
-    startBatchSize <= 0
+    startBatchSize <= 0 ||
+    !Number.isInteger(measurementRounds) ||
+    measurementRounds <= 0
   ) {
-    console.error('Expected positive integer values for workflows, activities, and batch size.');
+    console.error(
+      'Expected positive integer values for workflows, activities, batch size, and rounds.',
+    );
     process.exit(1);
   }
 
@@ -83,6 +110,7 @@ if (import.meta.main) {
     totalWorkflows,
     activitiesPerWorkflow,
     startBatchSize,
+    measurementRounds,
   );
   console.log(JSON.stringify(measurement));
 }

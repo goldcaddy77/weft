@@ -1510,44 +1510,36 @@ const FULL_TERMINAL_CLEANUP_TIMER_PREFIX = 'terminal-cleanup:full:';
 const TERMINAL_CLEANUP_DELAY_MS = 60_000;
 
 function createTerminalCleanupTimerId(
-  workflowId: string,
   includeOutputArtifacts: boolean,
-  terminalizedAt: number,
+  terminalCleanupToken: string,
 ): string {
   return includeOutputArtifacts
-    ? `${FULL_TERMINAL_CLEANUP_TIMER_PREFIX}${String(terminalizedAt)}:${workflowId}`
-    : `${PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX}${String(terminalizedAt)}:${workflowId}`;
+    ? `${FULL_TERMINAL_CLEANUP_TIMER_PREFIX}${terminalCleanupToken}`
+    : `${PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX}${terminalCleanupToken}`;
 }
 
 function parseTerminalCleanupTimerId(
   timerId: string,
-): { includeOutputArtifacts: boolean; terminalizedAt: number } | null {
-  const parseTerminalizedAt = (prefix: string): number | null => {
-    const separatorIndex = timerId.indexOf(':', prefix.length);
-    if (separatorIndex === -1) {
-      return null;
-    }
-
-    const terminalizedAtValue = Number(timerId.slice(prefix.length, separatorIndex));
-    if (
-      !Number.isFinite(terminalizedAtValue) ||
-      terminalizedAtValue < 0 ||
-      !Number.isSafeInteger(terminalizedAtValue)
-    ) {
-      return null;
-    }
-
-    return terminalizedAtValue;
+): { includeOutputArtifacts: boolean; terminalCleanupToken: string } | null {
+  const parseTerminalCleanupToken = (prefix: string): string | null => {
+    const token = timerId.slice(prefix.length);
+    return token.length === 0 ? null : token;
   };
 
   if (timerId.startsWith(FULL_TERMINAL_CLEANUP_TIMER_PREFIX)) {
-    const terminalizedAt = parseTerminalizedAt(FULL_TERMINAL_CLEANUP_TIMER_PREFIX);
-    return terminalizedAt === null ? null : { includeOutputArtifacts: true, terminalizedAt };
+    const terminalCleanupToken = parseTerminalCleanupToken(FULL_TERMINAL_CLEANUP_TIMER_PREFIX);
+    return terminalCleanupToken === null
+      ? null
+      : { includeOutputArtifacts: true, terminalCleanupToken };
   }
 
   if (timerId.startsWith(PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX)) {
-    const terminalizedAt = parseTerminalizedAt(PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX);
-    return terminalizedAt === null ? null : { includeOutputArtifacts: false, terminalizedAt };
+    const terminalCleanupToken = parseTerminalCleanupToken(
+      PRESERVE_OUTPUT_TERMINAL_CLEANUP_TIMER_PREFIX,
+    );
+    return terminalCleanupToken === null
+      ? null
+      : { includeOutputArtifacts: false, terminalCleanupToken };
   }
 
   return null;
@@ -3423,14 +3415,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const cleanupIncludesOutputArtifacts =
       state.status === 'cancelled' || state.status === 'timed-out';
-    const terminalCleanupTimerId = createTerminalCleanupTimerId(
-      workflowId,
-      cleanupIncludesOutputArtifacts,
-      state.updatedAt,
-    );
-    deleteKeys.add(
-      KEYS.terminalCleanup(state.updatedAt + TERMINAL_CLEANUP_DELAY_MS, terminalCleanupTimerId),
-    );
+    if (state.terminalCleanupToken !== undefined) {
+      const terminalCleanupTimerId = createTerminalCleanupTimerId(
+        cleanupIncludesOutputArtifacts,
+        state.terminalCleanupToken,
+      );
+      deleteKeys.add(
+        KEYS.terminalCleanup(state.updatedAt + TERMINAL_CLEANUP_DELAY_MS, terminalCleanupTimerId),
+      );
+    }
 
     if (attributeBytes) {
       const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
@@ -4006,9 +3999,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     includeOutputArtifacts: boolean,
     terminalizedAt: number,
+    terminalCleanupToken: string,
   ): import('../storage/interface.ts').BatchOperation[] {
     return buildTimerBatchOperations({
-      id: createTerminalCleanupTimerId(workflowId, includeOutputArtifacts, terminalizedAt),
+      id: createTerminalCleanupTimerId(includeOutputArtifacts, terminalCleanupToken),
       workflowId,
       fireAt: terminalizedAt + TERMINAL_CLEANUP_DELAY_MS,
       kind: 'terminal-cleanup',
@@ -4414,6 +4408,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       signalName: string,
       signalPayload: unknown,
     ): Promise<void> => {
+      const targetState = await this.#loadWorkflowState(targetWorkflowId);
+      if (targetState && isTerminalWorkflowStatus(targetState.status)) {
+        return;
+      }
+
       const signalId = crypto.randomUUID();
       const signalKey = KEYS.signal(targetWorkflowId, signalName, signalId);
       const operations: BatchOperation[] = [
@@ -8211,7 +8210,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return;
     }
 
-    if (state.updatedAt !== parsedTimer.terminalizedAt) {
+    if (state.terminalCleanupToken !== parsedTimer.terminalCleanupToken) {
       return;
     }
 
@@ -8624,8 +8623,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return null;
       }
 
-      const now = this.#options.getNow();
+      const now = normalizeStorageTimestamp(
+        this.#options.getNow(),
+        'Workflow completion timestamp',
+      );
       const duration = now - getWorkflowExecutionStartedAt(state);
+      const terminalCleanupToken = this.#workflowsNeedingTerminalCleanup.has(workflowId)
+        ? crypto.randomUUID()
+        : undefined;
 
       // Batch the completion state write with attribute index cleanup into a
       // single storage transaction to reduce round-trips on the hot path.
@@ -8634,6 +8639,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         status: 'completed' as const,
         result,
         updatedAt: now,
+        ...(terminalCleanupToken !== undefined ? { terminalCleanupToken } : {}),
       };
       const completionOperations: import('../storage/interface.ts').BatchOperation[] = [
         ...this.#buildTerminalWorkflowIndexOperations(state, updatedState),
@@ -8644,11 +8650,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         completionOperations.push(pendingTimelineOperation);
       }
 
-      // Inline attribute cleanup into the same batch instead of a separate
-      // storage.get() + storage.batch() round-trip.
-      const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
-      if (attributeBytes) {
-        const currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+      // Prefer the in-memory checkpoint's search attributes when available so
+      // the completion hot path avoids an extra storage read in the common
+      // case. Recovered workflows still fall back to storage if the checkpoint
+      // is unexpectedly absent.
+      let currentAttributes = this.#checkpoints.get(workflowId)?.searchAttributes;
+      if (currentAttributes === undefined) {
+        const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
+        if (attributeBytes) {
+          currentAttributes = decode(attributeBytes) as Record<string, SearchAttributeValue>;
+        }
+      }
+      if (currentAttributes !== undefined && Object.keys(currentAttributes).length > 0) {
         const retainedAttributes = this.#buildRetainedTerminalSearchAttributes(currentAttributes);
 
         completionOperations.push(
@@ -8665,9 +8678,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         }
       }
 
-      if (this.#workflowsNeedingTerminalCleanup.has(workflowId)) {
+      if (terminalCleanupToken !== undefined) {
         completionOperations.push(
-          ...this.#buildTerminalCleanupTimerOperations(workflowId, false, now),
+          ...this.#buildTerminalCleanupTimerOperations(
+            workflowId,
+            false,
+            now,
+            terminalCleanupToken,
+          ),
         );
       }
 

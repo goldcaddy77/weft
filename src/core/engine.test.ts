@@ -6,7 +6,7 @@ import { AgentBudgetExceededEvent, AgentBudgetWarningEvent } from '../ai/events.
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
 import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
-import { KEYS } from '../storage/interface.ts';
+import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
 import type { Context, StreamReference } from './context.ts';
@@ -146,6 +146,31 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('signal on a completed workflow is a no-op and does not recreate cleanup scratch', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+
+    engine.register('signal-noop', async function* () {
+      return 'done';
+    });
+
+    const handle = await engine.start('signal-noop', null);
+    await expect(handle.result()).resolves.toBe('done');
+    await expect(
+      engine.signal(handle.id, 'after-complete', { value: true }),
+    ).resolves.toBeUndefined();
+
+    const persistedSignalKeys: string[] = [];
+    for await (const [key] of storage.scan(`sig:${encodeStorageKeyComponent(handle.id)}:`)) {
+      persistedSignalKeys.push(key);
+    }
+
+    expect(persistedSignalKeys).toEqual([]);
+    expect(await storage.get(KEYS.terminalCleanupNeeded(handle.id))).toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
   it('resolves handle.result() even when terminal cleanup throws', async () => {
     const storage = new MemoryStorage();
     const engine = new Engine({ storage });
@@ -176,6 +201,10 @@ describe('Engine', () => {
     };
 
     const handle = await engine.start('cleanup-throw', null);
+    await flush();
+
+    const reviewKey = KEYS.review(handle.id, 'cleanup-warning-review');
+    await storage.put(reviewKey, encode({ status: 'pending' }));
 
     // handle.result() must resolve — the resolver must not be stranded even
     // though the deferred durable cleanup later fails.
@@ -191,6 +220,13 @@ describe('Engine', () => {
     expect(cleanupWarnings).toHaveLength(1);
     expect(cleanupWarnings[0]!.source).toBe('cleanupTerminalWorkflowDurableState');
     expect(cleanupWarnings[0]!.error.message).toBe('simulated cleanup failure');
+    expect(await storage.get(reviewKey)).not.toBeNull();
+    expect(await storage.get(KEYS.terminalCleanupNeeded(handle.id))).not.toBeNull();
+
+    await engine.scheduler.tick(Date.now() + 120_000);
+
+    expect(await storage.get(reviewKey)).toBeNull();
+    expect(await storage.get(KEYS.terminalCleanupNeeded(handle.id))).toBeNull();
 
     consoleErrorSpy.mockRestore();
     engine[Symbol.dispose]();
@@ -4375,11 +4411,51 @@ describe('Engine', () => {
       secondEngine[Symbol.dispose]();
     });
 
+    it('terminal cleanup timers still clean up scratch data when getNow() returns fractional timestamps', async () => {
+      const storage = new MemoryStorage();
+      const warnings: CleanupWarningEvent[] = [];
+      const fractionalNow = 1_700_000_000_000.5;
+      const engine = new Engine({
+        storage,
+        getNow: () => fractionalNow,
+      });
+
+      engine.addEventListener(CleanupWarningEvent.type, (event) => {
+        warnings.push(event as CleanupWarningEvent);
+      });
+
+      engine.register('fractional-terminal-cleanup', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('finish');
+        return 'done';
+      });
+
+      const handle = await engine.start('fractional-terminal-cleanup', null);
+      await flush();
+
+      const reviewKey = KEYS.review(handle.id, 'fractional-review');
+      await storage.put(reviewKey, encode({ status: 'pending' }));
+
+      const resultPromise = handle.result();
+      await engine.signal(handle.id, 'finish', null);
+      await expect(resultPromise).resolves.toBe('done');
+
+      await engine.scheduler.tick(fractionalNow + 120_000);
+
+      expect(await storage.get(reviewKey)).toBeNull();
+      expect(warnings).toEqual([]);
+
+      engine[Symbol.dispose]();
+    });
+
     it('stale terminal cleanup timers do not delete scratch data for a reused workflow id', async () => {
       const storage = new MemoryStorage();
       const workflowId = 'reused-terminal-cleanup-id';
+      const fixedNow = 1_700_000_000_000;
 
-      const firstEngine = new Engine({ storage });
+      const firstEngine = new Engine({
+        storage,
+        getNow: () => fixedNow,
+      });
       firstEngine.register('reused-terminal-cleanup', async function* (ctx: WorkflowContext) {
         yield* (ctx as Context).waitForSignal('finish');
         return 'old';
@@ -4396,12 +4472,16 @@ describe('Engine', () => {
 
       const firstState = await firstEngine.get(workflowId);
       expect(firstState?.status).toBe('completed');
-      const staleTerminalizedAt = firstState!.updatedAt;
+      const staleTerminalCleanupToken = firstState!.terminalCleanupToken;
+      expect(staleTerminalCleanupToken).toBeDefined();
 
       await firstEngine.deleteAll({ status: 'completed' });
       firstEngine[Symbol.dispose]();
 
-      const secondEngine = new Engine({ storage });
+      const secondEngine = new Engine({
+        storage,
+        getNow: () => fixedNow,
+      });
       secondEngine.register('reused-terminal-cleanup', async function* (ctx: WorkflowContext) {
         yield* (ctx as Context).waitForSignal('finish');
         return 'new';
@@ -4414,23 +4494,33 @@ describe('Engine', () => {
 
       const retainedSignalKey = KEYS.signal(secondHandle.id, 'keep', 'entry');
       const retainedReviewKey = KEYS.review(secondHandle.id, 'keep-review');
-      await storage.put(retainedSignalKey, encode({ kept: true }));
-      await storage.put(retainedReviewKey, encode({ status: 'pending' }));
-
-      await secondEngine.scheduler.schedule({
-        id: `terminal-cleanup:preserve-output:${String(staleTerminalizedAt)}:${workflowId}`,
-        workflowId,
-        fireAt: Date.now(),
-        kind: 'terminal-cleanup',
-      });
-      await secondEngine.scheduler.tick(Date.now() + 120_000);
-
-      expect(await storage.get(retainedSignalKey)).not.toBeNull();
-      expect(await storage.get(retainedReviewKey)).not.toBeNull();
 
       const secondResultPromise = secondHandle.result();
       await secondEngine.signal(secondHandle.id, 'finish', null);
       await expect(secondResultPromise).resolves.toBe('new');
+
+      const secondState = await secondEngine.get(workflowId);
+      expect(secondState?.status).toBe('completed');
+      expect(secondState?.updatedAt).toBe(fixedNow);
+
+      await storage.put(retainedSignalKey, encode({ kept: true }));
+      await storage.put(retainedReviewKey, encode({ status: 'pending' }));
+
+      await secondEngine.scheduler.schedule({
+        id: `terminal-cleanup:preserve-output:${staleTerminalCleanupToken!}`,
+        workflowId,
+        fireAt: fixedNow,
+        kind: 'terminal-cleanup',
+      });
+      await secondEngine.scheduler.tick(fixedNow + 1);
+
+      expect(await storage.get(retainedSignalKey)).not.toBeNull();
+      expect(await storage.get(retainedReviewKey)).not.toBeNull();
+
+      await secondEngine.scheduler.tick(fixedNow + 120_000);
+
+      expect(await storage.get(retainedSignalKey)).toBeNull();
+      expect(await storage.get(retainedReviewKey)).toBeNull();
 
       secondEngine[Symbol.dispose]();
     });
@@ -4440,13 +4530,14 @@ describe('Engine', () => {
       const engine = new Engine({ storage });
       const warnings: CleanupWarningEvent[] = [];
       const fireAt = Date.now();
+      const timerId = 'terminal-cleanup:malformed';
 
       engine.addEventListener(CleanupWarningEvent.type, (event) => {
         warnings.push(event as CleanupWarningEvent);
       });
 
       await engine.scheduler.schedule({
-        id: 'terminal-cleanup:malformed',
+        id: timerId,
         workflowId: 'wf-malformed-terminal-cleanup',
         fireAt,
         kind: 'terminal-cleanup',
@@ -4455,8 +4546,13 @@ describe('Engine', () => {
 
       expect(warnings).toHaveLength(1);
       expect(warnings[0]!.error.message).toContain('Ignoring malformed terminal cleanup timer');
-      expect(await storage.get(KEYS.deadline(fireAt, 'terminal-cleanup:malformed'))).toBeNull();
-      expect(await storage.get('timer-idx:terminal-cleanup:malformed')).toBeNull();
+      expect(await storage.get(KEYS.terminalCleanup(fireAt, timerId))).toBeNull();
+
+      const remainingTerminalCleanupKeys: string[] = [];
+      for await (const [key] of storage.scan('wf-cleanup:')) {
+        remainingTerminalCleanupKeys.push(key);
+      }
+      expect(remainingTerminalCleanupKeys).toEqual([]);
 
       engine[Symbol.dispose]();
     });

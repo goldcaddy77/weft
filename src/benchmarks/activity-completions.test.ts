@@ -25,10 +25,10 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
  * acceptance target.
  *
  * The harness intentionally amortizes workflow-start overhead by distributing
- * many activity completions across fewer workflows. This keeps the
- * benchmark focused on the completion path instead of mostly measuring
- * sequential `engine.start()` latency, which has a separate architecture
- * target.
+ * many activity completions across fewer workflows. It also aggregates several
+ * fresh rounds per sample so each reported datapoint runs long enough to smooth
+ * host noise without turning the measurement into a fundamentally different,
+ * storage-growth-heavy workload.
  */
 
 const SAMPLES = 5;
@@ -36,7 +36,8 @@ const BASELINE_TARGET_COMPLETIONS_PER_SECOND = 20_000;
 const COVERAGE_TARGET_COMPLETIONS_PER_SECOND = process.env['CI'] ? 10_000 : 12_000;
 const TOTAL_WORKFLOWS = 250;
 const ACTIVITIES_PER_WORKFLOW = 30;
-const TOTAL_ACTIVITY_COMPLETIONS = TOTAL_WORKFLOWS * ACTIVITIES_PER_WORKFLOW;
+const MEASUREMENT_ROUNDS = 3;
+const TOTAL_ACTIVITY_COMPLETIONS = TOTAL_WORKFLOWS * ACTIVITIES_PER_WORKFLOW * MEASUREMENT_ROUNDS;
 const START_BATCH_SIZE = 250;
 
 function percentile(sorted: number[], fraction: number): number {
@@ -52,6 +53,7 @@ function runActivityCompletionBenchmark(
   totalWorkflows: number,
   activitiesPerWorkflow: number,
   startBatchSize: number,
+  measurementRounds: number,
 ): ActivityCompletionMeasurement {
   const result = Bun.spawnSync(
     [
@@ -61,6 +63,7 @@ function runActivityCompletionBenchmark(
       String(totalWorkflows),
       String(activitiesPerWorkflow),
       String(startBatchSize),
+      String(measurementRounds),
     ],
     {
       cwd: process.cwd(),
@@ -91,12 +94,21 @@ describe('Activity completion throughput', () => {
     // Warm the subprocess runner once so the sampled runs measure the engine's
     // steady-state hot path instead of Bun's first-run transpilation/cache
     // setup cost.
-    runActivityCompletionBenchmark(TOTAL_WORKFLOWS, ACTIVITIES_PER_WORKFLOW, START_BATCH_SIZE);
+    runActivityCompletionBenchmark(
+      TOTAL_WORKFLOWS,
+      ACTIVITIES_PER_WORKFLOW,
+      START_BATCH_SIZE,
+      MEASUREMENT_ROUNDS,
+    );
 
     for (let sample = 0; sample < SAMPLES; sample += 1) {
       samples.push(
-        runActivityCompletionBenchmark(TOTAL_WORKFLOWS, ACTIVITIES_PER_WORKFLOW, START_BATCH_SIZE)
-          .completionsPerSecond,
+        runActivityCompletionBenchmark(
+          TOTAL_WORKFLOWS,
+          ACTIVITIES_PER_WORKFLOW,
+          START_BATCH_SIZE,
+          MEASUREMENT_ROUNDS,
+        ).completionsPerSecond,
       );
     }
 
@@ -108,6 +120,7 @@ describe('Activity completion throughput', () => {
         `\n  Activity completion throughput benchmark:`,
         `    Total workflows: ${TOTAL_WORKFLOWS.toLocaleString()}`,
         `    Activities per workflow: ${ACTIVITIES_PER_WORKFLOW.toLocaleString()}`,
+        `    Measurement rounds: ${MEASUREMENT_ROUNDS.toLocaleString()}`,
         `    Total completions: ${TOTAL_ACTIVITY_COMPLETIONS.toLocaleString()}`,
         `    Start batch size: ${START_BATCH_SIZE.toLocaleString()}`,
         `    Samples:         ${samples.map((sample) => sample.toLocaleString()).join(', ')}`,

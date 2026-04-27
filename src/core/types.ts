@@ -79,6 +79,7 @@ export interface WorkflowState {
   createdAt: number;
   startedAt?: number;
   updatedAt: number;
+  terminalCleanupToken?: string;
   executionDeadline?: number;
   /**
    * Optional {@link TenantContext} resolved at start time by the engine's
