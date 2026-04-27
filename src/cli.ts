@@ -9,6 +9,7 @@
  * @module cli
  */
 
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { isRecord, safeDebugStringify } from './core/debug-output.ts';
@@ -45,7 +46,7 @@ export type CliCommand =
       help: boolean;
       json: boolean;
     }
-  | { command: 'validate'; entryPath: string; help: boolean; json: boolean }
+  | { command: 'validate'; entryPaths: string[]; help: boolean; json: boolean }
   | {
       command: 'timeline';
       database: string;
@@ -281,7 +282,7 @@ function parseValidateArguments(args: string[]): CliCommand {
 
   return {
     command: 'validate',
-    entryPath: positionals[0] ?? '',
+    entryPaths: positionals,
     help: values.help ?? false,
     json: values.json ?? false,
   };
@@ -580,11 +581,12 @@ Options:
 export const VALIDATE_HELP_TEXT = `
 weft validate - Lint workflow registrations for design-time anti-patterns
 
-Usage: weft validate <entry.ts> [options]
+Usage: weft validate <entry.ts>... [options]
 
 Arguments:
-  <entry.ts>              Path to a TypeScript module that exports workflow
-                          registrations and/or activity definitions.
+  <entry.ts>...           One or more TypeScript modules or glob patterns that
+                          resolve to workflow registrations and/or activity
+                          definitions.
 
 Options:
   -j, --json              Output results as JSON
@@ -593,7 +595,10 @@ Options:
 Exit codes:
   0   No errors (warnings may be present)
   1   One or more errors detected
-  2   Entry file could not be loaded
+  2   Entry file could not be loaded (takes precedence over validation errors)
+
+JSON output:
+  { entries, valid, hasLoadErrors, hasValidationErrors }
 
 Checks performed:
   unbounded-retry               Activity retry.maxAttempts is Infinity
@@ -608,6 +613,60 @@ export interface CommandOutput {
   stdout: string;
   exitCode: number;
   stderr?: string;
+}
+
+function isGlobPattern(value: string): boolean {
+  return value.includes('*') || value.includes('?') || value.includes('[');
+}
+
+function normalizeGlobPatternPath(entryPath: string): string {
+  return entryPath.replaceAll('\\', '/');
+}
+
+export function splitGlobPattern(entryPath: string): { scanRoot: string; pattern: string } {
+  const normalizedEntryPath = normalizeGlobPatternPath(entryPath);
+  const firstGlobIndex = Array.from(normalizedEntryPath).findIndex((character) =>
+    ['*', '?', '['].includes(character),
+  );
+
+  if (firstGlobIndex === -1) {
+    return { scanRoot: '.', pattern: normalizedEntryPath };
+  }
+
+  const separatorIndex = normalizedEntryPath.lastIndexOf('/', firstGlobIndex);
+  if (separatorIndex === -1) {
+    return { scanRoot: '.', pattern: normalizedEntryPath };
+  }
+
+  const scanRootCandidate = normalizedEntryPath.slice(0, separatorIndex);
+  const scanRoot =
+    scanRootCandidate === ''
+      ? '/'
+      : /^[A-Za-z]:\//.test(normalizedEntryPath) &&
+          scanRootCandidate === normalizedEntryPath.slice(0, 2)
+        ? `${scanRootCandidate}/`
+        : scanRootCandidate;
+  const pattern = normalizedEntryPath.slice(separatorIndex + 1);
+
+  return { scanRoot, pattern };
+}
+
+async function expandValidateEntryPaths(entryPaths: string[]): Promise<string[]> {
+  const expandedEntryPaths: string[] = [];
+
+  for (const entryPath of entryPaths) {
+    if (!isGlobPattern(entryPath)) {
+      expandedEntryPaths.push(entryPath);
+      continue;
+    }
+
+    const { scanRoot, pattern } = splitGlobPattern(entryPath);
+    const matchedPaths = await Array.fromAsync(new Bun.Glob(pattern).scan(scanRoot));
+    const matches = matchedPaths.map((match) => join(scanRoot, match)).toSorted();
+    expandedEntryPaths.push(...(matches.length === 0 ? [entryPath] : matches));
+  }
+
+  return Array.from(new Set(expandedEntryPaths));
 }
 
 export async function executeDoctor(options: {
@@ -661,10 +720,10 @@ export async function executeVersionCheck(options: {
 }
 
 export async function executeValidate(options: {
-  entryPath: string;
+  entryPaths: string[];
   json: boolean;
 }): Promise<CommandOutput> {
-  if (!options.entryPath) {
+  if (options.entryPaths.length === 0) {
     return {
       stdout: '',
       stderr: 'Error: entry file path is required for validate',
@@ -672,32 +731,93 @@ export async function executeValidate(options: {
     };
   }
 
+  const expandedEntryPaths = await expandValidateEntryPaths(options.entryPaths);
+
   const { loadRegistrationsFromModule, validateRegistrations, formatValidationReport } =
     await import('./diagnostics/validate.ts');
 
-  let registrations: Record<string, WorkflowRegistration>;
-  let activities: ActivityDefinition[];
+  const reports: Array<{
+    entryPath: string;
+    report?: ReturnType<typeof validateRegistrations>;
+    loadError?: string;
+  }> = [];
+  let hasValidationErrors = false;
+  let hasLoadErrors = false;
 
-  try {
-    const loaded = await loadRegistrationsFromModule(options.entryPath);
-    registrations = loaded.registrations;
-    activities = loaded.activities;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  for (const entryPath of expandedEntryPaths) {
+    let registrations: Record<string, WorkflowRegistration>;
+    let activities: ActivityDefinition[];
+
+    try {
+      const loaded = await loadRegistrationsFromModule(entryPath);
+      registrations = loaded.registrations;
+      activities = loaded.activities;
+    } catch (err) {
+      hasLoadErrors = true;
+      reports.push({
+        entryPath,
+        loadError: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+
+    const report = validateRegistrations(registrations, activities);
+    if (!report.valid) {
+      hasValidationErrors = true;
+    }
+    reports.push({ entryPath, report });
+  }
+
+  const exitCode = hasLoadErrors ? 2 : hasValidationErrors ? 1 : 0;
+
+  if (options.json) {
+    const entries = reports.map((entry) => {
+      if (entry.loadError !== undefined) {
+        return {
+          entryPath: entry.entryPath,
+          loadError: entry.loadError,
+        };
+      }
+
+      if (entry.report === undefined) {
+        throw new Error(`Missing validation report for '${entry.entryPath}'.`);
+      }
+
+      return {
+        entryPath: entry.entryPath,
+        ...entry.report,
+      };
+    });
+
     return {
-      stdout: '',
-      stderr: `Error: could not load entry file '${options.entryPath}': ${message}`,
-      exitCode: 2,
+      stdout: JSON.stringify(
+        {
+          entries,
+          valid: !hasLoadErrors && !hasValidationErrors,
+          hasLoadErrors,
+          hasValidationErrors,
+        },
+        null,
+        2,
+      ),
+      exitCode,
     };
   }
 
-  const report = validateRegistrations(registrations, activities);
+  const stdout = reports
+    .filter((entry) => entry.report !== undefined)
+    .map((entry) => formatValidationReport(entry.report!, entry.entryPath))
+    .join('\n\n');
+  const stderr = reports
+    .filter((entry) => entry.loadError !== undefined)
+    .map((entry) => `Error: could not load entry file '${entry.entryPath}': ${entry.loadError}`)
+    .join('\n');
 
-  const stdout = options.json
-    ? JSON.stringify(report, null, 2)
-    : formatValidationReport(report, options.entryPath);
-
-  return { stdout, exitCode: report.valid ? 0 : 1 };
+  return {
+    stdout,
+    ...(stderr ? { stderr } : {}),
+    exitCode,
+  };
 }
 
 function formatTimelineLine(entry: {

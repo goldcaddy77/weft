@@ -20,10 +20,13 @@ import {
   executeValidate,
   executeVersionCheck,
   parseCliArguments,
+  splitGlobPattern,
 } from './cli.ts';
 import { encode } from './core/codec.ts';
 import type { WorkflowContext } from './core/types.ts';
 import { KEYS } from './storage/interface.ts';
+
+const publicEntryPointUrl = new URL('./index.ts', import.meta.url).href;
 
 type ServeCommand = Extract<CliCommand, { command: 'serve' }>;
 type DoctorCommand = Extract<CliCommand, { command: 'doctor' }>;
@@ -385,12 +388,21 @@ describe('CLI argument parsing', () => {
     it('parses entry path as first positional argument', () => {
       const result = parseCliArguments(['validate', './my-workflow.ts']) as ValidateCommand;
       expect(result.command).toBe('validate');
-      expect(result.entryPath).toBe('./my-workflow.ts');
+      expect(result.entryPaths).toEqual(['./my-workflow.ts']);
     });
 
-    it('defaults entryPath to empty string when no positional is given', () => {
+    it('parses multiple entry paths in order', () => {
+      const result = parseCliArguments([
+        'validate',
+        './examples/one.ts',
+        './examples/two.ts',
+      ]) as ValidateCommand;
+      expect(result.entryPaths).toEqual(['./examples/one.ts', './examples/two.ts']);
+    });
+
+    it('defaults entryPaths to an empty list when no positional is given', () => {
       const result = parseCliArguments(['validate']) as ValidateCommand;
-      expect(result.entryPath).toBe('');
+      expect(result.entryPaths).toEqual([]);
     });
 
     it('parses --json flag', () => {
@@ -616,6 +628,15 @@ describe('CLI argument parsing', () => {
   });
 });
 
+describe('splitGlobPattern', () => {
+  it('splits Windows-style absolute glob patterns into scan root and pattern', () => {
+    expect(splitGlobPattern(String.raw`C:\work\examples\**\*.ts`)).toEqual({
+      scanRoot: 'C:/work/examples',
+      pattern: '**/*.ts',
+    });
+  });
+});
+
 describe('help text', () => {
   it('HELP_TEXT contains doctor subcommand', () => {
     expect(HELP_TEXT).toContain('doctor');
@@ -656,6 +677,11 @@ describe('help text', () => {
   it('VALIDATE_HELP_TEXT contains --json and --help flags', () => {
     expect(VALIDATE_HELP_TEXT).toContain('--json');
     expect(VALIDATE_HELP_TEXT).toContain('--help');
+  });
+
+  it('VALIDATE_HELP_TEXT documents JSON output shape and load-error precedence', () => {
+    expect(VALIDATE_HELP_TEXT).toContain('{ entries, valid, hasLoadErrors, hasValidationErrors }');
+    expect(VALIDATE_HELP_TEXT).toContain('takes precedence over validation errors');
   });
 
   it('DOCTOR_HELP_TEXT contains --database flag', () => {
@@ -1030,11 +1056,29 @@ describe('CLI direct execution', () => {
     const exitCode = await process.exited;
     expect(exitCode).toBe(0);
   });
+
+  it('validates the bundled examples through the CLI entrypoint and exits 0', async () => {
+    const childProcess = Bun.spawn(['bun', './src/cli-main.ts', 'validate', 'examples/**/*.ts'], {
+      cwd: process.cwd(),
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+
+    const exitCode = await childProcess.exited;
+    const stdout = await new Response(childProcess.stdout).text();
+    const stderr = await new Response(childProcess.stderr).text();
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe('');
+    expect(stdout).toContain('examples/hello-world.ts');
+    expect(stdout).toContain('examples/customer-profile.ts');
+    expect(stdout).toContain('No issues found.');
+  });
 });
 
 describe('executeValidate', () => {
-  it('returns exitCode 2 and stderr when entryPath is empty', async () => {
-    const result = await executeValidate({ entryPath: '', json: false });
+  it('returns exitCode 2 and stderr when no entry paths are provided', async () => {
+    const result = await executeValidate({ entryPaths: [], json: false });
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain('entry file path is required');
     expect(result.stdout).toBe('');
@@ -1042,7 +1086,7 @@ describe('executeValidate', () => {
 
   it('returns exitCode 2 and stderr when entry file does not exist', async () => {
     const result = await executeValidate({
-      entryPath: '/does/not/exist/entry.ts',
+      entryPaths: ['/does/not/exist/entry.ts'],
       json: false,
     });
     expect(result.exitCode).toBe(2);
@@ -1063,7 +1107,7 @@ describe('executeValidate', () => {
         ].join('\n'),
       );
 
-      const result = await executeValidate({ entryPath, json: false });
+      const result = await executeValidate({ entryPaths: [entryPath], json: false });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('No issues found.');
       const loaded = await loadRegistrationsFromModule(entryPath);
@@ -1091,7 +1135,7 @@ describe('executeValidate', () => {
         ].join('\n'),
       );
 
-      const result = await executeValidate({ entryPath, json: false });
+      const result = await executeValidate({ entryPaths: [entryPath], json: false });
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toContain('unbounded-retry');
       const loaded = await loadRegistrationsFromModule(entryPath);
@@ -1115,15 +1159,261 @@ describe('executeValidate', () => {
         ].join('\n'),
       );
 
-      const result = await executeValidate({ entryPath, json: true });
+      const result = await executeValidate({ entryPaths: [entryPath], json: true });
       expect(result.exitCode).toBe(0);
       const parsed = JSON.parse(result.stdout);
-      expect(parsed).toMatchObject({ valid: true, issues: [], workflowCount: expect.any(Number) });
+      expect(parsed).toMatchObject({
+        valid: true,
+        hasLoadErrors: false,
+        hasValidationErrors: false,
+        entries: [
+          {
+            entryPath,
+            valid: true,
+            issues: [],
+            workflowCount: expect.any(Number),
+          },
+        ],
+      });
       const loaded = await loadRegistrationsFromModule(entryPath);
       const iterator = loaded.registrations['myWorkflow']!.handler({} as never, undefined);
       await expect(iterator.next()).resolves.toEqual({ value: 'done', done: true });
     } finally {
       rmSync(entryPath, { force: true });
+    }
+  });
+
+  it('returns exitCode 0 when multiple clean entry files validate', async () => {
+    const firstEntryPath = join(tmpdir(), `weft-validate-multi-a-${crypto.randomUUID()}.ts`);
+    const secondEntryPath = join(tmpdir(), `weft-validate-multi-b-${crypto.randomUUID()}.ts`);
+
+    try {
+      await Bun.write(
+        firstEntryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'export const firstWorkflow: WorkflowRegistration = {',
+          '  handler: async function* () { return "first"; },',
+          '};',
+        ].join('\n'),
+      );
+      await Bun.write(
+        secondEntryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'export const secondWorkflow: WorkflowRegistration = {',
+          '  handler: async function* () { return "second"; },',
+          '};',
+        ].join('\n'),
+      );
+
+      const result = await executeValidate({
+        entryPaths: [firstEntryPath, secondEntryPath],
+        json: false,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(firstEntryPath);
+      expect(result.stdout).toContain(secondEntryPath);
+      expect(result.stdout).toContain('No issues found.');
+    } finally {
+      rmSync(firstEntryPath, { force: true });
+      rmSync(secondEntryPath, { force: true });
+    }
+  });
+
+  it('returns exitCode 0 for the bundled examples validation gate', async () => {
+    const result = await executeValidate({
+      entryPaths: ['examples/**/*.ts'],
+      json: false,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.indexOf('examples/customer-profile.ts')).toBeLessThan(
+      result.stdout.indexOf('examples/hello-world.ts'),
+    );
+    expect(result.stdout).toContain('examples/hello-world.ts');
+    expect(result.stdout).toContain('examples/customer-profile.ts');
+  });
+
+  it('expands absolute glob patterns for bundled example validation', async () => {
+    const result = await executeValidate({
+      entryPaths: [join(process.cwd(), 'examples/**/*.ts')],
+      json: false,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(join(process.cwd(), 'examples/customer-profile.ts'));
+    expect(result.stdout).toContain(join(process.cwd(), 'examples/hello-world.ts'));
+  });
+
+  it('normalizes Windows-style glob separators for bundled example validation', async () => {
+    const result = await executeValidate({
+      entryPaths: [String.raw`examples\**\*.ts`],
+      json: false,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('examples/customer-profile.ts');
+    expect(result.stdout).toContain('examples/hello-world.ts');
+  });
+
+  it('deduplicates validate entries when a glob and explicit path match the same file', async () => {
+    const result = await executeValidate({
+      entryPaths: ['examples/**/*.ts', 'examples/hello-world.ts'],
+      json: true,
+    });
+
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout) as {
+      entries: Array<{ entryPath: string }>;
+      valid: boolean;
+      hasLoadErrors: boolean;
+      hasValidationErrors: boolean;
+    };
+
+    expect(parsed).toMatchObject({
+      valid: true,
+      hasLoadErrors: false,
+      hasValidationErrors: false,
+    });
+    expect(parsed.entries.map((entry) => entry.entryPath)).toEqual([
+      'examples/customer-profile.ts',
+      'examples/hello-world.ts',
+    ]);
+  });
+
+  it('returns exitCode 2 when a clean entry and a missing entry are validated together', async () => {
+    const cleanEntryPath = join(tmpdir(), `weft-validate-mixed-clean-${crypto.randomUUID()}.ts`);
+
+    try {
+      await Bun.write(
+        cleanEntryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'export const cleanWorkflow: WorkflowRegistration = {',
+          '  handler: async function* () { return "clean"; },',
+          '};',
+        ].join('\n'),
+      );
+
+      const result = await executeValidate({
+        entryPaths: [cleanEntryPath, '/does/not/exist/entry.ts'],
+        json: false,
+      });
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toContain(cleanEntryPath);
+      expect(result.stdout).toContain('No issues found.');
+      expect(result.stderr).toContain('/does/not/exist/entry.ts');
+    } finally {
+      rmSync(cleanEntryPath, { force: true });
+    }
+  });
+
+  it('returns exitCode 1 when a clean entry and an invalid entry are validated together', async () => {
+    const cleanEntryPath = join(tmpdir(), `weft-validate-mixed-clean-${crypto.randomUUID()}.ts`);
+    const invalidEntryPath = join(
+      tmpdir(),
+      `weft-validate-mixed-invalid-${crypto.randomUUID()}.ts`,
+    );
+
+    try {
+      await Bun.write(
+        cleanEntryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          'export const cleanWorkflow: WorkflowRegistration = {',
+          '  handler: async function* () { return "clean"; },',
+          '};',
+        ].join('\n'),
+      );
+      await Bun.write(
+        invalidEntryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          `import { activity } from "${publicEntryPointUrl}";`,
+          'export const sendEmail = activity({',
+          '  name: "sendEmail",',
+          '  idempotent: false,',
+          '  execute: async () => undefined,',
+          '});',
+          'export const invalidWorkflow: WorkflowRegistration = {',
+          '  handler: async function* (_ctx, input) {',
+          '    return yield* sendEmail(input);',
+          '  },',
+          '};',
+        ].join('\n'),
+      );
+
+      const result = await executeValidate({
+        entryPaths: [cleanEntryPath, invalidEntryPath],
+        json: false,
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain(cleanEntryPath);
+      expect(result.stdout).toContain(invalidEntryPath);
+      expect(result.stdout).toContain('stateful-without-compensator');
+      expect(result.stderr).toBeUndefined();
+    } finally {
+      rmSync(cleanEntryPath, { force: true });
+      rmSync(invalidEntryPath, { force: true });
+    }
+  });
+
+  it('returns a stable JSON envelope for mixed load and validation outcomes', async () => {
+    const invalidEntryPath = join(tmpdir(), `weft-validate-json-invalid-${crypto.randomUUID()}.ts`);
+
+    try {
+      await Bun.write(
+        invalidEntryPath,
+        [
+          'import type { WorkflowRegistration } from "./src/core/types.ts";',
+          `import { activity } from "${publicEntryPointUrl}";`,
+          'export const sendEmail = activity({',
+          '  name: "sendEmail",',
+          '  idempotent: false,',
+          '  execute: async () => undefined,',
+          '});',
+          'export const invalidWorkflow: WorkflowRegistration = {',
+          '  handler: async function* (_ctx, input) {',
+          '    return yield* sendEmail(input);',
+          '  },',
+          '};',
+        ].join('\n'),
+      );
+
+      const result = await executeValidate({
+        entryPaths: [invalidEntryPath, '/does/not/exist/entry.ts'],
+        json: true,
+      });
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toBeUndefined();
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        valid: false,
+        hasLoadErrors: true,
+        hasValidationErrors: true,
+        entries: [
+          {
+            entryPath: invalidEntryPath,
+            valid: false,
+            issues: [
+              expect.objectContaining({
+                code: 'stateful-without-compensator',
+              }),
+            ],
+          },
+          {
+            entryPath: '/does/not/exist/entry.ts',
+            loadError: expect.any(String),
+          },
+        ],
+      });
+    } finally {
+      rmSync(invalidEntryPath, { force: true });
     }
   });
 });
