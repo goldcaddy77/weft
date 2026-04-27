@@ -4,6 +4,7 @@ import type { Engine } from '../../core/engine.ts';
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { invalidParamsFault, jsonErrorResponse } from './operation-helpers.ts';
 
 // `fromStep` is intentionally `unknown` at the schema boundary. The exact
 // legacy "Field 'fromStep' must be a non-negative safe integer" error path
@@ -80,14 +81,6 @@ export const forkWorkflowOperation = defineOperation<ForkWorkflowInput, ForkWork
   },
 });
 
-function invalidParamsFault(message: string): OperationFault {
-  return {
-    code: 'InvalidParams',
-    message,
-    data: { issues: [] },
-  };
-}
-
 function shapeForkWorkflowFault(fault: OperationFault): Response {
   if (fault.code === 'InvalidParams') {
     return jsonErrorResponse(fault.message, 400);
@@ -100,13 +93,6 @@ function shapeForkWorkflowFault(fault: OperationFault): Response {
   }
 
   return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
-}
-
-function jsonErrorResponse(message: string, status: number): Response {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }
 
 export const forkWorkflowRestBinding: UnknownRestBinding = {

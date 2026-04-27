@@ -5,6 +5,7 @@ import { UpdateTimeoutError, WorkflowTerminalError } from '../../core/updates.ts
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { isOperationFault, jsonErrorResponse } from './operation-helpers.ts';
 
 const DEFAULT_UPDATE_TIMEOUT_MS = 30_000;
 
@@ -103,16 +104,6 @@ export const updateWorkflowOperation = defineOperation<UpdateWorkflowInput, Upda
   },
 });
 
-function isOperationFault(error: unknown): error is OperationFault {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    'message' in error &&
-    'data' in error
-  );
-}
-
 function shapeUpdateWorkflowFault(fault: OperationFault): Response {
   if (fault.code === 'Unprocessable') {
     return jsonErrorResponse(fault.message, 422);
@@ -125,13 +116,6 @@ function shapeUpdateWorkflowFault(fault: OperationFault): Response {
   }
 
   return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
-}
-
-function jsonErrorResponse(message: string, status: number): Response {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }
 
 export const updateWorkflowRestBinding: UnknownRestBinding = {

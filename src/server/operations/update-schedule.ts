@@ -1,14 +1,15 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
-import type { ScheduleAccessOptions } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import { type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
-import type { Principal } from '../principal.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-
-const MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE =
-  'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim';
+import {
+  isOperationFault,
+  mapScheduleErrorToFault,
+  resolveScheduleAccessOptions,
+  shapeScheduleFault,
+} from './schedule-faults.ts';
 
 // `cronExpression` is intentionally permissive at the schema boundary so REST
 // and JSON-RPC clients hit the same validation in `invoke()`. `scheduleId`
@@ -39,7 +40,7 @@ export const updateScheduleOperation = defineOperation<UpdateScheduleInput, null
     }
     const cronExpression = input.cronExpression;
 
-    const accessOptions = getScheduleAccessOptions(principal);
+    const accessOptions = resolveScheduleAccessOptions(principal);
     if (isOperationFault(accessOptions)) {
       throw accessOptions;
     }
@@ -48,108 +49,10 @@ export const updateScheduleOperation = defineOperation<UpdateScheduleInput, null
       await typedEngine.updateSchedule(input.scheduleId, cronExpression, accessOptions);
       return null;
     } catch (error) {
-      throw classifyScheduleError(error);
+      throw mapScheduleErrorToFault(input.scheduleId, error);
     }
   },
 });
-
-function getScheduleAccessOptions(
-  principal: Principal,
-): OperationFault | ScheduleAccessOptions | undefined {
-  if (principal.method !== 'jwt') {
-    return undefined;
-  }
-  if (principal.tenantId === undefined) {
-    return {
-      code: 'Forbidden',
-      message: MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE,
-      data: { reason: MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE },
-    };
-  }
-  return { tenantId: principal.tenantId };
-}
-
-function classifyScheduleError(error: unknown): OperationFault {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalizedMessage = message.toLowerCase();
-
-  if (normalizedMessage.includes('not found')) {
-    return {
-      code: 'NotFound',
-      message,
-      data: { resource: 'schedule' },
-    };
-  }
-  if (normalizedMessage.includes('already exists')) {
-    return {
-      code: 'Conflict',
-      message,
-      data: { reason: message },
-    };
-  }
-  if (normalizedMessage.includes('authenticated tenant')) {
-    return {
-      code: 'Forbidden',
-      message,
-      data: { reason: message },
-    };
-  }
-  if (
-    message.includes('Missing required field') ||
-    normalizedMessage.includes('must be') ||
-    normalizedMessage.includes('no workflow registered') ||
-    normalizedMessage.includes('cron')
-  ) {
-    return {
-      code: 'InvalidParams',
-      message,
-      data: { issues: [] },
-    };
-  }
-
-  return {
-    code: 'EngineFailure',
-    message,
-    data: {},
-  };
-}
-
-function isOperationFault(value: unknown): value is OperationFault {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'code' in value &&
-    'message' in value &&
-    'data' in value
-  );
-}
-
-function shapeUpdateScheduleFault(fault: OperationFault): Response {
-  if (fault.code === 'NotFound') {
-    return jsonErrorResponse(fault.message, 404);
-  }
-  if (fault.code === 'Conflict') {
-    return jsonErrorResponse(fault.message, 409);
-  }
-  if (fault.code === 'Forbidden') {
-    return jsonErrorResponse(fault.message, 403);
-  }
-  if (fault.code === 'InvalidParams') {
-    return jsonErrorResponse(fault.message, 400);
-  }
-  if (fault.code === 'EngineFailure') {
-    return jsonErrorResponse(fault.message, 500);
-  }
-
-  return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
-}
-
-function jsonErrorResponse(message: string, status: number): Response {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
 
 function invalidParamsFault(message: string): OperationFault {
   return {
@@ -189,5 +92,5 @@ export const updateScheduleRestBinding: UnknownRestBinding = {
     };
   },
   success: { kind: 'empty', status: 204 },
-  shapeFault: shapeUpdateScheduleFault,
+  shapeFault: shapeScheduleFault,
 };

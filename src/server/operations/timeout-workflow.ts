@@ -4,6 +4,7 @@ import type { Engine } from '../../core/engine.ts';
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { jsonErrorResponse } from './operation-helpers.ts';
 
 const timeoutWorkflowInput = z.object({
   workflowId: z.string().min(1),
@@ -57,13 +58,6 @@ function shapeTimeoutWorkflowFault(fault: OperationFault): Response {
   }
 
   return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
-}
-
-function jsonErrorResponse(message: string, status: number): Response {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }
 
 export const timeoutWorkflowRestBinding: UnknownRestBinding = {
