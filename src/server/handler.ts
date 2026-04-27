@@ -10,10 +10,9 @@
 
 import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
 import { formatSSE } from '../ai/streaming-agent.ts';
-import { assertScopedBulkWorkflowFilter } from '../core/bulk-workflow-filter.ts';
 import { encode } from '../core/codec.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
-import { BulkDeleteRequiresTerminalWorkflowsError, type Engine } from '../core/engine.ts';
+import type { Engine } from '../core/engine.ts';
 import {
   assertExclusiveStartWorkflowOptions,
   coerceStartWorkflowDuration,
@@ -24,9 +23,7 @@ import {
 } from '../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../core/tenant-quotas.ts';
 import type {
-  AttributeFilter,
   ForkOptions,
-  ListFilter,
   ReviewDecision,
   ScheduleAccessOptions,
   ScheduleFilter,
@@ -34,7 +31,6 @@ import type {
   ScheduleStatus,
   SearchAttributeValue,
   StartOptions,
-  WorkflowStatus,
 } from '../core/types.ts';
 import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
 import {
@@ -544,184 +540,6 @@ async function handleStartWorkflow(request: Request, engine: Engine): Promise<Re
   }
 }
 
-function isJsonSearchAttributeValue(value: unknown): value is SearchAttributeValue {
-  if (typeof value === 'string' || typeof value === 'boolean') {
-    return true;
-  }
-
-  if (typeof value === 'number') {
-    return Number.isFinite(value);
-  }
-
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
-}
-
-function parseAttributeFiltersFromBody(value: unknown): AttributeFilter[] {
-  if (!Array.isArray(value)) {
-    throw new Error('Field "filter.attributes" must be an array');
-  }
-
-  return value.map((entry, index) => {
-    if (typeof entry !== 'object' || entry === null) {
-      throw new Error(`Field "filter.attributes[${index}]" must be an object`);
-    }
-
-    const record = entry as Record<string, unknown>;
-    const key = record['key'];
-    if (typeof key !== 'string' || key.length === 0) {
-      throw new Error(`Field "filter.attributes[${index}].key" must be a non-empty string`);
-    }
-
-    const filter: AttributeFilter = { key };
-    for (const property of ['value', 'gt', 'lt', 'gte', 'lte'] as const) {
-      const attributeValue = record[property];
-      if (attributeValue === undefined) {
-        continue;
-      }
-
-      if (!isJsonSearchAttributeValue(attributeValue)) {
-        throw new Error(
-          `Field "filter.attributes[${index}].${property}" must be a string, number, boolean, or string array`,
-        );
-      }
-
-      filter[property] = attributeValue;
-    }
-
-    return filter;
-  });
-}
-
-function parseFilterStatus(value: unknown): ListFilter['status'] {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value === 'string') {
-    return value as WorkflowStatus;
-  }
-
-  if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
-    return value as WorkflowStatus[];
-  }
-
-  throw new Error('Field "filter.status" must be a string or an array of strings');
-}
-
-function parseOptionalFilterType(value: unknown): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  throw new Error('Field "filter.type" must be a string');
-}
-
-function parseOptionalFilterTags(value: unknown): string[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  return coerceStartWorkflowTags(value, 'Field "filter.tags"');
-}
-
-function parseOptionalFilterNumber(
-  value: unknown,
-  fieldName: 'limit' | 'offset',
-): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    throw new Error(`Field "filter.${fieldName}" must be a non-negative number`);
-  }
-
-  return Math.floor(value);
-}
-
-function parseListFilterBody(body: unknown): ListFilter {
-  if (body === undefined) {
-    return {};
-  }
-
-  if (typeof body !== 'object' || body === null) {
-    throw new Error('Request body must be a JSON object');
-  }
-
-  const record = body as Record<string, unknown>;
-  const rawFilter = record['filter'];
-  if (rawFilter === undefined) {
-    return {};
-  }
-
-  if (typeof rawFilter !== 'object' || rawFilter === null) {
-    throw new Error('Field "filter" must be an object');
-  }
-
-  const filterRecord = rawFilter as Record<string, unknown>;
-  const filter: ListFilter = {};
-  const status = parseFilterStatus(filterRecord['status']);
-  if (status !== undefined) {
-    filter.status = status;
-  }
-
-  const type = parseOptionalFilterType(filterRecord['type']);
-  if (type !== undefined) {
-    filter.type = type;
-  }
-
-  const tags = parseOptionalFilterTags(filterRecord['tags']);
-  if (tags !== undefined) {
-    filter.tags = tags;
-  }
-
-  if (filterRecord['attributes'] !== undefined) {
-    filter.attributes = parseAttributeFiltersFromBody(filterRecord['attributes']);
-  }
-
-  const limit = parseOptionalFilterNumber(filterRecord['limit'], 'limit');
-  if (limit !== undefined) {
-    filter.limit = limit;
-  }
-
-  const offset = parseOptionalFilterNumber(filterRecord['offset'], 'offset');
-  if (offset !== undefined) {
-    filter.offset = offset;
-  }
-
-  return filter;
-}
-
-type ParsedJsonBody =
-  | undefined
-  | null
-  | boolean
-  | number
-  | string
-  | Record<string, unknown>
-  | unknown[];
-
-async function parseOptionalJsonBody(request: Request): Promise<Response | ParsedJsonBody> {
-  try {
-    const rawBody = await request.text();
-    if (rawBody.trim() === '') {
-      return undefined;
-    }
-
-    return JSON.parse(rawBody) as ParsedJsonBody;
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-}
-
-function parseRequiredBulkWorkflowFilter(body: unknown): ListFilter {
-  return assertScopedBulkWorkflowFilter(parseListFilterBody(body));
-}
-
 async function handleGetRetentionOverview(engine: Engine): Promise<Response> {
   return jsonResponse(engine.getRetentionOverview());
 }
@@ -886,146 +704,6 @@ async function handleUpdateSchedule(
     return new Response(null, { status: 204 });
   } catch (error) {
     return scheduleErrorResponse(error);
-  }
-}
-
-async function handlePurgeWorkflows(request: Request, engine: Engine): Promise<Response> {
-  const parsedBody = await parseOptionalJsonBody(request);
-  if (parsedBody instanceof Response) {
-    return parsedBody;
-  }
-
-  let filter: ListFilter;
-  try {
-    filter = parseListFilterBody(parsedBody);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 400);
-  }
-
-  const result = await engine.purge(filter);
-  return jsonResponse(result);
-}
-
-async function handleBulkCancelWorkflows(request: Request, engine: Engine): Promise<Response> {
-  const parsedBody = await parseOptionalJsonBody(request);
-  if (parsedBody instanceof Response) {
-    return parsedBody;
-  }
-
-  let filter: ListFilter;
-  try {
-    filter = parseRequiredBulkWorkflowFilter(parsedBody);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 400);
-  }
-
-  try {
-    return jsonResponse(await engine.cancelAll(filter));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 500);
-  }
-}
-
-async function handleBulkSignalWorkflows(request: Request, engine: Engine): Promise<Response> {
-  const parsedBody = await parseOptionalJsonBody(request);
-  if (parsedBody instanceof Response) {
-    return parsedBody;
-  }
-
-  const body = parseJsonRecordBody(parsedBody);
-  if (!body) {
-    return errorResponse('Request body must be a JSON object', 400);
-  }
-
-  let filter: ListFilter;
-  try {
-    filter = parseRequiredBulkWorkflowFilter(body);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 400);
-  }
-
-  const name = body['name'];
-  if (typeof name !== 'string' || name.length === 0) {
-    return errorResponse('Field "name" must be a non-empty string', 400);
-  }
-
-  try {
-    return jsonResponse(await engine.signalAll(filter, name, body['payload']));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 500);
-  }
-}
-
-async function handleBulkDeleteWorkflows(request: Request, engine: Engine): Promise<Response> {
-  const parsedBody = await parseOptionalJsonBody(request);
-  if (parsedBody instanceof Response) {
-    return parsedBody;
-  }
-
-  let filter: ListFilter;
-  try {
-    filter = parseRequiredBulkWorkflowFilter(parsedBody);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 400);
-  }
-
-  try {
-    return jsonResponse(await engine.deleteAll(filter));
-  } catch (error) {
-    if (error instanceof BulkDeleteRequiresTerminalWorkflowsError) {
-      return errorResponse(error.message, 422);
-    }
-
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 500);
-  }
-}
-
-async function handleBulkMutateWorkflowTags(request: Request, engine: Engine): Promise<Response> {
-  const parsedBody = await parseOptionalJsonBody(request);
-  if (parsedBody instanceof Response) {
-    return parsedBody;
-  }
-
-  const body = parseJsonRecordBody(parsedBody);
-  if (!body) {
-    return errorResponse('Request body must be a JSON object', 400);
-  }
-
-  let filter: ListFilter;
-  try {
-    filter = parseRequiredBulkWorkflowFilter(body);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 400);
-  }
-
-  let tags: string[];
-  try {
-    tags = coerceStartWorkflowTags(body['tags'], 'Field "tags"');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 400);
-  }
-
-  const operation = body['operation'];
-  if (operation !== 'add' && operation !== 'remove') {
-    return errorResponse('Field "operation" must be "add" or "remove"', 400);
-  }
-
-  try {
-    const result =
-      operation === 'add' ? await engine.tagAll(filter, tags) : await engine.untagAll(filter, tags);
-    return jsonResponse(result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 500);
   }
 }
 
@@ -1711,12 +1389,6 @@ type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
 const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
-  purgeWorkflows: async ({ request, engine }) => handlePurgeWorkflows(request, engine),
-  bulkCancelWorkflows: async ({ request, engine }) => handleBulkCancelWorkflows(request, engine),
-  bulkSignalWorkflows: async ({ request, engine }) => handleBulkSignalWorkflows(request, engine),
-  bulkDeleteWorkflows: async ({ request, engine }) => handleBulkDeleteWorkflows(request, engine),
-  bulkMutateWorkflowTags: async ({ request, engine }) =>
-    handleBulkMutateWorkflowTags(request, engine),
   recoverAll: async ({ engine }) => handleRecoverAll(engine),
   getRetentionOverview: async ({ engine }) => handleGetRetentionOverview(engine),
   listSchedules: async ({ request, engine, options }) =>

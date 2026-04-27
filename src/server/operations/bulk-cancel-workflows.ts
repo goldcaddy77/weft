@@ -1,0 +1,116 @@
+import { z } from 'zod';
+
+import { assertScopedBulkWorkflowFilter } from '../../core/bulk-workflow-filter.ts';
+import type { Engine } from '../../core/engine.ts';
+import { coerceStartWorkflowTags } from '../../core/start-workflow-validation.ts';
+import type { BulkCancelResult } from '../../core/types.ts';
+import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import { defineOperation } from '../operation-registry.ts';
+import type { UnknownRestBinding } from '../rest-bindings.ts';
+import {
+  bulkListFilterInputSchema,
+  engineFailureFault,
+  faultMessage,
+  invalidParamsFault,
+  listFilterFromBulkInput,
+  parseBulkListFilterFromBody,
+  readOptionalJsonBody,
+  unprocessableFault,
+  type BulkListFilterInput,
+} from './bulk-filter-helpers.ts';
+
+const bulkCancelWorkflowsOutput = z.unknown();
+
+export type BulkCancelWorkflowsInput = BulkListFilterInput;
+export type BulkCancelWorkflowsOutput = BulkCancelResult;
+
+export const bulkCancelWorkflowsOperation = defineOperation<
+  BulkCancelWorkflowsInput,
+  BulkCancelWorkflowsOutput
+>({
+  name: 'weft.workflows.bulk.cancel',
+  summary: 'Cancel workflows in bulk',
+  tags: ['Workflows'],
+  inputSchema: bulkListFilterInputSchema,
+  outputSchema: bulkCancelWorkflowsOutput as z.ZodType<BulkCancelWorkflowsOutput>,
+  access: { kind: 'public' },
+  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+  unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+  invoke: async ({ input, engine }): Promise<BulkCancelWorkflowsOutput> => {
+    const e = engine as Engine;
+
+    let validatedTags: string[] | undefined;
+    if (input.tags !== undefined) {
+      try {
+        validatedTags = coerceStartWorkflowTags(input.tags, 'Field "filter.tags"');
+      } catch (error) {
+        throw unprocessableFault(faultMessage(error));
+      }
+    }
+
+    const filter = listFilterFromBulkInput({
+      ...input,
+      ...(validatedTags === undefined ? {} : { tags: validatedTags }),
+    });
+
+    try {
+      assertScopedBulkWorkflowFilter(filter);
+    } catch (error) {
+      throw unprocessableFault(faultMessage(error));
+    }
+
+    try {
+      return await e.cancelAll(filter);
+    } catch (error) {
+      throw engineFailureFault(faultMessage(error));
+    }
+  },
+});
+
+function shapeBulkCancelWorkflowsSuccess(result: BulkCancelWorkflowsOutput): Response {
+  return new Response(JSON.stringify(result), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function shapeBulkCancelWorkflowsFault(fault: OperationFault): Response {
+  if (fault.code === 'Unprocessable') {
+    return new Response(JSON.stringify({ error: fault.message }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (fault.code === 'EngineFailure') {
+    return new Response(JSON.stringify({ error: fault.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  return new Response(JSON.stringify({ error: fault.message }), {
+    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export const bulkCancelWorkflowsRestBinding: UnknownRestBinding = {
+  method: 'POST',
+  path: '/v1/workflows/bulk/cancel',
+  pathParamNames: [],
+  operationName: 'weft.workflows.bulk.cancel',
+  inputSources: {},
+  extractInput: async (request) => {
+    const raw = await readOptionalJsonBody(request);
+
+    try {
+      return { ...parseBulkListFilterFromBody(raw) };
+    } catch (error) {
+      throw invalidParamsFault(faultMessage(error));
+    }
+  },
+  success: { kind: 'json', status: 200 },
+  shapeSuccess: (output: BulkCancelWorkflowsOutput) => shapeBulkCancelWorkflowsSuccess(output),
+  shapeFault: shapeBulkCancelWorkflowsFault,
+};
