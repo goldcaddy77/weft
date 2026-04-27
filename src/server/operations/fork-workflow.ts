@@ -5,9 +5,12 @@ import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fau
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 
+// `fromStep` is intentionally `unknown` at the schema boundary. The exact
+// legacy "Field 'fromStep' must be a non-negative safe integer" error path
+// lives in `invoke()` so REST and JSON-RPC callers share one contract.
 const forkWorkflowInput = z.object({
   workflowId: z.string().min(1),
-  fromStep: z.number().int().min(0).safe().optional(),
+  fromStep: z.unknown().optional(),
 });
 
 const forkWorkflowOutput = z.object({
@@ -28,7 +31,18 @@ export const forkWorkflowOperation = defineOperation<ForkWorkflowInput, ForkWork
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<ForkWorkflowOutput> => {
     const typedEngine = engine as Engine;
-    const options = input.fromStep !== undefined ? { fromStep: input.fromStep } : undefined;
+
+    let options: { fromStep: number } | undefined;
+    if (input.fromStep !== undefined) {
+      if (
+        typeof input.fromStep !== 'number' ||
+        !Number.isSafeInteger(input.fromStep) ||
+        input.fromStep < 0
+      ) {
+        throw invalidParamsFault('Field "fromStep" must be a non-negative safe integer');
+      }
+      options = { fromStep: input.fromStep };
+    }
 
     try {
       const handle = await typedEngine.fork(input.workflowId, options);
@@ -117,23 +131,17 @@ export const forkWorkflowRestBinding: UnknownRestBinding = {
       throw invalidParamsFault('Invalid JSON body');
     }
 
+    // Legacy parity: arrays are explicitly rejected here (handleForkWorkflow
+    // uses the same `Array.isArray(body)` guard); `fromStep` validation lives
+    // in `invoke` so REST and JSON-RPC share one error path.
     if (typeof body !== 'object' || body === null || Array.isArray(body)) {
       throw invalidParamsFault('Request body must be a JSON object');
     }
 
     const record = body as Record<string, unknown>;
-    const fromStep = record['fromStep'];
-    if (fromStep === undefined) {
-      return { workflowId: pathParams['id'] ?? '' };
-    }
-
-    if (typeof fromStep !== 'number' || !Number.isSafeInteger(fromStep) || fromStep < 0) {
-      throw invalidParamsFault('Field "fromStep" must be a non-negative safe integer');
-    }
-
     return {
       workflowId: pathParams['id'] ?? '',
-      fromStep,
+      fromStep: record['fromStep'],
     };
   },
   success: { kind: 'json', status: 201 },

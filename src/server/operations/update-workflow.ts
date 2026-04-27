@@ -147,20 +147,20 @@ export const updateWorkflowRestBinding: UnknownRestBinding = {
     idempotencyKey: { kind: 'body-field', bodyField: 'idempotencyKey' },
   },
   extractInput: async (request, pathParams) => {
+    // Legacy parity: invalid or absent JSON body is ignored, defaults apply.
+    // Field-level typeof checks live in `invoke()` (the single cross-transport
+    // validator) — extractInput just reads through.
     let payload: unknown;
-    let timeout: number | undefined;
-    let idempotencyKey: string | undefined;
+    let timeout: unknown;
+    let idempotencyKey: unknown;
 
     try {
       const body = await request.json();
-      if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
-        payload = body['payload'];
-        if (typeof body['timeout'] === 'number') {
-          timeout = body['timeout'];
-        }
-        if (typeof body['idempotencyKey'] === 'string') {
-          idempotencyKey = body['idempotencyKey'];
-        }
+      if (typeof body === 'object' && body !== null) {
+        const record = body as Record<string, unknown>;
+        payload = record['payload'];
+        timeout = record['timeout'];
+        idempotencyKey = record['idempotencyKey'];
       }
     } catch {
       // Legacy behavior: invalid or absent JSON body is ignored.

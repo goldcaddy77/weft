@@ -17,10 +17,10 @@ import type { UnknownRestBinding } from '../rest-bindings.ts';
 
 // Inputs are intentionally permissive at the schema boundary so legacy REST
 // callers (and equivalent JSON-RPC callers) hit the same validation in
-// `invoke()` via `buildStartWorkflowOptions` rather than being rejected by Zod
-// with a different error path. The `type` field is the only hard requirement.
+// `invoke()` rather than being rejected by Zod with a different error path.
+// All field validation lives in `invoke()` to keep one cross-transport contract.
 const startWorkflowInput = z.object({
-  type: z.string().min(1),
+  type: z.unknown(),
   input: z.unknown().optional(),
   id: z.unknown().optional(),
   executionTimeout: z.unknown().optional(),
@@ -48,6 +48,12 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
   invoke: async ({ input, engine }): Promise<StartWorkflowOutput> => {
     const typedEngine = engine as Engine;
 
+    // Validate `type` here so REST and JSON-RPC clients share one error path.
+    if (typeof input.type !== 'string' || input.type.length === 0) {
+      throw invalidParamsFault('Missing required field: type');
+    }
+    const type = input.type;
+
     let options: StartOptions;
     try {
       options = buildStartWorkflowOptions(input);
@@ -57,7 +63,7 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
     }
 
     try {
-      const handle = await typedEngine.start(input.type, input.input, options);
+      const handle = await typedEngine.start(type, input.input, options);
       return { id: handle.id };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -177,20 +183,15 @@ export const startWorkflowRestBinding: UnknownRestBinding = {
     }
 
     // Legacy parity: arrays are typeof 'object', so they pass this guard and
-    // fall through to the "Missing required field: type" check below — the
-    // same path JSON-RPC clients take when they pass an array to `params`.
+    // fall through to the "Missing required field: type" check in `invoke`
+    // (the single cross-transport validator).
     if (typeof body !== 'object' || body === null) {
       throw invalidParamsFault('Request body must be a JSON object');
     }
 
     const record = body as Record<string, unknown>;
-    const type = record['type'];
-    if (typeof type !== 'string' || type.length === 0) {
-      throw invalidParamsFault('Missing required field: type');
-    }
-
     return {
-      type,
+      type: record['type'],
       input: record['input'],
       id: record['id'],
       executionTimeout: record['executionTimeout'],
