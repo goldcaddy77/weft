@@ -290,7 +290,7 @@ function selectNextTimerSource(timerSources: TimerSource[]): TimerSource | undef
   return selectedSource;
 }
 
-function shouldDeleteTimerIndex(entry: TimerEntry): boolean {
+function shouldDeleteTimerIndexWithoutLookup(entry: TimerEntry): boolean {
   return entry.kind !== 'schedule' && entry.kind !== 'terminal-cleanup';
 }
 
@@ -451,9 +451,7 @@ export class Scheduler implements Disposable {
       // surface the error rather than silently swallowing it.
       try {
         const cleanupOperations: BatchOperation[] = [{ type: 'delete', key: nextEntry.key }];
-        if (shouldDeleteTimerIndex(nextEntry.entry)) {
-          cleanupOperations.push({ type: 'delete', key: indexKey });
-        } else {
+        if (nextEntry.entry.kind === 'schedule') {
           const indexValue = await this.#storage.get(indexKey);
           if (indexValue !== null) {
             const decodedIndexValue = decode(indexValue);
@@ -465,6 +463,8 @@ export class Scheduler implements Disposable {
               cleanupOperations.push({ type: 'delete', key: indexKey });
             }
           }
+        } else if (shouldDeleteTimerIndexWithoutLookup(nextEntry.entry)) {
+          cleanupOperations.push({ type: 'delete', key: indexKey });
         }
 
         await this.#storage.batch(cleanupOperations);
