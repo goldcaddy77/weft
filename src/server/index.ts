@@ -231,7 +231,6 @@ async function withRetry<T>(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await operation();
-      /* c8 ignore start -- retry exhaustion requires forced storage or network failures */
     } catch (error) {
       lastError = error;
       if (attempt < maxAttempts) {
@@ -243,7 +242,6 @@ async function withRetry<T>(
   }
   // All attempts exhausted — throw the last error so callers can handle it.
   throw lastError;
-  /* c8 ignore stop */
 }
 
 function isWorkerConnection(pathname: string): boolean {
@@ -1532,7 +1530,6 @@ export function serve(options: ServeOptions): WeftServer {
     for await (const [key, value] of options.engine.storage.scan('op:inflight:')) {
       const decoded = decode(value);
       if (!isInflightRecord(decoded)) {
-        /* c8 ignore next 2 -- corrupt persisted inflight records are defensive */
         console.error(`[weft] Corrupt inflight record at "${key}" during restore — skipping`);
         continue;
       }
@@ -1569,7 +1566,6 @@ export function serve(options: ServeOptions): WeftServer {
         }
       }
     }
-    /* c8 ignore next 2 -- restore failure requires injected storage scan faults */
   }, 'restore in-flight tasks from storage').catch((error) => {
     console.error('[weft] Failed to restore in-flight tasks from storage:', error);
   });
@@ -1622,7 +1618,6 @@ export function serve(options: ServeOptions): WeftServer {
 
           const decoded = decode(existing);
           if (!isInflightRecord(decoded)) {
-            /* c8 ignore next 2 -- corrupt inflight records are defensive */
             console.error(`[weft] Corrupt inflight record for task "${operationId}" — skipping`);
             continue;
           }
@@ -1644,7 +1639,6 @@ export function serve(options: ServeOptions): WeftServer {
           registry.completeTask(decoded.operationId);
           cleanupWorkflowIndex(decoded.operationId);
           await reassignOrExpireTask(decoded.operationId, decoded);
-          /* c8 ignore next 5 -- retry path requires injected storage or reassignment faults */
         } catch (error) {
           // Re-add to the heap so it will be retried on the next tick
           // instead of waiting for the slower reconciliation scan.
@@ -1657,7 +1651,6 @@ export function serve(options: ServeOptions): WeftServer {
           processingOperations.delete(operationId);
         }
       }
-      /* c8 ignore next 2 -- scanner failure requires injected storage scan faults */
     } catch (error) {
       console.error('[weft] Visibility timeout scanner error:', error);
     } finally {
@@ -1708,7 +1701,6 @@ export function serve(options: ServeOptions): WeftServer {
             registry.completeTask(decoded.operationId);
             cleanupWorkflowIndex(decoded.operationId);
             await reassignOrExpireTask(decoded.operationId, decoded);
-            /* c8 ignore next 2 -- reconciliation failure handling is defensive */
           } finally {
             processingOperations.delete(decoded.operationId);
           }
@@ -1716,7 +1708,6 @@ export function serve(options: ServeOptions): WeftServer {
           console.error('[weft] Failed to reconcile inflight record — skipping:', error);
         }
       }
-      /* c8 ignore next 2 -- reconciliation scan failure requires injected storage faults */
     } catch (error) {
       console.error('[weft] Reconciliation scanner error:', error);
     } finally {
