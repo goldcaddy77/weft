@@ -1,0 +1,214 @@
+import { describe, expect, it } from 'bun:test';
+
+import { Engine } from '../../core/engine.ts';
+import { tenantFromInputField } from '../../core/tenant.ts';
+import type { WorkflowContext } from '../../core/types.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
+import { handleRequest, type HandlerOptions } from '../handler.ts';
+import { createOperationRegistry } from '../operation-catalog.ts';
+import { updateScheduleOperation, updateScheduleRestBinding } from './update-schedule.ts';
+
+function createEngine(): Engine {
+  const engine = new Engine({ storage: new MemoryStorage() });
+  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    return input;
+  });
+  return engine;
+}
+
+function createTenantAwareEngine(): Engine {
+  const engine = new Engine({
+    storage: new MemoryStorage(),
+    tenantResolver: tenantFromInputField('tenantId'),
+  });
+  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    return input;
+  });
+  return engine;
+}
+
+function request(method: string, path: string, body?: unknown): Request {
+  const options: RequestInit = { method };
+  if (body !== undefined) {
+    options.headers = { 'Content-Type': 'application/json' };
+    options.body = JSON.stringify(body);
+  }
+  return new Request(`http://localhost${path}`, options);
+}
+
+function invalidJsonRequest(method: string, path: string, rawBody: string): Request {
+  return new Request(`http://localhost${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: rawBody,
+  });
+}
+
+const registry = createOperationRegistry([updateScheduleOperation]);
+const bindings = [updateScheduleRestBinding];
+
+describe('weft.schedules.update', () => {
+  it('returns 204 and updates the cron expression on the happy path', async () => {
+    const engine = createEngine();
+    await engine.schedule('echo', null, '0 * * * *', { id: 'schedule-update' });
+
+    const response = await handleRequest(
+      request('PATCH', '/v1/schedules/schedule-update', { cronExpression: '30 * * * *' }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe('');
+    expect(await engine.getSchedule('schedule-update')).toEqual(
+      expect.objectContaining({ cronExpression: '30 * * * *' }),
+    );
+  });
+
+  it('returns 400 when the request body is invalid JSON', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      invalidJsonRequest('PATCH', '/v1/schedules/schedule-update', '{'),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Invalid JSON body' });
+  });
+
+  it('returns 400 when the request body is not a JSON object', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('PATCH', '/v1/schedules/schedule-update', ['not-an-object']),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Request body must be a JSON object' });
+  });
+
+  it('returns 403 when a JWT-authenticated request is missing a tenant claim', async () => {
+    const engine = createTenantAwareEngine();
+    const options: HandlerOptions = {
+      authContext: {
+        method: 'jwt',
+        claims: { sub: 'user-123' },
+      },
+      operationRegistry: registry,
+      restBindings: bindings,
+    };
+
+    const response = await handleRequest(
+      request('PATCH', '/v1/schedules/schedule-update', { cronExpression: '30 * * * *' }),
+      engine,
+      options,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim',
+    });
+  });
+
+  it('returns 404 when a JWT-authenticated caller updates another tenant’s schedule', async () => {
+    const engine = createTenantAwareEngine();
+    await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', { id: 'schedule-globex' });
+
+    const response = await handleRequest(
+      request('PATCH', '/v1/schedules/schedule-globex', { cronExpression: '30 * * * *' }),
+      engine,
+      {
+        authContext: {
+          method: 'jwt',
+          claims: { tenantId: 'acme' },
+        },
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Schedule "schedule-globex" not found' });
+  });
+
+  it('returns 404 when the schedule does not exist', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('PATCH', '/v1/schedules/missing-schedule', { cronExpression: '30 * * * *' }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Schedule "missing-schedule" not found' });
+  });
+
+  it('returns 409 when the engine reports a conflict', async () => {
+    const engine = createEngine();
+    const originalUpdateSchedule = engine.updateSchedule.bind(engine);
+
+    try {
+      engine.updateSchedule = async () => {
+        throw new Error('Schedule already exists');
+      };
+
+      const response = await handleRequest(
+        request('PATCH', '/v1/schedules/schedule-update', { cronExpression: '30 * * * *' }),
+        engine,
+        { operationRegistry: registry, restBindings: bindings },
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: 'Schedule already exists' });
+    } finally {
+      engine.updateSchedule = originalUpdateSchedule;
+    }
+  });
+
+  it('returns 400 when the cron expression is invalid', async () => {
+    const engine = createEngine();
+    await engine.schedule('echo', null, '0 * * * *', { id: 'schedule-update-invalid-cron' });
+
+    const response = await handleRequest(
+      request('PATCH', '/v1/schedules/schedule-update-invalid-cron', {
+        cronExpression: 'not-a-cron',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()) as { error: string }).toEqual(
+      expect.objectContaining({
+        error: expect.stringContaining('Cron'),
+      }),
+    );
+  });
+
+  it('returns the raw engine error message on unexpected failures', async () => {
+    const engine = createEngine();
+    const originalUpdateSchedule = engine.updateSchedule.bind(engine);
+
+    try {
+      engine.updateSchedule = async () => {
+        throw new Error('update schedule exploded');
+      };
+
+      const response = await handleRequest(
+        request('PATCH', '/v1/schedules/schedule-update', { cronExpression: '30 * * * *' }),
+        engine,
+        { operationRegistry: registry, restBindings: bindings },
+      );
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: 'update schedule exploded' });
+    } finally {
+      engine.updateSchedule = originalUpdateSchedule;
+    }
+  });
+});

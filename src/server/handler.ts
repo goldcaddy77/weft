@@ -12,24 +12,7 @@ import { formatSSE } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
 import type { StoredStreamChunk } from '../core/context.ts';
 import type { Engine } from '../core/engine.ts';
-import {
-  assertExclusiveStartWorkflowOptions,
-  coerceStartWorkflowDuration,
-  coerceStartWorkflowId,
-  coerceStartWorkflowTags,
-  coerceStartWorkflowTimestamp,
-  StartWorkflowValidationError,
-} from '../core/start-workflow-validation.ts';
-import { QuotaExceededError } from '../core/tenant-quotas.ts';
-import type {
-  ForkOptions,
-  ScheduleAccessOptions,
-  ScheduleFilter,
-  ScheduleOptions,
-  ScheduleStatus,
-  StartOptions,
-} from '../core/types.ts';
-import { UpdateTimeoutError, WorkflowTerminalError } from '../core/updates.ts';
+import type { ScheduleAccessOptions, ScheduleFilter, ScheduleStatus } from '../core/types.ts';
 import {
   createMetricsCollectorExporter,
   type MetricsCollector,
@@ -242,102 +225,7 @@ export function getRequiredRouteParameter(
   return value;
 }
 
-function validateStartWorkflowOptions(body: Record<string, unknown>): StartOptions {
-  const options: StartOptions = {};
-
-  const id = body['id'];
-  if (id !== undefined) {
-    options.id = coerceStartWorkflowId(id, 'Field "id"');
-  }
-
-  const executionTimeout = body['executionTimeout'];
-  if (executionTimeout !== undefined) {
-    options.executionTimeout = coerceStartWorkflowDuration(
-      executionTimeout,
-      'Field "executionTimeout"',
-    );
-  }
-
-  const startAt = body['startAt'];
-  if (startAt !== undefined) {
-    options.startAt = coerceStartWorkflowTimestamp(startAt, 'Field "startAt"');
-  }
-
-  const startAfter = body['startAfter'];
-  if (startAfter !== undefined) {
-    options.startAfter = coerceStartWorkflowDuration(startAfter, 'Field "startAfter"');
-  }
-
-  const tags = body['tags'];
-  if (tags !== undefined) {
-    options.tags = coerceStartWorkflowTags(tags, 'Field "tags"');
-  }
-
-  assertExclusiveStartWorkflowOptions(options.startAt, options.startAfter);
-
-  return options;
-}
-
-const VALID_SCHEDULE_OVERLAP_POLICIES = new Set<NonNullable<ScheduleOptions['overlap']>>([
-  'skip',
-  'queue',
-  'cancel-running',
-  'allow',
-]);
 const VALID_SCHEDULE_STATUSES = new Set<ScheduleStatus>(['active', 'paused', 'cancelled']);
-
-function validateScheduleOptions(body: Record<string, unknown>): {
-  type: string;
-  input: unknown;
-  cronExpression: string;
-  options: ScheduleOptions;
-} {
-  const type = body['type'];
-  if (typeof type !== 'string' || type.length === 0) {
-    throw new Error('Missing required field: type');
-  }
-
-  const cronExpression = body['cronExpression'];
-  if (typeof cronExpression !== 'string' || cronExpression.length === 0) {
-    throw new Error('Missing required field: cronExpression');
-  }
-
-  const options: ScheduleOptions = {};
-
-  const id = body['id'];
-  if (id !== undefined) {
-    if (typeof id !== 'string' || id.length === 0) {
-      throw new Error('Field "id" must be a non-empty string');
-    }
-    options.id = id;
-  }
-
-  const overlap = body['overlap'];
-  if (overlap !== undefined) {
-    if (
-      typeof overlap !== 'string' ||
-      !VALID_SCHEDULE_OVERLAP_POLICIES.has(overlap as NonNullable<ScheduleOptions['overlap']>)
-    ) {
-      throw new Error('Field "overlap" must be one of skip, queue, cancel-running, allow');
-    }
-    options.overlap = overlap as NonNullable<ScheduleOptions['overlap']>;
-  }
-
-  const backfill = body['backfill'];
-  if (backfill !== undefined) {
-    if (typeof backfill !== 'boolean') {
-      throw new Error('Field "backfill" must be a boolean');
-    }
-    options.backfill = backfill;
-  }
-
-  return {
-    type,
-    input: body['input'],
-    cronExpression,
-    options,
-  };
-}
 
 function parseScheduleListFilter(request: Request): ScheduleFilter {
   const url = new URL(request.url);
@@ -482,64 +370,6 @@ function getScheduleAccessOptions(
 // Route handlers — each delegates to an Engine method
 // ---------------------------------------------------------------------------
 
-async function handleStartWorkflow(request: Request, engine: Engine): Promise<Response> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  if (typeof body !== 'object' || body === null) {
-    return errorResponse('Request body must be a JSON object', 400);
-  }
-
-  const { type, input, id, executionTimeout, startAt, startAfter, tags } = body as Record<
-    string,
-    unknown
-  >;
-
-  if (typeof type !== 'string' || type.length === 0) {
-    return errorResponse('Missing required field: type', 400);
-  }
-
-  let options: StartOptions;
-  try {
-    options = validateStartWorkflowOptions({
-      id,
-      executionTimeout,
-      startAt,
-      startAfter,
-      tags,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 400);
-  }
-
-  try {
-    const handle = await engine.start(type, input, options);
-    return jsonResponse({ id: handle.id }, 201);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-
-    if (error instanceof StartWorkflowValidationError) {
-      return errorResponse(message, 400);
-    }
-    if (error instanceof QuotaExceededError) {
-      return errorResponse(message, 429);
-    }
-    if (message.includes('No workflow registered')) {
-      return errorResponse(message, 400);
-    }
-    if (message.includes('already exists')) {
-      return errorResponse(message, 409);
-    }
-
-    return errorResponse(message, 500);
-  }
-}
-
 async function handleListSchedules(
   request: Request,
   engine: Engine,
@@ -552,41 +382,6 @@ async function handleListSchedules(
       return authError;
     }
     return jsonResponse(await engine.listSchedules(filter));
-  } catch (error) {
-    return scheduleErrorResponse(error);
-  }
-}
-
-async function handleCreateSchedule(
-  request: Request,
-  engine: Engine,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  if (typeof body !== 'object' || body === null) {
-    return errorResponse('Request body must be a JSON object', 400);
-  }
-
-  try {
-    const validated = validateScheduleOptions(body as Record<string, unknown>);
-    const accessOptions = getScheduleAccessOptions(authContext);
-    if (accessOptions instanceof Response) {
-      return accessOptions;
-    }
-    const handle = await engine.schedule(
-      validated.type,
-      validated.input,
-      validated.cronExpression,
-      validated.options,
-      accessOptions,
-    );
-    return jsonResponse({ id: handle.id }, 201);
   } catch (error) {
     return scheduleErrorResponse(error);
   }
@@ -614,100 +409,6 @@ async function handleGetSchedule(
   }
 }
 
-async function handleUpdateSchedule(
-  request: Request,
-  engine: Engine,
-  scheduleId: string,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return errorResponse('Invalid JSON body', 400);
-  }
-
-  if (typeof body !== 'object' || body === null) {
-    return errorResponse('Request body must be a JSON object', 400);
-  }
-
-  const cronExpression = (body as Record<string, unknown>)['cronExpression'];
-  if (typeof cronExpression !== 'string' || cronExpression.length === 0) {
-    return errorResponse('Missing required field: cronExpression', 400);
-  }
-
-  try {
-    const accessOptions = getScheduleAccessOptions(authContext);
-    if (accessOptions instanceof Response) {
-      return accessOptions;
-    }
-
-    await engine.updateSchedule(scheduleId, cronExpression, accessOptions);
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    return scheduleErrorResponse(error);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Update routes — engine.submitCoordinatedUpdate() / engine.getUpdateResult()
-// ---------------------------------------------------------------------------
-
-const DEFAULT_UPDATE_TIMEOUT_MS = 30_000;
-
-async function handleUpdateWorkflow(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-  updateName: string,
-): Promise<Response> {
-  let payload: unknown;
-  let timeout = DEFAULT_UPDATE_TIMEOUT_MS;
-  let idempotencyKey: string | undefined;
-
-  try {
-    const body = (await request.json()) as Record<string, unknown>;
-    payload = body['payload'];
-    if (typeof body['timeout'] === 'number') {
-      timeout = body['timeout'];
-    }
-    if (typeof body['idempotencyKey'] === 'string') {
-      idempotencyKey = body['idempotencyKey'];
-    }
-  } catch {
-    // No body or invalid JSON — payload stays undefined
-  }
-
-  const updateOptions: { timeout?: number; idempotencyKey?: string } = { timeout };
-  if (idempotencyKey !== undefined) {
-    updateOptions.idempotencyKey = idempotencyKey;
-  }
-
-  try {
-    const result = await engine.submitCoordinatedUpdate(
-      workflowId,
-      updateName,
-      payload,
-      updateOptions,
-    );
-
-    if (result.error !== undefined) {
-      return errorResponse(result.error, 422);
-    }
-
-    return jsonResponse({ updateId: result.updateId, result: result.result });
-  } catch (error) {
-    if (error instanceof WorkflowTerminalError) {
-      return errorResponse(error.message, 422);
-    }
-    if (error instanceof UpdateTimeoutError) {
-      return errorResponse(error.message, 408);
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    return errorResponse(message, 500);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Events route — engine.getEvents()
 // ---------------------------------------------------------------------------
@@ -719,108 +420,6 @@ async function handleUpdateWorkflow(
 // ---------------------------------------------------------------------------
 // Query route — engine.query()
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Resume route — engine.resume()
-// ---------------------------------------------------------------------------
-
-async function handleResumeWorkflow(engine: Engine, workflowId: string): Promise<Response> {
-  try {
-    const handle = await engine.resume(workflowId);
-    return jsonResponse({ id: handle.id });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('not found')) {
-      return errorResponse(message, 404);
-    }
-    if (message.includes('Cannot resume')) {
-      return errorResponse(message, 409);
-    }
-    return errorResponse(message, 500);
-  }
-}
-
-async function handleForkWorkflow(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-): Promise<Response> {
-  let options: ForkOptions | undefined;
-  const rawBody = await request.text();
-
-  if (rawBody.trim().length > 0) {
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody) as unknown;
-    } catch {
-      return errorResponse('Invalid JSON body', 400);
-    }
-
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-      return errorResponse('Request body must be a JSON object', 400);
-    }
-
-    const record = body as Record<string, unknown>;
-    if (record['fromStep'] !== undefined) {
-      const fromStep = record['fromStep'];
-      if (typeof fromStep !== 'number' || !Number.isSafeInteger(fromStep) || fromStep < 0) {
-        return errorResponse('Field "fromStep" must be a non-negative safe integer', 400);
-      }
-      options = { fromStep };
-    }
-  }
-
-  try {
-    const handle = await engine.fork(workflowId, options);
-    return jsonResponse({ id: handle.id }, 201);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-
-    if (message.includes('fromStep') || message.includes('Checkpoint not found at step')) {
-      return errorResponse(message, 400);
-    }
-
-    if (message.includes('Checkpoint not found')) {
-      return errorResponse(message, 404);
-    }
-
-    if (message.includes('not found')) {
-      return errorResponse(message, 404);
-    }
-
-    return errorResponse(message, 500);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Recover all route — engine.recoverAll()
-// ---------------------------------------------------------------------------
-
-async function handleRecoverAll(engine: Engine): Promise<Response> {
-  const handles = await engine.recoverAll();
-  const recovered: string[] = [];
-  for (const handle of handles) {
-    recovered.push(handle.id);
-  }
-  return jsonResponse({ recovered });
-}
-
-// ---------------------------------------------------------------------------
-// Timeout route — engine.timeout()
-// ---------------------------------------------------------------------------
-
-async function handleTimeoutWorkflow(engine: Engine, workflowId: string): Promise<Response> {
-  try {
-    await engine.timeout(workflowId);
-    return new Response(null, { status: 204 });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('not found')) {
-      return errorResponse(message, 404);
-    }
-    return errorResponse(message, 500);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Budget policy route — engine.setBudgetPolicy()
@@ -1020,26 +619,14 @@ type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
 
 const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
-  startWorkflow: async ({ request, engine }) => handleStartWorkflow(request, engine),
-  recoverAll: async ({ engine }) => handleRecoverAll(engine),
   listSchedules: async ({ request, engine, options }) =>
     handleListSchedules(request, engine, options?.authContext),
-  createSchedule: async ({ request, engine, options }) =>
-    handleCreateSchedule(request, engine, options?.authContext),
   getSchedule: async ({ engine, options, param }) =>
     handleGetSchedule(engine, param('id'), options?.authContext),
-  updateSchedule: async ({ request, engine, options, param }) =>
-    handleUpdateSchedule(request, engine, param('id'), options?.authContext),
   getTenantQuota: async ({ engine, options, param }) =>
     handleGetTenantQuota(engine, param('id'), options?.authContext),
   getStreamChunks: async ({ request, engine, param }) =>
     handleGetStreamChunks(request, engine, param('id'), param('key')),
-  resumeWorkflow: async ({ engine, param }) => handleResumeWorkflow(engine, param('id')),
-  forkWorkflow: async ({ request, engine, param }) =>
-    handleForkWorkflow(request, engine, param('id')),
-  timeoutWorkflow: async ({ engine, param }) => handleTimeoutWorkflow(engine, param('id')),
-  updateWorkflow: async ({ request, engine, param }) =>
-    handleUpdateWorkflow(request, engine, param('id'), param('name')),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
   streamSSE: async ({ request, engine, param }) => handleStreamSSE(request, engine, param('id')),

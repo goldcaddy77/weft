@@ -39,6 +39,11 @@ import {
   cancelWorkflowRestBinding,
 } from './operations/cancel-workflow.ts';
 import {
+  createScheduleOperation,
+  createScheduleRestBinding,
+} from './operations/create-schedule.ts';
+import { forkWorkflowOperation, forkWorkflowRestBinding } from './operations/fork-workflow.ts';
+import {
   getBudgetPolicyOperation,
   getBudgetPolicyRestBinding,
 } from './operations/get-budget-policy.ts';
@@ -84,6 +89,7 @@ import {
   purgeWorkflowsRestBinding,
 } from './operations/purge-workflows.ts';
 import { queryWorkflowOperation, queryWorkflowRestBinding } from './operations/query-workflow.ts';
+import { recoverAllOperation, recoverAllRestBinding } from './operations/recover-all.ts';
 import {
   removeWorkflowTagsOperation,
   removeWorkflowTagsRestBinding,
@@ -92,6 +98,10 @@ import {
   resumeScheduleOperation,
   resumeScheduleRestBinding,
 } from './operations/resume-schedule.ts';
+import {
+  resumeWorkflowOperation,
+  resumeWorkflowRestBinding,
+} from './operations/resume-workflow.ts';
 import {
   setBudgetPolicyOperation,
   setBudgetPolicyRestBinding,
@@ -104,10 +114,23 @@ import {
   signalWorkflowOperation,
   signalWorkflowRestBinding,
 } from './operations/signal-workflow.ts';
+import { startWorkflowOperation, startWorkflowRestBinding } from './operations/start-workflow.ts';
 import {
   submitReviewDecisionOperation,
   submitReviewDecisionRestBinding,
 } from './operations/submit-review-decision.ts';
+import {
+  timeoutWorkflowOperation,
+  timeoutWorkflowRestBinding,
+} from './operations/timeout-workflow.ts';
+import {
+  updateScheduleOperation,
+  updateScheduleRestBinding,
+} from './operations/update-schedule.ts';
+import {
+  updateWorkflowOperation,
+  updateWorkflowRestBinding,
+} from './operations/update-workflow.ts';
 import type { RestBinding } from './rest-binding.ts';
 
 /**
@@ -132,6 +155,8 @@ export type UnknownRestBinding = RestBinding<any, any>;
  * runtime.
  */
 export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
+  startWorkflowRestBinding,
+  recoverAllRestBinding,
   listWorkflowsRestBinding,
   purgeWorkflowsRestBinding,
   bulkCancelWorkflowsRestBinding,
@@ -146,6 +171,12 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   setWorkflowAttributesRestBinding,
   signalWorkflowRestBinding,
   queryWorkflowRestBinding,
+  resumeWorkflowRestBinding,
+  forkWorkflowRestBinding,
+  timeoutWorkflowRestBinding,
+  updateWorkflowRestBinding,
+  createScheduleRestBinding,
+  updateScheduleRestBinding,
   getRetentionOverviewRestBinding,
   getBudgetPolicyRestBinding,
   getUpdateResultRestBinding,
@@ -175,6 +206,8 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
  */
 export function createLiveOperationRegistry(): OperationRegistry {
   return createOperationRegistry([
+    startWorkflowOperation,
+    recoverAllOperation,
     listWorkflowsOperation,
     purgeWorkflowsOperation,
     bulkCancelWorkflowsOperation,
@@ -189,6 +222,12 @@ export function createLiveOperationRegistry(): OperationRegistry {
     setWorkflowAttributesOperation,
     signalWorkflowOperation,
     queryWorkflowOperation,
+    resumeWorkflowOperation,
+    forkWorkflowOperation,
+    timeoutWorkflowOperation,
+    updateWorkflowOperation,
+    createScheduleOperation,
+    updateScheduleOperation,
     getRetentionOverviewOperation,
     getBudgetPolicyOperation,
     getUpdateResultOperation,
