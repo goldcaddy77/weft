@@ -15,14 +15,18 @@ import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fau
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 
+// Inputs are intentionally permissive at the schema boundary so legacy REST
+// callers (and equivalent JSON-RPC callers) hit the same validation in
+// `invoke()` via `buildStartWorkflowOptions` rather than being rejected by Zod
+// with a different error path. The `type` field is the only hard requirement.
 const startWorkflowInput = z.object({
   type: z.string().min(1),
   input: z.unknown().optional(),
-  id: z.string().optional(),
-  executionTimeout: z.union([z.string(), z.number()]).optional(),
-  startAt: z.number().optional(),
-  startAfter: z.union([z.string(), z.number()]).optional(),
-  tags: z.array(z.unknown()).optional(),
+  id: z.unknown().optional(),
+  executionTimeout: z.unknown().optional(),
+  startAt: z.unknown().optional(),
+  startAfter: z.unknown().optional(),
+  tags: z.unknown().optional(),
 });
 
 const startWorkflowOutput = z.object({
@@ -172,7 +176,10 @@ export const startWorkflowRestBinding: UnknownRestBinding = {
       throw invalidParamsFault('Invalid JSON body');
     }
 
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    // Legacy parity: arrays are typeof 'object', so they pass this guard and
+    // fall through to the "Missing required field: type" check below — the
+    // same path JSON-RPC clients take when they pass an array to `params`.
+    if (typeof body !== 'object' || body === null) {
       throw invalidParamsFault('Request body must be a JSON object');
     }
 

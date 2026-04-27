@@ -17,14 +17,17 @@ const VALID_SCHEDULE_OVERLAP_POLICIES = new Set<NonNullable<ScheduleOptions['ove
 const MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE =
   'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim';
 
+// Inputs are intentionally permissive at the schema boundary so legacy REST
+// callers (and equivalent JSON-RPC callers) hit the same validation in
+// `invoke()` rather than being rejected by Zod with a different error path.
+// All field validation lives in `invoke()` to keep one cross-transport contract.
 const createScheduleInput = z.object({
-  type: z.string().min(1),
-  cronExpression: z.string().min(1),
+  type: z.unknown(),
+  cronExpression: z.unknown(),
   input: z.unknown().optional(),
-  id: z.string().optional(),
-  overlap: z.string().optional(),
-  backfill: z.boolean().optional(),
-  authenticatedTenantId: z.string().optional(),
+  id: z.unknown().optional(),
+  overlap: z.unknown().optional(),
+  backfill: z.unknown().optional(),
 });
 
 const createScheduleOutput = z.object({
@@ -46,13 +49,40 @@ export const createScheduleOperation = defineOperation<CreateScheduleInput, Crea
   invoke: async ({ input, engine, principal }): Promise<CreateScheduleOutput> => {
     const typedEngine = engine as Engine;
 
-    const overlap = input.overlap;
-
-    if (input.id !== undefined && input.id.length === 0) {
-      throw invalidParamsFault('Field "id" must be a non-empty string');
+    // All field validation lives here so REST and JSON-RPC clients both
+    // receive the legacy error messages verbatim. Order matches legacy
+    // `validateScheduleOptions`: type → cronExpression → id → overlap → backfill.
+    if (typeof input.type !== 'string' || input.type.length === 0) {
+      throw invalidParamsFault('Missing required field: type');
     }
-    if (overlap !== undefined && !isScheduleOverlapPolicy(overlap)) {
-      throw invalidParamsFault('Field "overlap" must be one of skip, queue, cancel-running, allow');
+    if (typeof input.cronExpression !== 'string' || input.cronExpression.length === 0) {
+      throw invalidParamsFault('Missing required field: cronExpression');
+    }
+
+    let validatedId: string | undefined;
+    if (input.id !== undefined) {
+      if (typeof input.id !== 'string' || input.id.length === 0) {
+        throw invalidParamsFault('Field "id" must be a non-empty string');
+      }
+      validatedId = input.id;
+    }
+
+    let validatedOverlap: NonNullable<ScheduleOptions['overlap']> | undefined;
+    if (input.overlap !== undefined) {
+      if (typeof input.overlap !== 'string' || !isScheduleOverlapPolicy(input.overlap)) {
+        throw invalidParamsFault(
+          'Field "overlap" must be one of skip, queue, cancel-running, allow',
+        );
+      }
+      validatedOverlap = input.overlap;
+    }
+
+    let validatedBackfill: boolean | undefined;
+    if (input.backfill !== undefined) {
+      if (typeof input.backfill !== 'boolean') {
+        throw invalidParamsFault('Field "backfill" must be a boolean');
+      }
+      validatedBackfill = input.backfill;
     }
 
     const accessOptions = getScheduleAccessOptions(principal);
@@ -61,9 +91,9 @@ export const createScheduleOperation = defineOperation<CreateScheduleInput, Crea
     }
 
     const options: ScheduleOptions = {
-      ...(input.id !== undefined ? { id: input.id } : {}),
-      ...(overlap !== undefined ? { overlap } : {}),
-      ...(input.backfill !== undefined ? { backfill: input.backfill } : {}),
+      ...(validatedId !== undefined ? { id: validatedId } : {}),
+      ...(validatedOverlap !== undefined ? { overlap: validatedOverlap } : {}),
+      ...(validatedBackfill !== undefined ? { backfill: validatedBackfill } : {}),
     };
 
     try {
@@ -208,33 +238,21 @@ export const createScheduleRestBinding: UnknownRestBinding = {
       throw invalidParamsFault('Invalid JSON body');
     }
 
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    // Legacy parity: arrays are typeof 'object' && !== null, so they pass
+    // this guard and fall through to the type/cronExpression checks in
+    // `invoke` (which is the single cross-transport validator).
+    if (typeof body !== 'object' || body === null) {
       throw invalidParamsFault('Request body must be a JSON object');
     }
 
     const record = body as Record<string, unknown>;
-    const type = record['type'];
-    if (typeof type !== 'string' || type.length === 0) {
-      throw invalidParamsFault('Missing required field: type');
-    }
-
-    const cronExpression = record['cronExpression'];
-    if (typeof cronExpression !== 'string' || cronExpression.length === 0) {
-      throw invalidParamsFault('Missing required field: cronExpression');
-    }
-
-    const backfill = record['backfill'];
-    if (backfill !== undefined && typeof backfill !== 'boolean') {
-      throw invalidParamsFault('Field "backfill" must be a boolean');
-    }
-
     return {
-      type,
-      cronExpression,
+      type: record['type'],
+      cronExpression: record['cronExpression'],
       input: record['input'],
       id: record['id'],
       overlap: record['overlap'],
-      backfill,
+      backfill: record['backfill'],
     };
   },
   success: { kind: 'json', status: 201 },

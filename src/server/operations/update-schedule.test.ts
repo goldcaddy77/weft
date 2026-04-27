@@ -78,7 +78,24 @@ describe('weft.schedules.update', () => {
     expect(await response.json()).toEqual({ error: 'Invalid JSON body' });
   });
 
-  it('returns 400 when the request body is not a JSON object', async () => {
+  it('returns 400 when the request body is JSON null', async () => {
+    // Legacy `handleUpdateSchedule` rejected `null` (typeof 'object' && === null
+    // fails the guard) with "Request body must be a JSON object".
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('PATCH', '/v1/schedules/schedule-update', null),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Request body must be a JSON object' });
+  });
+
+  it('returns 400 with "Missing required field: cronExpression" when body is a JSON array', async () => {
+    // Legacy parity: arrays are typeof 'object' && !== null, so they pass
+    // the body-shape guard and fall through to the cronExpression check.
     const engine = createEngine();
 
     const response = await handleRequest(
@@ -88,7 +105,7 @@ describe('weft.schedules.update', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: 'Request body must be a JSON object' });
+    expect(await response.json()).toEqual({ error: 'Missing required field: cronExpression' });
   });
 
   it('returns 403 when a JWT-authenticated request is missing a tenant claim', async () => {

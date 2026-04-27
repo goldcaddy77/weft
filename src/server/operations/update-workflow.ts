@@ -8,12 +8,17 @@ import type { UnknownRestBinding } from '../rest-bindings.ts';
 
 const DEFAULT_UPDATE_TIMEOUT_MS = 30_000;
 
+// `timeout` and `idempotencyKey` are intentionally `unknown` at the schema
+// boundary. Legacy REST silently ignored non-number `timeout` and non-string
+// `idempotencyKey`, falling back to defaults — Zod cannot reproduce that
+// "ignore-and-default" semantic. The same typeof checks live in `invoke()` so
+// REST and JSON-RPC callers share one contract.
 const updateWorkflowInput = z.object({
   workflowId: z.string().min(1),
   updateName: z.string().min(1),
   payload: z.unknown().optional(),
-  timeout: z.number().optional(),
-  idempotencyKey: z.string().optional(),
+  timeout: z.unknown().optional(),
+  idempotencyKey: z.unknown().optional(),
 });
 
 const updateWorkflowOutput = z.object({
@@ -35,9 +40,13 @@ export const updateWorkflowOperation = defineOperation<UpdateWorkflowInput, Upda
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<UpdateWorkflowOutput> => {
     const typedEngine = engine as Engine;
-    const timeout = input.timeout ?? DEFAULT_UPDATE_TIMEOUT_MS;
+
+    // Legacy parity: non-number `timeout` and non-string `idempotencyKey` are
+    // silently ignored (defaults apply). Validation happens here, not at the
+    // schema boundary, so REST and JSON-RPC callers behave identically.
+    const timeout = typeof input.timeout === 'number' ? input.timeout : DEFAULT_UPDATE_TIMEOUT_MS;
     const options: { timeout: number; idempotencyKey?: string } = { timeout };
-    if (input.idempotencyKey !== undefined) {
+    if (typeof input.idempotencyKey === 'string') {
       options.idempotencyKey = input.idempotencyKey;
     }
 

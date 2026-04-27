@@ -10,10 +10,13 @@ import type { UnknownRestBinding } from '../rest-bindings.ts';
 const MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE =
   'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim';
 
+// `cronExpression` is intentionally permissive at the schema boundary so REST
+// and JSON-RPC clients hit the same validation in `invoke()`. `scheduleId`
+// comes from the path on REST (and is required at the schema level for
+// JSON-RPC); we keep the min-length guard.
 const updateScheduleInput = z.object({
   scheduleId: z.string().min(1),
-  cronExpression: z.string().min(1),
-  authenticatedTenantId: z.string().optional(),
+  cronExpression: z.unknown(),
 });
 
 export type UpdateScheduleInput = z.infer<typeof updateScheduleInput>;
@@ -29,13 +32,20 @@ export const updateScheduleOperation = defineOperation<UpdateScheduleInput, null
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }): Promise<null> => {
     const typedEngine = engine as Engine;
+
+    // Validate cronExpression here so REST and JSON-RPC share one error path.
+    if (typeof input.cronExpression !== 'string' || input.cronExpression.length === 0) {
+      throw invalidParamsFault('Missing required field: cronExpression');
+    }
+    const cronExpression = input.cronExpression;
+
     const accessOptions = getScheduleAccessOptions(principal);
     if (isOperationFault(accessOptions)) {
       throw accessOptions;
     }
 
     try {
-      await typedEngine.updateSchedule(input.scheduleId, input.cronExpression, accessOptions);
+      await typedEngine.updateSchedule(input.scheduleId, cronExpression, accessOptions);
       return null;
     } catch (error) {
       throw classifyScheduleError(error);
@@ -166,19 +176,16 @@ export const updateScheduleRestBinding: UnknownRestBinding = {
       throw invalidParamsFault('Invalid JSON body');
     }
 
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    // Legacy parity: arrays are typeof 'object' && !== null, so they pass
+    // this guard and fall through to the cronExpression check in `invoke`.
+    if (typeof body !== 'object' || body === null) {
       throw invalidParamsFault('Request body must be a JSON object');
     }
 
     const record = body as Record<string, unknown>;
-    const cronExpression = record['cronExpression'];
-    if (typeof cronExpression !== 'string' || cronExpression.length === 0) {
-      throw invalidParamsFault('Missing required field: cronExpression');
-    }
-
     return {
       scheduleId: pathParams['id'] ?? '',
-      cronExpression,
+      cronExpression: record['cronExpression'],
     };
   },
   success: { kind: 'empty', status: 204 },

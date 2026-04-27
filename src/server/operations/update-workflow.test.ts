@@ -73,6 +73,39 @@ describe('weft.workflows.update', () => {
     }
   });
 
+  it('silently ignores non-number timeout and non-string idempotencyKey (legacy parity)', async () => {
+    // Legacy `handleUpdateWorkflow` only honored `timeout` if `typeof === 'number'`
+    // and `idempotencyKey` if `typeof === 'string'`; anything else was ignored
+    // and defaults applied. Pin this so JSON-RPC clients hit the same contract
+    // as REST (instead of being rejected by Zod for the wrong type).
+    const engine = createEngine();
+    const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
+
+    try {
+      engine.submitCoordinatedUpdate = async (_workflowId, _updateName, _payload, options) => {
+        expect(options).toEqual({ timeout: 30_000 });
+        return {
+          updateId: 'update-mistyped',
+          result: null,
+        } as Awaited<ReturnType<Engine['submitCoordinatedUpdate']>>;
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/workflows/workflow-123/update/rename', {
+          timeout: '2000',
+          idempotencyKey: 12345,
+        }),
+        engine,
+        { operationRegistry: registry, restBindings: bindings },
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ updateId: 'update-mistyped', result: null });
+    } finally {
+      engine.submitCoordinatedUpdate = originalSubmit;
+    }
+  });
+
   it('silently ignores invalid JSON bodies and uses the default timeout', async () => {
     const engine = createEngine();
     const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
