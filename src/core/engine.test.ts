@@ -1,20 +1,19 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
 
-import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
-
 import { BudgetPolicyEnforcer } from '../ai/budget-policy.ts';
 import { defineAgent } from '../ai/declaration.ts';
 import { AgentBudgetExceededEvent, AgentBudgetWarningEvent } from '../ai/events.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
 import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
-import { KEYS } from '../storage/interface.ts';
+import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
 import type { Context, StreamReference } from './context.ts';
 import { Engine, ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING, WorkflowHandle } from './engine.ts';
 import {
   CheckpointSizeWarningEvent,
+  CleanupWarningEvent,
   DevelopmentWarningEvent,
   WorkflowCancelledEvent,
   WorkflowCompletedEvent,
@@ -22,9 +21,10 @@ import {
   WorkflowStartedEvent,
   WorkflowTimedOutEvent,
 } from './events.ts';
+import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
 import type { ActivityInterceptor, WorkflowInterceptor } from './interceptor.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
-import type { WorkflowContext, WorkflowState } from './types.ts';
+import type { WorkerOutboundMessage, WorkflowContext, WorkflowState } from './types.ts';
 import { activity } from './types.ts';
 
 // ---------------------------------------------------------------------------
@@ -147,46 +147,50 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
-  it('resolves handle.result() even when terminal cleanup throws', async () => {
+  it('signal on a completed workflow is a no-op and does not recreate cleanup scratch', async () => {
     const storage = new MemoryStorage();
-
-    // The InlineExecutionStrategy's #emit calls the message handler
-    // synchronously without awaiting the returned promise. When
-    // #completeWorkflow's catch block re-throws cleanupError, that promise
-    // rejects unhandled. We intercept at the onMessage registration point to
-    // wrap the handler so the async error is captured rather than becoming an
-    // unhandled rejection that would fail the test.
-    const capturedCleanupErrors: unknown[] = [];
-    const onMessageSpy = spyOn(InlineExecutionStrategy.prototype, 'onMessage').mockImplementation(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test mock needs flexible handler type
-      function (this: InlineExecutionStrategy, handler: any) {
-        // Restore so subsequent engine creation is not affected.
-        onMessageSpy.mockRestore();
-        // Wrap the handler: let the promise resolve/reject naturally but absorb
-        // any rejection that matches the expected cleanup error.
-        const wrappedHandler = (message: unknown): void => {
-          const result = handler(message);
-          if (result instanceof Promise) {
-            result.catch((error: unknown) => {
-              capturedCleanupErrors.push(error);
-            });
-          }
-        };
-        // Call the original to store the wrapped handler in the strategy.
-        InlineExecutionStrategy.prototype.onMessage.call(this, wrappedHandler);
-      },
-    );
-
     const engine = new Engine({ storage });
 
-    engine.register('cleanup-throw', async function* () {
+    engine.register('signal-noop', async function* () {
+      return 'done';
+    });
+
+    const handle = await engine.start('signal-noop', null);
+    await expect(handle.result()).resolves.toBe('done');
+    await expect(
+      engine.signal(handle.id, 'after-complete', { value: true }),
+    ).resolves.toBeUndefined();
+
+    const persistedSignalKeys: string[] = [];
+    for await (const [key] of storage.scan(`sig:${encodeStorageKeyComponent(handle.id)}:`)) {
+      persistedSignalKeys.push(key);
+    }
+
+    expect(persistedSignalKeys).toEqual([]);
+    expect(await storage.get(KEYS.terminalCleanupNeeded(handle.id))).toBeNull();
+
+    engine[Symbol.dispose]();
+  });
+
+  it('resolves handle.result() even when terminal cleanup throws', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const cleanupWarnings: CleanupWarningEvent[] = [];
+    const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
+
+    engine.addEventListener(CleanupWarningEvent.type, (event) => {
+      cleanupWarnings.push(event as CleanupWarningEvent);
+    });
+
+    engine.register('cleanup-throw', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('finish');
       return 'expected-result';
     });
 
-    // Patch deletePrefix to throw on the first call, which occurs inside
-    // #cleanupTerminalWorkflow → #cleanupReviews. The completion state write
-    // (storage.batch with a 'put' op) runs before cleanup, so the workflow
-    // is durably recorded as terminal before the error fires.
+    // Patch deletePrefix to throw on the first call, which occurs when the
+    // deferred terminal-cleanup timer runs `#cleanupReviews`. The completion
+    // state write runs before that cleanup, so the workflow is durably
+    // recorded as terminal before the error fires.
     const originalDeletePrefix = storage.deletePrefix.bind(storage);
     let deletePrefixCallCount = 0;
     storage.deletePrefix = async (prefix: string): Promise<number> => {
@@ -198,20 +202,88 @@ describe('Engine', () => {
     };
 
     const handle = await engine.start('cleanup-throw', null);
-
-    // handle.result() must resolve — the resolver must not be stranded even
-    // though #cleanupTerminalWorkflow throws internally.
-    const result = await handle.result();
-    expect(result).toBe('expected-result');
-
-    // Allow the microtask queue to drain so the cleanup error propagates
-    // through the wrapped handler and into capturedCleanupErrors.
     await flush();
 
-    // Confirm that cleanup did in fact throw — guards against the test
+    const reviewKey = KEYS.review(handle.id, 'cleanup-warning-review');
+    await storage.put(reviewKey, encode({ status: 'pending' }));
+
+    // handle.result() must resolve — the resolver must not be stranded even
+    // though the deferred durable cleanup later fails.
+    const resultPromise = handle.result();
+    await engine.signal(handle.id, 'finish', null);
+    const result = await resultPromise;
+    expect(result).toBe('expected-result');
+
+    await engine.scheduler.tick(Date.now() + 120_000);
+
+    // Confirm that cleanup did in fact fail — guards against the test
     // passing vacuously if the deletePrefix patch was never exercised.
-    expect(capturedCleanupErrors).toHaveLength(1);
-    expect((capturedCleanupErrors[0] as Error).message).toBe('simulated cleanup failure');
+    expect(cleanupWarnings).toHaveLength(1);
+    expect(cleanupWarnings[0]!.source).toBe('cleanupTerminalWorkflowDurableState');
+    expect(cleanupWarnings[0]!.error.message).toBe('simulated cleanup failure');
+    expect(await storage.get(reviewKey)).not.toBeNull();
+    expect(await storage.get(KEYS.terminalCleanupNeeded(handle.id))).not.toBeNull();
+
+    await engine.scheduler.tick(Date.now() + 120_000);
+
+    expect(await storage.get(reviewKey)).toBeNull();
+    expect(await storage.get(KEYS.terminalCleanupNeeded(handle.id))).toBeNull();
+
+    consoleErrorSpy.mockRestore();
+    engine[Symbol.dispose]();
+  });
+
+  it('resolves handle.result() even when completion event dispatch throws', async () => {
+    const capturedCompletionErrors: unknown[] = [];
+    const onMessageSpy = spyOn(InlineExecutionStrategy.prototype, 'onMessage').mockImplementation(
+      function (
+        this: InlineExecutionStrategy,
+        handler: (message: WorkerOutboundMessage) => void | Promise<void>,
+      ) {
+        onMessageSpy.mockRestore();
+
+        const wrappedHandler = (message: WorkerOutboundMessage): void => {
+          const result = handler(message);
+          if (result instanceof Promise) {
+            result.catch((error: unknown) => {
+              capturedCompletionErrors.push(error);
+            });
+          }
+        };
+
+        InlineExecutionStrategy.prototype.onMessage.call(this, wrappedHandler);
+      },
+    );
+
+    const engine = new Engine();
+    const originalDispatchEvent = engine.dispatchEvent.bind(engine);
+
+    engine.register('dispatch-throws-on-complete', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('finish');
+      return 'expected-result';
+    });
+
+    engine.dispatchEvent = ((event: Event): boolean => {
+      if (event.type === WorkflowCompletedEvent.type) {
+        throw new Error('simulated completion dispatch failure');
+      }
+
+      return originalDispatchEvent(event);
+    }) as typeof engine.dispatchEvent;
+
+    const handle = await engine.start('dispatch-throws-on-complete', null);
+    await flush();
+
+    const resultPromise = handle.result();
+    await engine.signal(handle.id, 'finish', null);
+
+    await expect(resultPromise).resolves.toBe('expected-result');
+    await flush();
+
+    expect(capturedCompletionErrors).toHaveLength(1);
+    expect((capturedCompletionErrors[0] as Error).message).toBe(
+      'simulated completion dispatch failure',
+    );
 
     engine[Symbol.dispose]();
   });
@@ -4147,6 +4219,7 @@ describe('Engine', () => {
       const resultPromise = handle.result().catch(() => undefined);
       await engine.cancel(handle.id);
       await resultPromise;
+      await engine.scheduler.tick(Date.now() + 120_000);
 
       // Review entry is deleted
       expect(await engine.storage.get(reviewKey)).toBeNull();
@@ -4179,6 +4252,7 @@ describe('Engine', () => {
       const resultPromise = handle.result().catch(() => undefined);
       await engine.timeout(handle.id);
       await resultPromise;
+      await engine.scheduler.tick(Date.now() + 120_000);
 
       expect(await engine.storage.get(reviewKey)).toBeNull();
       const state = await engine.get(handle.id);
@@ -4205,12 +4279,12 @@ describe('Engine', () => {
       // Pre-seed: a pending signal (internal state) and a shared-state entry
       // (output artifact), plus a synthetic event-history key to verify
       // retention.
-      await storage.put(`sig:${handle.id}:pre:entry`, encode({ ignored: true }));
+      await engine.signal(handle.id, 'pre', { ignored: true });
       await storage.put(`shared:${handle.id}:counter`, encode({ value: 1 }));
       await storage.put(`ev:${handle.id}:0000000000`, encode({ kind: 'synthetic' }));
 
       await handle.result();
-      await flush();
+      await engine.scheduler.tick(Date.now() + 120_000);
 
       // Signals (internal) are dropped on completion.
       const remainingSignals: string[] = [];
@@ -4302,7 +4376,7 @@ describe('Engine', () => {
 
       const handle = await engine.start('tool-effect-cleanup-workflow', null);
       await handle.result();
-      await flush();
+      await engine.scheduler.tick(Date.now() + 120_000);
 
       // Sanity check: the mock fired exactly four turns (3 tool calls + final).
       expect(callIndex).toBe(4);
@@ -4315,6 +4389,226 @@ describe('Engine', () => {
         remainingToolEffectKeys.push(key);
       }
       expect(remainingToolEffectKeys).toEqual([]);
+
+      engine[Symbol.dispose]();
+    });
+
+    it('completing a workflow defers durable scratch cleanup until the terminal cleanup timer fires', async () => {
+      const storage = new MemoryStorage();
+      const engine = new Engine({ storage });
+
+      engine.register('deferred-terminal-cleanup', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('finish');
+        return 'done';
+      });
+
+      const handle = await engine.start('deferred-terminal-cleanup', null);
+      await flush();
+
+      const signalKey = KEYS.signal(handle.id, 'pre', 'entry');
+      const reviewKey = KEYS.review(handle.id, 'manual-review');
+      const workflowHeaderKey = KEYS.workflowHeaders(handle.id);
+
+      await storage.put(signalKey, encode({ ignored: true }));
+      await storage.put(reviewKey, encode({ status: 'pending' }));
+      await storage.put(workflowHeaderKey, encode([['traceparent', '00-test']]));
+
+      const resultPromise = handle.result();
+      await engine.signal(handle.id, 'finish', null);
+
+      await expect(resultPromise).resolves.toBe('done');
+
+      expect(await storage.get(signalKey)).not.toBeNull();
+      expect(await storage.get(reviewKey)).not.toBeNull();
+      expect(await storage.get(workflowHeaderKey)).not.toBeNull();
+
+      await engine.scheduler.tick(Date.now() + 120_000);
+
+      expect(await storage.get(signalKey)).toBeNull();
+      expect(await storage.get(reviewKey)).toBeNull();
+      expect(await storage.get(workflowHeaderKey)).toBeNull();
+
+      engine[Symbol.dispose]();
+    });
+
+    it('terminal cleanup timers survive restart and remove durable scratch data on the recovered engine', async () => {
+      const storage = new MemoryStorage();
+      const firstEngine = new Engine({ storage });
+
+      firstEngine.register('restart-terminal-cleanup', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('finish');
+        return 'done';
+      });
+
+      const handle = await firstEngine.start('restart-terminal-cleanup', null);
+      await flush();
+
+      const signalKey = KEYS.signal(handle.id, 'pre', 'entry');
+      const reviewKey = KEYS.review(handle.id, 'manual-review');
+
+      await storage.put(signalKey, encode({ ignored: true }));
+      await storage.put(reviewKey, encode({ status: 'pending' }));
+
+      const resultPromise = handle.result();
+      await firstEngine.signal(handle.id, 'finish', null);
+      await expect(resultPromise).resolves.toBe('done');
+
+      expect(await storage.get(signalKey)).not.toBeNull();
+      expect(await storage.get(reviewKey)).not.toBeNull();
+
+      firstEngine[Symbol.dispose]();
+
+      const secondEngine = new Engine({ storage });
+      await secondEngine.scheduler.tick(Date.now() + 120_000);
+
+      expect(await storage.get(signalKey)).toBeNull();
+      expect(await storage.get(reviewKey)).toBeNull();
+
+      secondEngine[Symbol.dispose]();
+    });
+
+    it('terminal cleanup timers still clean up scratch data when getNow() returns fractional timestamps', async () => {
+      const storage = new MemoryStorage();
+      const warnings: CleanupWarningEvent[] = [];
+      const fractionalNow = 1_700_000_000_000.5;
+      const engine = new Engine({
+        storage,
+        getNow: () => fractionalNow,
+      });
+
+      engine.addEventListener(CleanupWarningEvent.type, (event) => {
+        warnings.push(event as CleanupWarningEvent);
+      });
+
+      engine.register('fractional-terminal-cleanup', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('finish');
+        return 'done';
+      });
+
+      const handle = await engine.start('fractional-terminal-cleanup', null);
+      await flush();
+
+      const reviewKey = KEYS.review(handle.id, 'fractional-review');
+      await storage.put(reviewKey, encode({ status: 'pending' }));
+
+      const resultPromise = handle.result();
+      await engine.signal(handle.id, 'finish', null);
+      await expect(resultPromise).resolves.toBe('done');
+
+      await engine.scheduler.tick(fractionalNow + 120_000);
+
+      expect(await storage.get(reviewKey)).toBeNull();
+      expect(warnings).toEqual([]);
+
+      engine[Symbol.dispose]();
+    });
+
+    it('stale terminal cleanup timers do not delete scratch data for a reused workflow id', async () => {
+      const storage = new MemoryStorage();
+      const workflowId = 'reused-terminal-cleanup-id';
+      const fixedNow = 1_700_000_000_000;
+
+      const firstEngine = new Engine({
+        storage,
+        getNow: () => fixedNow,
+      });
+      firstEngine.register('reused-terminal-cleanup', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('finish');
+        return 'old';
+      });
+
+      const firstHandle = await firstEngine.start('reused-terminal-cleanup', null, {
+        id: workflowId,
+      });
+      await flush();
+
+      const firstResultPromise = firstHandle.result();
+      await firstEngine.signal(firstHandle.id, 'finish', null);
+      await expect(firstResultPromise).resolves.toBe('old');
+
+      const firstState = await firstEngine.get(workflowId);
+      expect(firstState?.status).toBe('completed');
+      const staleTerminalCleanupToken = firstState!.terminalCleanupToken;
+      expect(staleTerminalCleanupToken).toBeDefined();
+
+      await firstEngine.deleteAll({ status: 'completed' });
+      firstEngine[Symbol.dispose]();
+
+      const secondEngine = new Engine({
+        storage,
+        getNow: () => fixedNow,
+      });
+      secondEngine.register('reused-terminal-cleanup', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('finish');
+        return 'new';
+      });
+
+      const secondHandle = await secondEngine.start('reused-terminal-cleanup', null, {
+        id: workflowId,
+      });
+      await flush();
+
+      const retainedSignalKey = KEYS.signal(secondHandle.id, 'keep', 'entry');
+      const retainedReviewKey = KEYS.review(secondHandle.id, 'keep-review');
+
+      const secondResultPromise = secondHandle.result();
+      await secondEngine.signal(secondHandle.id, 'finish', null);
+      await expect(secondResultPromise).resolves.toBe('new');
+
+      const secondState = await secondEngine.get(workflowId);
+      expect(secondState?.status).toBe('completed');
+      expect(secondState?.updatedAt).toBe(fixedNow);
+
+      await storage.put(retainedSignalKey, encode({ kept: true }));
+      await storage.put(retainedReviewKey, encode({ status: 'pending' }));
+
+      await secondEngine.scheduler.schedule({
+        id: `terminal-cleanup:preserve-output:${staleTerminalCleanupToken!}`,
+        workflowId,
+        fireAt: fixedNow,
+        kind: 'terminal-cleanup',
+      });
+      await secondEngine.scheduler.tick(fixedNow + 1);
+
+      expect(await storage.get(retainedSignalKey)).not.toBeNull();
+      expect(await storage.get(retainedReviewKey)).not.toBeNull();
+
+      await secondEngine.scheduler.tick(fixedNow + 120_000);
+
+      expect(await storage.get(retainedSignalKey)).toBeNull();
+      expect(await storage.get(retainedReviewKey)).toBeNull();
+
+      secondEngine[Symbol.dispose]();
+    });
+
+    it('malformed terminal cleanup timers emit one warning and are deleted instead of retrying forever', async () => {
+      const storage = new MemoryStorage();
+      const engine = new Engine({ storage });
+      const warnings: CleanupWarningEvent[] = [];
+      const fireAt = Date.now();
+      const timerId = 'terminal-cleanup:malformed';
+
+      engine.addEventListener(CleanupWarningEvent.type, (event) => {
+        warnings.push(event as CleanupWarningEvent);
+      });
+
+      await engine.scheduler.schedule({
+        id: timerId,
+        workflowId: 'wf-malformed-terminal-cleanup',
+        fireAt,
+        kind: 'terminal-cleanup',
+      });
+      await engine.scheduler.tick(Date.now() + 120_000);
+
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]!.error.message).toContain('Ignoring malformed terminal cleanup timer');
+      expect(await storage.get(KEYS.terminalCleanup(fireAt, timerId))).toBeNull();
+
+      const remainingTerminalCleanupKeys: string[] = [];
+      for await (const [key] of storage.scan('wf-cleanup:')) {
+        remainingTerminalCleanupKeys.push(key);
+      }
+      expect(remainingTerminalCleanupKeys).toEqual([]);
 
       engine[Symbol.dispose]();
     });
@@ -4341,7 +4635,7 @@ describe('Engine', () => {
       const resultPromise = handle.result().catch(() => undefined);
       await engine.cancel(handle.id);
       await resultPromise;
-      await flush();
+      await engine.scheduler.tick(Date.now() + 120_000);
 
       // Output artifacts AND signals are dropped on cancel (no consumer waiting).
       for (const prefix of [

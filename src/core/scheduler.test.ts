@@ -236,6 +236,33 @@ describe('Scheduler', () => {
     expect(firedEntries[0]!.id).toBe('timer-1');
   });
 
+  it('does not read a timer index when firing a terminal cleanup timer', async () => {
+    const entry = makeTimer({
+      id: 'terminal-cleanup:cleanup-token',
+      fireAt: currentTime - 1000,
+      kind: 'terminal-cleanup',
+    });
+    await scheduler.schedule(entry);
+
+    const timerIndexKey = `timer-idx:${entry.id}`;
+    const originalGet = storage.get.bind(storage);
+    let timerIndexReadCount = 0;
+
+    storage.get = async (key) => {
+      if (key === timerIndexKey) {
+        timerIndexReadCount++;
+      }
+
+      return originalGet(key);
+    };
+
+    await scheduler.tick(currentTime);
+
+    expect(firedEntries).toHaveLength(1);
+    expect(firedEntries[0]!.id).toBe(entry.id);
+    expect(timerIndexReadCount).toBe(0);
+  });
+
   it('does NOT fire callback for future timers', async () => {
     const entry = makeTimer({ fireAt: currentTime + 5000 });
     await scheduler.schedule(entry);

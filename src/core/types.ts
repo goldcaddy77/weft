@@ -79,6 +79,7 @@ export interface WorkflowState {
   createdAt: number;
   startedAt?: number;
   updatedAt: number;
+  terminalCleanupToken?: string;
   executionDeadline?: number;
   /**
    * Optional {@link TenantContext} resolved at start time by the engine's
@@ -403,7 +404,13 @@ export interface TimerEntry {
   id: string;
   workflowId: WorkflowId;
   fireAt: number;
-  kind: 'sleep' | 'visibility-timeout' | 'execution-deadline' | 'delayed-start' | 'schedule';
+  kind:
+    | 'sleep'
+    | 'visibility-timeout'
+    | 'execution-deadline'
+    | 'delayed-start'
+    | 'schedule'
+    | 'terminal-cleanup';
   executionTimeoutMs?: number;
 }
 
