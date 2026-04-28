@@ -4,6 +4,19 @@
  * Both `handleRequest()` and the OpenAPI generator consume this model,
  * ensuring the handler and the API documentation always agree.
  *
+ * As of Wave 1, only routes that are intentionally REST-only direct
+ * handlers remain here. All cataloged runtime operations have been
+ * migrated to `rest-bindings.ts`:
+ *   - `GET /v1/schedules`           → `weft.schedules.list`
+ *   - `GET /v1/schedules/:id`       → `weft.schedules.get`
+ *   - `GET /v1/tenants/:id/quota`   → `weft.tenants.quota.get`
+ *   - `GET /v1/workflows/:id/replay/:step` → `weft.workflows.replay`
+ *
+ * Intentional REST-only direct handlers that remain:
+ *   - `GET /v1/health`    — anonymous liveness probe (no catalog op)
+ *   - `GET /v1/metrics`   — Prometheus text exposition (text/plain, no catalog op)
+ *   - `GET /openapi.json` — transport-meta endpoint (self-describing, no catalog op)
+ *
  * @module server/route-model
  */
 
@@ -38,8 +51,8 @@ export type RouteDefinition = {
 // ---------------------------------------------------------------------------
 
 /**
- * All REST API routes. Each entry is the single source of truth for the
- * route's method, path, parameters, and documentation.
+ * Intentionally REST-only routes. These are not in the operation catalog.
+ * See module JSDoc for the full list of routes migrated to catalog operations.
  *
  * `as const` preserves the literal types of `handler` so consumers can
  * derive a string-literal union (see `HandlerName` in handler.ts) for
@@ -56,43 +69,11 @@ export const ROUTES = [
   },
   {
     method: 'GET',
-    path: '/v1/schedules',
-    handler: 'listSchedules',
-    paramNames: [],
-    summary: 'List recurring schedules',
-    tags: ['Schedules'],
-  },
-  {
-    method: 'GET',
-    path: '/v1/schedules/:id',
-    handler: 'getSchedule',
-    paramNames: ['id'],
-    summary: 'Get one recurring schedule',
-    tags: ['Schedules'],
-  },
-  {
-    method: 'GET',
-    path: '/v1/tenants/:id/quota',
-    handler: 'getTenantQuota',
-    paramNames: ['id'],
-    summary: 'Get quota usage for a tenant',
-    tags: ['Budget'],
-  },
-  {
-    method: 'GET',
     path: '/v1/metrics',
     handler: 'getMetrics',
     paramNames: [],
     summary: 'Prometheus metrics export',
     tags: ['Observability'],
-  },
-  {
-    method: 'GET',
-    path: '/v1/workflows/:id/replay/:step',
-    handler: 'replayWorkflowToStep',
-    paramNames: ['id', 'step'],
-    summary: 'Replay a workflow to a historical checkpoint step',
-    tags: ['Checkpoints'],
   },
   {
     method: 'GET',

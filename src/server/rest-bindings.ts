@@ -9,6 +9,7 @@
  * @module server/rest-bindings
  */
 
+import type { MetricsCollector } from '../observability/metrics.ts';
 import { createOperationRegistry, type OperationRegistry } from './operation-catalog.ts';
 import {
   addWorkflowTagsOperation,
@@ -56,10 +57,19 @@ import {
   getRetentionOverviewRestBinding,
 } from './operations/get-retention-overview.ts';
 import { getReviewOperation, getReviewRestBinding } from './operations/get-review.ts';
+import { getScheduleOperation, getScheduleRestBinding } from './operations/get-schedule.ts';
 import {
   getStreamChunksOperation,
   getStreamChunksRestBinding,
 } from './operations/get-stream-chunks.ts';
+import {
+  createGetSystemMetricsRestBinding,
+  getSystemMetricsOperation,
+} from './operations/get-system-metrics.ts';
+import {
+  getTenantQuotaOperation,
+  getTenantQuotaRestBinding,
+} from './operations/get-tenant-quota.ts';
 import {
   getUpdateResultOperation,
   getUpdateResultRestBinding,
@@ -86,6 +96,7 @@ import {
   listCheckpointsRestBinding,
 } from './operations/list-checkpoints.ts';
 import { listReviewsOperation, listReviewsRestBinding } from './operations/list-reviews.ts';
+import { listSchedulesOperation, listSchedulesRestBinding } from './operations/list-schedules.ts';
 import { listWorkflowsOperation, listWorkflowsRestBinding } from './operations/list-workflows.ts';
 import { pauseScheduleOperation, pauseScheduleRestBinding } from './operations/pause-schedule.ts';
 import {
@@ -98,6 +109,10 @@ import {
   removeWorkflowTagsOperation,
   removeWorkflowTagsRestBinding,
 } from './operations/remove-workflow-tags.ts';
+import {
+  replayWorkflowOperation,
+  replayWorkflowRestBinding,
+} from './operations/replay-workflow.ts';
 import {
   resumeScheduleOperation,
   resumeScheduleRestBinding,
@@ -158,9 +173,11 @@ import type { RestBinding } from './rest-binding.ts';
 export type UnknownRestBinding = RestBinding<any, any>;
 
 /**
- * Live REST binding set. Each migrated operation contributes exactly
- * one entry. Exported `readonly` so the router cannot mutate it at
- * runtime.
+ * Static REST bindings for all operations that do not need per-server
+ * configuration. The `weft.system.metrics` binding is excluded here
+ * because it is constructed per-server via `createGetSystemMetricsRestBinding`
+ * (to receive the metrics collector without module-level singletons).
+ * Use `createLiveRestBindings()` to get the full set for a given server.
  */
 export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   startWorkflowRestBinding,
@@ -202,7 +219,29 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   resumeScheduleRestBinding,
   getStreamChunksRestBinding,
   streamWorkflowSseRestBinding,
+  // Wave 1 — previously legacy direct handlers
+  listSchedulesRestBinding,
+  getScheduleRestBinding,
+  getTenantQuotaRestBinding,
+  replayWorkflowRestBinding,
 ];
+
+/**
+ * Build the full REST binding set for a server instance. Appends the
+ * `weft.system.metrics` binding configured with the provided metrics
+ * collector. Callers that do not use a metrics collector get a binding
+ * that returns an empty snapshot.
+ */
+export function createLiveRestBindings(options?: {
+  metricsCollector?: MetricsCollector;
+}): ReadonlyArray<UnknownRestBinding> {
+  return [
+    ...REST_BINDINGS,
+    options?.metricsCollector === undefined
+      ? createGetSystemMetricsRestBinding({})
+      : createGetSystemMetricsRestBinding({ metricsCollector: options.metricsCollector }),
+  ];
+}
 
 /**
  * Live operation registry — populated with every operation that has a
@@ -255,5 +294,11 @@ export function createLiveOperationRegistry(): OperationRegistry {
     resumeScheduleOperation,
     getStreamChunksOperation,
     streamWorkflowSseOperation,
+    // Wave 1 — previously legacy direct handlers
+    listSchedulesOperation,
+    getScheduleOperation,
+    getTenantQuotaOperation,
+    replayWorkflowOperation,
+    getSystemMetricsOperation,
   ]);
 }

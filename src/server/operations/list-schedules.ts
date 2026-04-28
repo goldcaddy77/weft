@@ -1,0 +1,196 @@
+/**
+ * `weft.schedules.list` operation + REST binding.
+ *
+ * Lists recurring schedules with optional filtering. REST response matches
+ * the legacy `handleListSchedules` shape: 200 with the paginated result,
+ * 400 for bad query params, or a JSON `{ error: <message> }` for other failures.
+ *
+ * @module server/operations/list-schedules
+ */
+
+import { z } from 'zod';
+
+import type { Engine } from '../../core/engine.ts';
+import type {
+  PaginatedResult,
+  ScheduleFilter,
+  ScheduleStatus,
+  ScheduleSummary,
+} from '../../core/types.ts';
+import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import { defineOperation } from '../operation-registry.ts';
+import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { invalidParamsFault } from './operation-helpers.ts';
+
+const VALID_SCHEDULE_STATUSES = new Set<string>(['active', 'paused', 'cancelled']);
+
+const listSchedulesInput = z.object({
+  status: z.unknown().optional(),
+  workflowType: z.unknown().optional(),
+  tenantId: z.unknown().optional(),
+  limit: z.unknown().optional(),
+  offset: z.unknown().optional(),
+  // JWT-authenticated tenant scope resolved by the authorize hook, not
+  // passed directly by the caller. Stored on input so the hook can
+  // inject it without touching the raw query string.
+  _resolvedTenantId: z.string().optional(),
+});
+
+const listSchedulesOutput = z.unknown();
+
+export type ListSchedulesInput = z.infer<typeof listSchedulesInput>;
+export type ListSchedulesOutput = PaginatedResult<ScheduleSummary>;
+
+export const listSchedulesOperation = defineOperation<ListSchedulesInput, ListSchedulesOutput>({
+  name: 'weft.schedules.list',
+  summary: 'List recurring schedules',
+  tags: ['Schedules'],
+  inputSchema: listSchedulesInput,
+  outputSchema: listSchedulesOutput as z.ZodType<ListSchedulesOutput>,
+  access: { kind: 'public' },
+  transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+  unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+  // oxlint-disable-next-line eslint(complexity) -- preserves the legacy query-validation order at one transport-neutral invoke boundary.
+  invoke: async ({ input, engine }): Promise<ListSchedulesOutput> => {
+    const e = engine as Engine;
+
+    // Build the ScheduleFilter from the validated input. Field-level
+    // validation mirrors the legacy `parseScheduleListFilter` exactly.
+    const filter: ScheduleFilter = {};
+
+    if (input.status !== undefined) {
+      const statuses = Array.isArray(input.status) ? (input.status as unknown[]) : [input.status];
+
+      const normalized: ScheduleStatus[] = [];
+      for (const s of statuses) {
+        if (typeof s !== 'string' || !VALID_SCHEDULE_STATUSES.has(s)) {
+          throw invalidParamsFault(
+            'Query parameter "status" must be one of active, paused, cancelled',
+          );
+        }
+        normalized.push(s as ScheduleStatus);
+      }
+
+      if (normalized.length === 1 && normalized[0] !== undefined) {
+        filter.status = normalized[0];
+      } else if (normalized.length > 1) {
+        filter.status = normalized;
+      }
+    }
+
+    if (input.workflowType !== undefined) {
+      if (typeof input.workflowType !== 'string') {
+        throw invalidParamsFault('Query parameter "workflowType" must be a string');
+      }
+      filter.workflowType = input.workflowType;
+    }
+
+    if (input.tenantId !== undefined) {
+      if (typeof input.tenantId !== 'string') {
+        throw invalidParamsFault('Query parameter "tenantId" must be a string');
+      }
+      filter.tenantId = input.tenantId;
+    }
+
+    // JWT scope override: the REST binding injects the resolved tenant id
+    // into `_resolvedTenantId` before calling executeOperation. The same
+    // field can be set by JSON-RPC callers (no-op for non-JWT principals).
+    if (input._resolvedTenantId !== undefined) {
+      // If the caller also passed tenantId and it disagrees, that is a
+      // scope-mismatch — the tenant scope wins.
+      if (filter.tenantId !== undefined && filter.tenantId !== input._resolvedTenantId) {
+        const fault: OperationFault = {
+          code: 'Forbidden',
+          message: 'Schedule access is limited to the authenticated tenant',
+          data: { reason: 'tenantId mismatch with JWT claim' },
+        };
+        throw fault;
+      }
+      filter.tenantId = input._resolvedTenantId;
+    }
+
+    if (input.limit !== undefined) {
+      const parsed = Number(input.limit);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw invalidParamsFault('Query parameter "limit" must be a positive integer');
+      }
+      filter.limit = Math.min(parsed, 1000);
+    }
+
+    if (input.offset !== undefined) {
+      const parsed = Number(input.offset);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        throw invalidParamsFault('Query parameter "offset" must be a non-negative integer');
+      }
+      filter.offset = parsed;
+    }
+
+    return e.listSchedules(filter);
+  },
+});
+
+function shapeListSchedulesFault(fault: OperationFault): Response {
+  if (fault.code === 'InvalidParams') {
+    return new Response(JSON.stringify({ error: fault.message }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (fault.code === 'Forbidden') {
+    return new Response(JSON.stringify({ error: fault.message }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (fault.code === 'EngineFailure') {
+    return new Response(JSON.stringify({ error: 'Internal server error' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return new Response(JSON.stringify({ error: fault.message }), {
+    status: FAULT_CODE_TO_HTTP_STATUS[fault.code],
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export const listSchedulesRestBinding: UnknownRestBinding = {
+  method: 'GET',
+  path: '/v1/schedules',
+  pathParamNames: [],
+  operationName: 'weft.schedules.list',
+  inputSources: {
+    status: { kind: 'query', queryParam: 'status' },
+    workflowType: { kind: 'query', queryParam: 'workflowType' },
+    tenantId: { kind: 'query', queryParam: 'tenantId' },
+    limit: { kind: 'query', queryParam: 'limit' },
+    offset: { kind: 'query', queryParam: 'offset' },
+  },
+  extractInput: async (request) => {
+    const url = new URL(request.url);
+    const statusValues = url.searchParams.getAll('status');
+    const result: ListSchedulesInput = {};
+
+    if (statusValues.length === 1) {
+      result.status = statusValues[0];
+    } else if (statusValues.length > 1) {
+      result.status = statusValues;
+    }
+
+    const workflowType = url.searchParams.get('workflowType');
+    if (workflowType !== null) result.workflowType = workflowType;
+
+    const tenantId = url.searchParams.get('tenantId');
+    if (tenantId !== null) result.tenantId = tenantId;
+
+    const limit = url.searchParams.get('limit');
+    if (limit !== null) result.limit = limit;
+
+    const offset = url.searchParams.get('offset');
+    if (offset !== null) result.offset = offset;
+
+    return result;
+  },
+  success: { kind: 'json', status: 200 },
+  shapeFault: shapeListSchedulesFault,
+};

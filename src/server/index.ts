@@ -48,7 +48,7 @@ import {
 } from './json-rpc-websocket-runtime.ts';
 import type { JsonRpcWebSocketSession } from './json-rpc-websocket.ts';
 import type { Principal } from './principal.ts';
-import { REST_BINDINGS, createLiveOperationRegistry } from './rest-bindings.ts';
+import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
 import {
   claimNextSequence,
   evictOldestAffinityEntries,
@@ -1296,7 +1296,11 @@ export function serve(options: ServeOptions): WeftServer {
           ? { metricsCollector: options.metricsCollector }
           : {}),
         operationRegistry: liveOperationRegistry,
-        restBindings: REST_BINDINGS,
+        restBindings: createLiveRestBindings(
+          options.metricsCollector !== undefined
+            ? { metricsCollector: options.metricsCollector }
+            : undefined,
+        ),
       });
     },
     websocket: {

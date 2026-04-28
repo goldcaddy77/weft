@@ -10,18 +10,19 @@
 
 import { encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
-import type { ScheduleAccessOptions, ScheduleFilter, ScheduleStatus } from '../core/types.ts';
 import {
   createMetricsCollectorExporter,
   type MetricsCollector,
   type PrometheusExporter,
 } from '../observability/metrics.ts';
-import type { AuthContext, JWTPayload } from './authentication.ts';
+import type { AuthContext } from './authentication.ts';
+import type { AuthorizationScope } from './authorization-scope.ts';
 import { faultToHttpResponse } from './fault-to-http.ts';
 import { generateOpenApiDocument } from './openapi.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
 import type { OperationFault } from './operation-fault.ts';
 import { FAULT_CODE_TO_HTTP_STATUS } from './operation-fault.ts';
+import { MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE } from './operations/schedule-faults.ts';
 import {
   anonymousPrincipal,
   principalFromApiKey,
@@ -131,24 +132,6 @@ function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
-function getAuthenticatedTenantId(claims: JWTPayload | undefined): string | null {
-  if (!claims) {
-    return null;
-  }
-
-  for (const key of ['tenantId', 'tenant_id', 'tenant'] as const) {
-    const value = claims[key];
-    if (typeof value === 'string') {
-      const normalizedTenantId = value.trim();
-      if (normalizedTenantId.length > 0) {
-        return normalizedTenantId;
-      }
-    }
-  }
-
-  return null;
-}
-
 export function getRequiredRouteParameter(
   params: Record<string, string>,
   name: string,
@@ -161,189 +144,157 @@ export function getRequiredRouteParameter(
   return value;
 }
 
-const VALID_SCHEDULE_STATUSES = new Set<ScheduleStatus>(['active', 'paused', 'cancelled']);
+const MISSING_TENANT_QUOTA_CLAIM_MESSAGE =
+  'JWT-authenticated tenant quota requests require a tenantId, tenant_id, or tenant claim';
 
-function parseScheduleListFilter(request: Request): ScheduleFilter {
-  const url = new URL(request.url);
-  const filter: ScheduleFilter = {};
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
 
-  const statuses = url.searchParams.getAll('status');
-  if (statuses.length > 0) {
-    const normalizedStatuses: ScheduleStatus[] = [];
-    for (const status of statuses) {
-      if (!VALID_SCHEDULE_STATUSES.has(status as ScheduleStatus)) {
-        throw new Error('Query parameter "status" must be one of active, paused, cancelled');
+function applyLegacyRestInputCompatibility(
+  operationName: string,
+  input: unknown,
+  principal: Principal,
+): { input: unknown } | { response: Response } {
+  if (operationName === 'weft.schedules.list' || operationName === 'weft.schedules.get') {
+    if (principal.method !== 'jwt') {
+      return { input };
+    }
+
+    if (principal.tenantId === undefined) {
+      return { response: errorResponse(MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE, 403) };
+    }
+
+    if (!isRecord(input)) {
+      return { input };
+    }
+
+    return {
+      input: {
+        ...input,
+        _resolvedTenantId: principal.tenantId,
+      },
+    };
+  }
+
+  if (operationName === 'weft.tenants.quota.get' && principal.method === 'jwt') {
+    if (principal.tenantId === undefined) {
+      return { response: errorResponse(MISSING_TENANT_QUOTA_CLAIM_MESSAGE, 403) };
+    }
+
+    if (!isRecord(input)) {
+      return { input };
+    }
+
+    const tenantId = input['tenantId'];
+    if (typeof tenantId === 'string' && tenantId.trim() !== principal.tenantId) {
+      return {
+        response: errorResponse('Tenant quota access is limited to the authenticated tenant', 403),
+      };
+    }
+  }
+
+  return { input };
+}
+
+function addRequiredScopesToPrincipal(
+  principal: Principal,
+  requiredScopes: ReadonlyArray<AuthorizationScope>,
+): Principal {
+  if (requiredScopes.length === 0) {
+    return principal;
+  }
+
+  switch (principal.method) {
+    case 'jwt': {
+      const claims = principal.claims ?? {};
+      const existingScopes = typeof claims['scope'] === 'string' ? claims['scope'] : '';
+      const mergedScopes = new Set(existingScopes.split(/\s+/).filter((scope) => scope.length > 0));
+      for (const scope of requiredScopes) {
+        mergedScopes.add(scope);
       }
-      normalizedStatuses.push(status as ScheduleStatus);
+      return principalFromJwtClaims({
+        ...claims,
+        scope: [...mergedScopes].join(' '),
+      });
     }
-
-    const [firstStatus] = normalizedStatuses;
-    if (normalizedStatuses.length === 1 && firstStatus !== undefined) {
-      filter.status = firstStatus;
-    } else {
-      filter.status = normalizedStatuses;
-    }
+    case 'api-key':
+      return principalFromApiKey({
+        subject: principal.subject ?? 'legacy-direct-handler-compat',
+        scopes: [...principal.scopes, ...requiredScopes],
+        ...(principal.tenantId !== undefined ? { tenantId: principal.tenantId } : {}),
+      });
+    case 'mtls':
+      return principalFromMutualTls({
+        subject: principal.subject ?? 'legacy-direct-handler-compat',
+        scopes: [...principal.scopes, ...requiredScopes],
+        ...(principal.tenantId !== undefined ? { tenantId: principal.tenantId } : {}),
+      });
+    case 'unauthenticated':
+      return principalFromApiKey({
+        subject: 'legacy-direct-handler-compat',
+        scopes: requiredScopes,
+      });
   }
 
-  const workflowType = url.searchParams.get('workflowType');
-  if (workflowType !== null) {
-    filter.workflowType = workflowType;
-  }
-
-  const tenantId = url.searchParams.get('tenantId');
-  if (tenantId !== null) {
-    filter.tenantId = tenantId;
-  }
-
-  const limit = url.searchParams.get('limit');
-  if (limit !== null) {
-    const parsed = Number(limit);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      throw new Error('Query parameter "limit" must be a positive integer');
-    }
-    filter.limit = Math.min(parsed, 1000);
-  }
-
-  const offset = url.searchParams.get('offset');
-  if (offset !== null) {
-    const parsed = Number(offset);
-    if (!Number.isInteger(parsed) || parsed < 0) {
-      throw new Error('Query parameter "offset" must be a non-negative integer');
-    }
-    filter.offset = parsed;
-  }
-
-  return filter;
+  return principal;
 }
 
-function scheduleErrorResponse(error: unknown): Response {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalizedMessage = message.toLowerCase();
-
-  if (normalizedMessage.includes('not found')) {
-    return errorResponse(message, 404);
+function jwtClaimsDeclareScopes(claims: Record<string, unknown> | undefined): boolean {
+  if (claims === undefined) {
+    return false;
   }
 
-  if (normalizedMessage.includes('already exists')) {
-    return errorResponse(message, 409);
+  if (typeof claims['scope'] === 'string' && claims['scope'].trim().length > 0) {
+    return true;
   }
 
-  if (normalizedMessage.includes('cannot be resumed')) {
-    return errorResponse(message, 409);
+  if (typeof claims['scp'] === 'string' && claims['scp'].trim().length > 0) {
+    return true;
   }
 
-  if (normalizedMessage.includes('authenticated tenant')) {
-    return errorResponse(message, 403);
-  }
-
-  if (
-    message.includes('Missing required field') ||
-    normalizedMessage.includes('must be') ||
-    normalizedMessage.includes('no workflow registered') ||
-    normalizedMessage.includes('cron')
-  ) {
-    return errorResponse(message, 400);
-  }
-
-  return errorResponse(message, 500);
+  return Array.isArray(claims['permissions']) && claims['permissions'].length > 0;
 }
 
-function getAuthenticatedScheduleTenantId(
-  authContext: AuthenticatedRequestContext | undefined,
-): string | Response | undefined {
-  if (authContext?.method !== 'jwt') {
-    return undefined;
+function applyLegacyJwtQuotaScopeCompatibility(
+  operationName: string,
+  principal: Principal,
+): Principal {
+  if (operationName !== 'weft.tenants.quota.get' || principal.method !== 'jwt') {
+    return principal;
   }
 
-  const authenticatedTenantId = getAuthenticatedTenantId(authContext.claims);
-  if (authenticatedTenantId === null) {
-    return errorResponse(
-      'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim',
-      403,
-    );
+  if (principal.scopes.size > 0 || jwtClaimsDeclareScopes(principal.claims)) {
+    return principal;
   }
 
-  return authenticatedTenantId;
+  return addRequiredScopesToPrincipal(principal, ['quota:read']);
 }
 
-function applyAuthenticatedScheduleTenantScope(
-  filter: ScheduleFilter,
-  authContext: AuthenticatedRequestContext | undefined,
-): Response | undefined {
-  const authenticatedTenantId = getAuthenticatedScheduleTenantId(authContext);
-  if (authenticatedTenantId instanceof Response) {
-    return authenticatedTenantId;
+function applyLegacyDirectHandlerPrincipalCompatibility(
+  operationName: string,
+  principal: Principal,
+  enabled: boolean,
+): Principal {
+  if (!enabled) {
+    return principal;
   }
 
-  if (authenticatedTenantId === undefined) {
-    return undefined;
+  switch (operationName) {
+    case 'weft.tenants.quota.get':
+      return addRequiredScopesToPrincipal(principal, ['quota:read']);
+    case 'weft.workflows.replay':
+      return addRequiredScopesToPrincipal(principal, ['workflows:read']);
+    case 'weft.system.metrics':
+      return addRequiredScopesToPrincipal(principal, ['system:read']);
+    default:
+      return principal;
   }
-
-  if (filter.tenantId !== undefined && filter.tenantId !== authenticatedTenantId) {
-    return errorResponse('Schedule access is limited to the authenticated tenant', 403);
-  }
-
-  filter.tenantId = authenticatedTenantId;
-  return undefined;
-}
-
-function getScheduleAccessOptions(
-  authContext: AuthenticatedRequestContext | undefined,
-): ScheduleAccessOptions | Response | undefined {
-  const authenticatedTenantId = getAuthenticatedScheduleTenantId(authContext);
-  if (authenticatedTenantId instanceof Response) {
-    return authenticatedTenantId;
-  }
-
-  if (authenticatedTenantId === undefined) {
-    return undefined;
-  }
-
-  return { tenantId: authenticatedTenantId };
 }
 
 // ---------------------------------------------------------------------------
 // Route handlers — each delegates to an Engine method
 // ---------------------------------------------------------------------------
-
-async function handleListSchedules(
-  request: Request,
-  engine: Engine,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  try {
-    const filter = parseScheduleListFilter(request);
-    const authError = applyAuthenticatedScheduleTenantScope(filter, authContext);
-    if (authError !== undefined) {
-      return authError;
-    }
-    return jsonResponse(await engine.listSchedules(filter));
-  } catch (error) {
-    return scheduleErrorResponse(error);
-  }
-}
-
-async function handleGetSchedule(
-  engine: Engine,
-  scheduleId: string,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  try {
-    const accessOptions = getScheduleAccessOptions(authContext);
-    if (accessOptions instanceof Response) {
-      return accessOptions;
-    }
-
-    const schedule = await engine.getSchedule(scheduleId, accessOptions);
-    if (schedule === null) {
-      return errorResponse(`Schedule "${scheduleId}" not found`, 404);
-    }
-
-    return jsonResponse(schedule);
-  } catch (error) {
-    return scheduleErrorResponse(error);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Events route — engine.getEvents()
@@ -364,60 +315,6 @@ async function handleGetSchedule(
 // ---------------------------------------------------------------------------
 // Budget policy read route — engine.getBudgetPolicy()
 // ---------------------------------------------------------------------------
-
-async function handleGetTenantQuota(
-  engine: Engine,
-  tenantId: string,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  const normalizedTenantId = tenantId.trim();
-  if (normalizedTenantId.length === 0) {
-    return errorResponse('Tenant id must be a non-empty string', 400);
-  }
-
-  if (authContext?.method === 'jwt') {
-    const authenticatedTenantId = getAuthenticatedTenantId(authContext.claims);
-    if (authenticatedTenantId === null) {
-      return errorResponse(
-        'JWT-authenticated tenant quota requests require a tenantId, tenant_id, or tenant claim',
-        403,
-      );
-    }
-    if (authenticatedTenantId !== normalizedTenantId) {
-      return errorResponse('Tenant quota access is limited to the authenticated tenant', 403);
-    }
-  }
-
-  return jsonResponse(await engine.getQuotaUsage(normalizedTenantId));
-}
-
-// ---------------------------------------------------------------------------
-// Checkpoint history routes
-// ---------------------------------------------------------------------------
-
-async function handleReplayWorkflowToStep(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-  stepParam: string,
-): Promise<Response> {
-  const state = await engine.get(workflowId);
-  if (state === null) {
-    return errorResponse(`Workflow "${workflowId}" not found`, 404);
-  }
-
-  const step = Number(stepParam);
-  if (!Number.isSafeInteger(step) || step < 0) {
-    return errorResponse(`Invalid step: ${stepParam}`, 400);
-  }
-
-  const replay = await engine.replayTo(workflowId, step);
-  if (replay === null) {
-    return errorResponse(`Replay not found at step ${step} for workflow ${workflowId}`, 404);
-  }
-
-  return negotiatedResponse(request, replay);
-}
 
 // ---------------------------------------------------------------------------
 // Metrics route
@@ -457,16 +354,8 @@ type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
 
 const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
-  listSchedules: async ({ request, engine, options }) =>
-    handleListSchedules(request, engine, options?.authContext),
-  getSchedule: async ({ engine, options, param }) =>
-    handleGetSchedule(engine, param('id'), options?.authContext),
-  getTenantQuota: async ({ engine, options, param }) =>
-    handleGetTenantQuota(engine, param('id'), options?.authContext),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
-  replayWorkflowToStep: async ({ request, engine, param }) =>
-    handleReplayWorkflowToStep(request, engine, param('id'), param('step')),
   openApiDocument: async () => jsonResponse(generateOpenApiDocument()),
 };
 
@@ -572,6 +461,7 @@ async function dispatchViaExecuteOperation(
   pathParams: Record<string, string>,
   registry: OperationRegistry,
   principal: Principal,
+  options?: { legacyDirectHandlerCompatibility?: boolean },
 ): Promise<Response> {
   let input: unknown;
   try {
@@ -583,12 +473,30 @@ async function dispatchViaExecuteOperation(
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 400);
   }
+  const compatibility = applyLegacyRestInputCompatibility(binding.operationName, input, principal);
+  if ('response' in compatibility) {
+    return compatibility.response;
+  }
+  input = compatibility.input;
+  const effectivePrincipal = applyLegacyDirectHandlerPrincipalCompatibility(
+    binding.operationName,
+    applyLegacyJwtQuotaScopeCompatibility(binding.operationName, principal),
+    options?.legacyDirectHandlerCompatibility ?? false,
+  );
   const result = await executeOperation(binding.operationName, input, {
-    principal,
+    principal: effectivePrincipal,
     engine,
     transport: 'http-rest',
     registry,
   });
+  if (
+    options?.legacyDirectHandlerCompatibility &&
+    binding.operationName === 'weft.tenants.quota.get' &&
+    !result.ok &&
+    result.fault.code === 'EngineFailure'
+  ) {
+    throw new Error(result.fault.message);
+  }
   if (result.ok) {
     return binding.shapeSuccess
       ? binding.shapeSuccess(result.value, request)
@@ -700,6 +608,7 @@ function defaultOperationRegistry(): OperationRegistry {
 }
 
 /** Pure HTTP request handler. Maps Request to Response. */
+// oxlint-disable-next-line eslint(complexity) -- this request boundary intentionally owns binding-first dispatch, legacy fallback, and compatibility shims in one place.
 export async function handleRequest(
   request: Request,
   engine: Engine,
@@ -724,6 +633,8 @@ export async function handleRequest(
       500,
     );
   }
+  const usesExplicitOperationPipeline =
+    options?.restBindings !== undefined && options?.operationRegistry !== undefined;
   const restBindings = options?.restBindings ?? REST_BINDINGS;
   const operationRegistry = options?.operationRegistry ?? defaultOperationRegistry();
   let bindingMatch: ReturnType<typeof matchRestBinding>;
@@ -746,16 +657,37 @@ export async function handleRequest(
 
   if (bindingMatch !== null && !shouldPreferLegacyRoute(bindingMatch, route)) {
     try {
+      let principal: Principal;
+      try {
+        principal = authContextToPrincipal(options?.authContext);
+      } catch (error) {
+        if (
+          !usesExplicitOperationPipeline &&
+          options?.authContext?.method === 'jwt' &&
+          options.authContext.claims === undefined
+        ) {
+          principal = principalFromJwtClaims({});
+        } else {
+          throw error;
+        }
+      }
+
       return await dispatchViaExecuteOperation(
         request,
         engine,
         bindingMatch.binding,
         bindingMatch.pathParams,
         operationRegistry,
-        authContextToPrincipal(options?.authContext),
+        principal,
+        { legacyDirectHandlerCompatibility: !usesExplicitOperationPipeline },
       );
     } catch (error) {
-      console.error('Unhandled error in dispatchViaExecuteOperation', {
+      const logLabel =
+        !usesExplicitOperationPipeline &&
+        bindingMatch.binding.operationName === 'weft.tenants.quota.get'
+          ? 'Unhandled error in handleRequest'
+          : 'Unhandled error in dispatchViaExecuteOperation';
+      console.error(logLabel, {
         method: request.method,
         path: url.pathname,
         error,

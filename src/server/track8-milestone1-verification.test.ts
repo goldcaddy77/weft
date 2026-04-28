@@ -39,6 +39,11 @@ async function waitForStatus(
 }
 
 describe('Track 8 — live operation registry matches REST_BINDINGS', () => {
+  it('The runtime API has one transport-neutral operation catalog', () => {
+    const registry = createLiveOperationRegistry();
+    expect(registry.list().length).toBeGreaterThan(0);
+  });
+
   it('createLiveOperationRegistry resolves every operation referenced by REST_BINDINGS', () => {
     const registry = createLiveOperationRegistry();
     for (const binding of REST_BINDINGS) {
