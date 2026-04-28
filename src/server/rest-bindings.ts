@@ -229,14 +229,11 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
 
 /**
  * Build the full REST binding set for a server instance. Appends the
- * `weft.system.metrics` binding configured with the provided metrics
- * collector. Callers that do not use a metrics collector get a binding
- * that returns an empty snapshot.
+ * `weft.system.metrics` binding. The metrics collector is wired into
+ * the operation (not the binding) via `createLiveOperationRegistry`.
  */
-export function createLiveRestBindings(options?: {
-  metricsCollector?: MetricsCollector;
-}): ReadonlyArray<UnknownRestBinding> {
-  return [...REST_BINDINGS, createGetSystemMetricsRestBinding(options ?? {})];
+export function createLiveRestBindings(): ReadonlyArray<UnknownRestBinding> {
+  return [...REST_BINDINGS, createGetSystemMetricsRestBinding()];
 }
 
 /**

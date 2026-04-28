@@ -355,11 +355,35 @@ export interface HandlerOptions {
    */
   restBindings?: ReadonlyArray<UnknownRestBinding>;
   /**
-   * Opt in to legacy compatibility shims that predate the transport-neutral
-   * operation catalog.
+   * Internal regression-harness gate. Public callers cannot construct
+   * `LEGACY_COMPAT_TOKEN`; it lives only inside this module and the
+   * regression-harness re-export at
+   * `__internal_legacy_compat_token_for_regression_harness_only`.
+   *
+   * When set to `LEGACY_COMPAT_TOKEN`, the following shims activate:
+   *
+   * - `applyLegacyJwtQuotaScopeCompatibility`: auto-grants `quota:read`,
+   *   `workflows:read`, and `system:read` to JWT principals on the
+   *   schedule, quota, replay, and metrics endpoints, mirroring the
+   *   pre-Track-8 implicit-grant behavior.
+   * - `applyLegacyDirectHandlerPrincipalCompatibility`: passes the
+   *   legacy direct-handler principal through `dispatchViaExecuteOperation`
+   *   so existing tests that exercise the legacy path keep working.
+   *
+   * Production callers MUST leave this `undefined`. Setting any other
+   * value than the exact internal token is a no-op.
    */
-  legacyCompatMode?: boolean;
+  legacyCompatToken?: typeof LEGACY_COMPAT_TOKEN;
 }
+
+const LEGACY_COMPAT_TOKEN: unique symbol = Symbol('weft.handler.legacyCompatToken');
+
+/**
+ * Internal: regression harness re-export of the legacy-compat token. This
+ * export is intentionally named so it stands out in any callsite review;
+ * production code MUST NOT import it.
+ */
+export const __internal_legacy_compat_token_for_regression_harness_only = LEGACY_COMPAT_TOKEN;
 
 /**
  * Find a REST binding that matches the request's method and path.
@@ -572,7 +596,7 @@ function defaultOperationRegistry(): OperationRegistry {
 let _defaultRestBindings: ReadonlyArray<UnknownRestBinding> | undefined;
 function defaultRestBindings(): ReadonlyArray<UnknownRestBinding> {
   if (_defaultRestBindings === undefined) {
-    _defaultRestBindings = createLiveRestBindings({});
+    _defaultRestBindings = createLiveRestBindings();
   }
   return _defaultRestBindings;
 }
@@ -630,7 +654,7 @@ export async function handleRequest(
         principal = authContextToPrincipal(options?.authContext);
       } catch (error) {
         if (
-          options?.legacyCompatMode === true &&
+          options?.legacyCompatToken === LEGACY_COMPAT_TOKEN &&
           options?.authContext?.method === 'jwt' &&
           options.authContext.claims === undefined
         ) {
@@ -647,11 +671,11 @@ export async function handleRequest(
         bindingMatch.pathParams,
         operationRegistry,
         principal,
-        { legacyDirectHandlerCompatibility: options?.legacyCompatMode === true },
+        { legacyDirectHandlerCompatibility: options?.legacyCompatToken === LEGACY_COMPAT_TOKEN },
       );
     } catch (error) {
       const logLabel =
-        options?.legacyCompatMode === true &&
+        options?.legacyCompatToken === LEGACY_COMPAT_TOKEN &&
         bindingMatch.binding.operationName === 'weft.tenants.quota.get'
           ? 'Unhandled error in handleRequest'
           : 'Unhandled error in dispatchViaExecuteOperation';

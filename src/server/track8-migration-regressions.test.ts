@@ -172,8 +172,8 @@ describe('Track 8 Wave 1 migration regressions', () => {
     }
   });
 
-  it('The parity surface covers all data-driven runtime operations', () => {
-    // verify the 5 new operations are in the registry
+  it('The parity surface covers all data-driven runtime operations', async () => {
+    // Step 1: registry membership — all 5 Wave 1 operations are present.
     const registry = createLiveOperationRegistry();
     const expected = [
       'weft.schedules.list',
@@ -185,17 +185,132 @@ describe('Track 8 Wave 1 migration regressions', () => {
     for (const name of expected) {
       expect(registry.get(name)).toBeDefined();
     }
+
+    // Step 2: behavioral — `weft.tenants.quota.get` (a representative
+    // migrated operation) dispatches through REST and JSON-RPC HTTP and
+    // both reach the same engine method with the same authoritative
+    // result. This proves the parity surface is actually addressable
+    // cross-transport, not just registered.
+    const engine = createTenantAwareEngine();
+    engines.push(engine);
+    const server = serve({
+      engine,
+      port: 0,
+      auth: { jwt: { secret: TEST_SECRET } },
+    });
+    servers.push(server);
+
+    const token = await issueJwt(['quota:read'], { tenantId: 'acme' });
+
+    const restResponse = await fetch(`${server.url}/v1/tenants/acme/quota`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(restResponse.status).toBe(200);
+    const restBody = (await restResponse.json()) as Record<string, unknown>;
+
+    const jsonRpcResponse = await postJsonRpc(
+      server,
+      { method: 'weft.tenants.quota.get', params: { tenantId: 'acme' } },
+      token,
+    );
+    expect(jsonRpcResponse.status).toBe(200);
+    const jsonRpcBody = (await jsonRpcResponse.json()) as { result: Record<string, unknown> };
+
+    // Both transports dispatched into engine.getQuotaUsage('acme') and
+    // returned the same shape. The parity surface is real.
+    expect(jsonRpcBody.result).toEqual(restBody);
   });
 
-  it('Track 8 adds transport-neutral authorization for runtime operations', () => {
-    // The 3 scoped ops use the catalog's evaluateAccess rather than inline checks
+  it('Track 8 adds transport-neutral authorization for runtime operations', async () => {
+    // The 3 scoped ops use the catalog's evaluateAccess rather than
+    // inline checks; behavioral check: an authenticated principal
+    // missing the required scope is rejected Forbidden over REST,
+    // JSON-RPC HTTP, JSON-RPC WebSocket, and stdio uniformly.
     const registry = createLiveOperationRegistry();
-    const quota = registry.get('weft.tenants.quota.get');
-    const replay = registry.get('weft.workflows.replay');
-    const metrics = registry.get('weft.system.metrics');
-    expect(quota?.access.kind).toBe('scoped');
-    expect(replay?.access.kind).toBe('scoped');
-    expect(metrics?.access.kind).toBe('scoped');
+    expect(registry.get('weft.tenants.quota.get')?.access.kind).toBe('scoped');
+    expect(registry.get('weft.workflows.replay')?.access.kind).toBe('scoped');
+    expect(registry.get('weft.system.metrics')?.access.kind).toBe('scoped');
+
+    const engine = createTenantAwareEngine();
+    engines.push(engine);
+    const server = serve({
+      engine,
+      port: 0,
+      auth: { jwt: { secret: TEST_SECRET } },
+    });
+    servers.push(server);
+
+    // Wrong scope: workflows:read instead of quota:read.
+    const wrongScopeToken = await issueJwt(['workflows:read'], { tenantId: 'acme' });
+
+    // REST — Forbidden
+    const restResponse = await fetch(`${server.url}/v1/tenants/acme/quota`, {
+      headers: { Authorization: `Bearer ${wrongScopeToken}` },
+    });
+    expect(restResponse.status).toBe(403);
+
+    // JSON-RPC HTTP — Forbidden via Weft application code
+    const jsonRpcResponse = await postJsonRpc(
+      server,
+      { method: 'weft.tenants.quota.get', params: { tenantId: 'acme' } },
+      wrongScopeToken,
+    );
+    expect(jsonRpcResponse.status).toBe(200);
+    const jsonRpcBody = (await jsonRpcResponse.json()) as {
+      error?: { data?: { weftCode?: string; httpStatus?: number } };
+    };
+    expect(jsonRpcBody.error?.data?.weftCode).toBe('Forbidden');
+    expect(jsonRpcBody.error?.data?.httpStatus).toBe(403);
+
+    // JSON-RPC WebSocket — Forbidden, principal bound at upgrade
+    const wsUrl = server.url.replace(/^http/, 'ws') + '/jsonrpc';
+    const ws = await openWebSocket(wsUrl, wrongScopeToken);
+    try {
+      const wsId = crypto.randomUUID();
+      const wsResponsePromise = waitForMessage(
+        ws,
+        (parsed) =>
+          typeof parsed === 'object' &&
+          parsed !== null &&
+          'id' in parsed &&
+          (parsed as { id: unknown }).id === wsId,
+      );
+      ws.send(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: wsId,
+          method: 'weft.tenants.quota.get',
+          params: { tenantId: 'acme' },
+        }),
+      );
+      const wsResponse = (await wsResponsePromise) as {
+        error?: { data?: { weftCode?: string } };
+      };
+      expect(wsResponse.error?.data?.weftCode).toBe('Forbidden');
+    } finally {
+      ws.close();
+    }
+
+    // stdio — Forbidden via the same operation policy hook
+    const stdioPrincipal = principalFromJwtClaims({
+      sub: 'track-8-user',
+      scope: 'workflows:read',
+      tenantId: 'acme',
+    });
+    const stdioResult = await executeOperation(
+      'weft.tenants.quota.get',
+      { tenantId: 'acme' },
+      {
+        engine,
+        registry,
+        principal: stdioPrincipal,
+        transport: 'jsonRpcStdio',
+      },
+    );
+    expect(stdioResult.ok).toBe(false);
+    if (!stdioResult.ok) {
+      expect(stdioResult.fault.code).toBe('Forbidden');
+    }
   });
 
   it('GET /v1/schedules preserves the legacy success shape', async () => {

@@ -42,7 +42,7 @@ function metricsAuthContext() {
   };
 }
 
-const defaultBinding = createGetSystemMetricsRestBinding({});
+const defaultBinding = createGetSystemMetricsRestBinding();
 
 describe('weft.system.metrics — default export (no collector)', () => {
   let engine: Engine | undefined;
@@ -115,7 +115,7 @@ describe('weft.system.metrics — factory variant (with collector)', () => {
 
     const operation = createGetSystemMetricsOperation({ metricsCollector: collector });
     const registry = createOperationRegistry([operation]);
-    const binding = createGetSystemMetricsRestBinding({ metricsCollector: collector });
+    const binding = createGetSystemMetricsRestBinding();
 
     const response = await handleRequest(
       new Request('http://localhost/v1/metrics/json', { method: 'GET' }),
@@ -134,7 +134,7 @@ describe('weft.system.metrics — factory variant (with collector)', () => {
 
     const operation = createGetSystemMetricsOperation({});
     const registry = createOperationRegistry([operation]);
-    const binding = createGetSystemMetricsRestBinding({});
+    const binding = createGetSystemMetricsRestBinding();
 
     const response = await handleRequest(
       new Request('http://localhost/v1/metrics/json', { method: 'GET' }),

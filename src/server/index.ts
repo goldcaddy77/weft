@@ -887,9 +887,7 @@ export function serve(options: ServeOptions): WeftServer {
   const liveOperationRegistry = createLiveOperationRegistry(
     options.metricsCollector !== undefined ? { metricsCollector: options.metricsCollector } : {},
   );
-  const liveRestBindings = createLiveRestBindings(
-    options.metricsCollector !== undefined ? { metricsCollector: options.metricsCollector } : {},
-  );
+  const liveRestBindings = createLiveRestBindings();
   const eventFeedBackend = createEngineEventFeedBackend(options.engine);
   const workflowEventFeed: WorkflowEventFeed = createWorkflowEventFeed(eventFeedBackend);
   // Track every live `/jsonrpc` session so shutdown can await their

@@ -83,11 +83,13 @@ function shapeGetSystemMetricsFault(fault: OperationFault): Response {
 
 /**
  * Factory for the `weft.system.metrics` REST binding.
+ *
+ * Takes no arguments — the metrics snapshot is sourced through
+ * `createGetSystemMetricsOperation`'s closure over the server-owned
+ * collector, not through the binding. The binding only declares the
+ * REST shape (path, method, response shaping).
  */
-export function createGetSystemMetricsRestBinding(options: {
-  metricsCollector?: { snapshot(): MetricsSnapshot };
-}): UnknownRestBinding {
-  void options;
+export function createGetSystemMetricsRestBinding(): UnknownRestBinding {
   return {
     method: 'GET',
     path: '/v1/metrics/json',
