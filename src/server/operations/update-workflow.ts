@@ -2,10 +2,10 @@ import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
 import { UpdateTimeoutError, WorkflowTerminalError } from '../../core/updates.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import { isOperationFault, jsonErrorResponse } from './operation-helpers.ts';
+import { isOperationFault, shapeRestFault } from './operation-helpers.ts';
 
 const DEFAULT_UPDATE_TIMEOUT_MS = 30_000;
 
@@ -104,20 +104,6 @@ export const updateWorkflowOperation = defineOperation<UpdateWorkflowInput, Upda
   },
 });
 
-function shapeUpdateWorkflowFault(fault: OperationFault): Response {
-  if (fault.code === 'Unprocessable') {
-    return jsonErrorResponse(fault.message, 422);
-  }
-  if (fault.code === 'Timeout') {
-    return jsonErrorResponse(fault.message, 408);
-  }
-  if (fault.code === 'EngineFailure') {
-    return jsonErrorResponse(fault.message, 500);
-  }
-
-  return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
-}
-
 export const updateWorkflowRestBinding: UnknownRestBinding = {
   method: 'POST',
   path: '/v1/workflows/:id/update/:name',
@@ -159,5 +145,5 @@ export const updateWorkflowRestBinding: UnknownRestBinding = {
     };
   },
   success: { kind: 'json', status: 200 },
-  shapeFault: shapeUpdateWorkflowFault,
+  shapeFault: shapeRestFault,
 };

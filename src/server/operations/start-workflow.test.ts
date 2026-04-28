@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import { StartWorkflowValidationError } from '../../core/start-workflow-validation.ts';
@@ -38,8 +38,15 @@ const registry = createOperationRegistry([startWorkflowOperation]);
 const bindings = [startWorkflowRestBinding];
 
 describe('weft.workflows.start', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('returns 201 with the started workflow id on the happy path', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/workflows', {
@@ -58,7 +65,7 @@ describe('weft.workflows.start', () => {
   });
 
   it('returns 400 when the request body is invalid JSON', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(invalidJsonRequest('POST', '/v1/workflows', '{'), engine, {
       operationRegistry: registry,
@@ -73,7 +80,7 @@ describe('weft.workflows.start', () => {
     // Legacy `handleStartWorkflow` rejects `null` (typeof 'object' && === null
     // fails the guard) with "Request body must be a JSON object". This pins
     // that path; arrays are handled by the next test as legacy parity.
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(request('POST', '/v1/workflows', null), engine, {
       operationRegistry: registry,
@@ -89,7 +96,7 @@ describe('weft.workflows.start', () => {
     // body-shape guard and fall through to the "type" required-field check
     // (arrays do not have a string `'type'` property). Matching this exactly
     // keeps REST and JSON-RPC clients on the same error path.
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/workflows', ['not-an-object']),
@@ -102,7 +109,7 @@ describe('weft.workflows.start', () => {
   });
 
   it('returns 400 when startAt and startAfter are both provided', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/workflows', {
@@ -119,7 +126,7 @@ describe('weft.workflows.start', () => {
   });
 
   it('returns 400 when engine.start throws StartWorkflowValidationError', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalStart = engine.start.bind(engine);
 
     try {
@@ -141,7 +148,7 @@ describe('weft.workflows.start', () => {
   });
 
   it('returns 429 when engine.start throws QuotaExceededError', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalStart = engine.start.bind(engine);
 
     try {
@@ -172,7 +179,7 @@ describe('weft.workflows.start', () => {
   });
 
   it('returns 400 when the workflow type is not registered', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/workflows', { type: 'missing-workflow' }),
@@ -189,7 +196,7 @@ describe('weft.workflows.start', () => {
   });
 
   it('returns 409 when the workflow id already exists', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const firstResponse = await handleRequest(
       request('POST', '/v1/workflows', { type: 'echo', id: 'duplicate-workflow-id' }),
@@ -212,8 +219,8 @@ describe('weft.workflows.start', () => {
     );
   });
 
-  it('returns the raw engine error message on unexpected failures', async () => {
-    const engine = createEngine();
+  it('masks unexpected engine failures to a generic 500 (no raw message leak)', async () => {
+    engine = createEngine();
     const originalStart = engine.start.bind(engine);
 
     try {
@@ -228,7 +235,8 @@ describe('weft.workflows.start', () => {
       );
 
       expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ error: 'unexpected engine error' });
+      expect(await response.json()).toEqual({ error: 'Internal server error' });
+      expect(response.headers.get('Content-Type')).toContain('application/json');
     } finally {
       engine.start = originalStart;
     }

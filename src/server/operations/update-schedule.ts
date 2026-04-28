@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
-import { type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { invalidParamsFault } from './operation-helpers.ts';
 import {
   isOperationFault,
   mapScheduleErrorToFault,
@@ -53,14 +53,6 @@ export const updateScheduleOperation = defineOperation<UpdateScheduleInput, null
     }
   },
 });
-
-function invalidParamsFault(message: string): OperationFault {
-  return {
-    code: 'InvalidParams',
-    message,
-    data: { issues: [] },
-  };
-}
 
 export const updateScheduleRestBinding: UnknownRestBinding = {
   method: 'PATCH',

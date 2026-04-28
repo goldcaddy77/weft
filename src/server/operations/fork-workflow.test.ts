@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
@@ -36,8 +36,15 @@ const registry = createOperationRegistry([forkWorkflowOperation]);
 const bindings = [forkWorkflowRestBinding];
 
 describe('weft.workflows.fork', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('returns 201 with the forked workflow id on the happy path', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalFork = engine.fork.bind(engine);
 
     try {
@@ -61,7 +68,7 @@ describe('weft.workflows.fork', () => {
   });
 
   it('returns 400 when the request body is invalid JSON', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       invalidJsonRequest('POST', '/v1/workflows/workflow-123/fork', '{'),
@@ -74,7 +81,7 @@ describe('weft.workflows.fork', () => {
   });
 
   it('returns 400 when the request body is not a JSON object', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/workflows/workflow-123/fork', ['not-an-object']),
@@ -87,7 +94,7 @@ describe('weft.workflows.fork', () => {
   });
 
   it('returns 400 when fromStep is not a non-negative safe integer', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/workflows/workflow-123/fork', { fromStep: -1 }),
@@ -102,7 +109,7 @@ describe('weft.workflows.fork', () => {
   });
 
   it('returns 400 when the engine reports an invalid checkpoint step', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalFork = engine.fork.bind(engine);
 
     try {
@@ -124,7 +131,7 @@ describe('weft.workflows.fork', () => {
   });
 
   it('returns 404 when the current checkpoint is missing', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalFork = engine.fork.bind(engine);
 
     try {
@@ -148,7 +155,7 @@ describe('weft.workflows.fork', () => {
   });
 
   it('returns 404 when the source workflow does not exist', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/workflows/missing-workflow/fork'),
@@ -160,8 +167,8 @@ describe('weft.workflows.fork', () => {
     expect(await response.json()).toEqual({ error: 'Workflow "missing-workflow" not found' });
   });
 
-  it('returns the raw engine error message on unexpected failures', async () => {
-    const engine = createEngine();
+  it('masks unexpected engine failures to a generic 500 (no raw message leak)', async () => {
+    engine = createEngine();
     const originalFork = engine.fork.bind(engine);
 
     try {
@@ -176,7 +183,8 @@ describe('weft.workflows.fork', () => {
       );
 
       expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ error: 'unexpected fork failure' });
+      expect(await response.json()).toEqual({ error: 'Internal server error' });
+      expect(response.headers.get('Content-Type')).toContain('application/json');
     } finally {
       engine.fork = originalFork;
     }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
@@ -37,8 +37,15 @@ const registry = createOperationRegistry([updateWorkflowOperation]);
 const bindings = [updateWorkflowRestBinding];
 
 describe('weft.workflows.update', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('returns 200 with the update result on the happy path', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
 
     try {
@@ -78,7 +85,7 @@ describe('weft.workflows.update', () => {
     // and `idempotencyKey` if `typeof === 'string'`; anything else was ignored
     // and defaults applied. Pin this so JSON-RPC clients hit the same contract
     // as REST (instead of being rejected by Zod for the wrong type).
-    const engine = createEngine();
+    engine = createEngine();
     const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
 
     try {
@@ -107,7 +114,7 @@ describe('weft.workflows.update', () => {
   });
 
   it('silently ignores invalid JSON bodies and uses the default timeout', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
 
     try {
@@ -134,7 +141,7 @@ describe('weft.workflows.update', () => {
   });
 
   it('returns 422 when the coordinated update result contains an error string', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
 
     try {
@@ -158,7 +165,7 @@ describe('weft.workflows.update', () => {
   });
 
   it('returns 422 when the workflow is already terminal', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
 
     try {
@@ -183,7 +190,7 @@ describe('weft.workflows.update', () => {
   });
 
   it('returns 408 when the coordinated update times out', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
 
     try {
@@ -208,8 +215,8 @@ describe('weft.workflows.update', () => {
     }
   });
 
-  it('returns the raw engine error message on unexpected failures', async () => {
-    const engine = createEngine();
+  it('masks unexpected engine failures to a generic 500 (no raw message leak)', async () => {
+    engine = createEngine();
     const originalSubmit = engine.submitCoordinatedUpdate.bind(engine);
 
     try {
@@ -224,7 +231,8 @@ describe('weft.workflows.update', () => {
       );
 
       expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ error: 'update exploded' });
+      expect(await response.json()).toEqual({ error: 'Internal server error' });
+      expect(response.headers.get('Content-Type')).toContain('application/json');
     } finally {
       engine.submitCoordinatedUpdate = originalSubmit;
     }

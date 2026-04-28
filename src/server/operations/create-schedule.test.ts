@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import { tenantFromInputField } from '../../core/tenant.ts';
@@ -48,8 +48,15 @@ const registry = createOperationRegistry([createScheduleOperation]);
 const bindings = [createScheduleRestBinding];
 
 describe('weft.schedules.create', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('returns 201 and creates the schedule on the happy path', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/schedules', {
@@ -78,7 +85,7 @@ describe('weft.schedules.create', () => {
   });
 
   it('returns 400 when the request body is invalid JSON', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(invalidJsonRequest('POST', '/v1/schedules', '{'), engine, {
       operationRegistry: registry,
@@ -92,7 +99,7 @@ describe('weft.schedules.create', () => {
   it('returns 400 when the request body is JSON null', async () => {
     // Legacy `handleCreateSchedule` rejected `null` (typeof 'object' && === null
     // fails the guard) with "Request body must be a JSON object".
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(request('POST', '/v1/schedules', null), engine, {
       operationRegistry: registry,
@@ -106,7 +113,7 @@ describe('weft.schedules.create', () => {
   it('returns 400 with "Missing required field: type" when body is a JSON array', async () => {
     // Legacy parity: arrays are typeof 'object' && !== null, so they pass the
     // body-shape guard and fall through to the "type" required-field check.
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/schedules', ['not-an-object']),
@@ -119,7 +126,7 @@ describe('weft.schedules.create', () => {
   });
 
   it('returns 400 when overlap is invalid', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/schedules', {
@@ -138,7 +145,7 @@ describe('weft.schedules.create', () => {
   });
 
   it('returns 403 when a JWT-authenticated request is missing a tenant claim', async () => {
-    const engine = createTenantAwareEngine();
+    engine = createTenantAwareEngine();
     const options: HandlerOptions = {
       authContext: {
         method: 'jwt',
@@ -164,7 +171,7 @@ describe('weft.schedules.create', () => {
   });
 
   it('returns 403 when the schedule input targets a different tenant', async () => {
-    const engine = createTenantAwareEngine();
+    engine = createTenantAwareEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/schedules', {
@@ -191,7 +198,7 @@ describe('weft.schedules.create', () => {
   });
 
   it('returns 404 when the engine reports a not-found error', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalSchedule = engine.schedule.bind(engine);
 
     try {
@@ -216,7 +223,7 @@ describe('weft.schedules.create', () => {
   });
 
   it('returns 409 when the schedule id already exists', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const firstResponse = await handleRequest(
       request('POST', '/v1/schedules', {
@@ -248,7 +255,7 @@ describe('weft.schedules.create', () => {
   });
 
   it('returns the raw engine error message on unexpected failures', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalSchedule = engine.schedule.bind(engine);
 
     try {

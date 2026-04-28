@@ -2,9 +2,9 @@ import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
 import type { ScheduleOptions } from '../../core/types.ts';
-import { type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { invalidParamsFault } from './operation-helpers.ts';
 import {
   isOperationFault,
   mapScheduleErrorToFault,
@@ -117,14 +117,6 @@ export const createScheduleOperation = defineOperation<CreateScheduleInput, Crea
 
 function isScheduleOverlapPolicy(value: string): value is NonNullable<ScheduleOptions['overlap']> {
   return VALID_SCHEDULE_OVERLAP_POLICIES.has(value as NonNullable<ScheduleOptions['overlap']>);
-}
-
-function invalidParamsFault(message: string): OperationFault {
-  return {
-    code: 'InvalidParams',
-    message,
-    data: { issues: [] },
-  };
 }
 
 export const createScheduleRestBinding: UnknownRestBinding = {

@@ -1,4 +1,4 @@
-import type { OperationFault } from '../operation-fault.ts';
+import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 
 /** Type guard distinguishing an `OperationFault` from a value type. */
 export function isOperationFault(value: unknown): value is OperationFault {
@@ -34,4 +34,23 @@ export function invalidParamsFault(message: string): OperationFault {
     message,
     data: { issues: [] },
   };
+}
+
+/**
+ * Default REST fault shaper for compound-write operations. `EngineFailure` is
+ * masked to a generic `"Internal server error"` with status 500 — matching the
+ * legacy top-level catch in `handler.ts` and avoiding leakage of internal
+ * engine error messages over the public REST contract. All other faults map
+ * by the canonical fault-code-to-status table.
+ *
+ * JSON-RPC transports continue to receive the structured fault verbatim;
+ * sanitization is intentionally REST-only (REST is the legacy public surface
+ * with a contract to preserve; JSON-RPC was newly introduced for these
+ * operations and has no legacy contract that requires masking).
+ */
+export function shapeRestFault(fault: OperationFault): Response {
+  if (fault.code === 'EngineFailure') {
+    return jsonErrorResponse('Internal server error', 500);
+  }
+  return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
 }
