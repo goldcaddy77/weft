@@ -154,12 +154,16 @@ describe('weft.workflows.streams.sse', () => {
     });
   });
 
-  it('maps engine errors to 500 with the raw message', async () => {
+  it('sanitizes engine errors to 500 "Internal server error" (legacy parity)', async () => {
+    // Legacy `handleStreamSSE` had no try/catch; engine errors bubbled to
+    // `handleRequest`'s outer catch which sanitized the message before
+    // returning to the client. Pin that — raw engine messages can contain
+    // SQL fragments, file paths, etc., and must never reach a caller.
     const engine = createEngine();
     const handle = await engine.start('hold', null, { id: 'wf-sse-fail' });
     const original = engine.getStreamChunks.bind(engine);
     engine.getStreamChunks = async () => {
-      throw new Error('storage offline');
+      throw new Error('storage offline: secret-credential-leak');
     };
 
     try {
@@ -169,7 +173,7 @@ describe('weft.workflows.streams.sse', () => {
         { operationRegistry: registry, restBindings: bindings },
       );
       expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ error: 'storage offline' });
+      expect(await response.json()).toEqual({ error: 'Internal server error' });
     } finally {
       engine.getStreamChunks = original;
     }

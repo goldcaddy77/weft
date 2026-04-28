@@ -56,17 +56,16 @@ export const getStreamChunksOperation = defineOperation<
       after = parsed.value;
     }
 
-    try {
-      const chunks =
-        after !== undefined
-          ? await e.getStreamChunks(input.workflowId, input.key, { after })
-          : await e.getStreamChunks(input.workflowId, input.key);
-      return { chunks };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const fault: OperationFault = { code: 'EngineFailure', message, data: {} };
-      throw fault;
-    }
+    // Engine errors bubble — `executeOperation` wraps unhandled throws as a
+    // sanitized `{ code: 'EngineFailure', message: 'internal error' }` fault
+    // so raw engine messages (which may contain SQL, file paths, etc.) never
+    // reach the wire. `shapeFault` maps that to legacy "Internal server error"
+    // 500, matching the outer `handleRequest` catch the legacy code relied on.
+    const chunks =
+      after !== undefined
+        ? await e.getStreamChunks(input.workflowId, input.key, { after })
+        : await e.getStreamChunks(input.workflowId, input.key);
+    return { chunks };
   },
 });
 
@@ -75,7 +74,10 @@ function shapeGetStreamChunksFault(fault: OperationFault): Response {
     return jsonErrorResponse(fault.message, 400);
   }
   if (fault.code === 'EngineFailure') {
-    return jsonErrorResponse(fault.message, 500);
+    // Legacy `handleGetStreamChunks` had no try/catch; engine errors bubbled
+    // to `handleRequest`'s outer catch and became `Internal server error`.
+    // Match that sanitization so raw engine messages never reach clients.
+    return jsonErrorResponse('Internal server error', 500);
   }
   return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
 }
