@@ -24,6 +24,7 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
 } from './json-rpc-protocol.ts';
+import { generateOpenRpcDocument } from './openrpc.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
 import { type TransportKind } from './operation-fault.ts';
 import { type Principal } from './principal.ts';
@@ -49,6 +50,8 @@ export type DispatchJsonRpcResult =
   | { readonly kind: 'notification' }
   | { readonly kind: 'batch'; readonly responses: ReadonlyArray<JsonRpcResponse> }
   | { readonly kind: 'notification-batch' };
+
+const DISCOVER_METHOD_NAME = 'rpc.discover';
 
 /** Parse the raw body and dispatch each request. */
 export async function dispatchJsonRpc(
@@ -136,6 +139,13 @@ async function dispatchOne(
   context: DispatchJsonRpcContext,
 ): Promise<JsonRpcResponse> {
   const id: JsonRpcId = request.id ?? null;
+  if (request.method === DISCOVER_METHOD_NAME) {
+    const document = generateOpenRpcDocument({
+      registry: context.registry,
+      transports: ['http', 'websocket', 'stdio'],
+    });
+    return { jsonrpc: JSON_RPC_VERSION, result: document, id };
+  }
   const result = await executeOperation(request.method, request.params ?? {}, {
     principal: context.principal,
     engine: context.engine,

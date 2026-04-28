@@ -16,6 +16,7 @@
  *   - `GET /v1/health`    — anonymous liveness probe (no catalog op)
  *   - `GET /v1/metrics`   — Prometheus text exposition (text/plain, no catalog op)
  *   - `GET /openapi.json` — transport-meta endpoint (self-describing, no catalog op)
+ *   - `GET /openrpc.json` — transport-meta endpoint (self-describing, no catalog op)
  *
  * @module server/route-model
  */
@@ -81,6 +82,14 @@ export const ROUTES = [
     handler: 'openApiDocument',
     paramNames: [],
     summary: 'OpenAPI 3.1 specification',
+    tags: ['System'],
+  },
+  {
+    method: 'GET',
+    path: '/openrpc.json',
+    handler: 'openRpcDocument',
+    paramNames: [],
+    summary: 'OpenRPC 1.3.2 specification',
     tags: ['System'],
   },
 ] as const satisfies readonly RouteDefinition[];

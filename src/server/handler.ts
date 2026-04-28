@@ -18,6 +18,7 @@ import {
 import type { AuthContext } from './authentication.ts';
 import { faultToHttpResponse } from './fault-to-http.ts';
 import { generateOpenApiDocument } from './openapi.ts';
+import { generateOpenRpcDocument } from './openrpc.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
 import type { OperationFault } from './operation-fault.ts';
 import { FAULT_CODE_TO_HTTP_STATUS } from './operation-fault.ts';
@@ -215,6 +216,13 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
   openApiDocument: async () => jsonResponse(generateOpenApiDocument()),
+  openRpcDocument: async () =>
+    jsonResponse(
+      generateOpenRpcDocument({
+        registry: defaultOperationRegistry(),
+        transports: ['http', 'websocket', 'stdio'],
+      }),
+    ),
 };
 
 // ---------------------------------------------------------------------------

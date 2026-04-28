@@ -10,7 +10,7 @@
 
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
-import { createLiveOperationRegistry, REST_BINDINGS } from './rest-bindings.ts';
+import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
 import { ROUTES, toOpenApiPath } from './route-model.ts';
 
 // ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ function buildPathParameters(paramNames: readonly string[]): Array<Record<string
 export function emitBindings(
   paths: Record<string, Record<string, unknown>>,
   tagSet: Set<string>,
-  bindings: ReadonlyArray<UnknownRestBinding> = REST_BINDINGS,
+  bindings: ReadonlyArray<UnknownRestBinding> = createLiveRestBindings(),
   registry: OperationRegistry = createLiveOperationRegistry(),
 ): Set<string> {
   const boundMethodPaths = new Set<string>();
