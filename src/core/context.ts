@@ -713,13 +713,17 @@ export class Context implements WorkflowContext {
   // -------------------------------------------------------------------------
 
   sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T> {
+    const sessionStateInitialValue =
+      initialValue === undefined ? undefined : cloneSessionStateValue(initialValue);
     const get = (): T | undefined =>
-      this.#executeSessionStateOperation(() => this.#getSessionStateValue(key, initialValue));
+      this.#executeSessionStateOperation(() =>
+        this.#getSessionStateValue(key, sessionStateInitialValue),
+      );
     const set = (value: T): T =>
       this.#executeSessionStateOperation(() => this.#setSessionStateValue(key, value));
     const update = (updater: (current: T | undefined) => T): T =>
       this.#executeSessionStateOperation(() =>
-        this.#updateSessionStateValue(key, initialValue, updater),
+        this.#updateSessionStateValue(key, sessionStateInitialValue, updater),
       );
     const clear = (): void => {
       this.#executeSessionStateOperation(() => {

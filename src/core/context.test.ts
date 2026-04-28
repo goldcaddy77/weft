@@ -300,6 +300,20 @@ describe('Context', () => {
       expect(session.get()).toEqual({ values: ['a'] });
     });
 
+    it('snapshots the initial value when the handle is created', () => {
+      const context = createContext();
+      const initialValue = { values: ['a'] };
+      const session = context.sessionState<{ values: string[] }>('draft', initialValue);
+
+      initialValue.values.push('b');
+
+      const firstRead = session.get();
+      expect(firstRead).toEqual({ values: ['a'] });
+
+      firstRead!.values.push('c');
+      expect(session.get()).toEqual({ values: ['a'] });
+    });
+
     it('does not poison stored state when validation rejects a write', () => {
       const context = createContext();
       const session = context.sessionState<string>('payload');
