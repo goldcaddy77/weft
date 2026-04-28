@@ -30,11 +30,12 @@ import { parseDuration } from './scheduler.ts';
 import { validateAttributeType } from './search-attributes.ts';
 import {
   assertValidSessionStateKey,
-  buildSessionStateLocals,
+  cloneSessionStateStore,
   cloneSessionStateValue,
   createSessionStateStore,
   hasSessionStateKey,
   normalizeSessionStateRecord,
+  SESSION_STATE_LOCAL_KEY,
   validateSessionStateStore,
 } from './session-state.ts';
 import { isAsyncGeneratorFunction, isGeneratorFunction } from './step-context.ts';
@@ -407,6 +408,8 @@ export interface ContextOptions {
   resolveWorkflowType?: (target: string | Function) => string;
 }
 
+const EMPTY_CHECKPOINT_LOCALS = Object.freeze({}) as Record<string, unknown>;
+
 // ---------------------------------------------------------------------------
 // Context class
 // ---------------------------------------------------------------------------
@@ -420,6 +423,7 @@ export class Context implements WorkflowContext {
   #abortController: AbortController;
   #stepIndex: number;
   #accumulatedResults: Map<number, unknown> | undefined;
+  #checkpointLocals: Record<string, unknown>;
   #sessionState: Record<string, unknown> | undefined;
   #searchAttributes: Record<string, SearchAttributeValue>;
   #searchAttributeSchema: SearchAttributeSchema | undefined;
@@ -441,6 +445,34 @@ export class Context implements WorkflowContext {
     return trimCallerStack(error.stack ?? '');
   }
 
+  #createCheckpointLocals(
+    sessionState: Record<string, unknown> | undefined,
+    existingLocals: Record<string, unknown> | undefined,
+  ): Record<string, unknown> {
+    const localEntries =
+      existingLocals === undefined
+        ? []
+        : Object.entries(existingLocals).filter(([key]) => key !== SESSION_STATE_LOCAL_KEY);
+
+    if (sessionState === undefined) {
+      if (localEntries.length === 0) {
+        return EMPTY_CHECKPOINT_LOCALS;
+      }
+
+      return Object.fromEntries(localEntries);
+    }
+
+    return {
+      ...Object.fromEntries(localEntries),
+      [SESSION_STATE_LOCAL_KEY]: sessionState,
+    };
+  }
+
+  #commitSessionStateStore(sessionState: Record<string, unknown> | undefined): void {
+    this.#sessionState = sessionState;
+    this.#checkpointLocals = this.#createCheckpointLocals(sessionState, this.#checkpointLocals);
+  }
+
   constructor(options: ContextOptions) {
     this.workflowId = options.workflowId;
     this.workflowType = options.workflowType;
@@ -450,7 +482,8 @@ export class Context implements WorkflowContext {
 
     this.#stepIndex = options.initialStep ?? 0;
     this.#accumulatedResults = options.accumulatedResults;
-    this.#sessionState = normalizeSessionStateRecord(options.locals?.['sessionState']);
+    this.#sessionState = normalizeSessionStateRecord(options.locals?.[SESSION_STATE_LOCAL_KEY]);
+    this.#checkpointLocals = this.#createCheckpointLocals(this.#sessionState, options.locals);
     this.#searchAttributes = options.searchAttributes ? { ...options.searchAttributes } : {};
     this.#searchAttributeSchema = options.searchAttributeSchema;
     this.#pendingAttributeChanges = undefined;
@@ -500,7 +533,7 @@ export class Context implements WorkflowContext {
   }
 
   get checkpointLocals(): Record<string, unknown> {
-    return buildSessionStateLocals(this.#sessionState);
+    return this.#checkpointLocals;
   }
 
   get pendingAttributeChanges(): Record<string, SearchAttributeValue> {
@@ -556,7 +589,7 @@ export class Context implements WorkflowContext {
       ...(this.#accumulatedResults !== undefined
         ? { accumulatedResults: new Map(this.#accumulatedResults) }
         : {}),
-      locals: this.checkpointLocals,
+      locals: this.#checkpointLocals,
       searchAttributes: this.#searchAttributes,
       nestingDepth: this.#nestingDepth,
       ...(this.#deadline !== undefined ? { deadline: this.#deadline } : {}),
@@ -592,7 +625,11 @@ export class Context implements WorkflowContext {
     this.#stepIndex = child.#stepIndex;
     this.#accumulatedResults =
       child.#accumulatedResults !== undefined ? new Map(child.#accumulatedResults) : undefined;
-    this.#sessionState = normalizeSessionStateRecord(child.#sessionState);
+    this.#sessionState = cloneSessionStateStore(child.#sessionState);
+    this.#checkpointLocals = this.#createCheckpointLocals(
+      this.#sessionState,
+      child.#checkpointLocals,
+    );
     this.#searchAttributes = { ...child.#searchAttributes };
     this.#pendingAttributeChanges =
       child.#pendingAttributeChanges !== undefined
@@ -611,36 +648,43 @@ export class Context implements WorkflowContext {
     assertValidSessionStateKey(key);
 
     if (this.#sessionState && hasSessionStateKey(this.#sessionState, key)) {
-      return this.#sessionState[key] as T;
+      return cloneSessionStateValue(this.#sessionState[key] as T);
     }
 
-    if (initialValue === undefined) {
-      return undefined;
-    }
-
-    const clonedInitialValue = cloneSessionStateValue(initialValue);
-    this.sessionStateValues[key] = clonedInitialValue as unknown;
-    validateSessionStateStore(this.sessionStateValues);
-    return clonedInitialValue;
+    return initialValue === undefined ? undefined : cloneSessionStateValue(initialValue);
   }
 
   #setSessionStateValue<T>(key: string, value: T): T {
     assertValidSessionStateKey(key);
-    const clonedValue = cloneSessionStateValue(value);
-    this.sessionStateValues[key] = clonedValue as unknown;
-    validateSessionStateStore(this.sessionStateValues);
-    return clonedValue;
+    const candidate = cloneSessionStateStore(this.#sessionState) ?? createSessionStateStore();
+    candidate[key] = cloneSessionStateValue(value) as unknown;
+    validateSessionStateStore(candidate);
+    this.#commitSessionStateStore(candidate);
+    return cloneSessionStateValue(candidate[key] as T);
+  }
+
+  #updateSessionStateValue<T>(
+    key: string,
+    initialValue: T | undefined,
+    updater: (current: T | undefined) => T,
+  ): T {
+    return this.#setSessionStateValue(key, updater(this.#getSessionStateValue(key, initialValue)));
   }
 
   #clearSessionStateValue(key: string): void {
+    assertValidSessionStateKey(key);
+
     if (!this.#sessionState || !hasSessionStateKey(this.#sessionState, key)) {
       return;
     }
 
-    delete this.#sessionState[key];
-    if (Object.keys(this.#sessionState).length === 0) {
-      this.#sessionState = undefined;
+    const candidate = cloneSessionStateStore(this.#sessionState);
+    if (!candidate) {
+      return;
     }
+
+    delete candidate[key];
+    this.#commitSessionStateStore(Object.keys(candidate).length === 0 ? undefined : candidate);
   }
 
   #mergeSessionStateRunOptions(rest: unknown[]): unknown[] {
@@ -664,11 +708,6 @@ export class Context implements WorkflowContext {
     return result;
   }
 
-  get sessionStateValues(): Record<string, unknown> {
-    this.#sessionState ??= createSessionStateStore();
-    return this.#sessionState;
-  }
-
   // -------------------------------------------------------------------------
   // Durable operations (generators)
   // -------------------------------------------------------------------------
@@ -680,7 +719,7 @@ export class Context implements WorkflowContext {
       this.#executeSessionStateOperation(() => this.#setSessionStateValue(key, value));
     const update = (updater: (current: T | undefined) => T): T =>
       this.#executeSessionStateOperation(() =>
-        this.#setSessionStateValue(key, updater(this.#getSessionStateValue(key, initialValue))),
+        this.#updateSessionStateValue(key, initialValue, updater),
       );
     const clear = (): void => {
       this.#executeSessionStateOperation(() => {

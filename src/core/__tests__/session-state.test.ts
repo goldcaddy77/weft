@@ -66,6 +66,58 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
     engine2[Symbol.dispose]();
   });
 
+  it('keeps cleared state absent across checkpointing and recovery until a write occurs', async () => {
+    const storage = new MemoryStorage();
+
+    function createWorkflow() {
+      return async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        const session = context.sessionState<number>('counter', 0);
+
+        session.set(1);
+        session.clear();
+        const afterClear = session.get();
+
+        yield* context.waitForSignal('resume');
+
+        const afterRecovery = session.get();
+        const afterWrite = session.update((current) => (current ?? 0) + 1);
+        return { afterClear, afterRecovery, afterWrite };
+      };
+    }
+
+    const engine1 = new Engine({ storage });
+    engine1.register('session-state-clear-workflow', createWorkflow());
+
+    await engine1.start('session-state-clear-workflow', null, { id: 'wf-session-state-clear' });
+    await flush();
+
+    const checkpointBeforeCrash = deserializeCheckpoint(
+      (await storage.get(KEYS.checkpoint('wf-session-state-clear')))!,
+    );
+    expect(checkpointBeforeCrash.locals).toEqual({});
+
+    engine1[Symbol.dispose]();
+
+    const engine2 = new Engine({ storage });
+    engine2.register('session-state-clear-workflow', createWorkflow());
+
+    const handles = await engine2.recoverAll();
+    expect(handles).toHaveLength(1);
+
+    await engine2.signal('wf-session-state-clear', 'resume');
+    await flush();
+
+    const result = await handles[0]!.result();
+    expect(result).toEqual({
+      afterClear: 0,
+      afterRecovery: 0,
+      afterWrite: 1,
+    });
+
+    engine2[Symbol.dispose]();
+  });
+
   it('rejects corrupted checkpoint locals that use reserved session-state keys', () => {
     const sessionState = Object.create(null) as Record<string, unknown>;
     sessionState['constructor'] = {
@@ -85,5 +137,24 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
     });
 
     expect(() => deserializeCheckpoint(corruptedCheckpoint)).toThrow();
+  });
+
+  it('rejects corrupted checkpoint locals whose session-state root is not a plain object', () => {
+    for (const sessionState of [new Date(), new Map<string, number>([['count', 1]])]) {
+      const corruptedCheckpoint = encode({
+        workflowId: 'wf-corrupted-session-state-root',
+        step: 1,
+        locals: {
+          sessionState,
+        },
+        accumulatedResults: [],
+        pendingSignals: [],
+        searchAttributes: {},
+        version: '1.0.0',
+        createdAt: Date.now(),
+      });
+
+      expect(() => deserializeCheckpoint(corruptedCheckpoint)).toThrow();
+    }
   });
 });

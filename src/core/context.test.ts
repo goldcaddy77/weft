@@ -234,6 +234,16 @@ describe('Context', () => {
       expect(session.get()).toBe(0);
     });
 
+    it('returns undefined after clear when no initial value is configured', () => {
+      const context = createContext();
+      const session = context.sessionState<number>('counter');
+
+      session.set(1);
+      session.clear();
+
+      expect(session.get()).toBeUndefined();
+    });
+
     it('updates and clears a session-scoped value', () => {
       const context = createContext();
       const session = context.sessionState<number>('counter', 0);
@@ -274,6 +284,32 @@ describe('Context', () => {
       expect(() => session.set('x'.repeat(MAX_SESSION_STATE_SERIALIZED_BYTES + 1024))).toThrow(
         SessionStateValidationError,
       );
+    });
+
+    it('returns cloned values so caller mutation does not leak into durable state', () => {
+      const context = createContext();
+      const session = context.sessionState<{ values: string[] }>('draft');
+
+      const stored = session.set({ values: ['a'] });
+      stored.values.push('b');
+
+      const firstRead = session.get();
+      expect(firstRead).toEqual({ values: ['a'] });
+
+      firstRead!.values.push('c');
+      expect(session.get()).toEqual({ values: ['a'] });
+    });
+
+    it('does not poison stored state when validation rejects a write', () => {
+      const context = createContext();
+      const session = context.sessionState<string>('payload');
+
+      session.set('safe');
+
+      expect(() => session.set('x'.repeat(MAX_SESSION_STATE_SERIALIZED_BYTES + 1024))).toThrow(
+        SessionStateValidationError,
+      );
+      expect(session.get()).toBe('safe');
     });
   });
 

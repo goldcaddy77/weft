@@ -15,7 +15,12 @@ export class SessionStateValidationError extends Error {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+  );
 }
 
 export function createSessionStateStore(): Record<string, unknown> {
@@ -40,6 +45,20 @@ export function assertValidSessionStateKey(key: string): void {
 
 export function cloneSessionStateValue<T>(value: T): T {
   return structuredClone(value);
+}
+
+export function cloneSessionStateStore(
+  store: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!store) {
+    return undefined;
+  }
+
+  const clonedStore = createSessionStateStore();
+  for (const [key, value] of Object.entries(store)) {
+    clonedStore[key] = cloneSessionStateValue(value);
+  }
+  return clonedStore;
 }
 
 export function normalizeSessionStateRecord(value: unknown): Record<string, unknown> | undefined {
