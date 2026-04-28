@@ -4,15 +4,6 @@ A Bun-native durable execution engine.
 
 > _Weft_---the cross-threads in weaving that bind the warp together.
 
-## What Is Weft?
-
-Weft runs async workflows to completion across crashes, retries, and arbitrary stretches of wall-clock time. You write what looks like a normal generator function; the engine persists a checkpoint at every `yield*` boundary and resumes from the last checkpoint on recovery. No replay, no determinism constraints, no special imports.
-
-It's built specifically for two execution shapes that traditional workflow engines treat as second-class:
-
-- **Long-running business processes**---checkouts, onboarding flows, fulfillment pipelines---where a process crash mid-flight must not lose money or leave the system in a partial state.
-- **AI agent loops**---ReAct-style LLM execution where the next step is decided at runtime by a probabilistic model, tool calls have real side effects, and conversations need to survive crashes mid-turn.
-
 ## The Problem
 
 Imagine you're building an e-commerce checkout: charge the customer's credit card, reserve inventory, send a confirmation email, schedule shipping. What happens if your server crashes between step one and step two? The customer has been charged, but the inventory was never reserved. You can't just re-run the whole flow---you'd double-charge them.
@@ -20,6 +11,15 @@ Imagine you're building an e-commerce checkout: charge the customer's credit car
 **Durable execution** solves this. You write a normal-looking function and the runtime guarantees it will complete---even if the process crashes and restarts a hundred times along the way. Each step is checkpointed so recovery picks up exactly where it stopped.
 
 Temporal is the most prominent durable execution engine, built in 2019 with Go, gRPC, and Cassandra. It works. But we can do better with modern tools.
+
+## What Is Weft?
+
+Weft runs async workflows to completion across crashes, retries, and arbitrary stretches of wall-clock time. You write what looks like a normal generator function; the engine persists a checkpoint at every `yield*` boundary and resumes from the last checkpoint on recovery. No replay, no determinism constraints, no special imports.
+
+It's built for two execution shapes that traditional workflow engines treat as second-class:
+
+- **Long-running business processes**---checkouts, onboarding flows, fulfillment pipelines---where a process crash mid-flight must not lose money or leave the system in a partial state.
+- **AI agent loops**---ReAct-style LLM execution where the next step is decided at runtime by a probabilistic model, tool calls have real side effects, and conversations need to survive crashes mid-turn.
 
 ## Design Constraints
 
@@ -65,11 +65,11 @@ Weft uses a **checkpoint model**, not a replay model. This is the single most im
 
 In a replay-based system (Temporal, Cadence), the workflow runtime re-executes your function from the beginning on every recovery, replaying recorded activity results to reconstruct state. That's why those systems demand strict determinism---no `Date.now()`, no `Math.random()`, no random control flow---and why they need separate sandboxes, bundlers, and version-pinning protocols.
 
-Weft does the opposite. The generator function pauses at each `yield*`, the engine serializes its current local state via `structuredClone`, and the next time the workflow runs it resumes from that paused position. Your code can use `Date.now()`, `Math.random()`, dynamic imports, anything---because nothing replays. The checkpoint is the source of truth for "where am I and what do I know."
+Weft does the opposite. At each `yield*`, the engine snapshots the workflow's current state---the values of local variables in scope at that boundary, plus the position in the generator---using `structuredClone` semantics, and writes that snapshot to storage. On recovery the engine reads the snapshot and resumes from the same boundary. Your code can use `Date.now()`, `Math.random()`, dynamic imports, anything---because nothing replays. The checkpoint is the source of truth for "where am I and what do I know."
 
 A few consequences fall out of this:
 
-- **Fixed-size checkpoints.** Long-running workflows don't accumulate ever-growing event histories. The checkpoint stores only what's currently in scope.
+- **Checkpoint size tracks live state, not history.** Long-running workflows don't accumulate ever-growing event logs. The snapshot reflects whatever's currently in scope at the yield boundary, so a workflow that processes 100 large API responses but only retains a summary checkpoints just that summary.
 - **No `continueAsNew` ceremony.** Workflows can run for years without special handling.
 - **Native agent loops.** Each tool call inside an agent loop is its own checkpoint boundary, so dynamic LLM-driven control flow is just generator code.
 
@@ -78,7 +78,7 @@ A few consequences fall out of this:
 | Concept              | What it is                                                                                                                    |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | **Workflow**         | A generator function the engine drives to completion. Every `yield*` is a checkpoint.                                         |
-| **Activity**         | A regular async function dispatched by a workflow with `ctx.run(fn, args)`. Activities are where side effects live.           |
+| **Activity**         | A regular async function dispatched by a workflow with `ctx.run(fn, ...args)`. Activities are where side effects live.        |
 | **Checkpoint**       | A serialized snapshot of a workflow's position and local variables, written at every yield.                                   |
 | **Signal**           | A fire-and-forget message sent _into_ a running workflow. Workflows pause at `ctx.waitForSignal()` until one arrives.         |
 | **Update**           | A request-response message sent into a running workflow. The caller blocks until the workflow returns a result.               |
@@ -87,7 +87,7 @@ A few consequences fall out of this:
 | **Worker**           | A process or thread that executes activities. Inline by default; can run remote over WebSocket.                               |
 | **Interceptor**      | A composable hook that wraps context operations for tracing, validation, encryption, or any cross-cutting concern.            |
 | **Agent**            | A durable LLM execution loop registered via `defineAgent()` or invoked inline with `ctx.agent()`.                             |
-| **Shared state**     | A CAS-backed durable mutable primitive for safe concurrent reads and writes across workflows.                                 |
+| **Shared state**     | A compare-and-swap (CAS) durable mutable primitive for safe concurrent reads and writes across workflows.                     |
 
 ## Features
 
@@ -227,7 +227,7 @@ await worker.start();
 
 ### Browser Support
 
-The core engine runs inside a Web Worker, with a Service Worker acting as the durable persistence layer over `IndexedDB`. The same workflow code that runs on the server ships to the browser unmodified---useful for offline-first apps that need durable client-side workflows.
+The core engine runs inside a Web Worker, with a Service Worker acting as the durable persistence layer over `IndexedDB`. Browser-compatible workflow logic ships across server and browser without modification---useful for offline-first apps that need durable client-side workflows. Activities, storage adapters, and other environment-bound pieces still need browser-safe implementations: use `IndexedDBStorage` instead of `BunSQLiteStorage`, swap server-only activities for `fetch`-based equivalents, and so on.
 
 ### Multi-Tenancy
 
@@ -311,7 +311,7 @@ import { IndexedDBStorage } from 'weft/storage/indexeddb';
 
 The `bun` runtime version `1.3.0` or later is required.
 
-## Step API for `async`/`await` Folks
+## Step API for `async`/`await` Users
 
 If generator syntax is unfamiliar, the same workflow can be written with `ctx.step()` calls and plain `async`/`await`:
 
