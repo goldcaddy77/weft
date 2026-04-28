@@ -111,18 +111,6 @@ export function validateSessionStateStore(store: Record<string, unknown>): void 
   }
 }
 
-export function buildSessionStateLocals(
-  store: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  if (!store || Object.keys(store).length === 0) {
-    return {};
-  }
-
-  validateSessionStateStore(store);
-  const normalized = normalizeSessionStateRecord(store);
-  return normalized ? { [SESSION_STATE_LOCAL_KEY]: normalized } : {};
-}
-
 export function validateSessionStateLocals(locals: Record<string, unknown>): void {
   normalizeSessionStateRecord(locals[SESSION_STATE_LOCAL_KEY]);
 }
