@@ -16,7 +16,6 @@ import {
   type PrometheusExporter,
 } from '../observability/metrics.ts';
 import type { AuthContext } from './authentication.ts';
-import type { AuthorizationScope } from './authorization-scope.ts';
 import { faultToHttpResponse } from './fault-to-http.ts';
 import { generateOpenApiDocument } from './openapi.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
@@ -151,101 +150,6 @@ function applyLegacyRestInputCompatibility(
   return { input };
 }
 
-function addRequiredScopesToPrincipal(
-  principal: Principal,
-  requiredScopes: ReadonlyArray<AuthorizationScope>,
-): Principal {
-  if (requiredScopes.length === 0) {
-    return principal;
-  }
-
-  switch (principal.method) {
-    case 'jwt': {
-      const claims = principal.claims ?? {};
-      const existingScopes = typeof claims['scope'] === 'string' ? claims['scope'] : '';
-      const mergedScopes = new Set(existingScopes.split(/\s+/).filter((scope) => scope.length > 0));
-      for (const scope of requiredScopes) {
-        mergedScopes.add(scope);
-      }
-      return principalFromJwtClaims({
-        ...claims,
-        scope: [...mergedScopes].join(' '),
-      });
-    }
-    case 'api-key':
-      return principalFromApiKey({
-        subject: principal.subject ?? 'legacy-direct-handler-compat',
-        scopes: [...principal.scopes, ...requiredScopes],
-        ...(principal.tenantId !== undefined ? { tenantId: principal.tenantId } : {}),
-      });
-    case 'mtls':
-      return principalFromMutualTls({
-        subject: principal.subject ?? 'legacy-direct-handler-compat',
-        scopes: [...principal.scopes, ...requiredScopes],
-        ...(principal.tenantId !== undefined ? { tenantId: principal.tenantId } : {}),
-      });
-    case 'unauthenticated':
-      return principalFromApiKey({
-        subject: 'legacy-direct-handler-compat',
-        scopes: requiredScopes,
-      });
-  }
-
-  return principal;
-}
-
-function jwtClaimsDeclareScopes(claims: Record<string, unknown> | undefined): boolean {
-  if (claims === undefined) {
-    return false;
-  }
-
-  if (typeof claims['scope'] === 'string' && claims['scope'].trim().length > 0) {
-    return true;
-  }
-
-  if (typeof claims['scp'] === 'string' && claims['scp'].trim().length > 0) {
-    return true;
-  }
-
-  return Array.isArray(claims['permissions']) && claims['permissions'].length > 0;
-}
-
-function applyLegacyJwtQuotaScopeCompatibility(
-  operationName: string,
-  principal: Principal,
-): Principal {
-  if (operationName !== 'weft.tenants.quota.get' || principal.method !== 'jwt') {
-    return principal;
-  }
-
-  if (principal.scopes.size > 0 || jwtClaimsDeclareScopes(principal.claims)) {
-    return principal;
-  }
-
-  return addRequiredScopesToPrincipal(principal, ['quota:read']);
-}
-
-function applyLegacyDirectHandlerPrincipalCompatibility(
-  operationName: string,
-  principal: Principal,
-  enabled: boolean,
-): Principal {
-  if (!enabled) {
-    return principal;
-  }
-
-  switch (operationName) {
-    case 'weft.tenants.quota.get':
-      return addRequiredScopesToPrincipal(principal, ['quota:read']);
-    case 'weft.workflows.replay':
-      return addRequiredScopesToPrincipal(principal, ['workflows:read']);
-    case 'weft.system.metrics':
-      return addRequiredScopesToPrincipal(principal, ['system:read']);
-    default:
-      return principal;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Route handlers — each delegates to an Engine method
 // ---------------------------------------------------------------------------
@@ -357,29 +261,6 @@ export interface HandlerOptions {
 }
 
 /**
- * Module-private legacy-compat flag, threaded through the handler's
- * dispatch path via a closure rather than a public option. The public
- * `handleRequest()` always runs with `legacyCompat: false`. The
- * test-only wrapper `handleRequestWithLegacyCompat()` (defined in
- * `handler-legacy-compat.ts`) is the only path that flips it true.
- *
- * When `legacyCompat` is true, the following shims activate:
- *
- * - `applyLegacyJwtQuotaScopeCompatibility`: auto-grants `quota:read`,
- *   `workflows:read`, and `system:read` to JWT principals on the
- *   schedule, quota, replay, and metrics endpoints, mirroring the
- *   pre-Track-8 implicit-grant behavior.
- * - `applyLegacyDirectHandlerPrincipalCompatibility`: passes the
- *   legacy direct-handler principal through `dispatchViaExecuteOperation`
- *   so existing tests that exercise the legacy path keep working.
- *
- * Production callers cannot reach this flag.
- */
-interface InternalDispatchOptions extends HandlerOptions {
-  __legacyCompatInternal?: boolean;
-}
-
-/**
  * Find a REST binding that matches the request's method and path.
  * Returns null if no binding matches (caller falls back to legacy
  * dispatch). Delegates path resolution to the canonical
@@ -438,7 +319,6 @@ async function dispatchViaExecuteOperation(
   pathParams: Record<string, string>,
   registry: OperationRegistry,
   principal: Principal,
-  options?: { legacyDirectHandlerCompatibility?: boolean },
 ): Promise<Response> {
   let input: unknown;
   try {
@@ -455,28 +335,12 @@ async function dispatchViaExecuteOperation(
     return compatibility.response;
   }
   input = compatibility.input;
-  const legacyDirectHandlerCompatibility = options?.legacyDirectHandlerCompatibility ?? false;
-  const effectivePrincipal = applyLegacyDirectHandlerPrincipalCompatibility(
-    binding.operationName,
-    legacyDirectHandlerCompatibility
-      ? applyLegacyJwtQuotaScopeCompatibility(binding.operationName, principal)
-      : principal,
-    legacyDirectHandlerCompatibility,
-  );
   const result = await executeOperation(binding.operationName, input, {
-    principal: effectivePrincipal,
+    principal,
     engine,
     transport: 'http-rest',
     registry,
   });
-  if (
-    options?.legacyDirectHandlerCompatibility &&
-    binding.operationName === 'weft.tenants.quota.get' &&
-    !result.ok &&
-    result.fault.code === 'EngineFailure'
-  ) {
-    throw new Error(result.fault.message);
-  }
   if (result.ok) {
     return binding.shapeSuccess
       ? binding.shapeSuccess(result.value, request)
@@ -643,21 +507,7 @@ export async function handleRequest(
 
   if (bindingMatch !== null && !shouldPreferLegacyRoute(bindingMatch, route)) {
     try {
-      let principal: Principal;
-      try {
-        principal = authContextToPrincipal(options?.authContext);
-      } catch (error) {
-        if (
-          (options as InternalDispatchOptions | undefined)?.__legacyCompatInternal === true &&
-          options?.authContext?.method === 'jwt' &&
-          options.authContext.claims === undefined
-        ) {
-          principal = principalFromJwtClaims({});
-        } else {
-          throw error;
-        }
-      }
-
+      const principal = authContextToPrincipal(options?.authContext);
       return await dispatchViaExecuteOperation(
         request,
         engine,
@@ -665,18 +515,9 @@ export async function handleRequest(
         bindingMatch.pathParams,
         operationRegistry,
         principal,
-        {
-          legacyDirectHandlerCompatibility:
-            (options as InternalDispatchOptions | undefined)?.__legacyCompatInternal === true,
-        },
       );
     } catch (error) {
-      const logLabel =
-        (options as InternalDispatchOptions | undefined)?.__legacyCompatInternal === true &&
-        bindingMatch.binding.operationName === 'weft.tenants.quota.get'
-          ? 'Unhandled error in handleRequest'
-          : 'Unhandled error in dispatchViaExecuteOperation';
-      console.error(logLabel, {
+      console.error('Unhandled error in dispatchViaExecuteOperation', {
         method: request.method,
         path: url.pathname,
         error,
