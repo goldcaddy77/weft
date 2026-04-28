@@ -51,7 +51,7 @@ engine.register('welcome', async function* (ctx, user: { name: string }) {
 
 const handle = await engine.start('welcome', { name: 'Steve' });
 const result = await handle.result();
-// result === { greeting: "Hello, Steve!", onboarded: true }
+// result is { greeting: "Hello, Steve!", onboarded: true }
 ```
 
 That's a complete durable workflow. Checkpoints are written to `./weft.db` at every `yield*` boundary, so if the process crashes after `greet` finishes but before the sleep expires, restarting the engine resumes from exactly that point.
@@ -69,7 +69,7 @@ Weft does the opposite. At each `yield*`, the engine snapshots the workflow's cu
 
 A few consequences fall out of this:
 
-- **Checkpoint size tracks live state, not history.** Long-running workflows don't accumulate ever-growing event logs. The snapshot reflects whatever's currently in scope at the yield boundary, so a workflow that processes 100 large API responses but only retains a summary checkpoints just that summary.
+- **Checkpoint size is bounded by live state, not history length.** Long-running workflows don't accumulate ever-growing event logs. The snapshot reflects whatever's currently in scope at the yield boundary, so a workflow that processes 100 large API responses but only retains a summary checkpoints just that summary.
 - **No `continueAsNew` ceremony.** Workflows can run for years without special handling.
 - **Native agent loops.** Each tool call inside an agent loop is its own checkpoint boundary, so dynamic LLM-driven control flow is just generator code.
 
@@ -126,6 +126,7 @@ engine.register('approval', async function* (ctx, input: { orderId: string }) {
 });
 
 // From an HTTP handler, another workflow, or anywhere with engine access:
+const handle = await engine.start('approval', { orderId: 'order-123' });
 await engine.signal(handle.id, 'approval', { approved: true });
 ```
 
@@ -142,7 +143,10 @@ engine.register('order', async function* (ctx, input: { customerId: string }) {
 });
 
 const orders = await engine.list({
-  filter: { customerId: 'acme', status: 'shipped' },
+  attributes: [
+    { key: 'customerId', value: 'acme' },
+    { key: 'status', value: 'shipped' },
+  ],
 });
 ```
 
@@ -162,7 +166,7 @@ const researcher = defineAgent({
   budget: { maxTokens: 100_000, maxCost: 5.0, warningThreshold: 0.8 },
   modelRouter: costTierRouter([
     { model: 'claude-sonnet-4-20250514', maxCostRemaining: 2.0 },
-    { model: 'claude-haiku-4-5-20251001' },
+    { model: 'claude-sonnet-4-20250514' },
   ]),
   contextStrategy: slidingWindowStrategy({
     preserveSystemMessage: true,
@@ -180,7 +184,7 @@ Each tool call inside the loop is a separate checkpoint boundary. Crash after 7 
 
 ### Pluggable Storage
 
-A five-method `Storage` interface (`get`, `put`, `delete`, `scan`, `batch`) over `Uint8Array` keys and values. Built-in adapters:
+A small `Storage` interface over string keys and `Uint8Array` values: five required methods (`get`, `put`, `delete`, `scan`, `batch`) plus optional capabilities (`conditionalBatch`, `has`, `deletePrefix`) that adapters can implement when their backend supports them. Built-in adapters:
 
 - **`MemoryStorage`** for development and tests
 - **`BunSQLiteStorage`** (subpath `weft/storage/bun-sqlite`) for production via `Bun.SQL`
@@ -188,7 +192,7 @@ A five-method `Storage` interface (`get`, `put`, `delete`, `scan`, `batch`) over
 - **`LMDBStorage`** (subpath `weft/storage/lmdb`) for embedded high-throughput workloads
 - **`TursoStorage`** (subpath `weft/storage/turso`) for distributed libSQL deployments
 - **`IndexedDBStorage`** (subpath `weft/storage/indexeddb`) for browser environments
-- **`CompressedStorage`** wrapper for transparent zstd/gzip compression
+- **`CompressedStorage`** wrapper for transparent `gzip` or `brotli` compression
 
 Bring your own backend by implementing the interface---five methods is enough.
 
@@ -204,7 +208,7 @@ import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 engine.register('checkout', checkoutWorkflow);
 
-using server = serve({ engine, port: 7233 });
+await using server = serve({ engine, port: 7233 });
 // server.url is e.g. "http://0.0.0.0:7233"
 ```
 
@@ -269,7 +273,7 @@ const engine = new Engine({
 `TestEngine` swaps the production engine in tests and gives you a virtual clock. `engine.advanceTime('1 hour')` jumps timers forward without waiting; `engine.mock(activity, fake)` swaps in fake activity implementations with type-checked signatures, call recording, and per-call overrides.
 
 ```typescript
-import { TestEngine } from 'weft/testing';
+import { TestEngine } from 'weft';
 import { expect, test } from 'bun:test';
 
 test('onboarding completes after a day', async () => {
@@ -328,17 +332,17 @@ Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workf
 
 ## Weft vs. Temporal
 
-| Concept                | Temporal                          | Weft                                 |
-| ---------------------- | --------------------------------- | ------------------------------------ |
-| Core mental model      | Replay determinism                | Generators pause and resume          |
-| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(fn, args)`           |
-| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`         |
-| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`     |
-| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional) |
-| Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size) |
-| Agent declaration      | N/A (build from primitives)       | `defineAgent()` or `ctx.agent()`     |
-| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                       |
-| Bundling               | Webpack for workflow sandbox      | None                                 |
+| Concept                | Temporal                          | Weft                                                                       |
+| ---------------------- | --------------------------------- | -------------------------------------------------------------------------- |
+| Core mental model      | Replay determinism                | Generators pause and resume                                                |
+| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(fn, ...args)`                                              |
+| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`                                               |
+| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`                                           |
+| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)                                       |
+| Long-running workflows | `continueAsNew()`                 | None needed (checkpoint size is bounded by live state, not history length) |
+| Agent declaration      | N/A (build from primitives)       | `defineAgent()` or `ctx.agent()`                                           |
+| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                                                             |
+| Bundling               | Webpack for workflow sandbox      | None                                                                       |
 
 ## Documentation
 
