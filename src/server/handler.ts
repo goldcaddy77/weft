@@ -354,36 +354,30 @@ export interface HandlerOptions {
    * with `operationRegistry`. Omit both to use the live defaults.
    */
   restBindings?: ReadonlyArray<UnknownRestBinding>;
-  /**
-   * Internal regression-harness gate. Public callers cannot construct
-   * `LEGACY_COMPAT_TOKEN`; it lives only inside this module and the
-   * regression-harness re-export at
-   * `__internal_legacy_compat_token_for_regression_harness_only`.
-   *
-   * When set to `LEGACY_COMPAT_TOKEN`, the following shims activate:
-   *
-   * - `applyLegacyJwtQuotaScopeCompatibility`: auto-grants `quota:read`,
-   *   `workflows:read`, and `system:read` to JWT principals on the
-   *   schedule, quota, replay, and metrics endpoints, mirroring the
-   *   pre-Track-8 implicit-grant behavior.
-   * - `applyLegacyDirectHandlerPrincipalCompatibility`: passes the
-   *   legacy direct-handler principal through `dispatchViaExecuteOperation`
-   *   so existing tests that exercise the legacy path keep working.
-   *
-   * Production callers MUST leave this `undefined`. Setting any other
-   * value than the exact internal token is a no-op.
-   */
-  legacyCompatToken?: typeof LEGACY_COMPAT_TOKEN;
 }
 
-const LEGACY_COMPAT_TOKEN: unique symbol = Symbol('weft.handler.legacyCompatToken');
-
 /**
- * Internal: regression harness re-export of the legacy-compat token. This
- * export is intentionally named so it stands out in any callsite review;
- * production code MUST NOT import it.
+ * Module-private legacy-compat flag, threaded through the handler's
+ * dispatch path via a closure rather than a public option. The public
+ * `handleRequest()` always runs with `legacyCompat: false`. The
+ * test-only wrapper `handleRequestWithLegacyCompat()` (defined in
+ * `handler-legacy-compat.ts`) is the only path that flips it true.
+ *
+ * When `legacyCompat` is true, the following shims activate:
+ *
+ * - `applyLegacyJwtQuotaScopeCompatibility`: auto-grants `quota:read`,
+ *   `workflows:read`, and `system:read` to JWT principals on the
+ *   schedule, quota, replay, and metrics endpoints, mirroring the
+ *   pre-Track-8 implicit-grant behavior.
+ * - `applyLegacyDirectHandlerPrincipalCompatibility`: passes the
+ *   legacy direct-handler principal through `dispatchViaExecuteOperation`
+ *   so existing tests that exercise the legacy path keep working.
+ *
+ * Production callers cannot reach this flag.
  */
-export const __internal_legacy_compat_token_for_regression_harness_only = LEGACY_COMPAT_TOKEN;
+interface InternalDispatchOptions extends HandlerOptions {
+  __legacyCompatInternal?: boolean;
+}
 
 /**
  * Find a REST binding that matches the request's method and path.
@@ -654,7 +648,7 @@ export async function handleRequest(
         principal = authContextToPrincipal(options?.authContext);
       } catch (error) {
         if (
-          options?.legacyCompatToken === LEGACY_COMPAT_TOKEN &&
+          (options as InternalDispatchOptions | undefined)?.__legacyCompatInternal === true &&
           options?.authContext?.method === 'jwt' &&
           options.authContext.claims === undefined
         ) {
@@ -671,11 +665,14 @@ export async function handleRequest(
         bindingMatch.pathParams,
         operationRegistry,
         principal,
-        { legacyDirectHandlerCompatibility: options?.legacyCompatToken === LEGACY_COMPAT_TOKEN },
+        {
+          legacyDirectHandlerCompatibility:
+            (options as InternalDispatchOptions | undefined)?.__legacyCompatInternal === true,
+        },
       );
     } catch (error) {
       const logLabel =
-        options?.legacyCompatToken === LEGACY_COMPAT_TOKEN &&
+        (options as InternalDispatchOptions | undefined)?.__legacyCompatInternal === true &&
         bindingMatch.binding.operationName === 'weft.tenants.quota.get'
           ? 'Unhandled error in handleRequest'
           : 'Unhandled error in dispatchViaExecuteOperation';
