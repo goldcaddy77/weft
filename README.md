@@ -25,9 +25,10 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 ## Hello World
 
 ```typescript
-import { Engine, MemoryStorage } from 'weft';
+import { Engine } from 'weft';
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
-const engine = new Engine({ storage: new MemoryStorage() });
+const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 
 async function greet(name: string) {
   return `Hello, ${name}!`;
@@ -44,7 +45,10 @@ console.log(await handle.result());
 // { greeting: "Hello, Steve!", onboarded: true }
 ```
 
-That's a complete durable workflow. If the process crashes after `greet` finishes but before the sleep expires, Weft restores the checkpoint and resumes from exactly that point. No replay, no determinism constraints, no special imports.
+That's a complete durable workflow. Checkpoints are written to `./weft.db` at every `yield*` boundary, so if the process crashes after `greet` finishes but before the sleep expires, restarting the engine resumes from exactly that point. No replay, no determinism constraints, no special imports.
+
+> [!NOTE]
+> `MemoryStorage` (also exported from `weft`) is fine for tests and ephemeral scripts, but it lives in process memory — a crash takes the checkpoints with it. Use a persistent backend like `BunSQLiteStorage` whenever durability actually matters.
 
 ## Features
 
