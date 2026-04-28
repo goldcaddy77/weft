@@ -6,6 +6,7 @@ import { deserializeCheckpoint } from '../checkpoint.ts';
 import { encode } from '../codec.ts';
 import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
+import { validateSessionStateLocals } from '../session-state.ts';
 import type { WorkflowContext } from '../types.ts';
 
 async function flush(): Promise<void> {
@@ -156,5 +157,17 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
 
       expect(() => deserializeCheckpoint(corruptedCheckpoint)).toThrow();
     }
+  });
+
+  it('rejects custom class instances at the session-state validation boundary', () => {
+    class SessionStateRoot {
+      count = 1;
+    }
+
+    expect(() =>
+      validateSessionStateLocals({
+        sessionState: new SessionStateRoot(),
+      }),
+    ).toThrow();
   });
 });
