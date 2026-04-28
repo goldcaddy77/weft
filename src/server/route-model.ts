@@ -80,28 +80,11 @@ export const ROUTES = [
   },
   {
     method: 'GET',
-    path: '/v1/workflows/:id/streams/:key',
-    // Deferred to Piece 4 Wave E (SSE branch requires streaming migration).
-    handler: 'getStreamChunks',
-    paramNames: ['id', 'key'],
-    summary: 'Get stream chunks for a workflow',
-    tags: ['Streams'],
-  },
-  {
-    method: 'GET',
     path: '/v1/metrics',
     handler: 'getMetrics',
     paramNames: [],
     summary: 'Prometheus metrics export',
     tags: ['Observability'],
-  },
-  {
-    method: 'GET',
-    path: '/v1/workflows/:id/sse',
-    handler: 'streamSSE',
-    paramNames: ['id'],
-    summary: 'Stream workflow events via Server-Sent Events',
-    tags: ['Streams'],
   },
   {
     method: 'GET',

@@ -8,9 +8,7 @@
  * @module server/handler
  */
 
-import { formatSSE } from '../ai/streaming-agent.ts';
 import { encode } from '../core/codec.ts';
-import type { StoredStreamChunk } from '../core/context.ts';
 import type { Engine } from '../core/engine.ts';
 import type { ScheduleAccessOptions, ScheduleFilter, ScheduleStatus } from '../core/types.ts';
 import {
@@ -38,7 +36,6 @@ import {
   type UnknownRestBinding,
 } from './rest-bindings.ts';
 import { ROUTES, toRegex } from './route-model.ts';
-import { parseOptionalSequenceCursor } from './sequence-cursor.ts';
 
 // ---------------------------------------------------------------------------
 // Route matching
@@ -67,7 +64,6 @@ const ROUTE_PATTERNS: Array<{
   path: string;
   paramNames: readonly string[];
 }> = [];
-const textEncoder = new TextEncoder();
 
 for (const route of ROUTES) {
   ROUTE_PATTERNS.push({
@@ -151,66 +147,6 @@ function getAuthenticatedTenantId(claims: JWTPayload | undefined): string | null
   }
 
   return null;
-}
-
-function parseAfterQueryParameter(request: Request): number | Response | undefined {
-  const result = parseOptionalSequenceCursor(
-    new URL(request.url).searchParams.get('after'),
-    'after query parameter',
-  );
-  if (result.error) {
-    return errorResponse(result.error, 400);
-  }
-
-  return result.value;
-}
-
-function parseLastEventIdHeader(request: Request): number | Response | undefined {
-  const result = parseOptionalSequenceCursor(
-    request.headers.get('Last-Event-ID'),
-    'Last-Event-ID header',
-  );
-  if (result.error) {
-    return errorResponse(result.error, 400);
-  }
-
-  return result.value;
-}
-
-function createStoredChunkSSEStream(
-  chunks: StoredStreamChunk[],
-  mapChunkToText: (chunk: StoredStreamChunk) => string | null,
-): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) {
-        const text = mapChunkToText(chunk);
-        if (text === null) {
-          continue;
-        }
-
-        controller.enqueue(
-          textEncoder.encode(
-            formatSSE({
-              id: String(chunk.sequence),
-              event: 'token',
-              data: text,
-            }),
-          ),
-        );
-      }
-
-      controller.enqueue(
-        textEncoder.encode(
-          formatSSE({
-            event: 'done',
-            data: '',
-          }),
-        ),
-      );
-      controller.close();
-    },
-  });
 }
 
 export function getRequiredRouteParameter(
@@ -456,104 +392,6 @@ async function handleGetTenantQuota(
 }
 
 // ---------------------------------------------------------------------------
-// Stream chunks route — engine.getStreamChunks()
-// ---------------------------------------------------------------------------
-
-async function handleGetStreamChunks(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-  key: string,
-): Promise<Response> {
-  const after = parseAfterQueryParameter(request);
-  if (after instanceof Response) {
-    return after;
-  }
-
-  const chunks =
-    after !== undefined
-      ? await engine.getStreamChunks(workflowId, key, { after })
-      : await engine.getStreamChunks(workflowId, key);
-
-  const accept = request.headers.get('Accept') ?? '';
-  if (accept.includes('text/event-stream')) {
-    return new Response(
-      createStoredChunkSSEStream(chunks, (chunk) =>
-        JSON.stringify({ sequence: chunk.sequence, value: chunk.value }),
-      ),
-      {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-        },
-      },
-    );
-  }
-
-  return jsonResponse({ chunks });
-}
-
-// ---------------------------------------------------------------------------
-// SSE streaming route
-// ---------------------------------------------------------------------------
-
-async function handleStreamSSE(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-): Promise<Response> {
-  const accept = request.headers.get('Accept') ?? '';
-  if (!accept.includes('text/event-stream')) {
-    return errorResponse('Accept header must include text/event-stream', 406);
-  }
-
-  // Check workflow exists
-  const state = await engine.get(workflowId);
-  if (state === null) {
-    return errorResponse(`Workflow "${workflowId}" not found`, 404);
-  }
-
-  const after = parseLastEventIdHeader(request);
-  if (after instanceof Response) {
-    return after;
-  }
-
-  const chunks =
-    after !== undefined
-      ? await engine.getStreamChunks(workflowId, 'tokens', { after })
-      : await engine.getStreamChunks(workflowId, 'tokens');
-
-  const sseStream = createStoredChunkSSEStream(chunks, (chunk) => {
-    if (typeof chunk.value === 'string') {
-      return chunk.value;
-    }
-
-    if (
-      typeof chunk.value === 'object' &&
-      chunk.value !== null &&
-      'token' in chunk.value &&
-      typeof chunk.value['token'] === 'string' &&
-      chunk.value['token'].length > 0
-    ) {
-      return chunk.value['token'];
-    }
-
-    return null;
-  });
-
-  return new Response(sseStream, {
-    status: 200,
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Checkpoint history routes
 // ---------------------------------------------------------------------------
 
@@ -625,11 +463,8 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     handleGetSchedule(engine, param('id'), options?.authContext),
   getTenantQuota: async ({ engine, options, param }) =>
     handleGetTenantQuota(engine, param('id'), options?.authContext),
-  getStreamChunks: async ({ request, engine, param }) =>
-    handleGetStreamChunks(request, engine, param('id'), param('key')),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
-  streamSSE: async ({ request, engine, param }) => handleStreamSSE(request, engine, param('id')),
   replayWorkflowToStep: async ({ request, engine, param }) =>
     handleReplayWorkflowToStep(request, engine, param('id'), param('step')),
   openApiDocument: async () => jsonResponse(generateOpenApiDocument()),
