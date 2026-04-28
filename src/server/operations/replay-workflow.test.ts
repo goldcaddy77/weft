@@ -126,15 +126,20 @@ function openWebSocket(url: string, token?: string): Promise<WebSocket> {
 
 describe('weft.workflows.replay authorization parity', () => {
   const servers: WeftServer[] = [];
+  const engines: Engine[] = [];
 
   afterEach(async () => {
     while (servers.length > 0) {
       await servers.pop()?.stop();
     }
+    while (engines.length > 0) {
+      engines.pop()?.[Symbol.dispose]();
+    }
   });
 
   it('REST uses the same scoped access policy as JSON-RPC HTTP', async () => {
     const engine = createReplayEngine();
+    engines.push(engine);
     const workflowId = await createReplayWorkflow(engine);
     const noScopeToken = await issueJwt(['quota:read']);
     const readToken = await issueJwt(['workflows:read']);
@@ -208,6 +213,7 @@ describe('weft.workflows.replay authorization parity', () => {
 
   it('WebSocket sessions bind authenticated identity at upgrade time', async () => {
     const anonymousEngine = createReplayEngine();
+    engines.push(anonymousEngine);
     const anonymousWorkflowId = await createReplayWorkflow(anonymousEngine, 'wf-replay-ws-anon');
     const anonymousServer = serve({ engine: anonymousEngine, port: 0 });
     servers.push(anonymousServer);
@@ -236,10 +242,12 @@ describe('weft.workflows.replay authorization parity', () => {
     anonymousSocket.close();
 
     const authenticatedEngine = createReplayEngine();
+    engines.push(authenticatedEngine);
     const authenticatedWorkflowId = await createReplayWorkflow(
       authenticatedEngine,
       'wf-replay-ws-authenticated',
     );
+    const noScopeToken = await issueJwt(['quota:read']);
     const readToken = await issueJwt(['workflows:read']);
     const authenticatedServer = serve({
       engine: authenticatedEngine,
@@ -274,10 +282,35 @@ describe('weft.workflows.replay authorization parity', () => {
     expect(authenticatedResponse.error).toBeUndefined();
     expect(authenticatedResponse.result?.checkpoint?.step).toBe(2);
     authenticatedSocket.close();
+
+    const forbiddenSocket = await openWebSocket(
+      `${authenticatedServer.url.replace('http://', 'ws://')}/jsonrpc`,
+      noScopeToken,
+    );
+    const forbiddenResponsePromise = waitForMessage(forbiddenSocket, (parsed) => {
+      return (
+        typeof parsed === 'object' && parsed !== null && (parsed as { id?: string }).id === 'forbid'
+      );
+    });
+    forbiddenSocket.send(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'forbid',
+        method: 'weft.workflows.replay',
+        params: { workflowId: authenticatedWorkflowId, step: 2 },
+      }),
+    );
+    const forbiddenResponse = (await forbiddenResponsePromise) as {
+      error?: { data?: { weftCode?: string; httpStatus?: number } };
+    };
+    expect(forbiddenResponse.error?.data?.weftCode).toBe('Forbidden');
+    expect(forbiddenResponse.error?.data?.httpStatus).toBe(403);
+    forbiddenSocket.close();
   });
 
   it('stdio authorization uses the same operation-level policy hook once a session exists', async () => {
     const engine = createReplayEngine();
+    engines.push(engine);
     const workflowId = await createReplayWorkflow(engine);
     const registry = createLiveOperationRegistry();
 

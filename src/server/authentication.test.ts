@@ -828,7 +828,10 @@ describe('serve() with authentication', () => {
     });
     server = serve({ engine, port: 0, auth: { jwt: { secret: TEST_SECRET } } });
 
-    const token = await signJWT({ sub: 'user-1', tenantId: 'acme' }, TEST_SECRET);
+    const token = await signJWT(
+      { sub: 'user-1', tenantId: 'acme', scope: 'quota:read' },
+      TEST_SECRET,
+    );
 
     const startResponse = await fetch(`${server.url}/v1/workflows`, {
       method: 'POST',
@@ -866,8 +869,14 @@ describe('serve() with authentication', () => {
     });
     server = serve({ engine, port: 0, auth: { jwt: { secret: TEST_SECRET } } });
 
-    const startToken = await signJWT({ sub: 'user-1', tenantId: 'acme' }, TEST_SECRET);
-    const mismatchedTenantToken = await signJWT({ sub: 'user-1', tenantId: 'other' }, TEST_SECRET);
+    const startToken = await signJWT(
+      { sub: 'user-1', tenantId: 'acme', scope: 'quota:read' },
+      TEST_SECRET,
+    );
+    const mismatchedTenantToken = await signJWT(
+      { sub: 'user-1', tenantId: 'other', scope: 'quota:read' },
+      TEST_SECRET,
+    );
 
     const startResponse = await fetch(`${server.url}/v1/workflows`, {
       method: 'POST',
@@ -902,8 +911,11 @@ describe('serve() with authentication', () => {
     });
     server = serve({ engine, port: 0, auth: { jwt: { secret: TEST_SECRET } } });
 
-    const startToken = await signJWT({ sub: 'user-1', tenantId: 'acme' }, TEST_SECRET);
-    const missingTenantToken = await signJWT({ sub: 'user-1' }, TEST_SECRET);
+    const startToken = await signJWT(
+      { sub: 'user-1', tenantId: 'acme', scope: 'quota:read' },
+      TEST_SECRET,
+    );
+    const missingTenantToken = await signJWT({ sub: 'user-1', scope: 'quota:read' }, TEST_SECRET);
 
     const startResponse = await fetch(`${server.url}/v1/workflows`, {
       method: 'POST',

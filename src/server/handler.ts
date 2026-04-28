@@ -22,7 +22,6 @@ import { generateOpenApiDocument } from './openapi.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
 import type { OperationFault } from './operation-fault.ts';
 import { FAULT_CODE_TO_HTTP_STATUS } from './operation-fault.ts';
-import { MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE } from './operations/schedule-faults.ts';
 import {
   anonymousPrincipal,
   principalFromApiKey,
@@ -33,7 +32,7 @@ import {
 import { bindingPathMatches, MalformedRouteParameterError } from './rest-binding.ts';
 import {
   createLiveOperationRegistry,
-  REST_BINDINGS,
+  createLiveRestBindings,
   type UnknownRestBinding,
 } from './rest-bindings.ts';
 import { ROUTES, toRegex } from './route-model.ts';
@@ -144,56 +143,11 @@ export function getRequiredRouteParameter(
   return value;
 }
 
-const MISSING_TENANT_QUOTA_CLAIM_MESSAGE =
-  'JWT-authenticated tenant quota requests require a tenantId, tenant_id, or tenant claim';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 function applyLegacyRestInputCompatibility(
-  operationName: string,
+  _operationName: string,
   input: unknown,
-  principal: Principal,
+  _principal: Principal,
 ): { input: unknown } | { response: Response } {
-  if (operationName === 'weft.schedules.list' || operationName === 'weft.schedules.get') {
-    if (principal.method !== 'jwt') {
-      return { input };
-    }
-
-    if (principal.tenantId === undefined) {
-      return { response: errorResponse(MISSING_SCHEDULE_TENANT_CLAIM_MESSAGE, 403) };
-    }
-
-    if (!isRecord(input)) {
-      return { input };
-    }
-
-    return {
-      input: {
-        ...input,
-        _resolvedTenantId: principal.tenantId,
-      },
-    };
-  }
-
-  if (operationName === 'weft.tenants.quota.get' && principal.method === 'jwt') {
-    if (principal.tenantId === undefined) {
-      return { response: errorResponse(MISSING_TENANT_QUOTA_CLAIM_MESSAGE, 403) };
-    }
-
-    if (!isRecord(input)) {
-      return { input };
-    }
-
-    const tenantId = input['tenantId'];
-    if (typeof tenantId === 'string' && tenantId.trim() !== principal.tenantId) {
-      return {
-        response: errorResponse('Tenant quota access is limited to the authenticated tenant', 403),
-      };
-    }
-  }
-
   return { input };
 }
 
@@ -400,6 +354,11 @@ export interface HandlerOptions {
    * with `operationRegistry`. Omit both to use the live defaults.
    */
   restBindings?: ReadonlyArray<UnknownRestBinding>;
+  /**
+   * Opt in to legacy compatibility shims that predate the transport-neutral
+   * operation catalog.
+   */
+  legacyCompatMode?: boolean;
 }
 
 /**
@@ -478,10 +437,13 @@ async function dispatchViaExecuteOperation(
     return compatibility.response;
   }
   input = compatibility.input;
+  const legacyDirectHandlerCompatibility = options?.legacyDirectHandlerCompatibility ?? false;
   const effectivePrincipal = applyLegacyDirectHandlerPrincipalCompatibility(
     binding.operationName,
-    applyLegacyJwtQuotaScopeCompatibility(binding.operationName, principal),
-    options?.legacyDirectHandlerCompatibility ?? false,
+    legacyDirectHandlerCompatibility
+      ? applyLegacyJwtQuotaScopeCompatibility(binding.operationName, principal)
+      : principal,
+    legacyDirectHandlerCompatibility,
   );
   const result = await executeOperation(binding.operationName, input, {
     principal: effectivePrincipal,
@@ -607,6 +569,14 @@ function defaultOperationRegistry(): OperationRegistry {
   return _defaultOperationRegistry;
 }
 
+let _defaultRestBindings: ReadonlyArray<UnknownRestBinding> | undefined;
+function defaultRestBindings(): ReadonlyArray<UnknownRestBinding> {
+  if (_defaultRestBindings === undefined) {
+    _defaultRestBindings = createLiveRestBindings({});
+  }
+  return _defaultRestBindings;
+}
+
 /** Pure HTTP request handler. Maps Request to Response. */
 // oxlint-disable-next-line eslint(complexity) -- this request boundary intentionally owns binding-first dispatch, legacy fallback, and compatibility shims in one place.
 export async function handleRequest(
@@ -633,9 +603,7 @@ export async function handleRequest(
       500,
     );
   }
-  const usesExplicitOperationPipeline =
-    options?.restBindings !== undefined && options?.operationRegistry !== undefined;
-  const restBindings = options?.restBindings ?? REST_BINDINGS;
+  const restBindings = options?.restBindings ?? defaultRestBindings();
   const operationRegistry = options?.operationRegistry ?? defaultOperationRegistry();
   let bindingMatch: ReturnType<typeof matchRestBinding>;
   try {
@@ -662,7 +630,7 @@ export async function handleRequest(
         principal = authContextToPrincipal(options?.authContext);
       } catch (error) {
         if (
-          !usesExplicitOperationPipeline &&
+          options?.legacyCompatMode === true &&
           options?.authContext?.method === 'jwt' &&
           options.authContext.claims === undefined
         ) {
@@ -679,11 +647,11 @@ export async function handleRequest(
         bindingMatch.pathParams,
         operationRegistry,
         principal,
-        { legacyDirectHandlerCompatibility: !usesExplicitOperationPipeline },
+        { legacyDirectHandlerCompatibility: options?.legacyCompatMode === true },
       );
     } catch (error) {
       const logLabel =
-        !usesExplicitOperationPipeline &&
+        options?.legacyCompatMode === true &&
         bindingMatch.binding.operationName === 'weft.tenants.quota.get'
           ? 'Unhandled error in handleRequest'
           : 'Unhandled error in dispatchViaExecuteOperation';

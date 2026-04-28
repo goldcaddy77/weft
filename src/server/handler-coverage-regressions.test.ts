@@ -7,6 +7,7 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { handleRequest } from './handler.ts';
 import { createOperationRegistry } from './operation-catalog.ts';
 import { defineOperation } from './operation-registry.ts';
+import { principalFromApiKey } from './principal.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
 
 function createEngine(): Engine {
@@ -27,6 +28,15 @@ function request(method: string, path: string, body?: unknown): Request {
           body: JSON.stringify(body),
         }),
   });
+}
+
+function apiKeyAuth() {
+  return {
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+    },
+  };
 }
 
 describe('handleRequest coverage regressions', () => {
@@ -142,7 +152,11 @@ describe('handleRequest coverage regressions', () => {
     engine.getSchedule = async () => {
       throw new Error('Schedule "missing" not found');
     };
-    let response = await handleRequest(request('GET', '/v1/schedules/missing'), engine);
+    let response = await handleRequest(
+      request('GET', '/v1/schedules/missing'),
+      engine,
+      apiKeyAuth(),
+    );
     expect(response.status).toBe(404);
 
     engine.schedule = async () => {

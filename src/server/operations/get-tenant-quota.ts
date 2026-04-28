@@ -38,12 +38,33 @@ export const getTenantQuotaOperation = defineOperation<GetTenantQuotaInput, GetT
   },
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
-  invoke: async ({ input, engine }): Promise<GetTenantQuotaOutput> => {
+  invoke: async ({ input, engine, principal }): Promise<GetTenantQuotaOutput> => {
     const e = engine as Engine;
 
     const normalizedTenantId = input.tenantId.trim();
     if (normalizedTenantId.length === 0) {
       throw invalidParamsFault('Tenant id must be a non-empty string');
+    }
+
+    if (principal.method === 'jwt') {
+      if (principal.tenantId === undefined) {
+        throw {
+          code: 'Forbidden',
+          message:
+            'JWT-authenticated tenant quota requests require a tenantId, tenant_id, or tenant claim',
+          data: {
+            reason:
+              'JWT-authenticated tenant quota requests require a tenantId, tenant_id, or tenant claim',
+          },
+        } satisfies OperationFault;
+      }
+      if (principal.tenantId !== normalizedTenantId) {
+        throw {
+          code: 'Forbidden',
+          message: 'Tenant quota access is limited to the authenticated tenant',
+          data: { reason: 'Tenant quota access is limited to the authenticated tenant' },
+        } satisfies OperationFault;
+      }
     }
 
     return e.getQuotaUsage(normalizedTenantId);

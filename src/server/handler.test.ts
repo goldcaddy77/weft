@@ -11,6 +11,7 @@ import { UpdateCoordinator, WorkflowTerminalError } from '../core/updates.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { getRequiredRouteParameter, handleRequest } from './handler.ts';
+import { principalFromApiKey } from './principal.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -19,6 +20,19 @@ import { getRequiredRouteParameter, handleRequest } from './handler.ts';
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
   await Bun.sleep(10);
+}
+
+/**
+ * HandlerOptions that inject an api-key principal, bypassing the auth layer
+ * for tests that verify behavior of operations that now require authentication.
+ */
+function apiKeyAuth() {
+  return {
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+    },
+  };
 }
 
 async function waitForCondition(
@@ -191,7 +205,11 @@ describe('handleRequest', () => {
       expect(createResponse.status).toBe(201);
       expect(await json(createResponse)).toEqual({ id: 'nightly-maintenance' });
 
-      const listResponse = await handleRequest(request('GET', '/v1/schedules'), engine);
+      const listResponse = await handleRequest(
+        request('GET', '/v1/schedules'),
+        engine,
+        apiKeyAuth(),
+      );
       expect(listResponse.status).toBe(200);
 
       const listed = (await json(listResponse)) as {
@@ -226,7 +244,11 @@ describe('handleRequest', () => {
       engine = createEngine();
       await engine.schedule('echo', 'payload', '0 * * * *', { id: 'schedule-detail' });
 
-      const response = await handleRequest(request('GET', '/v1/schedules/schedule-detail'), engine);
+      const response = await handleRequest(
+        request('GET', '/v1/schedules/schedule-detail'),
+        engine,
+        apiKeyAuth(),
+      );
 
       expect(response.status).toBe(200);
       expect(await json(response)).toEqual(
@@ -322,7 +344,11 @@ describe('handleRequest', () => {
     it('GET /v1/schedules rejects invalid status filters', async () => {
       engine = createEngine();
 
-      const response = await handleRequest(request('GET', '/v1/schedules?status=unknown'), engine);
+      const response = await handleRequest(
+        request('GET', '/v1/schedules?status=unknown'),
+        engine,
+        apiKeyAuth(),
+      );
 
       expect(response.status).toBe(400);
       expect(await json(response)).toEqual({
@@ -336,6 +362,7 @@ describe('handleRequest', () => {
       const invalidLimitResponse = await handleRequest(
         request('GET', '/v1/schedules?limit=bogus'),
         engine,
+        apiKeyAuth(),
       );
       expect(invalidLimitResponse.status).toBe(400);
       expect(await json(invalidLimitResponse)).toEqual({
@@ -345,6 +372,7 @@ describe('handleRequest', () => {
       const invalidOffsetResponse = await handleRequest(
         request('GET', '/v1/schedules?offset=-1'),
         engine,
+        apiKeyAuth(),
       );
       expect(invalidOffsetResponse.status).toBe(400);
       expect(await json(invalidOffsetResponse)).toEqual({
@@ -576,6 +604,7 @@ describe('handleRequest', () => {
       const getResponse = await handleRequest(
         request('GET', '/v1/schedules/missing-schedule'),
         engine,
+        apiKeyAuth(),
       );
       expect(getResponse.status).toBe(404);
 
@@ -715,7 +744,11 @@ describe('handleRequest', () => {
     );
     await flush();
 
-    const response = await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine);
+    const response = await handleRequest(
+      request('GET', '/v1/tenants/acme/quota'),
+      engine,
+      apiKeyAuth(),
+    );
 
     expect(response.status).toBe(200);
     const body = (await json(response)) as {
@@ -739,15 +772,20 @@ describe('handleRequest', () => {
       return input;
     });
 
-    expect(await handleRequest(request('GET', '/v1/tenants/%20%20/quota'), engine)).toMatchObject({
+    // Blank tenantId validation requires the request to pass auth first.
+    expect(
+      await handleRequest(request('GET', '/v1/tenants/%20%20/quota'), engine, apiKeyAuth()),
+    ).toMatchObject({
       status: 400,
     });
 
+    // JWT authContext without claims is a contract violation — the production
+    // authenticator always populates claims. The handler throws + returns 500.
     expect(
       await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine, {
         authContext: { method: 'jwt' },
       }),
-    ).toMatchObject({ status: 403 });
+    ).toMatchObject({ status: 500 });
 
     expect(
       await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine, {
@@ -755,11 +793,13 @@ describe('handleRequest', () => {
       }),
     ).toMatchObject({ status: 403 });
 
+    // The tenant fallback uses the 'tenant' claim when 'tenantId' is whitespace-only.
+    // Add quota:read scope so the scoped-access check passes.
     expect(
       await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine, {
         authContext: {
           method: 'jwt',
-          claims: { tenantId: '   ', tenant: 'acme' },
+          claims: { tenantId: '   ', tenant: 'acme', scope: 'quota:read' },
         },
       }),
     ).toMatchObject({ status: 200 });
@@ -774,7 +814,9 @@ describe('handleRequest', () => {
     ).toMatchObject({ status: 403 });
   });
 
-  it('GET /v1/tenants/:id/quota lets unexpected errors reach the top-level handler logger', async () => {
+  it('GET /v1/tenants/:id/quota maps engine failures to 500 with the legacy body', async () => {
+    // After Wave 1 migration: EngineFailure from the operation invoke() is
+    // returned as a proper 500 fault response — no legacy re-throw path fires.
     engine = new Engine({
       storage: new MemoryStorage(),
       tenantResolver: tenantFromInputField('tenantId'),
@@ -788,24 +830,19 @@ describe('handleRequest', () => {
       throw new Error('quota exploded');
     };
 
-    const recordedCalls: unknown[][] = [];
-    const originalError = console.error;
-    console.error = ((...args: unknown[]) => {
-      recordedCalls.push(args);
-    }) as typeof console.error;
-
     let response: Response;
     try {
-      response = await handleRequest(request('GET', '/v1/tenants/acme/quota'), engine);
+      response = await handleRequest(
+        request('GET', '/v1/tenants/acme/quota'),
+        engine,
+        apiKeyAuth(),
+      );
     } finally {
-      console.error = originalError;
       engine.getQuotaUsage = originalGetQuotaUsage;
     }
 
     expect(response.status).toBe(500);
     expect(await json(response)).toEqual({ error: 'Internal server error' });
-    expect(recordedCalls).toHaveLength(1);
-    expect(recordedCalls[0]?.map(String).join(' ')).toContain('Unhandled error in handleRequest');
   });
 
   it('GET /v1/tenants/:id/quota rejects blank tenant ids', async () => {
@@ -817,7 +854,11 @@ describe('handleRequest', () => {
       return input;
     });
 
-    const response = await handleRequest(request('GET', '/v1/tenants/%20%20/quota'), engine);
+    const response = await handleRequest(
+      request('GET', '/v1/tenants/%20%20/quota'),
+      engine,
+      apiKeyAuth(),
+    );
 
     expect(response.status).toBe(400);
     expect(await json(response)).toEqual({ error: 'Tenant id must be a non-empty string' });
@@ -4047,6 +4088,7 @@ describe('handleRequest', () => {
     const response = await handleRequest(
       request('GET', '/v1/workflows/wf-http-replay/replay/2'),
       engine,
+      apiKeyAuth(),
     );
 
     expect(response.status).toBe(200);
@@ -4067,6 +4109,7 @@ describe('handleRequest', () => {
     const response = await handleRequest(
       request('GET', '/v1/workflows/wf-replay-step/replay/9007199254740992'),
       engine,
+      apiKeyAuth(),
     );
 
     expect(response.status).toBe(400);

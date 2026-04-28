@@ -19,6 +19,8 @@ import { MetricsCollector } from '../observability/metrics.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { signJWT } from './authentication.ts';
 import { serve, type WeftServer } from './index.ts';
+import { executeOperation } from './operation-catalog.ts';
+import { principalFromJwtClaims } from './principal.ts';
 import { createLiveOperationRegistry } from './rest-bindings.ts';
 
 const TEST_SECRET = 'track-8-wave-1-test-secret-1234567890';
@@ -115,12 +117,58 @@ async function postJsonRpc(
   });
 }
 
+function waitForMessage(
+  ws: WebSocket,
+  predicate: (parsed: unknown) => boolean,
+  timeoutMs = 3_000,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      ws.removeEventListener('message', handler);
+      reject(new Error('waitForMessage timed out'));
+    }, timeoutMs);
+
+    function handler(event: MessageEvent) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(String(event.data));
+      } catch {
+        return;
+      }
+
+      if (predicate(parsed)) {
+        clearTimeout(timer);
+        ws.removeEventListener('message', handler);
+        resolve(parsed);
+      }
+    }
+
+    ws.addEventListener('message', handler);
+  });
+}
+
+function openWebSocket(url: string, token?: string): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const socket =
+      token === undefined
+        ? new WebSocket(url)
+        : // oxlint-disable-next-line typescript/no-explicit-any -- Bun's WebSocket accepts a headers init option not in the lib.dom type.
+          new WebSocket(url, { headers: { authorization: `Bearer ${token}` } } as any);
+    socket.addEventListener('open', () => resolve(socket));
+    socket.addEventListener('error', (event: Event) => reject(event));
+  });
+}
+
 describe('Track 8 Wave 1 migration regressions', () => {
   const servers: WeftServer[] = [];
+  const engines: Engine[] = [];
 
   afterEach(async () => {
     while (servers.length > 0) {
       await servers.pop()?.stop();
+    }
+    while (engines.length > 0) {
+      engines.pop()?.[Symbol.dispose]();
     }
   });
 
@@ -152,13 +200,23 @@ describe('Track 8 Wave 1 migration regressions', () => {
 
   it('GET /v1/schedules preserves the legacy success shape', async () => {
     const engine = createScheduleEngine();
+    engines.push(engine);
     await engine.schedule('echo', { payload: 'alpha' }, '0 * * * *', { id: 'schedule-alpha' });
     await engine.schedule('echo', { payload: 'beta' }, '30 * * * *', { id: 'schedule-beta' });
 
-    const server = serve({ engine, port: 0 });
+    // Schedules require authentication (access:authenticated added in Wave 1).
+    // Use an api-key server so the success-shape assertions can fire without
+    // triggering the JWT-tenant scope check that fires for JWT principals.
+    const server = serve({
+      engine,
+      port: 0,
+      auth: { apiKeys: ['test-schedule-key'] },
+    });
     servers.push(server);
 
-    const response = await fetch(`${server.url}/v1/schedules`);
+    const response = await fetch(`${server.url}/v1/schedules`, {
+      headers: { 'X-API-Key': 'test-schedule-key' },
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/json');
 
@@ -179,12 +237,21 @@ describe('Track 8 Wave 1 migration regressions', () => {
 
   it('GET /v1/schedules/:id preserves the legacy success shape and 404 contract', async () => {
     const engine = createScheduleEngine();
+    engines.push(engine);
     await engine.schedule('echo', { payload: 'alpha' }, '0 * * * *', { id: 'schedule-alpha' });
 
-    const server = serve({ engine, port: 0 });
+    // Schedules require authentication (access:authenticated added in Wave 1).
+    // Use api-key auth to avoid the JWT-tenant scope check.
+    const server = serve({
+      engine,
+      port: 0,
+      auth: { apiKeys: ['test-schedule-key'] },
+    });
     servers.push(server);
 
-    const success = await fetch(`${server.url}/v1/schedules/schedule-alpha`);
+    const success = await fetch(`${server.url}/v1/schedules/schedule-alpha`, {
+      headers: { 'X-API-Key': 'test-schedule-key' },
+    });
     expect(success.status).toBe(200);
     expect(success.headers.get('content-type')).toBe('application/json');
     const successBody = (await success.json()) as {
@@ -196,7 +263,9 @@ describe('Track 8 Wave 1 migration regressions', () => {
     expect(successBody.workflowType).toBe('echo');
     expect(successBody.cronExpression).toBe('0 * * * *');
 
-    const missing = await fetch(`${server.url}/v1/schedules/does-not-exist`);
+    const missing = await fetch(`${server.url}/v1/schedules/does-not-exist`, {
+      headers: { 'X-API-Key': 'test-schedule-key' },
+    });
     expect(missing.status).toBe(404);
     expect(missing.headers.get('content-type')).toBe('application/json');
     expect(await missing.json()).toEqual({
@@ -206,6 +275,7 @@ describe('Track 8 Wave 1 migration regressions', () => {
 
   it('GET /v1/tenants/:id/quota preserves success and auth outcomes on REST and JSON-RPC HTTP', async () => {
     const engine = createTenantAwareEngine();
+    engines.push(engine);
     const quotaToken = await issueJwt(['quota:read'], { tenantId: 'acme' });
     const noScopeToken = await issueJwt(['workflows:read'], { tenantId: 'acme' });
 
@@ -288,8 +358,86 @@ describe('Track 8 Wave 1 migration regressions', () => {
     expect(successJsonRpcBody.result?.tenantId).toBe('acme');
   });
 
+  it('tenant-IDOR guard rejects JWT tenant-A accessing tenant-B on all four transports', async () => {
+    const engine = createTenantAwareEngine();
+    engines.push(engine);
+    // A token for tenant-a with quota:read — must not be able to read tenant-b.
+    const tenantAToken = await issueJwt(['quota:read'], { tenantId: 'tenant-a' });
+
+    const authenticatedServer = serve({
+      engine,
+      port: 0,
+      auth: { jwt: { secret: TEST_SECRET } },
+    });
+    servers.push(authenticatedServer);
+
+    // REST — should be 403
+    const restResponse = await fetch(`${authenticatedServer.url}/v1/tenants/tenant-b/quota`, {
+      headers: { Authorization: `Bearer ${tenantAToken}` },
+    });
+    expect(restResponse.status).toBe(403);
+
+    // JSON-RPC HTTP — error.data.weftCode should be 'Forbidden'
+    const jsonRpcResponse = await postJsonRpc(
+      authenticatedServer,
+      {
+        method: 'weft.tenants.quota.get',
+        params: { tenantId: 'tenant-b' },
+      },
+      tenantAToken,
+    );
+    expect(jsonRpcResponse.status).toBe(200);
+    const jsonRpcBody = (await jsonRpcResponse.json()) as {
+      error?: { data?: { weftCode?: string; httpStatus?: number } };
+    };
+    expect(jsonRpcBody.error?.data?.weftCode).toBe('Forbidden');
+    expect(jsonRpcBody.error?.data?.httpStatus).toBe(403);
+
+    // JSON-RPC WebSocket — error.data.weftCode should be 'Forbidden'
+    const wsUrl = `${authenticatedServer.url.replace('http://', 'ws://')}/jsonrpc`;
+    const ws = await openWebSocket(wsUrl, tenantAToken);
+    const wsResponsePromise = waitForMessage(ws, (parsed) => {
+      return (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        (parsed as { id?: string }).id === 'idor-ws'
+      );
+    });
+    ws.send(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'idor-ws',
+        method: 'weft.tenants.quota.get',
+        params: { tenantId: 'tenant-b' },
+      }),
+    );
+    const wsResponse = (await wsResponsePromise) as {
+      error?: { data?: { weftCode?: string; httpStatus?: number } };
+    };
+    expect(wsResponse.error?.data?.weftCode).toBe('Forbidden');
+    expect(wsResponse.error?.data?.httpStatus).toBe(403);
+    ws.close();
+
+    // stdio — executeOperation directly with the decoded JWT principal
+    const tenantAPrincipal = principalFromJwtClaims({
+      sub: 'user-a',
+      scope: 'quota:read',
+      tenantId: 'tenant-a',
+    });
+    const liveRegistry = createLiveOperationRegistry();
+    const stdioResult = await executeOperation(
+      'weft.tenants.quota.get',
+      { tenantId: 'tenant-b' },
+      { principal: tenantAPrincipal, engine, transport: 'jsonRpcStdio', registry: liveRegistry },
+    );
+    expect(stdioResult.ok).toBe(false);
+    if (stdioResult.ok) throw new Error('expected Forbidden');
+    expect(stdioResult.fault.code).toBe('Forbidden');
+  });
+
   it('GET /v1/workflows/:id/replay/:step preserves the legacy success, 404, and REST auth contract', async () => {
     const engine = createReplayEngine();
+    engines.push(engine);
     const replayToken = await issueJwt(['workflows:read']);
     const noScopeToken = await issueJwt(['quota:read']);
     const workflowId = await createReplayWorkflow(engine);
@@ -350,6 +498,7 @@ describe('Track 8 Wave 1 migration regressions', () => {
 
   it('GET /v1/metrics/json preserves success and auth outcomes on REST and JSON-RPC HTTP', async () => {
     const engine = createScheduleEngine();
+    engines.push(engine);
     const metricsCollector = new MetricsCollector();
     metricsCollector.increment('weft_test_counter', 2);
 
@@ -427,11 +576,9 @@ describe('Track 8 Wave 1 migration regressions', () => {
       authenticatedServer,
       {
         method: 'weft.system.metrics',
-        params: {
-          snapshot: {
-            rpc_counter: { type: 'counter', value: 3 },
-          },
-        },
+        // weft.system.metrics ignores all input and returns the server-owned collector's
+        // snapshot. Send empty params — no unknown keys to trigger the 'reject' policy.
+        params: {},
       },
       metricsToken,
     );
@@ -441,9 +588,10 @@ describe('Track 8 Wave 1 migration regressions', () => {
       error?: unknown;
     };
     expect(successJsonRpcBody.error).toBeUndefined();
-    expect(successJsonRpcBody.result?.['rpc_counter']).toEqual({
+    // The collector was incremented at the top of this test with 'weft_test_counter' → 2
+    expect(successJsonRpcBody.result?.['weft_test_counter']).toEqual({
       type: 'counter',
-      value: 3,
+      value: 2,
     });
   });
 });

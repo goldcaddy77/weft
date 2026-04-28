@@ -21,8 +21,13 @@ import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fau
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
 import { invalidParamsFault } from './operation-helpers.ts';
+import { isOperationFault, resolveScheduleAccessOptions } from './schedule-faults.ts';
 
 const VALID_SCHEDULE_STATUSES = new Set<string>(['active', 'paused', 'cancelled']);
+
+function isValidScheduleStatus(value: string): value is ScheduleStatus {
+  return VALID_SCHEDULE_STATUSES.has(value);
+}
 
 const listSchedulesInput = z.object({
   status: z.unknown().optional(),
@@ -47,28 +52,33 @@ export const listSchedulesOperation = defineOperation<ListSchedulesInput, ListSc
   tags: ['Schedules'],
   inputSchema: listSchedulesInput,
   outputSchema: listSchedulesOutput as z.ZodType<ListSchedulesOutput>,
-  access: { kind: 'public' },
+  access: { kind: 'authenticated' },
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line eslint(complexity) -- preserves the legacy query-validation order at one transport-neutral invoke boundary.
-  invoke: async ({ input, engine }): Promise<ListSchedulesOutput> => {
+  invoke: async ({ input, engine, principal }): Promise<ListSchedulesOutput> => {
     const e = engine as Engine;
 
     // Build the ScheduleFilter from the validated input. Field-level
     // validation mirrors the legacy `parseScheduleListFilter` exactly.
     const filter: ScheduleFilter = {};
+    const accessOptions = resolveScheduleAccessOptions(principal);
+    if (isOperationFault(accessOptions)) {
+      throw accessOptions;
+    }
+    const resolvedTenantId = accessOptions?.tenantId;
 
     if (input.status !== undefined) {
-      const statuses = Array.isArray(input.status) ? (input.status as unknown[]) : [input.status];
+      const statuses = Array.isArray(input.status) ? input.status : [input.status];
 
       const normalized: ScheduleStatus[] = [];
       for (const s of statuses) {
-        if (typeof s !== 'string' || !VALID_SCHEDULE_STATUSES.has(s)) {
+        if (typeof s !== 'string' || !isValidScheduleStatus(s)) {
           throw invalidParamsFault(
             'Query parameter "status" must be one of active, paused, cancelled',
           );
         }
-        normalized.push(s as ScheduleStatus);
+        normalized.push(s);
       }
 
       if (normalized.length === 1 && normalized[0] !== undefined) {
@@ -92,13 +102,23 @@ export const listSchedulesOperation = defineOperation<ListSchedulesInput, ListSc
       filter.tenantId = input.tenantId;
     }
 
-    // JWT scope override: the REST binding injects the resolved tenant id
-    // into `_resolvedTenantId` before calling executeOperation. The same
-    // field can be set by JSON-RPC callers (no-op for non-JWT principals).
-    if (input._resolvedTenantId !== undefined) {
+    if (
+      input._resolvedTenantId !== undefined &&
+      resolvedTenantId !== undefined &&
+      input._resolvedTenantId !== resolvedTenantId
+    ) {
+      const fault: OperationFault = {
+        code: 'Forbidden',
+        message: 'Schedule access is limited to the authenticated tenant',
+        data: { reason: 'tenantId mismatch with JWT claim' },
+      };
+      throw fault;
+    }
+
+    if (resolvedTenantId !== undefined) {
       // If the caller also passed tenantId and it disagrees, that is a
       // scope-mismatch — the tenant scope wins.
-      if (filter.tenantId !== undefined && filter.tenantId !== input._resolvedTenantId) {
+      if (filter.tenantId !== undefined && filter.tenantId !== resolvedTenantId) {
         const fault: OperationFault = {
           code: 'Forbidden',
           message: 'Schedule access is limited to the authenticated tenant',
@@ -106,7 +126,7 @@ export const listSchedulesOperation = defineOperation<ListSchedulesInput, ListSc
         };
         throw fault;
       }
-      filter.tenantId = input._resolvedTenantId;
+      filter.tenantId = resolvedTenantId;
     }
 
     if (input.limit !== undefined) {
@@ -139,6 +159,12 @@ function shapeListSchedulesFault(fault: OperationFault): Response {
   if (fault.code === 'Forbidden') {
     return new Response(JSON.stringify({ error: fault.message }), {
       status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (fault.code === 'Unauthorized') {
+    return new Response(JSON.stringify({ error: fault.message }), {
+      status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
   }

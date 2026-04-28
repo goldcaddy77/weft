@@ -16,6 +16,7 @@ import type { ScheduleSummary } from '../../core/types.ts';
 import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
+import { isOperationFault, resolveScheduleAccessOptions } from './schedule-faults.ts';
 
 const getScheduleInput = z.object({
   scheduleId: z.string().min(1),
@@ -34,14 +35,27 @@ export const getScheduleOperation = defineOperation<GetScheduleInput, GetSchedul
   tags: ['Schedules'],
   inputSchema: getScheduleInput,
   outputSchema: getScheduleOutput as z.ZodType<GetScheduleOutput>,
-  access: { kind: 'public' },
+  access: { kind: 'authenticated' },
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
-  invoke: async ({ input, engine }): Promise<GetScheduleOutput> => {
+  invoke: async ({ input, engine, principal }): Promise<GetScheduleOutput> => {
     const e = engine as Engine;
+    const accessOptions = resolveScheduleAccessOptions(principal);
+    if (isOperationFault(accessOptions)) {
+      throw accessOptions;
+    }
 
-    const accessOptions =
-      input._resolvedTenantId !== undefined ? { tenantId: input._resolvedTenantId } : undefined;
+    if (
+      input._resolvedTenantId !== undefined &&
+      accessOptions?.tenantId !== undefined &&
+      input._resolvedTenantId !== accessOptions.tenantId
+    ) {
+      throw {
+        code: 'Forbidden',
+        message: 'Schedule access is limited to the authenticated tenant',
+        data: { reason: 'tenantId mismatch with JWT claim' },
+      } satisfies OperationFault;
+    }
 
     const schedule = await e.getSchedule(input.scheduleId, accessOptions);
     if (schedule === null) {
@@ -66,6 +80,12 @@ function shapeGetScheduleFault(fault: OperationFault): Response {
   if (fault.code === 'Forbidden') {
     return new Response(JSON.stringify({ error: fault.message }), {
       status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (fault.code === 'Unauthorized') {
+    return new Response(JSON.stringify({ error: fault.message }), {
+      status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
   }

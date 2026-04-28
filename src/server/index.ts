@@ -884,7 +884,12 @@ export function serve(options: ServeOptions): WeftServer {
   // lifetime so `executeOperation` sees the same resolution table
   // across requests. Registry contents are immutable after creation,
   // so sharing across concurrent requests is safe.
-  const liveOperationRegistry = createLiveOperationRegistry();
+  const liveOperationRegistry = createLiveOperationRegistry(
+    options.metricsCollector !== undefined ? { metricsCollector: options.metricsCollector } : {},
+  );
+  const liveRestBindings = createLiveRestBindings(
+    options.metricsCollector !== undefined ? { metricsCollector: options.metricsCollector } : {},
+  );
   const eventFeedBackend = createEngineEventFeedBackend(options.engine);
   const workflowEventFeed: WorkflowEventFeed = createWorkflowEventFeed(eventFeedBackend);
   // Track every live `/jsonrpc` session so shutdown can await their
@@ -1296,11 +1301,7 @@ export function serve(options: ServeOptions): WeftServer {
           ? { metricsCollector: options.metricsCollector }
           : {}),
         operationRegistry: liveOperationRegistry,
-        restBindings: createLiveRestBindings(
-          options.metricsCollector !== undefined
-            ? { metricsCollector: options.metricsCollector }
-            : undefined,
-        ),
+        restBindings: liveRestBindings,
       });
     },
     websocket: {

@@ -63,6 +63,7 @@ import {
   getStreamChunksRestBinding,
 } from './operations/get-stream-chunks.ts';
 import {
+  createGetSystemMetricsOperation,
   createGetSystemMetricsRestBinding,
   getSystemMetricsOperation,
 } from './operations/get-system-metrics.ts';
@@ -235,12 +236,7 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
 export function createLiveRestBindings(options?: {
   metricsCollector?: MetricsCollector;
 }): ReadonlyArray<UnknownRestBinding> {
-  return [
-    ...REST_BINDINGS,
-    options?.metricsCollector === undefined
-      ? createGetSystemMetricsRestBinding({})
-      : createGetSystemMetricsRestBinding({ metricsCollector: options.metricsCollector }),
-  ];
+  return [...REST_BINDINGS, createGetSystemMetricsRestBinding(options ?? {})];
 }
 
 /**
@@ -253,7 +249,12 @@ export function createLiveRestBindings(options?: {
  * assignable to `RegistrableOperation` by the variance design in
  * `operation-catalog.ts` — no `as ErasedOperation` cast is needed.
  */
-export function createLiveOperationRegistry(): OperationRegistry {
+/**
+ * Create the live operation registry for a server instance.
+ */
+export function createLiveOperationRegistry(options?: {
+  metricsCollector?: MetricsCollector;
+}): OperationRegistry {
   return createOperationRegistry([
     startWorkflowOperation,
     recoverAllOperation,
@@ -299,6 +300,8 @@ export function createLiveOperationRegistry(): OperationRegistry {
     getScheduleOperation,
     getTenantQuotaOperation,
     replayWorkflowOperation,
-    getSystemMetricsOperation,
+    options?.metricsCollector === undefined
+      ? getSystemMetricsOperation
+      : createGetSystemMetricsOperation({ metricsCollector: options.metricsCollector }),
   ]);
 }

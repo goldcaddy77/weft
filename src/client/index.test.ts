@@ -4,6 +4,7 @@ import { Engine } from '../core/engine.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
+import { principalFromApiKey } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { HttpClient, HttpClientError } from './index.ts';
 import type { WeftClient } from './interface.ts';
@@ -407,7 +408,17 @@ beforeAll(() => {
   server = Bun.serve({
     port: 0, // random available port
     async fetch(request) {
-      return handleRequest(request, engine);
+      // Inject a broad api-key principal so authenticated operations work
+      // in this test environment which does not configure a real auth server.
+      return handleRequest(request, engine, {
+        authContext: {
+          method: 'api-key',
+          principal: principalFromApiKey({
+            subject: 'http-client-test',
+            scopes: ['quota:read', 'workflows:read', 'system:read'],
+          }),
+        },
+      });
     },
   });
 
