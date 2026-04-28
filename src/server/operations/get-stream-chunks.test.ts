@@ -72,20 +72,27 @@ describe('weft.workflows.streams.chunks', () => {
     }
   });
 
-  it('returns 400 with a precise message for a non-numeric `after`', async () => {
-    const engine = createEngineWithChunks();
+  it.each(['not-a-number', '0x10', '1e3'])(
+    'returns 400 with a precise message for an invalid `after` (%s)',
+    async (badValue) => {
+      // Legacy parity: `parseOptionalSequenceCursor` rejects hex (0x10),
+      // scientific notation (1e3), and obviously non-numeric strings via the
+      // same DECIMAL_INTEGER_PATTERN regex. Cover all three classes here so
+      // a future change to the regex doesn't silently widen acceptance.
+      const engine = createEngineWithChunks();
 
-    const response = await handleRequest(
-      request('GET', '/v1/workflows/wf-1/streams/tokens?after=not-a-number'),
-      engine,
-      { operationRegistry: registry, restBindings: bindings },
-    );
+      const response = await handleRequest(
+        request('GET', `/v1/workflows/wf-1/streams/tokens?after=${badValue}`),
+        engine,
+        { operationRegistry: registry, restBindings: bindings },
+      );
 
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
-      error: 'Invalid after query parameter: not-a-number',
-    });
-  });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: `Invalid after query parameter: ${badValue}`,
+      });
+    },
+  );
 
   it('returns 400 for an empty `after` query parameter (legacy parity)', async () => {
     const engine = createEngineWithChunks();

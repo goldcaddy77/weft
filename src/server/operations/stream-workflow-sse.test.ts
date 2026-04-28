@@ -115,6 +115,26 @@ describe('weft.workflows.streams.sse', () => {
     }
   });
 
+  it('returns 404 (not 400) for missing-workflow + invalid Last-Event-ID', async () => {
+    // Legacy precedence: `handleStreamSSE` checked workflow existence BEFORE
+    // parsing `Last-Event-ID`, so a missing workflow with a bad cursor
+    // returned 404, not 400. Pin this so a future refactor that re-orders
+    // those checks (e.g. parsing the cursor in extractInput) breaks loudly.
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('GET', '/v1/workflows/missing-wf/sse', {
+        Accept: 'text/event-stream',
+        'Last-Event-ID': 'not-a-number',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Workflow "missing-wf" not found' });
+  });
+
   it('returns 400 for an invalid Last-Event-ID header', async () => {
     const engine = createEngine();
     const handle = await engine.start('hold', null, { id: 'wf-sse-bad-cursor' });

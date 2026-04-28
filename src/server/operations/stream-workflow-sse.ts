@@ -11,9 +11,13 @@ import { createStoredChunkSSEStream, SSE_RESPONSE_HEADERS } from './sse-stream.t
 
 const TOKENS_STREAM_KEY = 'tokens';
 
+// `after` is permissive at the schema boundary so REST and JSON-RPC clients
+// share one validation path. extractInput passes through the raw header
+// string; invoke parses it AFTER the 404 workflow-existence check, matching
+// legacy `handleStreamSSE` precedence (workflow-not-found beats bad cursor).
 const streamWorkflowSseInput = z.object({
   workflowId: z.string().min(1),
-  after: z.number().int().optional(),
+  after: z.unknown().optional(),
 });
 
 export type StreamWorkflowSseInput = z.infer<typeof streamWorkflowSseInput>;
@@ -38,6 +42,8 @@ export const streamWorkflowSseOperation = defineOperation<
   invoke: async ({ input, engine }): Promise<StreamWorkflowSseOutput> => {
     const e = engine as Engine;
 
+    // 404 wins precedence over a bad cursor — legacy `handleStreamSSE`
+    // checked workflow existence before parsing `Last-Event-ID`.
     const state = await e.get(input.workflowId);
     if (state === null) {
       const message = `Workflow "${input.workflowId}" not found`;
@@ -49,10 +55,28 @@ export const streamWorkflowSseOperation = defineOperation<
       throw fault;
     }
 
+    // REST passes the raw `Last-Event-ID` header string; JSON-RPC may pass an
+    // already-parsed number. Either way, run the legacy validator so both
+    // transports hit the same "Invalid Last-Event-ID header" error path.
+    let after: number | undefined;
+    if (input.after !== undefined) {
+      const rawCursor =
+        typeof input.after === 'string'
+          ? input.after
+          : typeof input.after === 'number'
+            ? String(input.after)
+            : '';
+      const parsed = parseOptionalSequenceCursor(rawCursor, 'Last-Event-ID header');
+      if (parsed.error !== undefined) {
+        throw invalidParamsFault(parsed.error);
+      }
+      after = parsed.value;
+    }
+
     try {
       const chunks =
-        input.after !== undefined
-          ? await e.getStreamChunks(input.workflowId, TOKENS_STREAM_KEY, { after: input.after })
+        after !== undefined
+          ? await e.getStreamChunks(input.workflowId, TOKENS_STREAM_KEY, { after })
           : await e.getStreamChunks(input.workflowId, TOKENS_STREAM_KEY);
       return { chunks };
     } catch (error) {
@@ -92,14 +116,11 @@ function mapTokenChunkToText(chunk: StoredStreamChunk): string | null {
   if (typeof chunk.value === 'string') {
     return chunk.value;
   }
-  if (
-    typeof chunk.value === 'object' &&
-    chunk.value !== null &&
-    'token' in chunk.value &&
-    typeof (chunk.value as { token?: unknown }).token === 'string' &&
-    (chunk.value as { token: string }).token.length > 0
-  ) {
-    return (chunk.value as { token: string }).token;
+  if (typeof chunk.value === 'object' && chunk.value !== null && 'token' in chunk.value) {
+    const { token } = chunk.value as { token: unknown };
+    if (typeof token === 'string' && token.length > 0) {
+      return token;
+    }
   }
   return null;
 }
@@ -128,17 +149,13 @@ export const streamWorkflowSseRestBinding: UnknownRestBinding = {
       throw invalidParamsFault(ACCEPT_HEADER_MUST_INCLUDE_SSE);
     }
 
-    const result = parseOptionalSequenceCursor(
-      request.headers.get('Last-Event-ID'),
-      'Last-Event-ID header',
-    );
-    if (result.error !== undefined) {
-      throw invalidParamsFault(result.error);
-    }
-
+    // Pass the raw `Last-Event-ID` header through; `invoke` parses and
+    // validates it AFTER the workflow-existence check so the legacy 404
+    // precedence over a bad cursor is preserved.
+    const rawLastEventId = request.headers.get('Last-Event-ID');
     return {
       workflowId: pathParams['id'] ?? '',
-      ...(result.value !== undefined ? { after: result.value } : {}),
+      ...(rawLastEventId !== null ? { after: rawLastEventId } : {}),
     };
   },
   success: { kind: 'streaming', mediaType: 'text/event-stream' },
