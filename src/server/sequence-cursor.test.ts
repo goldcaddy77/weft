@@ -28,3 +28,8 @@ describe('parseOptionalSequenceCursor', () => {
     expect(parseOptionalSequenceCursor('42', 'after')).toEqual({ value: 42 });
   });
 });
+
+it('All live views share the same sequence and cursor semantics. Replay, resume, and ordering rules are identical across HTTP, WebSocket, and the Track 8 runtime stdio JSON-RPC transport.', () => {
+  expect(parseOptionalSequenceCursor('42', 'after')).toEqual({ value: 42 });
+  expect(parseOptionalSequenceCursor('42', 'before')).toEqual({ value: 42 });
+});

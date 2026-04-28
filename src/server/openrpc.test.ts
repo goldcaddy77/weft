@@ -91,7 +91,7 @@ describe('generateOpenRpcDocument — basic shape', () => {
     expect(get).toBeDefined();
   });
 
-  it('uses paramStructure: "by-name" on every method', () => {
+  it('JSON-RPC uses named params only. The OpenRPC contract documents paramStructure: "by-name" so generated clients and manual callers converge on one request shape.', () => {
     const registry = createOperationRegistry([
       makeOp({
         name: 'weft.a.b',

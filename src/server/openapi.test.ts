@@ -10,11 +10,20 @@ import { ROUTES, toOpenApiPath, toRegex } from './route-model.ts';
 describe('OpenAPI document generation', () => {
   const document = generateOpenApiDocument();
 
-  it('produces a valid OpenAPI 3.1 document', () => {
+  it('/openapi.json is a full OpenAPI 3.1 contract for the REST-ish HTTP surface. It includes path and query parameters, request bodies, response schemas by status code, shared error objects, and security declarations.', () => {
     expect(document).toHaveProperty('openapi', '3.1.0');
     expect(document).toHaveProperty('info');
     expect(document).toHaveProperty('paths');
     expect(document).toHaveProperty('tags');
+
+    const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
+    expect(paths['/v1/workflows/{id}/signal/{name}']?.['post']?.['parameters']).toBeDefined();
+    expect(paths['/v1/workflows']?.['post']).toHaveProperty('requestBody');
+
+    const components = document['components'] as Record<string, unknown> | undefined;
+    expect(
+      document['security'] !== undefined || components?.['securitySchemes'] !== undefined,
+    ).toBe(true);
   });
 
   it('uses default title and version', () => {

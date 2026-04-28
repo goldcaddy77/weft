@@ -151,6 +151,21 @@ export function generateOpenApiDocument(options?: OpenApiOptions): Record<string
     info: { title, version },
     paths,
     tags,
+    security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+        apiKeyAuth: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'x-api-key',
+        },
+      },
+    },
   };
 
   if (options?.serverUrl) {
