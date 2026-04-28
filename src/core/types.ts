@@ -487,6 +487,17 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
 
 export type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
 
+export interface WorkflowSessionState<T> {
+  get(): T | undefined;
+  set(value: T): T;
+  update(updater: (current: T | undefined) => T): T;
+  clear(): void;
+  run<TResult>(
+    fn: (...args: unknown[]) => Promise<TResult> | TResult,
+    ...rest: unknown[]
+  ): WorkflowOperation<TResult>;
+}
+
 export type ChildWorkflowTarget<TInput = unknown, TOutput = unknown> =
   | string
   | WorkflowFunction<TInput, TOutput>
@@ -564,6 +575,7 @@ export interface WorkflowContext {
    * contract that the getter can't satisfy.
    */
   readonly tenant: import('./tenant.ts').TenantContext | undefined;
+  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>;
   pipe<TInput, TOutput>(
     stages: [WorkflowPipeStageDefinition<TInput, TOutput>],
     input: TInput,
