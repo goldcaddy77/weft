@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import { tenantFromInputField } from '../../core/tenant.ts';
@@ -48,8 +48,15 @@ const registry = createOperationRegistry([updateScheduleOperation]);
 const bindings = [updateScheduleRestBinding];
 
 describe('weft.schedules.update', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('returns 204 and updates the cron expression on the happy path', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     await engine.schedule('echo', null, '0 * * * *', { id: 'schedule-update' });
 
     const response = await handleRequest(
@@ -66,7 +73,7 @@ describe('weft.schedules.update', () => {
   });
 
   it('returns 400 when the request body is invalid JSON', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       invalidJsonRequest('PATCH', '/v1/schedules/schedule-update', '{'),
@@ -81,7 +88,7 @@ describe('weft.schedules.update', () => {
   it('returns 400 when the request body is JSON null', async () => {
     // Legacy `handleUpdateSchedule` rejected `null` (typeof 'object' && === null
     // fails the guard) with "Request body must be a JSON object".
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('PATCH', '/v1/schedules/schedule-update', null),
@@ -96,7 +103,7 @@ describe('weft.schedules.update', () => {
   it('returns 400 with "Missing required field: cronExpression" when body is a JSON array', async () => {
     // Legacy parity: arrays are typeof 'object' && !== null, so they pass
     // the body-shape guard and fall through to the cronExpression check.
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('PATCH', '/v1/schedules/schedule-update', ['not-an-object']),
@@ -109,7 +116,7 @@ describe('weft.schedules.update', () => {
   });
 
   it('returns 403 when a JWT-authenticated request is missing a tenant claim', async () => {
-    const engine = createTenantAwareEngine();
+    engine = createTenantAwareEngine();
     const options: HandlerOptions = {
       authContext: {
         method: 'jwt',
@@ -132,7 +139,7 @@ describe('weft.schedules.update', () => {
   });
 
   it('returns 404 when a JWT-authenticated caller updates another tenant’s schedule', async () => {
-    const engine = createTenantAwareEngine();
+    engine = createTenantAwareEngine();
     await engine.schedule('echo', { tenantId: 'globex' }, '0 * * * *', { id: 'schedule-globex' });
 
     const response = await handleRequest(
@@ -153,7 +160,7 @@ describe('weft.schedules.update', () => {
   });
 
   it('returns 404 when the schedule does not exist', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('PATCH', '/v1/schedules/missing-schedule', { cronExpression: '30 * * * *' }),
@@ -166,7 +173,7 @@ describe('weft.schedules.update', () => {
   });
 
   it('returns 409 when the engine reports a conflict', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalUpdateSchedule = engine.updateSchedule.bind(engine);
 
     try {
@@ -188,7 +195,7 @@ describe('weft.schedules.update', () => {
   });
 
   it('returns 400 when the cron expression is invalid', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     await engine.schedule('echo', null, '0 * * * *', { id: 'schedule-update-invalid-cron' });
 
     const response = await handleRequest(
@@ -208,7 +215,7 @@ describe('weft.schedules.update', () => {
   });
 
   it('returns the raw engine error message on unexpected failures', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalUpdateSchedule = engine.updateSchedule.bind(engine);
 
     try {

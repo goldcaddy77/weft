@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import { jsonErrorResponse } from './operation-helpers.ts';
+import { shapeRestFault } from './operation-helpers.ts';
 
 const recoverAllInput = z.object({});
 
@@ -42,14 +42,6 @@ export const recoverAllOperation = defineOperation<RecoverAllInput, RecoverAllOu
   },
 });
 
-function shapeRecoverAllFault(fault: OperationFault): Response {
-  if (fault.code === 'EngineFailure') {
-    return jsonErrorResponse(fault.message, 500);
-  }
-
-  return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
-}
-
 export const recoverAllRestBinding: UnknownRestBinding = {
   method: 'POST',
   path: '/v1/recover',
@@ -58,5 +50,5 @@ export const recoverAllRestBinding: UnknownRestBinding = {
   inputSources: {},
   extractInput: async () => ({}),
   success: { kind: 'json', status: 200 },
-  shapeFault: shapeRecoverAllFault,
+  shapeFault: shapeRestFault,
 };

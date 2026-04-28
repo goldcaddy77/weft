@@ -11,10 +11,10 @@ import {
 } from '../../core/start-workflow-validation.ts';
 import { QuotaExceededError } from '../../core/tenant-quotas.ts';
 import type { StartOptions } from '../../core/types.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import { invalidParamsFault, jsonErrorResponse } from './operation-helpers.ts';
+import { invalidParamsFault, shapeRestFault } from './operation-helpers.ts';
 
 // Inputs are intentionally permissive at the schema boundary so legacy REST
 // callers (and equivalent JSON-RPC callers) hit the same validation in
@@ -129,23 +129,6 @@ function buildStartWorkflowOptions(input: StartWorkflowInput): StartOptions {
   return options;
 }
 
-function shapeStartWorkflowFault(fault: OperationFault): Response {
-  if (fault.code === 'InvalidParams') {
-    return jsonErrorResponse(fault.message, 400);
-  }
-  if (fault.code === 'RateLimited') {
-    return jsonErrorResponse(fault.message, 429);
-  }
-  if (fault.code === 'Conflict') {
-    return jsonErrorResponse(fault.message, 409);
-  }
-  if (fault.code === 'EngineFailure') {
-    return jsonErrorResponse(fault.message, 500);
-  }
-
-  return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
-}
-
 export const startWorkflowRestBinding: UnknownRestBinding = {
   method: 'POST',
   path: '/v1/workflows',
@@ -187,5 +170,5 @@ export const startWorkflowRestBinding: UnknownRestBinding = {
     };
   },
   success: { kind: 'json', status: 201 },
-  shapeFault: shapeStartWorkflowFault,
+  shapeFault: shapeRestFault,
 };

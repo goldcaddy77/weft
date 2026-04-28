@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import { invalidParamsFault, jsonErrorResponse } from './operation-helpers.ts';
+import { invalidParamsFault, shapeRestFault } from './operation-helpers.ts';
 
 // `fromStep` is intentionally `unknown` at the schema boundary. The exact
 // legacy "Field 'fromStep' must be a non-negative safe integer" error path
@@ -81,20 +81,6 @@ export const forkWorkflowOperation = defineOperation<ForkWorkflowInput, ForkWork
   },
 });
 
-function shapeForkWorkflowFault(fault: OperationFault): Response {
-  if (fault.code === 'InvalidParams') {
-    return jsonErrorResponse(fault.message, 400);
-  }
-  if (fault.code === 'NotFound') {
-    return jsonErrorResponse(fault.message, 404);
-  }
-  if (fault.code === 'EngineFailure') {
-    return jsonErrorResponse(fault.message, 500);
-  }
-
-  return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
-}
-
 export const forkWorkflowRestBinding: UnknownRestBinding = {
   method: 'POST',
   path: '/v1/workflows/:id/fork',
@@ -131,5 +117,5 @@ export const forkWorkflowRestBinding: UnknownRestBinding = {
     };
   },
   success: { kind: 'json', status: 201 },
-  shapeFault: shapeForkWorkflowFault,
+  shapeFault: shapeRestFault,
 };

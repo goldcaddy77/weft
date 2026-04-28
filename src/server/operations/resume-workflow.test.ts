@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
@@ -23,8 +23,15 @@ const registry = createOperationRegistry([resumeWorkflowOperation]);
 const bindings = [resumeWorkflowRestBinding];
 
 describe('weft.workflows.resume', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('returns 200 with the resumed workflow id on the happy path', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalResume = engine.resume.bind(engine);
 
     try {
@@ -45,7 +52,7 @@ describe('weft.workflows.resume', () => {
   });
 
   it('returns 404 when the workflow is not found', async () => {
-    const engine = createEngine();
+    engine = createEngine();
 
     const response = await handleRequest(
       request('POST', '/v1/workflows/missing-workflow/resume'),
@@ -60,7 +67,7 @@ describe('weft.workflows.resume', () => {
   });
 
   it('returns 409 when the workflow cannot be resumed', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const handle = await engine.start('echo', 'done', { id: 'completed-workflow' });
     await handle.result();
 
@@ -78,8 +85,8 @@ describe('weft.workflows.resume', () => {
     );
   });
 
-  it('returns the raw engine error message on unexpected failures', async () => {
-    const engine = createEngine();
+  it('masks unexpected engine failures to a generic 500 (no raw message leak)', async () => {
+    engine = createEngine();
     const originalResume = engine.resume.bind(engine);
 
     try {
@@ -94,7 +101,8 @@ describe('weft.workflows.resume', () => {
       );
 
       expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ error: 'resume exploded' });
+      expect(await response.json()).toEqual({ error: 'Internal server error' });
+      expect(response.headers.get('Content-Type')).toContain('application/json');
     } finally {
       engine.resume = originalResume;
     }

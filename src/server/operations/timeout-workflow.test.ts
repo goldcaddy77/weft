@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
@@ -23,8 +23,15 @@ const registry = createOperationRegistry([timeoutWorkflowOperation]);
 const bindings = [timeoutWorkflowRestBinding];
 
 describe('weft.workflows.timeout', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('returns 204 on the happy path', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalTimeout = engine.timeout.bind(engine);
 
     try {
@@ -44,7 +51,7 @@ describe('weft.workflows.timeout', () => {
   });
 
   it('returns 404 when the workflow is not found', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalTimeout = engine.timeout.bind(engine);
 
     try {
@@ -65,8 +72,8 @@ describe('weft.workflows.timeout', () => {
     }
   });
 
-  it('returns the raw engine error message on unexpected failures', async () => {
-    const engine = createEngine();
+  it('masks unexpected engine failures to a generic 500 (no raw message leak)', async () => {
+    engine = createEngine();
     const originalTimeout = engine.timeout.bind(engine);
 
     try {
@@ -81,7 +88,8 @@ describe('weft.workflows.timeout', () => {
       );
 
       expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ error: 'timeout exploded' });
+      expect(await response.json()).toEqual({ error: 'Internal server error' });
+      expect(response.headers.get('Content-Type')).toContain('application/json');
     } finally {
       engine.timeout = originalTimeout;
     }

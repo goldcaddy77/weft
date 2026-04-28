@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
@@ -23,8 +23,15 @@ const registry = createOperationRegistry([recoverAllOperation]);
 const bindings = [recoverAllRestBinding];
 
 describe('weft.recover.all', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+    engine = undefined;
+  });
+
   it('returns 200 with the recovered workflow ids on the happy path', async () => {
-    const engine = createEngine();
+    engine = createEngine();
     const originalRecoverAll = engine.recoverAll.bind(engine);
 
     try {
@@ -47,8 +54,8 @@ describe('weft.recover.all', () => {
     }
   });
 
-  it('returns the raw engine error message on unexpected failures', async () => {
-    const engine = createEngine();
+  it('masks unexpected engine failures to a generic 500 (no raw message leak)', async () => {
+    engine = createEngine();
     const originalRecoverAll = engine.recoverAll.bind(engine);
 
     try {
@@ -62,7 +69,8 @@ describe('weft.recover.all', () => {
       });
 
       expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ error: 'recover all exploded' });
+      expect(await response.json()).toEqual({ error: 'Internal server error' });
+      expect(response.headers.get('Content-Type')).toContain('application/json');
     } finally {
       engine.recoverAll = originalRecoverAll;
     }

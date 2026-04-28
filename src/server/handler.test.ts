@@ -1753,8 +1753,9 @@ describe('handleRequest', () => {
     );
 
     expect(response.status).toBe(500);
+    expect(response.headers.get('Content-Type')).toContain('application/json');
     const body = (await json(response)) as { error: string };
-    expect(body.error).toContain('unexpected engine error');
+    expect(body.error).toBe('Internal server error');
 
     // Restore original
     engine.start = originalStart;
@@ -2593,8 +2594,9 @@ describe('handleRequest', () => {
       );
 
       expect(response.status).toBe(500);
+      expect(response.headers.get('Content-Type')).toContain('application/json');
       const body = (await json(response)) as { error: string };
-      expect(body.error).toContain('Storage read failure');
+      expect(body.error).toBe('Internal server error');
 
       storage.get = originalGet;
     });
@@ -3284,7 +3286,8 @@ describe('handleRequest', () => {
       );
 
       expect(response.status).toBe(500);
-      expect(await json(response)).toMatchObject({ error: 'resume exploded' });
+      expect(response.headers.get('Content-Type')).toContain('application/json');
+      expect(await json(response)).toMatchObject({ error: 'Internal server error' });
 
       engine.resume = originalResume;
     });
@@ -3408,7 +3411,8 @@ describe('handleRequest', () => {
       );
 
       expect(response.status).toBe(500);
-      expect(await json(response)).toMatchObject({ error: 'timeout exploded' });
+      expect(response.headers.get('Content-Type')).toContain('application/json');
+      expect(await json(response)).toMatchObject({ error: 'Internal server error' });
 
       engine.timeout = originalTimeout;
     });
@@ -4209,7 +4213,8 @@ describe('handleRequest', () => {
       const response = await handleRequest(request('POST', '/v1/workflows/wf-source/fork'), engine);
 
       expect(response.status).toBe(500);
-      expect(await json(response)).toEqual({ error: 'unexpected fork failure' });
+      expect(response.headers.get('Content-Type')).toContain('application/json');
+      expect(await json(response)).toEqual({ error: 'Internal server error' });
     } finally {
       engine.fork = originalFork;
     }

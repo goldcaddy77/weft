@@ -1,10 +1,10 @@
 import { z } from 'zod';
 
 import type { Engine } from '../../core/engine.ts';
-import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { defineOperation } from '../operation-registry.ts';
 import type { UnknownRestBinding } from '../rest-bindings.ts';
-import { jsonErrorResponse } from './operation-helpers.ts';
+import { shapeRestFault } from './operation-helpers.ts';
 
 const resumeWorkflowInput = z.object({
   workflowId: z.string().min(1),
@@ -62,20 +62,6 @@ export const resumeWorkflowOperation = defineOperation<ResumeWorkflowInput, Resu
   },
 });
 
-function shapeResumeWorkflowFault(fault: OperationFault): Response {
-  if (fault.code === 'NotFound') {
-    return jsonErrorResponse(fault.message, 404);
-  }
-  if (fault.code === 'Conflict') {
-    return jsonErrorResponse(fault.message, 409);
-  }
-  if (fault.code === 'EngineFailure') {
-    return jsonErrorResponse(fault.message, 500);
-  }
-
-  return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
-}
-
 export const resumeWorkflowRestBinding: UnknownRestBinding = {
   method: 'POST',
   path: '/v1/workflows/:id/resume',
@@ -86,5 +72,5 @@ export const resumeWorkflowRestBinding: UnknownRestBinding = {
   },
   extractInput: async (_request, pathParams) => ({ workflowId: pathParams['id'] ?? '' }),
   success: { kind: 'json', status: 200 },
-  shapeFault: shapeResumeWorkflowFault,
+  shapeFault: shapeRestFault,
 };

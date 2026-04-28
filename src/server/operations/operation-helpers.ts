@@ -1,4 +1,4 @@
-import type { OperationFault } from '../operation-fault.ts';
+import { FAULT_CODE_TO_HTTP_STATUS, type OperationFault } from '../operation-fault.ts';
 
 /** Type guard distinguishing an `OperationFault` from a value type. */
 export function isOperationFault(value: unknown): value is OperationFault {
@@ -34,4 +34,16 @@ export function invalidParamsFault(message: string): OperationFault {
     message,
     data: { issues: [] },
   };
+}
+
+/**
+ * Default REST fault shaper: masks `EngineFailure` to a generic
+ * `"Internal server error"` 500; other faults map by `FAULT_CODE_TO_HTTP_STATUS`.
+ * REST-only — JSON-RPC transports receive unmasked faults.
+ */
+export function shapeRestFault(fault: OperationFault): Response {
+  if (fault.code === 'EngineFailure') {
+    return jsonErrorResponse('Internal server error', 500);
+  }
+  return jsonErrorResponse(fault.message, FAULT_CODE_TO_HTTP_STATUS[fault.code]);
 }
