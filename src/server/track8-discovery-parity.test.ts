@@ -14,9 +14,15 @@ type OpenApiDocument = {
 type OpenRpcMethodDocument = {
   name: string;
   paramStructure?: unknown;
+  params?: unknown[];
+  result?: unknown;
+  summary?: string;
 };
 
 type OpenRpcDocument = {
+  openrpc?: string;
+  info?: unknown;
+  servers?: unknown[];
   methods?: OpenRpcMethodDocument[];
 };
 
@@ -43,19 +49,11 @@ function listOperationBindings(
   return bindings;
 }
 
-function normalizeOpenRpcDocument(document: OpenRpcDocument): {
-  methodCount: number;
-  methodNames: string[];
-  paramStructureByMethod: Record<string, unknown>;
-} {
-  const methods = document.methods ?? [];
-  return {
-    methodCount: methods.length,
-    methodNames: methods.map((method) => method.name).toSorted(),
-    paramStructureByMethod: Object.fromEntries(
-      methods.map((method) => [method.name, method.paramStructure]),
-    ),
-  };
+function normalizeOpenRpcDocument(document: OpenRpcDocument): OpenRpcDocument {
+  const methods = (document.methods ?? []).toSorted((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  );
+  return { ...document, methods };
 }
 
 describe('Track 8 discovery parity', () => {
@@ -95,6 +93,9 @@ describe('Track 8 discovery parity', () => {
 
       const operation = registry.get(method.name);
       expect(operation).toBeDefined();
+      expect(operation?.transports.jsonRpcHttp || operation?.transports.jsonRpcWebSocket).toBe(
+        true,
+      );
 
       const bindings = listOperationBindings(openApiDocument, method.name);
       const expectedBindingCount = operation?.transports.http ? 1 : 0;
@@ -176,9 +177,12 @@ describe('Track 8 discovery parity', () => {
 
       expect(webSocketBody.error).toBeUndefined();
 
-      const routeShape = normalizeOpenRpcDocument(routeDocument);
-      expect(normalizeOpenRpcDocument(httpBody.result ?? {})).toEqual(routeShape);
-      expect(normalizeOpenRpcDocument(webSocketBody.result ?? {})).toEqual(routeShape);
+      expect(normalizeOpenRpcDocument(httpBody.result ?? {})).toEqual(
+        normalizeOpenRpcDocument(routeDocument),
+      );
+      expect(normalizeOpenRpcDocument(webSocketBody.result ?? {})).toEqual(
+        normalizeOpenRpcDocument(routeDocument),
+      );
     } finally {
       webSocket.close();
     }

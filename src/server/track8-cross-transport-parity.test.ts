@@ -9,6 +9,7 @@ import { serve, type WeftServer } from './index.ts';
 import { createLiveOperationRegistry } from './rest-bindings.ts';
 import { runStdioSession } from './stdio-session.ts';
 import {
+  assertIdenticalFaultCode,
   assertIdenticalJson,
   assertShapeEquivalent,
   type ParityInvariants,
@@ -177,6 +178,47 @@ async function invokeStdioJsonRpc(
     const response = JSON.parse(firstLine!) as { error?: unknown; result?: unknown };
     expect(response.error).toBeUndefined();
     return response.result;
+  } finally {
+    feed.dispose();
+  }
+}
+
+async function invokeStdioJsonRpcExpectError(
+  engine: Engine,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<{ code: number; data?: Record<string, unknown> }> {
+  const feed = createWorkflowEventFeed(createEngineEventFeedBackend(engine));
+  const output = collectingWritable();
+  try {
+    const result = await runStdioSession({
+      input: readableFromLines([
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: crypto.randomUUID(),
+          method,
+          params,
+        }) + '\n',
+      ]),
+      output: output.stream,
+      admission: { kind: 'allow-unauthenticated-local-admin' },
+      registry,
+      engine,
+      feed,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const [firstLine] = output.lines();
+    expect(firstLine).toBeDefined();
+    const response = JSON.parse(firstLine!) as {
+      error?: { code?: number; data?: Record<string, unknown> };
+    };
+    expect(response.error).toBeDefined();
+    expect(typeof response.error?.code).toBe('number');
+    return {
+      code: response.error!.code!,
+      ...(response.error?.data !== undefined ? { data: response.error.data } : {}),
+    };
   } finally {
     feed.dispose();
   }
@@ -519,6 +561,79 @@ describe('cross-transport parity', () => {
 
     const results = await invokeGetAcrossTransports(engine, server, handle.id);
     assertSuccessParity(results, invariants, 'weft.workflows.get');
+  });
+
+  it('REST and JSON-RPC share one engine-error mapping layer', async () => {
+    const engine = createHoldEngine();
+    engines.push(engine);
+
+    const server = serve({ engine, port: 0 });
+    servers.push(server);
+
+    const workflowId = 'nonexistent-workflow-id';
+
+    const restResponse = await fetch(`${server.url}/v1/workflows/${workflowId}`);
+    expect(restResponse.status).toBe(404);
+    await restResponse.json();
+
+    const jsonRpcHttpResponse = await fetch(`${server.url}/jsonrpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'track8-not-found-http',
+        method: 'weft.workflows.get',
+        params: { workflowId },
+      }),
+    });
+    expect(jsonRpcHttpResponse.status).toBe(200);
+    const jsonRpcHttpBody = (await jsonRpcHttpResponse.json()) as {
+      error?: { code?: number; data?: Record<string, unknown> };
+    };
+    expect(jsonRpcHttpBody.error).toBeDefined();
+    expect(jsonRpcHttpBody.error?.data?.['weftCode']).toBe('NotFound');
+
+    const webSocket = await openWebSocket(`${server.url.replace('http://', 'ws://')}/jsonrpc`);
+    try {
+      const messagePromise = waitForMessage(
+        webSocket,
+        (parsed) =>
+          typeof parsed === 'object' &&
+          parsed !== null &&
+          (parsed as { id?: string }).id === 'track8-not-found-websocket',
+      );
+      webSocket.send(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 'track8-not-found-websocket',
+          method: 'weft.workflows.get',
+          params: { workflowId },
+        }),
+      );
+      const webSocketBody = (await messagePromise) as {
+        error?: { code?: number; data?: Record<string, unknown> };
+      };
+      expect(webSocketBody.error).toBeDefined();
+      expect(webSocketBody.error?.data?.['weftCode']).toBe('NotFound');
+
+      const stdioError = await invokeStdioJsonRpcExpectError(engine, 'weft.workflows.get', {
+        workflowId,
+      });
+      expect(stdioError.data?.['weftCode']).toBe('NotFound');
+
+      assertIdenticalFaultCode(
+        String(jsonRpcHttpBody.error?.code),
+        String(webSocketBody.error?.code),
+        'weft.workflows.get NotFound: json-rpc-http vs json-rpc-websocket',
+      );
+      assertIdenticalFaultCode(
+        String(jsonRpcHttpBody.error?.code),
+        String(stdioError.code),
+        'weft.workflows.get NotFound: json-rpc-http vs json-rpc-stdio',
+      );
+    } finally {
+      webSocket.close();
+    }
   });
 
   it('keeps weft.workflows.signal parity across REST, JSON-RPC HTTP, JSON-RPC WebSocket, and JSON-RPC stdio', async () => {

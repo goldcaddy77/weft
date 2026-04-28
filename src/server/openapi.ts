@@ -23,6 +23,8 @@ export type OpenApiOptions = {
   title?: string;
   /** API version. Defaults to `'0.0.1'`. */
   version?: string;
+  /** Operation registry used to emit migrated REST bindings. */
+  registry?: OperationRegistry;
   /** Server URL. When omitted, no `servers` array is included. */
   serverUrl?: string;
 };
@@ -124,13 +126,14 @@ function emitRoutes(
 export function generateOpenApiDocument(options?: OpenApiOptions): Record<string, unknown> {
   const title = options?.title ?? 'Weft Workflow Engine';
   const version = options?.version ?? '0.0.1';
+  const registry = options?.registry ?? createLiveOperationRegistry();
 
   const paths: Record<string, Record<string, unknown>> = {};
   const tagSet = new Set<string>();
 
   // REST_BINDINGS win against any stale ROUTES entry covering the same
   // (method, path) — a migrated operation owns its OpenAPI description.
-  const boundMethodPaths = emitBindings(paths, tagSet);
+  const boundMethodPaths = emitBindings(paths, tagSet, undefined, registry);
   emitRoutes(paths, tagSet, boundMethodPaths);
 
   const tags = [...tagSet].toSorted().map((name) => ({ name }));

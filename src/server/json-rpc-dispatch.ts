@@ -142,7 +142,7 @@ async function dispatchOne(
   if (request.method === DISCOVER_METHOD_NAME) {
     const document = generateOpenRpcDocument({
       registry: context.registry,
-      transports: ['http', 'websocket', 'stdio'],
+      transports: ['http', 'websocket'],
     });
     return { jsonrpc: JSON_RPC_VERSION, result: document, id };
   }

@@ -215,12 +215,17 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
-  openApiDocument: async () => jsonResponse(generateOpenApiDocument()),
-  openRpcDocument: async () =>
+  openApiDocument: async ({ options }) =>
+    jsonResponse(
+      generateOpenApiDocument({
+        registry: options?.operationRegistry ?? defaultOperationRegistry(),
+      }),
+    ),
+  openRpcDocument: async ({ options }) =>
     jsonResponse(
       generateOpenRpcDocument({
-        registry: defaultOperationRegistry(),
-        transports: ['http', 'websocket', 'stdio'],
+        registry: options?.operationRegistry ?? defaultOperationRegistry(),
+        transports: ['http', 'websocket'],
       }),
     ),
 };

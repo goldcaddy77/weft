@@ -24,8 +24,8 @@ export type ParityInvariants = {
  * Use for `successPayload: 'identical-json'` invariants.
  */
 export function assertIdenticalJson(a: unknown, b: unknown, label: string): void {
-  const aString = JSON.stringify(a);
-  const bString = JSON.stringify(b);
+  const aString = sortedJson(a);
+  const bString = sortedJson(b);
   if (aString !== bString) {
     throw new Error(
       `Parity invariant violated [${label}]: identical-json expected but payloads differ.\n` +
@@ -36,31 +36,12 @@ export function assertIdenticalJson(a: unknown, b: unknown, label: string): void
 }
 
 /**
- * Assert that two values have the same top-level keys with matching types.
+ * Assert that two values have the same recursive key shape with matching types.
  * Use for `successPayload: 'shape-equivalent'` invariants — allows values
  * to differ (e.g. generated ids, timestamps) as long as structure matches.
  */
 export function assertShapeEquivalent(a: unknown, b: unknown, label: string): void {
-  if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) {
-    if (typeof a !== typeof b) {
-      throw new Error(
-        `Parity invariant violated [${label}]: shape-equivalent expected same typeof.\n` +
-          `  Transport A: ${typeof a}\n` +
-          `  Transport B: ${typeof b}`,
-      );
-    }
-    return;
-  }
-
-  const aKeys = Object.keys(a as Record<string, unknown>).toSorted();
-  const bKeys = Object.keys(b as Record<string, unknown>).toSorted();
-  if (JSON.stringify(aKeys) !== JSON.stringify(bKeys)) {
-    throw new Error(
-      `Parity invariant violated [${label}]: shape-equivalent expected same keys.\n` +
-        `  Transport A keys: ${JSON.stringify(aKeys)}\n` +
-        `  Transport B keys: ${JSON.stringify(bKeys)}`,
-    );
-  }
+  checkShapeRecursive(a, b, label);
 }
 
 /**
@@ -74,5 +55,43 @@ export function assertIdenticalFaultCode(aCode: string, bCode: string, label: st
         `  Transport A code: ${aCode}\n` +
         `  Transport B code: ${bCode}`,
     );
+  }
+}
+
+function sortedJson(value: unknown): string {
+  return JSON.stringify(value, (_, currentValue: unknown) =>
+    currentValue !== null && typeof currentValue === 'object' && !Array.isArray(currentValue)
+      ? Object.fromEntries(
+          Object.entries(currentValue as Record<string, unknown>).toSorted(([left], [right]) =>
+            left < right ? -1 : left > right ? 1 : 0,
+          ),
+        )
+      : currentValue,
+  );
+}
+
+function checkShapeRecursive(a: unknown, b: unknown, path: string): void {
+  if (typeof a !== typeof b) {
+    throw new Error(
+      `Parity invariant violated: shape-equivalent expected same typeof at path "${path}".\n` +
+        `  A: ${typeof a}\n` +
+        `  B: ${typeof b}`,
+    );
+  }
+  if (typeof a !== 'object' || a === null || b === null) return;
+
+  const aRecord = a as Record<string, unknown>;
+  const bRecord = b as Record<string, unknown>;
+  const aKeys = Object.keys(aRecord).toSorted();
+  const bKeys = Object.keys(bRecord).toSorted();
+  if (JSON.stringify(aKeys) !== JSON.stringify(bKeys)) {
+    throw new Error(
+      `Parity invariant violated: shape-equivalent expected same keys at path "${path}".\n` +
+        `  A keys: ${JSON.stringify(aKeys)}\n` +
+        `  B keys: ${JSON.stringify(bKeys)}`,
+    );
+  }
+  for (const key of aKeys) {
+    checkShapeRecursive(aRecord[key], bRecord[key], `${path}.${key}`);
   }
 }
