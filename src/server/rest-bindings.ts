@@ -57,6 +57,10 @@ import {
 } from './operations/get-retention-overview.ts';
 import { getReviewOperation, getReviewRestBinding } from './operations/get-review.ts';
 import {
+  getStreamChunksOperation,
+  getStreamChunksRestBinding,
+} from './operations/get-stream-chunks.ts';
+import {
   getUpdateResultOperation,
   getUpdateResultRestBinding,
 } from './operations/get-update-result.ts';
@@ -115,6 +119,10 @@ import {
   signalWorkflowRestBinding,
 } from './operations/signal-workflow.ts';
 import { startWorkflowOperation, startWorkflowRestBinding } from './operations/start-workflow.ts';
+import {
+  streamWorkflowSseOperation,
+  streamWorkflowSseRestBinding,
+} from './operations/stream-workflow-sse.ts';
 import {
   submitReviewDecisionOperation,
   submitReviewDecisionRestBinding,
@@ -192,6 +200,8 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   cancelScheduleRestBinding,
   pauseScheduleRestBinding,
   resumeScheduleRestBinding,
+  getStreamChunksRestBinding,
+  streamWorkflowSseRestBinding,
 ];
 
 /**
@@ -243,5 +253,7 @@ export function createLiveOperationRegistry(): OperationRegistry {
     cancelScheduleOperation,
     pauseScheduleOperation,
     resumeScheduleOperation,
+    getStreamChunksOperation,
+    streamWorkflowSseOperation,
   ]);
 }
