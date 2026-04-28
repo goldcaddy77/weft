@@ -94,6 +94,25 @@ describe('weft.workflows.streams.chunks', () => {
     },
   );
 
+  it.each(['-2', '-3'])('returns 400 for an out-of-range `after` value (%s)', async (badValue) => {
+    // Legacy `parseOptionalSequenceCursor` rejects values < -1. Cover this
+    // explicitly so JSON-RPC callers can't bypass the rule by passing a
+    // raw integer that the prior `z.number().int()` schema would have
+    // accepted; the validator now lives in invoke().
+    const engine = createEngineWithChunks();
+
+    const response = await handleRequest(
+      request('GET', `/v1/workflows/wf-1/streams/tokens?after=${badValue}`),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: `Invalid after query parameter: ${badValue}`,
+    });
+  });
+
   it('returns 400 for an empty `after` query parameter (legacy parity)', async () => {
     const engine = createEngineWithChunks();
 

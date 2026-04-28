@@ -9,10 +9,15 @@ import { parseOptionalSequenceCursor } from '../sequence-cursor.ts';
 import { invalidParamsFault, jsonErrorResponse } from './operation-helpers.ts';
 import { createStoredChunkSSEStream, SSE_RESPONSE_HEADERS } from './sse-stream.ts';
 
+// `after` is permissive at the schema boundary so REST and JSON-RPC clients
+// share one validation path. extractInput passes through the raw query
+// string; invoke runs the legacy `parseOptionalSequenceCursor` so both
+// transports receive identical "Invalid after query parameter" messages
+// (and reject the same edge cases — < -1, hex, scientific notation).
 const getStreamChunksInput = z.object({
   workflowId: z.string().min(1),
   key: z.string().min(1),
-  after: z.number().int().optional(),
+  after: z.unknown().optional(),
 });
 
 export type GetStreamChunksInput = z.infer<typeof getStreamChunksInput>;
@@ -33,10 +38,28 @@ export const getStreamChunksOperation = defineOperation<
   invoke: async ({ input, engine }): Promise<GetStreamChunksOutput> => {
     const e = engine as Engine;
 
+    // REST passes the raw query string; JSON-RPC may pass an already-parsed
+    // number. Either way, run the legacy validator so both transports hit
+    // the same "Invalid after query parameter" error path.
+    let after: number | undefined;
+    if (input.after !== undefined) {
+      const rawCursor =
+        typeof input.after === 'string'
+          ? input.after
+          : typeof input.after === 'number'
+            ? String(input.after)
+            : '';
+      const parsed = parseOptionalSequenceCursor(rawCursor, 'after query parameter');
+      if (parsed.error !== undefined) {
+        throw invalidParamsFault(parsed.error);
+      }
+      after = parsed.value;
+    }
+
     try {
       const chunks =
-        input.after !== undefined
-          ? await e.getStreamChunks(input.workflowId, input.key, { after: input.after })
+        after !== undefined
+          ? await e.getStreamChunks(input.workflowId, input.key, { after })
           : await e.getStreamChunks(input.workflowId, input.key);
       return { chunks };
     } catch (error) {
@@ -89,17 +112,13 @@ export const getStreamChunksRestBinding: UnknownRestBinding = {
     after: { kind: 'query', queryParam: 'after' },
   },
   extractInput: async (request, pathParams) => {
-    const result = parseOptionalSequenceCursor(
-      new URL(request.url).searchParams.get('after'),
-      'after query parameter',
-    );
-    if (result.error !== undefined) {
-      throw invalidParamsFault(result.error);
-    }
+    // Pass the raw `after` query string through; `invoke` parses and
+    // validates it so REST and JSON-RPC share one cross-transport contract.
+    const rawAfter = new URL(request.url).searchParams.get('after');
     return {
       workflowId: pathParams['id'] ?? '',
       key: pathParams['key'] ?? '',
-      ...(result.value !== undefined ? { after: result.value } : {}),
+      ...(rawAfter !== null ? { after: rawAfter } : {}),
     };
   },
   success: { kind: 'streaming', mediaType: 'text/event-stream' },
