@@ -6,6 +6,16 @@ import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { handleRequest, type HandlerOptions } from './handler.ts';
+import { principalFromApiKey } from './principal.ts';
+
+function apiKeyAuth(): HandlerOptions {
+  return {
+    authContext: {
+      method: 'api-key' as const,
+      principal: principalFromApiKey({ subject: 'test', scopes: ['quota:read', 'workflows:read'] }),
+    },
+  };
+}
 
 function createEngine(): Engine {
   const engine = new Engine({
@@ -364,7 +374,7 @@ describe('handleRequest edge coverage', () => {
     const options: HandlerOptions = {
       authContext: {
         method: 'jwt',
-        claims: { tenant_id: '   ', tenant: 'acme' },
+        claims: { tenant_id: '   ', tenant: 'acme', scope: 'quota:read' },
       },
     };
 
@@ -463,6 +473,7 @@ describe('handleRequest edge coverage', () => {
         '/v1/schedules?status=active&status=paused&workflowType=echo&tenantId=acme&limit=5001&offset=4',
       ),
       engine,
+      apiKeyAuth(),
     );
     expect(response.status).toBe(200);
     expect(await json(response)).toEqual({
@@ -472,7 +483,11 @@ describe('handleRequest edge coverage', () => {
       limit: 1000,
     });
 
-    response = await handleRequest(request('GET', '/v1/schedules?status=active'), engine);
+    response = await handleRequest(
+      request('GET', '/v1/schedules?status=active'),
+      engine,
+      apiKeyAuth(),
+    );
     expect(response.status).toBe(200);
     expect(await json(response)).toEqual({
       items: [],
@@ -578,7 +593,11 @@ describe('handleRequest edge coverage', () => {
     engine.getSchedule = async () => {
       throw new Error('lookup exploded');
     };
-    response = await handleRequest(request('GET', '/v1/schedules/schedule-1'), engine);
+    response = await handleRequest(
+      request('GET', '/v1/schedules/schedule-1'),
+      engine,
+      apiKeyAuth(),
+    );
     expect(response.status).toBe(500);
 
     engine.resumeSchedule = async () => {

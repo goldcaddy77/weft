@@ -48,7 +48,7 @@ import {
 } from './json-rpc-websocket-runtime.ts';
 import type { JsonRpcWebSocketSession } from './json-rpc-websocket.ts';
 import type { Principal } from './principal.ts';
-import { REST_BINDINGS, createLiveOperationRegistry } from './rest-bindings.ts';
+import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
 import {
   claimNextSequence,
   evictOldestAffinityEntries,
@@ -884,7 +884,10 @@ export function serve(options: ServeOptions): WeftServer {
   // lifetime so `executeOperation` sees the same resolution table
   // across requests. Registry contents are immutable after creation,
   // so sharing across concurrent requests is safe.
-  const liveOperationRegistry = createLiveOperationRegistry();
+  const liveOperationRegistry = createLiveOperationRegistry(
+    options.metricsCollector !== undefined ? { metricsCollector: options.metricsCollector } : {},
+  );
+  const liveRestBindings = createLiveRestBindings();
   const eventFeedBackend = createEngineEventFeedBackend(options.engine);
   const workflowEventFeed: WorkflowEventFeed = createWorkflowEventFeed(eventFeedBackend);
   // Track every live `/jsonrpc` session so shutdown can await their
@@ -1296,7 +1299,7 @@ export function serve(options: ServeOptions): WeftServer {
           ? { metricsCollector: options.metricsCollector }
           : {}),
         operationRegistry: liveOperationRegistry,
-        restBindings: REST_BINDINGS,
+        restBindings: liveRestBindings,
       });
     },
     websocket: {

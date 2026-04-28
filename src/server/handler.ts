@@ -10,13 +10,12 @@
 
 import { encode } from '../core/codec.ts';
 import type { Engine } from '../core/engine.ts';
-import type { ScheduleAccessOptions, ScheduleFilter, ScheduleStatus } from '../core/types.ts';
 import {
   createMetricsCollectorExporter,
   type MetricsCollector,
   type PrometheusExporter,
 } from '../observability/metrics.ts';
-import type { AuthContext, JWTPayload } from './authentication.ts';
+import type { AuthContext } from './authentication.ts';
 import { faultToHttpResponse } from './fault-to-http.ts';
 import { generateOpenApiDocument } from './openapi.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
@@ -32,7 +31,7 @@ import {
 import { bindingPathMatches, MalformedRouteParameterError } from './rest-binding.ts';
 import {
   createLiveOperationRegistry,
-  REST_BINDINGS,
+  createLiveRestBindings,
   type UnknownRestBinding,
 } from './rest-bindings.ts';
 import { ROUTES, toRegex } from './route-model.ts';
@@ -131,24 +130,6 @@ function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
-function getAuthenticatedTenantId(claims: JWTPayload | undefined): string | null {
-  if (!claims) {
-    return null;
-  }
-
-  for (const key of ['tenantId', 'tenant_id', 'tenant'] as const) {
-    const value = claims[key];
-    if (typeof value === 'string') {
-      const normalizedTenantId = value.trim();
-      if (normalizedTenantId.length > 0) {
-        return normalizedTenantId;
-      }
-    }
-  }
-
-  return null;
-}
-
 export function getRequiredRouteParameter(
   params: Record<string, string>,
   name: string,
@@ -161,189 +142,17 @@ export function getRequiredRouteParameter(
   return value;
 }
 
-const VALID_SCHEDULE_STATUSES = new Set<ScheduleStatus>(['active', 'paused', 'cancelled']);
-
-function parseScheduleListFilter(request: Request): ScheduleFilter {
-  const url = new URL(request.url);
-  const filter: ScheduleFilter = {};
-
-  const statuses = url.searchParams.getAll('status');
-  if (statuses.length > 0) {
-    const normalizedStatuses: ScheduleStatus[] = [];
-    for (const status of statuses) {
-      if (!VALID_SCHEDULE_STATUSES.has(status as ScheduleStatus)) {
-        throw new Error('Query parameter "status" must be one of active, paused, cancelled');
-      }
-      normalizedStatuses.push(status as ScheduleStatus);
-    }
-
-    const [firstStatus] = normalizedStatuses;
-    if (normalizedStatuses.length === 1 && firstStatus !== undefined) {
-      filter.status = firstStatus;
-    } else {
-      filter.status = normalizedStatuses;
-    }
-  }
-
-  const workflowType = url.searchParams.get('workflowType');
-  if (workflowType !== null) {
-    filter.workflowType = workflowType;
-  }
-
-  const tenantId = url.searchParams.get('tenantId');
-  if (tenantId !== null) {
-    filter.tenantId = tenantId;
-  }
-
-  const limit = url.searchParams.get('limit');
-  if (limit !== null) {
-    const parsed = Number(limit);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      throw new Error('Query parameter "limit" must be a positive integer');
-    }
-    filter.limit = Math.min(parsed, 1000);
-  }
-
-  const offset = url.searchParams.get('offset');
-  if (offset !== null) {
-    const parsed = Number(offset);
-    if (!Number.isInteger(parsed) || parsed < 0) {
-      throw new Error('Query parameter "offset" must be a non-negative integer');
-    }
-    filter.offset = parsed;
-  }
-
-  return filter;
-}
-
-function scheduleErrorResponse(error: unknown): Response {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalizedMessage = message.toLowerCase();
-
-  if (normalizedMessage.includes('not found')) {
-    return errorResponse(message, 404);
-  }
-
-  if (normalizedMessage.includes('already exists')) {
-    return errorResponse(message, 409);
-  }
-
-  if (normalizedMessage.includes('cannot be resumed')) {
-    return errorResponse(message, 409);
-  }
-
-  if (normalizedMessage.includes('authenticated tenant')) {
-    return errorResponse(message, 403);
-  }
-
-  if (
-    message.includes('Missing required field') ||
-    normalizedMessage.includes('must be') ||
-    normalizedMessage.includes('no workflow registered') ||
-    normalizedMessage.includes('cron')
-  ) {
-    return errorResponse(message, 400);
-  }
-
-  return errorResponse(message, 500);
-}
-
-function getAuthenticatedScheduleTenantId(
-  authContext: AuthenticatedRequestContext | undefined,
-): string | Response | undefined {
-  if (authContext?.method !== 'jwt') {
-    return undefined;
-  }
-
-  const authenticatedTenantId = getAuthenticatedTenantId(authContext.claims);
-  if (authenticatedTenantId === null) {
-    return errorResponse(
-      'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim',
-      403,
-    );
-  }
-
-  return authenticatedTenantId;
-}
-
-function applyAuthenticatedScheduleTenantScope(
-  filter: ScheduleFilter,
-  authContext: AuthenticatedRequestContext | undefined,
-): Response | undefined {
-  const authenticatedTenantId = getAuthenticatedScheduleTenantId(authContext);
-  if (authenticatedTenantId instanceof Response) {
-    return authenticatedTenantId;
-  }
-
-  if (authenticatedTenantId === undefined) {
-    return undefined;
-  }
-
-  if (filter.tenantId !== undefined && filter.tenantId !== authenticatedTenantId) {
-    return errorResponse('Schedule access is limited to the authenticated tenant', 403);
-  }
-
-  filter.tenantId = authenticatedTenantId;
-  return undefined;
-}
-
-function getScheduleAccessOptions(
-  authContext: AuthenticatedRequestContext | undefined,
-): ScheduleAccessOptions | Response | undefined {
-  const authenticatedTenantId = getAuthenticatedScheduleTenantId(authContext);
-  if (authenticatedTenantId instanceof Response) {
-    return authenticatedTenantId;
-  }
-
-  if (authenticatedTenantId === undefined) {
-    return undefined;
-  }
-
-  return { tenantId: authenticatedTenantId };
+function applyLegacyRestInputCompatibility(
+  _operationName: string,
+  input: unknown,
+  _principal: Principal,
+): { input: unknown } | { response: Response } {
+  return { input };
 }
 
 // ---------------------------------------------------------------------------
 // Route handlers — each delegates to an Engine method
 // ---------------------------------------------------------------------------
-
-async function handleListSchedules(
-  request: Request,
-  engine: Engine,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  try {
-    const filter = parseScheduleListFilter(request);
-    const authError = applyAuthenticatedScheduleTenantScope(filter, authContext);
-    if (authError !== undefined) {
-      return authError;
-    }
-    return jsonResponse(await engine.listSchedules(filter));
-  } catch (error) {
-    return scheduleErrorResponse(error);
-  }
-}
-
-async function handleGetSchedule(
-  engine: Engine,
-  scheduleId: string,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  try {
-    const accessOptions = getScheduleAccessOptions(authContext);
-    if (accessOptions instanceof Response) {
-      return accessOptions;
-    }
-
-    const schedule = await engine.getSchedule(scheduleId, accessOptions);
-    if (schedule === null) {
-      return errorResponse(`Schedule "${scheduleId}" not found`, 404);
-    }
-
-    return jsonResponse(schedule);
-  } catch (error) {
-    return scheduleErrorResponse(error);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Events route — engine.getEvents()
@@ -364,60 +173,6 @@ async function handleGetSchedule(
 // ---------------------------------------------------------------------------
 // Budget policy read route — engine.getBudgetPolicy()
 // ---------------------------------------------------------------------------
-
-async function handleGetTenantQuota(
-  engine: Engine,
-  tenantId: string,
-  authContext: AuthenticatedRequestContext | undefined,
-): Promise<Response> {
-  const normalizedTenantId = tenantId.trim();
-  if (normalizedTenantId.length === 0) {
-    return errorResponse('Tenant id must be a non-empty string', 400);
-  }
-
-  if (authContext?.method === 'jwt') {
-    const authenticatedTenantId = getAuthenticatedTenantId(authContext.claims);
-    if (authenticatedTenantId === null) {
-      return errorResponse(
-        'JWT-authenticated tenant quota requests require a tenantId, tenant_id, or tenant claim',
-        403,
-      );
-    }
-    if (authenticatedTenantId !== normalizedTenantId) {
-      return errorResponse('Tenant quota access is limited to the authenticated tenant', 403);
-    }
-  }
-
-  return jsonResponse(await engine.getQuotaUsage(normalizedTenantId));
-}
-
-// ---------------------------------------------------------------------------
-// Checkpoint history routes
-// ---------------------------------------------------------------------------
-
-async function handleReplayWorkflowToStep(
-  request: Request,
-  engine: Engine,
-  workflowId: string,
-  stepParam: string,
-): Promise<Response> {
-  const state = await engine.get(workflowId);
-  if (state === null) {
-    return errorResponse(`Workflow "${workflowId}" not found`, 404);
-  }
-
-  const step = Number(stepParam);
-  if (!Number.isSafeInteger(step) || step < 0) {
-    return errorResponse(`Invalid step: ${stepParam}`, 400);
-  }
-
-  const replay = await engine.replayTo(workflowId, step);
-  if (replay === null) {
-    return errorResponse(`Replay not found at step ${step} for workflow ${workflowId}`, 404);
-  }
-
-  return negotiatedResponse(request, replay);
-}
 
 // ---------------------------------------------------------------------------
 // Metrics route
@@ -457,16 +212,8 @@ type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
 
 const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
-  listSchedules: async ({ request, engine, options }) =>
-    handleListSchedules(request, engine, options?.authContext),
-  getSchedule: async ({ engine, options, param }) =>
-    handleGetSchedule(engine, param('id'), options?.authContext),
-  getTenantQuota: async ({ engine, options, param }) =>
-    handleGetTenantQuota(engine, param('id'), options?.authContext),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
-  replayWorkflowToStep: async ({ request, engine, param }) =>
-    handleReplayWorkflowToStep(request, engine, param('id'), param('step')),
   openApiDocument: async () => jsonResponse(generateOpenApiDocument()),
 };
 
@@ -583,6 +330,11 @@ async function dispatchViaExecuteOperation(
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 400);
   }
+  const compatibility = applyLegacyRestInputCompatibility(binding.operationName, input, principal);
+  if ('response' in compatibility) {
+    return compatibility.response;
+  }
+  input = compatibility.input;
   const result = await executeOperation(binding.operationName, input, {
     principal,
     engine,
@@ -699,7 +451,16 @@ function defaultOperationRegistry(): OperationRegistry {
   return _defaultOperationRegistry;
 }
 
+let _defaultRestBindings: ReadonlyArray<UnknownRestBinding> | undefined;
+function defaultRestBindings(): ReadonlyArray<UnknownRestBinding> {
+  if (_defaultRestBindings === undefined) {
+    _defaultRestBindings = createLiveRestBindings();
+  }
+  return _defaultRestBindings;
+}
+
 /** Pure HTTP request handler. Maps Request to Response. */
+// oxlint-disable-next-line eslint(complexity) -- this request boundary intentionally owns binding-first dispatch, legacy fallback, and compatibility shims in one place.
 export async function handleRequest(
   request: Request,
   engine: Engine,
@@ -724,7 +485,7 @@ export async function handleRequest(
       500,
     );
   }
-  const restBindings = options?.restBindings ?? REST_BINDINGS;
+  const restBindings = options?.restBindings ?? defaultRestBindings();
   const operationRegistry = options?.operationRegistry ?? defaultOperationRegistry();
   let bindingMatch: ReturnType<typeof matchRestBinding>;
   try {
@@ -746,13 +507,14 @@ export async function handleRequest(
 
   if (bindingMatch !== null && !shouldPreferLegacyRoute(bindingMatch, route)) {
     try {
+      const principal = authContextToPrincipal(options?.authContext);
       return await dispatchViaExecuteOperation(
         request,
         engine,
         bindingMatch.binding,
         bindingMatch.pathParams,
         operationRegistry,
-        authContextToPrincipal(options?.authContext),
+        principal,
       );
     } catch (error) {
       console.error('Unhandled error in dispatchViaExecuteOperation', {
