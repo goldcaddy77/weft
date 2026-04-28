@@ -5016,6 +5016,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
           getNow: this.#options.getNow,
           resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
           accumulatedResults,
+          locals: resumeCheckpoint.locals,
           searchAttributes: resumeCheckpoint.searchAttributes,
           ...(registration.searchAttributes && {
             searchAttributeSchema: registration.searchAttributes,
@@ -5909,9 +5910,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       const previousAttributes = { ...current.searchAttributes };
       const hasPendingAttributeChanges = context.hasPendingAttributeChanges;
+      const checkpointLocals = context.checkpointLocals;
       const pendingAttributeChanges = context.checkpointPendingAttributeChanges;
       const accumulatedResults = context.checkpointAccumulatedResults;
-      const advanced = advanceCheckpoint(current, current.locals, {
+      const advanced = advanceCheckpoint(current, checkpointLocals, {
         accumulatedResults,
         now: this.#options.getNow(),
         ...(pendingAttributeChanges !== undefined

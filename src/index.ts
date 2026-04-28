@@ -103,6 +103,7 @@ export type {
   WorkflowRegistration,
   WorkflowRegistry,
   WorkflowReplay,
+  WorkflowSessionState,
   WorkflowState,
   WorkflowStatus,
   WorkflowSummary,

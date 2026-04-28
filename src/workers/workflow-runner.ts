@@ -4,6 +4,7 @@ import type {
   OperationRequest,
   WorkerOutboundMessage,
   WorkflowContext,
+  WorkflowSessionState,
 } from '../core/types.ts';
 
 // ---------------------------------------------------------------------------
@@ -21,7 +22,9 @@ import type {
 export type WorkerWorkflowContext = Pick<
   WorkflowContext,
   'workflowId' | 'tenant' | 'signal' | 'startedAt'
->;
+> & {
+  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>;
+};
 
 interface RunMessageShape {
   workflowId: string;
@@ -47,6 +50,12 @@ export function createWorkerWorkflowContext(
     tenant: message.tenant,
     signal: controller.signal,
     startedAt: Date.now(),
+    sessionState: <T>(_key: string, _initialValue?: T): WorkflowSessionState<T> => {
+      throw new Error(
+        'ctx.sessionState() is not supported in worker execution mode. ' +
+          'Construct the engine without `workerExecution` to use session state.',
+      );
+    },
   };
 }
 

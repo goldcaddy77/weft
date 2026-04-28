@@ -582,7 +582,6 @@ export function wireEventBroadcasting(
         const previousChain = sequenceChains.get(workflowId) ?? Promise.resolve();
         const nextChain = previousChain
           .then(() => persistAndPublishEvent(workflowId, eventType, message))
-          /* c8 ignore next 6 -- requires forced event persistence failure */
           .catch((error) => {
             console.error(
               `[weft] Failed to persist event "${eventType}" for workflow "${workflowId}":`,

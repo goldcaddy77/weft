@@ -10,6 +10,10 @@ import {
   type StreamReference,
   type StreamSink,
 } from './context.ts';
+import {
+  MAX_SESSION_STATE_SERIALIZED_BYTES,
+  SessionStateValidationError,
+} from './session-state.ts';
 import type { SearchAttributeValue } from './types.ts';
 
 function createContext(overrides: Partial<ConstructorParameters<typeof Context>[0]> = {}) {
@@ -219,6 +223,107 @@ describe('Context', () => {
       const calls = consoleSpy.mock.calls.flat().join(' ');
       expect(calls).toContain('queue "gpu"');
       consoleSpy.mockRestore();
+    });
+  });
+
+  describe('Acceptance criterion: Virtual-Object-style session state API', () => {
+    it('returns the initial value until a value is written', () => {
+      const context = createContext();
+      const session = context.sessionState<number>('counter', 0);
+
+      expect(session.get()).toBe(0);
+    });
+
+    it('returns undefined after clear when no initial value is configured', () => {
+      const context = createContext();
+      const session = context.sessionState<number>('counter');
+
+      session.set(1);
+      session.clear();
+
+      expect(session.get()).toBeUndefined();
+    });
+
+    it('updates and clears a session-scoped value', () => {
+      const context = createContext();
+      const session = context.sessionState<number>('counter', 0);
+
+      expect(session.update((current) => (current ?? 0) + 1)).toBe(1);
+      expect(session.get()).toBe(1);
+
+      session.clear();
+      expect(session.get()).toBe(0);
+    });
+
+    it('routes session-bound activities through sticky worker execution', () => {
+      const context = createContext();
+      const session = context.sessionState<number>('conversation', 0);
+
+      const generator = session.run(greet, 'Alice', { queue: 'gpu' });
+      const request = expectRequest(
+        generator.next() as IteratorResult<ContextOperationRequest, unknown>,
+        'activity',
+      );
+
+      expect(request.args).toEqual(['Alice']);
+      expect(request.options).toEqual({ queue: 'gpu', sticky: true });
+    });
+
+    it('rejects reserved prototype keys', () => {
+      const context = createContext();
+      const session = context.sessionState<number>('__proto__', 0);
+
+      expect(() => session.set(1)).toThrow(SessionStateValidationError);
+      expect(({} as { polluted?: number }).polluted).toBeUndefined();
+    });
+
+    it('rejects oversized session-state payloads', () => {
+      const context = createContext();
+      const session = context.sessionState<string>('payload');
+
+      expect(() => session.set('x'.repeat(MAX_SESSION_STATE_SERIALIZED_BYTES + 1024))).toThrow(
+        SessionStateValidationError,
+      );
+    });
+
+    it('returns cloned values so caller mutation does not leak into durable state', () => {
+      const context = createContext();
+      const session = context.sessionState<{ values: string[] }>('draft');
+
+      const stored = session.set({ values: ['a'] });
+      stored.values.push('b');
+
+      const firstRead = session.get();
+      expect(firstRead).toEqual({ values: ['a'] });
+
+      firstRead!.values.push('c');
+      expect(session.get()).toEqual({ values: ['a'] });
+    });
+
+    it('snapshots the initial value when the handle is created', () => {
+      const context = createContext();
+      const initialValue = { values: ['a'] };
+      const session = context.sessionState<{ values: string[] }>('draft', initialValue);
+
+      initialValue.values.push('b');
+
+      const firstRead = session.get();
+      expect(firstRead).toEqual({ values: ['a'] });
+
+      firstRead!.values.push('c');
+      expect(session.get()).toEqual({ values: ['a'] });
+    });
+
+    it('does not poison stored state when validation rejects a write', () => {
+      const context = createContext();
+      const session = context.sessionState<string>('payload');
+
+      session.set('safe');
+
+      expect(() => session.set('x'.repeat(MAX_SESSION_STATE_SERIALIZED_BYTES + 1024))).toThrow(
+        SessionStateValidationError,
+      );
+      expect(session.get()).toBe('safe');
     });
   });
 

@@ -629,6 +629,20 @@ describe('CLI argument parsing', () => {
 });
 
 describe('splitGlobPattern', () => {
+  it('returns the original path when no glob characters are present', () => {
+    expect(splitGlobPattern('examples/hello-world.ts')).toEqual({
+      scanRoot: '.',
+      pattern: 'examples/hello-world.ts',
+    });
+  });
+
+  it('keeps the current directory as the scan root for top-level globs', () => {
+    expect(splitGlobPattern('*.ts')).toEqual({
+      scanRoot: '.',
+      pattern: '*.ts',
+    });
+  });
+
   it('splits Windows-style absolute glob patterns into scan root and pattern', () => {
     expect(splitGlobPattern(String.raw`C:\work\examples\**\*.ts`)).toEqual({
       scanRoot: 'C:/work/examples',

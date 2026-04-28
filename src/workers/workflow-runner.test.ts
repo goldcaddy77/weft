@@ -240,6 +240,29 @@ describe('handleRunMessage', () => {
 
     expect(context.abortControllers.has('wf-6')).toBe(true);
   });
+
+  it('fails with a clear error when a worker-side workflow calls ctx.sessionState()', async () => {
+    const context = createWorkflowRunnerContext();
+
+    async function* sessionWorkflow(
+      ctx: { sessionState<T>(key: string, initialValue?: T): { get(): T | undefined } },
+      _input: unknown,
+    ) {
+      ctx.sessionState('draft', { count: 0 }).get();
+      return 'ok';
+    }
+
+    const result = await handleRunMessage(
+      context,
+      { workflowId: 'wf-worker-session-state', workflowType: 'session-state-test', input: null },
+      () => sessionWorkflow,
+    );
+
+    expect(result.type).toBe('failed');
+    expect((result as { error: string }).error).toContain(
+      'ctx.sessionState() is not supported in worker execution mode',
+    );
+  });
 });
 
 describe('handleResumeMessage', () => {

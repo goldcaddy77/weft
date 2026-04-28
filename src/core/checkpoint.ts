@@ -6,6 +6,7 @@
  */
 
 import { decode, encode, validateCloneable } from './codec.ts';
+import { validateSessionStateLocals } from './session-state.ts';
 import type { Checkpoint, SearchAttributeValue, Serializer, WorkflowId } from './types.ts';
 
 // ---------------------------------------------------------------------------
@@ -170,6 +171,8 @@ function validateCheckpointShape(value: unknown): asserts value is Checkpoint {
   if (typeof record['locals'] !== 'object' || record['locals'] === null) {
     throw new Error('Invalid checkpoint: missing or invalid "locals" (expected object)');
   }
+
+  validateSessionStateLocals(record['locals'] as Record<string, unknown>);
 
   // Backwards compatibility: treat missing accumulatedResults as empty
   if (!('accumulatedResults' in record)) {

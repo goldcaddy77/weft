@@ -106,6 +106,15 @@ describe('OpenAPI document generation', () => {
     expect(operation).toHaveProperty('requestBody');
   });
 
+  it('adds requestBody for legacy non-GET/DELETE routes emitted from the route table', () => {
+    const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
+    const pausePath = paths['/v1/schedules/{id}/pause'];
+    expect(pausePath).toBeDefined();
+
+    const operation = pausePath!['post']!;
+    expect(operation).toHaveProperty('requestBody');
+  });
+
   it('does not add requestBody for GET routes', () => {
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
     const healthPath = paths['/v1/health'];

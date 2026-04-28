@@ -736,11 +736,17 @@ export async function executeValidate(options: {
   const { loadRegistrationsFromModule, validateRegistrations, formatValidationReport } =
     await import('./diagnostics/validate.ts');
 
-  const reports: Array<{
+  type ValidationReportEntry = {
     entryPath: string;
-    report?: ReturnType<typeof validateRegistrations>;
-    loadError?: string;
-  }> = [];
+    report: ReturnType<typeof validateRegistrations>;
+  };
+  type ValidationLoadErrorEntry = {
+    entryPath: string;
+    loadError: string;
+  };
+  type ValidationEntry = ValidationReportEntry | ValidationLoadErrorEntry;
+
+  const reports: ValidationEntry[] = [];
   let hasValidationErrors = false;
   let hasLoadErrors = false;
 
@@ -772,15 +778,11 @@ export async function executeValidate(options: {
 
   if (options.json) {
     const entries = reports.map((entry) => {
-      if (entry.loadError !== undefined) {
+      if ('loadError' in entry) {
         return {
           entryPath: entry.entryPath,
           loadError: entry.loadError,
         };
-      }
-
-      if (entry.report === undefined) {
-        throw new Error(`Missing validation report for '${entry.entryPath}'.`);
       }
 
       return {
@@ -805,11 +807,11 @@ export async function executeValidate(options: {
   }
 
   const stdout = reports
-    .filter((entry) => entry.report !== undefined)
-    .map((entry) => formatValidationReport(entry.report!, entry.entryPath))
+    .filter((entry): entry is ValidationReportEntry => 'report' in entry)
+    .map((entry) => formatValidationReport(entry.report, entry.entryPath))
     .join('\n\n');
   const stderr = reports
-    .filter((entry) => entry.loadError !== undefined)
+    .filter((entry): entry is ValidationLoadErrorEntry => 'loadError' in entry)
     .map((entry) => `Error: could not load entry file '${entry.entryPath}': ${entry.loadError}`)
     .join('\n');
 

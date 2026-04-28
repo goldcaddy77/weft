@@ -4366,6 +4366,46 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       errorSpy.mockRestore();
     }
   });
+
+  it('logs and swallows event persistence failures', async () => {
+    engine = createEngine();
+    const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const consoleWarnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    const originalPut = engine.storage.put.bind(engine.storage);
+    let putAttempts = 0;
+
+    engine.storage.put = async (...args) => {
+      putAttempts++;
+      if (putAttempts <= 2) {
+        throw new Error('forced persistence failure');
+      }
+      return originalPut(...args);
+    };
+
+    try {
+      const handle = wireEventBroadcasting(engine, { publish() {} } as never, {
+        publishTokenMessage() {},
+      });
+
+      engine.dispatchEvent(new WorkflowCompletedEvent('wf-persist-failure', 'done', 1));
+
+      await waitFor(() => consoleErrorSpy.mock.calls.length === 1, {
+        label: 'event persistence failure log',
+      });
+
+      expect(
+        consoleWarnSpy.mock.calls.some(([message]) => String(message).includes('Retrying')),
+      ).toBe(true);
+      expect(consoleErrorSpy.mock.calls[0]?.[0]).toContain(
+        'Failed to persist event "workflow:completed" for workflow "wf-persist-failure"',
+      );
+
+      handle.dispose();
+    } finally {
+      consoleWarnSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
