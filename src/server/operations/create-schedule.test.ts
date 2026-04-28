@@ -1,0 +1,274 @@
+import { describe, expect, it } from 'bun:test';
+
+import { Engine } from '../../core/engine.ts';
+import { tenantFromInputField } from '../../core/tenant.ts';
+import type { WorkflowContext } from '../../core/types.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
+import { handleRequest, type HandlerOptions } from '../handler.ts';
+import { createOperationRegistry } from '../operation-catalog.ts';
+import { createScheduleOperation, createScheduleRestBinding } from './create-schedule.ts';
+
+function createEngine(): Engine {
+  const engine = new Engine({ storage: new MemoryStorage() });
+  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    return input;
+  });
+  return engine;
+}
+
+function createTenantAwareEngine(): Engine {
+  const engine = new Engine({
+    storage: new MemoryStorage(),
+    tenantResolver: tenantFromInputField('tenantId'),
+  });
+  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
+    return input;
+  });
+  return engine;
+}
+
+function request(method: string, path: string, body?: unknown): Request {
+  const options: RequestInit = { method };
+  if (body !== undefined) {
+    options.headers = { 'Content-Type': 'application/json' };
+    options.body = JSON.stringify(body);
+  }
+  return new Request(`http://localhost${path}`, options);
+}
+
+function invalidJsonRequest(method: string, path: string, rawBody: string): Request {
+  return new Request(`http://localhost${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: rawBody,
+  });
+}
+
+const registry = createOperationRegistry([createScheduleOperation]);
+const bindings = [createScheduleRestBinding];
+
+describe('weft.schedules.create', () => {
+  it('returns 201 and creates the schedule on the happy path', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        input: { payload: 'nightly' },
+        cronExpression: '0 * * * *',
+        id: 'nightly-maintenance',
+        overlap: 'queue',
+        backfill: true,
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ id: 'nightly-maintenance' });
+    expect(await engine.getSchedule('nightly-maintenance')).toEqual(
+      expect.objectContaining({
+        id: 'nightly-maintenance',
+        workflowType: 'echo',
+        cronExpression: '0 * * * *',
+        overlap: 'queue',
+        backfill: true,
+      }),
+    );
+  });
+
+  it('returns 400 when the request body is invalid JSON', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(invalidJsonRequest('POST', '/v1/schedules', '{'), engine, {
+      operationRegistry: registry,
+      restBindings: bindings,
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Invalid JSON body' });
+  });
+
+  it('returns 400 when the request body is JSON null', async () => {
+    // Legacy `handleCreateSchedule` rejected `null` (typeof 'object' && === null
+    // fails the guard) with "Request body must be a JSON object".
+    const engine = createEngine();
+
+    const response = await handleRequest(request('POST', '/v1/schedules', null), engine, {
+      operationRegistry: registry,
+      restBindings: bindings,
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Request body must be a JSON object' });
+  });
+
+  it('returns 400 with "Missing required field: type" when body is a JSON array', async () => {
+    // Legacy parity: arrays are typeof 'object' && !== null, so they pass the
+    // body-shape guard and fall through to the "type" required-field check.
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/schedules', ['not-an-object']),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Missing required field: type' });
+  });
+
+  it('returns 400 when overlap is invalid', async () => {
+    const engine = createEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        cronExpression: '0 * * * *',
+        overlap: 'invalid',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: 'Field "overlap" must be one of skip, queue, cancel-running, allow',
+    });
+  });
+
+  it('returns 403 when a JWT-authenticated request is missing a tenant claim', async () => {
+    const engine = createTenantAwareEngine();
+    const options: HandlerOptions = {
+      authContext: {
+        method: 'jwt',
+        claims: { sub: 'user-123' },
+      },
+      operationRegistry: registry,
+      restBindings: bindings,
+    };
+
+    const response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        cronExpression: '0 * * * *',
+      }),
+      engine,
+      options,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'JWT-authenticated schedule requests require a tenantId, tenant_id, or tenant claim',
+    });
+  });
+
+  it('returns 403 when the schedule input targets a different tenant', async () => {
+    const engine = createTenantAwareEngine();
+
+    const response = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        input: { tenantId: 'globex', payload: 'tenant-b' },
+        cronExpression: '0 * * * *',
+        id: 'schedule-globex',
+      }),
+      engine,
+      {
+        authContext: {
+          method: 'jwt',
+          claims: { tenantId: 'acme' },
+        },
+        operationRegistry: registry,
+        restBindings: bindings,
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'Schedule creation is limited to the authenticated tenant',
+    });
+  });
+
+  it('returns 404 when the engine reports a not-found error', async () => {
+    const engine = createEngine();
+    const originalSchedule = engine.schedule.bind(engine);
+
+    try {
+      engine.schedule = async () => {
+        throw new Error('Schedule "missing-schedule" not found');
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/schedules', {
+          type: 'echo',
+          cronExpression: '0 * * * *',
+        }),
+        engine,
+        { operationRegistry: registry, restBindings: bindings },
+      );
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: 'Schedule "missing-schedule" not found' });
+    } finally {
+      engine.schedule = originalSchedule;
+    }
+  });
+
+  it('returns 409 when the schedule id already exists', async () => {
+    const engine = createEngine();
+
+    const firstResponse = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        cronExpression: '0 * * * *',
+        id: 'duplicate-schedule',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+    expect(firstResponse.status).toBe(201);
+
+    const secondResponse = await handleRequest(
+      request('POST', '/v1/schedules', {
+        type: 'echo',
+        cronExpression: '0 * * * *',
+        id: 'duplicate-schedule',
+      }),
+      engine,
+      { operationRegistry: registry, restBindings: bindings },
+    );
+
+    expect(secondResponse.status).toBe(409);
+    expect((await secondResponse.json()) as { error: string }).toEqual(
+      expect.objectContaining({
+        error: expect.stringContaining('already exists'),
+      }),
+    );
+  });
+
+  it('returns the raw engine error message on unexpected failures', async () => {
+    const engine = createEngine();
+    const originalSchedule = engine.schedule.bind(engine);
+
+    try {
+      engine.schedule = async () => {
+        throw new Error('schedule exploded');
+      };
+
+      const response = await handleRequest(
+        request('POST', '/v1/schedules', {
+          type: 'echo',
+          cronExpression: '0 * * * *',
+        }),
+        engine,
+        { operationRegistry: registry, restBindings: bindings },
+      );
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: 'schedule exploded' });
+    } finally {
+      engine.schedule = originalSchedule;
+    }
+  });
+});
