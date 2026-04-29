@@ -23,9 +23,8 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-type JsonRpcEnvelope =
-  | { error: { code: number; data?: unknown; message: string }; result?: never }
-  | { error?: never; result: unknown };
+type JsonRpcError = { code: number; data?: unknown; message: string };
+type JsonRpcEnvelope = { error: JsonRpcError; result?: never } | { error?: never; result: unknown };
 
 const BINARY_STARTUP_TIMEOUT_MS = 15_000;
 const WORKFLOW_COMPLETION_TIMEOUT_MS = 10_000;
@@ -33,13 +32,30 @@ const REQUEST_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 const SHUTDOWN_GRACE_MS = 5_000;
 
+function getPipedStream(
+  output: ReturnType<typeof Bun.spawn>['stdout'] | ReturnType<typeof Bun.spawn>['stderr'],
+  label: string,
+): ReadableStream<Uint8Array> {
+  if (output instanceof ReadableStream) {
+    return output;
+  }
+  throw new Error(`${label} was not configured as a piped stream`);
+}
+
+function isJsonRpcError(value: unknown): value is JsonRpcError {
+  if (typeof value !== 'object' || value === null) return false;
+  const error = value as Record<string, unknown>;
+  return typeof error['code'] === 'number' && typeof error['message'] === 'string';
+}
+
 function isJsonRpcEnvelope(value: unknown): value is JsonRpcEnvelope {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
-  if ('error' in v) {
-    return typeof v['error'] === 'object' && v['error'] !== null;
-  }
-  return 'result' in v;
+  const hasError = 'error' in v;
+  const hasResult = 'result' in v;
+  if (hasError === hasResult) return false;
+  if (hasError) return isJsonRpcError(v['error']);
+  return true;
 }
 
 function hasStatus(value: unknown): value is { result?: unknown; status: string } {
@@ -50,12 +66,17 @@ function hasStatus(value: unknown): value is { result?: unknown; status: string 
   );
 }
 
-async function jsonRpc(url: string, method: string, params: unknown): Promise<unknown> {
+async function jsonRpc(
+  url: string,
+  method: string,
+  params: unknown,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<unknown> {
   const response = await fetch(`${url}/jsonrpc`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const raw = await response.json();
   if (!isJsonRpcEnvelope(raw)) {
@@ -70,7 +91,9 @@ async function jsonRpc(url: string, method: string, params: unknown): Promise<un
 async function pollUntilCompleted(url: string, workflowId: string): Promise<unknown> {
   const deadline = Date.now() + WORKFLOW_COMPLETION_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const raw = await jsonRpc(url, 'weft.workflows.get', { workflowId });
+    const remainingMs = deadline - Date.now();
+    const requestTimeoutMs = Math.min(REQUEST_TIMEOUT_MS, remainingMs);
+    const raw = await jsonRpc(url, 'weft.workflows.get', { workflowId }, requestTimeoutMs);
     if (!hasStatus(raw)) {
       throw new Error(`weft.workflows.get returned unexpected shape: ${JSON.stringify(raw)}`);
     }
@@ -78,7 +101,8 @@ async function pollUntilCompleted(url: string, workflowId: string): Promise<unkn
     if (raw.status === 'failed' || raw.status === 'cancelled') {
       throw new Error(`Workflow ${workflowId} ended with status ${raw.status}`);
     }
-    await Bun.sleep(POLL_INTERVAL_MS);
+    const nextPollDelayMs = Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()));
+    await Bun.sleep(nextPollDelayMs);
   }
   throw new Error(
     `Workflow ${workflowId} did not complete within ${WORKFLOW_COMPLETION_TIMEOUT_MS}ms`,
@@ -86,25 +110,34 @@ async function pollUntilCompleted(url: string, workflowId: string): Promise<unkn
 }
 
 async function waitForReady(process_: ReturnType<typeof Bun.spawn>): Promise<string> {
-  const reader = process_.stdout.getReader();
+  const reader = getPipedStream(process_.stdout, 'Harness stdout').getReader();
   const decoder = new TextDecoder();
   let buffered = '';
-
-  const timeoutPromise = new Promise<never>((_resolve, reject) =>
-    setTimeout(
-      () =>
-        reject(
-          new Error(
-            `Timed out waiting for SMOKE_READY after ${BINARY_STARTUP_TIMEOUT_MS}ms (check stderr above)`,
-          ),
+  let startupTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
+  let cancelReadPromise: Promise<void> | undefined;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    startupTimeoutId = setTimeout(() => {
+      if (pendingRead) {
+        cancelReadPromise = reader.cancel().catch(() => undefined);
+      }
+      reject(
+        new Error(
+          `Timed out waiting for SMOKE_READY after ${BINARY_STARTUP_TIMEOUT_MS}ms (check stderr above)`,
         ),
-      BINARY_STARTUP_TIMEOUT_MS,
-    ),
-  );
+      );
+    }, BINARY_STARTUP_TIMEOUT_MS);
+  });
 
   try {
     while (true) {
-      const { done, value } = await Promise.race([reader.read(), timeoutPromise]);
+      pendingRead = reader.read();
+      const readResult: ReadableStreamReadResult<Uint8Array> = await Promise.race([
+        pendingRead,
+        timeoutPromise,
+      ]);
+      const { done, value } = readResult;
+      pendingRead = undefined;
       if (done) {
         throw new Error('Binary exited before signalling SMOKE_READY (check stderr above)');
       }
@@ -113,6 +146,10 @@ async function waitForReady(process_: ReturnType<typeof Bun.spawn>): Promise<str
       if (match) return match[1] ?? '';
     }
   } finally {
+    if (startupTimeoutId) {
+      clearTimeout(startupTimeoutId);
+    }
+    await cancelReadPromise;
     reader.releaseLock();
   }
 }
@@ -133,7 +170,7 @@ async function compileBinary(entry: string, binaryPath: string): Promise<void> {
   });
   const buildExit = await build.exited;
   if (buildExit !== 0) {
-    const stderr = await new Response(build.stderr).text();
+    const stderr = await new Response(getPipedStream(build.stderr, 'Build stderr')).text();
     throw new Error(`bun build --compile ${entry} failed (exit ${buildExit}):\n${stderr}`);
   }
   if (!existsSync(binaryPath)) {
@@ -152,7 +189,7 @@ async function exerciseProductionCli(binaryPath: string): Promise<void> {
   if (probeExit !== 0) {
     throw new Error(`Production CLI binary exited ${probeExit} on --help`);
   }
-  const stdout = await new Response(probe.stdout).text();
+  const stdout = await new Response(getPipedStream(probe.stdout, 'Production CLI stdout')).text();
   if (!stdout.includes('weft') || !stdout.includes('Commands:')) {
     throw new Error(`Production CLI --help output looks wrong:\n${stdout}`);
   }

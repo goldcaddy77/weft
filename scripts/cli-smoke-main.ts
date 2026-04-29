@@ -8,7 +8,7 @@ import { serve } from '../src/server/index.ts';
 
 const portArgument = Bun.argv.find((argument) => argument.startsWith('--port='));
 const parsedPort = portArgument ? Number(portArgument.slice('--port='.length)) : 0;
-if (!Number.isFinite(parsedPort) || parsedPort < 0 || parsedPort > 65_535) {
+if (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65_535) {
   console.error(`Invalid --port value: ${portArgument}`);
   process.exit(1);
 }
