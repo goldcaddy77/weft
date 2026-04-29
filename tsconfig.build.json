@@ -12,5 +12,5 @@
     "inlineSources": true
   },
   "include": ["src"],
-  "exclude": ["node_modules", "**/*.test.ts", "**/*.spec.ts", "src/cli-smoke-main.ts"]
+  "exclude": ["node_modules", "**/*.test.ts", "**/*.spec.ts"]
 }

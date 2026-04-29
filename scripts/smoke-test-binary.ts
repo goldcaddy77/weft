@@ -1,11 +1,20 @@
 #!/usr/bin/env bun
 
 /**
- * Round-trip smoke test for the compiled `weft-smoke` binary.
+ * Round-trip smoke test for the compiled Weft binaries.
  *
- * Builds a self-contained binary from src/cli-smoke-main.ts (which embeds
- * the hello-world workflow), spawns it on an OS-assigned port, drives a
- * full workflow lifecycle over JSON-RPC HTTP, and asserts the result.
+ * Two binaries are compiled with `bun build --compile`:
+ *
+ * 1. The production CLI entrypoint, `src/cli-main.ts` — proves that
+ *    `final-5` (compile produces a working binary) holds for the CLI
+ *    that ships to consumers. Verified by spawning it with `--help` and
+ *    confirming a clean exit and the expected banner.
+ *
+ * 2. The smoke harness, `scripts/cli-smoke-main.ts` — embeds the
+ *    hello-world workflow because the production CLI does not accept a
+ *    `--workflows` flag. The harness binds to 127.0.0.1 on an OS-assigned
+ *    port and announces itself with `SMOKE_READY <url>` on stdout. The
+ *    driver then drives a full workflow lifecycle over JSON-RPC HTTP.
  *
  * Run with: `bun run scripts/smoke-test-binary.ts`
  */
@@ -18,132 +27,194 @@ type JsonRpcEnvelope =
   | { error: { code: number; data?: unknown; message: string }; result?: never }
   | { error?: never; result: unknown };
 
+const BINARY_STARTUP_TIMEOUT_MS = 15_000;
+const WORKFLOW_COMPLETION_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
-const POLL_TIMEOUT_MS = 10_000;
-const READY_TIMEOUT_MS = 15_000;
+const SHUTDOWN_GRACE_MS = 5_000;
+
+function isJsonRpcEnvelope(value: unknown): value is JsonRpcEnvelope {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if ('error' in v) {
+    return typeof v['error'] === 'object' && v['error'] !== null;
+  }
+  return 'result' in v;
+}
+
+function hasStatus(value: unknown): value is { result?: unknown; status: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Record<string, unknown>)['status'] === 'string'
+  );
+}
 
 async function jsonRpc(url: string, method: string, params: unknown): Promise<unknown> {
   const response = await fetch(`${url}/jsonrpc`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  const envelope = (await response.json()) as JsonRpcEnvelope;
-  if ('error' in envelope && envelope.error) {
-    throw new Error(`RPC error from ${method}: ${JSON.stringify(envelope.error)}`);
+  const raw = await response.json();
+  if (!isJsonRpcEnvelope(raw)) {
+    throw new Error(`Malformed JSON-RPC response from ${method}: ${JSON.stringify(raw)}`);
   }
-  return envelope.result;
+  if ('error' in raw && raw.error) {
+    throw new Error(`RPC error from ${method}: ${JSON.stringify(raw.error)}`);
+  }
+  return raw.result;
 }
 
 async function pollUntilCompleted(url: string, workflowId: string): Promise<unknown> {
-  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  const deadline = Date.now() + WORKFLOW_COMPLETION_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const handle = (await jsonRpc(url, 'weft.workflows.get', { workflowId })) as {
-      result?: unknown;
-      status: string;
-    };
-    if (handle.status === 'completed') {
-      return handle.result;
+    const raw = await jsonRpc(url, 'weft.workflows.get', { workflowId });
+    if (!hasStatus(raw)) {
+      throw new Error(`weft.workflows.get returned unexpected shape: ${JSON.stringify(raw)}`);
     }
-    if (handle.status === 'failed' || handle.status === 'cancelled') {
-      throw new Error(`Workflow ${workflowId} ended with status ${handle.status}`);
+    if (raw.status === 'completed') return raw.result;
+    if (raw.status === 'failed' || raw.status === 'cancelled') {
+      throw new Error(`Workflow ${workflowId} ended with status ${raw.status}`);
     }
     await Bun.sleep(POLL_INTERVAL_MS);
   }
-  throw new Error(`Workflow ${workflowId} did not complete within ${POLL_TIMEOUT_MS}ms`);
+  throw new Error(
+    `Workflow ${workflowId} did not complete within ${WORKFLOW_COMPLETION_TIMEOUT_MS}ms`,
+  );
 }
 
-async function waitForReady(
-  process_: ReturnType<typeof Bun.spawn>,
-  stderrBuffer: { value: string },
-): Promise<string> {
-  const deadline = Date.now() + READY_TIMEOUT_MS;
+async function waitForReady(process_: ReturnType<typeof Bun.spawn>): Promise<string> {
   const reader = process_.stdout.getReader();
   const decoder = new TextDecoder();
   let buffered = '';
-  while (Date.now() < deadline) {
-    const { done, value } = await reader.read();
-    if (done) {
-      throw new Error(
-        `Binary exited before signalling SMOKE_READY. stderr:\n${stderrBuffer.value}`,
-      );
-    }
-    buffered += decoder.decode(value, { stream: true });
-    const match = buffered.match(/SMOKE_READY (\S+)/);
-    if (match) {
-      reader.releaseLock();
-      return match[1] ?? '';
-    }
-  }
-  throw new Error(`Timed out waiting for SMOKE_READY. stderr:\n${stderrBuffer.value}`);
-}
 
-async function captureStderr(
-  process_: ReturnType<typeof Bun.spawn>,
-  buffer: { value: string },
-): Promise<void> {
-  const reader = process_.stderr.getReader();
-  const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) return;
-    buffer.value += decoder.decode(value, { stream: true });
+  const timeoutPromise = new Promise<never>((_resolve, reject) =>
+    setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Timed out waiting for SMOKE_READY after ${BINARY_STARTUP_TIMEOUT_MS}ms (check stderr above)`,
+          ),
+        ),
+      BINARY_STARTUP_TIMEOUT_MS,
+    ),
+  );
+
+  try {
+    while (true) {
+      const { done, value } = await Promise.race([reader.read(), timeoutPromise]);
+      if (done) {
+        throw new Error('Binary exited before signalling SMOKE_READY (check stderr above)');
+      }
+      buffered += decoder.decode(value, { stream: true });
+      const match = buffered.match(/SMOKE_READY (\S+)/);
+      if (match) return match[1] ?? '';
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 
-async function main(): Promise<void> {
-  const buildDirectory = mkdtempSync(join(tmpdir(), 'weft-smoke-'));
-  const binaryPath = join(buildDirectory, 'weft-smoke');
+async function shutdownServer(server: ReturnType<typeof Bun.spawn>): Promise<void> {
+  server.kill('SIGTERM');
+  const escalation = setTimeout(() => server.kill('SIGKILL'), SHUTDOWN_GRACE_MS);
+  await server.exited;
+  clearTimeout(escalation);
+}
 
-  console.log(`[smoke] Building binary at ${binaryPath}…`);
+async function compileBinary(entry: string, binaryPath: string): Promise<void> {
+  console.log(`[smoke] Compiling ${entry} → ${binaryPath}…`);
   const build = Bun.spawn({
-    cmd: ['bun', 'build', '--compile', '--outfile', binaryPath, './src/cli-smoke-main.ts'],
+    cmd: ['bun', 'build', '--compile', '--outfile', binaryPath, entry],
     stdout: 'pipe',
     stderr: 'pipe',
   });
   const buildExit = await build.exited;
   if (buildExit !== 0) {
     const stderr = await new Response(build.stderr).text();
-    throw new Error(`bun build --compile failed (exit ${buildExit}):\n${stderr}`);
+    throw new Error(`bun build --compile ${entry} failed (exit ${buildExit}):\n${stderr}`);
   }
   if (!existsSync(binaryPath)) {
     throw new Error(`Binary not found at ${binaryPath} after compile`);
   }
+}
 
-  console.log(`[smoke] Spawning binary…`);
+async function exerciseProductionCli(binaryPath: string): Promise<void> {
+  console.log('[smoke] Exercising production CLI binary (--help)…');
+  const probe = Bun.spawn({
+    cmd: [binaryPath, '--help'],
+    stdout: 'pipe',
+    stderr: 'inherit',
+  });
+  const probeExit = await probe.exited;
+  if (probeExit !== 0) {
+    throw new Error(`Production CLI binary exited ${probeExit} on --help`);
+  }
+  const stdout = await new Response(probe.stdout).text();
+  if (!stdout.includes('weft') || !stdout.includes('Commands:')) {
+    throw new Error(`Production CLI --help output looks wrong:\n${stdout}`);
+  }
+}
+
+async function exerciseHarnessRoundTrip(binaryPath: string): Promise<void> {
+  console.log('[smoke] Spawning harness binary…');
   const server = Bun.spawn({
     cmd: [binaryPath, '--port=0'],
     stdout: 'pipe',
-    stderr: 'pipe',
+    stderr: 'inherit',
   });
-  const stderrBuffer = { value: '' };
-  const stderrPromise = captureStderr(server, stderrBuffer);
 
   try {
-    const url = await waitForReady(server, stderrBuffer);
-    console.log(`[smoke] Binary ready at ${url}`);
+    const url = await waitForReady(server);
+    console.log(`[smoke] Harness ready at ${url}`);
 
     console.log('[smoke] Calling weft.workflows.start…');
-    const startResult = (await jsonRpc(url, 'weft.workflows.start', {
+    const startRaw = await jsonRpc(url, 'weft.workflows.start', {
       type: 'helloWorld',
       input: 'Alice',
-    })) as { id: string };
-    if (typeof startResult.id !== 'string' || startResult.id.length === 0) {
-      throw new Error(`weft.workflows.start did not return an id: ${JSON.stringify(startResult)}`);
+    });
+    if (
+      typeof startRaw !== 'object' ||
+      startRaw === null ||
+      typeof (startRaw as Record<string, unknown>)['id'] !== 'string'
+    ) {
+      throw new Error(`weft.workflows.start did not return an id: ${JSON.stringify(startRaw)}`);
     }
-    console.log(`[smoke] Started workflow ${startResult.id}`);
+    const workflowId = (startRaw as { id: string }).id;
+    console.log(`[smoke] Started workflow ${workflowId}`);
 
     console.log('[smoke] Polling weft.workflows.get until completed…');
-    const result = (await pollUntilCompleted(url, startResult.id)) as { greeting: string };
-    if (result?.greeting !== 'hello Alice') {
+    const result = await pollUntilCompleted(url, workflowId);
+    if (
+      typeof result !== 'object' ||
+      result === null ||
+      (result as Record<string, unknown>)['greeting'] !== 'hello Alice'
+    ) {
       throw new Error(`Unexpected workflow result: ${JSON.stringify(result)}`);
     }
     console.log(`[smoke] Got expected result: ${JSON.stringify(result)}`);
+  } finally {
+    await shutdownServer(server);
+  }
+}
+
+async function main(): Promise<void> {
+  const buildDirectory = mkdtempSync(join(tmpdir(), 'weft-smoke-'));
+
+  try {
+    const productionBinary = join(buildDirectory, 'weft');
+    const harnessBinary = join(buildDirectory, 'weft-smoke');
+
+    await compileBinary('./src/cli-main.ts', productionBinary);
+    await exerciseProductionCli(productionBinary);
+
+    await compileBinary('./scripts/cli-smoke-main.ts', harnessBinary);
+    await exerciseHarnessRoundTrip(harnessBinary);
+
     console.log('[smoke] PASS');
   } finally {
-    server.kill('SIGTERM');
-    await server.exited;
-    await stderrPromise;
     rmSync(buildDirectory, { recursive: true, force: true });
   }
 }
