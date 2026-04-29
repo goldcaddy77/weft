@@ -54,17 +54,29 @@ function slugify(input: string): string {
 
 // ---------------------------------------------------------------------------
 // Extract @example blocks from a source declaration. Returns the raw block
-// content with the surrounding ```ts ... ``` fence stripped.
+// content with the surrounding ```ts ... ``` fence stripped, plus any blocks
+// that have a non-ts fence so the caller can warn about them — silently
+// skipping a `typescript`/`javascript` fence would let real examples bypass
+// the doctest gate.
 // ---------------------------------------------------------------------------
 
-function extractExamples(sourceFile: ts.SourceFile, sourceName: string): string[] {
+type ExtractedExamples = {
+  examples: string[];
+  badFences: { language: string; preview: string }[]; // non-ts fences (must be ts)
+  fenceless: boolean[]; // @example tags with no fenced code block at all
+};
+
+function extractExamples(sourceFile: ts.SourceFile, sourceName: string): ExtractedExamples {
   const examples: string[] = [];
+  const badFences: { language: string; preview: string }[] = [];
+  const fenceless: boolean[] = [];
   function visit(node: ts.Node): void {
     if (
       (ts.isFunctionDeclaration(node) ||
         ts.isClassDeclaration(node) ||
         ts.isInterfaceDeclaration(node) ||
         ts.isTypeAliasDeclaration(node) ||
+        ts.isEnumDeclaration(node) ||
         ts.isVariableStatement(node)) &&
       hasMatchingName(node, sourceName)
     ) {
@@ -73,17 +85,29 @@ function extractExamples(sourceFile: ts.SourceFile, sourceName: string): string[
         if (tag.tagName.text === 'example') {
           const text = readJSDocComment(tag.comment);
           // Match ```ts (optional language meta) \n (block content) \n ```
-          const fence = text.match(/```ts\b[^\n]*\n([\s\S]*?)```/);
-          if (fence) {
-            examples.push(fence[1]);
+          const tsFence = text.match(/```ts\b[^\n]*\n([\s\S]*?)```/);
+          if (tsFence) {
+            examples.push(tsFence[1]);
+            continue;
           }
+          // Non-ts fence — flag for warning; silently skipping would let real
+          // examples bypass the doctest gate.
+          const anyFence = text.match(/```([^\s`]*)\b[^\n]*\n([\s\S]*?)```/);
+          if (anyFence) {
+            badFences.push({
+              language: anyFence[1] || '(empty)',
+              preview: anyFence[2].slice(0, 80).replace(/\n/g, ' '),
+            });
+            continue;
+          }
+          fenceless.push(true);
         }
       }
     }
     ts.forEachChild(node, visit);
   }
   visit(sourceFile);
-  return examples;
+  return { examples, badFences, fenceless };
 }
 
 function hasMatchingName(node: ts.Node, sourceName: string): boolean {
@@ -91,9 +115,13 @@ function hasMatchingName(node: ts.Node, sourceName: string): boolean {
     ts.isFunctionDeclaration(node) ||
     ts.isClassDeclaration(node) ||
     ts.isInterfaceDeclaration(node) ||
-    ts.isTypeAliasDeclaration(node)
+    ts.isTypeAliasDeclaration(node) ||
+    ts.isEnumDeclaration(node)
   ) {
-    return node.name?.getText() === sourceName;
+    const name = node.name;
+    if (!name) return false;
+    if (ts.isIdentifier(name)) return name.text === sourceName;
+    return name.getText() === sourceName;
   }
   if (ts.isVariableStatement(node)) {
     for (const decl of node.declarationList.declarations) {
@@ -118,13 +146,17 @@ function readJSDocComment(comment: ts.JSDocTag['comment']): string {
 }
 
 // ---------------------------------------------------------------------------
-// Validate that an example block has a `from 'weft'` (or subpath) import.
-// Accepts value, type-only, or mixed import forms.
+// Validate that an example block imports from at least one of the symbol's
+// publicFaces import paths. Accepts value, type-only, or mixed import forms.
+//
+// For a symbol reachable only from one path (e.g. `weft/storage/lmdb#LMDBStorage`),
+// the example MUST import from that path — importing from `'weft'` would be
+// misleading because `LMDBStorage` isn't re-exported there. For symbols
+// reachable from multiple paths (e.g. `MemoryStorage` is at both `'weft'` and
+// `'weft/storage/memory'`), importing from any one valid face is acceptable.
 // ---------------------------------------------------------------------------
 
-function hasWeftImport(block: string, weftSpecifiers: Set<string>): boolean {
-  // Match `import ... from '<specifier>'` with optional `type` keyword.
-  // Only consider the first ~6 non-blank lines for the import.
+function hasFaceImport(block: string, candidateImportPaths: Set<string>): boolean {
   const lines = block
     .split('\n')
     .filter((l) => l.trim().length > 0)
@@ -133,7 +165,7 @@ function hasWeftImport(block: string, weftSpecifiers: Set<string>): boolean {
   const importPattern = /import(?:\s+type)?\s+[^;]+\s+from\s+['"]([^'"]+)['"]/g;
   let match: RegExpExecArray | null;
   while ((match = importPattern.exec(joined)) !== null) {
-    if (weftSpecifiers.has(match[1])) return true;
+    if (candidateImportPaths.has(match[1])) return true;
   }
   return false;
 }
@@ -182,7 +214,6 @@ function main(): void {
     process.exit(1);
   }
   const manifest: Manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
-  const weftSpecifiers = new Set(Object.keys(manifest.publicEntryPoints));
 
   // Reset the doctests directory.
   if (existsSync(DOCTESTS_DIR)) rmSync(DOCTESTS_DIR, { recursive: true, force: true });
@@ -203,6 +234,7 @@ function main(): void {
 
   let totalBlocks = 0;
   const missingImports: string[] = [];
+  const malformedFences: string[] = [];
 
   // Iterate manifest entries; only entries reachable from a public face produce
   // doctests (we want consumer-visible imports to be the source of truth, and
@@ -211,37 +243,67 @@ function main(): void {
     if (entry.publicFaces.length === 0) continue;
     const sourceFile = getSource(entry.sourceFile);
     if (!sourceFile) continue;
-    const examples = extractExamples(sourceFile, entry.sourceName);
+    const { examples, badFences, fenceless } = extractExamples(sourceFile, entry.sourceName);
+    for (const bad of badFences) {
+      const fenceMarker = '```';
+      malformedFences.push(
+        `  ${entry.sourceFile}#${entry.sourceName}: @example uses ${fenceMarker}${bad.language} fence (must be ${fenceMarker}ts) — preview: "${bad.preview}"`,
+      );
+    }
+    for (let i = 0; i < fenceless.length; i++) {
+      malformedFences.push(
+        `  ${entry.sourceFile}#${entry.sourceName}: @example tag #${i + 1} has no fenced code block`,
+      );
+    }
     if (examples.length === 0) continue;
     const batchSlug =
       entry.batch ?? (entry.currentState === 'has-example' ? 'exemplar' : 'unclassified');
     const batchDir = resolve(DOCTESTS_DIR, slugify(batchSlug));
     mkdirSync(batchDir, { recursive: true });
 
-    for (const face of entry.publicFaces) {
-      examples.forEach((block, index) => {
-        if (!hasWeftImport(block, weftSpecifiers)) {
-          missingImports.push(
-            `  ${face.importPath}#${face.exportName}#${face.kind} (example ${index + 1}): no 'from \\'${face.importPath}\\'' import in first lines`,
-          );
-          return;
-        }
+    // The example must import from at least one of the entry's publicFaces.
+    // For multi-face symbols (re-exported from both `'weft'` and a subpath),
+    // any one valid face import is acceptable for all faces.
+    const candidateImportPaths = new Set(entry.publicFaces.map((f) => f.importPath));
+    examples.forEach((block, index) => {
+      if (!hasFaceImport(block, candidateImportPaths)) {
+        const facesList = entry.publicFaces
+          .map((f) => `${f.importPath}#${f.exportName}#${f.kind}`)
+          .join(', ');
+        missingImports.push(
+          `  ${entry.sourceFile}#${entry.sourceName} (example ${index + 1}): no import from any of [${[...candidateImportPaths].join(', ')}]; faces=[${facesList}]`,
+        );
+        return;
+      }
+      // Emit one doctest file per face — same source block, different filename
+      // so the per-face declaration check has a per-face artifact to point at.
+      for (const face of entry.publicFaces) {
         const filename = `${slugify(face.importPath)}__${face.exportName}__${face.kind}__${index}.ts`;
         const filePath = resolve(batchDir, filename);
-        // Wrap in an IIFE so top-level `await` works without the file becoming
-        // a module-scope no-op when the example references unused identifiers.
         const wrapped = `// auto-generated from @example block of ${face.importPath}#${face.exportName}#${face.kind}\n${block}\n`;
         writeFileSync(filePath, wrapped, 'utf8');
         totalBlocks++;
-      });
-    }
+      }
+    });
   }
 
   writeTsconfig(manifest.publicEntryPoints);
 
+  if (malformedFences.length > 0) {
+    console.error('extract-doctests: malformed @example fences (must be ```ts):');
+    for (const line of malformedFences) console.error(line);
+    console.error(
+      '  → Fix: edit the source @example block to use the ```ts language tag (no `typescript`, no untagged fences). The doctest gate only compiles ```ts blocks, so other tags would silently bypass type-checking.',
+    );
+    process.exit(1);
+  }
+
   if (missingImports.length > 0) {
-    console.error("extract-doctests: examples missing required `from 'weft'` import:");
+    console.error("extract-doctests: examples missing required `from '<publicFace>'` import:");
     for (const line of missingImports) console.error(line);
+    console.error(
+      "  → Fix: each @example block must import its symbol from the same path the consumer would. For an entry whose publicFaces[0].importPath is 'weft/storage/lmdb', the example must include `import { ... } from 'weft/storage/lmdb';` (related auxiliary imports from 'weft' are fine in addition).",
+    );
     process.exit(1);
   }
 

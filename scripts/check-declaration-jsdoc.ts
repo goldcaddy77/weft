@@ -382,10 +382,34 @@ function main(): void {
   const selector = parseArgs(process.argv.slice(2));
   if (!existsSync(MANIFEST_PATH)) {
     console.error(`check-declaration-jsdoc: manifest not found at ${MANIFEST_PATH}`);
+    console.error(
+      `  → Fix: run \`bun run scripts/build-jsdoc-manifest.ts\` to generate the manifest.`,
+    );
     process.exit(1);
   }
   const manifest: Manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
   const pkg = loadPackageJson();
+
+  // Pre-flight: every entry-point's emitted .d.ts must exist before we walk
+  // any tuple — otherwise we'd flood the user with hundreds of identical
+  // "declaration file not found" errors. Bail with one summary line.
+  const missingDts: string[] = [];
+  for (const importPath of Object.keys(manifest.publicEntryPoints)) {
+    try {
+      const dtsPath = declarationFileFor(importPath, pkg);
+      if (!existsSync(dtsPath)) missingDts.push(`  - ${importPath} → ${dtsPath}`);
+    } catch (err) {
+      missingDts.push(`  - ${importPath}: ${(err as Error).message}`);
+    }
+  }
+  if (missingDts.length > 0) {
+    console.error(
+      `check-declaration-jsdoc: ${missingDts.length} declaration file(s) missing — run \`bun run build\` first.`,
+    );
+    for (const line of missingDts) console.error(line);
+    process.exit(1);
+  }
+
   const population = buildPopulation(selector, manifest);
   const programCache = new Map<
     string,
@@ -399,6 +423,9 @@ function main(): void {
   if (failures.length > 0) {
     console.error('check-declaration-jsdoc: failures:');
     for (const line of failures) console.error(line);
+    console.error(
+      '  → Fix: each failing triple needs prose JSDoc and (for example-required entries) at least one @example block in the source declaration. Edit the source file, then re-run `bun run build && bun run scripts/check-declaration-jsdoc.ts --all`.',
+    );
     process.exit(1);
   }
   console.log(`check-declaration-jsdoc: ${population.length} triples passed`);

@@ -103,26 +103,42 @@ function batchFor(entry: ManifestEntry, classification: Classification): string 
 }
 
 function main(): void {
+  const args = process.argv.slice(2);
+  const reset = args.includes('--reset');
   const manifest: Manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
   let proseOnlyCount = 0;
   let notPublicCount = 0;
   let exampleRequiredCount = 0;
+  let preserved = 0;
   const batchCounts = new Map<string, number>();
 
   for (const entry of manifest.entries) {
-    const { classification, rationale } = classify(entry);
-    entry.classification = classification;
-    entry.classificationRationale = rationale;
-    entry.batch = batchFor(entry, classification);
-    if (classification === 'prose-only') proseOnlyCount++;
-    else if (classification === 'not-public') notPublicCount++;
+    // Preserve existing manual classifications by default. The classifier's
+    // automated rules cannot encode every domain decision (e.g. "this type
+    // looks like a returned shape but users actually construct it"), so any
+    // entry whose `classification` is already set to a final value should
+    // not be re-classified on subsequent runs. Pass --reset to override.
+    const isAlreadyClassified =
+      !reset && entry.classification !== 'unclassified' && entry.classification != null;
+    if (!isAlreadyClassified) {
+      const { classification, rationale } = classify(entry);
+      entry.classification = classification;
+      entry.classificationRationale = rationale;
+    } else {
+      preserved++;
+    }
+    entry.batch = batchFor(entry, entry.classification);
+    if (entry.classification === 'prose-only') proseOnlyCount++;
+    else if (entry.classification === 'not-public') notPublicCount++;
     else exampleRequiredCount++;
     if (entry.batch) batchCounts.set(entry.batch, (batchCounts.get(entry.batch) ?? 0) + 1);
   }
 
   writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 
-  console.log(`Classified ${manifest.entries.length} entries:`);
+  console.log(
+    `Classified ${manifest.entries.length} entries (${preserved} preserved from prior run):`,
+  );
   console.log(`  example-required: ${exampleRequiredCount}`);
   console.log(`  prose-only:       ${proseOnlyCount}`);
   console.log(`  not-public:       ${notPublicCount}`);

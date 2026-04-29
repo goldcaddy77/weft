@@ -73,11 +73,15 @@ function pickTypesField(value: unknown): string | null {
   if (value === null || typeof value !== 'object') return null;
   const obj = value as Record<string, unknown>;
   if (typeof obj['types'] === 'string') return obj['types'];
+  // Conditional shape with platform-specific types — return null. The
+  // unified specifier maps to different sources per platform; explicit
+  // per-platform subpaths in package.json must cover both. (Mirrors the
+  // build script's pickTypesField behavior.)
   for (const key of ['bun', 'node', 'import', 'default'] as const) {
     const inner = obj[key];
-    if (inner && typeof inner === 'object') {
+    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
       const innerTypes = (inner as Record<string, unknown>)['types'];
-      if (typeof innerTypes === 'string') return innerTypes;
+      if (typeof innerTypes === 'string') return null;
     }
   }
   return null;
@@ -370,6 +374,25 @@ function main(): void {
   if (failures.length > 0) {
     console.error('audit-jsdoc-manifest: failures:');
     for (const line of failures) console.error(line);
+    console.error(
+      [
+        '',
+        'How to fix:',
+        '  - "publicEntryPoints: key X present/missing": package.json `exports` changed.',
+        '    Run `bun run scripts/build-jsdoc-manifest.ts` to regenerate the manifest, then',
+        '    `bun run scripts/classify-jsdoc-manifest.ts` to re-apply classifications.',
+        '  - "public-face set: X in manifest but missing from declarations": a public export was',
+        '    removed from the runtime surface but still appears in the manifest.',
+        '    Run the build pipeline (`bun run build && bun run scripts/build-jsdoc-manifest.ts`).',
+        '  - "public-face set: X in declarations but missing from manifest": a NEW public export',
+        '    was added without regenerating the manifest. Run',
+        '    `bun run scripts/build-jsdoc-manifest.ts && bun run scripts/classify-jsdoc-manifest.ts`,',
+        '    review the diff, then re-run the audit.',
+        '  - "example-required entry has currentState=...": JSDoc is missing or incomplete on the',
+        "    source declaration. Add prose + an @example block (`import { X } from '<face>'` first),",
+        '    then re-run.',
+      ].join('\n'),
+    );
     process.exit(1);
   }
   console.log(

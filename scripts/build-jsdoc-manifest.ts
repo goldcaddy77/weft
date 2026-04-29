@@ -17,7 +17,7 @@
  * pass (step 3 of the JSDoc plan) sets it to example-required | prose-only | not-public.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import ts from 'typescript';
 
@@ -67,23 +67,47 @@ function distToSource(distRelative: string): string {
 }
 
 function pickTypesField(value: unknown): string | null {
-  if (typeof value === 'string') return value;
+  // A plain-string export (e.g. "./foo.js") points at runtime JS only and
+  // carries no type information — return null to match the audit + check
+  // scripts' behavior.
+  if (typeof value === 'string') return null;
   if (value === null || typeof value !== 'object') return null;
   const obj = value as Record<string, unknown>;
   if (typeof obj['types'] === 'string') return obj['types'];
-  // Conditional shape: { bun: { types: ... } } or { node: { types: ... } }.
+  // Conditional shape with platform-specific types in nested fields like
+  // { bun: { types: ... } } or { node: { types: ... } }. We return null
+  // here — `splitConditionalTypes` is the proper way to enumerate per-platform
+  // sources separately (see `buildPublicEntryPoints`). Returning a single
+  // first-match types field would silently drop the other platform's source.
   for (const key of ['bun', 'node', 'import', 'default'] as const) {
     const inner = obj[key];
-    if (typeof inner === 'string') {
-      // `import` / `default` values are .js — not useful for source resolution.
-      continue;
-    }
-    if (inner && typeof inner === 'object') {
+    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
       const innerTypes = (inner as Record<string, unknown>)['types'];
-      if (typeof innerTypes === 'string') return innerTypes;
+      if (typeof innerTypes === 'string') return null;
     }
   }
   return null;
+}
+
+/**
+ * For conditional exports without a top-level `types` field but with nested
+ * platform conditions, return the per-platform source paths so the manifest
+ * tracks each platform's source independently. Skips when a top-level `types`
+ * field exists (handled by `pickTypesField`).
+ */
+function splitConditionalTypes(value: unknown): string[] {
+  if (typeof value !== 'object' || value === null) return [];
+  const obj = value as Record<string, unknown>;
+  if (typeof obj['types'] === 'string') return [];
+  const out: string[] = [];
+  for (const key of ['bun', 'node', 'import', 'default'] as const) {
+    const inner = obj[key];
+    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+      const innerTypes = (inner as Record<string, unknown>)['types'];
+      if (typeof innerTypes === 'string') out.push(innerTypes);
+    }
+  }
+  return out;
 }
 
 function buildPublicEntryPoints(): Record<string, string> {
@@ -96,12 +120,28 @@ function buildPublicEntryPoints(): Record<string, string> {
   }
   const out: Record<string, string> = {};
   for (const [subpath, value] of Object.entries(pkg.exports)) {
-    const typesPath = pickTypesField(value);
-    if (!typesPath) continue; // Some entries are .js-only without types.
-    const sourcePath = distToSource(typesPath);
     const importPath = subpath === '.' ? pkg.name : `${pkg.name}/${subpath.replace(/^\.\//, '')}`;
-    const absoluteSource = resolve(REPO_ROOT, sourcePath);
-    out[importPath] = relative(REPO_ROOT, absoluteSource);
+
+    const typesPath = pickTypesField(value);
+    if (typesPath) {
+      const sourcePath = distToSource(typesPath);
+      out[importPath] = relative(REPO_ROOT, resolve(REPO_ROOT, sourcePath));
+      continue;
+    }
+
+    // Conditional export with platform-specific types and no top-level
+    // unification (e.g. `./storage/sqlite` whose types differ per bun/node).
+    // Skip the unified specifier — both platform-specific sources should be
+    // covered by their own explicit subpaths (e.g. `./storage/sqlite/bun`).
+    // If neither explicit subpath exists, this is a real coverage gap that
+    // should be addressed in package.json by adding a unified types field
+    // or splitting the export into explicit per-platform subpaths.
+    const platformTypes = splitConditionalTypes(value);
+    if (platformTypes.length === 0) continue;
+    // Has platform-specific types but no unified — verify explicit per-platform
+    // subpaths cover them, otherwise warn at build time.
+    // We don't add the conditional importPath to the manifest because there's
+    // no single source file to map it to.
   }
   return out;
 }
@@ -150,9 +190,16 @@ function symbolKind(symbol: ts.Symbol): { kind: SymbolKind; subKind: string } {
 // ---------------------------------------------------------------------------
 
 function detectCurrentState(symbol: ts.Symbol): CurrentState {
+  // Accumulate hasProse and hasExample across ALL declarations so that
+  // overload signatures with split JSDoc (one declaration carries the prose,
+  // another carries the @example) aggregate correctly. Returning early on
+  // the first declaration would silently misclassify these.
   const declarations = symbol.declarations ?? [];
+  let hasProse = false;
+  let hasExample = false;
   for (const decl of declarations) {
     const tags = ts.getJSDocTags(decl);
+    if (tags.some((tag) => tag.tagName.text === 'example')) hasExample = true;
     const jsdocComments = ts.getJSDocCommentsAndTags(decl);
     let proseText = '';
     for (const node of jsdocComments) {
@@ -168,11 +215,10 @@ function detectCurrentState(symbol: ts.Symbol): CurrentState {
         }
       }
     }
-    const hasProse = proseText.trim().length > 0;
-    const hasExample = tags.some((tag) => tag.tagName.text === 'example');
-    if (hasProse && hasExample) return 'has-example';
-    if (hasProse) return 'prose-only';
+    if (proseText.trim().length > 0) hasProse = true;
   }
+  if (hasProse && hasExample) return 'has-example';
+  if (hasProse) return 'prose-only';
   return 'no-jsdoc';
 }
 
@@ -330,6 +376,32 @@ function main(): void {
   const entries = runPass1(publicEntryPoints, program);
   runPass2(entries, program);
 
+  // Preserve existing classifications from a prior committed manifest so
+  // re-running the builder doesn't clobber the manual classification pass.
+  // Classifications are semantic decisions; the builder's only auto-set value
+  // is "unclassified" which gets replaced by the classify script. If a user
+  // wants to wipe and re-classify, they delete the manifest first.
+  if (existsSync(MANIFEST_PATH)) {
+    type PriorEntry = {
+      sourceFile: string;
+      sourceName: string;
+      kind: SymbolKind;
+      classification?: ManifestEntry['classification'];
+    };
+    const prior = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { entries?: PriorEntry[] };
+    const priorByKey = new Map<string, ManifestEntry['classification']>();
+    for (const e of prior.entries ?? []) {
+      if (e.classification && e.classification !== 'unclassified') {
+        priorByKey.set(entryKey(e.sourceFile, e.sourceName, e.kind), e.classification);
+      }
+    }
+    for (const entry of entries.values()) {
+      const key = entryKey(entry.sourceFile, entry.sourceName, entry.kind);
+      const priorClass = priorByKey.get(key);
+      if (priorClass) entry.classification = priorClass;
+    }
+  }
+
   // Sort entries deterministically for stable diffs.
   const sorted = [...entries.values()].toSorted((a, b) => {
     if (a.sourceFile !== b.sourceFile) return a.sourceFile < b.sourceFile ? -1 : 1;
@@ -346,7 +418,22 @@ function main(): void {
     });
   }
 
-  const manifest: Manifest = { publicEntryPoints, entries: sorted };
+  // The committed manifest only stores fields that are NOT cheaply re-derivable
+  // from source: classification (semantic decisions made by humans/classifier)
+  // and the structural shape (sourceFile/sourceName/kind/subKind/publicFaces,
+  // plus publicEntryPoints). `currentState`, `classificationRationale`, and
+  // `batch` are regenerated on every run by the build/classify scripts and
+  // would only add noise to the diff. Consumers (audit, check-declaration)
+  // re-derive currentState from source on each run.
+  const persistedEntries = sorted.map((entry) => ({
+    sourceFile: entry.sourceFile,
+    sourceName: entry.sourceName,
+    kind: entry.kind,
+    subKind: entry.subKind,
+    publicFaces: entry.publicFaces,
+    classification: entry.classification,
+  }));
+  const manifest = { publicEntryPoints, entries: persistedEntries };
   writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
 
   const total = sorted.length;

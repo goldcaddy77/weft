@@ -292,7 +292,7 @@ export function resolveInstalledOtelApi(
  * ```ts
  * import { getOtelApi } from 'weft';
  *
- * // Works whether @opentelemetry/api is installed or not
+ * // Works whether the OpenTelemetry API package is installed or not
  * const api = getOtelApi();
  * const tracer = api.trace.getTracer('my-app');
  * const span = tracer.startSpan('startup');
