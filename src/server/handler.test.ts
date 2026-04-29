@@ -137,6 +137,16 @@ describe('handleRequest', () => {
     expect(body.paths['/v1/workflows']).toBeDefined();
   });
 
+  it('GET /openrpc.json returns the OpenRPC document', async () => {
+    engine = createEngine();
+    const response = await handleRequest(request('GET', '/openrpc.json'), engine);
+
+    expect(response.status).toBe(200);
+    const body = (await json(response)) as { openrpc: string; methods: unknown[] };
+    expect(body.openrpc).toBe('1.3.2');
+    expect(body.methods.length).toBeGreaterThan(0);
+  });
+
   it('GET /v1/retention returns the retention overview used by the dashboard', async () => {
     engine = new Engine({
       storage: new MemoryStorage(),

@@ -18,6 +18,7 @@ import {
 import type { AuthContext } from './authentication.ts';
 import { faultToHttpResponse } from './fault-to-http.ts';
 import { generateOpenApiDocument } from './openapi.ts';
+import { generateOpenRpcDocument } from './openrpc.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
 import type { OperationFault } from './operation-fault.ts';
 import { FAULT_CODE_TO_HTTP_STATUS } from './operation-fault.ts';
@@ -214,7 +215,20 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
   healthCheck: async ({ request }) => negotiatedResponse(request, { status: 'ok' }),
   getMetrics: async ({ options }) =>
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
-  openApiDocument: async () => jsonResponse(generateOpenApiDocument()),
+  openApiDocument: async ({ options }) =>
+    jsonResponse(
+      generateOpenApiDocument({
+        registry: options?.operationRegistry ?? defaultOperationRegistry(),
+        ...(options?.restBindings !== undefined ? { restBindings: options.restBindings } : {}),
+      }),
+    ),
+  openRpcDocument: async ({ options }) =>
+    jsonResponse(
+      generateOpenRpcDocument({
+        registry: options?.operationRegistry ?? defaultOperationRegistry(),
+        transports: ['http', 'websocket'],
+      }),
+    ),
 };
 
 // ---------------------------------------------------------------------------

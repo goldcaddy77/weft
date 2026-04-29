@@ -580,6 +580,28 @@ describe('createAuthenticator — public paths', () => {
     }
   });
 
+  it('bypasses authentication for /openapi.json by default', async () => {
+    const authenticate = await createAuthenticator({ apiKeys: [TEST_API_KEY] });
+
+    const result = await authenticate(makeRequest('http://localhost/openapi.json'));
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) {
+      expect(result.method).toBe('public');
+    }
+  });
+
+  it('bypasses authentication for /openrpc.json by default', async () => {
+    const authenticate = await createAuthenticator({ apiKeys: [TEST_API_KEY] });
+
+    const result = await authenticate(makeRequest('http://localhost/openrpc.json'));
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) {
+      expect(result.method).toBe('public');
+    }
+  });
+
   it('uses custom public paths when provided', async () => {
     const authenticate = await createAuthenticator({
       apiKeys: [TEST_API_KEY],

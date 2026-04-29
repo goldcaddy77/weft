@@ -42,7 +42,7 @@ describe('OpenAPI document generation', () => {
 
     for (const route of domainRoutes) {
       const openApiPath = toOpenApiPath(route.path);
-      expect(paths).toHaveProperty(openApiPath);
+      expect(paths[openApiPath]).toBeDefined();
 
       const pathItem = paths[openApiPath] as Record<string, unknown>;
       const method = route.method.toLowerCase();

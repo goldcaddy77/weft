@@ -197,7 +197,13 @@ function zodObjectToJsonSchema(
 
 function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
   // Zod 4 ships native JSON Schema conversion.
-  const result = z.toJSONSchema(schema) as Record<string, unknown>;
+  const result = z.toJSONSchema(schema, {
+    // The live registry uses `z.custom(...)` for a few trust-boundary
+    // types such as workflow statuses. OpenRPC still needs a document
+    // for those operations, so unrepresentable internals degrade to
+    // `{}` instead of taking down the entire discovery route.
+    unrepresentable: 'any',
+  }) as Record<string, unknown>;
   // Strip the `$schema` key — it's noise inside a bigger OpenRPC
   // document, and it's the same constant for every call.
   if ('$schema' in result) {

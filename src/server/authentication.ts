@@ -59,7 +59,10 @@ export type AuthConfig = {
   jwt?: JWTConfig;
   /** Mutual TLS configuration. Passed through to Bun.serve's `tls` option. */
   mtls?: MTLSConfig;
-  /** Paths that bypass authentication. Defaults to `['/v1/health', '/v1/metrics']`. */
+  /**
+   * Paths that bypass authentication. Defaults to
+   * `['/v1/health', '/v1/metrics', '/openapi.json', '/openrpc.json']`.
+   */
   publicPaths?: string[];
   /**
    * Optional resolver that maps a presented API key to a fully-shaped
@@ -126,7 +129,7 @@ export type Authenticator = (request: Request) => Promise<AuthResult>;
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PUBLIC_PATHS = ['/v1/health', '/v1/metrics'];
+const DEFAULT_PUBLIC_PATHS = ['/v1/health', '/v1/metrics', '/openapi.json', '/openrpc.json'];
 const DEFAULT_CLOCK_TOLERANCE = 60;
 
 // ---------------------------------------------------------------------------
