@@ -330,6 +330,45 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('engine disposal leaves waitForSignal suspended for recovery instead of resuming with undefined', async () => {
+    const storage = new MemoryStorage();
+    let resumedAfterWait = false;
+
+    const registerWorkflow = (engine: Engine) => {
+      engine.register('dispose-wait-signal', async function* (ctx: WorkflowContext) {
+        const value = yield* (ctx as Context).waitForSignal<string>('go');
+        resumedAfterWait = true;
+        return `resumed:${value}`;
+      });
+    };
+
+    const engine1 = new Engine({ storage });
+    registerWorkflow(engine1);
+
+    await engine1.start('dispose-wait-signal', null, { id: 'dispose-wait-signal' });
+    await flush();
+
+    engine1[Symbol.dispose]();
+    await flush();
+
+    expect(resumedAfterWait).toBe(false);
+
+    const stateBytes = await storage.get(KEYS.workflow('dispose-wait-signal'));
+    const state = decode(stateBytes!) as WorkflowState;
+    expect(state.status).toBe('running');
+
+    const engine2 = new Engine({ storage });
+    registerWorkflow(engine2);
+
+    const recoveredHandles = await engine2.recoverAll();
+    expect(recoveredHandles).toHaveLength(1);
+
+    await engine2.signal('dispose-wait-signal', 'go', 'value');
+    await expect(recoveredHandles[0]!.result()).resolves.toBe('resumed:value');
+
+    engine2[Symbol.dispose]();
+  });
+
   it('WorkflowCancelledEvent fires on cancel', async () => {
     const engine = new Engine();
 

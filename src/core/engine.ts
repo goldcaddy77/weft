@@ -6851,9 +6851,50 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'wait-signal' }>,
   ): Promise<void> {
-    return this.#runOperationWithResult(workflowId, operation, () =>
-      this.#waitForSignalPayload(workflowId, operation.signalName),
-    );
+    const abortSignal = this.#abortController.signal;
+    const waiterKey = `${workflowId}:${operation.signalName}`;
+
+    try {
+      while (true) {
+        if (abortSignal.aborted) {
+          return;
+        }
+
+        const existingPayload = await this.#consumeSignal(workflowId, operation.signalName);
+        if (existingPayload.found) {
+          this.#completeOperation(workflowId, existingPayload.payload);
+          return;
+        }
+
+        const { promise, resolve } = Promise.withResolvers<void>();
+        this.#signalWaiters.set(waiterKey, resolve);
+        this.#trackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
+
+        if (abortSignal.aborted) {
+          this.#signalWaiters.delete(waiterKey);
+          this.#untrackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
+          return;
+        }
+
+        const bufferedPayload = await this.#consumeSignal(workflowId, operation.signalName);
+        if (bufferedPayload.found) {
+          if (this.#signalWaiters.get(waiterKey) === resolve) {
+            this.#signalWaiters.delete(waiterKey);
+            this.#untrackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
+          }
+          this.#completeOperation(workflowId, bufferedPayload.payload);
+          return;
+        }
+
+        await promise;
+
+        if (abortSignal.aborted) {
+          return;
+        }
+      }
+    } catch (error) {
+      this.#failOperation(workflowId, operation, error);
+    }
   }
 
   async #processWaitUpdateOperation(
