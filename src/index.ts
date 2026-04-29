@@ -8,8 +8,9 @@
  *
  * @example Hello world
  * ```ts
- * import { activity, Engine, type Context, type WorkflowContext } from 'weft';
+ * import { activity, Engine, VERSION, type Context, type WorkflowContext } from 'weft';
  *
+ * void VERSION;
  * const sendEmail = activity({
  *   name: 'sendEmail',
  *   execute: async (input: unknown) => {
@@ -32,8 +33,9 @@
  *
  * @example Multi-tenant engine
  * ```ts
- * import { Engine, tenantFromInputField, type Context, type WorkflowContext } from 'weft';
+ * import { Engine, VERSION, tenantFromInputField, type Context, type WorkflowContext } from 'weft';
  *
+ * void VERSION;
  * const engine = new Engine({
  *   tenantResolver: tenantFromInputField('customerId'),
  * });

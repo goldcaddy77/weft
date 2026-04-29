@@ -53,12 +53,13 @@ export type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } fro
  *
  * @example
  * ```ts
- * import { HttpClient } from 'weft';
+ * import { HttpClient, type HttpClientOptions } from 'weft';
  *
- * const client = new HttpClient({
+ * const options: HttpClientOptions = {
  *   baseUrl: 'http://localhost:3000',
  *   headers: { 'X-API-Key': 'my-secret-key' },
- * });
+ * };
+ * const client = new HttpClient(options);
  * ```
  */
 export interface HttpClientOptions {

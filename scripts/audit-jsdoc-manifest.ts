@@ -391,6 +391,8 @@ function main(): void {
         '  - "example-required entry has currentState=...": JSDoc is missing or incomplete on the',
         "    source declaration. Add prose + an @example block (`import { X } from '<face>'` first),",
         '    then re-run.',
+        '  - "prose-only entry has currentState=no-jsdoc": source prose is missing.',
+        '    Add descriptive JSDoc prose to the source declaration, then re-run the audit.',
       ].join('\n'),
     );
     process.exit(1);

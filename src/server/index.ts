@@ -222,12 +222,12 @@ export interface TaskDispatch {
  *
  * @example
  * ```ts
- * import { serve } from 'weft/server';
+ * import { serve, type WeftServer } from 'weft/server';
  * import { Engine, MemoryStorage } from 'weft';
  *
  * await using storage = new MemoryStorage();
  * await using engine = new Engine({ storage });
- * await using server = await serve({ engine, port: 4000 });
+ * await using server: WeftServer = await serve({ engine, port: 4000 });
  *
  * console.log(server.url);            // http://localhost:4000
  * console.log(server.registry);       // WorkerRegistry instance

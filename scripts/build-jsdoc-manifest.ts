@@ -52,6 +52,11 @@ type Manifest = {
   entries: ManifestEntry[];
 };
 
+type PersistedManifestEntry = Pick<
+  ManifestEntry,
+  'sourceFile' | 'sourceName' | 'kind' | 'subKind' | 'publicFaces' | 'classification'
+>;
+
 // ---------------------------------------------------------------------------
 // Read package.json `exports` and resolve each public specifier to a source file.
 // `dist/foo/bar.d.ts` -> `src/foo/bar.ts`. Source-side authoritative lookup.
@@ -270,6 +275,21 @@ function entryKey(sourceFile: string, sourceName: string, kind: SymbolKind): str
   return `${sourceFile}|${sourceName}|${kind}`;
 }
 
+function publicFacesFingerprint(publicFaces: PublicFace[]): string {
+  return publicFaces
+    .toSorted((a, b) => {
+      if (a.importPath !== b.importPath) return a.importPath < b.importPath ? -1 : 1;
+      if (a.exportName !== b.exportName) return a.exportName < b.exportName ? -1 : 1;
+      return a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0;
+    })
+    .map((face) => `${face.importPath}#${face.exportName}#${face.kind}`)
+    .join('|');
+}
+
+function entryFingerprint(entry: Pick<ManifestEntry, 'subKind' | 'publicFaces'>): string {
+  return `${entry.subKind}|${publicFacesFingerprint(entry.publicFaces)}`;
+}
+
 // ---------------------------------------------------------------------------
 // Pass 1 — public-face discovery.
 // ---------------------------------------------------------------------------
@@ -379,29 +399,32 @@ function main(): void {
   const entries = runPass1(publicEntryPoints, program);
   runPass2(entries, program);
 
-  // Preserve existing classifications from a prior committed manifest so
-  // re-running the builder doesn't clobber the manual classification pass.
-  // Classifications are semantic decisions; the builder's only auto-set value
-  // is "unclassified" which gets replaced by the classify script. If a user
-  // wants to wipe and re-classify, they delete the manifest first.
+  // Preserve existing classifications from a prior committed manifest only
+  // when the structural fingerprint is unchanged. This keeps manual
+  // classifications stable across rebuilds while forcing review when a symbol
+  // becomes public, changes public faces, or changes declaration shape.
   if (existsSync(MANIFEST_PATH)) {
-    type PriorEntry = {
-      sourceFile: string;
-      sourceName: string;
-      kind: SymbolKind;
-      classification?: ManifestEntry['classification'];
+    const prior = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as {
+      entries?: PersistedManifestEntry[];
     };
-    const prior = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { entries?: PriorEntry[] };
-    const priorByKey = new Map<string, ManifestEntry['classification']>();
+    const priorByKey = new Map<
+      string,
+      { classification: ManifestEntry['classification']; fingerprint: string }
+    >();
     for (const e of prior.entries ?? []) {
       if (e.classification && e.classification !== 'unclassified') {
-        priorByKey.set(entryKey(e.sourceFile, e.sourceName, e.kind), e.classification);
+        priorByKey.set(entryKey(e.sourceFile, e.sourceName, e.kind), {
+          classification: e.classification,
+          fingerprint: entryFingerprint(e),
+        });
       }
     }
     for (const entry of entries.values()) {
       const key = entryKey(entry.sourceFile, entry.sourceName, entry.kind);
-      const priorClass = priorByKey.get(key);
-      if (priorClass) entry.classification = priorClass;
+      const priorEntry = priorByKey.get(key);
+      if (priorEntry && priorEntry.fingerprint === entryFingerprint(entry)) {
+        entry.classification = priorEntry.classification;
+      }
     }
   }
 

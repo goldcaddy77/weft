@@ -1616,7 +1616,7 @@ type RefreshedScheduleState = {
  *
  * @example
  * ```ts
- * import { Engine, activity } from 'weft';
+ * import { Engine, WorkflowHandle, activity } from 'weft';
  * import type { WorkflowContext, Context } from 'weft';
  *
  * const greet = activity({ name: 'greet', execute: async (i: unknown) => `hi ${i}` });
@@ -1626,7 +1626,9 @@ type RefreshedScheduleState = {
  * });
  *
  * const handle = await engine.start('wave', 'world');
+ * const typedHandle: WorkflowHandle = handle;
  * const result = await handle.result();
+ * void typedHandle;
  * console.log(result); // 'hi world'
  * ```
  */
@@ -1877,14 +1879,16 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
  *
  * @example
  * ```ts
- * import { Engine } from 'weft';
+ * import { Engine, ScheduleHandle } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('daily-report', async function* () { return 'ok'; });
  *
  * const handle = await engine.schedule('0 9 * * *', 'daily-report', '');
+ * const typedHandle: ScheduleHandle = handle;
  * await handle.pause();
  * const summary = await handle.describe();
+ * void typedHandle;
  * console.log(summary.status); // 'paused'
  * await handle.cancel();
  * ```

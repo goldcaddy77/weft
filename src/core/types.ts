@@ -1517,10 +1517,10 @@ export interface WorkflowTypeRetentionPolicy {
  *
  * @example
  * ```ts
- * import { Engine } from 'weft';
+ * import { Engine, type RetentionOverview } from 'weft';
  *
  * const engine = new Engine({ retention: { completed: '7d' } });
- * const overview = await engine.getRetentionOverview();
+ * const overview: RetentionOverview = await engine.getRetentionOverview();
  * console.log(overview.sweepIntervalMs);
  * console.log(overview.workflowTypes.length);
  * ```

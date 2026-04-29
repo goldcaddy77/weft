@@ -34,9 +34,6 @@ type ManifestEntry = {
   subKind: string;
   publicFaces: PublicFace[];
   classification: 'unclassified' | 'example-required' | 'prose-only' | 'not-public';
-  currentState: 'no-jsdoc' | 'prose-only' | 'has-example';
-  classificationRationale: string | null;
-  batch: string | null;
 };
 
 type Manifest = {
@@ -92,7 +89,7 @@ function extractExamples(sourceFile: ts.SourceFile, sourceName: string): Extract
           }
           // Non-ts fence — flag for warning; silently skipping would let real
           // examples bypass the doctest gate.
-          const anyFence = text.match(/```([^\s`]*)\b[^\n]*\n([\s\S]*?)```/);
+          const anyFence = text.match(/```([^\s`]*)[^\n]*\n([\s\S]*?)```/);
           if (anyFence) {
             badFences.push({
               language: anyFence[1] || '(empty)',
@@ -146,8 +143,9 @@ function readJSDocComment(comment: ts.JSDocTag['comment']): string {
 }
 
 // ---------------------------------------------------------------------------
-// Validate that an example block imports from at least one of the symbol's
-// publicFaces import paths. Accepts value, type-only, or mixed import forms.
+// Validate that an example block imports the documented export from at least
+// one of the symbol's publicFaces import paths. Accepts value, type-only, or
+// mixed import forms, including aliases.
 //
 // For a symbol reachable only from one path (e.g. `weft/storage/lmdb#LMDBStorage`),
 // the example MUST import from that path — importing from `'weft'` would be
@@ -156,16 +154,31 @@ function readJSDocComment(comment: ts.JSDocTag['comment']): string {
 // `'weft/storage/memory'`), importing from any one valid face is acceptable.
 // ---------------------------------------------------------------------------
 
-function hasFaceImport(block: string, candidateImportPaths: Set<string>): boolean {
-  const lines = block
-    .split('\n')
-    .filter((l) => l.trim().length > 0)
-    .slice(0, 8);
-  const joined = lines.join('\n');
-  const importPattern = /import(?:\s+type)?\s+[^;]+\s+from\s+['"]([^'"]+)['"]/g;
-  let match: RegExpExecArray | null;
-  while ((match = importPattern.exec(joined)) !== null) {
-    if (candidateImportPaths.has(match[1])) return true;
+function hasFaceImport(block: string, publicFaces: PublicFace[]): boolean {
+  const sourceFile = ts.createSourceFile('doctest.ts', block, ts.ScriptTarget.Latest, true);
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const importPath = statement.moduleSpecifier.text;
+    const matchingFaces = publicFaces.filter((face) => face.importPath === importPath);
+    if (matchingFaces.length === 0) continue;
+    const importClause = statement.importClause;
+    if (!importClause) continue;
+    for (const face of matchingFaces) {
+      if (importClause.name?.text === face.exportName) return true;
+      const namedBindings = importClause.namedBindings;
+      if (!namedBindings) continue;
+      if (ts.isNamedImports(namedBindings)) {
+        for (const element of namedBindings.elements) {
+          const importedName = element.propertyName?.text ?? element.name.text;
+          if (importedName === face.exportName) return true;
+        }
+      } else {
+        const namespaceName = namedBindings.name.text;
+        const namespaceAccess = new RegExp(`\\b${namespaceName}\\.${face.exportName}\\b`);
+        if (namespaceAccess.test(block)) return true;
+      }
+    }
   }
   return false;
 }
@@ -257,21 +270,20 @@ function main(): void {
     }
     if (examples.length === 0) continue;
     const batchSlug =
-      entry.batch ?? (entry.currentState === 'has-example' ? 'exemplar' : 'unclassified');
+      entry.classification === 'unclassified' ? 'unclassified' : entry.classification;
     const batchDir = resolve(DOCTESTS_DIR, slugify(batchSlug));
     mkdirSync(batchDir, { recursive: true });
 
     // The example must import from at least one of the entry's publicFaces.
     // For multi-face symbols (re-exported from both `'weft'` and a subpath),
     // any one valid face import is acceptable for all faces.
-    const candidateImportPaths = new Set(entry.publicFaces.map((f) => f.importPath));
     examples.forEach((block, index) => {
-      if (!hasFaceImport(block, candidateImportPaths)) {
+      if (!hasFaceImport(block, entry.publicFaces)) {
         const facesList = entry.publicFaces
           .map((f) => `${f.importPath}#${f.exportName}#${f.kind}`)
           .join(', ');
         missingImports.push(
-          `  ${entry.sourceFile}#${entry.sourceName} (example ${index + 1}): no import from any of [${[...candidateImportPaths].join(', ')}]; faces=[${facesList}]`,
+          `  ${entry.sourceFile}#${entry.sourceName} (example ${index + 1}): no import of a documented public export from one of its public faces; faces=[${facesList}]`,
         );
         return;
       }
