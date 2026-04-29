@@ -49,6 +49,22 @@ function slugify(input: string): string {
   return input.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+// Short, deterministic, case-sensitive digest used to disambiguate filenames
+// for symbols whose names differ only in casing (e.g. `ScopedStorage` vs
+// `scopedStorage`). Encodes which characters were originally uppercase as a
+// short bit-packed hex string. Stable across runs for any given input.
+function caseDigest(input: string): string {
+  let bits = 0n;
+  for (let i = 0; i < input.length; i += 1) {
+    const c = input.charCodeAt(i);
+    if (c >= 65 && c <= 90) bits |= 1n << BigInt(i);
+  }
+  // 8 hex chars = 32 bits = first 32 characters covered. Beyond that we just
+  // truncate; collisions among ≥32-character names with identical case patterns
+  // beyond char 32 are accepted (essentially impossible in practice).
+  return (bits & 0xffffffffn).toString(16).padStart(8, '0');
+}
+
 // ---------------------------------------------------------------------------
 // Extract @example blocks from a source declaration. Returns the raw block
 // content with the surrounding ```ts ... ``` fence stripped, plus any blocks
@@ -289,8 +305,16 @@ function main(): void {
       }
       // Emit one doctest file per face — same source block, different filename
       // so the per-face declaration check has a per-face artifact to point at.
+      // Filenames are lowercased and disambiguated with a short case-tag because
+      // case-insensitive filesystems (macOS default) collapse e.g. `ScopedStorage`
+      // and `scopedStorage` into the same path, AND TypeScript's
+      // `forceConsistentCasingInFileNames` rejects mixed-case duplicates on
+      // case-sensitive filesystems (Linux CI). The case-tag is a short hex digest
+      // of the original-cased exportName, so two exports that differ only in
+      // case still produce distinct filenames everywhere.
       for (const face of entry.publicFaces) {
-        const filename = `${slugify(face.importPath)}__${face.exportName}__${face.kind}__${index}.ts`;
+        const caseTag = caseDigest(face.exportName);
+        const filename = `${slugify(face.importPath)}__${slugify(face.exportName).toLowerCase()}-${caseTag}__${face.kind}__${index}.ts`;
         const filePath = resolve(batchDir, filename);
         const wrapped = `// auto-generated from @example block of ${face.importPath}#${face.exportName}#${face.kind}\n${block}\n`;
         writeFileSync(filePath, wrapped, 'utf8');

@@ -109,7 +109,7 @@ function isInflightRecord(value: unknown): value is InflightRecord {
  *   port: 3000,
  *   auth: { apiKeys: ['secret'] },
  * };
- * await using server = await serve(options);
+ * await using server = serve(options);
  * console.log(server.url); // http://localhost:3000
  * ```
  */
@@ -216,7 +216,8 @@ export interface TaskDispatch {
  * Handle returned by `serve()` that exposes the running server's address,
  * worker registry, task dispatch, and shutdown controls.
  *
- * Implements `AsyncDisposable` — use `await using server = await serve(...)`
+ * Implements `AsyncDisposable` — `serve()` itself is synchronous, but the
+ * returned handle is awaitable for cleanup. Use `await using server = serve(...)`
  * in TypeScript 5.2+ to have the server stop automatically when the enclosing
  * block exits.
  *
@@ -227,7 +228,7 @@ export interface TaskDispatch {
  *
  * await using storage = new MemoryStorage();
  * await using engine = new Engine({ storage });
- * await using server: WeftServer = await serve({ engine, port: 4000 });
+ * await using server: WeftServer = serve({ engine, port: 4000 });
  *
  * console.log(server.url);            // http://localhost:4000
  * console.log(server.registry);       // WorkerRegistry instance
