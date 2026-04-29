@@ -1058,3 +1058,56 @@ async function longPollWorker(
 ```
 
 The long-poll client is intentionally simple — it can run in Deno, Cloudflare Workers, Node.js, or even a browser. The tradeoff versus WebSocket is higher latency (up to the poll timeout) and no server-push cancellation. For most use cases, WebSocket is preferred; long-poll is the compatibility escape hatch.
+
+## Authoring vs runtime split (8-top-2)
+
+`engine.register()`, workflow and activity declarations, provider configuration, storage adapter selection, interceptor chains, and execution-strategy wiring are in-process authoring surfaces. You call them at startup, in TypeScript, against the local `Engine` instance.
+
+None of these are exposed over REST, JSON-RPC HTTP, JSON-RPC WebSocket, or the stdio session. The transport-parity surface Track 8 defines covers runtime operations only—the catalog of things you can invoke against a running workflow. Authoring is deliberately not part of that catalog.
+
+Why? Because authoring APIs require code, not data. You cannot send a function over JSON. Wiring a new workflow type into the engine means shipping and loading code, which is a deployment concern, not a runtime-API concern. Keeping authoring TypeScript-only preserves this boundary and avoids a category of API that could never be honestly transport-neutral.
+
+The operation catalog (`src/server/operation-catalog.ts`) reflects this: every `defineOperation` entry maps to an `Engine` _method call_, not to `engine.register()` or any authoring surface. If you look at the catalog and find an entry that calls `engine.register()`, that is a bug, not a feature.
+
+## 8a-1: No second orchestration layer
+
+Track 8's transports—`POST /jsonrpc`, WebSocket on `/jsonrpc`, `/openrpc.json`, and the opt-in stdio session—all route through `src/server/operation-catalog.ts`'s `executeOperation` against the live `Engine` instance. There is no parallel orchestration system, no shadow event bus, no second state machine sitting between the transport and the engine.
+
+`executeOperation` calls the same `Engine` methods that the REST bindings have always called. The transport decides how to frame the request and response; the catalog decides what to invoke and how to map errors. The `Engine` itself is unchanged.
+
+You can verify this by tracing any JSON-RPC call: it enters `src/server/json-rpc-dispatch.ts`, which looks up the method in the registry built from `src/server/operation-catalog.ts`, calls `executeOperation`, and gets back a result or a `OperationFault`. No second execution path, no alternative routing.
+
+This matters because a second orchestration layer would mean Track 8's transports could diverge from the REST surface over time. By sharing one catalog and one `executeOperation`, that divergence is structurally impossible.
+
+## 8a-3: BroadcastChannel remains internal
+
+`BroadcastChannel` is used inside `src/core/` and `src/server/` for cross-worker coordination—signal delivery, event fan-out between the engine thread and worker threads. No transport file imports `BroadcastChannel` directly.
+
+Every external subscription is a projection from the operation catalog's `EventTarget` events, not from a raw `BroadcastChannel` channel. `src/server/engine-event-feed-backend.ts` is the projection boundary: it listens to engine events and translates them into the feed that `src/server/workflow-event-feed.ts` exposes to transports. Transports consume the feed; they never talk to `BroadcastChannel` directly.
+
+This matters because exposing `BroadcastChannel` to transports would couple the transport layer to an internal concurrency primitive. That primitive may change—number of channels, naming scheme, message shape—without any transport needing to care. Keeping `BroadcastChannel` inside the core boundary means the transport surface is stable even as the internal coordination model evolves.
+
+To verify: `grep -r "BroadcastChannel" src/server/` should show results only in files that are part of the server-internal coordination, not in `json-rpc-dispatch.ts`, `json-rpc-http.ts`, `json-rpc-websocket.ts`, or `rest-bindings.ts`.
+
+## 8a-4: Worker postMessage remains internal
+
+`WorkerInboundMessage` and `WorkerOutboundMessage` are defined in `src/workers/` and represent the private protocol between the engine's main thread and the Web Workers that execute workflow and activity code. They are not part of any external transport.
+
+The JSON-RPC dispatcher (`src/server/json-rpc-dispatch.ts`) uses `JsonRpcRequest` and `JsonRpcResponse` types—its own wire types—not `WorkerInboundMessage` or `WorkerOutboundMessage`. The two type systems do not overlap. A caller sending JSON-RPC over WebSocket has no way to inject a message directly into the worker execution path; they can only invoke operations through the catalog.
+
+This matters for the same reason `BroadcastChannel` matters: worker messages are a concurrency primitive, not an API. Leaking them to external transports would create an API surface that the runtime cannot evolve without breaking callers. Keeping them internal means the internal worker protocol can change—message shapes, versioning, transfer semantics—without any external-facing contract breaking.
+
+## Current auth state (8d-1)
+
+HTTP authentication exists today. `src/server/authentication.ts` handles it. `serve()` authenticates the incoming `Request` before accepting a WebSocket upgrade—the principal is established at upgrade time, not per-frame.
+
+The `serve()` configuration accepts two auth modes:
+
+- `auth: { jwt: { secret } }` — validates a Bearer token using the provided secret
+- `auth: { apiKeys: [...] }` — validates against a static list of API keys
+
+Unauthenticated requests to authenticated endpoints get a `401` over REST and `-32010 Unauthorized` over JSON-RPC. The same policy applies to the WebSocket upgrade handshake: an unauthenticated upgrade attempt is rejected before the connection is established.
+
+Wave 1 added tests confirming auth-parity for `weft.workflows.replay` across REST and JSON-RPC WebSocket (the representative authenticated operation). Wave 2's discovery-parity tests confirm that the auth declarations in the OpenAPI and OpenRPC documents match the actual enforcement in the catalog. The auth surface documented here is the same surface those tests exercise.
+
+stdio is opt-in and disabled by default—`serve()` does not start a stdio session unless explicitly configured. When enabled, it uses the same per-operation authorization hook as the other transports.
