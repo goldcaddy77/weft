@@ -28,7 +28,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import ts from 'typescript';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -198,11 +198,28 @@ function collectFromDeclarations(
 // Re-derive currentState from a source declaration's JSDoc.
 // ---------------------------------------------------------------------------
 
-function detectCurrentStateFromSource(entry: ManifestEntry, program: ts.Program): CurrentState {
+function detectCurrentStateFromSource(
+  entry: ManifestEntry,
+  sourceFileCache: Map<string, ts.SourceFile>,
+): CurrentState {
   const absolute = resolve(REPO_ROOT, entry.sourceFile);
-  const sourceFile = program.getSourceFile(absolute);
-  if (!sourceFile) return 'no-jsdoc';
+  let sourceFile = sourceFileCache.get(absolute);
+  if (!sourceFile) {
+    if (!existsSync(absolute)) return 'no-jsdoc';
+    const text = readFileSync(absolute, 'utf8');
+    // setParentNodes: true is required for ts.getJSDocCommentsAndTags to walk
+    // the JSDoc node graph — program.getSourceFile() doesn't always preserve
+    // those bindings the way createSourceFile + setParentNodes does.
+    sourceFile = ts.createSourceFile(absolute, text, ts.ScriptTarget.Latest, true);
+    sourceFileCache.set(absolute, sourceFile);
+  }
   let result: CurrentState = 'no-jsdoc';
+  function nameMatches(node: ts.NamedDeclaration): boolean {
+    const name = node.name;
+    if (!name) return false;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text === entry.sourceName;
+    return false;
+  }
   function visit(node: ts.Node): void {
     if (
       (ts.isClassDeclaration(node) ||
@@ -211,7 +228,7 @@ function detectCurrentStateFromSource(entry: ManifestEntry, program: ts.Program)
         ts.isTypeAliasDeclaration(node) ||
         ts.isEnumDeclaration(node) ||
         ts.isModuleDeclaration(node)) &&
-      node.name?.getText() === entry.sourceName
+      nameMatches(node)
     ) {
       const state = inspectJSDoc(node);
       if (state === 'has-example') result = 'has-example';
@@ -251,25 +268,6 @@ function inspectJSDoc(node: ts.Node): CurrentState {
   if (hasProse && hasExample) return 'has-example';
   if (hasProse) return 'prose-only';
   return 'no-jsdoc';
-}
-
-// ---------------------------------------------------------------------------
-// Source program loader (for currentState re-derivation).
-// ---------------------------------------------------------------------------
-
-function loadSourceProgram(): ts.Program {
-  const config = ts.findConfigFile(REPO_ROOT, ts.sys.fileExists.bind(ts.sys), 'tsconfig.json');
-  if (!config) throw new Error('tsconfig.json not found');
-  const parsed = ts.readConfigFile(config, ts.sys.readFile.bind(ts.sys));
-  if (parsed.error) {
-    throw new Error(ts.flattenDiagnosticMessageText(parsed.error.messageText, '\n'));
-  }
-  const compilerOptions = ts.parseJsonConfigFileContent(
-    parsed.config,
-    ts.sys,
-    dirname(config),
-  ).options;
-  return ts.createProgram(parsed.config.include ?? ['src'], { ...compilerOptions, noEmit: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -354,10 +352,10 @@ function main(): void {
   assertEqualSets('public-face set', manifestTriples, declTriples, failures);
 
   // Assertion 3 & 4: classification invariants.
-  const sourceProgram = loadSourceProgram();
+  const sourceFileCache = new Map<string, ts.SourceFile>();
   for (const entry of manifest.entries) {
     if (entry.classification === 'not-public') continue;
-    const rederived = detectCurrentStateFromSource(entry, sourceProgram);
+    const rederived = detectCurrentStateFromSource(entry, sourceFileCache);
     if (entry.classification === 'example-required' && rederived !== 'has-example') {
       failures.push(
         `  example-required entry has currentState=${rederived}: ${entry.sourceFile}#${entry.sourceName}#${entry.kind}`,
