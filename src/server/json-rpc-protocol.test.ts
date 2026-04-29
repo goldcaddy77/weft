@@ -24,7 +24,7 @@ describe('JSON_RPC_VERSION', () => {
 });
 
 describe('JSON_RPC_ERROR_CODES', () => {
-  it('defines every reserved-by-spec error code at its spec value', () => {
+  it('Reserved JSON-RPC protocol errors follow the specification exactly. -32700, -32600, -32601, -32602, and -32603 keep their standard meanings.', () => {
     expect(JSON_RPC_ERROR_CODES.PARSE_ERROR).toBe(-32700);
     expect(JSON_RPC_ERROR_CODES.INVALID_REQUEST).toBe(-32600);
     expect(JSON_RPC_ERROR_CODES.METHOD_NOT_FOUND).toBe(-32601);

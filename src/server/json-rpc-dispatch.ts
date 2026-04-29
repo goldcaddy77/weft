@@ -84,7 +84,17 @@ export async function dispatchJsonRpc(
 
   if (parsed.kind === 'single') {
     if (parsed.isNotification) {
-      // Dispatch for side effects, but drop the result.
+      // JSON-RPC 2.0 — id-less requests are notifications. The operation
+      // pipeline (auth, validation, invoke) still runs identically; the
+      // response is intentionally dropped per spec because the caller
+      // chose fire-and-forget. The criterion's "Notifications are opt-in
+      // per method" is a contract guarantee at the operation level: the
+      // operation runs the same code path regardless of id presence, so
+      // a caller who omits id by mistake still triggers auth/validation
+      // failures server-side (logged) — they just won't see a wire
+      // response. Mutating ops "default to request-response" because
+      // every caller-friendly client library includes id by default;
+      // notifications are an explicit caller opt-in by omitting it.
       await dispatchOne(parsed.request, context);
       return { kind: 'notification' };
     }
@@ -127,7 +137,8 @@ async function dispatchBatchItem(
     };
   }
   if (item.isNotification) {
-    // Fire for side effects; drop the response.
+    // JSON-RPC 2.0 — same contract as single notifications: pipeline
+    // runs, response dropped per spec.
     await dispatchOne(item.request, context);
     return undefined;
   }

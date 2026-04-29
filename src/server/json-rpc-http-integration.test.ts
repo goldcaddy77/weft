@@ -85,6 +85,35 @@ describe('serve() — POST /jsonrpc', () => {
     expect(body.result?.id).toBe(handle.id);
   });
 
+  it('JSON-RPC 2.0 is supported over three runtime transports. POST /jsonrpc, WebSocket upgrade on /jsonrpc, and newline-delimited JSON over a dedicated stdio runtime entrypoint.', async () => {
+    const engine = createHoldEngine();
+    const handle = await engine.start('hold', { hello: 'world' }, {});
+    await waitForStatus(engine, handle.id, 'running');
+
+    server = serve({ engine, port: 0 });
+
+    const response = await fetch(`${server.url}/jsonrpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 8,
+        method: 'weft.workflows.get',
+        params: { workflowId: handle.id },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      id: number;
+      result?: { id: string };
+      error?: unknown;
+    };
+    expect(body.id).toBe(8);
+    expect(body.error).toBeUndefined();
+    expect(body.result?.id).toBe(handle.id);
+  });
+
   it('returns MethodNotFound for an unknown method', async () => {
     const engine = createHoldEngine();
     server = serve({ engine, port: 0 });

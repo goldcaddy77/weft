@@ -26,6 +26,51 @@ describe('faultToJsonRpcError', () => {
     });
   });
 
+  it('Weft domain failures use a separate stable application error range outside the reserved protocol band. Business and workflow errors do not overload the reserved JSON-RPC codes.', () => {
+    const reservedCodes = new Set([-32700, -32600, -32601, -32602, -32603]);
+    const domainFaults: OperationFault[] = [
+      {
+        code: 'NotFound',
+        message: 'workflow not found',
+        data: { resource: 'workflow', identifier: 'wf-1' },
+      },
+      {
+        code: 'Unauthorized',
+        message: 'authentication required',
+        data: { reason: 'no credentials' },
+      },
+      {
+        code: 'Forbidden',
+        message: 'forbidden',
+        data: { reason: 'missing scope workflows:write' },
+      },
+      {
+        code: 'EngineFailure',
+        message: 'internal error',
+        data: {},
+      },
+    ];
+
+    for (const fault of domainFaults) {
+      expect(reservedCodes.has(faultToJsonRpcError(fault).code)).toBe(false);
+    }
+
+    expect(
+      faultToJsonRpcError({
+        code: 'InvalidParams',
+        message: 'invalid params',
+        data: { issues: [{ path: ['workflowId'], message: 'required', code: 'invalid_type' }] },
+      }).code,
+    ).toBe(-32602);
+    expect(
+      faultToJsonRpcError({
+        code: 'MethodNotFound',
+        message: 'unknown method',
+        data: { method: 'weft.unknown' },
+      }).code,
+    ).toBe(-32601);
+  });
+
   it('Unauthorized -> -32010', () => {
     const error = faultToJsonRpcError({
       code: 'Unauthorized',
@@ -162,7 +207,7 @@ describe('faultToJsonRpcError', () => {
     });
   });
 
-  it('every error includes weftCode + httpStatus in data (uniform shape)', () => {
+  it('JSON-RPC error.data carries structured machine-readable detail. At minimum it includes the canonical Weft application code and the related HTTP status when the same failure is exposed over REST.', () => {
     const samples: OperationFault[] = [
       { code: 'Unauthorized', message: 'x', data: { reason: 'r' } },
       { code: 'Forbidden', message: 'x', data: { reason: 'r' } },

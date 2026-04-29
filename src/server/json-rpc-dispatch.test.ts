@@ -207,6 +207,20 @@ describe('dispatchJsonRpc — batch', () => {
     expect(result.responses[1]?.id).toBe('a');
   });
 
+  it('Batch requests are supported. The shared dispatcher validates and executes JSON-RPC batches without inventing transport-specific behavior.', async () => {
+    const registry = registryOfTwo();
+    const body = JSON.stringify([
+      { jsonrpc: '2.0', method: 'weft.test.one', id: 1 },
+      { jsonrpc: '2.0', method: 'weft.test.two', id: 2 },
+    ]);
+
+    const result = await dispatchJsonRpc(body, { ...baseContext(), registry });
+
+    expect(result.kind).toBe('batch');
+    if (result.kind !== 'batch') throw new Error(`expected batch, got ${result.kind}`);
+    expect(result.responses).toHaveLength(2);
+  });
+
   it('dispatches batch items SEQUENTIALLY (side-effect order matches request order)', async () => {
     // Track 8 decision 13 — batches are not concurrent. Use staggered
     // delays (first-slowest) so that a parallel `Promise.all`-style

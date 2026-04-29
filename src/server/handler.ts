@@ -17,7 +17,7 @@ import {
 } from '../observability/metrics.ts';
 import type { AuthContext } from './authentication.ts';
 import { faultToHttpResponse } from './fault-to-http.ts';
-import { generateOpenApiDocument } from './openapi.ts';
+import { generateOpenApiDocument, type OpenApiSecuritySchemeName } from './openapi.ts';
 import { generateOpenRpcDocument } from './openrpc.ts';
 import { executeOperation, type OperationRegistry } from './operation-catalog.ts';
 import type { OperationFault } from './operation-fault.ts';
@@ -220,6 +220,9 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
       generateOpenApiDocument({
         registry: options?.operationRegistry ?? defaultOperationRegistry(),
         ...(options?.restBindings !== undefined ? { restBindings: options.restBindings } : {}),
+        ...(options?.supportedAuthenticationSchemes !== undefined
+          ? { supportedSchemes: options.supportedAuthenticationSchemes }
+          : {}),
       }),
     ),
   openRpcDocument: async ({ options }) =>
@@ -272,6 +275,8 @@ export interface HandlerOptions {
    * with `operationRegistry`. Omit both to use the live defaults.
    */
   restBindings?: ReadonlyArray<UnknownRestBinding>;
+  /** OpenAPI security schemes supported by the live server configuration. */
+  supportedAuthenticationSchemes?: ReadonlySet<OpenApiSecuritySchemeName>;
 }
 
 /**

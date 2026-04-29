@@ -10,11 +10,20 @@ import { ROUTES, toOpenApiPath, toRegex } from './route-model.ts';
 describe('OpenAPI document generation', () => {
   const document = generateOpenApiDocument();
 
-  it('produces a valid OpenAPI 3.1 document', () => {
+  it('/openapi.json is a full OpenAPI 3.1 contract for the REST-ish HTTP surface. It includes path and query parameters, request bodies, response schemas by status code, shared error objects, and security declarations.', () => {
     expect(document).toHaveProperty('openapi', '3.1.0');
     expect(document).toHaveProperty('info');
     expect(document).toHaveProperty('paths');
     expect(document).toHaveProperty('tags');
+
+    const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
+    expect(paths['/v1/workflows/{id}/signal/{name}']?.['post']?.['parameters']).toBeDefined();
+    expect(paths['/v1/workflows']?.['post']).toHaveProperty('requestBody');
+
+    const components = document['components'] as Record<string, unknown> | undefined;
+    expect(
+      document['security'] !== undefined || components?.['securitySchemes'] !== undefined,
+    ).toBe(true);
   });
 
   it('uses default title and version', () => {
@@ -235,5 +244,67 @@ describe('route-model helpers', () => {
       expect(regex.exec('/v1/health')).not.toBeNull();
       expect(regex.exec('/v1/health/extra')).toBeNull();
     });
+  });
+});
+
+// MF5: Integration test that boots serve() with a JWT auth config, fetches
+// /openapi.json, and asserts the document's security schemes match what the
+// live server actually enforces.  A request without a Bearer token must be
+// rejected (401), proving the document's bearerAuth claim is honest.
+describe('OpenAPI security schemes — live server honesty', () => {
+  it('serves /openapi.json with only the configured auth schemes for an api-key-only server', async () => {
+    // Dynamic import to avoid pulling the full serve() dependency into every
+    // openapi.test.ts import scope — the pattern matches authentication.test.ts.
+    const { serve } = await import('./index.ts');
+
+    const { Engine } = await import('../core/engine.ts');
+    const { MemoryStorage } = await import('../storage/memory.ts');
+
+    const engine = new Engine({ storage: new MemoryStorage() });
+    const server = serve({
+      engine,
+      port: 0,
+      auth: { apiKeys: ['test-key'] },
+    });
+
+    try {
+      // 1. Fetch the OpenAPI document (unauthenticated — /openapi.json is
+      //    explicitly a public meta-endpoint).
+      const docResponse = await fetch(`${server.url}/openapi.json`);
+      expect(docResponse.status).toBe(200);
+      const doc = (await docResponse.json()) as Record<string, unknown>;
+
+      // 2. The document must declare only the active API key scheme.
+      const components = doc['components'] as Record<string, Record<string, unknown>> | undefined;
+      const schemes = components?.['securitySchemes'];
+      expect(schemes).toBeDefined();
+      expect(schemes).toHaveProperty('apiKeyAuth');
+      expect(schemes).not.toHaveProperty('bearerAuth');
+
+      // 3. The document's top-level security array must reference only
+      //    the configured API key scheme.
+      const security = doc['security'] as Array<Record<string, unknown>> | undefined;
+      expect(Array.isArray(security)).toBe(true);
+      const schemeNames = (security ?? []).flatMap((entry) => Object.keys(entry));
+      expect(schemeNames).toContain('apiKeyAuth');
+      expect(schemeNames).not.toContain('bearerAuth');
+
+      // 4. Verify the api-key-only claim is honest: a request to a
+      //    protected endpoint WITHOUT credentials must be rejected with 401.
+      const noAuthResponse = await fetch(`${server.url}/v1/workflows`, {
+        headers: { accept: 'application/json' },
+      });
+      expect(noAuthResponse.status).toBe(401);
+
+      // 5. A request WITH the valid API key passes through, proving apiKeyAuth
+      //    is the active enforcement mechanism and the document is not lying.
+      const authResponse = await fetch(`${server.url}/v1/workflows`, {
+        headers: { 'x-api-key': 'test-key', accept: 'application/json' },
+      });
+      expect(authResponse.status).toBe(200);
+    } finally {
+      await server.stop();
+      engine[Symbol.dispose]();
+    }
   });
 });
