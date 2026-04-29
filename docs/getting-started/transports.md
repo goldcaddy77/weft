@@ -31,7 +31,7 @@ type JsonRpcEnvelope =
 function isJsonRpcError(value: unknown): value is JsonRpcError {
   if (typeof value !== 'object' || value === null) return false;
   const error = value as Record<string, unknown>;
-  return typeof error.code === 'number' && typeof error.message === 'string';
+  return typeof error['code'] === 'number' && typeof error['message'] === 'string';
 }
 
 function isJsonRpcEnvelope(value: unknown): value is JsonRpcEnvelope {
@@ -40,7 +40,7 @@ function isJsonRpcEnvelope(value: unknown): value is JsonRpcEnvelope {
   const hasError = 'error' in envelope;
   const hasResult = 'result' in envelope;
   if (hasError === hasResult) return false;
-  if (hasError) return isJsonRpcError(envelope.error);
+  if (hasError) return isJsonRpcError(envelope['error']);
   return true;
 }
 

@@ -96,7 +96,7 @@ async function pollUntilCompleted(url: string, workflowId: string): Promise<unkn
       throw new Error(`weft.workflows.get returned unexpected shape: ${JSON.stringify(raw)}`);
     }
     if (raw.status === 'completed') return raw.result;
-    if (raw.status === 'failed' || raw.status === 'cancelled') {
+    if (raw.status === 'failed' || raw.status === 'cancelled' || raw.status === 'timed-out') {
       throw new Error(`Workflow ${workflowId} ended with status ${raw.status}`);
     }
     const nextPollDelayMs = Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now()));
@@ -107,16 +107,22 @@ async function pollUntilCompleted(url: string, workflowId: string): Promise<unkn
   );
 }
 
-async function waitForReady(process_: ReturnType<typeof Bun.spawn>): Promise<string> {
+type ReadyResult = {
+  url: string;
+  /** Drains harness stdout in the background so the pipe buffer cannot fill after we return. */
+  drainPromise: Promise<void>;
+};
+
+async function waitForReady(process_: ReturnType<typeof Bun.spawn>): Promise<ReadyResult> {
   const reader = getPipedStream(process_.stdout, 'Harness stdout').getReader();
   const decoder = new TextDecoder();
   type ReaderReadResult = Awaited<ReturnType<typeof reader.read>>;
   let buffered = '';
   let startupTimeoutId: ReturnType<typeof setTimeout> | undefined;
-  let cancelReadPromise: Promise<void> | undefined;
+  let matched = false;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     startupTimeoutId = setTimeout(() => {
-      cancelReadPromise = reader.cancel().catch(() => undefined);
+      void reader.cancel().catch(() => undefined);
       reject(
         new Error(
           `Timed out waiting for SMOKE_READY after ${BINARY_STARTUP_TIMEOUT_MS}ms (check stderr above)`,
@@ -134,13 +140,30 @@ async function waitForReady(process_: ReturnType<typeof Bun.spawn>): Promise<str
       }
       buffered += decoder.decode(value, { stream: true });
       const match = buffered.match(/SMOKE_READY (\S+)/);
-      if (match) return match[1] ?? '';
+      if (match) {
+        matched = true;
+        if (startupTimeoutId) clearTimeout(startupTimeoutId);
+        const drainPromise = drainReader(reader);
+        return { url: match[1] ?? '', drainPromise };
+      }
     }
   } finally {
-    if (startupTimeoutId) {
-      clearTimeout(startupTimeoutId);
+    if (!matched) {
+      if (startupTimeoutId) clearTimeout(startupTimeoutId);
+      reader.releaseLock();
     }
-    await cancelReadPromise;
+  }
+}
+
+async function drainReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    while (true) {
+      const { done } = await reader.read();
+      if (done) return;
+    }
+  } catch {
+    // Stream closed or cancelled — fine.
+  } finally {
     reader.releaseLock();
   }
 }
@@ -154,14 +177,19 @@ async function shutdownServer(server: ReturnType<typeof Bun.spawn>): Promise<voi
 
 async function compileBinary(entry: string, binaryPath: string): Promise<void> {
   console.log(`[smoke] Compiling ${entry} → ${binaryPath}…`);
+  // Drain stdout in parallel with the await so a chatty `bun build` cannot
+  // fill the pipe buffer and stall the child. stderr stays piped because we
+  // surface it on failure; both streams are fully consumed before we read
+  // the exit code.
   const build = Bun.spawn({
     cmd: ['bun', 'build', '--compile', '--outfile', binaryPath, entry],
     stdout: 'pipe',
     stderr: 'pipe',
   });
-  const buildExit = await build.exited;
+  const stdoutDrain = new Response(getPipedStream(build.stdout, 'Build stdout')).text();
+  const stderrDrain = new Response(getPipedStream(build.stderr, 'Build stderr')).text();
+  const [buildExit, , stderr] = await Promise.all([build.exited, stdoutDrain, stderrDrain]);
   if (buildExit !== 0) {
-    const stderr = await new Response(getPipedStream(build.stderr, 'Build stderr')).text();
     throw new Error(`bun build --compile ${entry} failed (exit ${buildExit}):\n${stderr}`);
   }
   if (!existsSync(binaryPath)) {
@@ -194,12 +222,14 @@ async function exerciseHarnessRoundTrip(binaryPath: string): Promise<void> {
     stderr: 'inherit',
   });
 
+  let drainPromise: Promise<void> | undefined;
   try {
-    const url = await waitForReady(server);
-    console.log(`[smoke] Harness ready at ${url}`);
+    const ready = await waitForReady(server);
+    drainPromise = ready.drainPromise;
+    console.log(`[smoke] Harness ready at ${ready.url}`);
 
     console.log('[smoke] Calling weft.workflows.start…');
-    const startRaw = await jsonRpc(url, 'weft.workflows.start', {
+    const startRaw = await jsonRpc(ready.url, 'weft.workflows.start', {
       type: 'helloWorld',
       input: 'Alice',
     });
@@ -214,7 +244,7 @@ async function exerciseHarnessRoundTrip(binaryPath: string): Promise<void> {
     console.log(`[smoke] Started workflow ${workflowId}`);
 
     console.log('[smoke] Polling weft.workflows.get until completed…');
-    const result = await pollUntilCompleted(url, workflowId);
+    const result = await pollUntilCompleted(ready.url, workflowId);
     if (
       typeof result !== 'object' ||
       result === null ||
@@ -225,6 +255,7 @@ async function exerciseHarnessRoundTrip(binaryPath: string): Promise<void> {
     console.log(`[smoke] Got expected result: ${JSON.stringify(result)}`);
   } finally {
     await shutdownServer(server);
+    if (drainPromise) await drainPromise;
   }
 }
 
