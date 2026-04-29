@@ -60,7 +60,7 @@ Same JSON-RPC protocol, persistent connection. Use WebSocket when:
 
 - You need live event streams or subscription notifications
 - You're already using WebSocket for workflow observation and want one connection
-- Latency matters—no TCP handshake per call
+- Latency matters—once the socket is established you skip the per-call HTTP request/response cycle
 
 Authentication happens at upgrade time. Every subsequent call on the connection reuses the established principal; you don't re-authenticate per frame.
 

@@ -1071,13 +1071,11 @@ The operation catalog (`src/server/operation-catalog.ts`) reflects this: every `
 
 ## 8a-1: No second orchestration layer
 
-Track 8's transports—`POST /jsonrpc`, WebSocket on `/jsonrpc`, `/openrpc.json`, and the opt-in stdio session—all route through `src/server/operation-catalog.ts`'s `executeOperation` against the live `Engine` instance. There is no parallel orchestration system, no shadow event bus, no second state machine sitting between the transport and the engine.
+Track 8's runtime transports—`POST /jsonrpc`, WebSocket on `/jsonrpc`, and the opt-in stdio session—all route through `src/server/operation-catalog.ts`'s `executeOperation` against the live `Engine` instance. `/openrpc.json` is not in this list: it is a discovery document generated from the same catalog, served as documentation rather than executed as an operation. There is no parallel orchestration system, no shadow event bus, no second state machine sitting between transport and engine.
 
 `executeOperation` calls the same `Engine` methods that the REST bindings have always called. The transport decides how to frame the request and response; the catalog decides what to invoke and how to map errors. The `Engine` itself is unchanged.
 
-You can verify this by tracing any JSON-RPC call: it enters `src/server/json-rpc-dispatch.ts`, which looks up the method in the registry built from `src/server/operation-catalog.ts`, calls `executeOperation`, and gets back a result or a `OperationFault`. No second execution path, no alternative routing.
-
-This matters because a second orchestration layer would mean Track 8's transports could diverge from the REST surface over time. By sharing one catalog and one `executeOperation`, that divergence is structurally impossible.
+To verify: trace any JSON-RPC call. It enters `src/server/json-rpc-dispatch.ts`, which looks up the method in the registry built from `src/server/operation-catalog.ts`, calls `executeOperation`, and gets back a result or an `OperationFault`. No second execution path, no alternative routing. A second orchestration layer would let Track 8's transports diverge from the REST surface over time; sharing one catalog and one `executeOperation` makes that divergence structurally impossible.
 
 ## 8a-3: BroadcastChannel remains internal
 
@@ -1093,9 +1091,7 @@ To verify: `grep -r "BroadcastChannel" src/server/` should show results only in 
 
 `WorkerInboundMessage` and `WorkerOutboundMessage` are defined in `src/workers/` and represent the private protocol between the engine's main thread and the Web Workers that execute workflow and activity code. They are not part of any external transport.
 
-The JSON-RPC dispatcher (`src/server/json-rpc-dispatch.ts`) uses `JsonRpcRequest` and `JsonRpcResponse` types—its own wire types—not `WorkerInboundMessage` or `WorkerOutboundMessage`. The two type systems do not overlap. A caller sending JSON-RPC over WebSocket has no way to inject a message directly into the worker execution path; they can only invoke operations through the catalog.
-
-This matters for the same reason `BroadcastChannel` matters: worker messages are a concurrency primitive, not an API. Leaking them to external transports would create an API surface that the runtime cannot evolve without breaking callers. Keeping them internal means the internal worker protocol can change—message shapes, versioning, transfer semantics—without any external-facing contract breaking.
+The JSON-RPC dispatcher (`src/server/json-rpc-dispatch.ts`) uses `JsonRpcRequest` and `JsonRpcResponse` types—its own wire types—not `WorkerInboundMessage` or `WorkerOutboundMessage`. The two type systems do not overlap. A caller sending JSON-RPC over WebSocket has no way to inject a message directly into the worker execution path; they can only invoke operations through the catalog. The same reasoning as 8a-3 applies: worker messages are a concurrency primitive, not an API, so keeping them internal lets the worker protocol evolve without breaking external callers.
 
 ## Current auth state (8d-1)
 
