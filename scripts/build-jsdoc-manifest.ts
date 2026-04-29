@@ -1,0 +1,367 @@
+/**
+ * Builds reference/jsdoc-manifest.json — the deterministic denominator for the
+ * "every public API export carries JSDoc" verification gates.
+ *
+ * Two-pass walker:
+ *   Pass 1 (public-face discovery): walks every public entry point listed in
+ *     package.json `exports`, resolves the source .ts file backing each, and
+ *     records every reachable (importPath, exportName, kind) public face.
+ *   Pass 2 (source enumeration): walks every contributing source file and
+ *     emits manifest entries with `publicFaces: []` for declarations not
+ *     reached in Pass 1 — surfaces "not-public" candidates for review.
+ *
+ * Identity key: (sourceFile, sourceName, kind) where kind ∈ {value,type,namespace}.
+ * Public-face key: (importPath, exportName, kind) per element of publicFaces.
+ *
+ * `classification` is always written as "unclassified". The manual classification
+ * pass (step 3 of the JSDoc plan) sets it to example-required | prose-only | not-public.
+ */
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
+import ts from 'typescript';
+
+const REPO_ROOT = resolve(import.meta.dir, '..');
+const PACKAGE_JSON = resolve(REPO_ROOT, 'package.json');
+const MANIFEST_PATH = resolve(REPO_ROOT, 'reference/jsdoc-manifest.json');
+
+type SymbolKind = 'value' | 'type' | 'namespace';
+
+type PublicFace = {
+  importPath: string;
+  exportName: string;
+  kind: SymbolKind;
+};
+
+type CurrentState = 'no-jsdoc' | 'prose-only' | 'has-example';
+
+type ManifestEntry = {
+  sourceFile: string;
+  sourceName: string;
+  kind: SymbolKind;
+  subKind: string;
+  publicFaces: PublicFace[];
+  classification: 'unclassified' | 'example-required' | 'prose-only' | 'not-public';
+  currentState: CurrentState;
+  classificationRationale: string | null;
+  batch: string | null;
+};
+
+type Manifest = {
+  publicEntryPoints: Record<string, string>;
+  entries: ManifestEntry[];
+};
+
+// ---------------------------------------------------------------------------
+// Read package.json `exports` and resolve each public specifier to a source file.
+// `dist/foo/bar.d.ts` -> `src/foo/bar.ts`. Source-side authoritative lookup.
+// ---------------------------------------------------------------------------
+
+function distToSource(distRelative: string): string {
+  // distRelative looks like "./dist/storage/memory.d.ts" or "./dist/index.d.ts".
+  const stripped = distRelative
+    .replace(/^\.\//, '')
+    .replace(/^dist\//, 'src/')
+    .replace(/\.d\.ts$/, '.ts');
+  return stripped;
+}
+
+function pickTypesField(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (value === null || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj['types'] === 'string') return obj['types'];
+  // Conditional shape: { bun: { types: ... } } or { node: { types: ... } }.
+  for (const key of ['bun', 'node', 'import', 'default'] as const) {
+    const inner = obj[key];
+    if (typeof inner === 'string') {
+      // `import` / `default` values are .js — not useful for source resolution.
+      continue;
+    }
+    if (inner && typeof inner === 'object') {
+      const innerTypes = (inner as Record<string, unknown>)['types'];
+      if (typeof innerTypes === 'string') return innerTypes;
+    }
+  }
+  return null;
+}
+
+function buildPublicEntryPoints(): Record<string, string> {
+  const pkg = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')) as {
+    name: string;
+    exports?: Record<string, unknown>;
+  };
+  if (!pkg.exports) {
+    throw new Error('package.json missing `exports` map');
+  }
+  const out: Record<string, string> = {};
+  for (const [subpath, value] of Object.entries(pkg.exports)) {
+    const typesPath = pickTypesField(value);
+    if (!typesPath) continue; // Some entries are .js-only without types.
+    const sourcePath = distToSource(typesPath);
+    const importPath = subpath === '.' ? pkg.name : `${pkg.name}/${subpath.replace(/^\.\//, '')}`;
+    const absoluteSource = resolve(REPO_ROOT, sourcePath);
+    out[importPath] = relative(REPO_ROOT, absoluteSource);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// TypeScript program shared by Pass 1 and Pass 2.
+// ---------------------------------------------------------------------------
+
+function loadProgram(rootFiles: string[]): ts.Program {
+  const config = ts.findConfigFile(REPO_ROOT, ts.sys.fileExists.bind(ts.sys), 'tsconfig.json');
+  if (!config) throw new Error('tsconfig.json not found');
+  const parsed = ts.readConfigFile(config, ts.sys.readFile.bind(ts.sys));
+  if (parsed.error)
+    throw new Error(ts.flattenDiagnosticMessageText(parsed.error.messageText, '\n'));
+  const compilerOptions = ts.parseJsonConfigFileContent(
+    parsed.config,
+    ts.sys,
+    dirname(config),
+  ).options;
+  return ts.createProgram(rootFiles, { ...compilerOptions, noEmit: true });
+}
+
+// ---------------------------------------------------------------------------
+// Map a TypeScript symbol's flags to our kind/subKind taxonomy.
+// ---------------------------------------------------------------------------
+
+function symbolKind(symbol: ts.Symbol): { kind: SymbolKind; subKind: string } {
+  const flags = symbol.flags;
+  if (flags & ts.SymbolFlags.Class) return { kind: 'value', subKind: 'class' };
+  if (flags & ts.SymbolFlags.Enum) return { kind: 'value', subKind: 'enum' };
+  if (flags & ts.SymbolFlags.Function) return { kind: 'value', subKind: 'function' };
+  if (flags & ts.SymbolFlags.Variable) return { kind: 'value', subKind: 'const' };
+  if (flags & ts.SymbolFlags.Interface) return { kind: 'type', subKind: 'interface' };
+  if (flags & ts.SymbolFlags.TypeAlias) return { kind: 'type', subKind: 'type-alias' };
+  if (flags & ts.SymbolFlags.Module || flags & ts.SymbolFlags.Namespace) {
+    return { kind: 'namespace', subKind: 'namespace' };
+  }
+  if (flags & ts.SymbolFlags.Type) return { kind: 'type', subKind: 'type' };
+  if (flags & ts.SymbolFlags.Value) return { kind: 'value', subKind: 'value' };
+  return { kind: 'value', subKind: 'unknown' };
+}
+
+// ---------------------------------------------------------------------------
+// JSDoc inspection: derive `currentState` from a symbol's source-side JSDoc.
+// "has-example" requires both prose description AND at least one @example tag.
+// ---------------------------------------------------------------------------
+
+function detectCurrentState(symbol: ts.Symbol): CurrentState {
+  const declarations = symbol.declarations ?? [];
+  for (const decl of declarations) {
+    const tags = ts.getJSDocTags(decl);
+    const jsdocComments = ts.getJSDocCommentsAndTags(decl);
+    let proseText = '';
+    for (const node of jsdocComments) {
+      if (ts.isJSDoc(node)) {
+        const comment = node.comment;
+        if (typeof comment === 'string') proseText += comment;
+        else if (Array.isArray(comment)) {
+          for (const part of comment) {
+            if (part.kind === ts.SyntaxKind.JSDocText) {
+              proseText += (part as ts.JSDocText).text;
+            }
+          }
+        }
+      }
+    }
+    const hasProse = proseText.trim().length > 0;
+    const hasExample = tags.some((tag) => tag.tagName.text === 'example');
+    if (hasProse && hasExample) return 'has-example';
+    if (hasProse) return 'prose-only';
+  }
+  return 'no-jsdoc';
+}
+
+// ---------------------------------------------------------------------------
+// Walk a symbol back to its real declaration (resolving aliases / re-exports).
+// Returns { sourceFile, sourceName, kind, subKind } for the underlying symbol.
+// ---------------------------------------------------------------------------
+
+function resolveToSourceDeclaration(
+  symbol: ts.Symbol,
+  checker: ts.TypeChecker,
+): {
+  sourceFile: string;
+  sourceName: string;
+  kind: SymbolKind;
+  subKind: string;
+  underlying: ts.Symbol;
+} | null {
+  let current = symbol;
+  while (current.flags & ts.SymbolFlags.Alias) {
+    const next = checker.getAliasedSymbol(current);
+    if (!next || next === current) break;
+    current = next;
+  }
+  const decls = current.declarations ?? [];
+  if (decls.length === 0) return null;
+  // Prefer non-namespace-export declarations (pick the actual class/function/etc).
+  const decl = decls.find((d) => !ts.isExportSpecifier(d) && !ts.isExportAssignment(d)) ?? decls[0];
+  const sourceFile = relative(REPO_ROOT, decl.getSourceFile().fileName);
+  if (sourceFile.startsWith('..') || sourceFile.includes('node_modules')) return null;
+  const { kind, subKind } = symbolKind(current);
+  return {
+    sourceFile,
+    sourceName: current.getName(),
+    kind,
+    subKind,
+    underlying: current,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Identity-key dedup map for manifest entries.
+// ---------------------------------------------------------------------------
+
+function entryKey(sourceFile: string, sourceName: string, kind: SymbolKind): string {
+  return `${sourceFile}|${sourceName}|${kind}`;
+}
+
+// ---------------------------------------------------------------------------
+// Pass 1 — public-face discovery.
+// ---------------------------------------------------------------------------
+
+function runPass1(
+  publicEntryPoints: Record<string, string>,
+  program: ts.Program,
+): Map<string, ManifestEntry> {
+  const checker = program.getTypeChecker();
+  const entries = new Map<string, ManifestEntry>();
+
+  for (const [importPath, sourceRelative] of Object.entries(publicEntryPoints)) {
+    const absoluteEntry = resolve(REPO_ROOT, sourceRelative);
+    const entrySourceFile = program.getSourceFile(absoluteEntry);
+    if (!entrySourceFile) {
+      console.warn(`Pass 1: entry point ${importPath} → ${sourceRelative} not in program`);
+      continue;
+    }
+    const moduleSymbol = checker.getSymbolAtLocation(entrySourceFile);
+    if (!moduleSymbol) {
+      console.warn(`Pass 1: no module symbol for ${importPath}`);
+      continue;
+    }
+    const exports = checker.getExportsOfModule(moduleSymbol);
+    for (const exportSymbol of exports) {
+      const exportName = exportSymbol.getName();
+      const resolved = resolveToSourceDeclaration(exportSymbol, checker);
+      if (!resolved) continue;
+      const key = entryKey(resolved.sourceFile, resolved.sourceName, resolved.kind);
+      let entry = entries.get(key);
+      if (!entry) {
+        entry = {
+          sourceFile: resolved.sourceFile,
+          sourceName: resolved.sourceName,
+          kind: resolved.kind,
+          subKind: resolved.subKind,
+          publicFaces: [],
+          classification: 'unclassified',
+          currentState: detectCurrentState(resolved.underlying),
+          classificationRationale: null,
+          batch: null,
+        };
+        entries.set(key, entry);
+      }
+      // Add public face — use exportSymbol.kind because re-export aliases preserve
+      // the kind of the binding the consumer sees.
+      const faceKind = symbolKind(exportSymbol).kind;
+      const faceTuple: PublicFace = { importPath, exportName, kind: faceKind };
+      const dup = entry.publicFaces.some(
+        (f) => f.importPath === importPath && f.exportName === exportName && f.kind === faceKind,
+      );
+      if (!dup) entry.publicFaces.push(faceTuple);
+    }
+  }
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
+// Pass 2 — source enumeration. Adds entries with publicFaces:[] for any
+// exported declaration not already seen.
+// ---------------------------------------------------------------------------
+
+function runPass2(entries: Map<string, ManifestEntry>, program: ts.Program): void {
+  const checker = program.getTypeChecker();
+  const sourceFiles = new Set<string>();
+  for (const entry of entries.values()) sourceFiles.add(entry.sourceFile);
+
+  for (const sourceRelative of sourceFiles) {
+    const absoluteSource = resolve(REPO_ROOT, sourceRelative);
+    const sourceFile = program.getSourceFile(absoluteSource);
+    if (!sourceFile) continue;
+    const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
+    if (!moduleSymbol) continue;
+    const exports = checker.getExportsOfModule(moduleSymbol);
+    for (const exportSymbol of exports) {
+      const resolved = resolveToSourceDeclaration(exportSymbol, checker);
+      if (!resolved) continue;
+      // Pass 2 only emits entries whose source declaration lives in this same
+      // file — otherwise we double-count re-exports across files.
+      if (resolved.sourceFile !== sourceRelative) continue;
+      const key = entryKey(resolved.sourceFile, resolved.sourceName, resolved.kind);
+      if (entries.has(key)) continue;
+      entries.set(key, {
+        sourceFile: resolved.sourceFile,
+        sourceName: resolved.sourceName,
+        kind: resolved.kind,
+        subKind: resolved.subKind,
+        publicFaces: [],
+        classification: 'unclassified',
+        currentState: detectCurrentState(resolved.underlying),
+        classificationRationale: null,
+        batch: null,
+      });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Entry point.
+// ---------------------------------------------------------------------------
+
+function main(): void {
+  const publicEntryPoints = buildPublicEntryPoints();
+  const rootFiles = Object.values(publicEntryPoints).map((p) => resolve(REPO_ROOT, p));
+  const program = loadProgram(rootFiles);
+
+  const entries = runPass1(publicEntryPoints, program);
+  runPass2(entries, program);
+
+  // Sort entries deterministically for stable diffs.
+  const sorted = [...entries.values()].toSorted((a, b) => {
+    if (a.sourceFile !== b.sourceFile) return a.sourceFile < b.sourceFile ? -1 : 1;
+    if (a.sourceName !== b.sourceName) return a.sourceName < b.sourceName ? -1 : 1;
+    return a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0;
+  });
+
+  // Sort each entry's publicFaces deterministically.
+  for (const entry of sorted) {
+    entry.publicFaces = entry.publicFaces.toSorted((a, b) => {
+      if (a.importPath !== b.importPath) return a.importPath < b.importPath ? -1 : 1;
+      if (a.exportName !== b.exportName) return a.exportName < b.exportName ? -1 : 1;
+      return a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0;
+    });
+  }
+
+  const manifest: Manifest = { publicEntryPoints, entries: sorted };
+  writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+
+  const total = sorted.length;
+  const reachable = sorted.filter((e) => e.publicFaces.length > 0).length;
+  const orphaned = total - reachable;
+  const hasExample = sorted.filter((e) => e.currentState === 'has-example').length;
+  const proseOnly = sorted.filter((e) => e.currentState === 'prose-only').length;
+  const noJsdoc = sorted.filter((e) => e.currentState === 'no-jsdoc').length;
+  console.log(`Wrote ${MANIFEST_PATH}`);
+  console.log(`  ${total} total entries`);
+  console.log(`  ${reachable} reachable from a public entry point`);
+  console.log(`  ${orphaned} not-public candidates (publicFaces: [])`);
+  console.log(
+    `  currentState: has-example=${hasExample} prose-only=${proseOnly} no-jsdoc=${noJsdoc}`,
+  );
+}
+
+main();
