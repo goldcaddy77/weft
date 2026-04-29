@@ -12,6 +12,29 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Configuration object that governs how a {@link BudgetTracker} enforces token
+ * and cost limits for an agent loop.
+ *
+ * @example Cap cost at $0.50 with per-model pricing
+ * ```ts
+ * import { BudgetTracker, type BudgetOptions } from 'weft';
+ *
+ * const options: BudgetOptions = {
+ *   maxCost: 0.5,
+ *   maxTokens: 50_000,
+ *   warningThreshold: 0.75,
+ *   models: {
+ *     'claude-sonnet-4-5': { inputCostPer1K: 0.003, outputCostPer1K: 0.015 },
+ *     'claude-haiku-3-5':  { inputCostPer1K: 0.00025, outputCostPer1K: 0.00125 },
+ *   },
+ * };
+ *
+ * const tracker = new BudgetTracker(options, {
+ *   onWarning: (state) => console.warn('Budget 75 % used', state.costUsed),
+ * });
+ * ```
+ */
 export interface BudgetOptions {
   maxTokens?: number | undefined;
   maxCost?: number | undefined;

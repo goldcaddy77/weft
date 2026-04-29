@@ -8,7 +8,32 @@ export interface MultiplexerOptions {
   maxBufferSize?: number;
 }
 
-/** Multiplexes a single source stream to multiple consumers without duplicating the source. */
+/**
+ * Multiplexes a single source stream to multiple consumers without duplicating the source.
+ *
+ * Late consumers receive all buffered chunks before live chunks, up to
+ * `maxBufferSize`. Useful when multiple UI panels or loggers must independently
+ * consume the same token stream from a single LLM call.
+ *
+ * @example Fan out one LLM token stream to two independent readers
+ * ```ts
+ * import { StreamMultiplexer, TokenBridge } from 'weft';
+ * import type { StreamChunk } from 'weft';
+ *
+ * declare const sourceStream: ReadableStream<StreamChunk>;
+ * const targetA = new EventTarget();
+ * const targetB = new EventTarget();
+ *
+ * const mux = new StreamMultiplexer(sourceStream);
+ *
+ * // Create two independent consumers from the same source.
+ * const bridgeA = new TokenBridge(targetA, 'workflow-1', 'claude-sonnet-4-5');
+ * const bridgeB = new TokenBridge(targetB, 'workflow-1', 'claude-sonnet-4-5');
+ *
+ * void bridgeA.pipe(mux.createConsumer());
+ * void bridgeB.pipe(mux.createConsumer());
+ * ```
+ */
 export class StreamMultiplexer {
   #source: ReadableStream<StreamChunk>;
   #consumers: Set<ReadableStreamDefaultController<StreamChunk>>;
@@ -139,7 +164,22 @@ export class StreamMultiplexer {
   }
 }
 
-/** Bridges a ReadableStream to an EventTarget, dispatching TokenEvent for each token chunk. */
+/**
+ * Bridges a ReadableStream to an EventTarget, dispatching {@link TokenEvent} for each token chunk.
+ *
+ * @example Pipe a streaming LLM response to an engine event target
+ * ```ts
+ * import { TokenBridge } from 'weft';
+ * import type { StreamChunk } from 'weft';
+ *
+ * declare const stream: ReadableStream<StreamChunk>;
+ * const target = new EventTarget();
+ *
+ * const bridge = new TokenBridge(target, 'workflow-123', 'claude-sonnet-4-5');
+ * const fullText = await bridge.pipe(stream);
+ * console.log('Complete response:', fullText);
+ * ```
+ */
 export class TokenBridge {
   #target: EventTarget;
   #workflowId: string;
@@ -204,7 +244,28 @@ export interface ReconnectionBufferOptions {
 
 const DEFAULT_RECONNECTION_MAX_BYTES = 10 * 1024 * 1024;
 
-/** Accumulates completed turn text for reconnecting clients. */
+/**
+ * Accumulates completed turn text for reconnecting clients.
+ *
+ * Stores the last N turns of agent output so that a client reconnecting after
+ * a network interruption can replay missed content. Oldest turns are evicted
+ * first when the count or byte limit is reached.
+ *
+ * @example Replay buffered turns to a reconnected client
+ * ```ts
+ * import { ReconnectionBuffer } from 'weft';
+ *
+ * const buffer = new ReconnectionBuffer({ maxTurns: 5, maxBytes: 1_048_576 });
+ *
+ * buffer.addTurn('First agent response text.');
+ * buffer.addTurn('Second agent response text.');
+ *
+ * // On reconnect, send all buffered turns.
+ * for (const turn of buffer.getTurns()) {
+ *   console.log('Replaying turn:', turn);
+ * }
+ * ```
+ */
 export class ReconnectionBuffer {
   #turns: string[];
   #turnSizes: number[];

@@ -10,7 +10,25 @@ export interface ValidationError {
   actual?: string;
 }
 
-/** Validate a value against a JSON Schema. Minimal implementation for tool input validation. */
+/**
+ * Validate a value against a JSON Schema. Minimal implementation for tool input validation.
+ *
+ * @example Validate a tool's input object before dispatch
+ * ```ts
+ * import { validateSchema } from 'weft';
+ *
+ * const schema = {
+ *   type: 'object',
+ *   required: ['query'],
+ *   properties: { query: { type: 'string' }, limit: { type: 'number' } },
+ * };
+ *
+ * const result = validateSchema({ query: 'hello', limit: 5 }, schema);
+ * if (!result.valid) {
+ *   console.error('Validation errors:', result.errors);
+ * }
+ * ```
+ */
 export function validateSchema(value: unknown, schema: Record<string, unknown>): ValidationResult {
   const errors: ValidationError[] = [];
   validateValue(value, schema, '', errors);

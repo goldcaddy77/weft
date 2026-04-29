@@ -15,7 +15,28 @@ import { MCPTransportError } from './transport';
 // Options
 // ---------------------------------------------------------------------------
 
-/** Static headers or an async factory that refreshes per-request (e.g., OAuth2 tokens). */
+/**
+ * Static headers or an async factory that refreshes per-request (e.g., OAuth2 tokens).
+ *
+ * When a function is provided it is called before every HTTP request so that
+ * short-lived credentials (OAuth2 tokens, signed URLs) are always fresh.
+ *
+ * @example Dynamic header source using an OAuth2 token manager
+ * ```ts
+ * import type { HeaderSource } from 'weft';
+ * import { createOAuth2TokenManager } from 'weft';
+ *
+ * const manager = createOAuth2TokenManager({
+ *   tokenEndpoint: 'https://auth.example.com/token',
+ *   clientId: process.env['CLIENT_ID'] ?? '',
+ *   clientSecret: process.env['CLIENT_SECRET'] ?? '',
+ * });
+ *
+ * const source: HeaderSource = async () => ({
+ *   Authorization: `Bearer ${await manager.getAccessToken()}`,
+ * });
+ * ```
+ */
 export type HeaderSource = Record<string, string> | (() => Promise<Record<string, string>>);
 
 export type HttpTransportOptions = {

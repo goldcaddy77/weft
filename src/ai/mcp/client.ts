@@ -10,7 +10,23 @@ import { HttpTransport } from './transport-http';
 // Options
 // ---------------------------------------------------------------------------
 
-/** Options to construct an HttpTransport automatically from a server URL. */
+/**
+ * Options to construct an HttpTransport automatically from a server URL.
+ *
+ * @example Connect to a publicly accessible MCP server
+ * ```ts
+ * import { MCPClient, type MCPClientUrlOptions } from 'weft';
+ *
+ * const options: MCPClientUrlOptions = {
+ *   serverUrl: 'https://tools.example.com/mcp',
+ *   auth: { type: 'bearer', token: process.env['MCP_TOKEN'] ?? '' },
+ *   timeout: 15_000,
+ * };
+ *
+ * const client = new MCPClient(options);
+ * const tools = await client.discoverTools();
+ * ```
+ */
 export type MCPClientUrlOptions = {
   serverUrl: string;
   /** OAuth2 is not supported via URL options — use a transport with pre-fetched headers. */
@@ -18,7 +34,25 @@ export type MCPClientUrlOptions = {
   timeout?: number;
 };
 
-/** New options: bring your own transport. */
+/**
+ * Options to supply a pre-constructed transport to an {@link MCPClient}.
+ *
+ * Use this when you need full control over transport configuration — for example
+ * to inject OAuth2 dynamic headers or to use a stdio transport for a local process.
+ *
+ * @example Attach a pre-built transport with dynamic headers
+ * ```ts
+ * import { MCPClient, type MCPClientTransportOptions, type MCPTransport } from 'weft';
+ *
+ * // Bring your own transport (e.g. an HttpTransport with OAuth2 headers).
+ * declare const myTransport: MCPTransport;
+ *
+ * const options: MCPClientTransportOptions = { transport: myTransport, timeout: 20_000 };
+ * const client = new MCPClient(options);
+ * const tools = await client.discoverTools();
+ * console.log('Discovered tools:', tools.length);
+ * ```
+ */
 export type MCPClientTransportOptions = {
   transport: MCPTransport;
   timeout?: number | undefined;

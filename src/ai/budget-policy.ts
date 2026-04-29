@@ -62,6 +62,27 @@ export class OrganizationBudgetExceededError extends Error {
  * increments due to stale reads. Multi-writer safety requires an atomic
  * increment operation on the Storage interface (e.g., SQL UPSERT), which is
  * deferred to a future iteration.
+ *
+ * @example Enforce daily and monthly cost limits per organization namespace
+ * ```ts
+ * import { BudgetPolicyEnforcer } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const enforcer = new BudgetPolicyEnforcer(storage);
+ *
+ * enforcer.setPolicy({
+ *   namespace: 'acme',
+ *   daily: { maxCost: 10.0 },
+ *   monthly: { maxCost: 200.0 },
+ * });
+ *
+ * // Before each agent call, check the policy (throws OrganizationBudgetExceededError if over limit).
+ * await enforcer.checkBudget('acme');
+ *
+ * // After the agent call completes, record cost usage.
+ * await enforcer.recordCost('acme', 0.05);
+ * ```
  */
 export class BudgetPolicyEnforcer {
   #policies: Map<string, BudgetPolicyOptions> = new Map();

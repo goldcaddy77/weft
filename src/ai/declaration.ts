@@ -126,7 +126,27 @@ export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
   readonly _outputType?: TOutput;
 }
 
-/** Runtime check: is the value an AgentDefinition created by defineAgent()? */
+/**
+ * Runtime check: is the value an AgentDefinition created by {@link defineAgent}?
+ *
+ * @example Guard before calling engine.register with an unknown value
+ * ```ts
+ * import { isAgentDefinition, defineAgent } from 'weft';
+ *
+ * const definition = defineAgent({ name: 'my-agent', model: 'claude-sonnet-4-5' });
+ *
+ * function registerIfAgent(value: unknown): void {
+ *   if (isAgentDefinition(value)) {
+ *     console.log('Registering agent:', value.name);
+ *   } else {
+ *     console.log('Not an agent definition');
+ *   }
+ * }
+ *
+ * registerIfAgent(definition);  // logs: Registering agent: my-agent
+ * registerIfAgent({ name: 'x' }); // logs: Not an agent definition
+ * ```
+ */
 export function isAgentDefinition(value: unknown): value is AgentDefinition {
   if (typeof value !== 'object' || value === null) return false;
   const obj = value as Record<string, unknown>;

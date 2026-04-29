@@ -11,6 +11,21 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Context provided to a {@link ModelRouter} on each turn. Contains budget,
+ * conversation state, and workflow identity so routers can make informed decisions.
+ *
+ * @example Read routing context inside a custom router
+ * ```ts
+ * import { customRouter, type RoutingContext } from 'weft';
+ *
+ * const router = customRouter((ctx: RoutingContext) => ({
+ *   model: ctx.budgetRemaining && ctx.budgetRemaining.costRemaining < 0.05
+ *     ? 'claude-haiku-3-5'
+ *     : 'claude-sonnet-4-5',
+ * }));
+ * ```
+ */
 export interface RoutingContext {
   workflowId: string;
   turnIndex: number;
@@ -74,7 +89,19 @@ function hashString(input: string): number {
 // Router factories
 // ---------------------------------------------------------------------------
 
-/** Creates a router that always returns the primary model with a static fallback list. */
+/**
+ * Creates a router that always returns the primary model with a static fallback list.
+ *
+ * @example Always use claude-sonnet-4-5 with two fallbacks
+ * ```ts
+ * import { staticFallbackRouter } from 'weft';
+ *
+ * const router = staticFallbackRouter('claude-sonnet-4-5', [
+ *   'claude-haiku-3-5',
+ *   'claude-3-opus-20240229',
+ * ]);
+ * ```
+ */
 export function staticFallbackRouter(primary: string, fallbacks: string[]): ModelRouter {
   return {
     select(): ModelSelection {
@@ -95,6 +122,16 @@ export function staticFallbackRouter(primary: string, fallbacks: string[]): Mode
  * threshold act as catch-all entries and are always eligible.
  *
  * When no budget info is provided, the first tier is returned as a safe default.
+ *
+ * @example Downgrade to a cheaper model when budget drops below $0.10
+ * ```ts
+ * import { costTierRouter } from 'weft';
+ *
+ * const router = costTierRouter([
+ *   { model: 'claude-sonnet-4-5', maxCostRemaining: 0.10 },
+ *   { model: 'claude-haiku-3-5' },
+ * ]);
+ * ```
  */
 export function costTierRouter(tiers: CostTier[]): ModelRouter {
   // Sort tiers by threshold descending so the "most expensive" tier comes first.
@@ -151,6 +188,16 @@ export function costTierRouter(tiers: CostTier[]): ModelRouter {
  * The workflow ID is hashed via FNV-1a and normalized to a value in [0, 1).
  * Variants are selected by walking cumulative weights until the hash falls
  * within a variant's range. The same workflow ID always yields the same variant.
+ *
+ * @example Route 20 % of workflows to a new model
+ * ```ts
+ * import { abTestRouter } from 'weft';
+ *
+ * const router = abTestRouter([
+ *   { model: 'claude-sonnet-4-5', weight: 0.8 },
+ *   { model: 'claude-3-opus-20240229', weight: 0.2 },
+ * ]);
+ * ```
  */
 export function abTestRouter(variants: WeightedVariant[]): ModelRouter {
   return {
@@ -179,7 +226,19 @@ export function abTestRouter(variants: WeightedVariant[]): ModelRouter {
   };
 }
 
-/** Creates a router from a custom selection function. */
+/**
+ * Creates a router from a custom selection function.
+ *
+ * @example Route to different models based on turn index
+ * ```ts
+ * import { customRouter } from 'weft';
+ *
+ * // Use a cheap model for early turns; switch to a powerful one later.
+ * const router = customRouter((ctx) => ({
+ *   model: ctx.turnIndex < 3 ? 'claude-haiku-3-5' : 'claude-sonnet-4-5',
+ * }));
+ * ```
+ */
 export function customRouter(fn: (context: RoutingContext) => ModelSelection): ModelRouter {
   return {
     select(context: RoutingContext): ModelSelection {

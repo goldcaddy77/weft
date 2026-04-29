@@ -55,7 +55,28 @@ import { computeSemanticHash, ToolCallReplayConflictError } from './tool-effect-
 // Types
 // ---------------------------------------------------------------------------
 
-/** An MCP server URL to discover tools from at agent initialization. */
+/**
+ * An MCP server URL to discover tools from at agent initialization.
+ *
+ * @example Connect an HTTP MCP server with bearer auth
+ * ```ts
+ * import { executeAgentLoop, type MCPToolSource } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const source: MCPToolSource = {
+ *   mcp: 'https://tools.example.com/mcp',
+ *   auth: { type: 'bearer', token: process.env['MCP_TOKEN'] ?? '' },
+ *   timeout: 10_000,
+ * };
+ *
+ * const result = await executeAgentLoop(
+ *   { model: 'claude-sonnet-4-5', provider, tools: [source] },
+ *   'What tools are available?',
+ * );
+ * ```
+ */
 export interface MCPToolSource {
   mcp: string;
   auth?: MCPAuthConfig | undefined;
@@ -1215,7 +1236,28 @@ async function executeAgentTurn(runtime: AgentRuntime, turnIndex: number): Promi
   return true;
 }
 
-/** Execute a durable ReAct agent loop. Returns the final agent result. */
+/**
+ * Execute a durable ReAct agent loop. Returns the final agent result.
+ *
+ * @example Basic agent with a local tool
+ * ```ts
+ * import { executeAgentLoop, type AgentOptions, type AgentTool } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const echoCurrent: AgentTool = {
+ *   definition: { name: 'get_time', description: 'Returns current ISO time', inputSchema: { type: 'object' } },
+ *   execute: async () => new Date().toISOString(),
+ * };
+ *
+ * const result = await executeAgentLoop(
+ *   { model: 'claude-sonnet-4-5', provider, tools: [echoCurrent], maxTurns: 3 },
+ *   'What time is it?',
+ * );
+ * console.log(result.content);
+ * ```
+ */
 export async function executeAgentLoop(options: AgentOptions, input: string): Promise<AgentResult> {
   const runtime = await createAgentRuntime(options, input);
 

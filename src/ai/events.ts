@@ -334,6 +334,20 @@ export class AgentCheckpointSizeWarningEvent extends Event {
  * the effect log short-circuits it), but may also fire when the model emits
  * the same tool call twice within a single run and the second invocation is
  * replayed from the committed record.
+ *
+ * @example Listen for checkpoint resume events on the engine event target
+ * ```ts
+ * import { AgentCheckpointResumedEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentCheckpointResumedEvent.type, (e) => {
+ *   const event = e as AgentCheckpointResumedEvent;
+ *   console.log(
+ *     `Agent ${event.agentId} resumed: ${event.duplicatesPrevented} tool call(s) replayed.`,
+ *   );
+ * });
+ * ```
  */
 export class AgentCheckpointResumedEvent extends Event {
   static readonly type = 'agent:checkpoint:resumed' as const;

@@ -9,6 +9,24 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * OAuth2 client credentials configuration used by {@link createOAuth2TokenManager}.
+ *
+ * @example Configure client credentials for a protected MCP server
+ * ```ts
+ * import { createOAuth2TokenManager, type OAuth2Config } from 'weft';
+ *
+ * const config: OAuth2Config = {
+ *   tokenEndpoint: 'https://auth.example.com/oauth/token',
+ *   clientId: process.env['CLIENT_ID'] ?? '',
+ *   clientSecret: process.env['CLIENT_SECRET'] ?? '',
+ *   scope: 'tools:invoke',
+ * };
+ *
+ * const manager = createOAuth2TokenManager(config);
+ * const token = await manager.getAccessToken();
+ * ```
+ */
 export type OAuth2Config = {
   tokenEndpoint: string;
   clientId: string;
@@ -54,6 +72,22 @@ const EXPIRY_BUFFER_MS = 60_000;
  *
  * The manager caches tokens and refreshes them proactively before expiry.
  * Concurrent callers share a single in-flight refresh request.
+ *
+ * @example Get an access token and build a dynamic authorization header
+ * ```ts
+ * import { createOAuth2TokenManager } from 'weft';
+ *
+ * const tokenManager = createOAuth2TokenManager({
+ *   tokenEndpoint: 'https://auth.example.com/oauth/token',
+ *   clientId: process.env['CLIENT_ID'] ?? '',
+ *   clientSecret: process.env['CLIENT_SECRET'] ?? '',
+ * });
+ *
+ * // Concurrent calls share one in-flight refresh; cached while token is live.
+ * const token = await tokenManager.getAccessToken();
+ * const headers = { Authorization: `Bearer ${token}` };
+ * console.log(Object.keys(headers)); // ['Authorization']
+ * ```
  */
 export function createOAuth2TokenManager(config: OAuth2Config): OAuth2TokenManager {
   let cached: CachedToken | null = null;
