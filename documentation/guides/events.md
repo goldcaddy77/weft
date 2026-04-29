@@ -30,7 +30,7 @@ Each event class has a static `type` property that matches its event string. Use
 
 ## Core event types
 
-Here is the full set of events the engine dispatches during a workflow's lifecycle.
+Here is the primary set of events the engine dispatches. For the complete list, see `WeftEventMap` in `src/core/events.ts`.
 
 _Workflow events:_
 

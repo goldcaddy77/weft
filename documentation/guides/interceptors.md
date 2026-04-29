@@ -10,7 +10,7 @@ There are two categories. **Workflow interceptors** wrap operations inside the w
 
 ## Workflow interceptors
 
-The `WorkflowInterceptor` interface has four optional hooks:
+The `WorkflowInterceptor` interface has eight optional hooks:
 
 ```typescript
 interface WorkflowInterceptor {
@@ -32,6 +32,26 @@ interface WorkflowInterceptor {
   workflowStart?(
     interception: WorkflowStartInterception,
     next: (interception: WorkflowStartInterception) => void,
+  ): void;
+
+  childWorkflow?(
+    interception: ChildWorkflowInterception,
+    next: (interception: ChildWorkflowInterception) => Promise<unknown>,
+  ): Promise<unknown>;
+
+  agent?(
+    interception: AgentInterception,
+    next: (interception: AgentInterception) => Generator<unknown, unknown, unknown>,
+  ): Generator<unknown, unknown, unknown>;
+
+  query?(
+    interception: QueryInterception,
+    next: (interception: QueryInterception) => Generator<unknown, unknown, unknown>,
+  ): Generator<unknown, unknown, unknown>;
+
+  signalReceived?(
+    interception: SignalReceivedInterception,
+    next: (interception: SignalReceivedInterception) => void,
   ): void;
 }
 ```
@@ -178,6 +198,13 @@ const composed = composeWorkflowInterceptors([
   loggingInterceptor,
 ]);
 ```
+
+```typescript
+engine.addInterceptor(composed);
+engine.addActivityInterceptor(composeActivityInterceptors([authActivityInterceptor]));
+```
+
+Register interceptors on the engine with `engine.addInterceptor()` (workflow-side) and `engine.addActivityInterceptor()` (activity-side). The engine composes interceptors registered in sequence, so you can also call `addInterceptor` once per interceptor without manual composition.
 
 Registration order matters. The first interceptor is the outermost wrapper. In the example above, auth runs first, then validation, then logging wraps the actual call. Think of it as nesting: `auth(validation(logging(execute)))`.
 

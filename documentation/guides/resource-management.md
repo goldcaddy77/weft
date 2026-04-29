@@ -7,6 +7,8 @@ A workflow engine is a long-running process. It holds database connections, work
 When you declare a variable with `using`, its `[Symbol.dispose]()` method is called when the enclosing block exits. `await using` does the same but calls `[Symbol.asyncDispose]()` for async cleanup. No try/finally. No manual `.close()` calls.
 
 ```typescript
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+
 {
   using engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 
@@ -41,6 +43,8 @@ _WorkflowHandle_ implements `AsyncDisposable`. Handles are lightweight, so dispo
 ```
 
 _BunSQLiteStorage_ implements `Disposable`. Disposal closes the underlying SQLite database connection.
+
+`IndexedDBStorage` is the browser-environment equivalent---also `Disposable`---and uses the `await using` pattern. Import it from `'weft/storage/indexeddb'`.
 
 ```typescript
 {

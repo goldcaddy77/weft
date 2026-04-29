@@ -91,6 +91,7 @@ interface ActivityCallOptions {
   retry?: Partial<RetryPolicy>;
   idempotencyKey?: string;
   sticky?: boolean;
+  visibilityTimeout?: Duration; // override the activity's claim/visibility timeout
 }
 ```
 
@@ -123,6 +124,8 @@ interface ActivityDefinition<TInput, TOutput> {
   idempotent?: boolean;
 }
 ```
+
+See the JSDoc on `ActivityDefinition` for additional fields: `verify` (post-execution result verifier), `visibilityTimeout` (claim timeout override), `compensate` (saga rollback function), `resourceScope` (resource-level lock key), and a function-form `idempotencyKey` for per-input key generation.
 
 Here is what that looks like in practice.
 

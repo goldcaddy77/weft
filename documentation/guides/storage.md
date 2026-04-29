@@ -39,6 +39,8 @@ type BatchOperation =
   | { type: 'delete'; key: string };
 ```
 
+Adapters can also opt into optional methods for performance and feature parity: `conditionalBatch` (atomic compare-and-swap batch), `has` (key existence check), `deletePrefix` (bulk prefix delete), `keys` (key-only scan), `count` (prefix count), `scoped` (namespaced sub-storage), and `query` (SQL passthrough, adapter-specific). Adapters that omit optional methods receive generic fallbacks via wrapper functions (`storageHas`, `storageKeys`, etc.).
+
 ## Key layout
 
 Weft encodes structure into hierarchical keys. The `KEYS` constants define the layout.
@@ -57,6 +59,8 @@ upd:{workflowId}:{updateId}                   -- pending update request
 upr:{updateId}                                -- update response
 ```
 
+This listing covers the primary keys. The full canonical list---including `wf:{id}:timeline:`, `schedule:`, `op:inflight:`, `tag:`, `upk:` (idempotency), `budget:`, `quota:`, `archive:`, `shared:`, `blob:`, and others---is in `KEYS` in `src/storage/interface.ts`.
+
 All timestamps are zero-padded to 16 digits for correct lexicographic ordering. This means `scan("op:default:")` returns all operations on the "default" queue in scheduled order---the core hot path is a single range scan, whether the backend is SQLite or something else entirely.
 
 ## BunSQLiteStorage
@@ -64,7 +68,7 @@ All timestamps are zero-padded to 16 digits for correct lexicographic ordering. 
 This is the default for production. It uses Bun's built-in SQLite via `bun:sqlite`, which means zero external dependencies and seamless single-binary compilation with `bun build --compile`.
 
 ```typescript
-import { BunSQLiteStorage } from 'weft';
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 using storage = new BunSQLiteStorage('./weft.db');
 const engine = new Engine({ storage });
@@ -91,7 +95,7 @@ const storage = new MemoryStorage();
 const engine = new Engine({ storage });
 ```
 
-It also has a few convenience methods that the interface does not require: `size`, `clear()`, `has()`, `keys()`, and `snapshot()` (which returns a deep copy of the entire store). These are useful in test assertions.
+It also exposes a few `MemoryStorage`-only conveniences: the `size` getter, `clear()`, and `snapshot()` (returns a deep copy of the internal map). The `has()` and `keys()` methods are part of the optional `Storage` interface and are also available on other adapters.
 
 ```typescript
 expect(storage.size).toBe(2);

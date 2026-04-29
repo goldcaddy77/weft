@@ -13,44 +13,54 @@ import { serve } from 'weft/server';
 const engine = new Engine({ storage });
 engine.register('order', orderWorkflow);
 
-const server = serve({
-  engine,
-  port: 7233, // default
-  hostname: '0.0.0.0', // default
-});
+const server = serve({ engine });
 
 console.log(`Weft server listening at ${server.url}`);
 ```
 
-The `ServeOptions` interface is minimal:
+The `ServeOptions` interface:
 
 ```typescript
 interface ServeOptions {
   engine: Engine;
-  port?: number; // default: 7233
-  hostname?: string; // default: '0.0.0.0'
+  port?: number;
+  hostname?: string;
+  development?: boolean; // enable Bun's development mode (HMR, source maps)
+  auth?: AuthConfig; // API key or JWT authentication configuration
+  routingPolicy?: RoutingPolicy; // task dispatch policy for remote workers; default: 'least-loaded'
+  schedulingPolicy?: SchedulingPolicy; // workflow scheduling policy
+  prometheusExporter?: PrometheusExporter; // Prometheus metrics exporter
+  metricsCollector?: MetricsCollector; // @deprecated -- prefer prometheusExporter
 }
 ```
 
 ## The WeftServer handle
 
-`serve()` returns a `WeftServer` that exposes the resolved port, hostname, URL, and a `stop()` method. It also implements `Disposable`, so you can use it with `using` for automatic cleanup.
+`serve()` returns a `WeftServer` that exposes the resolved port, hostname, URL, and a `stop()` method that returns `Promise<void>`. It also implements `AsyncDisposable`, so you can use it with `await using` for correct async cleanup.
 
 ```typescript
-interface WeftServer extends Disposable {
+interface WeftServer extends AsyncDisposable {
   readonly port: number;
   readonly hostname: string;
   readonly url: string;
-  stop(): void;
+  readonly registry: WorkerRegistry;
+  readonly taskQueue: TaskQueue;
+  stop(): Promise<void>;
+  dispatchTask(task: TaskDispatch): Promise<boolean>;
+  shutdownWorker(workerId: string, options?: { timeoutMs?: number }): Promise<boolean>;
+  shutdownAllWorkers(options?: { timeoutMs?: number }): Promise<void>;
+  cancelTask(operationId: string): boolean;
 }
 ```
 
 ```typescript
 {
-  using server = serve({ engine });
+  await using server = serve({ engine });
   // Server is running...
 } // Automatically stopped here
 ```
+
+`WeftServer` implements `AsyncDisposable`, so `await using` is required for correct async cleanup.
 
 ## REST API endpoints
 
@@ -62,6 +72,15 @@ The server exposes a versioned REST API under `/v1/`. All endpoints return JSON 
 GET /v1/health
 → { "status": "ok" }
 ```
+
+**API discovery:**
+
+```
+GET /openrpc.json
+→ OpenRPC 1.3.2 document listing all JSON-RPC methods
+```
+
+The `rpc.discover` JSON-RPC method returns the same document over the JSON-RPC transport. These discovery endpoints were introduced in the Track 8 operation catalogue consolidation.
 
 **Start a workflow:**
 
@@ -102,6 +121,13 @@ If the workflow is still running, this endpoint blocks for up to 30 seconds wait
 
 ```
 DELETE /v1/workflows/:id
+→ 204 No Content
+```
+
+`DELETE` removes the workflow record from storage. To cancel a workflow while keeping its terminal state, use the cancel endpoint:
+
+```
+POST /v1/workflows/:id/cancel
 → 204 No Content
 ```
 

@@ -7,7 +7,7 @@ Your workflows are running in production. Something is slow, but you can't tell 
 Import the factory, pass the engine as the `eventTarget`, and register the interceptors.
 
 ```typescript
-import { createObservabilityInterceptors } from 'weft/observability';
+import { createObservabilityInterceptors } from 'weft';
 
 const { workflow, activity, dispose } = createObservabilityInterceptors({
   eventTarget: engine,
@@ -27,24 +27,27 @@ The `createObservabilityInterceptors()` factory accepts options for controlling 
 
 ```typescript
 interface ObservabilityOptions {
-  recordPayloads?: boolean; // Record inputs as span attributes. Default: false.
-  maxPayloadSize?: number; // Truncate payloads at this size. Default: 1024 bytes.
-  onSpanStart?: (span: SpanInfo) => void;
-  onSpanEnd?: (span: SpanInfo) => void;
+  tracerName?: string; // Name passed to trace.getTracer(). Default: 'weft'.
+  tracerVersion?: string; // Version passed to trace.getTracer().
+  recordPayloads?: boolean; // Record activity/workflow inputs as span attributes. Default: false.
+  maxPayloadSize?: number; // Maximum serialized payload size in bytes. Default: 1024.
+  attributeExtractor?: (
+    interception: InterceptionContext,
+  ) => Record<string, string | number | boolean>;
+  metrics?: MetricsCollectorClass; // Metrics collector for counters, histograms, gauges.
+  otelApi?: OtelApi; // Override OTel API instance (primarily for testing).
+  eventTarget?: EventTarget; // Engine instance; enables auto-close of root spans on lifecycle events.
 }
 ```
 
-The `onSpanStart` and `onSpanEnd` callbacks let you hook into span lifecycle events without needing a full tracing backend. Useful for logging, custom metrics, or forwarding to your own collector.
+Use `recordPayloads` and `maxPayloadSize` to control payload attributes, `attributeExtractor` to add domain-specific span attributes, and `eventTarget` to let the interceptor factory close root spans from engine lifecycle events.
 
 ```typescript
 const { workflow, activity } = createObservabilityInterceptors({
+  eventTarget: engine,
   recordPayloads: true,
   maxPayloadSize: 2048,
-  onSpanEnd(span) {
-    if (span.status === 'error') {
-      alerting.notify(`${span.name} failed: ${span.error}`);
-    }
-  },
+  attributeExtractor: () => ({ 'service.name': 'checkout' }),
 });
 ```
 
@@ -57,22 +60,6 @@ workflow:order (root span)
   activity:charge (child span)
   sleep (child span)
   activity:ship (child span)
-```
-
-Every span carries a `SpanInfo` object:
-
-```typescript
-interface SpanInfo {
-  name: string; // e.g., 'workflow:order', 'activity:charge', 'sleep'
-  traceId: string; // 32 hex chars
-  spanId: string; // 16 hex chars
-  parentSpanId?: string; // links child to parent
-  attributes: Record<string, string | number | boolean>;
-  startTime: number;
-  endTime?: number;
-  status?: 'ok' | 'error';
-  error?: string;
-}
 ```
 
 Attributes include `workflow.id`, `workflow.type`, `activity.name`, `activity.attempt`, and optionally the serialized `input` payload.
@@ -96,44 +83,26 @@ span A ends                             span B ends
 The propagation helpers are exported individually if you need them:
 
 ```typescript
-import {
-  generateTraceId,
-  generateSpanId,
-  formatTraceParent,
-  parseTraceParent,
-  injectTraceParent,
-  extractTraceParent,
-} from 'weft/observability';
+import { generateTraceId, generateSpanId, formatTraceParent, parseTraceParent } from 'weft';
 ```
 
 `generateTraceId()` produces a 32-hex-character (16-byte) random trace ID. `generateSpanId()` produces a 16-hex-character (8-byte) random span ID. Both use `crypto.randomBytes()` under the hood.
 
-The `TraceContext` type represents the parsed `traceparent` header:
-
-```typescript
-interface TraceContext {
-  version: string; // '00' for W3C Trace Context
-  traceId: string; // 32 hex chars
-  spanId: string; // 16 hex chars
-  traceFlags: number; // bit field (1 = sampled)
-}
-```
-
-`formatTraceParent()` serializes it to the standard format: `{version}-{traceId}-{spanId}-{flags}`. `parseTraceParent()` goes the other direction, returning `null` for invalid inputs or all-zero IDs.
+The `traceparent` header uses the standard `{version}-{traceId}-{spanId}-{flags}` format. `formatTraceParent()` serializes that shape, and `parseTraceParent()` goes the other direction, returning `null` for invalid inputs or all-zero IDs.
 
 ## Metrics
 
 The `METRICS` object defines the metric catalogue:
 
 ```typescript
-import { METRICS } from 'weft/observability';
+import { METRICS } from 'weft';
 
 // METRICS.workflowDuration
 //   name: 'weft.workflow.duration', type: 'histogram', unit: 'ms'
 // METRICS.activityDuration
 //   name: 'weft.activity.duration', type: 'histogram', unit: 'ms'
 // METRICS.activityAttempts
-//   name: 'weft.activity.attempts', type: 'histogram', unit: 'attempts'
+//   name: 'weft.activity.attempts', type: 'counter', unit: 'attempts'
 // METRICS.workflowActive
 //   name: 'weft.workflow.active', type: 'gauge', unit: 'workflows'
 // METRICS.workflowStarted
@@ -166,13 +135,6 @@ engine.addActivityInterceptor(observabilityActivity);
 engine.addActivityInterceptor(decryptionInterceptor);
 ```
 
-If you're building a custom interceptor that also needs trace context, extract it from the headers map the same way the observability interceptor does:
-
-```typescript
-const parentContext = extractTraceParent(interception.headers);
-if (parentContext) {
-  // You have traceId, spanId, traceFlags
-}
-```
+If you're building a custom interceptor that also needs trace context, let the observability interceptor handle extraction. It reads the propagated `traceparent` header internally and parses it with `parseTraceParent()`.
 
 Traces stitch together automatically as long as the headers propagate through the interceptor chain.

@@ -68,6 +68,8 @@ if (result === undefined) {
 
 Both `ctx.all()` and `ctx.race()` work by collecting the first yielded operation from each generator you pass in, then emitting a single `parallel` or `race` operation request. The engine handles the concurrent dispatch and result collection internally.
 
+Note that `ctx.race()` emits `{ type: 'race', ... }` rather than `{ type: 'parallel', ... }`. Each sub-operation also advances the workflow's `stepIndex`, which is why subsequent steps remain replay-stable after a parallel or race completes.
+
 ```typescript
 // What ctx.all() yields to the engine:
 {
@@ -89,6 +91,6 @@ Use `ctx.all()` when you need _every_ result. Enrichment pipelines, multi-servic
 
 Use `ctx.race()` when you need _any_ result. Hedged requests, timeout wrappers, competing strategies where the fastest path wins---that's `race`.
 
-If you're building something more complex---like "run five tasks, return when any three complete"---compose these primitives. Run the five tasks, track completions via [signals](./synchronous-updates.md), and use `ctx.race()` with a counter to detect when your threshold is met.
+If you're building something more complex---like "run five tasks, return when any three complete"---compose these primitives. Run the five tasks, track completions via [signals](./signals-and-queries.md), and use `ctx.race()` with a counter to detect when your threshold is met.
 
 Both primitives nest cleanly. You can `all()` inside a `race()` or vice versa, and checkpointing works correctly at every level.

@@ -7,7 +7,7 @@ Durable workflows are inherently hard to test. They span time---sleeps, retries,
 `TestEngine` is a subclass of `Engine` backed by in-memory storage and a virtual clock. Everything behaves like the real engine, but you control time and can mock activities.
 
 ```typescript
-import { TestEngine } from 'weft/testing';
+import { TestEngine } from 'weft';
 
 const engine = new TestEngine();
 
@@ -55,7 +55,7 @@ console.log(engine.now); // milliseconds since epoch
 Under the hood, `TestEngine` uses a `TimeControl` instance. You can also use it directly if you need finer control.
 
 ```typescript
-import { TimeControl } from 'weft/testing';
+import { TimeControl } from 'weft';
 
 const clock = new TimeControl(1700000000000);
 console.log(clock.now); // 1700000000000
@@ -106,10 +106,11 @@ The mock is type-safe---the implementation must match the original function's si
 `mock()` returns a `MockHandle` with call recording and override capabilities:
 
 ```typescript
-interface MockHandle<TArgs, TResult> {
+interface MockHandle<TArgs extends unknown[], TResult> {
   readonly calls: ReadonlyArray<MockCall<TArgs, TResult>>;
   readonly callCount: number;
   readonly lastCall: MockCall<TArgs, TResult> | undefined;
+  readonly currentImplementation: (...args: TArgs) => TResult | Promise<TResult>;
   mockImplementation(impl: (...args: TArgs) => TResult | Promise<TResult>): void;
   mockReturnValueOnce(value: TResult): MockHandle<TArgs, TResult>;
   mockRejectionOnce(error: Error): MockHandle<TArgs, TResult>;
@@ -190,7 +191,7 @@ Here's a complete test combining everything:
 
 ```typescript
 import { describe, expect, it } from 'bun:test';
-import { TestEngine } from 'weft/testing';
+import { TestEngine } from 'weft';
 
 describe('order workflow', () => {
   it('processes an order end to end', async () => {
@@ -235,4 +236,4 @@ describe('order workflow', () => {
 });
 ```
 
-Direct storage access via `engine.storage` (a `MemoryStorage` instance) lets you inspect persisted state in assertions when you need to verify checkpoint contents or attribute values. The mock registry is also accessible at `engine.mocks` if you need to manage mocks programmatically.
+Direct storage access via `engine.storage` (a `MemoryStorage` instance) lets you inspect persisted state in assertions when you need to verify checkpoint contents or attribute values. On `TestEngine`, `engine.storage` is overridden to expose the underlying `MemoryStorage`; on the production `Engine` the storage property is internal. The mock registry is also accessible at `engine.mocks` if you need to manage mocks programmatically.

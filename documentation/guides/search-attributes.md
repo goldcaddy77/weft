@@ -7,7 +7,8 @@ Your workflows are running, but you can't find the one you need. Filtering by st
 Search attributes are declared at registration time. This prevents typos and gives the engine enough type information to build correct indexes.
 
 ```typescript
-engine.register('order', orderWorkflow, {
+engine.register('order', {
+  handler: orderWorkflow,
   searchAttributes: {
     customerId: { type: 'string' },
     orderTotal: { type: 'number' },
@@ -94,7 +95,7 @@ const result = await engine.list({
 });
 ```
 
-The `AttributeFilter` type supports `value` for exact match, `gte` for greater-than-or-equal, and `lte` for less-than-or-equal. Combine multiple filters for AND logic.
+The `AttributeFilter` type supports `value` for exact match, plus `gt` (strict greater-than), `gte` (greater-than-or-equal), `lt` (strict less-than), and `lte` (less-than-or-equal) for range queries. Combine multiple filters for AND logic.
 
 The [server](./server.md) exposes these same queries over HTTP:
 

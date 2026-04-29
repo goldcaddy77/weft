@@ -10,10 +10,10 @@ No replay means no code-path determinism requirement. No `getVersion()` gates. N
 
 ## Version pinning
 
-When `engine.start()` creates a workflow, it records the version of the currently registered handler in the workflow state. The default version is `'0.0.0'` if you don't specify one.
+When `engine.start()` creates a workflow, it records the version of the currently registered handler in the workflow state. The default version is `'1'` if you don't specify one.
 
 ```typescript
-// Shorthand: version defaults to '0.0.0'
+// Shorthand: version defaults to '1'
 engine.register('order', orderWorkflow);
 
 // Explicit version
@@ -31,9 +31,7 @@ The comparison logic is straightforward:
 
 - **`'compatible'`** --- versions match. Resume normally.
 - **`'needs-migration'`** --- versions differ and a migration function is registered. Run the migration first.
-- **`'resume-as-is'`** --- versions differ but no migration function exists. Resume with the existing checkpoint and hope for the best.
-
-That third case works more often than you'd expect. If you only changed logic _after_ the step where the workflow is paused, the checkpoint shape is already compatible.
+- **`'incompatible'`** --- versions differ and no migration function is registered. The engine throws `VersionMismatchError` rather than resuming.
 
 ## Writing a migration
 
@@ -82,6 +80,8 @@ try {
     console.log(error.workflowType); // 'order'
     console.log(error.storedVersion); // '1.0.0'
     console.log(error.registeredVersion); // '2.0.0'
+    console.log(error.fieldDiffs); // populated when checkpoint shape drifted
+    console.log(error.versionDiff); // workflow/agent/tool version delta
   }
 }
 ```

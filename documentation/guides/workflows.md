@@ -57,6 +57,8 @@ Every workflow moves through a state machine with six possible states:
 - **cancelled** -- explicitly cancelled via `handle.cancel()` or `engine.cancel(id)`
 - **timed-out** -- hit its execution deadline
 
+The `pending` state is only observable for workflows scheduled with `startAt` or `startAfter`; workflows started with a plain `engine.start()` call skip directly to `running`.
+
 Transitions are one-way. A completed workflow stays completed. A failed workflow does not automatically retry (that is what [activities](activities.md) are for). This simplicity is deliberate---workflow state is easy to reason about because it only moves forward.
 
 ## Checkpoint serialization
@@ -117,6 +119,8 @@ engine.register('order', {
 ```
 
 The `version` string tags every checkpoint so that Weft knows which schema produced it. The optional `migrate` function transforms old checkpoints to the current shape when a workflow resumes after a code deploy.
+
+The registration object also accepts `searchAttributes` (declare indexed attributes for this workflow type), `retention` (how long to keep terminal workflow state), and `constraints` (resource-level execution limits). See the [search attributes guide](./search-attributes.md) for `searchAttributes` usage.
 
 ## Starting workflows and getting results
 

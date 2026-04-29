@@ -85,6 +85,12 @@ POST /v1/workflows/:id/update/:name
 
 Behind the scenes, the `UpdateCoordinator` class manages the full lifecycle. When you call `handle.update()`:
 
+`handle.update()` takes one of two paths depending on context:
+
+**Inline fast path** (when an inline execution context is active): the handler is invoked directly without any storage round-trip. The `UpdateReceivedEvent` and `UpdateCompletedEvent` are still dispatched, but no persistence occurs.
+
+**Coordinated path** (used by HTTP/RPC and worker-execution mode): the numbered steps below apply.
+
 1. The coordinator writes an update request to storage at `upd:{workflowId}:{updateId}`.
 2. The engine detects pending updates at the next checkpoint boundary and runs the registered handler.
 3. The response is written atomically with the checkpoint: the request is deleted, the response is stored at `upr:{updateId}`, and the checkpoint is updated---all in one `batch()` call.
@@ -94,17 +100,19 @@ If the server crashes between receiving the request and delivering the response,
 
 ## Idempotency
 
-An optional `idempotencyKey` prevents duplicate processing. If you send the same update twice with the same key, the second call returns the existing response without re-running the handler.
+For coordinated updates, an optional `idempotencyKey` prevents duplicate processing. If you send the same update twice with the same key, the second call returns the existing response without re-running the handler. The in-process handle path does not accept an idempotency key:
 
 ```typescript
 const result = await handle.update(
   'validate_coupon',
   { code: 'SAVE20' },
   {
-    idempotencyKey: 'coupon-save20-session-abc',
+    timeout: 5000,
   },
 );
 ```
+
+`handle.update()` accepts only `{ timeout }`---it is the in-process fast path and intentionally does not expose idempotency. For cross-process retries with idempotency guarantees, use `engine.submitCoordinatedUpdate()` directly or the HTTP path (`POST /v1/workflows/:id/update/:name` with an `idempotencyKey` field).
 
 The mapping from idempotency key to update ID is stored at `upk:{workflowId}:{key}`.
 
@@ -129,4 +137,4 @@ Response entries are cleaned up automatically after a configurable TTL (default 
 
 Updates shine when external code needs to _query_ workflow state or _validate_ something against it before proceeding. Cart validation, approval status checks, configuration queries---any case where the caller needs a synchronous response from the workflow's current perspective.
 
-If you're just pushing data in and don't need a response, stick with [signals](./workflows.md). If you need to run a long-running operation triggered by external input, send a signal and use [search attributes](./search-attributes.md) to track progress.
+If you're just pushing data in and don't need a response, stick with [signals](./signals-and-queries.md). If you need to run a long-running operation triggered by external input, send a signal and use [search attributes](./search-attributes.md) to track progress.

@@ -7,7 +7,7 @@ Your workflow engine runs on one machine, but your activities need to run on GPU
 A `RemoteWorker` connects to the server, registers its available activities and concurrency capacity, then waits for task assignments.
 
 ```typescript
-import { RemoteWorker } from 'weft/worker';
+import { RemoteWorker } from 'weft';
 
 const worker = new RemoteWorker({
   serverUrl: 'ws://weft-server:7233/v1/tasks/default/stream',
@@ -76,7 +76,7 @@ You want to trace every remote activity with OpenTelemetry, log timing for the o
 Pass an array of `ActivityInterceptor` objects to `RemoteWorker`, and they wrap every task execution on this worker. The chain runs _after_ the task arrives off the WebSocket but _before_ your activity function sees the input, which means interceptors can read propagated headers, transform inputs, observe failures, and record timing without your activities knowing anything about them.
 
 ```typescript
-import { RemoteWorker } from 'weft/worker';
+import { RemoteWorker } from 'weft';
 import type { ActivityInterceptor } from 'weft';
 
 const loggingInterceptor: ActivityInterceptor = {
@@ -114,8 +114,8 @@ interface ActivityExecutionInterception {
   input: unknown; // mutable — interceptors can transform it
   attempt: number;
   headers: Map<string, string>; // propagated from the dispatching workflow
-  operationId?: string; // present on remote workers
-  signal?: AbortSignal; // present on remote workers — aborts on cancel
+  operationId?: string; // Operation identifier, available when executing on a remote worker.
+  signal?: AbortSignal; // Abort signal for cancellation, available when executing on a remote worker.
 }
 ```
 
@@ -124,7 +124,7 @@ The `headers` Map is the important piece for remote workers. When a workflow int
 The most common use case is observability. The built-in `createObservabilityInterceptors()` factory returns a matched pair of workflow and activity interceptors that share trace context across the boundary. Pass the activity half to every remote worker that should show up in your traces:
 
 ```typescript
-import { createObservabilityInterceptors } from 'weft/observability';
+import { createObservabilityInterceptors } from 'weft';
 
 const { activity } = createObservabilityInterceptors();
 
@@ -159,6 +159,12 @@ The `HeartbeatManager` is a simple interval wrapper with `start()`, `stop()`, an
 
 Workers register with a queue name. The server's `WorkerRegistry.findWorker()` uses **least-loaded routing**---it picks the worker with the lowest in-flight count among those that handle the requested activity and have available capacity.
 
+The registry supports three routing policies, configured via `serve({ routingPolicy })`:
+
+- **`'least-loaded'`** (default) -- picks the worker with the lowest in-flight task count.
+- **`'round-robin'`** -- rotates through workers in registration order.
+- **`'fair-share'`** -- picks the worker with the fewest in-flight tasks for a given partition key (`fairShareKey`). Useful for tenant isolation: tasks from the same tenant go to the same worker when capacity allows, preventing one tenant's burst from starving others.
+
 ```typescript
 interface RoutingOptions {
   sticky?: string; // preferred worker ID for cache locality
@@ -175,6 +181,7 @@ On the server side, `WorkerRegistry` tracks all connected workers and their stat
 ```typescript
 interface WorkerInfo {
   id: string;
+  queue: string;
   activities: string[];
   concurrency: number;
   inFlight: number;
@@ -201,7 +208,7 @@ The `checkExpiredTasks()` method returns tasks that have exceeded their visibili
 Not every environment supports WebSockets. The `LongPollWorker` provides the same functionality over plain HTTP requests.
 
 ```typescript
-import { LongPollWorker } from 'weft/worker';
+import { LongPollWorker } from 'weft';
 
 const worker = new LongPollWorker({
   serverUrl: 'http://weft-server:7233',
