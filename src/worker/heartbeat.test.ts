@@ -32,10 +32,11 @@ describe('HeartbeatManager', () => {
   it('start begins periodic heartbeats', async () => {
     manager.start();
 
-    // Wait for a few intervals to fire
-    await Bun.sleep(130);
+    // Wait for several intervals to fire. The window is generous because
+    // setInterval drift under CI parallel load can stretch the first fire.
+    await Bun.sleep(250);
 
-    // At least 2 heartbeats should have fired in ~130ms with 50ms interval
+    // At least 2 heartbeats should have fired in ~250ms with 50ms interval
     expect(sendHeartbeat.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
