@@ -162,5 +162,9 @@ export async function waitForWorkflowStatus(
 export async function teardown(engine?: Engine, storageCleanup?: () => void): Promise<void> {
   engine?.[Symbol.dispose]();
   await flush();
+  // LMDB-backed tests can still have a read transaction unwinding on the next
+  // turn after engine disposal under heavy suite load. Give backend cleanup one
+  // more microtask window so storage disposal does not race that shutdown path.
+  await flush();
   storageCleanup?.();
 }

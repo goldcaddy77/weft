@@ -125,6 +125,10 @@ function emitRoutes(
       responses: { '200': { description: 'Successful response' } },
     };
     if (parameters.length > 0) entry['parameters'] = parameters;
+    // `ROUTES` only contains direct-handler legacy endpoints, and that
+    // table is intentionally GET-only. Any body-carrying route must be
+    // cataloged in REST_BINDINGS so the runtime API and OpenAPI contract
+    // stay aligned from one source of truth.
 
     paths[openApiPath][route.method.toLowerCase()] = entry;
     for (const tag of route.tags) tagSet.add(tag);

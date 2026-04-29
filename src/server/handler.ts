@@ -509,7 +509,13 @@ export async function handleRequest(
     throw error;
   }
 
-  const route = matchRoute(request.method, url.pathname);
+  let route: ReturnType<typeof matchRoute>;
+  try {
+    route = matchRoute(request.method, url.pathname);
+  } catch (error) {
+    if (error instanceof MalformedRouteParameterError) return errorResponse(error.message, 400);
+    throw error;
+  }
 
   if (bindingMatch !== null && !shouldPreferLegacyRoute(bindingMatch, route)) {
     try {

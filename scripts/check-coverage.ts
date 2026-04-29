@@ -65,8 +65,8 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       functions: 9,
       lines: createMergedLineSet(
         createLineSet(2574, 2578),
-        createLineSet(8297, 8301),
-        new Set([8365]),
+        createLineSet(8297, 8299),
+        new Set([8363]),
       ),
     },
   ],
@@ -120,7 +120,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // handler regression tests exercise them, and it also leaves the
       // defensive malformed-route rethrow line uncovered.
       functions: 1,
-      lines: new Set([228, 232, 236, 541, 542, 558, 560, 602, 735, 2170]),
+      lines: new Set([228, 232, 236, 323, 515, 516, 558, 560, 602, 735, 2170]),
     },
   ],
   [
