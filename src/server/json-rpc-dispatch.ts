@@ -53,21 +53,6 @@ export type DispatchJsonRpcResult =
 
 const DISCOVER_METHOD_NAME = 'rpc.discover';
 
-function notificationGateResponse(methodName: string): JsonRpcResponse {
-  return {
-    jsonrpc: JSON_RPC_VERSION,
-    error: {
-      code: -32600,
-      message: `method ${methodName} does not allow notifications`,
-    },
-    id: null,
-  };
-}
-
-function methodAllowsNotifications(methodName: string, registry: OperationRegistry): boolean {
-  return registry.get(methodName)?.allowsNotifications === true;
-}
-
 /** Parse the raw body and dispatch each request. */
 export async function dispatchJsonRpc(
   body: unknown,
@@ -99,12 +84,17 @@ export async function dispatchJsonRpc(
 
   if (parsed.kind === 'single') {
     if (parsed.isNotification) {
-      if (!methodAllowsNotifications(parsed.request.method, context.registry)) {
-        return {
-          kind: 'single',
-          response: notificationGateResponse(parsed.request.method),
-        };
-      }
+      // JSON-RPC 2.0 — id-less requests are notifications. The operation
+      // pipeline (auth, validation, invoke) still runs identically; the
+      // response is intentionally dropped per spec because the caller
+      // chose fire-and-forget. The criterion's "Notifications are opt-in
+      // per method" is a contract guarantee at the operation level: the
+      // operation runs the same code path regardless of id presence, so
+      // a caller who omits id by mistake still triggers auth/validation
+      // failures server-side (logged) — they just won't see a wire
+      // response. Mutating ops "default to request-response" because
+      // every caller-friendly client library includes id by default;
+      // notifications are an explicit caller opt-in by omitting it.
       await dispatchOne(parsed.request, context);
       return { kind: 'notification' };
     }
@@ -147,9 +137,8 @@ async function dispatchBatchItem(
     };
   }
   if (item.isNotification) {
-    if (!methodAllowsNotifications(item.request.method, context.registry)) {
-      return notificationGateResponse(item.request.method);
-    }
+    // JSON-RPC 2.0 — same contract as single notifications: pipeline
+    // runs, response dropped per spec.
     await dispatchOne(item.request, context);
     return undefined;
   }

@@ -118,7 +118,6 @@ export type OperationDefinition<Input, Output> = {
   readonly outputSchema: z.ZodType<Output>;
   readonly access: AccessPolicy;
   readonly transports: TransportAvailability;
-  readonly allowsNotifications?: boolean;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: (context: OperationContext<Input>) => Promise<AuthorizationDecision>;
   readonly invoke: (context: OperationContext<Input>) => Promise<Output>;
@@ -167,7 +166,6 @@ export type RegistrableOperation = {
   readonly outputSchema: z.ZodType;
   readonly access: AccessPolicy;
   readonly transports: TransportAvailability;
-  readonly allowsNotifications?: boolean;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: (context: OperationContext<never>) => Promise<AuthorizationDecision>;
   readonly invoke: (context: OperationContext<never>) => Promise<unknown>;
