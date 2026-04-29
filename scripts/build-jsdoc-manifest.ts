@@ -265,9 +265,9 @@ function runPass1(
         };
         entries.set(key, entry);
       }
-      // Add public face — use exportSymbol.kind because re-export aliases preserve
-      // the kind of the binding the consumer sees.
-      const faceKind = symbolKind(exportSymbol).kind;
+      // Add public face — kind comes from the resolved underlying symbol so
+      // type-only re-exports (interfaces, type aliases) are correctly classified.
+      const faceKind = resolved.kind;
       const faceTuple: PublicFace = { importPath, exportName, kind: faceKind };
       const dup = entry.publicFaces.some(
         (f) => f.importPath === importPath && f.exportName === exportName && f.kind === faceKind,

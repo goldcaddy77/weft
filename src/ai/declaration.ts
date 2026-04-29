@@ -149,14 +149,19 @@ export function isAgentDefinition(value: unknown): value is AgentDefinition {
  *
  * @example Standalone agent registered on an engine
  * ```ts
- * import { Engine, defineAgent } from 'weft';
+ * import { Engine, defineAgent, type LLMProvider } from 'weft';
+ *
+ * declare const myProvider: LLMProvider;
  *
  * const assistant = defineAgent({
  *   name: 'travel-assistant',
  *   model: 'claude-sonnet-4-5',
  *   systemPrompt: 'You help users book trips.',
  *   maxTurns: 5,
- *   budget: { maxCost: 1.0 },
+ *   budget: {
+ *     maxCost: 1.0,
+ *     models: { 'claude-sonnet-4-5': { inputCostPer1K: 0.003, outputCostPer1K: 0.015 } },
+ *   },
  * });
  *
  * const engine = new Engine();
@@ -168,14 +173,22 @@ export function isAgentDefinition(value: unknown): value is AgentDefinition {
  *
  * @example Per-tenant tool customization
  * ```ts
- * const searchTool = { definition: { name: 'search', ... }, execute: async () => [] };
- * const adminTool = { definition: { name: 'refund', ... }, execute: async () => null };
+ * import { defineAgent, type AgentToolDefinition } from 'weft';
+ *
+ * const searchTool: AgentToolDefinition = {
+ *   definition: { name: 'search', description: 'search', inputSchema: { type: 'object' } },
+ *   execute: async () => [],
+ * };
+ * const adminTool: AgentToolDefinition = {
+ *   definition: { name: 'refund', description: 'refund', inputSchema: { type: 'object' } },
+ *   execute: async () => null,
+ * };
  *
  * const agent = defineAgent({
  *   name: 'support-agent',
  *   model: 'claude-sonnet-4-5',
  *   toolsForTenant(tenant) {
- *     if (tenant?.attributes?.role === 'admin') return [searchTool, adminTool];
+ *     if (tenant?.attributes?.['role'] === 'admin') return [searchTool, adminTool];
  *     return [searchTool];
  *   },
  *   validateInput(input, tenant) {

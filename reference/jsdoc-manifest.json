@@ -29,7 +29,7 @@
         {
           "importPath": "weft",
           "exportName": "AgentOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -46,7 +46,7 @@
         {
           "importPath": "weft",
           "exportName": "AgentResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -63,7 +63,7 @@
         {
           "importPath": "weft",
           "exportName": "AgentTool",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -91,7 +91,7 @@
         {
           "importPath": "weft",
           "exportName": "MCPToolSource",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -130,7 +130,7 @@
         {
           "importPath": "weft",
           "exportName": "TurnCostEntry",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -225,7 +225,7 @@
         {
           "importPath": "weft",
           "exportName": "BudgetPolicyOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -287,7 +287,7 @@
         {
           "importPath": "weft",
           "exportName": "BudgetOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -304,7 +304,7 @@
         {
           "importPath": "weft",
           "exportName": "BudgetState",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -338,7 +338,7 @@
         {
           "importPath": "weft",
           "exportName": "ModelPricing",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -416,7 +416,7 @@
         {
           "importPath": "weft",
           "exportName": "ContextStrategy",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -673,7 +673,7 @@
         {
           "importPath": "weft",
           "exportName": "AgentDefinition",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -701,7 +701,7 @@
         {
           "importPath": "weft",
           "exportName": "AgentToolDefinition",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -718,7 +718,7 @@
         {
           "importPath": "weft",
           "exportName": "ToolIdentityResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1017,7 +1017,7 @@
         {
           "importPath": "weft",
           "exportName": "AgentHooks",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1128,7 +1128,7 @@
         {
           "importPath": "weft",
           "exportName": "ReviewCoordinatorOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1195,7 +1195,7 @@
         {
           "importPath": "weft",
           "exportName": "MCPAuthConfig",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1212,7 +1212,7 @@
         {
           "importPath": "weft",
           "exportName": "SyncMCPAuthConfig",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1263,7 +1263,7 @@
         {
           "importPath": "weft",
           "exportName": "MCPClientOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1280,7 +1280,7 @@
         {
           "importPath": "weft",
           "exportName": "MCPClientTransportOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1297,7 +1297,7 @@
         {
           "importPath": "weft",
           "exportName": "MCPClientUrlOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1348,7 +1348,7 @@
         {
           "importPath": "weft",
           "exportName": "OAuth2Config",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1382,7 +1382,7 @@
         {
           "importPath": "weft",
           "exportName": "OAuth2TokenManager",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1416,7 +1416,7 @@
         {
           "importPath": "weft",
           "exportName": "RegistryTool",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1540,7 +1540,7 @@
         {
           "importPath": "weft",
           "exportName": "HttpSseTransportOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1557,7 +1557,7 @@
         {
           "importPath": "weft",
           "exportName": "HeaderSource",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1591,7 +1591,7 @@
         {
           "importPath": "weft",
           "exportName": "HttpTransportOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1642,7 +1642,7 @@
         {
           "importPath": "weft",
           "exportName": "MCPRequest",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1659,7 +1659,7 @@
         {
           "importPath": "weft",
           "exportName": "MCPResponse",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1676,7 +1676,7 @@
         {
           "importPath": "weft",
           "exportName": "MCPTransport",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1710,7 +1710,7 @@
         {
           "importPath": "weft",
           "exportName": "TransportKind",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1772,7 +1772,7 @@
         {
           "importPath": "weft",
           "exportName": "ModelRouter",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1789,7 +1789,7 @@
         {
           "importPath": "weft",
           "exportName": "ModelSelection",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1806,7 +1806,7 @@
         {
           "importPath": "weft",
           "exportName": "RoutingContext",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1902,7 +1902,7 @@
         {
           "importPath": "weft",
           "exportName": "AnnotateResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1919,7 +1919,7 @@
         {
           "importPath": "weft",
           "exportName": "AnnotatedMessage",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -1936,7 +1936,7 @@
         {
           "importPath": "weft",
           "exportName": "AnthropicCacheControl",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2004,7 +2004,7 @@
         {
           "importPath": "weft",
           "exportName": "PromptCacheProviderMetadata",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2088,7 +2088,7 @@
         {
           "importPath": "weft",
           "exportName": "ChatOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2105,7 +2105,7 @@
         {
           "importPath": "weft",
           "exportName": "LLMProvider",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2150,7 +2150,7 @@
         {
           "importPath": "weft",
           "exportName": "ChatResponse",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2167,7 +2167,7 @@
         {
           "importPath": "weft",
           "exportName": "Message",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2195,7 +2195,7 @@
         {
           "importPath": "weft",
           "exportName": "StreamChunk",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2212,7 +2212,7 @@
         {
           "importPath": "weft",
           "exportName": "TokenUsage",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2240,7 +2240,7 @@
         {
           "importPath": "weft",
           "exportName": "ToolDefinition",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2341,7 +2341,7 @@
         {
           "importPath": "weft",
           "exportName": "EffectRecord",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2437,7 +2437,7 @@
         {
           "importPath": "weft",
           "exportName": "AlertAction",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2454,7 +2454,7 @@
         {
           "importPath": "weft",
           "exportName": "AlertMetric",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2471,7 +2471,7 @@
         {
           "importPath": "weft",
           "exportName": "AlertRule",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2488,7 +2488,7 @@
         {
           "importPath": "weft",
           "exportName": "AlertState",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2505,7 +2505,7 @@
         {
           "importPath": "weft",
           "exportName": "AlertStatus",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2522,7 +2522,7 @@
         {
           "importPath": "weft",
           "exportName": "AlertingOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2539,7 +2539,7 @@
         {
           "importPath": "weft",
           "exportName": "WebhookTarget",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2600,7 +2600,7 @@
         {
           "importPath": "weft",
           "exportName": "HttpClientOptions",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/client",
@@ -2622,12 +2622,12 @@
         {
           "importPath": "weft",
           "exportName": "ClientHandle",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/client",
           "exportName": "ClientHandle",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2644,7 +2644,7 @@
         {
           "importPath": "weft/client",
           "exportName": "ClientScheduleHandle",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2661,12 +2661,12 @@
         {
           "importPath": "weft",
           "exportName": "UpdateResult",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/client",
           "exportName": "UpdateResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2683,12 +2683,12 @@
         {
           "importPath": "weft",
           "exportName": "WeftClient",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/client",
           "exportName": "WeftClient",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2727,7 +2727,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityMetadata",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2744,7 +2744,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityRegistrationOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2969,7 +2969,7 @@
         {
           "importPath": "weft",
           "exportName": "CompressionAlgorithm",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -2986,7 +2986,7 @@
         {
           "importPath": "weft",
           "exportName": "CompressionOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3003,7 +3003,7 @@
         {
           "importPath": "weft",
           "exportName": "Compressor",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3087,7 +3087,7 @@
         {
           "importPath": "weft",
           "exportName": "ConstraintCheckState",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3104,7 +3104,7 @@
         {
           "importPath": "weft",
           "exportName": "ConstraintDefinition",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3121,7 +3121,7 @@
         {
           "importPath": "weft",
           "exportName": "ConstraintViolation",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3183,7 +3183,7 @@
         {
           "importPath": "weft",
           "exportName": "ContextOperationRequest",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3200,7 +3200,7 @@
         {
           "importPath": "weft",
           "exportName": "ContextOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3217,7 +3217,7 @@
         {
           "importPath": "weft",
           "exportName": "OffloadReference",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3234,7 +3234,7 @@
         {
           "importPath": "weft",
           "exportName": "SagaStep",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3251,7 +3251,7 @@
         {
           "importPath": "weft",
           "exportName": "StoredStreamChunk",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3268,7 +3268,7 @@
         {
           "importPath": "weft",
           "exportName": "StreamReference",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3285,7 +3285,7 @@
         {
           "importPath": "weft",
           "exportName": "StreamSink",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3302,7 +3302,7 @@
         {
           "importPath": "weft",
           "exportName": "AgentRegistrationOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3674,7 +3674,7 @@
         {
           "importPath": "weft",
           "exportName": "TypedEventTarget",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3725,7 +3725,7 @@
         {
           "importPath": "weft",
           "exportName": "WeftEventMap",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3844,7 +3844,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityExecutionInterception",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3861,7 +3861,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityInterception",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3878,7 +3878,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityInterceptor",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3895,7 +3895,7 @@
         {
           "importPath": "weft",
           "exportName": "AgentInterception",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3956,7 +3956,7 @@
         {
           "importPath": "weft",
           "exportName": "ChildWorkflowInterception",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3973,7 +3973,7 @@
         {
           "importPath": "weft",
           "exportName": "ComposedActivityInterceptor",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -3990,7 +3990,7 @@
         {
           "importPath": "weft",
           "exportName": "ComposedWorkflowInterceptor",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4007,7 +4007,7 @@
         {
           "importPath": "weft",
           "exportName": "QueryInterception",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4024,7 +4024,7 @@
         {
           "importPath": "weft",
           "exportName": "SignalInterception",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4041,7 +4041,7 @@
         {
           "importPath": "weft",
           "exportName": "SignalReceivedInterception",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4058,7 +4058,7 @@
         {
           "importPath": "weft",
           "exportName": "SleepInterception",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4075,7 +4075,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowInterceptor",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4092,7 +4092,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowStartInterception",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4479,7 +4479,7 @@
         {
           "importPath": "weft",
           "exportName": "TenantContext",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4496,7 +4496,7 @@
         {
           "importPath": "weft",
           "exportName": "TenantResolver",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4620,7 +4620,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityCallOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4637,7 +4637,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityContext",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4654,7 +4654,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityDefinition",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4671,7 +4671,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityFunction",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4699,7 +4699,7 @@
         {
           "importPath": "weft",
           "exportName": "BulkCancelResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4716,7 +4716,7 @@
         {
           "importPath": "weft",
           "exportName": "BulkDeleteResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4733,7 +4733,7 @@
         {
           "importPath": "weft",
           "exportName": "BulkOperationError",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4750,7 +4750,7 @@
         {
           "importPath": "weft",
           "exportName": "BulkSignalResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4767,7 +4767,7 @@
         {
           "importPath": "weft",
           "exportName": "BulkTagResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4784,7 +4784,7 @@
         {
           "importPath": "weft",
           "exportName": "Checkpoint",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4801,7 +4801,7 @@
         {
           "importPath": "weft",
           "exportName": "CheckpointState",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4818,7 +4818,7 @@
         {
           "importPath": "weft",
           "exportName": "CheckpointSummary",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4835,7 +4835,7 @@
         {
           "importPath": "weft",
           "exportName": "ChildWorkflowOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4852,7 +4852,7 @@
         {
           "importPath": "weft",
           "exportName": "ChildWorkflowTarget",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4869,7 +4869,7 @@
         {
           "importPath": "weft",
           "exportName": "CoordinatedUpdateResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -4987,7 +4987,7 @@
         {
           "importPath": "weft",
           "exportName": "Duration",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5004,7 +5004,7 @@
         {
           "importPath": "weft",
           "exportName": "EngineOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5021,7 +5021,7 @@
         {
           "importPath": "weft",
           "exportName": "FailureCategory",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5038,7 +5038,7 @@
         {
           "importPath": "weft",
           "exportName": "ForkLineage",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5055,7 +5055,7 @@
         {
           "importPath": "weft",
           "exportName": "ForkOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5072,7 +5072,7 @@
         {
           "importPath": "weft",
           "exportName": "ListFilter",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5089,7 +5089,7 @@
         {
           "importPath": "weft",
           "exportName": "NormalizedRetentionPolicy",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5150,7 +5150,7 @@
         {
           "importPath": "weft",
           "exportName": "PaginatedResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5167,7 +5167,7 @@
         {
           "importPath": "weft",
           "exportName": "PurgeResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5184,7 +5184,7 @@
         {
           "importPath": "weft",
           "exportName": "RetentionOverview",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5201,7 +5201,7 @@
         {
           "importPath": "weft",
           "exportName": "RetentionPolicy",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5218,7 +5218,7 @@
         {
           "importPath": "weft",
           "exportName": "RetryPolicy",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5235,7 +5235,7 @@
         {
           "importPath": "weft",
           "exportName": "ReviewDecision",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5252,7 +5252,7 @@
         {
           "importPath": "weft",
           "exportName": "ScheduleAccessOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5269,7 +5269,7 @@
         {
           "importPath": "weft",
           "exportName": "ScheduleFilter",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5286,7 +5286,7 @@
         {
           "importPath": "weft",
           "exportName": "ScheduleOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5303,7 +5303,7 @@
         {
           "importPath": "weft",
           "exportName": "ScheduleOverlapPolicy",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5320,7 +5320,7 @@
         {
           "importPath": "weft",
           "exportName": "ScheduleState",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5337,7 +5337,7 @@
         {
           "importPath": "weft",
           "exportName": "ScheduleStatus",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5354,7 +5354,7 @@
         {
           "importPath": "weft",
           "exportName": "ScheduleSummary",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5382,7 +5382,7 @@
         {
           "importPath": "weft",
           "exportName": "SearchAttributeSchema",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5399,7 +5399,7 @@
         {
           "importPath": "weft",
           "exportName": "SearchAttributeValue",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5416,7 +5416,7 @@
         {
           "importPath": "weft",
           "exportName": "Serializer",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5433,7 +5433,7 @@
         {
           "importPath": "weft",
           "exportName": "StartOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5450,7 +5450,7 @@
         {
           "importPath": "weft",
           "exportName": "StepWorkflowContext",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5467,7 +5467,7 @@
         {
           "importPath": "weft",
           "exportName": "StepWorkflowFunction",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5484,7 +5484,7 @@
         {
           "importPath": "weft",
           "exportName": "SubmitReviewOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5501,7 +5501,7 @@
         {
           "importPath": "weft",
           "exportName": "TenantQuotaMetricUsage",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5518,7 +5518,7 @@
         {
           "importPath": "weft",
           "exportName": "TenantQuotaOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5535,7 +5535,7 @@
         {
           "importPath": "weft",
           "exportName": "TenantQuotaUsage",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5552,7 +5552,7 @@
         {
           "importPath": "weft",
           "exportName": "TenantWorkflowCreationRateLimit",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5569,7 +5569,7 @@
         {
           "importPath": "weft",
           "exportName": "TenantWorkflowCreationRateUsage",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5619,7 +5619,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowContext",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5636,7 +5636,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowEvent",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5653,7 +5653,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowFunction",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5670,7 +5670,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowId",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5687,7 +5687,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowMapOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5704,7 +5704,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowOperation",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5721,7 +5721,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowPipeStage",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5738,7 +5738,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowPipeStageDefinition",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5755,7 +5755,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowReduceInput",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5772,7 +5772,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowReduceOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5789,7 +5789,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowRegistration",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5806,7 +5806,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowRegistry",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5823,7 +5823,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowReplay",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5840,7 +5840,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowSessionState",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5857,7 +5857,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowState",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5874,7 +5874,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowStatus",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5891,7 +5891,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowSummary",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5908,7 +5908,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowTimelineEntry",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5925,7 +5925,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowTimelineStatus",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -5942,7 +5942,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowTypeRetentionPolicy",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6071,7 +6071,7 @@
         {
           "importPath": "weft",
           "exportName": "FieldDiff",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6088,7 +6088,7 @@
         {
           "importPath": "weft",
           "exportName": "ShapeDescriptor",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6105,7 +6105,7 @@
         {
           "importPath": "weft",
           "exportName": "ShapeDiffOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6314,7 +6314,7 @@
         {
           "importPath": "weft",
           "exportName": "MemoryProfile",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6348,7 +6348,7 @@
         {
           "importPath": "weft",
           "exportName": "MemorySample",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6365,7 +6365,7 @@
         {
           "importPath": "weft",
           "exportName": "StabilityOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6382,7 +6382,7 @@
         {
           "importPath": "weft",
           "exportName": "StabilityResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6450,7 +6450,7 @@
         {
           "importPath": "weft",
           "exportName": "DatabaseHealth",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6467,7 +6467,7 @@
         {
           "importPath": "weft",
           "exportName": "DiagnosticReport",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6484,7 +6484,7 @@
         {
           "importPath": "weft",
           "exportName": "HealthStatus",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6501,7 +6501,7 @@
         {
           "importPath": "weft",
           "exportName": "LargestCheckpoint",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6518,7 +6518,7 @@
         {
           "importPath": "weft",
           "exportName": "LongestRunningWorkflow",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6535,7 +6535,7 @@
         {
           "importPath": "weft",
           "exportName": "QueueStatistics",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6552,7 +6552,7 @@
         {
           "importPath": "weft",
           "exportName": "Recommendation",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6569,7 +6569,7 @@
         {
           "importPath": "weft",
           "exportName": "RecommendationSeverity",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6597,7 +6597,7 @@
         {
           "importPath": "weft",
           "exportName": "VersionCheckReport",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6614,7 +6614,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowStatistics",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6631,7 +6631,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowStatusCounts",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6648,7 +6648,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkflowTypeReport",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6699,7 +6699,7 @@
         {
           "importPath": "weft",
           "exportName": "InterceptionContext",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6716,7 +6716,7 @@
         {
           "importPath": "weft",
           "exportName": "ObservabilityOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6844,7 +6844,7 @@
         {
           "importPath": "weft",
           "exportName": "OtelMetrics",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6861,7 +6861,7 @@
         {
           "importPath": "weft",
           "exportName": "PrometheusExporter",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6934,7 +6934,7 @@
         {
           "importPath": "weft",
           "exportName": "OtelApi",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6951,7 +6951,7 @@
         {
           "importPath": "weft",
           "exportName": "OtelMeter",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6968,7 +6968,7 @@
         {
           "importPath": "weft",
           "exportName": "OtelSpan",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -6985,7 +6985,7 @@
         {
           "importPath": "weft",
           "exportName": "OtelTracer",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7175,7 +7175,7 @@
         {
           "importPath": "weft",
           "exportName": "RuntimeKind",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7315,7 +7315,7 @@
         {
           "importPath": "weft",
           "exportName": "AuthConfig",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7343,7 +7343,7 @@
         {
           "importPath": "weft",
           "exportName": "AuthMethod",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7360,7 +7360,7 @@
         {
           "importPath": "weft",
           "exportName": "AuthResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7377,7 +7377,7 @@
         {
           "importPath": "weft",
           "exportName": "Authenticator",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7394,7 +7394,7 @@
         {
           "importPath": "weft",
           "exportName": "JWTAlgorithm",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7411,7 +7411,7 @@
         {
           "importPath": "weft",
           "exportName": "JWTConfig",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7428,7 +7428,7 @@
         {
           "importPath": "weft",
           "exportName": "JWTPayload",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7445,7 +7445,7 @@
         {
           "importPath": "weft",
           "exportName": "MTLSConfig",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7726,7 +7726,7 @@
         {
           "importPath": "weft",
           "exportName": "SchedulingPolicy",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -7953,12 +7953,12 @@
         {
           "importPath": "weft",
           "exportName": "BatchOperation",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "BatchOperation",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage/interface",
@@ -7980,12 +7980,12 @@
         {
           "importPath": "weft",
           "exportName": "ConditionalBatchCondition",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "ConditionalBatchCondition",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage/interface",
@@ -8034,12 +8034,12 @@
         {
           "importPath": "weft",
           "exportName": "ScanOptions",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "ScanOptions",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage/interface",
@@ -8061,12 +8061,12 @@
         {
           "importPath": "weft",
           "exportName": "Storage",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "Storage",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage/interface",
@@ -8450,12 +8450,12 @@
         {
           "importPath": "weft",
           "exportName": "JsonValue",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "JsonValue",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8483,12 +8483,12 @@
         {
           "importPath": "weft",
           "exportName": "MessagePackValue",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "MessagePackValue",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8505,12 +8505,12 @@
         {
           "importPath": "weft",
           "exportName": "StorageCodec",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "StorageCodec",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8527,12 +8527,12 @@
         {
           "importPath": "weft",
           "exportName": "StorageValueParser",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "StorageValueParser",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8549,12 +8549,12 @@
         {
           "importPath": "weft",
           "exportName": "TypedBatchOperation",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "TypedBatchOperation",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8571,12 +8571,12 @@
         {
           "importPath": "weft",
           "exportName": "TypedStorage",
-          "kind": "value"
+          "kind": "type"
         },
         {
           "importPath": "weft/storage",
           "exportName": "TypedStorage",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8676,7 +8676,7 @@
         {
           "importPath": "weft",
           "exportName": "ChaosScenario",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8727,7 +8727,7 @@
         {
           "importPath": "weft",
           "exportName": "FaultClass",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8778,7 +8778,7 @@
         {
           "importPath": "weft",
           "exportName": "MockCall",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8795,7 +8795,7 @@
         {
           "importPath": "weft",
           "exportName": "MockHandle",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8812,7 +8812,7 @@
         {
           "importPath": "weft",
           "exportName": "MockedActivity",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8829,7 +8829,7 @@
         {
           "importPath": "weft",
           "exportName": "RunNOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -8846,7 +8846,7 @@
         {
           "importPath": "weft",
           "exportName": "RunNResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -9003,7 +9003,7 @@
         {
           "importPath": "weft",
           "exportName": "RoutingPolicy",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -9059,7 +9059,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityExecutionRequest",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -9076,7 +9076,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityExecutionResult",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -9127,7 +9127,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityWorkerDispatcherOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -9144,7 +9144,7 @@
         {
           "importPath": "weft",
           "exportName": "ActivityHandlerLookup",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",
@@ -9229,7 +9229,7 @@
         {
           "importPath": "weft",
           "exportName": "WorkerPoolOptions",
-          "kind": "value"
+          "kind": "type"
         }
       ],
       "classification": "unclassified",

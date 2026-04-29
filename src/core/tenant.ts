@@ -60,6 +60,9 @@ export interface TenantResolver {
  *
  * @example
  * ```ts
+ * import { Engine, MemoryStorage, tenantFromInputField } from 'weft';
+ *
+ * const storage = new MemoryStorage();
  * const engine = new Engine({
  *   storage,
  *   tenantResolver: tenantFromInputField('tenantId'),

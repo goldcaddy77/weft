@@ -1860,17 +1860,22 @@ export class ScheduleHandle {
  *
  * @example Run a workflow with an activity
  * ```ts
- * import { Engine, activity } from 'weft';
+ * import { activity, Engine, type Context, type WorkflowContext } from 'weft';
  *
- * const fetchUser = activity('fetchUser', async (id: string) => {
- *   const response = await fetch(`https://api.example.com/users/${id}`);
- *   return response.json();
+ * const fetchUser = activity({
+ *   name: 'fetchUser',
+ *   execute: async (input: unknown) => {
+ *     const id = input as string;
+ *     const response = await fetch(`https://api.example.com/users/${id}`);
+ *     return (await response.json()) as { name: string };
+ *   },
  * });
  *
  * const engine = new Engine();
- * engine.register('greet-user', async function* (ctx, id: string) {
- *   const user = yield* ctx.run(fetchUser, id);
- *   return `Hello, ${(user as { name: string }).name}`;
+ * engine.register('greet-user', async function* (ctx: WorkflowContext, input: unknown) {
+ *   const id = input as string;
+ *   const user = yield* (ctx as Context).run(fetchUser, id);
+ *   return `Hello, ${user.name}`;
  * });
  *
  * const handle = await engine.start('greet-user', 'user-123');

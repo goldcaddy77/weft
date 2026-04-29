@@ -143,7 +143,13 @@ function subtreeContains(from: TrieNode, target: TrieNode): boolean {
  *
  * @example Basic usage
  * ```ts
+ * import { PromptCache, type Message } from 'weft';
+ *
  * const cache = new PromptCache();
+ * const conversationMessages: Message[] = [
+ *   { role: 'system', content: 'You are helpful.' },
+ *   { role: 'user', content: 'Hello!' },
+ * ];
  * const { messages, hit } = cache.annotate(conversationMessages);
  * // Pass `messages` to the provider — the last prefix message carries the
  * // cache_control marker when `hit` is true.

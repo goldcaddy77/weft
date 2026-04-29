@@ -1,0 +1,382 @@
+/**
+ * Independent verification that the manifest's public-surface set agrees with
+ * what consumers actually see (the emitted .d.ts files), and that every
+ * classified entry's currentState satisfies the example-required / prose-only
+ * invariants.
+ *
+ * The audit deliberately uses a different enumeration mechanism than
+ * scripts/build-jsdoc-manifest.ts (which walks source) so a shared logic bug
+ * cannot make both gates agree on a wrong denominator. The audit walks the
+ * emitted dist/<path>.d.ts files via ts.createProgram + getExportsOfModule.
+ *
+ * The audit asserts:
+ *   1. publicEntryPoints recomputed from package.json `exports` matches the
+ *      manifest's stored table (key set + source-file targets).
+ *   2. For each public specifier, the (importPath, exportName, kind) triples
+ *      derived by walking the emitted .d.ts equal the manifest's publicFaces
+ *      union for that specifier.
+ *   3. For each manifest entry with classification == 'example-required',
+ *      the re-derived currentState (read from source JSDoc) is 'has-example'.
+ *   4. For each manifest entry with classification == 'prose-only', the
+ *      re-derived currentState is 'prose-only' or 'has-example'.
+ *
+ * The audit never writes to the manifest. The classified manifest is the
+ * source of truth for `classification`.
+ *
+ * Smoke test (against an unclassified manifest): exits non-zero with
+ * "manifest contains unclassified entries; classification pass required".
+ */
+
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import ts from 'typescript';
+
+const REPO_ROOT = resolve(import.meta.dir, '..');
+const PACKAGE_JSON = resolve(REPO_ROOT, 'package.json');
+const MANIFEST_PATH = resolve(REPO_ROOT, 'reference/jsdoc-manifest.json');
+
+type SymbolKind = 'value' | 'type' | 'namespace';
+type CurrentState = 'no-jsdoc' | 'prose-only' | 'has-example';
+type Classification = 'unclassified' | 'example-required' | 'prose-only' | 'not-public';
+
+type PublicFace = { importPath: string; exportName: string; kind: SymbolKind };
+
+type ManifestEntry = {
+  sourceFile: string;
+  sourceName: string;
+  kind: SymbolKind;
+  subKind: string;
+  publicFaces: PublicFace[];
+  classification: Classification;
+  currentState: CurrentState;
+  classificationRationale: string | null;
+  batch: string | null;
+};
+
+type Manifest = {
+  publicEntryPoints: Record<string, string>;
+  entries: ManifestEntry[];
+};
+
+// ---------------------------------------------------------------------------
+// package.json reading.
+// ---------------------------------------------------------------------------
+
+type PkgJson = { name: string; exports?: Record<string, unknown> };
+
+function loadPackageJson(): PkgJson {
+  return JSON.parse(readFileSync(PACKAGE_JSON, 'utf8'));
+}
+
+function pickTypesField(value: unknown): string | null {
+  if (typeof value === 'string') return null;
+  if (value === null || typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj['types'] === 'string') return obj['types'];
+  for (const key of ['bun', 'node', 'import', 'default'] as const) {
+    const inner = obj[key];
+    if (inner && typeof inner === 'object') {
+      const innerTypes = (inner as Record<string, unknown>)['types'];
+      if (typeof innerTypes === 'string') return innerTypes;
+    }
+  }
+  return null;
+}
+
+function distToSource(distRelative: string): string {
+  return distRelative
+    .replace(/^\.\//, '')
+    .replace(/^dist\//, 'src/')
+    .replace(/\.d\.ts$/, '.ts');
+}
+
+function recomputePublicEntryPoints(pkg: PkgJson): Record<string, string> {
+  if (!pkg.exports) throw new Error('package.json missing `exports` map');
+  const out: Record<string, string> = {};
+  for (const [subpath, value] of Object.entries(pkg.exports)) {
+    const typesPath = pickTypesField(value);
+    if (!typesPath) continue;
+    const sourcePath = distToSource(typesPath);
+    const importPath = subpath === '.' ? pkg.name : `${pkg.name}/${subpath.replace(/^\.\//, '')}`;
+    out[importPath] = sourcePath;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Resolve a public specifier to its emitted .d.ts file.
+// ---------------------------------------------------------------------------
+
+function declarationFileFor(importPath: string, pkg: PkgJson): string {
+  if (!pkg.exports) throw new Error('package.json missing `exports` map');
+  const key = importPath === pkg.name ? '.' : `./${importPath.slice(pkg.name.length + 1)}`;
+  const value = pkg.exports[key];
+  if (value === undefined) throw new Error(`No exports entry for key ${key}`);
+  const typesPath = pickTypesField(value);
+  if (!typesPath) throw new Error(`exports[${key}] has no .types field`);
+  return resolve(REPO_ROOT, typesPath.replace(/^\.\//, ''));
+}
+
+// ---------------------------------------------------------------------------
+// Symbol kind inference (resolves aliases first).
+// ---------------------------------------------------------------------------
+
+function resolvedKind(symbol: ts.Symbol, checker: ts.TypeChecker): SymbolKind | null {
+  let underlying = symbol;
+  while (underlying.flags & ts.SymbolFlags.Alias) {
+    const next = checker.getAliasedSymbol(underlying);
+    if (!next || next === underlying) break;
+    underlying = next;
+  }
+  const f = underlying.flags;
+  if (f & (ts.SymbolFlags.Module | ts.SymbolFlags.Namespace)) return 'namespace';
+  if (
+    f &
+    (ts.SymbolFlags.Class |
+      ts.SymbolFlags.Function |
+      ts.SymbolFlags.Variable |
+      ts.SymbolFlags.Enum |
+      ts.SymbolFlags.EnumMember |
+      ts.SymbolFlags.ConstEnum)
+  ) {
+    return 'value';
+  }
+  if (f & (ts.SymbolFlags.Interface | ts.SymbolFlags.TypeAlias | ts.SymbolFlags.TypeParameter)) {
+    return 'type';
+  }
+  if (f & ts.SymbolFlags.Value) return 'value';
+  if (f & ts.SymbolFlags.Type) return 'type';
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Walk emitted .d.ts files and collect (importPath, exportName, kind) triples.
+// ---------------------------------------------------------------------------
+
+function collectFromDeclarations(
+  publicEntryPoints: Record<string, string>,
+  pkg: PkgJson,
+): { triples: Set<string>; missingFiles: string[] } {
+  const dtsFiles: string[] = [];
+  for (const importPath of Object.keys(publicEntryPoints)) {
+    const file = declarationFileFor(importPath, pkg);
+    if (!existsSync(file)) {
+      return { triples: new Set(), missingFiles: [file] };
+    }
+    dtsFiles.push(file);
+  }
+
+  const program = ts.createProgram(dtsFiles, {
+    target: ts.ScriptTarget.Latest,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    noEmit: true,
+    skipLibCheck: true,
+    allowJs: false,
+  });
+  const checker = program.getTypeChecker();
+  const triples = new Set<string>();
+
+  for (const importPath of Object.keys(publicEntryPoints)) {
+    const file = declarationFileFor(importPath, pkg);
+    const sourceFile = program.getSourceFile(file);
+    if (!sourceFile) continue;
+    const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
+    if (!moduleSymbol) continue;
+    const exports = checker.getExportsOfModule(moduleSymbol);
+    for (const exp of exports) {
+      const exportName = exp.getName();
+      const kind = resolvedKind(exp, checker);
+      if (!kind) continue;
+      triples.add(`${importPath}#${exportName}#${kind}`);
+    }
+  }
+  return { triples, missingFiles: [] };
+}
+
+// ---------------------------------------------------------------------------
+// Re-derive currentState from a source declaration's JSDoc.
+// ---------------------------------------------------------------------------
+
+function detectCurrentStateFromSource(entry: ManifestEntry, program: ts.Program): CurrentState {
+  const absolute = resolve(REPO_ROOT, entry.sourceFile);
+  const sourceFile = program.getSourceFile(absolute);
+  if (!sourceFile) return 'no-jsdoc';
+  let result: CurrentState = 'no-jsdoc';
+  function visit(node: ts.Node): void {
+    if (
+      (ts.isClassDeclaration(node) ||
+        ts.isFunctionDeclaration(node) ||
+        ts.isInterfaceDeclaration(node) ||
+        ts.isTypeAliasDeclaration(node) ||
+        ts.isEnumDeclaration(node) ||
+        ts.isModuleDeclaration(node)) &&
+      node.name?.getText() === entry.sourceName
+    ) {
+      const state = inspectJSDoc(node);
+      if (state === 'has-example') result = 'has-example';
+      else if (state === 'prose-only' && result !== 'has-example') result = 'prose-only';
+    }
+    if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name) && decl.name.text === entry.sourceName) {
+          const state = inspectJSDoc(node);
+          if (state === 'has-example') result = 'has-example';
+          else if (state === 'prose-only' && result !== 'has-example') result = 'prose-only';
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return result;
+}
+
+function inspectJSDoc(node: ts.Node): CurrentState {
+  const tags = ts.getJSDocTags(node);
+  const hasExample = tags.some((t) => t.tagName.text === 'example');
+  let proseText = '';
+  for (const c of ts.getJSDocCommentsAndTags(node)) {
+    if (ts.isJSDoc(c)) {
+      const comment = c.comment;
+      if (typeof comment === 'string') proseText += comment;
+      else if (Array.isArray(comment)) {
+        for (const part of comment) {
+          if (part.kind === ts.SyntaxKind.JSDocText) proseText += part.text;
+        }
+      }
+    }
+  }
+  const hasProse = proseText.trim().length > 0;
+  if (hasProse && hasExample) return 'has-example';
+  if (hasProse) return 'prose-only';
+  return 'no-jsdoc';
+}
+
+// ---------------------------------------------------------------------------
+// Source program loader (for currentState re-derivation).
+// ---------------------------------------------------------------------------
+
+function loadSourceProgram(): ts.Program {
+  const config = ts.findConfigFile(REPO_ROOT, ts.sys.fileExists.bind(ts.sys), 'tsconfig.json');
+  if (!config) throw new Error('tsconfig.json not found');
+  const parsed = ts.readConfigFile(config, ts.sys.readFile.bind(ts.sys));
+  if (parsed.error) {
+    throw new Error(ts.flattenDiagnosticMessageText(parsed.error.messageText, '\n'));
+  }
+  const compilerOptions = ts.parseJsonConfigFileContent(
+    parsed.config,
+    ts.sys,
+    dirname(config),
+  ).options;
+  return ts.createProgram(parsed.config.include ?? ['src'], { ...compilerOptions, noEmit: true });
+}
+
+// ---------------------------------------------------------------------------
+// Assertions.
+// ---------------------------------------------------------------------------
+
+function assertEqualMaps(
+  label: string,
+  a: Record<string, string>,
+  b: Record<string, string>,
+  failures: string[],
+): void {
+  const aKeys = Object.keys(a).toSorted();
+  const bKeys = Object.keys(b).toSorted();
+  for (const key of new Set([...aKeys, ...bKeys])) {
+    if (!(key in a))
+      failures.push(`  ${label}: key '${key}' present in manifest but not recomputed`);
+    else if (!(key in b))
+      failures.push(`  ${label}: key '${key}' recomputed but missing from manifest`);
+    else if (a[key] !== b[key])
+      failures.push(`  ${label}: key '${key}' = '${a[key]}' in manifest, '${b[key]}' recomputed`);
+  }
+}
+
+function assertEqualSets(
+  label: string,
+  manifest: Set<string>,
+  recomputed: Set<string>,
+  failures: string[],
+): void {
+  for (const triple of manifest) {
+    if (!recomputed.has(triple))
+      failures.push(`  ${label}: ${triple} in manifest but missing from declarations`);
+  }
+  for (const triple of recomputed) {
+    if (!manifest.has(triple))
+      failures.push(`  ${label}: ${triple} in declarations but missing from manifest`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point.
+// ---------------------------------------------------------------------------
+
+function main(): void {
+  if (!existsSync(MANIFEST_PATH)) {
+    console.error(`audit-jsdoc-manifest: manifest not found at ${MANIFEST_PATH}`);
+    process.exit(1);
+  }
+  const manifest: Manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+  const pkg = loadPackageJson();
+
+  const unclassified = manifest.entries.filter((e) => e.classification === 'unclassified');
+  if (unclassified.length > 0) {
+    console.error(
+      `audit-jsdoc-manifest: manifest contains ${unclassified.length} unclassified entries; classification pass required`,
+    );
+    process.exit(1);
+  }
+
+  const failures: string[] = [];
+
+  // Assertion 1: publicEntryPoints.
+  const recomputedPEP = recomputePublicEntryPoints(pkg);
+  assertEqualMaps('publicEntryPoints', manifest.publicEntryPoints, recomputedPEP, failures);
+
+  // Assertion 2: declaration-derived public-face set vs manifest publicFaces.
+  const { triples: declTriples, missingFiles } = collectFromDeclarations(recomputedPEP, pkg);
+  if (missingFiles.length > 0) {
+    console.error(
+      `audit-jsdoc-manifest: declaration files missing (run \`bun run build\` first):\n  ${missingFiles.join('\n  ')}`,
+    );
+    process.exit(1);
+  }
+  const manifestTriples = new Set<string>();
+  for (const entry of manifest.entries) {
+    if (entry.classification === 'not-public') continue;
+    for (const face of entry.publicFaces) {
+      manifestTriples.add(`${face.importPath}#${face.exportName}#${face.kind}`);
+    }
+  }
+  assertEqualSets('public-face set', manifestTriples, declTriples, failures);
+
+  // Assertion 3 & 4: classification invariants.
+  const sourceProgram = loadSourceProgram();
+  for (const entry of manifest.entries) {
+    if (entry.classification === 'not-public') continue;
+    const rederived = detectCurrentStateFromSource(entry, sourceProgram);
+    if (entry.classification === 'example-required' && rederived !== 'has-example') {
+      failures.push(
+        `  example-required entry has currentState=${rederived}: ${entry.sourceFile}#${entry.sourceName}#${entry.kind}`,
+      );
+    } else if (entry.classification === 'prose-only' && rederived === 'no-jsdoc') {
+      failures.push(
+        `  prose-only entry has currentState=no-jsdoc: ${entry.sourceFile}#${entry.sourceName}#${entry.kind}`,
+      );
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error('audit-jsdoc-manifest: failures:');
+    for (const line of failures) console.error(line);
+    process.exit(1);
+  }
+  console.log(
+    `audit-jsdoc-manifest: ok (${Object.keys(recomputedPEP).length} entry points, ${manifestTriples.size} public-face triples)`,
+  );
+}
+
+main();

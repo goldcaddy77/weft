@@ -90,6 +90,8 @@ export interface ConstraintDefinition {
  *
  * @example
  * ```ts
+ * import { constraint, Engine } from 'weft';
+ *
  * let balance = 0;
  *
  * const positiveBalance = constraint('positiveBalance', {
@@ -98,7 +100,8 @@ export interface ConstraintDefinition {
  *   onViolation: 'compensate',
  * });
  *
- * engine.register(workflow, { constraints: [positiveBalance] });
+ * const engine = new Engine();
+ * // engine.register(workflow, { constraints: [positiveBalance] });
  * ```
  */
 export function constraint(
