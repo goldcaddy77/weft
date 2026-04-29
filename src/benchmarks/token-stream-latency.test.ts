@@ -42,9 +42,6 @@ function createEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
 
-  engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
-    return input;
-  });
   engine.register('stream-target', async function* (ctx: WorkflowContext) {
     yield* (ctx as Context).sleep('1h');
     return 'done';
