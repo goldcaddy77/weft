@@ -83,6 +83,12 @@ function classify(entry: ManifestEntry): {
 function batchFor(entry: ManifestEntry, classification: Classification): string | null {
   if (classification === 'not-public') return null;
   if (entry.currentState === 'has-example') return null;
+  // prose-only entries are satisfied as soon as currentState reaches 'prose-only'
+  // — no @example required, so no work to assign.
+  if (classification === 'prose-only' && entry.currentState === 'prose-only') return null;
+  // example-required + prose-only currentState → Phase A (augmentation).
+  // example-required + no-jsdoc currentState   → Phase B (authorship).
+  // prose-only + no-jsdoc currentState         → Phase B (authorship — needs prose).
   const phase = entry.currentState === 'prose-only' ? 'A' : 'B';
   const sourceFile = entry.sourceFile;
   let domain: '1-core' | '2-infra' | '3-ai';

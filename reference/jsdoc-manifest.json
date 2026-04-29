@@ -136,7 +136,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -724,7 +724,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -1908,7 +1908,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/prompt-cache.ts",
@@ -2672,7 +2672,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/client/interface.ts",
@@ -3093,7 +3093,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/constraint.ts",
@@ -3127,7 +3127,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/constraint.ts",
@@ -4807,7 +4807,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4824,7 +4824,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4991,9 +4991,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5222,9 +5222,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5437,9 +5437,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5861,9 +5861,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5878,9 +5878,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -6077,7 +6077,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -6094,7 +6094,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -6111,7 +6111,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -6320,7 +6320,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -6354,7 +6354,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -6388,7 +6388,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -6867,7 +6867,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -7181,7 +7181,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -7732,7 +7732,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/task-queue.ts",
@@ -7969,7 +7969,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7996,7 +7996,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -8326,9 +8326,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/node-sqlite.ts",
@@ -9009,7 +9009,7 @@
       "classification": "prose-only",
       "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "A2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/worker/registry.ts",

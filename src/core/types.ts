@@ -33,6 +33,14 @@ export type FailureCategory = 'memory' | 'reflection' | 'planning' | 'action' | 
 // Workflow status state machine
 // ---------------------------------------------------------------------------
 
+/**
+ * Lifecycle states a workflow moves through, from registration to terminal
+ * state.
+ *
+ * Read this off `(await handle.state()).status` to learn whether a workflow
+ * is still running, finished cleanly, or failed. Pass it to `engine.list()`
+ * filters to scope queries by status.
+ */
 export type WorkflowStatus =
   | 'pending'
   | 'running'
@@ -45,6 +53,13 @@ export type WorkflowStatus =
 // Workflow state persisted in storage
 // ---------------------------------------------------------------------------
 
+/**
+ * Snapshot of a workflow's persisted state.
+ *
+ * Returned by `handle.state()` and `engine.get(workflowId)`. Users observe
+ * this shape — they don't construct it. Includes the input, current status,
+ * tenant, attributes, retention policy snapshot, and lineage information.
+ */
 export interface WorkflowState {
   id: WorkflowId;
   type: string;
@@ -104,6 +119,29 @@ export interface ForkLineage {
 // Duration: number (milliseconds) or human-readable string
 // ---------------------------------------------------------------------------
 
+/**
+ * A length of time accepted across the engine API.
+ *
+ * Either a number of milliseconds (`5000`) or a human-readable string
+ * (`'30s'`, `'5m'`, `'2h'`, `'1d'`). Supplies values for {@link RetryPolicy},
+ * `ctx.sleep()`, retention windows, schedule timing, and timeouts.
+ *
+ * @example Use a Duration in a retry policy
+ * ```ts
+ * import type { Duration, RetryPolicy } from 'weft';
+ *
+ * const initialBackoff: Duration = '500ms';
+ * const maxBackoff: Duration = '30s';
+ *
+ * const retry: RetryPolicy = {
+ *   maxAttempts: 5,
+ *   initialBackoff,
+ *   backoffMultiplier: 2,
+ *   maxBackoff,
+ * };
+ * void retry;
+ * ```
+ */
 export type Duration = number | string;
 
 // ---------------------------------------------------------------------------
@@ -174,6 +212,36 @@ export type WorkflowTimelineEntry = {
 // Retry policy for activities
 // ---------------------------------------------------------------------------
 
+/**
+ * Exponential-backoff retry policy for activities.
+ *
+ * Pass on `ActivityDefinition.retry` (set per-activity) or via the engine
+ * default policy. Backoff between attempts grows by `backoffMultiplier` and
+ * caps at `maxBackoff`. Errors whose `name` (or message) matches an entry in
+ * `nonRetryableErrors` skip the retry loop and fail fast.
+ *
+ * @example Configure a retry policy on an activity
+ * ```ts
+ * import { activity, type RetryPolicy } from 'weft';
+ *
+ * const retry: RetryPolicy = {
+ *   maxAttempts: 5,
+ *   initialBackoff: '500ms',
+ *   backoffMultiplier: 2,
+ *   maxBackoff: '30s',
+ *   nonRetryableErrors: ['ValidationError'],
+ * };
+ *
+ * const fetchUser = activity({
+ *   name: 'fetchUser',
+ *   retry,
+ *   execute: async (input: unknown) => {
+ *     return { id: input as string };
+ *   },
+ * });
+ * void fetchUser;
+ * ```
+ */
 export interface RetryPolicy {
   maxAttempts: number;
   initialBackoff: Duration;
@@ -224,6 +292,34 @@ export type SearchAttributeSchema = Record<string, SearchAttributeDefinition>;
 // Start options for engine.start()
 // ---------------------------------------------------------------------------
 
+/**
+ * Options accepted by `engine.start(type, input, options?)`.
+ *
+ * Every field is optional. `id` lets you specify your own workflow ID;
+ * `idempotencyKey` enforces single-execution semantics within a window;
+ * `executionTimeout` caps wall-clock time; `startAt`/`startAfter` defer
+ * execution; `tags` and `searchAttributes` make the workflow discoverable
+ * via filters.
+ *
+ * @example Start a delayed workflow with tags and search attributes
+ * ```ts
+ * import { Engine, type StartOptions } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('greet', async function* () {
+ *   return 'hi';
+ * });
+ *
+ * const options: StartOptions = {
+ *   id: 'greeting-2026-04-29',
+ *   startAfter: '5m',
+ *   tags: ['nightly', 'ops'],
+ *   searchAttributes: { customerId: 'acme' },
+ * };
+ * const handle = await engine.start('greet', null, options);
+ * void handle;
+ * ```
+ */
 export interface StartOptions {
   id?: string;
   idempotencyKey?: string;
