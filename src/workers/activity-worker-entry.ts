@@ -29,6 +29,17 @@ export type ActivityHandlerLookup = (
  *
  * @param getActivity - Resolves an activity name to its function. Typically
  *   backed by a registration map built at worker creation time.
+ *
+ * @example
+ * ```ts
+ * import { initializeActivityWorkerMessageLoop } from 'weft';
+ *
+ * const activities = new Map<string, (...args: unknown[]) => unknown>();
+ * activities.set('greet', (input: unknown) => `Hello, ${(input as { name: string }).name}!`);
+ *
+ * // Call inside a Worker file to start listening for tasks:
+ * initializeActivityWorkerMessageLoop((name) => activities.get(name));
+ * ```
  */
 export function initializeActivityWorkerMessageLoop(getActivity: ActivityHandlerLookup): void {
   self.addEventListener('message', async (event: MessageEvent<ActivityExecutionRequest>) => {
@@ -136,6 +147,18 @@ function validateHandlerSerializable(
  *   option. Call {@link revokeActivityWorkerEntryUrl} when the URL is no
  *   longer needed (e.g., during engine disposal) to free the registration.
  * @throws {Error} If any handler function cannot be safely serialized.
+ *
+ * @example
+ * ```ts
+ * import { createActivityWorkerEntryUrl, revokeActivityWorkerEntryUrl } from 'weft';
+ *
+ * const registrations = new Map<string, (...args: unknown[]) => unknown>();
+ * registrations.set('double', (n: unknown) => (n as number) * 2);
+ *
+ * const url = createActivityWorkerEntryUrl(registrations);
+ * // Pass url to Engine as activityExecution.workerUrl
+ * revokeActivityWorkerEntryUrl(url); // cleanup when done
+ * ```
  */
 export function createActivityWorkerEntryUrl(
   registrations: Map<string, (...arguments_: unknown[]) => unknown>,
@@ -164,6 +187,17 @@ initializeActivityWorkerMessageLoop((name) => activities.get(name));
  * Revoke a Blob URL previously created by {@link createActivityWorkerEntryUrl}.
  * Call this once all workers that need the URL have been constructed (e.g.,
  * during engine disposal) to free the URL registration and prevent leaks.
+ *
+ * @example
+ * ```ts
+ * import { createActivityWorkerEntryUrl, revokeActivityWorkerEntryUrl } from 'weft';
+ *
+ * const registrations = new Map<string, (...args: unknown[]) => unknown>();
+ * registrations.set('greet', (input: unknown) => 'hello');
+ * const url = createActivityWorkerEntryUrl(registrations);
+ * // After all workers using this URL have been created:
+ * revokeActivityWorkerEntryUrl(url);
+ * ```
  */
 export function revokeActivityWorkerEntryUrl(url: string): void {
   URL.revokeObjectURL(url);

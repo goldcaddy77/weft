@@ -170,7 +170,18 @@ export class MetricsCollector {
 // OTel metrics bridge
 // ---------------------------------------------------------------------------
 
-/** OTel instrument set for Weft metrics. */
+/**
+ * OTel instrument set for Weft metrics.
+ *
+ * @example
+ * ```ts
+ * import { createOtelMetrics, type OtelMetrics } from 'weft';
+ *
+ * const otelMetrics: OtelMetrics = createOtelMetrics('my-service');
+ * otelMetrics.workflowDuration.record(120);
+ * otelMetrics.activityAttempts.add(1);
+ * ```
+ */
 export type OtelMetrics = {
   workflowDuration: {
     record(value: number, attributes?: Record<string, string | number | boolean>): void;
@@ -192,6 +203,16 @@ export type OtelMetrics = {
  * Accepts an `OtelMeter` instance, a string meter name, or nothing. When
  * called without arguments it uses `getOtelApi().metrics.getMeter('weft')`,
  * which returns a no-op meter when `@opentelemetry/api` is not installed.
+ *
+ * @example
+ * ```ts
+ * import { createOtelMetrics } from 'weft';
+ *
+ * // Uses the auto-detected OTel API or no-op fallback
+ * const instruments = createOtelMetrics('my-service');
+ * instruments.workflowDuration.record(250, { workflow_type: 'greet' });
+ * instruments.activityAttempts.add(1, { activity: 'sendEmail' });
+ * ```
  */
 export function createOtelMetrics(meterOrName?: OtelMeter | string): OtelMetrics {
   let meter: OtelMeter;
@@ -316,6 +337,18 @@ export function serializeMetricsSnapshotForPrometheus(snapshot: MetricsSnapshot)
  * {@link MetricsCollector}. Equivalent to the previous inline serializer in
  * the server's `/v1/metrics` handler — extracted here so it can be reused and
  * so a custom implementation can be substituted without touching the server.
+ *
+ * @example
+ * ```ts
+ * import { MetricsCollector, createMetricsCollectorExporter, serve } from 'weft';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * const collector = new MetricsCollector();
+ * const exporter = createMetricsCollectorExporter(collector);
+ * // Pass to serve() to expose /v1/metrics
+ * // serve({ engine, prometheusExporter: exporter });
+ * console.log(typeof exporter.serialize); // 'function'
+ * ```
  */
 export function createMetricsCollectorExporter(
   collector: MetricsCollector | undefined,
@@ -332,7 +365,19 @@ export function createMetricsCollectorExporter(
 // Metric catalogue
 // ---------------------------------------------------------------------------
 
-/** Metric names and descriptions for Weft observability. */
+/**
+ * Metric names and descriptions for Weft observability.
+ *
+ * @example
+ * ```ts
+ * import { METRICS } from 'weft';
+ *
+ * for (const metric of Object.values(METRICS)) {
+ *   console.log(metric.name, metric.type, metric.unit);
+ * }
+ * // e.g. 'weft.workflow.duration' 'histogram' 'ms'
+ * ```
+ */
 export const METRICS = {
   workflowDuration: {
     name: 'weft.workflow.duration',

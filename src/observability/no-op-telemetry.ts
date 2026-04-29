@@ -32,7 +32,21 @@ type SpanStatus = {
   message?: string;
 };
 
-/** Minimal span interface matching the OTel API surface we use. */
+/**
+ * Minimal span interface matching the OTel API surface we use.
+ *
+ * @example
+ * ```ts
+ * import { getOtelApi, type OtelSpan } from 'weft';
+ *
+ * const api = getOtelApi();
+ * const tracer = api.trace.getTracer('example');
+ * const span: OtelSpan = tracer.startSpan('my-operation');
+ * span.setAttribute('user.id', 'u-123');
+ * span.setStatus({ code: api.SpanStatusCode.OK });
+ * span.end();
+ * ```
+ */
 export type OtelSpan = {
   setAttribute(key: string, value: string | number | boolean): void;
   setStatus(status: SpanStatus): void;
@@ -47,7 +61,19 @@ type SpanOptions = {
   links?: SpanLink[];
 };
 
-/** Minimal tracer interface. */
+/**
+ * Minimal tracer interface.
+ *
+ * @example
+ * ```ts
+ * import { getOtelApi, type OtelTracer } from 'weft';
+ *
+ * const api = getOtelApi();
+ * const tracer: OtelTracer = api.trace.getTracer('my-service', '1.0.0');
+ * const span = tracer.startSpan('task', { attributes: { 'task.id': '42' } });
+ * span.end();
+ * ```
+ */
 export type OtelTracer = {
   startSpan(name: string, options?: SpanOptions, context?: unknown): OtelSpan;
 };
@@ -69,14 +95,39 @@ type OtelUpDownCounter = {
   add(value: number, attributes?: SpanAttributes): void;
 };
 
-/** Minimal meter interface. */
+/**
+ * Minimal meter interface.
+ *
+ * @example
+ * ```ts
+ * import { getOtelApi, type OtelMeter } from 'weft';
+ *
+ * const api = getOtelApi();
+ * const meter: OtelMeter = api.metrics.getMeter('my-service');
+ * const counter = meter.createCounter('requests.total');
+ * counter.add(1, { route: '/api/start' });
+ * ```
+ */
 export type OtelMeter = {
   createHistogram(name: string, options?: InstrumentOptions): OtelHistogram;
   createCounter(name: string, options?: InstrumentOptions): OtelCounter;
   createUpDownCounter(name: string, options?: InstrumentOptions): OtelUpDownCounter;
 };
 
-/** The resolved OTel API surface Weft consumes. */
+/**
+ * The resolved OTel API surface Weft consumes.
+ *
+ * @example
+ * ```ts
+ * import { getOtelApi, type OtelApi } from 'weft';
+ *
+ * const api: OtelApi = getOtelApi();
+ * const tracer = api.trace.getTracer('my-app');
+ * const span = tracer.startSpan('boot');
+ * span.setStatus({ code: api.SpanStatusCode.OK });
+ * span.end();
+ * ```
+ */
 export type OtelApi = {
   trace: {
     getTracer(name: string, version?: string): OtelTracer;
@@ -236,6 +287,17 @@ export function resolveInstalledOtelApi(
  * This function is the single entry point for all OTel interactions in Weft.
  * When no SDK is configured the no-op implementations ensure zero overhead
  * because every method is an empty function the JIT can inline away.
+ *
+ * @example
+ * ```ts
+ * import { getOtelApi } from 'weft';
+ *
+ * // Works whether @opentelemetry/api is installed or not
+ * const api = getOtelApi();
+ * const tracer = api.trace.getTracer('my-app');
+ * const span = tracer.startSpan('startup');
+ * span.end();
+ * ```
  */
 export function getOtelApi(loader?: (moduleName: string) => unknown): OtelApi {
   if (cached) return cached;

@@ -61,7 +61,21 @@ export type { TraceContext } from './propagation';
 // Types
 // ---------------------------------------------------------------------------
 
-/** Union of all interception context types the attributeExtractor receives. */
+/**
+ * Union of all interception context types the attributeExtractor receives.
+ *
+ * @example
+ * ```ts
+ * import { createObservabilityInterceptors, type InterceptionContext } from 'weft';
+ *
+ * const { workflow, activity } = createObservabilityInterceptors({
+ *   attributeExtractor: (ctx: InterceptionContext) => {
+ *     if ('workflowId' in ctx) return { workflowId: ctx.workflowId };
+ *     return {};
+ *   },
+ * });
+ * ```
+ */
 export type InterceptionContext =
   | WorkflowStartInterception
   | ActivityInterception
@@ -164,6 +178,20 @@ function injectSpanContext(span: OtelSpan, headers: Map<string, string>): void {
  *
  * Uses `@opentelemetry/api` directly for span creation. When the package is
  * not installed, falls back to no-op implementations with zero overhead.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, createObservabilityInterceptors } from 'weft';
+ *
+ * const { workflow, activity, metrics } = createObservabilityInterceptors({
+ *   tracerName: 'my-app',
+ *   recordPayloads: false,
+ * });
+ * await using engine = new Engine({
+ *   storage: new MemoryStorage(),
+ *   interceptors: { workflow, activity },
+ * });
+ * ```
  */
 export function createObservabilityInterceptors(options?: ObservabilityOptions): {
   workflow: WorkflowInterceptor;

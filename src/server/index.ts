@@ -383,6 +383,17 @@ function serializeEvent(event: Event): string | null {
  * - `cleanupWorkflow`: drops the per-workflow sequence state for the given
  *   workflow id. Should be invoked when a workflow reaches a terminal state
  *   so the bookkeeping maps do not grow unbounded over the server's lifetime.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, wireEventBroadcasting, type EventBroadcastingHandle } from 'weft';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * const bunServer = Bun.serve({ fetch: () => new Response('ok') });
+ * const handle: EventBroadcastingHandle = wireEventBroadcasting(engine, bunServer);
+ * // Later, on shutdown:
+ * handle.dispose();
+ * ```
  */
 export interface EventBroadcastingHandle {
   dispose: () => void;
@@ -407,6 +418,17 @@ function getWorkflowIdFromEvent(event: Event): string | undefined {
  * Attach event listeners to the engine that broadcast events via WebSocket
  * and persist each event to storage so GET /v1/workflows/:id/events returns data.
  * Returns a handle exposing a cleanup function and a per-workflow eviction hook.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, wireEventBroadcasting } from 'weft';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * const bunServer = Bun.serve({ fetch: () => new Response('ok') });
+ * const handle = wireEventBroadcasting(engine, bunServer);
+ * // events are now broadcast to WebSocket subscribers
+ * handle.dispose(); // cleanup on shutdown
+ * ```
  */
 export function wireEventBroadcasting(
   engine: Engine,
@@ -661,7 +683,23 @@ export function wireEventBroadcasting(
 // Implementation
 // ---------------------------------------------------------------------------
 
-/** Start the Weft HTTP + WebSocket server with embedded dashboard. */
+/**
+ * Start the Weft HTTP + WebSocket server with embedded dashboard.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, serve } from 'weft';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * engine.register('greet', async function* (ctx, input: unknown) {
+ *   return `Hello, ${(input as { name: string }).name}!`;
+ * });
+ *
+ * const server = serve({ engine, port: 7233 });
+ * console.log(`Weft listening on ${server.url}`);
+ * await server.stop();
+ * ```
+ */
 export function serve(options: ServeOptions): WeftServer {
   const port = options.port ?? 7233;
   const hostname = options.hostname ?? '0.0.0.0';

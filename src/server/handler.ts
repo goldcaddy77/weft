@@ -415,6 +415,16 @@ function isOperationFaultLike(value: unknown): value is OperationFault {
  * scopes. Scope-protected REST ops still dispatch through
  * `authenticateRequest` in `authentication.ts`, which adds scopes via
  * `resolveApiKeyPrincipal` / `defaultApiKeyScopes` when configured.
+ *
+ * @example
+ * ```ts
+ * import { authContextToPrincipal } from 'weft';
+ *
+ * const principal = authContextToPrincipal({
+ *   method: 'api-key',
+ * });
+ * console.log(principal.method); // 'api-key'
+ * ```
  */
 export function authContextToPrincipal(
   authContext: AuthenticatedRequestContext | undefined,
@@ -478,7 +488,21 @@ function defaultRestBindings(): ReadonlyArray<UnknownRestBinding> {
   return _defaultRestBindings;
 }
 
-/** Pure HTTP request handler. Maps Request to Response. */
+/**
+ * Pure HTTP request handler. Maps Request to Response.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, handleRequest } from 'weft';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * engine.register('ping', async function* () { return 'pong'; });
+ *
+ * const request = new Request('http://localhost/v1/health');
+ * const response = await handleRequest(request, engine);
+ * console.log(response.status); // 200
+ * ```
+ */
 // oxlint-disable-next-line eslint(complexity) -- this request boundary intentionally owns binding-first dispatch, legacy fallback, and compatibility shims in one place.
 export async function handleRequest(
   request: Request,

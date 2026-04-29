@@ -12,6 +12,20 @@
 // Public interfaces
 // ---------------------------------------------------------------------------
 
+/**
+ * A single recorded call on a mock activity.
+ *
+ * @example
+ * ```ts
+ * import { TestEngine, type MockCall } from 'weft';
+ *
+ * const engine = new TestEngine();
+ * const mockHandle = engine.mock('sendEmail', async (input: unknown) => 'sent');
+ * await engine.start('notify', { to: 'user@example.com' });
+ * const call: MockCall<[unknown], string> = mockHandle.calls[0]!;
+ * console.log(call.args[0]); // { to: 'user@example.com' }
+ * ```
+ */
 export interface MockCall<TArgs extends unknown[], TResult> {
   readonly args: TArgs;
   readonly result: TResult | undefined;

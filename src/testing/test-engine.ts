@@ -23,7 +23,21 @@ import { TimeControl } from './time-control.ts';
 // runN types
 // ---------------------------------------------------------------------------
 
-/** Options for {@link TestEngine.runN}. */
+/**
+ * Options for {@link TestEngine.runN}.
+ *
+ * @example
+ * ```ts
+ * import { TestEngine, type RunNOptions } from 'weft';
+ *
+ * const options: RunNOptions = {
+ *   runs: 50,
+ *   chaos: { faultRate: 0.2, faults: ['transient'], seed: 7 },
+ * };
+ * const engine = new TestEngine();
+ * // const result = await engine.runN('my-workflow', {}, options);
+ * ```
+ */
 export interface RunNOptions {
   /** Number of independent runs to execute. */
   runs: number;
@@ -33,6 +47,17 @@ export interface RunNOptions {
 
 /**
  * Aggregate reliability metrics returned by {@link TestEngine.runN}.
+ *
+ * @example
+ * ```ts
+ * import { TestEngine, type RunNResult } from 'weft';
+ *
+ * const engine = new TestEngine();
+ * engine.register('ping', async function* () { return 'pong'; });
+ * const result: RunNResult = await engine.runN('ping', null, { runs: 10 });
+ * console.log(result.passRate);    // 1 (all passed)
+ * console.log(result.consistency); // 1 (all identical)
+ * ```
  */
 export interface RunNResult {
   /** Fraction of runs [0, 1] that completed successfully. */

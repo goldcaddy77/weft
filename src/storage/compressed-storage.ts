@@ -25,7 +25,21 @@ import {
   tryDecodeStorageKeyComponent,
 } from './interface.ts';
 
-/** Options for agent-aware compression in {@link CompressedStorage}. */
+/**
+ * Options for agent-aware compression in {@link CompressedStorage}.
+ *
+ * @example
+ * ```ts
+ * import { CompressedStorage, MemoryStorage, type AgentCompressionOptions } from 'weft';
+ *
+ * const agentOptions: AgentCompressionOptions = {
+ *   agentAlgorithm: 'brotli',
+ *   agentThreshold: 512,
+ * };
+ * await using inner = new MemoryStorage();
+ * const storage = new CompressedStorage(inner, agentOptions);
+ * ```
+ */
 export type AgentCompressionOptions = {
   /** Returns the set of workflow IDs that are agent-typed. */
   agentWorkflowIds?: () => ReadonlySet<string>;

@@ -14,7 +14,20 @@ export interface ConditionalBatchCondition {
   expectedValue: Uint8Array | null;
 }
 
-/** Options for range scans. */
+/**
+ * Options for range scans.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, type ScanOptions } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * const options: ScanOptions = { limit: 10, reverse: true };
+ * for await (const [key, value] of storage.scan('wf:', options)) {
+ *   console.log(key);
+ * }
+ * ```
+ */
 export interface ScanOptions {
   limit?: number;
   reverse?: boolean;
@@ -24,7 +37,20 @@ export interface ScanOptions {
   lte?: string;
 }
 
-/** KV-oriented storage interface. All storage adapters implement this. */
+/**
+ * KV-oriented storage interface. All storage adapters implement this.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, type Storage } from 'weft';
+ *
+ * await using storage: Storage = new MemoryStorage();
+ * const encoded = new TextEncoder().encode('hello');
+ * await storage.put('my-key', encoded);
+ * const value = await storage.get('my-key');
+ * console.log(new TextDecoder().decode(value!)); // 'hello'
+ * ```
+ */
 export interface Storage extends Disposable {
   get(key: string): Promise<Uint8Array | null>;
   put(key: string, value: Uint8Array): Promise<void>;
@@ -45,14 +71,35 @@ export interface Storage extends Disposable {
   query?<T>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 
-/** Resolve the exclusive upper bound for a lexicographic prefix scan. */
+/**
+ * Resolve the exclusive upper bound for a lexicographic prefix scan.
+ *
+ * @example
+ * ```ts
+ * import { resolvePrefixRangeEnd } from 'weft';
+ *
+ * const end = resolvePrefixRangeEnd('wf:');
+ * console.log(end); // 'wg:'
+ * // Use as an exclusive upper bound in range queries
+ * ```
+ */
 export function resolvePrefixRangeEnd(prefix: string): string {
   return prefix.length > 0
     ? prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
     : '\xff';
 }
 
-/** Apply gt/gte/lt/lte scan bounds to a single key. */
+/**
+ * Apply gt/gte/lt/lte scan bounds to a single key.
+ *
+ * @example
+ * ```ts
+ * import { matchesScanOptions } from 'weft';
+ *
+ * console.log(matchesScanOptions('wf:b', { gt: 'wf:a', lt: 'wf:c' })); // true
+ * console.log(matchesScanOptions('wf:a', { gt: 'wf:a' }));              // false
+ * ```
+ */
 export function matchesScanOptions(key: string, options: ScanOptions = {}): boolean {
   if (options.gt !== undefined && key <= options.gt) {
     return false;
@@ -73,7 +120,21 @@ export function matchesScanOptions(key: string, options: ScanOptions = {}): bool
   return true;
 }
 
-/** Compare two storage values for byte-for-byte equality. */
+/**
+ * Compare two storage values for byte-for-byte equality.
+ *
+ * @example
+ * ```ts
+ * import { storageValuesEqual } from 'weft';
+ *
+ * const a = new Uint8Array([1, 2, 3]);
+ * const b = new Uint8Array([1, 2, 3]);
+ * const c = new Uint8Array([1, 2, 4]);
+ * console.log(storageValuesEqual(a, b)); // true
+ * console.log(storageValuesEqual(a, c)); // false
+ * console.log(storageValuesEqual(a, null)); // false
+ * ```
+ */
 export function storageValuesEqual(left: Uint8Array | null, right: Uint8Array | null): boolean {
   if (left === null || right === null) {
     return left === right;
@@ -92,7 +153,19 @@ export function storageValuesEqual(left: Uint8Array | null, right: Uint8Array | 
   return true;
 }
 
-/** Check key existence using the adapter method when available or a core fallback otherwise. */
+/**
+ * Check key existence using the adapter method when available or a core fallback otherwise.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, storageHas } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await storage.put('my-key', new Uint8Array([1]));
+ * console.log(await storageHas(storage, 'my-key'));    // true
+ * console.log(await storageHas(storage, 'other-key')); // false
+ * ```
+ */
 export async function storageHas(storage: Storage, key: string): Promise<boolean> {
   if (storage.has) {
     return storage.has(key);
@@ -101,7 +174,20 @@ export async function storageHas(storage: Storage, key: string): Promise<boolean
   return (await storage.get(key)) !== null;
 }
 
-/** Iterate keys only, using the adapter shortcut when available or `scan()` as a fallback. */
+/**
+ * Iterate keys only, using the adapter shortcut when available or `scan()` as a fallback.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, storageKeys } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await storage.put('wf:abc', new Uint8Array([1]));
+ * for await (const key of storageKeys(storage, 'wf:')) {
+ *   console.log(key); // 'wf:abc'
+ * }
+ * ```
+ */
 export function storageKeys(
   storage: Storage,
   prefix: string,
@@ -118,7 +204,19 @@ export function storageKeys(
   })();
 }
 
-/** Count keys for a prefix using the adapter method when available or iteration otherwise. */
+/**
+ * Count keys for a prefix using the adapter method when available or iteration otherwise.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, storageCount } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await storage.put('wf:1', new Uint8Array([1]));
+ * await storage.put('wf:2', new Uint8Array([2]));
+ * console.log(await storageCount(storage, 'wf:')); // 2
+ * ```
+ */
 export async function storageCount(storage: Storage, prefix: string): Promise<number> {
   if (storage.count) {
     return storage.count(prefix);
@@ -131,7 +229,20 @@ export async function storageCount(storage: Storage, prefix: string): Promise<nu
   return count;
 }
 
-/** Delete a whole prefix using the adapter method when available or a batched fallback otherwise. */
+/**
+ * Delete a whole prefix using the adapter method when available or a batched fallback otherwise.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, storageDeletePrefix } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await storage.put('wf:a', new Uint8Array([1]));
+ * await storage.put('wf:b', new Uint8Array([2]));
+ * const deleted = await storageDeletePrefix(storage, 'wf:');
+ * console.log(deleted); // 2
+ * ```
+ */
 export async function storageDeletePrefix(storage: Storage, prefix: string): Promise<number> {
   if (storage.deletePrefix) {
     return storage.deletePrefix(prefix);
@@ -151,7 +262,24 @@ export async function storageDeletePrefix(storage: Storage, prefix: string): Pro
   return operations.length;
 }
 
-/** Run a conditional batch or throw when the backend does not support it. */
+/**
+ * Run a conditional batch or throw when the backend does not support it.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, storageConditionalBatch } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * const key = 'my-key';
+ * // Commit only if key is absent
+ * const applied = await storageConditionalBatch(
+ *   storage,
+ *   [{ key, expectedValue: null }],
+ *   [{ type: 'put', key, value: new Uint8Array([1]) }],
+ * );
+ * console.log(applied); // true
+ * ```
+ */
 export async function storageConditionalBatch(
   storage: Storage,
   conditions: ConditionalBatchCondition[],
@@ -166,12 +294,33 @@ export async function storageConditionalBatch(
   return storage.conditionalBatch(conditions, operations);
 }
 
-/** Encode an untrusted string so it is safe to embed in a colon-delimited storage key. */
+/**
+ * Encode an untrusted string so it is safe to embed in a colon-delimited storage key.
+ *
+ * @example
+ * ```ts
+ * import { encodeStorageKeyComponent } from 'weft';
+ *
+ * const safe = encodeStorageKeyComponent('user:123/profile');
+ * console.log(safe); // 'user%3A123%2Fprofile'
+ * ```
+ */
 export function encodeStorageKeyComponent(value: string): string {
   return encodeURIComponent(value);
 }
 
-/** Decode a storage-key component produced by {@link encodeStorageKeyComponent}. */
+/**
+ * Decode a storage-key component produced by {@link encodeStorageKeyComponent}.
+ *
+ * @example
+ * ```ts
+ * import { encodeStorageKeyComponent, decodeStorageKeyComponent } from 'weft';
+ *
+ * const encoded = encodeStorageKeyComponent('user:123');
+ * const decoded = decodeStorageKeyComponent(encoded);
+ * console.log(decoded); // 'user:123'
+ * ```
+ */
 export function decodeStorageKeyComponent(value: string): string {
   return decodeURIComponent(value);
 }
@@ -179,6 +328,14 @@ export function decodeStorageKeyComponent(value: string): string {
 /**
  * Decode a storage-key component produced by {@link encodeStorageKeyComponent}.
  * Returns `null` when the component is malformed instead of throwing.
+ *
+ * @example
+ * ```ts
+ * import { tryDecodeStorageKeyComponent } from 'weft';
+ *
+ * console.log(tryDecodeStorageKeyComponent('user%3A123')); // 'user:123'
+ * console.log(tryDecodeStorageKeyComponent('%GG'));        // null
+ * ```
  */
 export function tryDecodeStorageKeyComponent(value: string): string | null {
   try {
@@ -195,6 +352,17 @@ function formatSortableTimestamp(timestamp: number): string {
 /**
  * Key layout constants for hierarchical key encoding.
  * All timestamps are zero-padded to 16 digits for correct lexicographic ordering.
+ *
+ * @example
+ * ```ts
+ * import { KEYS, MemoryStorage } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * const workflowKey = KEYS.workflow('my-workflow-id');
+ * const checkpointKey = KEYS.checkpoint('my-workflow-id');
+ * console.log(workflowKey);    // 'wf:my-workflow-id'
+ * console.log(checkpointKey);  // 'wf:my-workflow-id:ckpt'
+ * ```
  */
 export const KEYS = {
   workflow: (id: string) => `wf:${encodeStorageKeyComponent(id)}`,

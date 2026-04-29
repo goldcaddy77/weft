@@ -562,6 +562,17 @@ function deepFreezeApiKeyPrincipal(principal: AuthenticatedPrincipal): Authentic
 /**
  * Validate an `AuthConfig` eagerly, throwing on invalid combinations.
  * Called synchronously in `serve()` so misconfigurations fail fast.
+ *
+ * @example
+ * ```ts
+ * import { validateAuthConfig } from 'weft';
+ *
+ * // Throws if config is invalid (e.g. missing secret for HS256)
+ * validateAuthConfig({
+ *   apiKeys: ['secret-key-1'],
+ * });
+ * console.log('Config is valid');
+ * ```
  */
 export function validateAuthConfig(config: AuthConfig): void {
   if (config.jwt) {
@@ -609,6 +620,20 @@ export function validateAuthConfig(config: AuthConfig): void {
  * 2. API key (O(1) set lookup)
  * 3. JWT (signature + claims verification)
  * 4. mTLS (transport-level — any request that reaches the handler is authenticated)
+ *
+ * @example
+ * ```ts
+ * import { createAuthenticator } from 'weft';
+ *
+ * const authenticate = await createAuthenticator({
+ *   apiKeys: ['my-secret-key'],
+ * });
+ * const request = new Request('http://localhost/v1/workflows', {
+ *   headers: { 'X-API-Key': 'my-secret-key' },
+ * });
+ * const result = await authenticate(request);
+ * console.log(result.authenticated); // true
+ * ```
  */
 export async function createAuthenticator(config: AuthConfig): Promise<Authenticator> {
   validateAuthConfig(config);
