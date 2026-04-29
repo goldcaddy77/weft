@@ -15,6 +15,24 @@ import { MCPTransportError } from './transport';
 // Options
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for {@link StdioTransport}. Accepts the `command` path to the MCP
+ * server binary, an optional `args` array forwarded to the child process, and
+ * an optional `timeout` in milliseconds for individual JSON-RPC calls.
+ *
+ * @example Point the transport at a locally installed MCP binary
+ * ```ts
+ * import { StdioTransport, type StdioTransportOptions } from 'weft/mcp/stdio';
+ *
+ * const options: StdioTransportOptions = {
+ *   command: '/usr/local/bin/my-mcp-server',
+ *   args: ['--port', '0'],
+ *   timeout: 10_000,
+ * };
+ *
+ * using transport = new StdioTransport(options);
+ * ```
+ */
 export type StdioTransportOptions = {
   command: string;
   args?: string[] | undefined;
@@ -27,6 +45,27 @@ const DEFAULT_TIMEOUT = 30_000;
 // Transport
 // ---------------------------------------------------------------------------
 
+/**
+ * {@link MCPTransport} that communicates with a local MCP server process over
+ * stdin/stdout using newline-delimited JSON-RPC 2.0. Spawns the child process
+ * lazily on the first `send()` call and kills it on `dispose()`. Use this for
+ * local tool servers such as database adapters or file-system helpers.
+ *
+ * @example Connect a local MCP server binary to the agent loop
+ * ```ts
+ * import { StdioTransport } from 'weft/mcp/stdio';
+ * import { MCPClient } from 'weft';
+ *
+ * using transport = new StdioTransport({ command: '/usr/local/bin/my-mcp-server' });
+ * using client = new MCPClient({ transport });
+ *
+ * const healthy = await client.healthCheck();
+ * if (healthy) {
+ *   const tools = await client.discoverTools();
+ *   console.log('Local tools:', tools.map((t) => t.name));
+ * }
+ * ```
+ */
 export class StdioTransport implements MCPTransport {
   #command: string;
   #args: string[];

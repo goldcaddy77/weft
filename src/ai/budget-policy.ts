@@ -15,6 +15,30 @@ import { KEYS } from '../storage/interface.ts';
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for registering an organization-level budget policy on a
+ * {@link BudgetPolicyEnforcer}. Specifies the namespace plus optional daily
+ * and monthly cost caps enforced before each agent call.
+ *
+ * @example Set daily and monthly caps for an organization namespace
+ * ```ts
+ * import type { BudgetPolicyOptions } from 'weft';
+ * import { BudgetPolicyEnforcer } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const enforcer = new BudgetPolicyEnforcer(storage);
+ *
+ * const policy: BudgetPolicyOptions = {
+ *   namespace: 'acme',
+ *   daily: { maxCost: 10.0 },
+ *   monthly: { maxCost: 200.0 },
+ * };
+ *
+ * enforcer.setPolicy(policy);
+ * await enforcer.checkBudget('acme'); // throws if over limit
+ * ```
+ */
 export interface BudgetPolicyOptions {
   namespace: string;
   daily?: { maxCost: number };
@@ -32,6 +56,29 @@ interface BudgetPolicyCounter {
 // Error
 // ---------------------------------------------------------------------------
 
+/**
+ * Thrown by {@link BudgetPolicyEnforcer.checkBudget} when a namespace's daily
+ * or monthly cost limit has been exceeded. Carries the `namespace`, `period`
+ * ('daily' | 'monthly'), actual `costUsed`, and configured `limit` as properties.
+ *
+ * @example Catch a monthly limit violation
+ * ```ts
+ * import { OrganizationBudgetExceededError, BudgetPolicyEnforcer } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const enforcer = new BudgetPolicyEnforcer(storage);
+ * enforcer.setPolicy({ namespace: 'acme', monthly: { maxCost: 100.0 } });
+ *
+ * try {
+ *   await enforcer.checkBudget('acme');
+ * } catch (error) {
+ *   if (error instanceof OrganizationBudgetExceededError) {
+ *     console.error(`${error.period} budget exceeded: ${error.costUsed.toFixed(2)} / ${error.limit}`);
+ *   }
+ * }
+ * ```
+ */
 export class OrganizationBudgetExceededError extends Error {
   readonly namespace: string;
   readonly period: 'daily' | 'monthly';

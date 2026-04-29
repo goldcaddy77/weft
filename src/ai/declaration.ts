@@ -8,6 +8,31 @@ import type { ToolDefinition } from './providers/types.ts';
 /** @internal Brand string for runtime identification of AgentDefinition objects. */
 const AGENT_DEFINITION_BRAND = '__weft_agent_definition__' as const;
 
+/**
+ * The runtime shape of an agent definition returned by {@link defineAgent}.
+ * Carries the model name, optional tools, budget policy, context strategy,
+ * lifecycle hooks, and per-tenant callbacks. Register it on an {@link Engine}
+ * directly or invoke it from inside a workflow via `ctx.agent()`.
+ *
+ * @example Create and register an agent definition
+ * ```ts
+ * import { Engine, defineAgent, type AgentDefinition } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const assistant = defineAgent({
+ *   name: 'summarizer',
+ *   model: 'claude-sonnet-4-5',
+ *   systemPrompt: 'Summarize the given text concisely.',
+ *   maxTurns: 3,
+ * });
+ *
+ * // assistant satisfies AgentDefinition
+ * const engine = new Engine();
+ * engine.register(assistant, { provider });
+ * ```
+ */
 export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   /** @internal Runtime brand for identification via isAgentDefinition(). */
   readonly _brand: string;
@@ -60,6 +85,38 @@ export interface ToolIdentityResult {
   intentCriticalFields: string[];
 }
 
+/**
+ * A tool declaration for use inside an {@link AgentDefinition}. Extends the
+ * base {@link ToolDefinition} schema with an async `execute` function, an
+ * optional post-execution `verify` callback, semantic versioning, and an
+ * optional `identity` function for effect-log deduplication across checkpoint
+ * restores.
+ *
+ * @example Define a tool with semantic identity for deduplication
+ * ```ts
+ * import { computeSemanticHash, type AgentToolDefinition } from 'weft';
+ *
+ * const sendEmailTool: AgentToolDefinition = {
+ *   definition: {
+ *     name: 'send_email',
+ *     description: 'Sends an email to a recipient.',
+ *     inputSchema: {
+ *       type: 'object',
+ *       required: ['to', 'subject'],
+ *       properties: { to: { type: 'string' }, subject: { type: 'string' } },
+ *     },
+ *   },
+ *   execute: async (input: unknown) => {
+ *     const { to, subject } = input as { to: string; subject: string };
+ *     return { sent: true, to, subject };
+ *   },
+ *   identity: (input) => {
+ *     const { to, subject } = input as { to: string; subject: string };
+ *     return { semanticHash: computeSemanticHash({ to, subject }), intentCriticalFields: ['to', 'subject'] };
+ *   },
+ * };
+ * ```
+ */
 export interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;

@@ -78,6 +78,25 @@ export type EscalationAction =
 // Errors
 // ---------------------------------------------------------------------------
 
+/**
+ * Thrown when a human review request exceeds its configured `timeout`
+ * milliseconds without receiving a decision. Carries the `reviewId` and the
+ * elapsed time so callers can decide whether to escalate or auto-approve.
+ *
+ * @example Catch a review timeout and escalate
+ * ```ts
+ * import { ReviewTimeoutError } from 'weft';
+ *
+ * try {
+ *   // Await a review decision (may timeout)
+ *   await coordinator.getReview(workflowId, reviewId);
+ * } catch (error) {
+ *   if (error instanceof ReviewTimeoutError) {
+ *     console.warn(`Review ${error.reviewId} timed out after ${error.elapsed}ms — escalating.`);
+ *   }
+ * }
+ * ```
+ */
 export class ReviewTimeoutError extends Error {
   readonly reviewId: string;
   readonly elapsed: number;
@@ -94,6 +113,25 @@ export class ReviewTimeoutError extends Error {
 // Coordinator
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for constructing a {@link ReviewCoordinator}. Accepts an optional
+ * `EventTarget` to dispatch {@link HumanReviewRequestedEvent} on review
+ * creation, and a custom `getNow` clock function for deterministic testing.
+ *
+ * @example Attach an event target and a fixed clock for tests
+ * ```ts
+ * import { ReviewCoordinator, type ReviewCoordinatorOptions } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const options: ReviewCoordinatorOptions = {
+ *   eventTarget: new EventTarget(),
+ *   getNow: () => 1_700_000_000_000,
+ * };
+ *
+ * const coordinator = new ReviewCoordinator(storage, options);
+ * ```
+ */
 export interface ReviewCoordinatorOptions {
   /** When provided, the coordinator dispatches human review events. */
   eventTarget?: EventTarget;
@@ -101,6 +139,33 @@ export interface ReviewCoordinatorOptions {
   getNow?: () => number;
 }
 
+/**
+ * Persists human review requests to storage, dispatches
+ * {@link HumanReviewRequestedEvent} on creation, accepts reviewer decisions,
+ * and checks escalation timeouts. Used by `ctx.humanReview()` inside workflow
+ * generators to pause execution pending a human decision.
+ *
+ * @example Create a review and later submit a decision
+ * ```ts
+ * import { ReviewCoordinator } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const coordinator = new ReviewCoordinator(storage);
+ *
+ * const review = await coordinator.createReview('wf-123', {
+ *   artifact: { text: 'Draft email body…' },
+ *   reviewType: 'content',
+ *   reviewers: ['alice@example.com'],
+ * });
+ *
+ * const decision = await coordinator.submitDecision(review.reviewId, {
+ *   decision: 'approved',
+ *   reviewer: 'alice@example.com',
+ * });
+ * console.log(decision.decision); // 'approved'
+ * ```
+ */
 export class ReviewCoordinator {
   #storage: Storage;
   #getNow: () => number;

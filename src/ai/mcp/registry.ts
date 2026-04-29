@@ -1,6 +1,26 @@
 import type { ToolIdentityResult } from '../declaration';
 import type { ToolDefinition } from '../providers/types';
 
+/**
+ * The runtime shape of a tool stored inside a {@link ToolRegistry}. Combines
+ * the {@link ToolDefinition} schema with the resolved `execute` function,
+ * optional `verify` and semantic `identity` callbacks, and origin metadata
+ * (`source` and `serverUrl`) so the agent loop knows where each tool came from.
+ *
+ * @example Inspect registry entries after tool initialization
+ * ```ts
+ * import { ToolRegistry, type RegistryTool } from 'weft';
+ *
+ * const registry = new ToolRegistry();
+ * registry.registerLocal(
+ *   { name: 'echo', description: 'Echo input back.', inputSchema: { type: 'object' } },
+ *   async (input: unknown) => input,
+ * );
+ *
+ * const tools: RegistryTool[] = registry.getAll();
+ * console.log(tools[0]?.definition.name, tools[0]?.source); // 'echo', 'local'
+ * ```
+ */
 export interface RegistryTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -57,6 +77,29 @@ class RegistryToolEntry implements RegistryTool {
   }
 }
 
+/**
+ * Internal registry that stores local and MCP tools by name, resolves them for
+ * the agent loop via {@link ToolRegistry.get}, and validates for name conflicts
+ * via {@link ToolRegistry.validate} before the loop starts. Normally constructed
+ * by `initializeTools` inside `executeAgentLoop` — use it directly only when
+ * building custom agent plumbing.
+ *
+ * @example Build a registry manually for testing agent plumbing
+ * ```ts
+ * import { ToolRegistry } from 'weft';
+ *
+ * const registry = new ToolRegistry();
+ *
+ * registry.registerLocal(
+ *   { name: 'ping', description: 'Returns pong.', inputSchema: { type: 'object' } },
+ *   async (_input: unknown) => 'pong',
+ * );
+ *
+ * registry.validate(); // throws ToolNameConflictError if duplicates exist
+ * const tool = registry.get('ping');
+ * console.log(await tool?.execute({})); // 'pong'
+ * ```
+ */
 export class ToolRegistry {
   #tools: Map<string, RegistryTool[]>;
 
@@ -169,6 +212,35 @@ export class ToolRegistry {
   }
 }
 
+/**
+ * Thrown by {@link ToolRegistry.validate} when the same tool name is registered
+ * from more than one source — for example, a local tool and an MCP tool with
+ * the same name. Carries the conflicting `toolName` and the list of `sources`.
+ *
+ * @example Detect and report tool name conflicts early
+ * ```ts
+ * import { ToolRegistry, ToolNameConflictError } from 'weft';
+ *
+ * const registry = new ToolRegistry();
+ * registry.registerLocal(
+ *   { name: 'search', description: 'Local search.', inputSchema: { type: 'object' } },
+ *   async () => [],
+ * );
+ * registry.registerMCP(
+ *   [{ name: 'search', description: 'MCP search.', inputSchema: { type: 'object' } }],
+ *   'https://tools.example.com/mcp',
+ *   async () => [],
+ * );
+ *
+ * try {
+ *   registry.validate();
+ * } catch (error) {
+ *   if (error instanceof ToolNameConflictError) {
+ *     console.error(`Conflict on '${error.toolName}': ${error.sources.join(', ')}`);
+ *   }
+ * }
+ * ```
+ */
 export class ToolNameConflictError extends Error {
   readonly toolName: string;
   readonly sources: string[];

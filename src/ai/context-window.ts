@@ -55,6 +55,29 @@ export interface ContextWindowCheckpoint {
 
 type ResolvedContextWindowOptions = Required<ContextWindowOptions>;
 
+/**
+ * Manages context window compaction for long-running agent conversations.
+ * Monitors token count against a configured limit, invokes the active
+ * {@link ContextStrategy} when the window fills, and checkpoints compacted
+ * state via {@link ContextWindowManager.checkpoint} for crash recovery.
+ *
+ * @example Use a sliding-window strategy and check compaction threshold
+ * ```ts
+ * import { ContextWindowManager, slidingWindowStrategy } from 'weft';
+ *
+ * const manager = new ContextWindowManager({
+ *   maxTokens: 100_000,
+ *   reservedForOutput: 8_192,
+ *   compactAt: 0.85,
+ *   strategy: slidingWindowStrategy({ preserveRecentCount: 30 }),
+ * });
+ *
+ * // Check whether the current token count warrants compaction
+ * const needsCompaction = manager.shouldCompact(90_000);
+ * console.log('Input budget:', manager.inputBudget);
+ * console.log('Needs compaction:', needsCompaction);
+ * ```
+ */
 export class ContextWindowManager {
   #options: ResolvedContextWindowOptions;
   #compactedMessages: Message[] | null = null;

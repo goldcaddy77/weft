@@ -18,6 +18,28 @@ interface ResolvedAnthropicProviderOptions {
   apiVersion: string;
 }
 
+/**
+ * {@link LLMProvider} implementation for the Anthropic Messages API. Converts
+ * weft's normalized {@link Message} format to Anthropic's content-block format,
+ * handles `tool_use` blocks, extracts reasoning traces from `thinking` blocks
+ * (extended thinking models), and implements streaming via Server-Sent Events.
+ *
+ * @example Create an Anthropic provider and pass it to an agent
+ * ```ts
+ * import { AnthropicProvider, executeAgentLoop } from 'weft';
+ *
+ * const provider = new AnthropicProvider({
+ *   apiKey: process.env['ANTHROPIC_API_KEY'] ?? '',
+ *   defaultModel: 'claude-sonnet-4-5',
+ * });
+ *
+ * const result = await executeAgentLoop(
+ *   { model: 'claude-sonnet-4-5', provider, maxTurns: 3 },
+ *   'What is 2 + 2?',
+ * );
+ * console.log(result.content);
+ * ```
+ */
 export class AnthropicProvider implements LLMProvider {
   readonly name = 'anthropic';
   #options: ResolvedAnthropicProviderOptions;

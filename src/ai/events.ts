@@ -1,5 +1,22 @@
 import type { Message } from './providers/types.ts';
 
+/**
+ * Fired at the beginning of each LLM turn within an agent loop, before the
+ * provider call is made. Use this to observe turn sequencing, log model
+ * selection, or track conversation growth over time.
+ *
+ * @example Log every turn start
+ * ```ts
+ * import { AgentTurnStartedEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentTurnStartedEvent.type, (e) => {
+ *   const event = e as AgentTurnStartedEvent;
+ *   console.log(`Turn ${event.turnIndex} started — model: ${event.model}, messages: ${event.conversationLength}`);
+ * });
+ * ```
+ */
 export class AgentTurnStartedEvent extends Event {
   static readonly type = 'agent:turn:started' as const;
   readonly workflowId: string;
@@ -27,6 +44,25 @@ export class AgentTurnStartedEvent extends Event {
   }
 }
 
+/**
+ * Fired after each LLM turn completes, carrying token usage, cost, duration,
+ * tool call count, and a snapshot of the conversation. Use this for real-time
+ * cost monitoring, audit logging, and per-turn performance dashboards.
+ *
+ * @example Track cumulative cost across turns
+ * ```ts
+ * import { AgentTurnCompletedEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentTurnCompletedEvent.type, (e) => {
+ *   const event = e as AgentTurnCompletedEvent;
+ *   console.log(
+ *     `Turn ${event.turnIndex}: ${event.cost.toFixed(4)} (cumulative: ${event.cumulativeCost.toFixed(4)})`,
+ *   );
+ * });
+ * ```
+ */
 export class AgentTurnCompletedEvent extends Event {
   static readonly type = 'agent:turn:completed' as const;
   readonly workflowId: string;
@@ -84,6 +120,23 @@ export class AgentTurnCompletedEvent extends Event {
   }
 }
 
+/**
+ * Fired immediately before a tool is executed within an agent turn. Carries the
+ * tool name, raw input, source ('local' | 'mcp'), and a per-operation UUID that
+ * correlates with the matching {@link AgentToolReturnedEvent}.
+ *
+ * @example Audit all tool calls with their inputs
+ * ```ts
+ * import { AgentToolCalledEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentToolCalledEvent.type, (e) => {
+ *   const event = e as AgentToolCalledEvent;
+ *   console.log(`Tool called: ${event.toolName} (source: ${event.source})`, event.toolInput);
+ * });
+ * ```
+ */
 export class AgentToolCalledEvent extends Event {
   static readonly type = 'agent:tool:called' as const;
   readonly workflowId: string;
@@ -114,6 +167,24 @@ export class AgentToolCalledEvent extends Event {
   }
 }
 
+/**
+ * Fired after a tool finishes execution, carrying the tool name, wall-clock
+ * duration, success flag, and the operation ID that matches the preceding
+ * {@link AgentToolCalledEvent}. Use this to measure tool latency and track failures.
+ *
+ * @example Monitor tool execution duration and failures
+ * ```ts
+ * import { AgentToolReturnedEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentToolReturnedEvent.type, (e) => {
+ *   const event = e as AgentToolReturnedEvent;
+ *   const status = event.success ? 'ok' : 'error';
+ *   console.log(`Tool ${event.toolName} [${status}] ${event.duration}ms`);
+ * });
+ * ```
+ */
 export class AgentToolReturnedEvent extends Event {
   static readonly type = 'agent:tool:returned' as const;
   readonly workflowId: string;
@@ -144,6 +215,25 @@ export class AgentToolReturnedEvent extends Event {
   }
 }
 
+/**
+ * Fired when an agent's token or cost usage crosses the configured warning
+ * threshold (default 80%). Carries the percentage used, remaining tokens and
+ * cost, and the threshold value. Only fires once per agent run.
+ *
+ * @example Warn users when the agent is close to its budget
+ * ```ts
+ * import { AgentBudgetWarningEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentBudgetWarningEvent.type, (e) => {
+ *   const event = e as AgentBudgetWarningEvent;
+ *   console.warn(
+ *     `Budget ${event.budgetUsedPercent.toFixed(0)}% used — ${event.costRemaining.toFixed(4)} remaining`,
+ *   );
+ * });
+ * ```
+ */
 export class AgentBudgetWarningEvent extends Event {
   static readonly type = 'agent:budget:warning' as const;
   readonly workflowId: string;
@@ -171,6 +261,25 @@ export class AgentBudgetWarningEvent extends Event {
   }
 }
 
+/**
+ * Fired when an agent's token or cost usage exceeds the configured maximum,
+ * causing the loop to stop. Carries the final usage totals and the configured
+ * limits so downstream consumers can report the breach accurately.
+ *
+ * @example Stop a workflow and surface budget details on breach
+ * ```ts
+ * import { AgentBudgetExceededEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentBudgetExceededEvent.type, (e) => {
+ *   const event = e as AgentBudgetExceededEvent;
+ *   console.error(
+ *     `Budget exceeded: ${event.tokensUsed} tokens, ${event.costUsed.toFixed(4)} spent`,
+ *   );
+ * });
+ * ```
+ */
 export class AgentBudgetExceededEvent extends Event {
   static readonly type = 'agent:budget:exceeded' as const;
   readonly workflowId: string;
@@ -198,6 +307,25 @@ export class AgentBudgetExceededEvent extends Event {
   }
 }
 
+/**
+ * Fired when a {@link ContextWindowManager} compacts the conversation to fit
+ * within the token limit. Carries the strategy name, token counts before and
+ * after, and the number of messages dropped.
+ *
+ * @example Log compaction stats for observability
+ * ```ts
+ * import { AgentContextCompactedEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentContextCompactedEvent.type, (e) => {
+ *   const event = e as AgentContextCompactedEvent;
+ *   console.log(
+ *     `Context compacted via '${event.strategy}': ${event.tokensBefore} → ${event.tokensAfter} tokens`,
+ *   );
+ * });
+ * ```
+ */
 export class AgentContextCompactedEvent extends Event {
   static readonly type = 'agent:context:compacted' as const;
   readonly workflowId: string;
@@ -225,6 +353,23 @@ export class AgentContextCompactedEvent extends Event {
   }
 }
 
+/**
+ * Fired when the agent loop falls back from one model to another after a
+ * provider error. Carries the failed model, failure reason, next model to try,
+ * and the fallback attempt index for multi-step fallback chains.
+ *
+ * @example Alert when model fallbacks occur
+ * ```ts
+ * import { AgentModelFallbackEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentModelFallbackEvent.type, (e) => {
+ *   const event = e as AgentModelFallbackEvent;
+ *   console.warn(`Model fallback: ${event.failedModel} → ${event.nextModel} — ${event.failedReason}`);
+ * });
+ * ```
+ */
 export class AgentModelFallbackEvent extends Event {
   static readonly type = 'agent:model:fallback' as const;
   readonly workflowId: string;
@@ -255,6 +400,25 @@ export class AgentModelFallbackEvent extends Event {
   }
 }
 
+/**
+ * Fired by {@link ProviderHealthTracker} when a provider's circuit breaker
+ * trips to the open state after the error rate exceeds the configured threshold.
+ * Carries the provider name, current error rate, threshold, and window duration.
+ *
+ * @example Alert when a provider circuit opens
+ * ```ts
+ * import { AgentProviderCircuitOpenEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(AgentProviderCircuitOpenEvent.type, (e) => {
+ *   const event = e as AgentProviderCircuitOpenEvent;
+ *   console.error(
+ *     `Circuit open for '${event.provider}': error rate ${(event.errorRate * 100).toFixed(0)}%`,
+ *   );
+ * });
+ * ```
+ */
 export class AgentProviderCircuitOpenEvent extends Event {
   static readonly type = 'agent:provider:circuit-open' as const;
   readonly provider: string;
@@ -271,6 +435,25 @@ export class AgentProviderCircuitOpenEvent extends Event {
   }
 }
 
+/**
+ * Fired by {@link ReviewCoordinator} when a new human review request is
+ * persisted. Carries the `workflowId`, `reviewId`, `reviewType`, and the list
+ * of requested `reviewers`. Subscribe to this event to notify reviewers via
+ * email, webhook, or ticketing system.
+ *
+ * @example Route review notifications to a webhook
+ * ```ts
+ * import { HumanReviewRequestedEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(HumanReviewRequestedEvent.type, (e) => {
+ *   const event = e as HumanReviewRequestedEvent;
+ *   console.log(`Review ${event.reviewId} requested for workflow ${event.workflowId}`);
+ *   console.log('Reviewers:', event.reviewers);
+ * });
+ * ```
+ */
 export class HumanReviewRequestedEvent extends Event {
   static readonly type = 'human-review:requested' as const;
   readonly workflowId: string;
@@ -287,6 +470,24 @@ export class HumanReviewRequestedEvent extends Event {
   }
 }
 
+/**
+ * Fired by {@link ReviewCoordinator} when a reviewer submits a decision.
+ * Carries the `reviewId`, `decision` string, `reviewer` identifier, and the
+ * time elapsed since the review was created. Use this to close tickets, record
+ * audit logs, or trigger downstream workflow steps.
+ *
+ * @example Record review decisions in an audit log
+ * ```ts
+ * import { HumanReviewCompletedEvent } from 'weft';
+ *
+ * const target = new EventTarget();
+ *
+ * target.addEventListener(HumanReviewCompletedEvent.type, (e) => {
+ *   const event = e as HumanReviewCompletedEvent;
+ *   console.log(`Review ${event.reviewId}: '${event.decision}' by ${event.reviewer} in ${event.duration}ms`);
+ * });
+ * ```
+ */
 export class HumanReviewCompletedEvent extends Event {
   static readonly type = 'human-review:completed' as const;
   readonly workflowId: string;

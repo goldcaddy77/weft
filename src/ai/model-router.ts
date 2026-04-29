@@ -35,12 +35,47 @@ export interface RoutingContext {
   metadata?: Record<string, unknown> | undefined;
 }
 
+/**
+ * Return value from {@link ModelRouter.select}. Carries the chosen `model`
+ * identifier, an optional ordered `fallback` list tried on provider errors,
+ * and an optional human-readable `reason` for audit logs and observability.
+ *
+ * @example Provide a fallback chain with an audit reason
+ * ```ts
+ * import { customRouter, type ModelSelection } from 'weft';
+ *
+ * const router = customRouter((ctx): ModelSelection => ({
+ *   model: 'claude-sonnet-4-5',
+ *   fallback: ['claude-haiku-3-5'],
+ *   reason: ctx.turnIndex === 0 ? 'first-turn-premium' : 'standard',
+ * }));
+ * ```
+ */
 export interface ModelSelection {
   model: string;
   fallback?: string[] | undefined;
   reason?: string | undefined;
 }
 
+/**
+ * Interface for per-turn LLM model selection within the agent loop. The loop
+ * calls `select(context)` once before each turn to choose the model and optional
+ * fallback list. Implement this interface for custom routing logic, or use the
+ * built-in factories: {@link staticFallbackRouter}, {@link costTierRouter},
+ * {@link abTestRouter}, or {@link customRouter}.
+ *
+ * @example Implement a custom router that uses a large model on the last turn
+ * ```ts
+ * import type { ModelRouter, ModelSelection, RoutingContext } from 'weft';
+ *
+ * const finalTurnRouter: ModelRouter = {
+ *   select(ctx: RoutingContext): ModelSelection {
+ *     const isLastTurn = ctx.turnIndex >= 4;
+ *     return { model: isLastTurn ? 'claude-3-opus-20240229' : 'claude-haiku-3-5' };
+ *   },
+ * };
+ * ```
+ */
 export interface ModelRouter {
   select(context: RoutingContext): ModelSelection;
 }
