@@ -1,6 +1,6 @@
 # Agent Observability
 
-A traditional workflow dashboard shows "step 1 completed, step 2 running, step 3 pending." That's not enough for agents. You need to see the reasoning trace, token usage per turn, tool call results in context, cumulative cost, and real-time streaming output. Weft's agent subsystem emits 11 event types that give you all of this through the standard `EventTarget` system.
+A traditional workflow dashboard shows "step 1 completed, step 2 running, step 3 pending." That's not enough for agents. You need to see the reasoning trace, token usage per turn, tool call results in context, cumulative cost, and real-time streaming output. Weft's agent subsystem emits 13 event types that give you all of this through the standard `EventTarget` system.
 
 ## The event taxonomy
 
@@ -27,21 +27,22 @@ Fires before each LLM call.
 
 Fires after each LLM response and any tool calls in that turn.
 
-| Field              | Type                  | Description                                    |
-| ------------------ | --------------------- | ---------------------------------------------- |
-| `workflowId`       | `string`              | The workflow this agent belongs to             |
-| `agentId`          | `string`              | The agent's identifier                         |
-| `turnIndex`        | `number`              | Zero-based turn counter                        |
-| `model`            | `string`              | The default model                              |
-| `selectedModel`    | `string`              | The model actually used (may differ if routed) |
-| `inputTokens`      | `number`              | Input tokens consumed this turn                |
-| `outputTokens`     | `number`              | Output tokens generated this turn              |
-| `cost`             | `number`              | Cost for this turn in USD                      |
-| `cumulativeCost`   | `number`              | Total cost across all turns so far             |
-| `duration`         | `number`              | Wall-clock time in milliseconds                |
-| `toolCallCount`    | `number`              | Number of tool calls made this turn            |
-| `fallbackAttempts` | `number`              | How many fallback models were tried            |
-| `reasoningTrace`   | `string \| undefined` | Extended thinking content, if available        |
+| Field              | Type                  | Description                                                                                                                                        |
+| ------------------ | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflowId`       | `string`              | The workflow this agent belongs to                                                                                                                 |
+| `agentId`          | `string`              | The agent's identifier                                                                                                                             |
+| `turnIndex`        | `number`              | Zero-based turn counter                                                                                                                            |
+| `model`            | `string`              | The default model                                                                                                                                  |
+| `selectedModel`    | `string`              | The model actually used (may differ if routed)                                                                                                     |
+| `inputTokens`      | `number`              | Input tokens consumed this turn                                                                                                                    |
+| `outputTokens`     | `number`              | Output tokens generated this turn                                                                                                                  |
+| `cost`             | `number`              | Cost for this turn in USD                                                                                                                          |
+| `cumulativeCost`   | `number`              | Total cost across all turns so far                                                                                                                 |
+| `duration`         | `number`              | Wall-clock time in milliseconds                                                                                                                    |
+| `toolCallCount`    | `number`              | Number of tool calls made this turn                                                                                                                |
+| `fallbackAttempts` | `number`              | How many fallback models were tried                                                                                                                |
+| `reasoningTrace`   | `string \| undefined` | Extended thinking content, if available                                                                                                            |
+| `messages`         | `readonly Message[]`  | Size-bounded snapshot of the conversation at turn completion (truncated per `MAX_MESSAGE_CHARS`, `MAX_TOOL_RESULT_CHARS`, `MAX_SNAPSHOT_MESSAGES`) |
 
 This is the richest event in the system. Use it to build cost waterfalls, latency charts, and per-turn breakdowns.
 
@@ -182,18 +183,45 @@ Fires when a reviewer submits their decision.
 | `reviewer`   | `string` | Who submitted the decision                    |
 | `duration`   | `number` | Time from request to decision in milliseconds |
 
+### AgentCheckpointSizeWarningEvent
+
+**Type string:** `agent:checkpoint-size-warning`
+
+Fires when a checkpoint serializes to an unexpectedly large byte size.
+
+| Field        | Type     | Description                           |
+| ------------ | -------- | ------------------------------------- |
+| `workflowId` | `string` | The workflow this agent belongs to    |
+| `agentId`    | `string` | The agent's identifier                |
+| `sizeBytes`  | `number` | Serialized checkpoint size in bytes   |
+| `turnIndex`  | `number` | The turn index when the warning fired |
+
+### AgentCheckpointResumedEvent
+
+**Type string:** `agent:checkpoint:resumed`
+
+Fires after an agent loop completes when the effect log replayed at least one committed tool-call result. This occurs during checkpoint restores (the agent re-synthesizes a previously dispatched tool call and the effect log short-circuits it) and when the model emits the same tool call twice within a single run.
+
+| Field                 | Type     | Description                                       |
+| --------------------- | -------- | ------------------------------------------------- |
+| `workflowId`          | `string` | The workflow this agent belongs to                |
+| `agentId`             | `string` | The agent's identifier                            |
+| `duplicatesPrevented` | `number` | Number of tool calls replayed from the effect log |
+
 ## Listening to events
 
 All agent events flow through the standard `EventTarget` API. Listen on the engine for global events, or on a specific workflow handle for scoped events:
 
 ```typescript
 // Global: all agent budget warnings across all workflows
-engine.addEventListener(AgentBudgetWarningEvent.type, (event) => {
+engine.addEventListener(AgentBudgetWarningEvent.type, (e) => {
+  const event = e as AgentBudgetWarningEvent;
   console.warn(`Budget warning: workflow ${event.workflowId} at ${event.budgetUsedPercent}%`);
 });
 
 // Scoped: only events from a specific workflow
-handle.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+handle.addEventListener(AgentTurnCompletedEvent.type, (e) => {
+  const event = e as AgentTurnCompletedEvent;
   console.log(
     `Turn ${event.turnIndex}: ${event.inputTokens}in + ${event.outputTokens}out`,
     `= $${event.cost.toFixed(4)} (${event.toolCallCount} tool calls, ${event.duration}ms)`,
@@ -201,12 +229,15 @@ handle.addEventListener(AgentTurnCompletedEvent.type, (event) => {
 });
 ```
 
+The engine's `addEventListener` is typed via `WeftAgentEventMap`, which provides the correct event type for each event string—your IDE will autocomplete fields and catch typos. Inside the callback body, cast `e as AgentBudgetWarningEvent` (or the appropriate type) to access event-specific fields.
+
 ## Practical patterns
 
 **Cost waterfall logging.** Track per-turn costs to identify expensive turns:
 
 ```typescript
-engine.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+engine.addEventListener(AgentTurnCompletedEvent.type, (e) => {
+  const event = e as AgentTurnCompletedEvent;
   const entry = {
     workflow: event.workflowId,
     turn: event.turnIndex,
@@ -226,11 +257,13 @@ engine.addEventListener(AgentTurnCompletedEvent.type, (event) => {
 ```typescript
 const pending = new Map<string, number>();
 
-engine.addEventListener(AgentToolCalledEvent.type, (event) => {
+engine.addEventListener(AgentToolCalledEvent.type, (e) => {
+  const event = e as AgentToolCalledEvent;
   pending.set(event.operationId, Date.now());
 });
 
-engine.addEventListener(AgentToolReturnedEvent.type, (event) => {
+engine.addEventListener(AgentToolReturnedEvent.type, (e) => {
+  const event = e as AgentToolReturnedEvent;
   const started = pending.get(event.operationId);
   if (started) {
     metrics.recordToolLatency(event.toolName, event.duration, event.success);
@@ -242,7 +275,8 @@ engine.addEventListener(AgentToolReturnedEvent.type, (event) => {
 **Budget alerting.** Send alerts when budgets are running low:
 
 ```typescript
-engine.addEventListener(AgentBudgetWarningEvent.type, (event) => {
+engine.addEventListener(AgentBudgetWarningEvent.type, (e) => {
+  const event = e as AgentBudgetWarningEvent;
   alerting.send({
     severity: 'warning',
     message: `Workflow ${event.workflowId} budget at ${event.budgetUsedPercent}%`,
@@ -258,15 +292,17 @@ Agent events live alongside the core workflow events (`WorkflowStartedEvent`, `A
 ```typescript
 import { WorkflowCompletedEvent, AgentTurnCompletedEvent } from 'weft';
 
-engine.addEventListener(WorkflowCompletedEvent.type, (event) => {
+engine.addEventListener(WorkflowCompletedEvent.type, (e) => {
+  const event = e as WorkflowCompletedEvent;
   logger.info(`Workflow ${event.workflowId} completed`);
 });
 
-engine.addEventListener(AgentTurnCompletedEvent.type, (event) => {
+engine.addEventListener(AgentTurnCompletedEvent.type, (e) => {
+  const event = e as AgentTurnCompletedEvent;
   logger.info(`Agent turn ${event.turnIndex} completed in workflow ${event.workflowId}`);
 });
 ```
 
 The typed event map (`WeftAgentEventMap`) ensures type safety when using `addEventListener`—your IDE will autocomplete event fields and catch typos at compile time.
 
-Eleven event types might seem like a lot, but each one answers a specific operational question: _what model is being used?_ (turn events), _what tools are being called and how fast?_ (tool events), _how much is this costing?_ (budget events), _is the context being managed?_ (compaction events), _are providers healthy?_ (circuit events), _are humans in the loop?_ (review events). Skip the ones you don't need—subscribe only to the events that matter for your monitoring setup.
+Thirteen event types might seem like a lot, but each one answers a specific operational question: _what model is being used?_ (turn events), _what tools are being called and how fast?_ (tool events), _how much is this costing?_ (budget events), _is the context being managed?_ (compaction events), _are providers healthy?_ (circuit events), _are humans in the loop?_ (review events). Skip the ones you don't need—subscribe only to the events that matter for your monitoring setup.

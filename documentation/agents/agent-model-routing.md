@@ -81,7 +81,7 @@ const router = costTierRouter([
 ]);
 ```
 
-Both thresholds can be combined on a single tier—the tier is eligible only when _both_ are met.
+Both thresholds can be combined on a single tier—the tier is eligible only when _both_ are met. Tiers are sorted internally by `maxCostRemaining` descending. A tier that has only `maxTokensRemaining` (no cost threshold) sorts to the end and behaves as a catch-all for cost-driven walks—it will be selected when no cost-thresholded tier is eligible, regardless of the token threshold.
 
 When no budget information is available in the routing context (the agent wasn't given a `BudgetTracker`), the first tier is returned as a safe default.
 
@@ -99,6 +99,8 @@ const router = abTestRouter([
 ```
 
 Weights should sum to 1. The router hashes the workflow ID using FNV-1a with avalanche finalization, producing a deterministic value in [0, 1). It then walks the cumulative weights and selects the matching variant.
+
+If weights don't sum to exactly 1, the router falls back to the last variant when the hash exceeds the cumulative weight—over- or under-summing won't crash, but will skew the distribution.
 
 Because the selection is based on a hash of the workflow ID, the same workflow always gets the same model—across turns, across restarts, across process crashes. This gives you reproducible A/B cohorts without external randomization infrastructure.
 

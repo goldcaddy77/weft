@@ -55,18 +55,23 @@ const simple = defineAgent({
 
 Here's the complete set of fields on `AgentDefinition`:
 
-| Field             | Type                     | Description                                                                              |
-| ----------------- | ------------------------ | ---------------------------------------------------------------------------------------- |
-| `name`            | `string`                 | Unique identifier for the agent                                                          |
-| `model`           | `string`                 | Default LLM model identifier                                                             |
-| `description`     | `string?`                | Human-readable description                                                               |
-| `systemPrompt`    | `string?`                | System message prepended to every conversation                                           |
-| `tools`           | `AgentToolDefinition[]?` | Local function tools available to the agent                                              |
-| `maxTurns`        | `number?`                | Maximum LLM turns before the loop exits (defaults to 10)                                 |
-| `budget`          | `BudgetOptions?`         | Token and cost constraints (see [budget guide](./agent-budget-and-cost.md))              |
-| `modelRouter`     | `ModelRouter?`           | Per-turn model selection logic (see [model routing guide](./agent-model-routing.md))     |
-| `contextStrategy` | `ContextStrategy?`       | Conversation compaction strategy (see [context window guide](./agent-context-window.md)) |
-| `hooks`           | `AgentHooks?`            | Lifecycle callbacks for turns and tool calls                                             |
+| Field             | Type                                                                       | Description                                                                              |
+| ----------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `name`            | `string`                                                                   | Unique identifier for the agent                                                          |
+| `model`           | `string`                                                                   | Default LLM model identifier                                                             |
+| `version`         | `string?`                                                                  | Semantic version of this agent definition (defaults to `"0.0.0"`)                        |
+| `description`     | `string?`                                                                  | Human-readable description                                                               |
+| `systemPrompt`    | `string?`                                                                  | System message prepended to every conversation                                           |
+| `tools`           | `AgentToolDefinition[]?`                                                   | Local function tools available to the agent                                              |
+| `toolsForTenant`  | `(tenant: TenantContext \| undefined) => AgentToolDefinition[]` (optional) | Per-tenant tool selection callback—return a custom tool list for each tenant             |
+| `validateInput`   | `(input: unknown, tenant: TenantContext \| undefined) => void` (optional)  | Per-tenant input validation—throw to reject the workflow before it starts                |
+| `maxTurns`        | `number?`                                                                  | Maximum LLM turns before the loop exits (defaults to 10)                                 |
+| `budget`          | `BudgetOptions?`                                                           | Token and cost constraints (see [budget guide](./agent-budget-and-cost.md))              |
+| `modelRouter`     | `ModelRouter?`                                                             | Per-turn model selection logic (see [model routing guide](./agent-model-routing.md))     |
+| `contextStrategy` | `ContextStrategy?`                                                         | Conversation compaction strategy (see [context window guide](./agent-context-window.md)) |
+| `hooks`           | `AgentHooks?`                                                              | Lifecycle callbacks for turns and tool calls                                             |
+
+The `toolsForTenant` callback lets you expose different tool sets to different tenants—hide tools a tenant lacks permission to use, or inject tenant-scoped credentials into tool configuration. When present, the engine calls it on each agent invocation and uses the returned list instead of `tools`. Similarly, `validateInput` runs before the agent starts and lets you enforce per-tenant payload schemas without adding logic to the agent handler itself.
 
 Each `AgentToolDefinition` pairs a `ToolDefinition` (name, description, input schema) with an `execute` function:
 
@@ -74,8 +79,13 @@ Each `AgentToolDefinition` pairs a `ToolDefinition` (name, description, input sc
 interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
+  verify?: (result: unknown) => Promise<boolean> | boolean;
+  version?: string;
+  identity?: (input: unknown) => ToolIdentityResult;
 }
 ```
+
+The `verify` callback runs after `execute` returns—return `false` (or throw) to reject the result and send an error back to the model. The `identity` callback computes a stable semantic hash of the invocation; the engine uses it as the key in the tool effect log for deduplication across checkpoint restores. When `identity` is absent, the engine falls back to hashing the full input with `computeSemanticHash`.
 
 ## Lifecycle hooks
 
@@ -128,12 +138,15 @@ hooks: {
 Register the agent definition with an engine and start it like any workflow:
 
 ```typescript
-import { Engine } from 'weft';
+import { Engine, type LLMProvider } from 'weft';
 
 const engine = new Engine({
   /* ... */
 });
-engine.register(researcher);
+
+declare const provider: LLMProvider;
+
+engine.register(researcher, { provider });
 
 const handle = await engine.start('research', {
   prompt: 'Analyze the competitive landscape for durable execution engines.',
@@ -146,15 +159,28 @@ The engine treats agent workflows the same as any other—they get durable check
 
 ## Using an agent as a step in a workflow
 
-The same definition works inside a generator workflow via `ctx.agent()`:
+Inside a generator workflow, call `ctx.agent()` with a single options object that includes the model, provider, prompt, and any tools for that step. If you want to start a separate named agent workflow, use the engine to start the registered agent by name instead.
 
 ```typescript
-async function* pipeline(ctx: Weft.Context, input: { topic: string }) {
-  // Use the defined agent as a step
-  const research = yield* ctx.agent(researcher, { prompt: input.topic });
+import type { AgentDefinition, Context, LLMProvider } from 'weft';
 
-  // Use another agent for the next step
-  const report = yield* ctx.agent(writer, { data: research });
+declare const provider: LLMProvider;
+declare const researcherAgent: AgentDefinition;
+declare const writerAgent: AgentDefinition;
+
+async function* pipeline(ctx: Context, input: { topic: string }) {
+  const research = yield* ctx.agent({
+    model: researcherAgent.model,
+    provider,
+    prompt: input.topic,
+    ...(researcherAgent.tools ? { tools: researcherAgent.tools } : {}),
+  });
+
+  const report = yield* ctx.agent({
+    model: writerAgent.model,
+    provider,
+    prompt: `Write a report based on: ${JSON.stringify(research)}`,
+  });
 
   return report;
 }

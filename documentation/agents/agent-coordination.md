@@ -20,13 +20,18 @@ const result = await handoff({
 
 The `HandoffOptions`:
 
-| Field                | Type              | Description                                                                      |
-| -------------------- | ----------------- | -------------------------------------------------------------------------------- |
-| `agent`              | `AgentDefinition` | The agent to hand off to (created via [`defineAgent()`](./agent-declaration.md)) |
-| `input`              | `string`          | The task description for the receiving agent                                     |
-| `provider`           | `LLMProvider`     | The LLM provider to use                                                          |
-| `forwardContext`     | `ForwardContext`  | How much of the parent's conversation to include                                 |
-| `parentConversation` | `Message[]`       | The parent agent's conversation history                                          |
+| Field                | Type                   | Description                                                                      |
+| -------------------- | ---------------------- | -------------------------------------------------------------------------------- |
+| `agent`              | `AgentDefinition`      | The agent to hand off to (created via [`defineAgent()`](./agent-declaration.md)) |
+| `input`              | `string`               | The task description for the receiving agent                                     |
+| `provider`           | `LLMProvider`          | The LLM provider to use                                                          |
+| `forwardContext`     | `ForwardContext`       | How much of the parent's conversation to include                                 |
+| `parentConversation` | `Message[]`            | The parent agent's conversation history                                          |
+| `budget`             | `BudgetTracker?`       | Shared budget tracker—child agent usage accumulates here                         |
+| `signal`             | `AbortSignal?`         | Abort signal propagated to the child agent                                       |
+| `headers`            | `Map<string, string>?` | Trace context headers for OTel propagation (use `createChildHeaders()` to build) |
+
+The `headers` field carries W3C trace context (`traceparent`/`tracestate`) so child agent spans participate in the same OpenTelemetry trace. Use `createChildHeaders(parentHeaders)` to forward trace context from a parent workflow.
 
 The **`forwardContext`** option controls what the receiving agent sees from the handoff:
 
@@ -47,7 +52,12 @@ A typical pipeline chains handoffs:
 
 ```typescript
 async function* researchPipeline(ctx: Weft.Context, topic: string) {
-  const research = yield* ctx.agent(researcherAgent, { prompt: topic });
+  const research = yield* ctx.agent({
+    model: researcherAgent.model,
+    provider,
+    prompt: topic,
+    ...(researcherAgent.tools ? { tools: researcherAgent.tools } : {}),
+  });
 
   const analysis = await handoff({
     agent: analystAgent,
@@ -151,6 +161,8 @@ All workers run via `Promise.all()`—true parallel execution. The supervisor re
 
 **`'merge'`**—the supervisor combines all responses into a single comprehensive answer.
 
+Two additional options let you tune consensus behavior. Set `voting: 'confidence-weighted'` to use weighted consensus (groups worker outputs by content; the group with the highest total confidence weight wins) instead of the default naive string-equality check. Set `n` to override the worker count at runtime: a fixed number trims or round-robin-replicates the `workers` array, or a function `(input: string) => number` that is called with the workflow input and whose return value is used as the count.
+
 The `SuperviseResult`:
 
 ```typescript
@@ -168,23 +180,24 @@ You get the final synthesized answer _and_ each worker's individual result, so y
 When parallel agents need to write to shared mutable state, Weft's `SharedState` provides compare-and-swap semantics backed by storage. Multiple agents can read and update the same state without conflicts—on write collision, the update function retries with the latest value.
 
 ```typescript
-async function* collaborativeResearch(ctx: Weft.Context, topics: string[]) {
-  const findings = yield* ctx.sharedState('research-findings', {
-    initial: { articles: [], totalCost: 0 },
-  });
+import { SharedState } from 'weft';
 
-  yield* ctx.all(
-    topics.map((topic) =>
-      ctx.agent({
-        model: 'claude-sonnet-4-20250514',
-        prompt: `Research: ${topic}`,
-        tools: [webSearch],
-      }),
-    ),
-  );
+const initialFindings = { articles: [], totalCost: 0 };
 
-  return yield* findings.get();
-}
+// SharedState is constructed directly with storage, workflowId, key, and optional options.
+const findings = new SharedState<{ articles: string[]; totalCost: number }>(
+  storage,
+  workflowId,
+  'research-findings',
+);
+
+// Use get() to read, update() to prepare compare-and-swap writes.
+const current = await findings.get(initialFindings);
+const next = await findings.update(
+  (prev) => ({ ...prev, totalCost: prev.totalCost + cost }),
+  initialFindings,
+);
+await storage.batch(next.operations);
 ```
 
 See the core [shared state](../guides/workflows.md) documentation for the full API.

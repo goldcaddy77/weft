@@ -47,10 +47,10 @@ The `artifact` field is intentionally `unknown`—pass whatever the reviewer nee
 
 ## Submitting a decision
 
-When a reviewer makes their decision, submit it through the coordinator:
+When a reviewer makes their decision, complete the review through the engine:
 
 ```typescript
-const decision = await coordinator.submitDecision(review.reviewId, {
+await engine.submitReview(review.reviewId, {
   decision: 'approved',
   reviewer: 'jane@legal.example.com',
   feedback: 'Looks good. Minor typo in section 3.',
@@ -73,7 +73,7 @@ interface ReviewDecision {
 When `allowPartial` is true on the request, reviewers can approve or reject individual sections:
 
 ```typescript
-const decision = await coordinator.submitDecision(review.reviewId, {
+await engine.submitReview(review.reviewId, {
   decision: 'needs-changes',
   reviewer: 'jane@legal.example.com',
   feedback: 'Recommendations need revision, rest is fine.',
@@ -88,6 +88,8 @@ const decision = await coordinator.submitDecision(review.reviewId, {
 
 This lets the agent revise only the rejected sections instead of regenerating the entire artifact.
 
+Note: `coordinator.submitDecision()` is a low-level helper that constructs and returns a `ReviewDecision` object—it does not persist state or emit events. To actually complete a review and trigger `HumanReviewCompletedEvent`, call `engine.submitReview(reviewId, { decision, reviewer, feedback })` or POST to the `/v1/reviews/:reviewId/decision` HTTP endpoint.
+
 ## Querying reviews
 
 Fetch a specific review or list all pending ones:
@@ -97,7 +99,7 @@ const review = await coordinator.getReview('workflow-123', reviewId);
 const pending = await coordinator.listPendingReviews();
 ```
 
-`listPendingReviews()` scans all review keys in storage and returns them. In a production setup, the built-in HTTP server exposes these at `GET /v1/reviews?status=pending` for dashboard integration.
+`listPendingReviews()` scans all review keys in storage and returns them. In a production setup, the built-in HTTP server exposes these at `GET /v1/reviews` for dashboard integration. All returned reviews are pending by definition—completed reviews are removed from storage via `cleanupOperations()`.
 
 ## Escalation chains
 
@@ -145,6 +147,8 @@ if (review.timeout && elapsed > review.timeout) {
 ```
 
 The error carries the `reviewId` and `elapsed` time, making it easy to log which review timed out and how long it waited.
+
+The engine throws `ReviewTimeoutError` automatically when a workflow waiting on a review crosses its configured `timeout`. The pattern above is most useful in custom coordinators or tests.
 
 ## Event integration
 

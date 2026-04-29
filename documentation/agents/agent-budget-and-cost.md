@@ -58,6 +58,8 @@ const remaining = budget.budgetRemaining();
 
 The `breakdown` array shows per-model usage, which is especially useful when your agent switches models mid-run (via [model routing](./agent-model-routing.md)).
 
+When `maxTokens` or `maxCost` is unset, the corresponding `tokensRemaining` or `costRemaining` field is `Infinity`.
+
 ## Projecting remaining capacity
 
 Once you have some usage history, `budgetProjection()` estimates how many turns you have left based on average burn rate:
@@ -140,6 +142,18 @@ const budget = new BudgetTracker(
 ```
 
 The warning callback fires at most once per tracker instance. The exceeded callback fires every time `recordUsage()` pushes the budget over the limit (which in practice means once, since the agent loop exits after the first exceeded check).
+
+## Cloning a tracker
+
+`BudgetTracker.clone()` creates an independent copy of the current tracker state—same running totals, same limits, same pricing—without mutating the original. This is useful when you want to run a speculative agent branch and discard its cost if the branch is abandoned:
+
+```typescript
+const speculative = budget.clone();
+// Run a speculative agent branch using `speculative`
+// If the branch is abandoned, discard `speculative`—the original `budget` is unchanged
+```
+
+Cloned trackers do not share `AbortController` or event callbacks with the source—those are not copied.
 
 ## Agent event integration
 

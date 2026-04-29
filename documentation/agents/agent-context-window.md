@@ -57,12 +57,15 @@ A strategy is an object with a single method: `compact()`. It receives the curre
 
 ```typescript
 interface ContextStrategy {
+  name: string;
   compact(
     messages: Message[],
     options: CompactOptions,
   ): AsyncGenerator<Message[], Message[], unknown>;
 }
 ```
+
+The `name` field is a human-readable label (e.g. `'sliding-window'`) that surfaces in `AgentContextCompactedEvent.strategy`, making it easy to tell from observability which strategy triggered a given compaction.
 
 The generator pattern exists for durability—the engine can checkpoint between strategy steps. For most strategies, you'll yield once and return.
 
@@ -125,15 +128,12 @@ For more sophisticated approaches, compose multiple strategies in sequence:
 import { composeStrategies, slidingWindowStrategy } from 'weft';
 
 const strategy = composeStrategies(
-  removeToolResults(), // First: strip verbose tool output
-  slidingWindowStrategy({
-    // Then: keep recent messages
-    preserveRecentCount: 20,
-  }),
+  slidingWindowStrategy({ preserveRecentCount: 30 }), // First pass: broad window
+  slidingWindowStrategy({ preserveRecentCount: 20 }), // Second pass: tighter window
 );
 ```
 
-`composeStrategies()` runs each strategy in order, passing the output of one as the input to the next. Each step is a potential checkpoint boundary, so the engine can persist intermediate results.
+`composeStrategies()` runs each strategy in order, passing the output of one as the input to the next. The first pass can keep a broader slice of recent context, while the second pass tightens that window if the conversation still needs compaction. Each step is a potential checkpoint boundary, so the engine can persist intermediate results.
 
 ## Writing a custom strategy
 
@@ -145,6 +145,7 @@ import type { Message } from 'weft';
 
 function summarizeOldMessages(): ContextStrategy {
   return {
+    name: 'summarize-old-messages',
     async *compact(
       messages: Message[],
       options: CompactOptions,
@@ -179,8 +180,6 @@ The key requirements: yield your compacted messages at least once, and return th
 
 ## How context state survives checkpoints
 
-The `ContextWindowManager` is stateless—it doesn't store conversation history itself. The conversation lives in the agent loop's local variables, which are checkpointed by the generator engine at each `yield*` boundary. When a workflow resumes after a crash, the conversation (including any prior compactions) is restored from the checkpoint.
-
-This means compaction is idempotent. If the process crashes after compaction but before the next LLM call, recovery reloads the already-compacted conversation. The engine doesn't re-compact.
+The `ContextWindowManager` keeps a single piece of state—the most recent compacted message list. It exposes `checkpoint()`, `restore()`, `getCompactedMessages()`, and `clearCompactedMessages()` so the agent loop can persist and reload this state across crashes. When a workflow resumes after a crash, calling `restore(checkpoint)` reloads the already-compacted conversation so the manager doesn't re-compact unnecessarily.
 
 Context management is one of those things you don't think about until turn 30, and then it's the only thing you think about. Set up a strategy early—your agents will run longer and your bills will be smaller.

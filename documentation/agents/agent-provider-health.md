@@ -40,7 +40,7 @@ try {
 }
 ```
 
-The agent loop does this automatically when you pass a `healthTracker` to `executeAgentLoop()`.
+When passed via `AgentOptions.healthTracker`, the loop consults the tracker for routing decisions. Explicit `recordSuccess()` / `recordFailure()` calls in your own provider wrapper ensure accurate tracking when using custom integration patterns outside `executeAgentLoop()`.
 
 ## Circuit states
 
@@ -93,6 +93,8 @@ engine.addEventListener('agent:provider:circuit-open', (event) => {
   );
 });
 ```
+
+For `AgentProviderCircuitOpenEvent` to fire on the engine, set `tracker.eventTarget = engine` (or any shared `EventTarget`). The agent loop wires this automatically when you pass `healthTracker` via `executeAgentLoop()`.
 
 See the [observability guide](./agent-observability.md) for the full event reference.
 

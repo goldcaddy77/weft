@@ -12,7 +12,7 @@ import { TokenBridge } from 'weft';
 const bridge = new TokenBridge(eventTarget, 'workflow-123', 'claude-sonnet-4-20250514');
 ```
 
-The constructor takes three arguments: the `EventTarget` to dispatch events on, the workflow ID, and the model identifier. Both are included in every `TokenEvent` so listeners can distinguish tokens from different workflows and models.
+The constructor takes three arguments: the `EventTarget` to dispatch events on, the workflow ID, and the model identifier. The `workflowId` and `model` are included in every `TokenEvent` so listeners can distinguish tokens from different workflows and models.
 
 Pipe a stream through the bridge to start dispatching:
 
@@ -90,7 +90,7 @@ import { ReconnectionBuffer } from 'weft';
 const buffer = new ReconnectionBuffer({ maxTurns: 10 });
 ```
 
-The `maxTurns` option (defaults to 10) caps how many turns are kept. Once the buffer exceeds this, the oldest turn is dropped.
+The `maxTurns` option (defaults to 10) caps how many turns are kept. Once the buffer exceeds this, the oldest turn is dropped. A `maxBytes` option (default 10 MB) caps the total byte budget; turns are evicted oldest-first by count first, then by byte budget—always keeping at least one turn so a single oversized response doesn't wipe the buffer.
 
 Record completed turns as they finish:
 
@@ -113,6 +113,7 @@ Check the buffer state or clear it:
 
 ```typescript
 console.log(buffer.turnCount); // 2
+console.log(buffer.byteSize); // approximate byte size of buffered turns
 buffer.clear();
 ```
 
@@ -126,14 +127,18 @@ The text generated so far in completed turns is included in the checkpoint state
 
 ## Backpressure
 
-`ReadableStream`'s built-in backpressure mechanism propagates from slow consumers. If a WebSocket client can't keep up, the stream's `desiredSize` on the controller drops to zero, signaling the producer to slow down. The engine buffers up to a configurable limit. If the buffer fills, the slow client is disconnected rather than allowing unbounded memory growth.
+`ReadableStream`'s built-in backpressure mechanism propagates from slow consumers. If a WebSocket client can't keep up, the stream's `desiredSize` on the controller drops to zero, signaling the producer to slow down.
+
+There is no engine-level streaming config—backpressure limits are set per-instance. Pass `maxBufferSize` to `StreamMultiplexer` to cap how many chunks are buffered for late-joining consumers. For completed-turn replay, pass `maxBytes` alongside `maxTurns` to `ReconnectionBuffer`:
 
 ```typescript
-const engine = new Engine({
-  streaming: {
-    maxBufferSize: 64 * 1024, // 64KB per client
-    replayBufferTurns: 5, // Keep last 5 turns for reconnecting clients
-  },
+const multiplexer = new StreamMultiplexer(llmStream, {
+  maxBufferSize: 1000, // max chunks buffered per consumer
+});
+
+const buffer = new ReconnectionBuffer({
+  maxTurns: 10,
+  maxBytes: 1_048_576, // 1 MB byte budget
 });
 ```
 

@@ -32,6 +32,8 @@ const webSearch: AgentTool = {
 
 The `definition` field is a `ToolDefinition`—name, description, and a JSON Schema for the input. The `execute` function receives whatever the model sends and returns a result that gets serialized back into the conversation. If it throws, the error message is sent to the model so it can try a different approach.
 
+The `AgentTool` interface also exposes optional `verify` and `identity` callbacks. `verify(result)` runs after `execute` returns—return `false` or throw to reject the result and let the model retry. `identity(input)` computes a stable semantic hash used for deduplication in the tool effect log. See the [agent declaration guide](./agent-declaration.md) for full details.
+
 Pass tools directly to `defineAgent()` or `executeAgentLoop()`:
 
 ```typescript
@@ -54,6 +56,14 @@ const client = new MCPClient({
   timeout: 30_000,
 });
 ```
+
+`MCPClientOptions` also accepts a `transport` field for cases where you need to inject a pre-built transport (stdio, SSE, or an OAuth2-authenticated transport):
+
+```typescript
+const client = new MCPClient({ transport: myTransport });
+```
+
+When you need to pick a transport dynamically, use `inferTransportKind()` to detect the right kind for a given URL, then construct the matching transport explicitly.
 
 Discover what tools the server offers:
 
@@ -81,7 +91,7 @@ if (!healthy) {
 
 ## Authentication
 
-MCP servers often require authentication. The `MCPAuthConfig` type supports three modes:
+MCP servers often require authentication. `MCPAuthConfig` supports four authentication modes for agent MCP sources, while `MCPClient` supports three direct authentication modes through its `serverUrl` options:
 
 ```typescript
 // Bearer token
@@ -105,6 +115,26 @@ const client = new MCPClient({
 
 Under the hood, `buildAuthHeaders()` converts the config into HTTP headers. Bearer tokens become `Authorization: Bearer <token>`. API keys use whatever header name you specify.
 
+OAuth2 is supported through `createOAuth2TokenManager` and a transport with dynamic headers:
+
+```typescript
+import { createOAuth2TokenManager, HttpTransport, MCPClient } from 'weft';
+
+const manager = createOAuth2TokenManager({
+  tokenEndpoint: 'https://auth.example.com/oauth/token',
+  clientId: '...',
+  clientSecret: '...',
+  scope: 'tools:read',
+});
+
+const client = new MCPClient({
+  transport: new HttpTransport({
+    serverUrl: 'https://api.example.com/mcp',
+    headers: async () => ({ Authorization: `Bearer ${await manager.getAccessToken()}` }),
+  }),
+});
+```
+
 ## The tool registry
 
 When your agent uses tools from multiple sources—local functions, one or more MCP servers—you need a way to merge them into a single set. `ToolRegistry` handles this.
@@ -125,6 +155,8 @@ registry.registerMCP(mcpTools, 'http://localhost:3000/mcp', (toolName, input) =>
   mcpClient.invokeTool(toolName, input),
 );
 ```
+
+`registerLocal` also accepts optional `identity` and `verify` callbacks as third and fourth arguments; see the [agent declaration guide](./agent-declaration.md) for when to use them.
 
 Retrieve tools by name or get the full list:
 

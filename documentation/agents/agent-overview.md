@@ -32,17 +32,25 @@ Weft's generator model avoids this dilemma entirely. Each tool call within an ag
 The checkpoint stores only the current state—a single key containing the generator's local variables at the pause point. Whether the agent executed 3 tool calls or 300, checkpoint size depends only on what's in scope, not on execution history.
 
 ```typescript
-async function* researchAgent(ctx: Weft.Context, topic: string) {
+import type { AgentTool, Context, LLMProvider } from 'weft';
+
+declare const provider: LLMProvider;
+declare const webSearch: AgentTool;
+declare const readDocument: AgentTool;
+declare const analyzeData: AgentTool;
+
+async function* researchAgent(ctx: Context, topic: string) {
   let findings: string[] = [];
   let confidence = 0;
 
   while (confidence < 0.8) {
-    const result = yield* ctx.agent({
+    const result = (yield* ctx.agent({
       model: 'claude-sonnet-4-20250514',
+      provider,
       prompt: `Research "${topic}". Current findings:\n${findings.join('\n')}`,
       tools: [webSearch, readDocument, analyzeData],
       maxTurns: 5,
-    });
+    })) as { summary: string; confidence: number };
 
     findings.push(result.summary);
     confidence = result.confidence;
@@ -70,6 +78,6 @@ The rest of these guides cover each piece of the agent subsystem:
 - [**Human review**](./agent-human-review.md)—`ReviewCoordinator` for structured human-in-the-loop approval workflows
 - [**Multi-agent coordination**](./agent-coordination.md)—`handoff()`, `debate()`, and `supervise()` for orchestrating multiple agents
 - [**Provider health**](./agent-provider-health.md)—circuit breaker pattern for tracking and excluding unhealthy LLM providers
-- [**Observability**](./agent-observability.md)—11 agent-specific event types for logging, monitoring, and debugging
+- [**Observability**](./agent-observability.md)—13 agent-specific event types for logging, monitoring, and debugging
 
-Every one of these primitives integrates with Weft's core durability model. Tool calls checkpoint. Streams survive crashes. Budgets persist across restarts. That's what agent-native means.
+Every one of these primitives integrates with Weft's core durability model. Tool calls checkpoint. Streams survive crashes. Budgets persist across restarts. The 13 agent-specific event types expose that execution shape for logging, monitoring, and debugging. That's what agent-native means.
