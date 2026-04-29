@@ -104,6 +104,33 @@ describe('weft.schedules.list', () => {
     expect(body.error).toContain('status');
   });
 
+  it('rejects non-string workflowType and tenantId values via executeOperation', async () => {
+    engine = createEngine();
+
+    const liveRegistry = createLiveOperationRegistry();
+    const principal = principalFromApiKey({ subject: 'svc', scopes: [] });
+
+    let result = await executeOperation(
+      'weft.schedules.list',
+      { workflowType: 42 },
+      { principal, engine, transport: 'jsonRpcStdio', registry: liveRegistry },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected invalid workflowType fault');
+    expect(result.fault.code).toBe('InvalidParams');
+    expect(result.fault.message).toBe('Query parameter "workflowType" must be a string');
+
+    result = await executeOperation(
+      'weft.schedules.list',
+      { tenantId: 42 },
+      { principal, engine, transport: 'jsonRpcStdio', registry: liveRegistry },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected invalid tenantId fault');
+    expect(result.fault.code).toBe('InvalidParams');
+    expect(result.fault.message).toBe('Query parameter "tenantId" must be a string');
+  });
+
   it('accepts valid status values: active, paused, cancelled', async () => {
     engine = createEngine();
     await engine.schedule('echo', {}, '0 * * * *', { id: 'active-sched' });
@@ -280,5 +307,61 @@ describe('weft.schedules.list', () => {
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: 'Internal server error' });
+  });
+
+  it('shapes Unauthorized faults as 401', async () => {
+    engine = createEngine();
+
+    const unauthorizedOperation = {
+      ...listSchedulesOperation,
+      invoke: async () => {
+        throw {
+          code: 'Unauthorized',
+          message: 'missing credentials',
+          data: { reason: 'missing credentials' },
+        } satisfies OperationFault;
+      },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/schedules', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([unauthorizedOperation]),
+        restBindings: [listSchedulesRestBinding],
+        ...apiKeyAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'missing credentials' });
+  });
+
+  it('uses the fallback HTTP mapper for non-special-cased faults', async () => {
+    engine = createEngine();
+
+    const conflictOperation = {
+      ...listSchedulesOperation,
+      invoke: async () => {
+        throw {
+          code: 'Conflict',
+          message: 'schedule conflict',
+          data: { reason: 'schedule conflict' },
+        } satisfies OperationFault;
+      },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/schedules', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([conflictOperation]),
+        restBindings: [listSchedulesRestBinding],
+        ...apiKeyAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'schedule conflict' });
   });
 });

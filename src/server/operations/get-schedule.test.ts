@@ -230,4 +230,60 @@ describe('weft.schedules.get', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: 'Internal server error' });
   });
+
+  it('shapes Unauthorized faults as 401', async () => {
+    engine = createEngine();
+
+    const unauthorizedOperation = {
+      ...getScheduleOperation,
+      invoke: async () => {
+        throw {
+          code: 'Unauthorized',
+          message: 'missing credentials',
+          data: { reason: 'missing credentials' },
+        } satisfies OperationFault;
+      },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/schedules/some-schedule', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([unauthorizedOperation]),
+        restBindings: [getScheduleRestBinding],
+        ...apiKeyAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'missing credentials' });
+  });
+
+  it('uses the fallback HTTP mapper for non-special-cased faults', async () => {
+    engine = createEngine();
+
+    const conflictOperation = {
+      ...getScheduleOperation,
+      invoke: async () => {
+        throw {
+          code: 'Conflict',
+          message: 'schedule conflict',
+          data: { reason: 'schedule conflict' },
+        } satisfies OperationFault;
+      },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/schedules/some-schedule', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([conflictOperation]),
+        restBindings: [getScheduleRestBinding],
+        ...apiKeyAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'schedule conflict' });
+  });
 });
