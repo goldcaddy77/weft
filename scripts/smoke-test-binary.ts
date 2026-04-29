@@ -25,6 +25,7 @@ import { join } from 'node:path';
 
 type JsonRpcError = { code: number; data?: unknown; message: string };
 type JsonRpcEnvelope = { error: JsonRpcError; result?: never } | { error?: never; result: unknown };
+type SpawnProcessStream = ReturnType<typeof Bun.spawn>['stdout'];
 
 const BINARY_STARTUP_TIMEOUT_MS = 15_000;
 const WORKFLOW_COMPLETION_TIMEOUT_MS = 10_000;
@@ -32,10 +33,7 @@ const REQUEST_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 const SHUTDOWN_GRACE_MS = 5_000;
 
-function getPipedStream(
-  output: ReturnType<typeof Bun.spawn>['stdout'] | ReturnType<typeof Bun.spawn>['stderr'],
-  label: string,
-): ReadableStream<Uint8Array> {
+function getPipedStream(output: SpawnProcessStream, label: string): ReadableStream<Uint8Array> {
   if (output instanceof ReadableStream) {
     return output;
   }
@@ -112,15 +110,13 @@ async function pollUntilCompleted(url: string, workflowId: string): Promise<unkn
 async function waitForReady(process_: ReturnType<typeof Bun.spawn>): Promise<string> {
   const reader = getPipedStream(process_.stdout, 'Harness stdout').getReader();
   const decoder = new TextDecoder();
+  type ReaderReadResult = Awaited<ReturnType<typeof reader.read>>;
   let buffered = '';
   let startupTimeoutId: ReturnType<typeof setTimeout> | undefined;
-  let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
   let cancelReadPromise: Promise<void> | undefined;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     startupTimeoutId = setTimeout(() => {
-      if (pendingRead) {
-        cancelReadPromise = reader.cancel().catch(() => undefined);
-      }
+      cancelReadPromise = reader.cancel().catch(() => undefined);
       reject(
         new Error(
           `Timed out waiting for SMOKE_READY after ${BINARY_STARTUP_TIMEOUT_MS}ms (check stderr above)`,
@@ -131,13 +127,8 @@ async function waitForReady(process_: ReturnType<typeof Bun.spawn>): Promise<str
 
   try {
     while (true) {
-      pendingRead = reader.read();
-      const readResult: ReadableStreamReadResult<Uint8Array> = await Promise.race([
-        pendingRead,
-        timeoutPromise,
-      ]);
+      const readResult: ReaderReadResult = await Promise.race([reader.read(), timeoutPromise]);
       const { done, value } = readResult;
-      pendingRead = undefined;
       if (done) {
         throw new Error('Binary exited before signalling SMOKE_READY (check stderr above)');
       }
