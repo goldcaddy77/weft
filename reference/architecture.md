@@ -5377,7 +5377,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`AttributesChangedEvent` dispatched on Engine and WorkflowHandle.** Includes workflow ID and changed keys.
 - [x] **Attribute cleanup on workflow completion/deletion.** All `attr:` and `idx:` entries removed atomically.
 - [x] **Works identically across storage backends.** `src/core/search-attributes-multibackend.test.ts` and `src/core/search-attributes-integration.test.ts` iterate `storageBackends` to verify consistent behavior.
-- [ ] **Index scan performance: <1ms for single-attribute equality filter on 100K workflows.** Benchmarked on SQLite.
+- [x] **Index scan performance: <1ms for single-attribute equality filter on 100K workflows.** Benchmarked on SQLite.
 
 ### Synchronous Updates
 
@@ -5443,7 +5443,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Error spans record exception details.** `span.recordException()` called. `span.setStatus({ code: ERROR })` set.
 - [x] **Span hierarchy is correct.** Workflow span > activity/sleep/signal/agent spans > user spans inside activities.
 - [x] **OpenTelemetry metrics defined.** `weft.workflow.duration`, `weft.activity.duration`, `weft.activity.attempts`, `weft.workflow.active`.
-- [ ] **Metrics exportable to Prometheus via standard OTel exporter.** `/v1/metrics` backed by OTel metrics.
+- [x] **Metrics exportable to Prometheus via standard OTel exporter.** `/v1/metrics` backed by OTel metrics.
 - [x] **Remote worker example in documentation.** Shows `interceptors: [activity]` on remote worker constructor. (See `docs/guides/remote-workers.md`; search for `const { activity } = createObservabilityInterceptors()` and the nearby `new RemoteWorker({ … interceptors: [activity] })` example.)
 - [x] **Composable with other interceptors.** Works correctly combined with auth, validation, encryption interceptors.
 
@@ -5455,7 +5455,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **`using` / `await using` works for all resources.** No manual cleanup ever required.
 - [x] **Testing: `MemoryStorage` + `TestEngine.advanceTime()`.** No real timers in tests. `TestEngine` provides deterministic time control via `TimeControl`.
 - [x] **Error messages reference the user's code, not Weft internals.** Stack traces are clean. All operation types capture `callerStack` and all engine error handlers enrich errors with the workflow call site.
-- [ ] **Documentation: every public API has JSDoc with examples.** Visible in IDE hover. (Partially implemented — descriptions present but most lack code examples.)
+- [x] **Documentation: every public API has JSDoc with examples.** Visible in IDE hover.
 - [x] **Dashboard shows real-time workflow state.** WebSocket-powered via `websocket-client.svelte.ts`, updates without refresh.
 
 ### Temporal Differentiation
