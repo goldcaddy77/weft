@@ -60,6 +60,6 @@
     "typeRoots": ["node_modules/@types"],
     "types": ["bun"]
   },
-  "include": ["src"],
+  "include": ["src", "scripts/cli-smoke-main.ts", "scripts/smoke-test-binary.ts"],
   "exclude": ["node_modules", "coverage", "**/dist/**", "**/build/**"]
 }

@@ -28,6 +28,22 @@ type JsonRpcEnvelope =
   | { error: JsonRpcError; result?: never }
   | { error?: never; result: { id: string } };
 
+function isJsonRpcError(value: unknown): value is JsonRpcError {
+  if (typeof value !== 'object' || value === null) return false;
+  const error = value as Record<string, unknown>;
+  return typeof error['code'] === 'number' && typeof error['message'] === 'string';
+}
+
+function isJsonRpcEnvelope(value: unknown): value is JsonRpcEnvelope {
+  if (typeof value !== 'object' || value === null) return false;
+  const envelope = value as Record<string, unknown>;
+  const hasError = 'error' in envelope;
+  const hasResult = 'result' in envelope;
+  if (hasError === hasResult) return false;
+  if (hasError) return isJsonRpcError(envelope['error']);
+  return true;
+}
+
 const response = await fetch('http://localhost:7233/jsonrpc', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -40,7 +56,11 @@ const response = await fetch('http://localhost:7233/jsonrpc', {
   }),
 });
 
-const envelope = (await response.json()) as JsonRpcEnvelope;
+const raw = await response.json();
+if (!isJsonRpcEnvelope(raw)) {
+  throw new Error(`Malformed JSON-RPC response: ${JSON.stringify(raw)}`);
+}
+const envelope = raw;
 
 if ('error' in envelope) {
   // JSON-RPC errors carry a code (Weft uses the -32000 application range),
