@@ -28,7 +28,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import ts from 'typescript';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
@@ -48,9 +48,6 @@ type ManifestEntry = {
   subKind: string;
   publicFaces: PublicFace[];
   classification: Classification;
-  currentState: CurrentState;
-  classificationRationale: string | null;
-  batch: string | null;
 };
 
 type Manifest = {
@@ -92,6 +89,16 @@ type PkgJson = {
 
 function loadPackageJson(): PkgJson {
   return JSON.parse(readFileSync(PACKAGE_JSON, 'utf8'));
+}
+
+function loadCompilerOptions(): ts.CompilerOptions {
+  const config = ts.findConfigFile(REPO_ROOT, ts.sys.fileExists.bind(ts.sys), 'tsconfig.json');
+  if (!config) throw new Error('tsconfig.json not found');
+  const parsed = ts.readConfigFile(config, ts.sys.readFile.bind(ts.sys));
+  if (parsed.error) {
+    throw new Error(ts.flattenDiagnosticMessageText(parsed.error.messageText, '\n'));
+  }
+  return ts.parseJsonConfigFileContent(parsed.config, ts.sys, dirname(config)).options;
 }
 
 function normalizeExportKey(importPath: string, packageName: string): string {
@@ -293,6 +300,7 @@ type PopulationItem = {
   // when classification === 'unclassified'.
   sourceFile: string;
   sourceName: string;
+  kind: SymbolKind;
 };
 
 function buildPopulation(selector: Selector, manifest: Manifest): PopulationItem[] {
@@ -317,6 +325,7 @@ function populationAll(manifest: Manifest): PopulationItem[] {
         classification: entry.classification,
         sourceFile: entry.sourceFile,
         sourceName: entry.sourceName,
+        kind: entry.kind,
       });
     }
   }
@@ -342,6 +351,7 @@ function populationSymbols(triples: string[], manifest: Manifest): PopulationIte
       classification: entry.classification,
       sourceFile: entry.sourceFile,
       sourceName: entry.sourceName,
+      kind: entry.kind,
     });
   }
   return out;
@@ -356,84 +366,38 @@ function populationSymbols(triples: string[], manifest: Manifest): PopulationIte
 function detectCurrentStateFromSource(
   sourceFile: string,
   sourceName: string,
-  cache: Map<string, ts.SourceFile>,
+  kind: SymbolKind,
+  cache: Map<string, { program: ts.Program; checker: ts.TypeChecker; sourceFile: ts.SourceFile }>,
+  compilerOptions: ts.CompilerOptions,
 ): CurrentState {
   const absolute = resolve(REPO_ROOT, sourceFile);
-  let parsed = cache.get(absolute);
-  if (!parsed) {
+  let cached = cache.get(absolute);
+  if (!cached) {
     if (!existsSync(absolute)) return 'no-jsdoc';
-    const text = readFileSync(absolute, 'utf8');
-    parsed = ts.createSourceFile(absolute, text, ts.ScriptTarget.Latest, true);
-    cache.set(absolute, parsed);
+    const program = ts.createProgram([absolute], { ...compilerOptions, noEmit: true });
+    const checker = program.getTypeChecker();
+    const parsedSourceFile = program.getSourceFile(absolute);
+    if (!parsedSourceFile) return 'no-jsdoc';
+    cached = { program, checker, sourceFile: parsedSourceFile };
+    cache.set(absolute, cached);
   }
-  let hasProse = false;
-  let hasExample = false;
-  function visit(node: ts.Node): void {
-    if (isNamedDeclarationMatch(node, sourceName)) {
-      const state = inspectJSDoc(node);
-      if (state.hasExample) hasExample = true;
-      if (state.hasProse) hasProse = true;
+  const moduleSymbol = cached.checker.getSymbolAtLocation(cached.sourceFile);
+  if (!moduleSymbol) return 'no-jsdoc';
+  const exportSymbol = cached.checker.getExportsOfModule(moduleSymbol).find((symbol) => {
+    if (symbol.getName() !== sourceName) return false;
+    let underlying = symbol;
+    while (underlying.flags & ts.SymbolFlags.Alias) {
+      const next = cached.checker.getAliasedSymbol(underlying);
+      if (!next || next === underlying) break;
+      underlying = next;
     }
-    if (isVariableStatementMatch(node, sourceName)) {
-      const state = inspectJSDoc(node);
-      if (state.hasExample) hasExample = true;
-      if (state.hasProse) hasProse = true;
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(parsed);
-  if (hasProse && hasExample) return 'has-example';
-  if (hasProse) return 'prose-only';
+    return symbolMatchesKind(underlying, kind);
+  });
+  if (!exportSymbol) return 'no-jsdoc';
+  const state = jsdocStateForSymbol(exportSymbol, cached.checker);
+  if (state.hasProse && state.hasExample) return 'has-example';
+  if (state.hasProse) return 'prose-only';
   return 'no-jsdoc';
-}
-
-function isNamedDeclarationMatch(node: ts.Node, sourceName: string): boolean {
-  if (
-    !(
-      ts.isClassDeclaration(node) ||
-      ts.isFunctionDeclaration(node) ||
-      ts.isInterfaceDeclaration(node) ||
-      ts.isTypeAliasDeclaration(node) ||
-      ts.isEnumDeclaration(node) ||
-      ts.isModuleDeclaration(node)
-    )
-  ) {
-    return false;
-  }
-  return nameMatches(node, sourceName);
-}
-
-function isVariableStatementMatch(node: ts.Node, sourceName: string): boolean {
-  if (!ts.isVariableStatement(node)) return false;
-  return node.declarationList.declarations.some(
-    (decl) => ts.isIdentifier(decl.name) && decl.name.text === sourceName,
-  );
-}
-
-function inspectJSDoc(node: ts.Node): { hasProse: boolean; hasExample: boolean } {
-  const tags = ts.getJSDocTags(node);
-  let proseText = '';
-  for (const commentNode of ts.getJSDocCommentsAndTags(node)) {
-    if (!ts.isJSDoc(commentNode)) continue;
-    const comment = commentNode.comment;
-    if (typeof comment === 'string') proseText += comment;
-    else if (Array.isArray(comment)) {
-      for (const part of comment) {
-        if (part.kind === ts.SyntaxKind.JSDocText) proseText += part.text;
-      }
-    }
-  }
-  return {
-    hasProse: proseText.trim().length > 0,
-    hasExample: tags.some((tag) => tag.tagName.text === 'example'),
-  };
-}
-
-function nameMatches(node: ts.NamedDeclaration, sourceName: string): boolean {
-  const name = node.name;
-  if (!name) return false;
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text === sourceName;
-  return false;
 }
 
 type AssertionRule = { requireProse: boolean; requireExample: boolean } | { fail: string };
@@ -462,14 +426,24 @@ function checkItem(
     string,
     { program: ts.Program; checker: ts.TypeChecker; sourceFile: ts.SourceFile }
   >,
-  sourceCache: Map<string, ts.SourceFile>,
+  sourceCache: Map<
+    string,
+    { program: ts.Program; checker: ts.TypeChecker; sourceFile: ts.SourceFile }
+  >,
+  compilerOptions: ts.CompilerOptions,
 ): string | null {
   const result = resolveTriple(item.triple, pkg, programCache);
   if (!result.state) return `  ${item.triple}: ${result.reason ?? 'resolution failed'}`;
   // Only re-derive currentState if the assertion rule needs it.
   const currentState =
     item.classification === 'unclassified'
-      ? detectCurrentStateFromSource(item.sourceFile, item.sourceName, sourceCache)
+      ? detectCurrentStateFromSource(
+          item.sourceFile,
+          item.sourceName,
+          item.kind,
+          sourceCache,
+          compilerOptions,
+        )
       : 'no-jsdoc';
   const rule = pickAssertionRule(item, currentState);
   if ('fail' in rule) return `  ${item.triple}: ${rule.fail}`;
@@ -494,6 +468,7 @@ function main(): void {
   }
   const manifest: Manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
   const pkg = loadPackageJson();
+  const compilerOptions = loadCompilerOptions();
 
   // Pre-flight: every entry-point's emitted .d.ts must exist before we walk
   // any tuple — otherwise we'd flood the user with hundreds of identical
@@ -520,10 +495,13 @@ function main(): void {
     string,
     { program: ts.Program; checker: ts.TypeChecker; sourceFile: ts.SourceFile }
   >();
-  const sourceCache = new Map<string, ts.SourceFile>();
+  const sourceCache = new Map<
+    string,
+    { program: ts.Program; checker: ts.TypeChecker; sourceFile: ts.SourceFile }
+  >();
   const failures: string[] = [];
   for (const item of population) {
-    const failure = checkItem(item, pkg, programCache, sourceCache);
+    const failure = checkItem(item, pkg, programCache, sourceCache, compilerOptions);
     if (failure) failures.push(failure);
   }
   if (failures.length > 0) {
