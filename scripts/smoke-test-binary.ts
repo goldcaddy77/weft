@@ -89,7 +89,8 @@ async function jsonRpc(
 async function pollUntilCompleted(url: string, workflowId: string): Promise<unknown> {
   const deadline = Date.now() + WORKFLOW_COMPLETION_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const remainingMs = deadline - Date.now();
+    const remainingMs = Math.max(0, deadline - Date.now());
+    if (remainingMs === 0) break;
     const requestTimeoutMs = Math.min(REQUEST_TIMEOUT_MS, remainingMs);
     const raw = await jsonRpc(url, 'weft.workflows.get', { workflowId }, requestTimeoutMs);
     if (!hasStatus(raw)) {
@@ -204,11 +205,13 @@ async function exerciseProductionCli(binaryPath: string): Promise<void> {
     stdout: 'pipe',
     stderr: 'inherit',
   });
-  const probeExit = await probe.exited;
+  // Drain stdout in parallel with the await so a chatty --help cannot fill
+  // the pipe buffer and block the child before it exits.
+  const stdoutDrain = new Response(getPipedStream(probe.stdout, 'Production CLI stdout')).text();
+  const [probeExit, stdout] = await Promise.all([probe.exited, stdoutDrain]);
   if (probeExit !== 0) {
     throw new Error(`Production CLI binary exited ${probeExit} on --help`);
   }
-  const stdout = await new Response(getPipedStream(probe.stdout, 'Production CLI stdout')).text();
   if (!stdout.includes('weft') || !stdout.includes('Commands:')) {
     throw new Error(`Production CLI --help output looks wrong:\n${stdout}`);
   }
