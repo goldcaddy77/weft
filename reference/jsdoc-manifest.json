@@ -33,9 +33,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -50,9 +50,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -67,9 +67,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -229,9 +229,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/budget-policy.ts",
@@ -246,9 +246,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -274,9 +274,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -308,9 +308,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -325,9 +325,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -342,9 +342,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -392,9 +392,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -448,9 +448,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -677,9 +677,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -705,9 +705,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -773,9 +773,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -790,9 +790,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -835,9 +835,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -852,9 +852,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -869,9 +869,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -886,9 +886,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -903,9 +903,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -920,9 +920,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -937,9 +937,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -954,9 +954,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -971,9 +971,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -1021,9 +1021,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/hooks.ts",
@@ -1115,9 +1115,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -1132,9 +1132,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -1182,9 +1182,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/authentication.ts",
@@ -1250,9 +1250,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1267,9 +1267,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1318,9 +1318,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1335,9 +1335,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1369,9 +1369,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1386,9 +1386,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1420,9 +1420,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/registry.ts",
@@ -1437,9 +1437,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/registry.ts",
@@ -1454,9 +1454,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/schema-validator.ts",
@@ -1471,9 +1471,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/schema-validator.ts",
@@ -1527,9 +1527,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport-http-sse.ts",
@@ -1544,9 +1544,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport-http.ts",
@@ -1578,9 +1578,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport-http.ts",
@@ -1595,9 +1595,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport-stdio.ts",
@@ -1612,9 +1612,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport-stdio.ts",
@@ -1629,9 +1629,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1663,9 +1663,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1680,9 +1680,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1697,9 +1697,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1714,9 +1714,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1776,9 +1776,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1793,9 +1793,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -2047,9 +2047,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/anthropic.ts",
@@ -2064,9 +2064,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/anthropic.ts",
@@ -2092,9 +2092,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/interface.ts",
@@ -2109,9 +2109,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/openai.ts",
@@ -2126,9 +2126,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/openai.ts",
@@ -2154,9 +2154,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2171,9 +2171,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2199,9 +2199,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2216,9 +2216,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2244,9 +2244,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B3-ai"
+      "batch": null
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2424,9 +2424,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2441,9 +2441,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2458,9 +2458,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2475,9 +2475,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2492,9 +2492,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2509,9 +2509,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2526,9 +2526,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2543,9 +2543,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/client/index.ts",
@@ -3187,9 +3187,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -3204,9 +3204,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -3977,9 +3977,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3994,9 +3994,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -4788,9 +4788,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4890,9 +4890,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4907,9 +4907,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4974,9 +4974,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5708,9 +5708,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5742,9 +5742,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "prose-only",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "A1-core"
+      "batch": null
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -6454,9 +6454,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6471,9 +6471,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6488,9 +6488,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6505,9 +6505,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6522,9 +6522,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6539,9 +6539,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6556,9 +6556,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6573,9 +6573,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6601,9 +6601,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6618,9 +6618,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6635,9 +6635,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6652,9 +6652,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/diagnostics/version-check.ts",
@@ -6669,9 +6669,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/index.ts",
@@ -6720,9 +6720,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/observability/index.ts",
@@ -7319,9 +7319,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7347,9 +7347,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7364,9 +7364,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7381,9 +7381,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7398,9 +7398,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7415,9 +7415,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7432,9 +7432,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7449,9 +7449,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7544,9 +7544,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/handler.ts",
@@ -7578,9 +7578,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/handler.ts",
@@ -7634,9 +7634,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -7651,9 +7651,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -7668,9 +7668,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -7791,9 +7791,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/service-worker/index.ts",
@@ -7884,9 +7884,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/compressed-storage.ts",
@@ -7923,9 +7923,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/indexeddb.ts",
@@ -7940,9 +7940,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -8348,9 +8348,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/scoped-storage.ts",
@@ -8370,9 +8370,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/scoped-storage.ts",
@@ -8392,9 +8392,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/turso.ts",
@@ -8459,9 +8459,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8492,9 +8492,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8514,9 +8514,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8536,9 +8536,9 @@
         }
       ],
       "classification": "prose-only",
-      "currentState": "no-jsdoc",
+      "currentState": "prose-only",
       "classificationRationale": "returned/read-only shape — users observe rather than construct it",
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8558,9 +8558,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8580,9 +8580,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8602,9 +8602,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8624,9 +8624,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8646,9 +8646,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -8765,9 +8765,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/testing/mocks.ts",
@@ -8799,9 +8799,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/testing/mocks.ts",
@@ -8816,9 +8816,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/testing/test-engine.ts",
@@ -8867,9 +8867,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/testing/time-control.ts",
@@ -8884,9 +8884,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/worker/heartbeat.ts",
@@ -8901,9 +8901,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/worker/index.ts",
@@ -8929,9 +8929,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/worker/index.ts",
@@ -8957,9 +8957,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/worker/long-poll.ts",
@@ -9035,9 +9035,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/worker/registry.ts",
@@ -9063,9 +9063,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/workers/activity-runner.ts",
@@ -9080,9 +9080,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/workers/activity-runner.ts",
@@ -9097,9 +9097,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/workers/activity-worker-dispatcher.ts",
@@ -9114,9 +9114,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/workers/activity-worker-dispatcher.ts",
@@ -9131,9 +9131,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/workers/activity-worker-entry.ts",
@@ -9148,9 +9148,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/workers/activity-worker-entry.ts",
@@ -9216,9 +9216,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     },
     {
       "sourceFile": "src/workers/pool.ts",
@@ -9233,9 +9233,9 @@
         }
       ],
       "classification": "example-required",
-      "currentState": "no-jsdoc",
+      "currentState": "has-example",
       "classificationRationale": null,
-      "batch": "B2-infra"
+      "batch": null
     }
   ]
 }

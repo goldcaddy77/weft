@@ -298,14 +298,18 @@ export class MCPServerUnavailableError extends Error {
  * ```ts
  * import { MCPClient, MCPToolTimeoutError } from 'weft';
  *
- * try {
- *   using client = new MCPClient({ serverUrl: 'https://tools.example.com/mcp', timeout: 5_000 });
- *   return await client.invokeTool('slow_query', { id: 42 });
- * } catch (error) {
- *   if (error instanceof MCPToolTimeoutError) {
- *     console.warn(`Tool '${error.toolName}' timed out after ${error.timeout}ms — using cached result`);
+ * async function runQuery(): Promise<unknown> {
+ *   try {
+ *     using client = new MCPClient({ serverUrl: 'https://tools.example.com/mcp', timeout: 5_000 });
+ *     return await client.invokeTool('slow_query', { id: 42 });
+ *   } catch (error) {
+ *     if (error instanceof MCPToolTimeoutError) {
+ *       console.warn(`Tool '${error.toolName}' timed out after ${error.timeout}ms`);
+ *     }
+ *     return null;
  *   }
  * }
+ * void runQuery;
  * ```
  */
 export class MCPToolTimeoutError extends Error {

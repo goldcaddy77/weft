@@ -90,10 +90,16 @@ export interface TokenUsage {
  * import { AnthropicProvider, type StreamChunk } from 'weft';
  *
  * const provider = new AnthropicProvider({ apiKey: process.env['ANTHROPIC_API_KEY'] ?? '' });
- * const stream = await provider.stream([{ role: 'user', content: 'Hello' }], { model: 'claude-haiku-3-5' });
+ * const stream = await provider.stream(
+ *   [{ role: 'user', content: 'Hello' }],
+ *   { model: 'claude-haiku-3-5' },
+ * );
  *
  * let text = '';
- * for await (const chunk of stream as AsyncIterable<StreamChunk>) {
+ * const reader = stream.getReader();
+ * while (true) {
+ *   const { value: chunk, done } = await reader.read();
+ *   if (done) break;
  *   if (chunk.type === 'token' && chunk.token) text += chunk.token;
  *   if (chunk.type === 'done') console.log('Usage:', chunk.usage);
  * }

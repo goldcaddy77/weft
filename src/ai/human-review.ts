@@ -85,14 +85,18 @@ export type EscalationAction =
  *
  * @example Catch a review timeout and escalate
  * ```ts
- * import { ReviewTimeoutError } from 'weft';
+ * import { ReviewCoordinator, ReviewTimeoutError } from 'weft';
+ *
+ * declare const coordinator: ReviewCoordinator;
+ * declare const workflowId: string;
+ * declare const reviewId: string;
  *
  * try {
  *   // Await a review decision (may timeout)
  *   await coordinator.getReview(workflowId, reviewId);
  * } catch (error) {
  *   if (error instanceof ReviewTimeoutError) {
- *     console.warn(`Review ${error.reviewId} timed out after ${error.elapsed}ms — escalating.`);
+ *     console.warn(`Review ${error.reviewId} timed out after ${error.elapsed}ms`);
  *   }
  * }
  * ```
