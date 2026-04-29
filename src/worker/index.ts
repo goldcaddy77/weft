@@ -60,6 +60,33 @@ const DEFAULT_QUEUE = 'default';
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const DEFAULT_DISCONNECT_TIMEOUT_MS = 30_000;
 
+/**
+ * WebSocket-based remote worker that connects to the Weft server and executes
+ * activities on behalf of the engine.
+ *
+ * Construct with the server URL, a map of activity implementations, and optional
+ * concurrency and queue settings.  Call `start()` to open the WebSocket
+ * connection and begin processing tasks.  Dispose the instance (or call
+ * `[Symbol.dispose]()`) to close the connection.
+ *
+ * @example
+ * ```ts
+ * import { RemoteWorker } from 'weft';
+ *
+ * using worker = new RemoteWorker({
+ *   serverUrl: 'ws://localhost:3000',
+ *   activities: {
+ *     sendEmail: async (input: unknown) => {
+ *       console.log('sending', input);
+ *       return 'sent';
+ *     },
+ *   },
+ *   concurrency: 5,
+ *   queue: 'email',
+ * });
+ * await worker.connect();
+ * ```
+ */
 export class RemoteWorker implements Disposable {
   #options: RemoteWorkerOptions;
   #ws: WebSocket | null;

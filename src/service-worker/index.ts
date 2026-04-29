@@ -36,6 +36,28 @@ interface MinimalPeriodicSyncEvent extends MinimalExtendableEvent {
 // Options
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for the Service Worker bootstrap functions
+ * (`createFetchHandler`, `createActivateHandler`, `createPeriodicSyncHandler`).
+ *
+ * Supply the {@link Engine} instance that the service worker should delegate
+ * workflow requests to.  Use `pathPrefix` to scope which fetch requests the
+ * handler intercepts (default: `'/weft/'`).
+ *
+ * @example
+ * ```ts
+ * import { createFetchHandler, type ServiceWorkerOptions } from 'weft/service-worker';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * const storage = new MemoryStorage();
+ * const engine = new Engine({ storage });
+ *
+ * const options: ServiceWorkerOptions = { engine, pathPrefix: '/weft/' };
+ * const handleFetch = createFetchHandler(options);
+ * // In a Service Worker file: self.addEventListener('fetch', handleFetch);
+ * void handleFetch;
+ * ```
+ */
 export interface ServiceWorkerOptions {
   engine: Engine;
   pathPrefix?: string;

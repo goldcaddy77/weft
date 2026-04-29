@@ -15,6 +15,27 @@ import { executeActivity } from './activity-runner.ts';
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Function type that resolves an activity name to its handler function, or
+ * returns `undefined` when the activity is not registered.
+ *
+ * Passed to `initializeActivityWorkerMessageLoop` to wire up the message
+ * handler inside a Web Worker.  Typically backed by a `Map` built at worker
+ * startup from the activity registration object.
+ *
+ * @example
+ * ```ts
+ * import { type ActivityHandlerLookup } from 'weft';
+ *
+ * const activities = new Map<string, (...args: unknown[]) => unknown>([
+ *   ['double', (n: unknown) => (n as number) * 2],
+ * ]);
+ *
+ * const lookup: ActivityHandlerLookup = (name) => activities.get(name);
+ * console.log(lookup('double')); // [Function: double]
+ * console.log(lookup('missing')); // undefined
+ * ```
+ */
 export type ActivityHandlerLookup = (
   name: string,
 ) => ((...arguments_: unknown[]) => unknown) | undefined;

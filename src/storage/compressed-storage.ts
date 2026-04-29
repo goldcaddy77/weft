@@ -50,6 +50,33 @@ export type AgentCompressionOptions = {
   agentThreshold?: number;
 };
 
+/**
+ * {@link Storage} decorator that transparently compresses payloads above a
+ * configurable size threshold before writing and decompresses on read.
+ *
+ * Wraps any `Storage` implementation — pass a {@link BunSQLiteStorage},
+ * {@link MemoryStorage}, or any other backend as the first argument.  Supports
+ * agent-aware compression: when a key belongs to an agent workflow a different
+ * algorithm and threshold can be applied to handle conversation-heavy checkpoint
+ * data.
+ *
+ * @example
+ * ```ts
+ * import { CompressedStorage } from 'weft/storage/compressed';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * await using inner = new MemoryStorage();
+ * await using storage = new CompressedStorage(inner, {
+ *   algorithm: 'gzip',
+ *   threshold: 1024,
+ * });
+ * await using engine = new Engine({ storage });
+ *
+ * engine.register('noop', async function* () { return 'done'; });
+ * const handle = await engine.start('noop', null);
+ * console.log(await handle.result()); // 'done'
+ * ```
+ */
 export class CompressedStorage implements Storage {
   #inner: Storage;
   #compressor: Compressor;

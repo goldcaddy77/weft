@@ -89,6 +89,30 @@ function isInflightRecord(value: unknown): value is InflightRecord {
 // Public types
 // ---------------------------------------------------------------------------
 
+/**
+ * Configuration object for the `serve()` function.
+ *
+ * At minimum supply an `engine` and optionally a `port`.  Authentication,
+ * routing policy, metrics, and worker-dispatch settings are all optional — the
+ * server runs with sensible defaults when omitted.
+ *
+ * @example
+ * ```ts
+ * import { serve, type ServeOptions } from 'weft/server';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ *
+ * const options: ServeOptions = {
+ *   engine,
+ *   port: 3000,
+ *   auth: { apiKeys: ['secret'] },
+ * };
+ * await using server = await serve(options);
+ * console.log(server.url); // http://localhost:3000
+ * ```
+ */
 export interface ServeOptions {
   engine: Engine;
   port?: number;
@@ -138,6 +162,29 @@ export interface ServeOptions {
   metricsCollector?: MetricsCollector;
 }
 
+/**
+ * Descriptor for a task dispatched to a remote worker via
+ * {@link WeftServer.dispatchTask}.
+ *
+ * `operationId` and `activityName` are required; all other fields refine
+ * routing, retry behaviour, and priority.  Set `sticky: true` together with
+ * `workflowId` to route the task to the worker that last handled tasks for
+ * that workflow.
+ *
+ * @example
+ * ```ts
+ * import { type TaskDispatch } from 'weft/server';
+ *
+ * const task: TaskDispatch = {
+ *   operationId: crypto.randomUUID(),
+ *   activityName: 'sendEmail',
+ *   input: { to: 'user@example.com', subject: 'Hello' },
+ *   queue: 'email',
+ *   retryPolicy: { maxAttempts: 3, initialBackoff: '1s', backoffMultiplier: 2, maxBackoff: '30s' },
+ * };
+ * void task;
+ * ```
+ */
 export interface TaskDispatch {
   operationId: string;
   activityName: string;
@@ -165,6 +212,28 @@ export interface TaskDispatch {
   fairShareKey?: string;
 }
 
+/**
+ * Handle returned by `serve()` that exposes the running server's address,
+ * worker registry, task dispatch, and shutdown controls.
+ *
+ * Implements `AsyncDisposable` — use `await using server = await serve(...)`
+ * in TypeScript 5.2+ to have the server stop automatically when the enclosing
+ * block exits.
+ *
+ * @example
+ * ```ts
+ * import { serve } from 'weft/server';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ * await using server = await serve({ engine, port: 4000 });
+ *
+ * console.log(server.url);            // http://localhost:4000
+ * console.log(server.registry);       // WorkerRegistry instance
+ * await server.stop();
+ * ```
+ */
 export interface WeftServer extends AsyncDisposable {
   readonly port: number;
   readonly hostname: string;

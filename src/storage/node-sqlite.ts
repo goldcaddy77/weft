@@ -78,6 +78,29 @@ function loadBetterSqlite3(): BetterSqliteConstructor {
  */
 export { NodeSQLiteStorage as SQLiteStorage };
 
+/**
+ * SQLite-backed {@link Storage} using `better-sqlite3` for Node.js 22+
+ * environments.
+ *
+ * Implements the same interface and WAL-mode schema as {@link BunSQLiteStorage}
+ * but resolves the `better-sqlite3` peer dependency lazily at construction time,
+ * so the module compiles without it installed.  Import from
+ * `weft/storage/sqlite/node` to use this adapter.
+ *
+ * @example
+ * ```ts
+ * import { NodeSQLiteStorage } from 'weft/storage/sqlite/node';
+ * import { Engine } from 'weft';
+ *
+ * // Requires: bun add better-sqlite3
+ * await using storage = new NodeSQLiteStorage('./weft.db');
+ * await using engine = new Engine({ storage });
+ *
+ * engine.register('ping', async function* () { return 'pong'; });
+ * const handle = await engine.start('ping', null);
+ * console.log(await handle.result()); // 'pong'
+ * ```
+ */
 export class NodeSQLiteStorage implements Storage {
   #database: BetterSqliteDatabase;
   #getStatement: BetterSqliteStatement;

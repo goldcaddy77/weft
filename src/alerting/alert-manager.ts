@@ -19,6 +19,33 @@ import type { AlertRule, AlertState, AlertingOptions } from './types';
 /** Periodic re-evaluation interval in milliseconds. */
 const TICK_INTERVAL_MS = 10_000;
 
+/**
+ * Event-driven alert manager that evaluates metric-based rules against sliding
+ * time windows and fires `alert:fired` / `alert:resolved` lifecycle events.
+ *
+ * Construct with an `EventTarget` (typically the {@link Engine} instance) and an
+ * {@link AlertingOptions} configuration.  The manager subscribes to engine events
+ * on construction and re-evaluates rules every 10 seconds.  Dispose it to stop
+ * background evaluation and cancel pending webhooks.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, AlertManager } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ *
+ * using manager = new AlertManager(engine, {
+ *   rules: [
+ *     { metric: 'workflow.failure_rate', threshold: 0.1, window: '5m', action: 'log' },
+ *   ],
+ * });
+ *
+ * engine.addEventListener('alert:fired', (e) => {
+ *   console.log('Alert fired!', e);
+ * });
+ * ```
+ */
 export class AlertManager implements Disposable {
   #target: EventTarget;
   #options: AlertingOptions;

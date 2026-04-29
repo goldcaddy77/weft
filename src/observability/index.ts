@@ -85,6 +85,33 @@ export type InterceptionContext =
   | ChildWorkflowInterception
   | SignalReceivedInterception;
 
+/**
+ * Configuration for {@link createObservabilityInterceptors}, which produces
+ * {@link WorkflowInterceptor} and {@link ActivityInterceptor} implementations
+ * that propagate W3C trace context and emit OpenTelemetry spans.
+ *
+ * All fields are optional.  Omit `otelApi` in production — it is auto-detected
+ * from `@opentelemetry/api` when installed, and all operations fall back to
+ * no-ops when it is absent.  Pass your `Engine` instance as `eventTarget` so
+ * root workflow spans are closed correctly on terminal lifecycle events.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, createObservabilityInterceptors, type ObservabilityOptions } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ *
+ * const options: ObservabilityOptions = {
+ *   tracerName: 'my-service',
+ *   recordPayloads: false,
+ *   eventTarget: engine,
+ * };
+ * const { workflow, activity } = createObservabilityInterceptors(options);
+ * void workflow;
+ * void activity;
+ * ```
+ */
 export type ObservabilityOptions = {
   /** Name passed to `trace.getTracer()`. Default: `'weft'`. */
   tracerName?: string;

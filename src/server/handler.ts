@@ -131,6 +131,25 @@ function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
+/**
+ * Extracts a named parameter from a route parameter map, throwing a descriptive
+ * `Error` if the parameter is absent.
+ *
+ * Use this inside custom REST binding handlers to fail fast with a clear message
+ * instead of silently returning `undefined`.
+ *
+ * @example
+ * ```ts
+ * import { getRequiredRouteParameter } from 'weft/server/handler';
+ *
+ * const params = { workflowId: 'wf-123' };
+ * const id = getRequiredRouteParameter(params, 'workflowId', 'GET /v1/workflows/:workflowId');
+ * console.log(id); // 'wf-123'
+ *
+ * // Throws: Missing route parameter "workflowId" for GET /v1/workflows/:workflowId
+ * getRequiredRouteParameter({}, 'workflowId', 'GET /v1/workflows/:workflowId');
+ * ```
+ */
 export function getRequiredRouteParameter(
   params: Record<string, string>,
   name: string,
@@ -238,6 +257,23 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
 // Main handler
 // ---------------------------------------------------------------------------
 
+/**
+ * Options bag passed to `handleRequest` by the HTTP server wrapper.
+ *
+ * Injects the resolved authentication context, custom metrics exporters, and
+ * an optional override for the operation registry and REST bindings.  Omit
+ * `operationRegistry` and `restBindings` together to use the live defaults.
+ *
+ * @example
+ * ```ts
+ * import { type HandlerOptions } from 'weft/server/handler';
+ *
+ * const options: HandlerOptions = {
+ *   authContext: { method: 'public' },
+ * };
+ * void options;
+ * ```
+ */
 export interface HandlerOptions {
   /**
    * Optional authenticated caller context injected by the HTTP server

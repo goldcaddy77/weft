@@ -18,6 +18,31 @@ interface ScheduledTimer {
   cancelled: boolean;
 }
 
+/**
+ * Deterministic virtual clock for testing durable workflows that depend on
+ * time-based behaviour (timers, delays, scheduling).
+ *
+ * Does NOT monkey-patch global timers.  Instead, provides an explicit `now`
+ * property and an `advance` method that fires registered callbacks in
+ * chronological order as virtual time moves forward.  Use this inside a
+ * {@link TestEngine} to write fully deterministic timer tests.
+ *
+ * @example
+ * ```ts
+ * import { TimeControl } from 'weft';
+ *
+ * const clock = new TimeControl(0);
+ * let fired = false;
+ *
+ * clock.schedule(5_000, () => {
+ *   fired = true;
+ * });
+ *
+ * await clock.advance('5s');
+ * console.log(fired);   // true
+ * console.log(clock.now); // 5000
+ * ```
+ */
 export class TimeControl {
   #currentTime: number;
   #timers: ScheduledTimer[];

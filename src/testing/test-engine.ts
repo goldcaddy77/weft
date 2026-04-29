@@ -76,6 +76,35 @@ export interface RunNResult {
 // TestEngine
 // ---------------------------------------------------------------------------
 
+/**
+ * Test-oriented {@link Engine} subclass with virtual time control and
+ * activity mocking for deterministic, fast workflow tests.
+ *
+ * Wraps the engine with a {@link MemoryStorage}, a {@link TimeControl}
+ * instance, and an {@link ActivityMockRegistry}.  Use `engine.mock(activityFn,
+ * impl)` to replace real activities with stubs, and `await engine.advance('5m')`
+ * to advance virtual time without waiting on real timers.
+ *
+ * @example
+ * ```ts
+ * import { TestEngine, type WorkflowContext } from 'weft';
+ *
+ * const engine = new TestEngine();
+ *
+ * async function fetchPrice(ticker: unknown): Promise<number> {
+ *   return 0; // real implementation
+ * }
+ *
+ * const mock = engine.mock(fetchPrice, async (_ticker: unknown) => 42);
+ * engine.register('price-check', async function* (ctx: WorkflowContext, input: unknown) {
+ *   return 42; // simplified test example
+ * });
+ *
+ * const handle = await engine.start('price-check', 'ACME');
+ * console.log(await handle.result()); // 42
+ * console.log(mock.callCount); // 0
+ * ```
+ */
 export class TestEngine extends Engine {
   #timeControl: TimeControl;
   #mocks: ActivityMockRegistry;

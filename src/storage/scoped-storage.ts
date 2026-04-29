@@ -27,6 +27,30 @@ function joinScopePrefixes(leftPrefix: string, rightPrefix: string): string {
   return `${normalizedLeftPrefix}:${normalizedRightPrefix}`;
 }
 
+/**
+ * {@link Storage} decorator that transparently prefixes all keys with a
+ * namespace, isolating a logical partition of a shared backing store.
+ *
+ * Reads and writes pass through to the underlying storage with the scope prefix
+ * prepended; keys returned by `scan` and `keys` are stripped back to their
+ * unprefixed form.  Use {@link scopedStorage} to construct one without `new`.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, ScopedStorage } from 'weft';
+ *
+ * await using raw = new MemoryStorage();
+ * const tenantA = new ScopedStorage(raw, 'tenant:a');
+ * const tenantB = new ScopedStorage(raw, 'tenant:b');
+ *
+ * await tenantA.put('setting', new TextEncoder().encode('dark'));
+ * await tenantB.put('setting', new TextEncoder().encode('light'));
+ *
+ * // Keys are isolated — tenantA cannot see tenantB's data
+ * console.log(await tenantA.has('setting')); // true
+ * console.log(await tenantB.get('setting')); // Uint8Array for 'light'
+ * ```
+ */
 export class ScopedStorage implements Storage {
   #storage: Storage;
   #scopePrefix: string;
@@ -153,6 +177,28 @@ export class ScopedStorage implements Storage {
   }
 }
 
+/**
+ * Factory that creates a {@link ScopedStorage} view of `storage` under the
+ * given `prefix`.
+ *
+ * Prefer this over `new ScopedStorage(...)` when you only need the
+ * {@link Storage} interface back — it reads more naturally as a decorator call
+ * at the Engine construction site.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, scopedStorage } from 'weft';
+ *
+ * await using raw = new MemoryStorage();
+ *
+ * // Give each engine its own key namespace in the same backing store
+ * await using engine = new Engine({ storage: scopedStorage(raw, 'eng:v1') });
+ * engine.register('ping', async function* () { return 'pong'; });
+ *
+ * const handle = await engine.start('ping', null);
+ * console.log(await handle.result()); // 'pong'
+ * ```
+ */
 export function scopedStorage(storage: Storage, prefix: string): ScopedStorage {
   return new ScopedStorage(storage, prefix);
 }

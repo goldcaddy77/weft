@@ -19,6 +19,29 @@ interface WorkflowTypeGroup {
   versionCounts: Map<string, number>;
 }
 
+/**
+ * Scans active (running and pending) workflows in `storage`, groups them by
+ * type, and compares stored workflow versions against currently registered
+ * versions to determine deployment safety.
+ *
+ * Returns a {@link VersionCheckReport} with a per-type breakdown and an
+ * `overallVerdict` of `'safe'`, `'unsafe'`, or `'needs-migration'`.  Typically
+ * called by the `weft version:check` CLI command.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, runVersionCheck } from 'weft';
+ * import type { WorkflowRegistration } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ *
+ * const registrations: Record<string, WorkflowRegistration> = {
+ *   ping: { version: '1.0.0', handler: async function* () { return 'pong'; } },
+ * };
+ * const report = await runVersionCheck(storage, registrations);
+ * console.log(report.overallVerdict); // 'safe'
+ * ```
+ */
 export async function runVersionCheck(
   storage: Storage,
   registrations: Record<string, WorkflowRegistration>,
