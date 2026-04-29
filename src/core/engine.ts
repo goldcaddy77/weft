@@ -354,6 +354,10 @@ type PendingTimelineEntry = {
   entry: WorkflowTimelineEntry;
 };
 
+type BufferedSignalOptions = {
+  emitPublicEvent?: boolean;
+};
+
 /**
  * Discriminator for `replayWorkflowFeed` / `snapshotWorkflowFeedTail`
  * / `subscribeWorkflowFeedCommits`. Mirrored by `EventSelector` in
@@ -381,6 +385,20 @@ const STREAM_CHUNK_KIND = 'stream:chunk';
  */
 function workflowFeedListenerKey(workflowId: string, selector: WorkflowFeedSelector): string {
   return `${workflowId}\0${selector}`;
+}
+
+function agentExecutionStateStoragePrefix(workflowId: string): string {
+  return `agent-execution:${encodeStorageKeyComponent(workflowId)}:`;
+}
+
+function parseAgentExecutionStepIndex(key: string): number | undefined {
+  const stepIndexText = key.slice(key.lastIndexOf(':') + 1);
+  const stepIndex = Number.parseInt(stepIndexText, 10);
+  if (!Number.isSafeInteger(stepIndex) || stepIndex < 0) {
+    return undefined;
+  }
+
+  return stepIndex;
 }
 
 function isPersistedAgentLoopStateValue(value: unknown): value is PersistedAgentLoopState {
@@ -4454,39 +4472,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       signalName: string,
       signalPayload: unknown,
     ): Promise<void> => {
-      const targetState = await this.#loadWorkflowState(targetWorkflowId);
-      if (targetState && isTerminalWorkflowStatus(targetState.status)) {
-        return;
-      }
+      await this.#bufferSignalPayload(targetWorkflowId, signalName, signalPayload);
 
-      const signalId = crypto.randomUUID();
-      const signalKey = KEYS.signal(targetWorkflowId, signalName, signalId);
-      const operations: BatchOperation[] = [
-        { type: 'put', key: signalKey, value: encode(signalPayload) },
-      ];
-      if (!this.#workflowsNeedingTerminalCleanup.has(targetWorkflowId)) {
-        this.#workflowsNeedingTerminalCleanup.add(targetWorkflowId);
-        operations.push({
-          type: 'put',
-          key: KEYS.terminalCleanupNeeded(targetWorkflowId),
-          value: EMPTY_STORAGE_VALUE,
+      for (const internalSignalName of await this.#findMatchingAgentResumeSignalNames(
+        targetWorkflowId,
+        signalName,
+      )) {
+        await this.#bufferSignalPayload(targetWorkflowId, internalSignalName, signalPayload, {
+          emitPublicEvent: false,
         });
-      }
-      await this.#storage.batch(operations);
-
-      this.dispatchEvent(new SignalReceivedEvent(targetWorkflowId, signalName, signalPayload));
-
-      this.#broadcast({ type: 'signal:received', workflowId: targetWorkflowId, signalName });
-
-      // Check if workflow is waiting for this signal
-      const waiterKey = `${targetWorkflowId}:${signalName}`;
-      const waiter = this.#signalWaiters.get(waiterKey);
-      if (waiter) {
-        this.#signalWaiters.delete(waiterKey);
-        this.#untrackWaiterKey(this.#signalWaitersByWorkflow, targetWorkflowId, waiterKey);
-        waiter();
-      } else if (this.#parkedInlineWorkflows.has(targetWorkflowId)) {
-        void this.#swallowPromiseRejection(this.#resumeParkedInlineWorkflow(targetWorkflowId));
       }
     };
 
@@ -4527,6 +4521,79 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     } else {
       await deliverSignal(workflowId, name, payload);
     }
+  }
+
+  async #bufferSignalPayload(
+    workflowId: string,
+    signalName: string,
+    payload: unknown,
+    options: BufferedSignalOptions = {},
+  ): Promise<void> {
+    const targetState = await this.#loadWorkflowState(workflowId);
+    if (targetState && isTerminalWorkflowStatus(targetState.status)) {
+      return;
+    }
+
+    const signalId = crypto.randomUUID();
+    const signalKey = KEYS.signal(workflowId, signalName, signalId);
+    const operations: BatchOperation[] = [{ type: 'put', key: signalKey, value: encode(payload) }];
+    if (!this.#workflowsNeedingTerminalCleanup.has(workflowId)) {
+      this.#workflowsNeedingTerminalCleanup.add(workflowId);
+      operations.push({
+        type: 'put',
+        key: KEYS.terminalCleanupNeeded(workflowId),
+        value: EMPTY_STORAGE_VALUE,
+      });
+    }
+    await this.#storage.batch(operations);
+
+    if (options.emitPublicEvent !== false) {
+      this.dispatchEvent(new SignalReceivedEvent(workflowId, signalName, payload));
+      this.#broadcast({ type: 'signal:received', workflowId, signalName });
+    }
+
+    const waiterKey = `${workflowId}:${signalName}`;
+    const waiter = this.#signalWaiters.get(waiterKey);
+    if (waiter) {
+      this.#signalWaiters.delete(waiterKey);
+      this.#untrackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
+      waiter();
+    } else if (this.#parkedInlineWorkflows.has(workflowId)) {
+      void this.#swallowPromiseRejection(this.#resumeParkedInlineWorkflow(workflowId));
+    }
+  }
+
+  #createAgentResumeSignalName(stepIndex: number, resumeToken: string): string {
+    return `agent-resume:${String(stepIndex).padStart(10, '0')}:${resumeToken}`;
+  }
+
+  async #findMatchingAgentResumeSignalNames(
+    workflowId: string,
+    resumeToken: string,
+  ): Promise<string[]> {
+    const matchingSignalNames = new Set<string>();
+    const prefix = agentExecutionStateStoragePrefix(workflowId);
+
+    for await (const [key, value] of this.#storage.scan(prefix)) {
+      const decoded = decode(value);
+      if (!isStoredPendingAgentExecutionState(decoded)) {
+        continue;
+      }
+
+      const pendingResume = decoded.pendingResume;
+      if (pendingResume.resumed || pendingResume.hint.resumeToken !== resumeToken) {
+        continue;
+      }
+
+      const stepIndex = parseAgentExecutionStepIndex(key);
+      if (stepIndex === undefined) {
+        continue;
+      }
+
+      matchingSignalNames.add(this.#createAgentResumeSignalName(stepIndex, resumeToken));
+    }
+
+    return [...matchingSignalNames];
   }
 
   // -------------------------------------------------------------------------
@@ -6268,7 +6335,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return true;
   }
 
-  async #parkInlineWorkflowForAgentSuspension(workflowId: string): Promise<boolean> {
+  async #parkInlineWorkflowForAgentSuspension(
+    workflowId: string,
+    stepIndex: number,
+    resumeToken: string,
+  ): Promise<boolean> {
     if (this.#inlineStrategy === null) {
       return false;
     }
@@ -6278,7 +6349,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return false;
     }
 
-    return this.#publishParkedInlineWorkflowMarker(workflowId);
+    const internalSignalName = this.#createAgentResumeSignalName(stepIndex, resumeToken);
+    if (await this.#hasBufferedSignal(workflowId, internalSignalName)) {
+      return false;
+    }
+
+    const publishedParkedMarker = await this.#publishParkedInlineWorkflowMarker(workflowId);
+    if (!publishedParkedMarker) {
+      return false;
+    }
+
+    if (await this.#hasBufferedSignal(workflowId, internalSignalName)) {
+      await this.#resumeParkedInlineWorkflow(workflowId);
+    }
+
+    return true;
   }
 
   async #publishParkedInlineWorkflowMarker(workflowId: string): Promise<boolean> {
@@ -6766,8 +6851,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'wait-signal' }>,
   ): Promise<void> {
-    const payload = await this.#waitForSignalPayload(workflowId, operation.signalName);
-    this.#completeOperation(workflowId, payload);
+    return this.#runOperationWithResult(workflowId, operation, () =>
+      this.#waitForSignalPayload(workflowId, operation.signalName),
+    );
   }
 
   async #processWaitUpdateOperation(
@@ -7144,7 +7230,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       contextStrategy: _contextStrategy,
       ...rest
     } = operation.options;
-    const pendingExecutionState = await this.#loadPendingAgentExecutionState(
+    let pendingExecutionState = await this.#loadPendingAgentExecutionState(
       workflowId,
       operation.stepIndex,
     );
@@ -7166,62 +7252,79 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const toolEffectLog = new ToolEffectLog(this.#storage, workflowId, operation.operationId);
     const provider = this.#createAgentProvider(workflowId, operation.stepIndex, rest.provider);
 
-    try {
-      const agentResult = await executeAgentLoopWithState(
-        {
-          ...rest,
-          provider,
-          modelRouter: rest.modelRouter ?? this.#defaultModelRouter,
-          budget: budgetTracker,
-          eventTarget: this,
+    while (true) {
+      try {
+        const agentResult = await executeAgentLoopWithState(
+          {
+            ...rest,
+            provider,
+            modelRouter: rest.modelRouter ?? this.#defaultModelRouter,
+            budget: budgetTracker,
+            eventTarget: this,
+            workflowId,
+            agentId: operation.operationId,
+            onTurnStarted: agentInterception.onTurnStarted,
+            onTurnCompleted: agentInterception.onTurnCompleted,
+            onToolCalled: agentInterception.onToolCalled,
+            onToolReturned: agentInterception.onToolReturned,
+            toolEffectLog,
+          },
+          prompt,
+          pendingExecutionState?.loopState,
+        );
+        this.#closeAgentInterceptor(agentInterceptorGenerator, agentResult.content);
+        this.#exposeAgentObservability(context, agentResult, rest.maxTurns ?? 10);
+        this.#recordAgentContextCost(context, agentResult.totalCost);
+        await this.#recordAgentBudgetCost(
           workflowId,
-          agentId: operation.operationId,
-          onTurnStarted: agentInterception.onTurnStarted,
-          onTurnCompleted: agentInterception.onTurnCompleted,
-          onToolCalled: agentInterception.onToolCalled,
-          onToolReturned: agentInterception.onToolReturned,
-          toolEffectLog,
-        },
-        prompt,
-        pendingExecutionState?.loopState,
-      );
-      this.#closeAgentInterceptor(agentInterceptorGenerator, agentResult.content);
-      this.#exposeAgentObservability(context, agentResult, rest.maxTurns ?? 10);
-      this.#recordAgentContextCost(context, agentResult.totalCost);
-      await this.#recordAgentBudgetCost(
-        workflowId,
-        operation.operationId,
-        resolvedBudgetNamespace,
-        agentResult.totalCost,
-      );
-      await this.#clearPendingAgentExecutionState(workflowId, operation.stepIndex);
-      return { kind: 'completed', value: agentResult.content };
-    } catch (error) {
-      if (error instanceof AgentLoopSuspendedError) {
+          operation.operationId,
+          resolvedBudgetNamespace,
+          agentResult.totalCost,
+        );
+        await this.#clearPendingAgentExecutionState(workflowId, operation.stepIndex);
+        return { kind: 'completed', value: agentResult.content };
+      } catch (error) {
+        if (!(error instanceof AgentLoopSuspendedError)) {
+          await this.#clearPendingAgentExecutionState(workflowId, operation.stepIndex);
+          throw error;
+        }
+
         await this.#storePendingAgentExecutionState(workflowId, operation.stepIndex, {
           loopState: error.loopState,
           pendingResume: error.pendingResume,
         });
 
-        if (await this.#parkInlineWorkflowForAgentSuspension(workflowId)) {
+        if (
+          await this.#parkInlineWorkflowForAgentSuspension(
+            workflowId,
+            operation.stepIndex,
+            error.pendingResume.hint.resumeToken,
+          )
+        ) {
           return { kind: 'parked' };
         }
 
         const payload = await this.#waitForSignalPayload(
           workflowId,
-          error.pendingResume.hint.resumeToken,
+          this.#createAgentResumeSignalName(
+            operation.stepIndex,
+            error.pendingResume.hint.resumeToken,
+          ),
         );
+        if (this.#abortController.signal.aborted) {
+          return { kind: 'parked' };
+        }
         await this.#markPendingAgentResumeStateResumed(
           workflowId,
           operation.stepIndex,
           error.pendingResume.turnIndex,
           payload,
         );
-        return await this.#executeAgentContextOperationResult(workflowId, operation);
+        pendingExecutionState = await this.#loadPendingAgentExecutionState(
+          workflowId,
+          operation.stepIndex,
+        );
       }
-
-      await this.#clearPendingAgentExecutionState(workflowId, operation.stepIndex);
-      throw error;
     }
   }
 
@@ -8662,14 +8765,54 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     stepIndex: number,
   ): SuspendingProviderCoordinator {
+    const toInternalSignalName = (resumeToken: string) =>
+      this.#createAgentResumeSignalName(stepIndex, resumeToken);
+
     return {
       load: this.#loadPendingChatResumeState.bind(this, workflowId, stepIndex),
       store: this.#storePendingChatResumeState.bind(this, workflowId, stepIndex),
       clear: this.#clearPendingChatResumeState.bind(this, workflowId, stepIndex),
-      consumeSignal: this.#consumeSignal.bind(this, workflowId),
-      waitForSignal: this.#waitForSignalPayload.bind(this, workflowId),
-      canSuspend: this.#inlineStrategy !== null,
+      consumeSignal: (resumeToken: string) =>
+        this.#consumeSignal(workflowId, toInternalSignalName(resumeToken)),
+      waitForSignal: (resumeToken: string) =>
+        this.#waitForSignalPayload(workflowId, toInternalSignalName(resumeToken)),
+      // Force the provider wrapper to yield control back to the engine before
+      // waiting so the full agent loop state can be persisted first.
+      canSuspend: true,
     };
+  }
+
+  async #mirrorBufferedSignalPayload(
+    workflowId: string,
+    sourceSignalName: string,
+    targetSignalName: string,
+  ): Promise<void> {
+    if (await this.#hasBufferedSignal(workflowId, targetSignalName)) {
+      return;
+    }
+
+    const prefix = `sig:${encodeStorageKeyComponent(workflowId)}:${sourceSignalName}:`;
+    for await (const [_key, value] of this.#storage.scan(prefix, { limit: 1 })) {
+      await this.#bufferSignalPayload(workflowId, targetSignalName, decode(value), {
+        emitPublicEvent: false,
+      });
+      return;
+    }
+  }
+
+  async #clearBufferedSignals(workflowId: string, signalName: string): Promise<void> {
+    const prefix = `sig:${encodeStorageKeyComponent(workflowId)}:${signalName}:`;
+    const keysToDelete: string[] = [];
+
+    for await (const [key] of this.#storage.scan(prefix)) {
+      keysToDelete.push(key);
+    }
+
+    if (keysToDelete.length === 0) {
+      return;
+    }
+
+    await this.#storage.batch(keysToDelete.map((key) => ({ type: 'delete' as const, key })));
   }
 
   async #loadPendingChatResumeState(
@@ -8741,9 +8884,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     state: StoredPendingAgentExecutionState,
   ): Promise<void> {
     await this.#storage.put(KEYS.agentExecutionState(workflowId, stepIndex), encode(state));
+
+    if (!state.pendingResume.resumed) {
+      await this.#mirrorBufferedSignalPayload(
+        workflowId,
+        state.pendingResume.hint.resumeToken,
+        this.#createAgentResumeSignalName(stepIndex, state.pendingResume.hint.resumeToken),
+      );
+    }
   }
 
   async #clearPendingAgentExecutionState(workflowId: string, stepIndex: number): Promise<void> {
+    const existingState = await this.#loadPendingAgentExecutionState(workflowId, stepIndex);
+    if (existingState) {
+      await this.#clearBufferedSignals(
+        workflowId,
+        this.#createAgentResumeSignalName(stepIndex, existingState.pendingResume.hint.resumeToken),
+      );
+    }
+
     await this.#storage.delete(KEYS.agentExecutionState(workflowId, stepIndex));
   }
 

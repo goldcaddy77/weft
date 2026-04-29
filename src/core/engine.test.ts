@@ -2402,6 +2402,83 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('falls back to in-memory waiting when agent suspension cannot park and preserves the workflow signal', async () => {
+    const engine = new Engine({ suspendOnLlmWait: true });
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('non-parkable-resume-agent-workflow', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.onUpdate('touch', () => 'ok');
+      const agentResult = yield* context.agent({
+        model: 'test-model',
+        prompt: 'Wait for the provider resume signal',
+        provider,
+      });
+      const signalPayload = yield* context.waitForSignal<{ approved: boolean }>('llm-ready-token');
+      return {
+        agentResult,
+        signalPayload,
+      };
+    });
+
+    const handle = await engine.start('non-parkable-resume-agent-workflow', null);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (chatCalls.length === 0) {
+        await flush();
+      }
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(chatCalls).toHaveLength(0);
+
+    await engine.signal(handle.id, 'llm-ready-token', { approved: true });
+
+    await expect(handle.result()).resolves.toEqual({
+      agentResult: 'Agent resumed successfully',
+      signalPayload: { approved: true },
+    });
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
   it('leaves provider chat blocking behavior unchanged when suspendOnLlmWait is disabled', async () => {
     const engine = new Engine();
     const chatCalls: Array<{
