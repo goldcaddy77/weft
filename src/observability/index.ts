@@ -189,8 +189,8 @@ function injectSpanContext(span: OtelSpan, headers: Map<string, string>): void {
  * });
  * await using engine = new Engine({
  *   storage: new MemoryStorage(),
- *   interceptors: { workflow, activity },
  * });
+ * engine.addInterceptor(workflow);
  * ```
  */
 export function createObservabilityInterceptors(options?: ObservabilityOptions): {

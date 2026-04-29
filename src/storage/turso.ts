@@ -16,7 +16,7 @@ import { scopedStorage } from './scoped-storage';
  *
  * @example
  * ```ts
- * import { TursoStorage, type TursoStorageOptions } from 'weft';
+ * import { TursoStorage, type TursoStorageOptions } from 'weft/storage/turso';
  *
  * const options: TursoStorageOptions = {
  *   url: 'file:local.db',
@@ -46,12 +46,12 @@ const TABLE_INIT = `CREATE TABLE IF NOT EXISTS kv (
  *
  * @example
  * ```ts
- * import { TursoStorage } from 'weft';
+ * import { TursoStorage } from 'weft/storage/turso';
  * import { Engine } from 'weft';
  *
  * await using storage = new TursoStorage({
  *   url: 'libsql://my-db.turso.io',
- *   authToken: process.env.TURSO_AUTH_TOKEN,
+ * ...(process.env['TURSO_AUTH_TOKEN'] ? { authToken: process.env['TURSO_AUTH_TOKEN'] } : {}),
  * });
  * await using engine = new Engine({ storage });
  * ```

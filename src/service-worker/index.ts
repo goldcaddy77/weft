@@ -58,7 +58,8 @@ const DEFAULT_PERIODIC_SYNC_TAG = 'weft-timers';
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, createFetchHandler } from 'weft';
+ * import { Engine, MemoryStorage } from 'weft';
+ * import { createFetchHandler } from 'weft/service-worker';
  *
  * const engine = new Engine({ storage: new MemoryStorage() });
  * const handler = createFetchHandler({ engine, pathPrefix: '/weft/' });
@@ -111,7 +112,7 @@ export function createFetchHandler(
  *
  * @example
  * ```ts
- * import { createPeriodicSyncHandler } from 'weft';
+ * import { createPeriodicSyncHandler } from 'weft/service-worker';
  *
  * // scheduler is a ServiceWorkerScheduler instance
  * // const handler = createPeriodicSyncHandler(scheduler, 'weft-timers');
@@ -144,7 +145,7 @@ export function createPeriodicSyncHandler(
  *
  * @example
  * ```ts
- * import { createLifecycleHandlers } from 'weft';
+ * import { createLifecycleHandlers } from 'weft/service-worker';
  *
  * const { install, activate } = createLifecycleHandlers();
  *

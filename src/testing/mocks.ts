@@ -20,7 +20,8 @@
  * import { TestEngine, type MockCall } from 'weft';
  *
  * const engine = new TestEngine();
- * const mockHandle = engine.mock('sendEmail', async (input: unknown) => 'sent');
+ * async function sendEmail(input: unknown): Promise<string> { return ''; }
+ * const mockHandle = engine.mock(sendEmail, async (input: unknown) => 'sent');
  * await engine.start('notify', { to: 'user@example.com' });
  * const call: MockCall<[unknown], string> = mockHandle.calls[0]!;
  * console.log(call.args[0]); // { to: 'user@example.com' }

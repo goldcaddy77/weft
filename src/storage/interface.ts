@@ -76,7 +76,7 @@ export interface Storage extends Disposable {
  *
  * @example
  * ```ts
- * import { resolvePrefixRangeEnd } from 'weft';
+ * import { resolvePrefixRangeEnd } from 'weft/storage/interface';
  *
  * const end = resolvePrefixRangeEnd('wf:');
  * console.log(end); // 'wg:'
@@ -94,7 +94,7 @@ export function resolvePrefixRangeEnd(prefix: string): string {
  *
  * @example
  * ```ts
- * import { matchesScanOptions } from 'weft';
+ * import { matchesScanOptions } from 'weft/storage/interface';
  *
  * console.log(matchesScanOptions('wf:b', { gt: 'wf:a', lt: 'wf:c' })); // true
  * console.log(matchesScanOptions('wf:a', { gt: 'wf:a' }));              // false
@@ -158,7 +158,8 @@ export function storageValuesEqual(left: Uint8Array | null, right: Uint8Array | 
  *
  * @example
  * ```ts
- * import { MemoryStorage, storageHas } from 'weft';
+ * import { MemoryStorage } from 'weft';
+ * import { storageHas } from 'weft/storage/interface';
  *
  * await using storage = new MemoryStorage();
  * await storage.put('my-key', new Uint8Array([1]));
@@ -179,7 +180,8 @@ export async function storageHas(storage: Storage, key: string): Promise<boolean
  *
  * @example
  * ```ts
- * import { MemoryStorage, storageKeys } from 'weft';
+ * import { MemoryStorage } from 'weft';
+ * import { storageKeys } from 'weft/storage/interface';
  *
  * await using storage = new MemoryStorage();
  * await storage.put('wf:abc', new Uint8Array([1]));
@@ -209,7 +211,8 @@ export function storageKeys(
  *
  * @example
  * ```ts
- * import { MemoryStorage, storageCount } from 'weft';
+ * import { MemoryStorage } from 'weft';
+ * import { storageCount } from 'weft/storage/interface';
  *
  * await using storage = new MemoryStorage();
  * await storage.put('wf:1', new Uint8Array([1]));
@@ -234,7 +237,8 @@ export async function storageCount(storage: Storage, prefix: string): Promise<nu
  *
  * @example
  * ```ts
- * import { MemoryStorage, storageDeletePrefix } from 'weft';
+ * import { MemoryStorage } from 'weft';
+ * import { storageDeletePrefix } from 'weft/storage/interface';
  *
  * await using storage = new MemoryStorage();
  * await storage.put('wf:a', new Uint8Array([1]));
@@ -267,7 +271,8 @@ export async function storageDeletePrefix(storage: Storage, prefix: string): Pro
  *
  * @example
  * ```ts
- * import { MemoryStorage, storageConditionalBatch } from 'weft';
+ * import { MemoryStorage } from 'weft';
+ * import { storageConditionalBatch } from 'weft/storage/interface';
  *
  * await using storage = new MemoryStorage();
  * const key = 'my-key';
@@ -299,7 +304,7 @@ export async function storageConditionalBatch(
  *
  * @example
  * ```ts
- * import { encodeStorageKeyComponent } from 'weft';
+ * import { encodeStorageKeyComponent } from 'weft/storage/interface';
  *
  * const safe = encodeStorageKeyComponent('user:123/profile');
  * console.log(safe); // 'user%3A123%2Fprofile'
@@ -314,7 +319,7 @@ export function encodeStorageKeyComponent(value: string): string {
  *
  * @example
  * ```ts
- * import { encodeStorageKeyComponent, decodeStorageKeyComponent } from 'weft';
+ * import { encodeStorageKeyComponent, decodeStorageKeyComponent } from 'weft/storage/interface';
  *
  * const encoded = encodeStorageKeyComponent('user:123');
  * const decoded = decodeStorageKeyComponent(encoded);
@@ -331,7 +336,7 @@ export function decodeStorageKeyComponent(value: string): string {
  *
  * @example
  * ```ts
- * import { tryDecodeStorageKeyComponent } from 'weft';
+ * import { tryDecodeStorageKeyComponent } from 'weft/storage/interface';
  *
  * console.log(tryDecodeStorageKeyComponent('user%3A123')); // 'user:123'
  * console.log(tryDecodeStorageKeyComponent('%GG'));        // null

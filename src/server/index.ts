@@ -386,7 +386,8 @@ function serializeEvent(event: Event): string | null {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, wireEventBroadcasting, type EventBroadcastingHandle } from 'weft';
+ * import { Engine, MemoryStorage } from 'weft';
+ * import { wireEventBroadcasting, type EventBroadcastingHandle } from 'weft/server';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
  * const bunServer = Bun.serve({ fetch: () => new Response('ok') });
@@ -421,7 +422,8 @@ function getWorkflowIdFromEvent(event: Event): string | undefined {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, wireEventBroadcasting } from 'weft';
+ * import { Engine, MemoryStorage } from 'weft';
+ * import { wireEventBroadcasting } from 'weft/server';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
  * const bunServer = Bun.serve({ fetch: () => new Response('ok') });
@@ -688,10 +690,11 @@ export function wireEventBroadcasting(
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, serve } from 'weft';
+ * import { Engine, MemoryStorage } from 'weft';
+ * import { serve } from 'weft/server';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
- * engine.register('greet', async function* (ctx, input: unknown) {
+ * engine.register('greet', async function* (ctx: import('weft').WorkflowContext, input: unknown) {
  *   return `Hello, ${(input as { name: string }).name}!`;
  * });
  *

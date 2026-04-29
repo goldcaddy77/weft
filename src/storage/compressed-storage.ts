@@ -30,7 +30,8 @@ import {
  *
  * @example
  * ```ts
- * import { CompressedStorage, MemoryStorage, type AgentCompressionOptions } from 'weft';
+ * import { MemoryStorage } from 'weft';
+ * import { CompressedStorage, type AgentCompressionOptions } from 'weft/storage/compressed';
  *
  * const agentOptions: AgentCompressionOptions = {
  *   agentAlgorithm: 'brotli',

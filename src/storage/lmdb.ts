@@ -19,7 +19,7 @@ import { scopedStorage } from './scoped-storage';
  *
  * @example
  * ```ts
- * import { LMDBStorage } from 'weft';
+ * import { LMDBStorage } from 'weft/storage/lmdb';
  * import { Engine } from 'weft';
  *
  * await using storage = new LMDBStorage('./weft-data');

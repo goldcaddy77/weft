@@ -48,14 +48,14 @@ import type {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, type ClientHandle } from 'weft';
+ * import { Engine, MemoryStorage, type WorkflowCompletedEvent } from 'weft';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
  * engine.register('ping', async function* () { return 'pong'; });
  *
- * const handle: ClientHandle = await engine.start('ping', null);
+ * const handle = await engine.start('ping', null);
  * handle.addEventListener('workflow:completed', (e) => {
- *   console.log('completed', e.detail);
+ *   console.log('completed', (e as WorkflowCompletedEvent).result);
  * });
  * const result = await handle.result();
  * console.log(result); // 'pong'
@@ -101,12 +101,13 @@ export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, type ClientScheduleHandle } from 'weft';
+ * import { Engine, MemoryStorage } from 'weft';
+ * import type { ClientScheduleHandle } from 'weft/client';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
  * engine.register('report', async function* () { return 'sent'; });
  *
- * const handle: ClientScheduleHandle = await engine.schedule(
+ * const handle = await engine.schedule(
  *   'report', {}, '0 9 * * 1',
  * );
  * await handle.pause();

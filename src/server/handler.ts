@@ -418,7 +418,7 @@ function isOperationFaultLike(value: unknown): value is OperationFault {
  *
  * @example
  * ```ts
- * import { authContextToPrincipal } from 'weft';
+ * import { authContextToPrincipal } from 'weft/server/handler';
  *
  * const principal = authContextToPrincipal({
  *   method: 'api-key',

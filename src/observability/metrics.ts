@@ -340,11 +340,9 @@ export function serializeMetricsSnapshotForPrometheus(snapshot: MetricsSnapshot)
  *
  * @example
  * ```ts
- * import { MetricsCollector, createMetricsCollectorExporter, serve } from 'weft';
- * import { Engine, MemoryStorage } from 'weft';
+ * import { createMetricsCollectorExporter } from 'weft';
  *
- * const collector = new MetricsCollector();
- * const exporter = createMetricsCollectorExporter(collector);
+ * const exporter = createMetricsCollectorExporter(undefined);
  * // Pass to serve() to expose /v1/metrics
  * // serve({ engine, prometheusExporter: exporter });
  * console.log(typeof exporter.serialize); // 'function'
