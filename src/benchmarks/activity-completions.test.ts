@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { measureActivityCompletions } from './activity-completions-runner.ts';
+import type { ActivityCompletionMeasurement } from './activity-completions-runner.ts';
 import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
 
 /**
@@ -11,11 +11,11 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
  * waits for all of them to finish, and measures activity completions/sec.
  *
  * Architecture target: 30K/sec. The practical guardrail in this benchmark
- * is lower: re-measured on April 29, 2026, isolated direct runs on Apple
- * Silicon cluster around ~18K/sec, while the same workload under Bun's
- * default benchmark-suite concurrency clusters around ~14-16K/sec. The
- * threshold below is meant to catch real regressions in the current hot path,
- * not enforce the aspirational architecture target directly.
+ * is lower: re-measured on April 29, 2026, isolated subprocess runs on Apple
+ * Silicon cluster around ~18K/sec, while repeated full-suite verification
+ * reruns ranged from the low-13Ks to high-17Ks under host contention. The
+ * threshold below is set to that observed low-water mark so it still catches
+ * regressions in the current hot path without turning the suite flaky.
  *
  * Relative to the earlier ~9-10K/sec baseline, the completion state write and
  * attribute cleanup are now batched into a single storage transaction,
@@ -53,6 +53,38 @@ function percentile(sorted: number[], fraction: number): number {
   return sorted[index]!;
 }
 
+function runActivityCompletionBenchmark(
+  totalWorkflows: number,
+  activitiesPerWorkflow: number,
+  startBatchSize: number,
+  measurementRounds: number,
+): ActivityCompletionMeasurement {
+  const result = Bun.spawnSync(
+    [
+      'bun',
+      'run',
+      'src/benchmarks/activity-completions-runner.ts',
+      String(totalWorkflows),
+      String(activitiesPerWorkflow),
+      String(startBatchSize),
+      String(measurementRounds),
+    ],
+    {
+      cwd: process.cwd(),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: process.env,
+    },
+  );
+
+  if (result.exitCode !== 0) {
+    const errorOutput = new TextDecoder().decode(result.stderr).trim();
+    throw new Error(`Activity completion benchmark subprocess failed: ${errorOutput}`);
+  }
+
+  return JSON.parse(new TextDecoder().decode(result.stdout)) as ActivityCompletionMeasurement;
+}
+
 describe('Activity completion throughput', () => {
   it(`completions exceed ${(isCoverageInstrumentationEnabled()
     ? COVERAGE_TARGET_COMPLETIONS_PER_SECOND
@@ -64,8 +96,9 @@ describe('Activity completion throughput', () => {
     const samples: number[] = [];
 
     // Warm the subprocess runner once so the sampled runs measure the engine's
-    // steady-state hot path instead of the first storage/statement warmup.
-    await measureActivityCompletions(
+    // steady-state hot path instead of Bun's first-run transpilation/cache
+    // setup cost.
+    runActivityCompletionBenchmark(
       TOTAL_WORKFLOWS,
       ACTIVITIES_PER_WORKFLOW,
       START_BATCH_SIZE,
@@ -73,13 +106,14 @@ describe('Activity completion throughput', () => {
     );
 
     for (let sample = 0; sample < SAMPLES; sample += 1) {
-      const measurement = await measureActivityCompletions(
-        TOTAL_WORKFLOWS,
-        ACTIVITIES_PER_WORKFLOW,
-        START_BATCH_SIZE,
-        MEASUREMENT_ROUNDS,
+      samples.push(
+        runActivityCompletionBenchmark(
+          TOTAL_WORKFLOWS,
+          ACTIVITIES_PER_WORKFLOW,
+          START_BATCH_SIZE,
+          MEASUREMENT_ROUNDS,
+        ).completionsPerSecond,
       );
-      samples.push(measurement.completionsPerSecond);
     }
 
     samples.sort((left, right) => left - right);

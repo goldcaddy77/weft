@@ -10,13 +10,14 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
  * echo worker fixture so it measures an observable readiness boundary rather
  * than just constructor overhead.
  *
- * Architecture target: <5ms median on Bun in isolated direct runs.
+ * Architecture target: <5ms median on Bun.
  *
  * Re-measured on April 29, 2026, isolated direct runs cluster around ~3ms,
  * while default full-suite `bun test` concurrency can push the same
- * round-trip into the mid-5ms range on this machine. The regression floor
- * below is calibrated to the verification environment rather than the
- * aspirational architecture target.
+ * round-trip into the mid-5ms range on this machine. Until a stable strict
+ * proof for `<5ms` exists inside the default suite, this benchmark enforces a
+ * `<7ms` regression floor and leaves the architecture target open in the
+ * roadmap.
  *
  * Coverage mode gets a slightly looser floor because instrumentation adds
  * measurable overhead to worker bootstrap and message dispatch.
@@ -30,15 +31,19 @@ const COVERAGE_TARGET_MILLISECONDS = 9;
 
 function median(values: number[]): number {
   const sorted = values.toSorted((left, right) => left - right);
-  return sorted[Math.floor(sorted.length / 2)]!;
+  const middleIndex = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[middleIndex - 1]! + sorted[middleIndex]!) / 2;
+  }
+
+  return sorted[middleIndex]!;
 }
 
 async function measureWorkerSpawnRoundTrip(): Promise<number> {
+  const start = performance.now();
   const worker = new Worker(workerUrl);
 
   try {
-    const start = performance.now();
-
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(
         () => reject(new Error('Worker spawn benchmark timed out')),

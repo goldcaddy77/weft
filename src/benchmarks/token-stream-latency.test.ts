@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
+import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { TokenEvent } from '../core/events.ts';
 import type { WorkflowContext } from '../core/types.ts';
@@ -29,7 +30,12 @@ const COVERAGE_TARGET_MILLISECONDS = 15;
 
 function median(values: number[]): number {
   const sorted = values.toSorted((left, right) => left - right);
-  return sorted[Math.floor(sorted.length / 2)]!;
+  const middleIndex = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[middleIndex - 1]! + sorted[middleIndex]!) / 2;
+  }
+
+  return sorted[middleIndex]!;
 }
 
 function createEngine(): Engine {
@@ -38,6 +44,10 @@ function createEngine(): Engine {
 
   engine.register('echo', async function* (_ctx: WorkflowContext, input: unknown) {
     return input;
+  });
+  engine.register('stream-target', async function* (ctx: WorkflowContext) {
+    yield* (ctx as Context).sleep('1h');
+    return 'done';
   });
 
   return engine;
@@ -159,8 +169,11 @@ async function measureTokenLatency(
 describe('Token stream latency', () => {
   let engine: Engine;
   let server: WeftServer;
+  let streamSocket: WebSocket | undefined;
 
   afterEach(async () => {
+    streamSocket?.close();
+    streamSocket = undefined;
     if (server) {
       await server.stop();
     }
@@ -174,9 +187,9 @@ describe('Token stream latency', () => {
     engine = createEngine();
     server = serve({ engine, port: 0 });
 
-    const handle = await engine.start('echo', 'hello');
-    const streamSocket = await connectStream(server, handle.id);
-    await Bun.sleep(50);
+    const handle = await engine.start('stream-target', 'hello');
+    streamSocket = await connectStream(server, handle.id);
+    await measureTokenLatency(engine, handle.id, streamSocket, '__stream-ready__');
 
     for (let sample = 0; sample < WARMUP_SAMPLES; sample += 1) {
       await measureTokenLatency(engine, handle.id, streamSocket, `warmup-${String(sample)}`);
