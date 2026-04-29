@@ -33,12 +33,7 @@ export function assertIdenticalJson(a: unknown, b: unknown, label: string): void
   try {
     expect(a).toEqual(b);
   } catch (cause) {
-    const message =
-      cause instanceof Error
-        ? cause.message
-        : typeof cause === 'string'
-          ? cause
-          : 'unknown failure';
+    const message = cause instanceof Error ? cause.message : 'unknown failure';
     throw new Error(
       `Parity invariant violated [${label}]: identical-json expected but payloads differ.\n${message}`,
       { cause },

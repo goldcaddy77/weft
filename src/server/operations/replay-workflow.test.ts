@@ -5,10 +5,13 @@ import { Engine } from '../../core/engine.ts';
 import type { WorkflowContext } from '../../core/types.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { signJWT } from '../authentication.ts';
+import { handleRequest } from '../handler.ts';
 import { serve, type WeftServer } from '../index.ts';
-import { executeOperation } from '../operation-catalog.ts';
+import { createOperationRegistry, executeOperation } from '../operation-catalog.ts';
+import type { OperationFault } from '../operation-fault.ts';
 import { anonymousPrincipal, principalFromJwtClaims } from '../principal.ts';
 import { createLiveOperationRegistry } from '../rest-bindings.ts';
+import { replayWorkflowOperation, replayWorkflowRestBinding } from './replay-workflow.ts';
 
 const TEST_SECRET = 'track-8-replay-auth-secret-1234567890';
 
@@ -346,5 +349,149 @@ describe('weft.workflows.replay authorization parity', () => {
     }
     const replay = scopedResult.value as { checkpoint: { step: number } };
     expect(replay.checkpoint.step).toBe(2);
+  });
+});
+
+describe('weft.workflows.replay REST shaping', () => {
+  let engine: Engine | undefined;
+
+  afterEach(() => {
+    engine?.[Symbol.dispose]();
+  });
+
+  it('returns msgpack when the Accept header requests it', async () => {
+    engine = createReplayEngine();
+    const workflowId = await createReplayWorkflow(engine, 'wf-replay-msgpack');
+
+    const response = await handleRequest(
+      new Request(`http://localhost/v1/workflows/${workflowId}/replay/2`, {
+        method: 'GET',
+        headers: { Accept: 'application/msgpack' },
+      }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([replayWorkflowOperation]),
+        restBindings: [replayWorkflowRestBinding],
+        authContext: {
+          method: 'jwt',
+          principal: principalFromJwtClaims({ sub: 'reader', scope: 'workflows:read' }),
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/msgpack');
+  });
+
+  it('returns 400 for an invalid replay step', async () => {
+    engine = createReplayEngine();
+    const workflowId = await createReplayWorkflow(engine, 'wf-replay-invalid-step');
+
+    const response = await handleRequest(
+      new Request(`http://localhost/v1/workflows/${workflowId}/replay/not-a-number`, {
+        method: 'GET',
+      }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([replayWorkflowOperation]),
+        restBindings: [replayWorkflowRestBinding],
+        authContext: {
+          method: 'jwt',
+          principal: principalFromJwtClaims({ sub: 'reader', scope: 'workflows:read' }),
+        },
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Invalid step: not-a-number' });
+  });
+
+  it('returns 404 when the replay step does not exist', async () => {
+    engine = createReplayEngine();
+    const workflowId = await createReplayWorkflow(engine, 'wf-replay-missing-step');
+
+    const response = await handleRequest(
+      new Request(`http://localhost/v1/workflows/${workflowId}/replay/99`, { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([replayWorkflowOperation]),
+        restBindings: [replayWorkflowRestBinding],
+        authContext: {
+          method: 'jwt',
+          principal: principalFromJwtClaims({ sub: 'reader', scope: 'workflows:read' }),
+        },
+      },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: `Replay not found at step 99 for workflow ${workflowId}`,
+    });
+  });
+
+  it('maps EngineFailure faults to 500 with a sanitized body', async () => {
+    engine = createReplayEngine();
+
+    const failingOperation = {
+      ...replayWorkflowOperation,
+      invoke: async () => {
+        throw {
+          code: 'EngineFailure',
+          message: 'secret internal detail',
+          data: {},
+        } satisfies OperationFault;
+      },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/wf-replay-engine-failure/replay/2', {
+        method: 'GET',
+      }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([failingOperation]),
+        restBindings: [replayWorkflowRestBinding],
+        authContext: {
+          method: 'jwt',
+          principal: principalFromJwtClaims({ sub: 'reader', scope: 'workflows:read' }),
+        },
+      },
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Internal server error' });
+  });
+
+  it('uses the fallback HTTP mapper for non-special-cased faults', async () => {
+    engine = createReplayEngine();
+
+    const conflictOperation = {
+      ...replayWorkflowOperation,
+      invoke: async () => {
+        throw {
+          code: 'Conflict',
+          message: 'replay conflict',
+          data: { reason: 'replay conflict' },
+        } satisfies OperationFault;
+      },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/workflows/wf-replay-conflict/replay/2', {
+        method: 'GET',
+      }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([conflictOperation]),
+        restBindings: [replayWorkflowRestBinding],
+        authContext: {
+          method: 'jwt',
+          principal: principalFromJwtClaims({ sub: 'reader', scope: 'workflows:read' }),
+        },
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'replay conflict' });
   });
 });

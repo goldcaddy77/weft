@@ -205,6 +205,34 @@ describe('weft.system.metrics — factory variant (with collector)', () => {
     expect(await response.json()).toEqual({ error: 'insufficient scope' });
   });
 
+  it('uses the fallback HTTP mapper for non-special-cased faults', async () => {
+    engine = createEngine();
+
+    const rateLimitedOperation = {
+      ...createGetSystemMetricsOperation(),
+      invoke: async () => {
+        throw {
+          code: 'RateLimited',
+          message: 'slow down',
+          data: { retryAfterMs: 250 },
+        } satisfies OperationFault;
+      },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/metrics/json', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([rateLimitedOperation]),
+        restBindings: [defaultBinding],
+        ...metricsAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: 'slow down' });
+  });
+
   it('returns Unauthorized when called with no credentials via executeOperation', async () => {
     engine = createEngine();
     const liveRegistry = createLiveOperationRegistry();
