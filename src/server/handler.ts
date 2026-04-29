@@ -296,7 +296,7 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
 export interface HandlerOptions {
   /**
    * Optional authenticated caller context injected by the HTTP server
-   * wrapper. See `AuthContext` in `authentication.ts` for field docs.
+   * wrapper. See `AuthContext` in `authentication.ts` for field documentation.
    */
   authContext?: AuthContext;
   /**

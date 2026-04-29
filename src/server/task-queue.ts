@@ -131,7 +131,7 @@ export class TaskQueue {
     // never reach the head of the stack under sustained load — the producer
     // sees a generic timeout, not the LIFO scheduling decision behind it.
     // We only warn (rather than reject) so existing configurations keep
-    // working; the docs on `SchedulingPolicy` describe the trade-off in full.
+    // working; the documentation on `SchedulingPolicy` describes the trade-off in full.
     if (
       this.#schedulingPolicy === 'lifo' &&
       this.#pendingTaskTimeToLive > 0 &&
