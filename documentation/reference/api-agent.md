@@ -30,7 +30,7 @@ async function executeAgentLoop(options: AgentOptions, input: string): Promise<A
 | `model`           | `string`                           | --          | Model identifier passed to the provider               |
 | `provider`        | `LLMProvider`                      | --          | LLM provider instance                                 |
 | `systemPrompt`    | `string`                           | `undefined` | Optional system message prepended to the conversation |
-| `tools`           | `AgentTool[]`                      | `[]`        | Tools available to the model                          |
+| `tools`           | `(AgentTool \| MCPToolSource)[]`   | `[]`        | Tools available to the model                          |
 | `maxTurns`        | `number`                           | `10`        | Maximum LLM turns before returning                    |
 | `budget`          | `BudgetTracker`                    | `undefined` | Optional budget tracker for token/cost limits         |
 | `modelRouter`     | `ModelRouter`                      | `undefined` | Optional per-turn model selection                     |
@@ -53,8 +53,12 @@ async function executeAgentLoop(options: AgentOptions, input: string): Promise<A
 interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
+  verify?: (input: unknown, result: unknown) => boolean | Promise<boolean>;
+  identity?: (input: unknown) => ToolIdentityResult;
 }
 ```
+
+`verify` is called after `execute` to validate the result. `identity` returns a cache key for deduplication.
 
 #### `AgentResult`
 
@@ -65,6 +69,17 @@ interface AgentResult {
   totalTokens: TokenUsage;
   totalCost: number;
   turnCount: number;
+  reasoningTraces: string[];
+  turnCosts: TurnCostEntry[];
+  confidence?: number;
+}
+
+interface TurnCostEntry {
+  turnIndex: number;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
 }
 ```
 
@@ -108,7 +123,7 @@ import { executeAgentLoop } from 'weft';
 
 const result = await executeAgentLoop(
   {
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-5-20250929',
     provider: anthropicProvider,
     systemPrompt: 'You are a helpful assistant.',
     tools: [searchTool, calculatorTool],
@@ -168,7 +183,7 @@ import { defineAgent } from 'weft';
 
 const researcher = defineAgent({
   name: 'researcher',
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-sonnet-4-5-20250929',
   systemPrompt: 'You are a research assistant. Find and summarize information.',
   tools: [webSearchTool],
   maxTurns: 8,
@@ -516,7 +531,7 @@ Coordinates human-in-the-loop review requests, decisions, and escalation chains.
 
 ```ts
 class ReviewCoordinator {
-  constructor(storage: Storage);
+  constructor(storage: Storage, options?: ReviewCoordinatorOptions);
 
   async createReview(workflowId: string, options: ReviewOptions): Promise<ReviewRequest>;
   async submitDecision(
@@ -533,6 +548,8 @@ class ReviewCoordinator {
   ): EscalationAction | null;
 }
 ```
+
+See source for `ReviewCoordinatorOptions` fields (escalation defaults, webhook configuration).
 
 #### `ReviewOptions`
 
@@ -684,11 +701,33 @@ class MCPClient {
 
 #### `MCPClientOptions`
 
-| Field       | Type            | Default     | Description                   |
-| ----------- | --------------- | ----------- | ----------------------------- |
-| `serverUrl` | `string`        | --          | Base URL of the MCP server    |
-| `auth`      | `MCPAuthConfig` | `undefined` | Authentication configuration  |
-| `timeout`   | `number`        | `30_000`    | Tool invocation timeout in ms |
+`MCPClientOptions` is a union of two forms:
+
+**URL form:**
+
+```ts
+interface MCPClientUrlOptions {
+  serverUrl: string;
+  auth?: MCPAuthConfig;
+  timeout?: number;
+}
+```
+
+**Transport form:**
+
+```ts
+interface MCPClientTransportOptions {
+  transport: MCPTransport;
+  timeout?: number;
+}
+```
+
+| Field       | Type            | Default     | Description                                     |
+| ----------- | --------------- | ----------- | ----------------------------------------------- |
+| `serverUrl` | `string`        | --          | Base URL of the MCP server (URL form only)      |
+| `transport` | `MCPTransport`  | --          | Custom transport instance (transport form only) |
+| `auth`      | `MCPAuthConfig` | `undefined` | Authentication configuration (URL form only)    |
+| `timeout`   | `number`        | `30_000`    | Tool invocation timeout in milliseconds         |
 
 ### `MCPServerUnavailableError`
 

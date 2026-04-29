@@ -16,18 +16,27 @@ new Engine(options?: Partial<EngineOptions>)
 
 Creates a new engine instance. All options are optional -- sensible defaults are applied when omitted.
 
-| Option                           | Type         | Default               | Description                                                   |
-| -------------------------------- | ------------ | --------------------- | ------------------------------------------------------------- |
-| `storage`                        | `Storage`    | `new MemoryStorage()` | Storage backend for workflow state and checkpoints            |
-| `development`                    | `boolean`    | `false`               | Enable development-mode checkpoint validation                 |
-| `serializer`                     | `Serializer` | built-in codec        | Custom serialization for checkpoint data                      |
-| `checkpointHistory`              | `number`     | `10`                  | Number of historical checkpoints to retain                    |
-| `checkpointSizeWarningThreshold` | `number`     | `65_536`              | Byte threshold that triggers a `CheckpointSizeWarningEvent`   |
-| `maxNestingDepth`                | `number`     | `10`                  | Maximum allowed nesting depth for child workflows             |
-| `broadcastEvents`                | `boolean`    | `false`               | Enable `BroadcastChannel` for cross-worker event coordination |
+| Option                           | Type                       | Default               | Description                                                                    |
+| -------------------------------- | -------------------------- | --------------------- | ------------------------------------------------------------------------------ |
+| `storage`                        | `Storage`                  | `new MemoryStorage()` | Storage backend for workflow state and checkpoints                             |
+| `development`                    | `boolean`                  | `false`               | Enable development-mode checkpoint validation                                  |
+| `serializer`                     | `Serializer`               | built-in codec        | Custom serialization for checkpoint data                                       |
+| `checkpointHistory`              | `number`                   | `10`                  | Number of historical checkpoints to retain                                     |
+| `checkpointSizeWarningThreshold` | `number`                   | `65_536`              | Byte threshold that triggers a `CheckpointSizeWarningEvent`                    |
+| `maxNestingDepth`                | `number`                   | `10`                  | Maximum allowed nesting depth for child workflows                              |
+| `broadcastEvents`                | `boolean`                  | `false`               | Enable `BroadcastChannel` for cross-worker event coordination                  |
+| `tenantResolver`                 | `TenantResolver`           | `undefined`           | Resolves tenant context from workflow start options for multi-tenant isolation |
+| `quotas`                         | `TenantQuotaOptions`       | `undefined`           | Per-tenant quota configuration for workflow creation rate limiting             |
+| `retention`                      | `RetentionPolicy`          | `undefined`           | Default retention policy for completed/failed/cancelled workflows              |
+| `compression`                    | `boolean`                  | `false`               | Enable checkpoint compression                                                  |
+| `workerExecution`                | `WorkerExecutionOptions`   | `undefined`           | Configuration for offloading workflow execution to Web Workers                 |
+| `activityExecution`              | `ActivityExecutionOptions` | `undefined`           | Configuration for activity execution behavior                                  |
+| `defaultModelRouter`             | `ModelRouter`              | `undefined`           | Default model router applied to all agent operations                           |
+| `alerts`                         | `AlertOptions[]`           | `undefined`           | Metric alert thresholds that fire `AlertFiredEvent` / `AlertResolvedEvent`     |
 
 ```ts
-import { Engine, BunSQLiteStorage } from 'weft';
+import { Engine } from 'weft';
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 const engine = new Engine({
   storage: new BunSQLiteStorage('./data/weft.db'),
@@ -38,11 +47,12 @@ const engine = new Engine({
 ### `register()`
 
 ```ts
-register(name: string, handler: WorkflowFunction): void
+register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void
 register(name: string, registration: WorkflowRegistration): void
+register(agentDef: AgentDefinition, options?: AgentRegistrationOptions): void
 ```
 
-Register a workflow by name. The simple form accepts a generator function directly. The registration form accepts a `WorkflowRegistration` object with additional metadata like `version` and `migrate`.
+Register a workflow by name. The simple form accepts a generator or step-based workflow function directly. The registration form accepts a `WorkflowRegistration` object with additional metadata like `version` and `migrate`. Agent definitions can also be registered directly with optional agent registration options.
 
 ```ts
 engine.register('send-email', async function* (context, input) {
@@ -246,7 +256,7 @@ Shorthand for `engine.update(handle.id, name, payload, options)`.
 async *[Symbol.asyncIterator](): AsyncIterableIterator<Event>
 ```
 
-Iterate over workflow lifecycle events as they happen. Yields events for `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `activity:started`, `activity:completed`, and `signal:received`. The iterator completes when a terminal event (`completed`, `failed`, `cancelled`) fires.
+Iterate over workflow lifecycle events as they happen. Yields events for `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`, `activity:started`, `activity:completed`, `signal:received`, `update:received`, and `update:completed`. The iterator completes when a terminal event (`completed`, `failed`, `cancelled`) fires.
 
 ```ts
 for await (const event of handle) {
@@ -281,8 +291,18 @@ interface EngineOptions {
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;
   broadcastEvents?: boolean;
+  tenantResolver?: TenantResolver;
+  quotas?: TenantQuotaOptions;
+  retention?: RetentionPolicy;
+  compression?: boolean;
+  workerExecution?: WorkerExecutionOptions;
+  activityExecution?: ActivityExecutionOptions;
+  defaultModelRouter?: ModelRouter;
+  alerts?: AlertOptions[];
 }
 ```
+
+See [Configuration](./configuration.md) for defaults. See [types.md](./types.md) for the full field descriptions of multi-tenant and worker options.
 
 ### `StartOptions`
 
@@ -335,6 +355,7 @@ interface WorkflowSummary {
   version: string;
   createdAt: number;
   updatedAt: number;
+  tags?: string[];
 }
 ```
 
@@ -352,6 +373,8 @@ type WorkflowFunction<TInput = unknown, TOutput = unknown> = (
   input: TInput,
 ) => AsyncGenerator<unknown, TOutput, unknown>;
 ```
+
+See also `StepWorkflowFunction` in [types.md](./types.md) — the step-based variant that the engine auto-compiles to the generator form.
 
 ### `WorkflowRegistration`
 

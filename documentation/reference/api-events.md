@@ -68,6 +68,17 @@ class WorkflowTimedOutEvent extends Event {
 }
 ```
 
+### `WorkflowResumedEvent`
+
+Emitted when a paused or suspended workflow is explicitly resumed.
+
+```ts
+class WorkflowResumedEvent extends Event {
+  static readonly type = 'workflow:resumed';
+  readonly workflowId: string;
+}
+```
+
 ### `ActivityStartedEvent`
 
 Emitted when an activity begins executing.
@@ -200,6 +211,55 @@ class DevelopmentWarningEvent extends Event {
   readonly workflowId: string;
   readonly message: string;
   readonly fieldPaths: string[];
+}
+```
+
+### `StorageSizeReportedEvent`
+
+Emitted periodically with storage utilization metrics.
+
+```ts
+class StorageSizeReportedEvent extends Event {
+  static readonly type = 'storage:size-reported';
+  readonly totalBytes: number;
+  readonly entryCount: number;
+}
+```
+
+### `AlertFiredEvent`
+
+Emitted when a metric crosses an alert threshold.
+
+```ts
+class AlertFiredEvent extends Event {
+  static readonly type = 'alert:fired';
+  readonly metric: string;
+  readonly value: number;
+  readonly threshold: number;
+}
+```
+
+### `AlertResolvedEvent`
+
+Emitted when a previously fired alert metric returns below its threshold.
+
+```ts
+class AlertResolvedEvent extends Event {
+  static readonly type = 'alert:resolved';
+  readonly metric: string;
+  readonly value: number;
+}
+```
+
+### `ConstraintViolatedEvent`
+
+Emitted when a quota or constraint is violated (e.g., tenant workflow creation rate limit).
+
+```ts
+class ConstraintViolatedEvent extends Event {
+  static readonly type = 'constraint:violated';
+  readonly constraint: string;
+  readonly detail: string;
 }
 ```
 
@@ -341,6 +401,19 @@ class AgentContextCompactedEvent extends Event {
 }
 ```
 
+### `AgentCheckpointResumedEvent`
+
+Emitted when an agent resumes from a persisted checkpoint after a process restart.
+
+```ts
+class AgentCheckpointResumedEvent extends Event {
+  static readonly type = 'agent:checkpoint:resumed';
+  readonly workflowId: string;
+  readonly agentId: string;
+  readonly turnIndex: number;
+}
+```
+
 ### `AgentModelFallbackEvent`
 
 Emitted when a model call fails and the agent falls back to an alternative model.
@@ -416,6 +489,7 @@ interface WeftEventMap extends WeftAgentEventMap {
   'workflow:failed': WorkflowFailedEvent;
   'workflow:cancelled': WorkflowCancelledEvent;
   'workflow:timed-out': WorkflowTimedOutEvent;
+  'workflow:resumed': WorkflowResumedEvent;
   'activity:started': ActivityStartedEvent;
   'activity:completed': ActivityCompletedEvent;
   'activity:failed': ActivityFailedEvent;
@@ -427,6 +501,10 @@ interface WeftEventMap extends WeftAgentEventMap {
   'update:completed': UpdateCompletedEvent;
   'checkpoint:size-warning': CheckpointSizeWarningEvent;
   'development:warning': DevelopmentWarningEvent;
+  'storage:size-reported': StorageSizeReportedEvent;
+  'alert:fired': AlertFiredEvent;
+  'alert:resolved': AlertResolvedEvent;
+  'constraint:violated': ConstraintViolatedEvent;
 }
 ```
 
@@ -443,6 +521,7 @@ interface WeftAgentEventMap {
   'agent:budget:warning': AgentBudgetWarningEvent;
   'agent:budget:exceeded': AgentBudgetExceededEvent;
   'agent:context:compacted': AgentContextCompactedEvent;
+  'agent:checkpoint:resumed': AgentCheckpointResumedEvent;
   'agent:model:fallback': AgentModelFallbackEvent;
   'agent:provider:circuit-open': AgentProviderCircuitOpenEvent;
   'human-review:requested': HumanReviewRequestedEvent;

@@ -20,15 +20,19 @@ Typically constructed by the engine -- you will not create `Context` instances d
 
 ### Read-only Properties
 
-| Property                 | Type          | Description                                                                             |
-| ------------------------ | ------------- | --------------------------------------------------------------------------------------- |
-| `workflowId`             | `string`      | The workflow's unique identifier                                                        |
-| `workflowType`           | `string`      | The registered workflow type name                                                       |
-| `startedAt`              | `number`      | Epoch timestamp when the workflow started                                               |
-| `signal`                 | `AbortSignal` | Abort signal -- fires when the workflow is cancelled                                    |
-| `executionTimeRemaining` | `number`      | Milliseconds until execution deadline. `Infinity` if no deadline is set.                |
-| `stepIndex`              | `number`      | Current step counter (incremented by each durable operation)                            |
-| `nestingDepth`           | `number`      | How many levels deep this workflow is as a child workflow. `0` for top-level workflows. |
+| Property                 | Type                         | Description                                                                                                          |
+| ------------------------ | ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `workflowId`             | `string`                     | The workflow's unique identifier                                                                                     |
+| `workflowType`           | `string`                     | The registered workflow type name                                                                                    |
+| `startedAt`              | `number`                     | Epoch timestamp when the workflow started                                                                            |
+| `signal`                 | `AbortSignal`                | Abort signal -- fires when the workflow is cancelled                                                                 |
+| `executionTimeRemaining` | `number`                     | Milliseconds until execution deadline. `Infinity` if no deadline is set.                                             |
+| `tenant`                 | `TenantContext \| undefined` | Resolved tenant context when `EngineOptions.tenantResolver` is configured. `undefined` in single-tenant deployments. |
+| `stepIndex`              | `number`                     | Current step counter (incremented by each durable operation)                                                         |
+| `nestingDepth`           | `number`                     | How many levels deep this workflow is as a child workflow. `0` for top-level workflows.                              |
+
+> [!NOTE]
+> `stepIndex` and `nestingDepth` are available on the concrete `Context` class for debugging purposes. They are not part of the `WorkflowContext` public interface defined in `types.ts`.
 
 ---
 
@@ -414,6 +418,35 @@ budgetRemaining(): BudgetState | undefined
 ```
 
 Query the current budget state. Returns `undefined` if no budget is set.
+
+### `sessionState()`
+
+```ts
+sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>
+```
+
+Return a typed session-state slot keyed by `key`. The slot is durable: its value is checkpointed alongside the workflow and survives process restarts. If no value has been stored yet, `get()` returns `initialValue` (or `undefined`).
+
+| Parameter      | Type     | Description                                |
+| -------------- | -------- | ------------------------------------------ |
+| `key`          | `string` | Unique key for this state slot             |
+| `initialValue` | `T`      | Optional default value returned by `get()` |
+
+**Returns:** `WorkflowSessionState<T>` — a slot with `.get()`, `.set()`, `.update()`, `.clear()`, and `.run()`.
+
+```ts
+engine.register('order', async function* (ctx, order) {
+  const attempts = ctx.sessionState<number>('chargeAttempts', 0);
+  attempts.set((attempts.get() ?? 0) + 1);
+  if (attempts.get()! > 3) {
+    return { status: 'abandoned' };
+  }
+  const receipt = yield* ctx.run(chargeCard, order.token);
+  return { status: 'charged', receipt };
+});
+```
+
+`sessionState()` is synchronous — no `yield*` needed. Only the `.run()` method on the returned slot requires `yield*` (it executes a durable operation over the state).
 
 ---
 

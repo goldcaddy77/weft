@@ -87,7 +87,7 @@ The workflow is a **generator function**---notice the `function*` and the `yield
 
 There's no replay happening here. Weft doesn't re-execute your workflow from the beginning and try to match up results. It literally picks up where it left off. That's why you don't need to worry about determinism---your workflow code can use `Date.now()`, `Math.random()`, or anything else. The only rule is that side effects go inside activities (the functions you pass to `ctx.run()`).
 
-`ctx.run(fn, args)` is how you run an **activity**. An activity is just an async function---nothing special about it. Weft executes it, captures the return value, and checkpoints it. If the activity fails, the engine retries it according to the retry policy (3 attempts with exponential backoff by default).
+`ctx.run(fn, args)` is how you run an **activity**. An activity is just an async function---nothing special about it. Weft executes it, captures the return value, and checkpoints it. If the activity fails, the engine retries it according to the retry policy (3 attempts with exponential backoff by default, when using the `activity({ ... })` registration helper).
 
 `engine.register()` gives your workflow a name so the engine can find it. `engine.start()` kicks off a new execution and returns a handle. `handle.result()` waits for the workflow to finish and gives you the output.
 
@@ -98,13 +98,13 @@ Durable sleeps are one of the things that make this interesting. A normal `setTi
 ```typescript
 engine.register('onboarding', async function* (ctx, input: { name: string }) {
   const greeting = yield* ctx.run(greet, input.name);
-  yield* ctx.sleep('1 hour');
+  yield* ctx.sleep('1h');
   yield* ctx.run(notify, `${input.name} completed onboarding`);
   return { greeting, onboarded: true };
 });
 ```
 
-`yield* ctx.sleep('1 hour')` pauses the workflow for an hour. The engine persists a timer, and when it fires the workflow resumes. You can use human-readable strings like `'30 seconds'`, `'5 minutes'`, or `'2 days'`, or pass milliseconds directly.
+`yield* ctx.sleep('1h')` pauses the workflow for an hour. The engine persists a timer, and when it fires the workflow resumes. You can use compact duration strings like `'30s'`, `'5m'`, or `'2d'`, or pass milliseconds directly.
 
 ## Waiting for Signals
 
@@ -154,7 +154,8 @@ Both activities run concurrently and the workflow resumes when all of them compl
 `MemoryStorage` is great for development, but everything vanishes when the process stops. For real durability, use `BunSQLiteStorage`:
 
 ```typescript
-import { Engine, BunSQLiteStorage } from 'weft';
+import { Engine } from 'weft';
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 const engine = new Engine({
   storage: new BunSQLiteStorage('./weft.db'),

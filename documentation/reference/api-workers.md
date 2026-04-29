@@ -2,7 +2,7 @@
 
 The workers module provides both in-process worker pools (Web Workers for CPU isolation) and remote worker clients for distributed activity execution. In-process pools live in `src/workers/`; remote workers that connect over WebSocket or HTTP long-poll live in `src/worker/`.
 
-For a guided walkthrough, see the [Workers guide](../guides/workers.md).
+For a guided walkthrough, see the [Remote Workers guide](../guides/remote-workers.md).
 
 ---
 
@@ -133,13 +133,15 @@ class RemoteWorker implements Disposable {
 
 #### `RemoteWorkerOptions`
 
-| Field         | Type                                                   | Default               | Description                                |
-| ------------- | ------------------------------------------------------ | --------------------- | ------------------------------------------ |
-| `serverUrl`   | `string`                                               | --                    | WebSocket URL of the Weft server           |
-| `workerId`    | `string`                                               | `crypto.randomUUID()` | Unique worker identifier                   |
-| `activities`  | `Record<string, (input: unknown) => Promise<unknown>>` | --                    | Activity functions this worker can execute |
-| `concurrency` | `number`                                               | `10`                  | Maximum concurrent tasks                   |
-| `queue`       | `string`                                               | `'default'`           | Task queue to subscribe to                 |
+| Field                 | Type                                                                                    | Default               | Description                                                                                                      |
+| --------------------- | --------------------------------------------------------------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `serverUrl`           | `string`                                                                                | --                    | WebSocket URL of the Weft server                                                                                 |
+| `workerId`            | `string`                                                                                | `crypto.randomUUID()` | Unique worker identifier                                                                                         |
+| `activities`          | `Record<string, (input: unknown, context?: RemoteActivityContext) => Promise<unknown>>` | --                    | Activity functions this worker can execute; each may accept an optional `RemoteActivityContext` second parameter |
+| `concurrency`         | `number`                                                                                | `10`                  | Maximum concurrent tasks                                                                                         |
+| `queue`               | `string`                                                                                | `'default'`           | Task queue to subscribe to                                                                                       |
+| `disconnectTimeoutMs` | `number`                                                                                | `30_000`              | Time to wait for in-flight tasks before force-closing on disconnect                                              |
+| `interceptors`        | `ActivityInterceptor[]`                                                                 | `[]`                  | Activity interceptors applied to all tasks processed by this worker                                              |
 
 The worker sends heartbeats every 10 seconds and handles server-initiated `shutdown` messages gracefully.
 
@@ -252,7 +254,7 @@ Server-side worker tracking and least-loaded routing. The server uses this to tr
 
 ```ts
 class WorkerRegistry {
-  constructor();
+  constructor(options?: WorkerRegistryOptions);
 
   register(info: Omit<WorkerInfo, 'connectedAt' | 'lastHeartbeat' | 'inFlight'>): void;
   unregister(workerId: string): WorkerInfo | undefined;
@@ -271,11 +273,24 @@ class WorkerRegistry {
 }
 ```
 
+#### `WorkerRegistryOptions`
+
+```ts
+interface WorkerRegistryOptions {
+  policy?: RoutingPolicy;
+}
+```
+
+| Field    | Type            | Default          | Description                    |
+| -------- | --------------- | ---------------- | ------------------------------ |
+| `policy` | `RoutingPolicy` | `'least-loaded'` | Worker routing policy to apply |
+
 #### `WorkerInfo`
 
 ```ts
 interface WorkerInfo {
   id: string;
+  queue: string;
   activities: string[];
   concurrency: number;
   inFlight: number;
@@ -290,10 +305,11 @@ interface WorkerInfo {
 interface RoutingOptions {
   sticky?: string; // preferred worker ID for cache locality
   queue?: string;
+  fairShareKey?: string; // key used for fair-share routing policy
 }
 ```
 
-`findWorker()` uses least-loaded routing: it filters workers that can handle the activity and have capacity, then returns the one with the lowest `inFlight` count. If `sticky` is set and that worker has capacity, it is preferred.
+`findWorker()` applies the configured `RoutingPolicy` (least-loaded by default; supports `'round-robin'` and `'fair-share'`). It filters workers that can handle the activity and have capacity. For `'least-loaded'`, it returns the worker with the lowest `inFlight` count. If `sticky` is set and that worker has capacity, it is preferred.
 
 #### `InFlightTask`
 
@@ -302,6 +318,8 @@ interface InFlightTask {
   operationId: string;
   workerId: string;
   deadline: number; // absolute timestamp
+  visibilityTimeout: number;
+  fairShareKey?: string;
 }
 ```
 

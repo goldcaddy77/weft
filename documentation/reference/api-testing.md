@@ -79,11 +79,12 @@ const handle = engine.mock(sendEmail, async (to, body) => {
 recover(): TestEngine
 ```
 
-Create a new `TestEngine` backed by a copy of the current storage, simulating an engine restart. The new engine sees all persisted state but has fresh in-memory structures (no active generators, resolvers, etc.). Useful for testing workflow recovery after process restarts.
+Create a new `TestEngine` backed by a copy of the current storage, simulating an engine restart. The new engine sees all persisted state but has fresh in-memory structures (no active generators, resolvers, etc.). Useful for testing workflow recovery after process restarts. You must re-register workflow handlers on the recovered engine — only persisted state survives the simulated restart.
 
 ```ts
 const recovered = engine.recover();
 // recovered engine has the same storage data but no running workflows
+// Re-register handlers before starting new workflows on the recovered engine
 ```
 
 ### `storage` (getter)
@@ -96,7 +97,7 @@ Direct access to the underlying `MemoryStorage`. Useful for assertions.
 
 ```ts
 expect(engine.storage.size).toBeGreaterThan(0);
-expect(engine.storage.has(KEYS.workflow('my-id'))).toBe(true);
+expect(await engine.storage.has(KEYS.workflow('my-id'))).toBe(true);
 ```
 
 ### `mocks` (getter)

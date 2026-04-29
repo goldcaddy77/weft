@@ -80,6 +80,20 @@ engine.register('order', async function* (ctx, input) {
 });
 ```
 
+## Session State
+
+**Session state** is per-workflow durable state addressable by key, returned as a typed `WorkflowSessionState<T>` slot from `ctx.sessionState(key, initialValue?)`. Unlike search attributes (which are queryable indexes), session state is private to the workflow and survives checkpoint recovery. Access it with `.get()`, `.set()`, `.update()`, `.clear()`, or `.run()` for memoized operations over the slot's value.
+
+```typescript
+engine.register('counter', async function* (ctx, input) {
+  const counter = ctx.sessionState<number>('count', 0);
+  counter.set((counter.get() ?? 0) + 1);
+  return counter.get();
+});
+```
+
+Because session state is checkpointed alongside the workflow, the counter persists across process restarts.
+
 ## Interceptor
 
 An **interceptor** is a composable hook that wraps workflow context operations---activities, sleeps, signals---for cross-cutting concerns like tracing, validation, and encryption. Interceptors chain via `next()` delegation, so you can stack as many as you need without any of them knowing about each other.

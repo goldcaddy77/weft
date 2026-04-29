@@ -31,39 +31,57 @@ interface ServeOptions {
   engine: Engine;
   port?: number;
   hostname?: string;
+  development?: boolean;
+  dashboard?: boolean;
+  auth?: AuthConfig;
+  visibilityPollIntervalMs?: number;
+  routingPolicy?: RoutingPolicy;
+  schedulingPolicy?: SchedulingPolicy;
+  prometheusExporter?: boolean;
+  metricsCollector?: MetricsCollector;
 }
 ```
 
-| Field      | Type     | Default     | Description                             |
-| ---------- | -------- | ----------- | --------------------------------------- |
-| `engine`   | `Engine` | (required)  | The engine instance to expose over HTTP |
-| `port`     | `number` | `7233`      | TCP port to listen on                   |
-| `hostname` | `string` | `'0.0.0.0'` | Hostname/IP to bind to                  |
+| Field                      | Type               | Default          | Description                                          |
+| -------------------------- | ------------------ | ---------------- | ---------------------------------------------------- |
+| `engine`                   | `Engine`           | (required)       | The engine instance to expose over HTTP              |
+| `port`                     | `number`           | `7233`           | TCP port to listen on                                |
+| `hostname`                 | `string`           | `'0.0.0.0'`      | Hostname/IP to bind to                               |
+| `development`              | `boolean`          | `false`          | Enable development mode with verbose error responses |
+| `dashboard`                | `boolean`          | `true`           | Serve the web dashboard at `/ui`                     |
+| `auth`                     | `AuthConfig`       | `undefined`      | Authentication configuration (JWT, mTLS, or custom)  |
+| `visibilityPollIntervalMs` | `number`           | `1000`           | Polling interval for task visibility timeout checks  |
+| `routingPolicy`            | `RoutingPolicy`    | `'least-loaded'` | Worker routing policy                                |
+| `schedulingPolicy`         | `SchedulingPolicy` | `undefined`      | Scheduling policy for task dispatch                  |
+| `prometheusExporter`       | `boolean`          | `false`          | Expose Prometheus metrics at `/v1/metrics`           |
+| `metricsCollector`         | `MetricsCollector` | `undefined`      | Custom metrics collector instance                    |
+
+See [configuration.md](./configuration.md) for `AuthConfig`, `RoutingPolicy`, and `SchedulingPolicy` details.
 
 ---
 
 ## `WeftServer`
 
 ```ts
-interface WeftServer extends Disposable {
+interface WeftServer extends AsyncDisposable {
   readonly port: number;
   readonly hostname: string;
   readonly url: string;
-  stop(): void;
+  stop(): Promise<void>;
 }
 ```
 
-| Property             | Type         | Description                                  |
-| -------------------- | ------------ | -------------------------------------------- |
-| `port`               | `number`     | The resolved port the server is listening on |
-| `hostname`           | `string`     | The resolved hostname                        |
-| `url`                | `string`     | Full URL string, e.g. `http://0.0.0.0:7233`  |
-| `stop()`             | `() => void` | Gracefully shut down the server              |
-| `[Symbol.dispose]()` | `() => void` | Same as `stop()` -- supports `using` syntax  |
+| Property                  | Type                  | Description                                       |
+| ------------------------- | --------------------- | ------------------------------------------------- |
+| `port`                    | `number`              | The resolved port the server is listening on      |
+| `hostname`                | `string`              | The resolved hostname                             |
+| `url`                     | `string`              | Full URL string, e.g. `http://0.0.0.0:7233`       |
+| `stop()`                  | `() => Promise<void>` | Gracefully shut down the server                   |
+| `[Symbol.asyncDispose]()` | `() => Promise<void>` | Same as `stop()` -- supports `await using` syntax |
 
 ```ts
 {
-  using server = serve({ engine });
+  await using server = serve({ engine });
   // server shuts down when this block exits
 }
 ```
@@ -73,10 +91,16 @@ interface WeftServer extends Disposable {
 ## `handleRequest()`
 
 ```ts
-async function handleRequest(request: Request, engine: Engine): Promise<Response>;
+async function handleRequest(
+  request: Request,
+  engine: Engine,
+  options?: HandlerOptions,
+): Promise<Response>;
 ```
 
 A pure HTTP request handler that maps a `Request` to a `Response`. Has no Bun-specific dependencies -- suitable for embedding in any server framework that uses the Web `Request`/`Response` API.
+
+`HandlerOptions` accepts an operation registry, REST bindings, and a Prometheus exporter. Omit it to use defaults.
 
 ```ts
 import { handleRequest } from 'weft';
@@ -93,19 +117,19 @@ The handler exposes the following routes under the `/v1` prefix:
 
 ### Health
 
-| Method | Path         | Description                                                                            |
-| ------ | ------------ | -------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/health` | Health check. Returns `{ status: 'ok' }`. Supports content negotiation (JSON/msgpack). |
+| Method | Path         | Description                                                                                                                    |
+| ------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/v1/health` | Health check. Returns `{ status: 'ok' }`. Anonymous — no authentication required. Supports content negotiation (JSON/msgpack). |
 
 ### Workflows
 
-| Method   | Path                       | Description                                                        |
-| -------- | -------------------------- | ------------------------------------------------------------------ |
-| `POST`   | `/v1/workflows`            | Start a new workflow                                               |
-| `GET`    | `/v1/workflows`            | List workflows (query params: `status`, `type`, `limit`, `offset`) |
-| `GET`    | `/v1/workflows/:id`        | Get workflow state                                                 |
-| `DELETE` | `/v1/workflows/:id`        | Cancel a workflow                                                  |
-| `GET`    | `/v1/workflows/:id/result` | Await workflow result (30s long-poll timeout)                      |
+| Method   | Path                       | Description                                                                   |
+| -------- | -------------------------- | ----------------------------------------------------------------------------- |
+| `POST`   | `/v1/workflows`            | Start a new workflow                                                          |
+| `GET`    | `/v1/workflows`            | List workflows (query params: `status`, `type`, `limit`, `offset`)            |
+| `GET`    | `/v1/workflows/:id`        | Get workflow state                                                            |
+| `DELETE` | `/v1/workflows/:id`        | Cancel a workflow                                                             |
+| `GET`    | `/v1/workflows/:id/result` | Await workflow result (30s default long-poll timeout, configurable up to 60s) |
 
 #### Start Workflow -- Request Body
 
@@ -163,6 +187,46 @@ Update request body:
 
 PATCH body: `{ "attributes": { "key": "value" } }`.
 
+### Schedules
+
+| Method   | Path                        | Description        |
+| -------- | --------------------------- | ------------------ |
+| `POST`   | `/v1/schedules`             | Create a schedule  |
+| `GET`    | `/v1/schedules`             | List schedules     |
+| `GET`    | `/v1/schedules/:id`         | Get schedule state |
+| `DELETE` | `/v1/schedules/:id`         | Delete a schedule  |
+| `POST`   | `/v1/schedules/:id/pause`   | Pause a schedule   |
+| `POST`   | `/v1/schedules/:id/unpause` | Unpause a schedule |
+
+### Bulk Operations
+
+| Method | Path                        | Description               |
+| ------ | --------------------------- | ------------------------- |
+| `POST` | `/v1/workflows/bulk/cancel` | Cancel multiple workflows |
+| `POST` | `/v1/workflows/bulk/signal` | Signal multiple workflows |
+
+### Checkpoints & Replay
+
+| Method | Path                            | Description                       |
+| ------ | ------------------------------- | --------------------------------- |
+| `GET`  | `/v1/workflows/:id/checkpoints` | List workflow checkpoints         |
+| `POST` | `/v1/workflows/:id/replay`      | Replay workflow from a checkpoint |
+| `POST` | `/v1/workflows/:id/fork`        | Fork a workflow from a checkpoint |
+
+### Reviews
+
+| Method | Path                                  | Description                         |
+| ------ | ------------------------------------- | ----------------------------------- |
+| `GET`  | `/v1/workflows/:id/reviews`           | List pending reviews for a workflow |
+| `POST` | `/v1/workflows/:id/reviews/:reviewId` | Submit a review decision            |
+
+### Discovery
+
+| Method | Path            | Description                                    |
+| ------ | --------------- | ---------------------------------------------- |
+| `GET`  | `/openapi.json` | OpenAPI 3.1 contract for the operation catalog |
+| `GET`  | `/openrpc.json` | OpenRPC 1.3.2 contract                         |
+
 ### Metrics
 
 | Method | Path          | Description                                |
@@ -173,11 +237,12 @@ PATCH body: `{ "attributes": { "key": "value" } }`.
 
 WebSocket upgrade is supported on the following paths:
 
-| Path                       | Description                       |
-| -------------------------- | --------------------------------- |
-| `/v1/workflows/:id/watch`  | Observe workflow lifecycle events |
-| `/v1/workflows/:id/stream` | Stream agent token output         |
-| `/v1/tasks/:queue/stream`  | Worker task stream                |
+| Path                       | Description                                                       |
+| -------------------------- | ----------------------------------------------------------------- |
+| `/v1/workflows/:id/watch`  | Observe workflow lifecycle events                                 |
+| `/v1/workflows/:id/stream` | Stream agent token output                                         |
+| `/v1/tasks/:queue/stream`  | Worker task stream                                                |
+| `/jsonrpc`                 | JSON-RPC over WebSocket session for the unified operation catalog |
 
 ### Error Responses
 

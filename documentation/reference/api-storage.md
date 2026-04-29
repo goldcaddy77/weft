@@ -167,7 +167,7 @@ The constructor automatically creates the `kv` table if it does not exist and co
 - `cache_size = -64000` (64 MB)
 
 ```ts
-import { BunSQLiteStorage } from 'weft';
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 const storage = new BunSQLiteStorage('./data/weft.db');
 ```
@@ -233,7 +233,7 @@ Remove all entries.
 #### `has()`
 
 ```ts
-has(key: string): boolean
+has(key: string): Promise<boolean>
 ```
 
 Check whether a key exists.
@@ -241,10 +241,10 @@ Check whether a key exists.
 #### `keys()`
 
 ```ts
-keys(): string[]
+keys(prefix: string, options?: ScanOptions): AsyncIterable<string>
 ```
 
-Return all keys in sorted lexicographic order.
+Iterate over all keys with the given prefix in lexicographic order.
 
 #### `snapshot()`
 
@@ -290,7 +290,7 @@ const storage = new IndexedDBStorage('my-app');
 
 ### Methods
 
-All methods from the `Storage` interface are supported except `query()`. IndexedDB has no SQL engine, so raw queries are not available.
+All required Storage methods are supported. `query()` is not available since IndexedDB has no SQL engine.
 
 | Method     | Supported | Notes                                     |
 | ---------- | --------- | ----------------------------------------- |

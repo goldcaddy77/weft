@@ -47,7 +47,7 @@ The unique workflow identifier. This is either the ID you passed via `StartOptio
 async result(): Promise<unknown>;
 ```
 
-Returns a promise that resolves with the workflow's return value when it completes. If the workflow fails, the promise rejects with the error. If the workflow is cancelled, the promise rejects with `Error('Workflow cancelled')`.
+Returns a promise that resolves with the workflow's return value when it completes. If the workflow fails, the promise rejects with the error. If the workflow is cancelled, the promise rejects with a cancellation error.
 
 For workflows that are already complete when you call `result()`, the promise resolves immediately from stored state.
 
@@ -104,7 +104,7 @@ Cancel the workflow. This:
 2. Cleans up the generator
 3. Sets the workflow status to `'cancelled'`
 4. Dispatches a `WorkflowCancelledEvent`
-5. Rejects the `result()` promise with `Error('Workflow cancelled')`
+5. Rejects the `result()` promise with a cancellation error
 
 ```ts
 await handle.cancel();
@@ -150,7 +150,7 @@ async *[Symbol.asyncIterator](): AsyncIterableIterator<Event>;
 
 Yields workflow lifecycle events as they occur. The iterator completes when the workflow reaches a terminal state (`workflow:completed`, `workflow:failed`, or `workflow:cancelled`).
 
-Listened event types: `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `activity:started`, `activity:completed`, `signal:received`.
+Listened event types: `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`, `activity:started`, `activity:completed`, `signal:received`, `update:received`, `update:completed`.
 
 ```ts
 const handle = await engine.start('my-workflow', input);

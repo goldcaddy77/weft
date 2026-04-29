@@ -21,11 +21,13 @@ weft serve --port 8080 --database /var/data/weft.db
 
 **Options:**
 
-| Flag         | Short | Default     | Description               |
-| ------------ | ----- | ----------- | ------------------------- |
-| `--port`     | `-p`  | `7233`      | Server port               |
-| `--database` | `-d`  | `./weft.db` | SQLite database file path |
-| `--help`     | `-h`  |             | Show help message         |
+| Flag         | Short | Default     | Description                                    |
+| ------------ | ----- | ----------- | ---------------------------------------------- |
+| `--port`     | `-p`  | `7233`      | Server port                                    |
+| `--database` | `-d`  | `./weft.db` | SQLite database file path                      |
+| `--storage`  | `-s`  | `sqlite`    | Storage backend: `sqlite`, `lmdb`, or `memory` |
+| `--no-ui`    |       | `false`     | Disable the web dashboard                      |
+| `--help`     | `-h`  |             | Show help message                              |
 
 ### doctor
 
@@ -85,6 +87,62 @@ export default {
 - **Safe**: All stored workflow versions match registered versions.
 - **Needs migration**: Version mismatches exist, but all affected types provide migration functions.
 - **Unsafe**: Version mismatches exist without migration functions. Do not deploy.
+
+### schedule
+
+Manage durable schedules.
+
+```bash
+weft schedule list --database ./weft.db
+weft schedule create --database ./weft.db --type my-workflow --cron "0 * * * *"
+weft schedule pause --database ./weft.db --id <schedule-id>
+weft schedule unpause --database ./weft.db --id <schedule-id>
+weft schedule delete --database ./weft.db --id <schedule-id>
+```
+
+**Options:**
+
+| Flag         | Short | Default     | Description                            |
+| ------------ | ----- | ----------- | -------------------------------------- |
+| `--database` | `-d`  | `./weft.db` | SQLite database file path              |
+| `--id`       |       |             | Schedule ID (for pause/unpause/delete) |
+| `--type`     |       |             | Workflow type (for create)             |
+| `--cron`     |       |             | Cron expression (for create)           |
+| `--json`     | `-j`  | `false`     | Output as JSON                         |
+| `--help`     | `-h`  |             | Show help message                      |
+
+### timeline
+
+Show the execution timeline for a workflow.
+
+```bash
+weft timeline --database ./weft.db --id <workflow-id>
+```
+
+**Options:**
+
+| Flag         | Short | Default     | Description               |
+| ------------ | ----- | ----------- | ------------------------- |
+| `--database` | `-d`  | `./weft.db` | SQLite database file path |
+| `--id`       |       | (required)  | Workflow ID to inspect    |
+| `--json`     | `-j`  | `false`     | Output as JSON            |
+| `--help`     | `-h`  |             | Show help message         |
+
+### validate
+
+Validate a workflows module for correctness before deployment.
+
+```bash
+weft validate --workflows ./src/workflows.ts
+```
+
+**Options:**
+
+| Flag          | Short | Default    | Description                                     |
+| ------------- | ----- | ---------- | ----------------------------------------------- |
+| `--workflows` | `-w`  | (required) | Path to module exporting workflow registrations |
+| `--json`      | `-j`  | `false`    | Output as JSON                                  |
+| `--help`      | `-h`  |            | Show help message                               |
 
 ## Programmatic API
 

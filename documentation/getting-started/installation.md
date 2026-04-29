@@ -6,7 +6,7 @@ Weft runs on Bun. If you don't have it yet, the install is a one-liner:
 curl -fsSL https://bun.sh/install | bash
 ```
 
-You'll need Bun 1.2 or later. Verify with `bun --version`.
+You'll need Bun 1.3 or later. Verify with `bun --version`.
 
 ## Library Mode
 
@@ -27,7 +27,8 @@ const engine = new Engine({ storage: new MemoryStorage() });
 For production, swap in SQLite-backed storage so your checkpoints survive process restarts:
 
 ```typescript
-import { Engine, BunSQLiteStorage } from 'weft';
+import { Engine } from 'weft';
+import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 const engine = new Engine({
   storage: new BunSQLiteStorage('./weft.db'),
@@ -38,25 +39,23 @@ The database file is created automatically. No migrations to run.
 
 ## Server Mode
 
-For larger deployments where you want a standalone Weft server with a REST API, WebSocket worker connections, and a web dashboard, download the prebuilt binary for your platform:
+For larger deployments where you want a standalone Weft server with a REST API, WebSocket worker connections, and a web dashboard, build your own binary using the project's build script:
 
 ```bash
-curl -L https://releases.weft.dev/v1/weft-darwin-arm64 -o weft
-chmod +x weft
-./weft --port 7233
+bun run build:binary
 ```
 
-That gives you a running server with SQLite storage and a dashboard at `localhost:7233/ui`. Workers connect over WebSocket and pull tasks from the server.
+This produces a self-contained binary that includes the Weft engine, server, and web dashboard. See `scripts/build-binary-main.ts` for the build entrypoint and cross-compilation options.
 
 ## Compile Your Own Binary
 
 You can also bake your workflow code directly into a standalone binary. This is useful when you want a single artifact that includes the Weft engine _and_ your application logic---no runtime dependencies, nothing to install on the target machine.
 
 ```bash
-bun build --compile src/my-app.ts --outfile my-app
+bun run build:binary
 ```
 
-The resulting binary bundles the Bun runtime, the Weft engine, your workflows, and (if you include the server) the web dashboard. Ship it anywhere.
+The build script (`scripts/build-binary-main.ts`) produces a binary that bundles the Bun runtime, the Weft engine, your workflows, and (if you include the server) the web dashboard. For cross-compilation targets, see the script's Bun `--target` options. Ship it anywhere.
 
 ## Supported Platforms
 
@@ -78,7 +77,7 @@ bun build --compile --target=bun-windows-x64  src/cli.ts --outfile dist/weft-win
 
 ## What Ships Inside the Binary
 
-The compiled binary includes the Bun runtime (with SQLite, HTTP server, and WebSocket built in), the Weft engine and server code, the web dashboard, and default configuration. It does _not_ include LMDB native bindings (opt-in via `bun add lmdb`) or your workflow code (unless you compile it in yourself).
+The compiled binary includes the Bun runtime (with SQLite, HTTP server, and WebSocket built in), the Weft engine and server code, the web dashboard, and default configuration. It does not include native bindings for optional peers — `lmdb`, `@libsql/client`, and `@opentelemetry/api` — install those separately if you use Turso, LMDB, or OTel.
 
 ## Next Steps
 

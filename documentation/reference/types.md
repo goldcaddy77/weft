@@ -58,10 +58,80 @@ interface WorkflowContext {
   readonly signal: AbortSignal;
   readonly executionTimeRemaining: number;
   readonly startedAt: number;
+  readonly tenant: TenantContext | undefined;
+  sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>;
+  pipe<TInput, TOutput>(
+    inputs: TInput[],
+    stages: WorkflowPipeStage<TInput, TOutput>[],
+    options?: WorkflowChildOptions,
+  ): WorkflowOperation<TOutput[]>;
+  map<TInput, TOutput>(
+    inputs: TInput[],
+    target: ChildWorkflowTarget<TInput, TOutput>,
+    options?: WorkflowMapOptions,
+  ): WorkflowOperation<TOutput[]>;
+  reduce<TInput, TAcc>(
+    inputs: TInput[],
+    target: ChildWorkflowTarget<[TAcc, TInput], TAcc>,
+    initial: TAcc,
+    options?: WorkflowReduceOptions,
+  ): WorkflowOperation<TAcc>;
 }
 ```
 
-The full `Context` class (the runtime implementation) exposes additional methods -- `run()`, `sleep()`, `waitForSignal()`, `all()`, `race()`, `memo()`, `agent()`, and more -- documented in the [Engine API reference](./api-engine.md).
+The full `Context` class exposes additional concrete methods documented in the [Context API reference](./api-context.md).
+
+### Composition Types
+
+Types for `ctx.pipe()`, `ctx.map()`, and `ctx.reduce()` durable composition operators.
+
+```ts
+/** A pending durable composition result. Yield with `yield*` inside a workflow. */
+interface WorkflowOperation<TResult> {
+  readonly operationId: string;
+}
+
+/** Accepted forms for specifying a child workflow in composition operators. */
+type ChildWorkflowTarget<TInput = unknown, TOutput = unknown> =
+  | string
+  | WorkflowFunction<TInput, TOutput>
+  | StepWorkflowFunction<TInput, TOutput>;
+
+interface WorkflowMapOptions {
+  concurrency?: number;
+  idPrefix?: string;
+}
+
+interface WorkflowReduceOptions {
+  idPrefix?: string;
+}
+
+interface WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> {
+  target: ChildWorkflowTarget<TInput, TOutput>;
+  options?: WorkflowChildOptions;
+}
+
+type WorkflowPipeStage<TInput = unknown, TOutput = unknown> =
+  | ChildWorkflowTarget<TInput, TOutput>
+  | WorkflowPipeStageDefinition<TInput, TOutput>;
+```
+
+### `WorkflowSessionState<T>`
+
+Per-workflow durable state slot returned by `ctx.sessionState(key, initialValue?)`. Checkpointed with the workflow.
+
+```ts
+interface WorkflowSessionState<T> {
+  get(): T | undefined;
+  set(value: T): T;
+  update(updater: (current: T | undefined) => T): T;
+  clear(): void;
+  run<TResult>(
+    fn: (...args: unknown[]) => Promise<TResult> | TResult,
+    ...rest: unknown[]
+  ): WorkflowOperation<TResult>;
+}
+```
 
 ### `WorkflowRegistration`
 
@@ -176,6 +246,14 @@ interface EngineOptions {
   checkpointSizeWarningThreshold?: number;
   maxNestingDepth?: number;
   broadcastEvents?: boolean;
+  tenantResolver?: TenantResolver;
+  quotas?: TenantQuotaOptions;
+  retention?: RetentionPolicy;
+  compression?: boolean;
+  workerExecution?: WorkerExecutionOptions;
+  activityExecution?: ActivityExecutionOptions;
+  defaultModelRouter?: ModelRouter;
+  alerts?: AlertOptions[];
 }
 ```
 
@@ -233,6 +311,8 @@ interface ListFilter {
 interface AttributeFilter {
   key: string;
   value?: SearchAttributeValue;
+  gt?: SearchAttributeValue;
+  lt?: SearchAttributeValue;
   gte?: SearchAttributeValue;
   lte?: SearchAttributeValue;
 }
@@ -261,6 +341,7 @@ interface WorkflowSummary {
   version: string;
   createdAt: number;
   updatedAt: number;
+  tags?: string[];
 }
 ```
 
@@ -279,6 +360,7 @@ interface WeftEventMap {
   'workflow:failed': WorkflowFailedEvent;
   'workflow:cancelled': WorkflowCancelledEvent;
   'workflow:timed-out': WorkflowTimedOutEvent;
+  'workflow:resumed': WorkflowResumedEvent;
   'activity:started': ActivityStartedEvent;
   'activity:completed': ActivityCompletedEvent;
   'activity:failed': ActivityFailedEvent;
@@ -290,6 +372,10 @@ interface WeftEventMap {
   'update:completed': UpdateCompletedEvent;
   'checkpoint:size-warning': CheckpointSizeWarningEvent;
   'development:warning': DevelopmentWarningEvent;
+  'storage:size-reported': StorageSizeReportedEvent;
+  'alert:fired': AlertFiredEvent;
+  'alert:resolved': AlertResolvedEvent;
+  'constraint:violated': ConstraintViolatedEvent;
 }
 ```
 
@@ -531,11 +617,11 @@ interface ServeOptions {
 ### `WeftServer`
 
 ```ts
-interface WeftServer extends Disposable {
+interface WeftServer extends AsyncDisposable {
   readonly port: number;
   readonly hostname: string;
   readonly url: string;
-  stop(): void;
+  stop(): Promise<void>;
 }
 ```
 
@@ -608,6 +694,17 @@ interface AgentResult {
   totalTokens: TokenUsage;
   totalCost: number;
   turnCount: number;
+  reasoningTraces: string[];
+  turnCosts: TurnCostEntry[];
+  confidence?: number;
+}
+
+interface TurnCostEntry {
+  turnIndex: number;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
 }
 ```
 
@@ -617,6 +714,8 @@ interface AgentResult {
 interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
+  verify?: (input: unknown, result: unknown) => boolean | Promise<boolean>;
+  identity?: (input: unknown) => ToolIdentityResult;
 }
 ```
 
