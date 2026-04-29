@@ -21,12 +21,61 @@ const DEFAULT_WORKER_TIMEOUT_MILLISECONDS = 30_000;
 // ActivityWorkerDispatcher
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for {@link ActivityWorkerDispatcher}.
+ *
+ * Currently the only option is `timeoutMilliseconds`, which controls how long
+ * the dispatcher waits for a worker to respond before treating the task as
+ * failed and terminating the worker.
+ *
+ * @example
+ * ```ts
+ * import { ActivityWorkerDispatcher, WorkerPool, type ActivityWorkerDispatcherOptions } from 'weft';
+ *
+ * const options: ActivityWorkerDispatcherOptions = {
+ *   timeoutMilliseconds: 60_000,
+ * };
+ * const pool = new WorkerPool({ concurrency: 4, workerUrl: './worker.ts' });
+ * using dispatcher = new ActivityWorkerDispatcher(pool, options);
+ * void dispatcher;
+ * ```
+ */
 export type ActivityWorkerDispatcherOptions = {
   /** Maximum time in milliseconds to wait for a worker to respond before
    *  rejecting and terminating the worker. Default: 30 000 (30 seconds). */
   timeoutMilliseconds?: number;
 };
 
+/**
+ * Dispatches activity execution requests to a pool of Web Workers and awaits
+ * their results, implementing a request-response pattern over the Worker
+ * message protocol.
+ *
+ * Acquires a worker from the {@link WorkerPool}, posts the
+ * {@link ActivityExecutionRequest}, waits for the matching
+ * {@link ActivityExecutionResult}, then releases the worker back to the pool.
+ * If no response arrives within the configured timeout, the task fails and the
+ * worker is terminated.
+ *
+ * @example
+ * ```ts
+ * import { ActivityWorkerDispatcher, WorkerPool } from 'weft';
+ *
+ * const pool = new WorkerPool({
+ *   concurrency: 4,
+ *   workerUrl: new URL('./my-worker.ts', import.meta.url),
+ * });
+ * using dispatcher = new ActivityWorkerDispatcher(pool, { timeoutMilliseconds: 30_000 });
+ *
+ * const result = await dispatcher.execute({
+ *   operationId: crypto.randomUUID(),
+ *   activityName: 'processImage',
+ *   input: { url: 'https://example.com/img.png' },
+ *   attempt: 1,
+ * });
+ * console.log(result.status); // 'completed' or 'failed'
+ * ```
+ */
 export class ActivityWorkerDispatcher implements Disposable, AsyncDisposable {
   readonly #pool: WorkerPool;
   readonly #timeoutMilliseconds: number;

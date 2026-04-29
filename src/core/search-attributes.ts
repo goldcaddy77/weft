@@ -57,7 +57,19 @@ function sortableHexToFloat(hex: string): number {
   return view.getFloat64(0);
 }
 
-/** Encode a search attribute value to a sortable string for index keys. */
+/**
+ * Encode a search attribute value to a sortable string for index keys.
+ *
+ * @example
+ * ```ts
+ * import { encodeAttributeValue } from 'weft';
+ *
+ * console.log(encodeAttributeValue('acme'));        // 's:acme'
+ * console.log(encodeAttributeValue(42));            // 'n:...' (sortable hex)
+ * console.log(encodeAttributeValue(true));          // 'b:1'
+ * console.log(encodeAttributeValue(new Date('2026-01-01'))); // 'd:2026-01-01T00:00:00.000Z'
+ * ```
+ */
 export function encodeAttributeValue(value: SearchAttributeValue): string {
   let encoded: string;
 
@@ -96,7 +108,21 @@ export function validateEncodedValueSize(encoded: string, attributeName: string)
   }
 }
 
-/** Decode an encoded attribute value back to its original type. */
+/**
+ * Decode an encoded attribute value back to its original type.
+ *
+ * @example
+ * ```ts
+ * import { encodeAttributeValue, decodeAttributeValue } from 'weft';
+ *
+ * const encoded = encodeAttributeValue('acme');
+ * const decoded = decodeAttributeValue(encoded, 'string');
+ * console.log(decoded); // 'acme'
+ *
+ * const num = encodeAttributeValue(42);
+ * console.log(decodeAttributeValue(num, 'number')); // 42
+ * ```
+ */
 export function decodeAttributeValue(encoded: string, type: string): SearchAttributeValue {
   const colonIndex = encoded.indexOf(':');
   const payload = encoded.slice(colonIndex + 1);
@@ -183,7 +209,22 @@ function valuesEqual(a: SearchAttributeValue, b: SearchAttributeValue): boolean 
 
 const EMPTY_VALUE = new Uint8Array(0);
 
-/** Compute the diff between old and new attributes, returning BatchOperations for index updates. */
+/**
+ * Compute the diff between old and new attributes, returning BatchOperations for index updates.
+ *
+ * @example
+ * ```ts
+ * import { buildIndexOperations } from 'weft';
+ *
+ * const ops = buildIndexOperations(
+ *   'wf-123',
+ *   { status: 'pending' },
+ *   { status: 'completed', customerId: 'acme' },
+ * );
+ * // ops: delete old 'status' index key, put new 'status' key, put 'customerId' key
+ * console.log(ops.length > 0); // true
+ * ```
+ */
 export function buildIndexOperations(
   workflowId: string,
   previous: Record<string, SearchAttributeValue>,

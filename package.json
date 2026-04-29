@@ -150,6 +150,10 @@
     "typecheck": "tsc --noEmit",
     "validate": "bun run lint && bun run typecheck && bun run test",
     "verify:exports": "bun run scripts/verify-tree-shaking.ts",
+    "verify:jsdoc": "bun run scripts/audit-jsdoc-manifest.ts",
+    "verify:jsdoc:declarations": "bun run scripts/check-declaration-jsdoc.ts --all",
+    "verify:jsdoc:doctests": "bun run scripts/extract-doctests.ts && bunx tsc --noEmit -p tmp/doctests/",
+    "verify:jsdoc:full": "bun run build && bun run verify:jsdoc && bun run verify:jsdoc:doctests && bun run verify:jsdoc:declarations",
     "verify:portability": "bun run scripts/verify-portability.ts",
     "verify:release-version": "bun run scripts/verify-release-version.ts"
   },

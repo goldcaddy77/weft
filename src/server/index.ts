@@ -89,6 +89,30 @@ function isInflightRecord(value: unknown): value is InflightRecord {
 // Public types
 // ---------------------------------------------------------------------------
 
+/**
+ * Configuration object for the `serve()` function.
+ *
+ * At minimum supply an `engine` and optionally a `port`.  Authentication,
+ * routing policy, metrics, and worker-dispatch settings are all optional — the
+ * server runs with sensible defaults when omitted.
+ *
+ * @example
+ * ```ts
+ * import { serve, type ServeOptions } from 'weft/server';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ *
+ * const options: ServeOptions = {
+ *   engine,
+ *   port: 3000,
+ *   auth: { apiKeys: ['secret'] },
+ * };
+ * await using server = serve(options);
+ * console.log(server.url); // http://localhost:3000
+ * ```
+ */
 export interface ServeOptions {
   engine: Engine;
   port?: number;
@@ -138,6 +162,29 @@ export interface ServeOptions {
   metricsCollector?: MetricsCollector;
 }
 
+/**
+ * Descriptor for a task dispatched to a remote worker via
+ * {@link WeftServer.dispatchTask}.
+ *
+ * `operationId` and `activityName` are required; all other fields refine
+ * routing, retry behaviour, and priority.  Set `sticky: true` together with
+ * `workflowId` to route the task to the worker that last handled tasks for
+ * that workflow.
+ *
+ * @example
+ * ```ts
+ * import { type TaskDispatch } from 'weft/server';
+ *
+ * const task: TaskDispatch = {
+ *   operationId: crypto.randomUUID(),
+ *   activityName: 'sendEmail',
+ *   input: { to: 'user@example.com', subject: 'Hello' },
+ *   queue: 'email',
+ *   retryPolicy: { maxAttempts: 3, initialBackoff: '1s', backoffMultiplier: 2, maxBackoff: '30s' },
+ * };
+ * void task;
+ * ```
+ */
 export interface TaskDispatch {
   operationId: string;
   activityName: string;
@@ -165,6 +212,29 @@ export interface TaskDispatch {
   fairShareKey?: string;
 }
 
+/**
+ * Handle returned by `serve()` that exposes the running server's address,
+ * worker registry, task dispatch, and shutdown controls.
+ *
+ * Implements `AsyncDisposable` — `serve()` itself is synchronous, but the
+ * returned handle is awaitable for cleanup. Use `await using server = serve(...)`
+ * in TypeScript 5.2+ to have the server stop automatically when the enclosing
+ * block exits.
+ *
+ * @example
+ * ```ts
+ * import { serve, type WeftServer } from 'weft/server';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ * await using server: WeftServer = serve({ engine, port: 4000 });
+ *
+ * console.log(server.url);            // http://localhost:4000
+ * console.log(server.registry);       // WorkerRegistry instance
+ * await server.stop();
+ * ```
+ */
 export interface WeftServer extends AsyncDisposable {
   readonly port: number;
   readonly hostname: string;
@@ -383,6 +453,18 @@ function serializeEvent(event: Event): string | null {
  * - `cleanupWorkflow`: drops the per-workflow sequence state for the given
  *   workflow id. Should be invoked when a workflow reaches a terminal state
  *   so the bookkeeping maps do not grow unbounded over the server's lifetime.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage } from 'weft';
+ * import { wireEventBroadcasting, type EventBroadcastingHandle } from 'weft/server';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * const bunServer = Bun.serve({ fetch: () => new Response('ok') });
+ * const handle: EventBroadcastingHandle = wireEventBroadcasting(engine, bunServer);
+ * // Later, on shutdown:
+ * handle.dispose();
+ * ```
  */
 export interface EventBroadcastingHandle {
   dispose: () => void;
@@ -407,6 +489,18 @@ function getWorkflowIdFromEvent(event: Event): string | undefined {
  * Attach event listeners to the engine that broadcast events via WebSocket
  * and persist each event to storage so GET /v1/workflows/:id/events returns data.
  * Returns a handle exposing a cleanup function and a per-workflow eviction hook.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage } from 'weft';
+ * import { wireEventBroadcasting } from 'weft/server';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * const bunServer = Bun.serve({ fetch: () => new Response('ok') });
+ * const handle = wireEventBroadcasting(engine, bunServer);
+ * // events are now broadcast to WebSocket subscribers
+ * handle.dispose(); // cleanup on shutdown
+ * ```
  */
 export function wireEventBroadcasting(
   engine: Engine,
@@ -661,7 +755,24 @@ export function wireEventBroadcasting(
 // Implementation
 // ---------------------------------------------------------------------------
 
-/** Start the Weft HTTP + WebSocket server with embedded dashboard. */
+/**
+ * Start the Weft HTTP + WebSocket server with embedded dashboard.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage } from 'weft';
+ * import { serve } from 'weft/server';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * engine.register('greet', async function* (ctx: import('weft').WorkflowContext, input: unknown) {
+ *   return `Hello, ${(input as { name: string }).name}!`;
+ * });
+ *
+ * const server = serve({ engine, port: 7233 });
+ * console.log(`Weft listening on ${server.url}`);
+ * await server.stop();
+ * ```
+ */
 export function serve(options: ServeOptions): WeftServer {
   const port = options.port ?? 7233;
   const hostname = options.hostname ?? '0.0.0.0';

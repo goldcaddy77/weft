@@ -16,6 +16,16 @@ import { scopedStorage } from './scoped-storage';
  * memory-mapped files. Writes use lmdb-js's async batching: individual
  * `put`/`remove` calls return promises that resolve once the next
  * batched transaction commits to disk.
+ *
+ * @example
+ * ```ts
+ * import { LMDBStorage } from 'weft/storage/lmdb';
+ * import { Engine } from 'weft';
+ *
+ * await using storage = new LMDBStorage('./weft-data');
+ * await using engine = new Engine({ storage });
+ * engine.register('ping', async function* () { return 'pong'; });
+ * ```
  */
 export class LMDBStorage implements Storage {
   #database: lmdb.RootDatabase<Buffer, string>;

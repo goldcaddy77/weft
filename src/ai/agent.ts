@@ -55,7 +55,28 @@ import { computeSemanticHash, ToolCallReplayConflictError } from './tool-effect-
 // Types
 // ---------------------------------------------------------------------------
 
-/** An MCP server URL to discover tools from at agent initialization. */
+/**
+ * An MCP server URL to discover tools from at agent initialization.
+ *
+ * @example Connect an HTTP MCP server with bearer auth
+ * ```ts
+ * import { executeAgentLoop, type MCPToolSource } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const source: MCPToolSource = {
+ *   mcp: 'https://tools.example.com/mcp',
+ *   auth: { type: 'bearer', token: process.env['MCP_TOKEN'] ?? '' },
+ *   timeout: 10_000,
+ * };
+ *
+ * const result = await executeAgentLoop(
+ *   { model: 'claude-sonnet-4-5', provider, tools: [source] },
+ *   'What tools are available?',
+ * );
+ * ```
+ */
 export interface MCPToolSource {
   mcp: string;
   auth?: MCPAuthConfig | undefined;
@@ -74,6 +95,33 @@ function isMCPToolSource(entry: AgentTool | MCPToolSource): entry is MCPToolSour
   return 'mcp' in entry && typeof entry.mcp === 'string';
 }
 
+/**
+ * Configuration object passed to {@link executeAgentLoop}. Controls the model,
+ * provider, tool list, budget, turn limit, context management, and observability
+ * hooks for a single agent invocation.
+ *
+ * @example Run a tool-calling agent with a cost budget
+ * ```ts
+ * import { executeAgentLoop, BudgetTracker, type AgentOptions } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const options: AgentOptions = {
+ *   model: 'claude-sonnet-4-5',
+ *   provider,
+ *   systemPrompt: 'You are a helpful assistant.',
+ *   maxTurns: 8,
+ *   budget: new BudgetTracker({
+ *     maxCost: 0.25,
+ *     models: { 'claude-sonnet-4-5': { inputCostPer1K: 0.003, outputCostPer1K: 0.015 } },
+ *   }),
+ * };
+ *
+ * const result = await executeAgentLoop(options, 'Summarize the latest news.');
+ * console.log(result.content);
+ * ```
+ */
 export interface AgentOptions {
   model: string;
   provider: LLMProvider;
@@ -120,6 +168,25 @@ export interface AgentOptions {
   verificationRecorder?: VerificationRecorder | undefined;
 }
 
+/**
+ * A locally-defined tool that the agent loop can call during a conversation.
+ * Pairs a {@link ToolDefinition} (name, description, and JSON Schema) with an
+ * async `execute` function, plus optional `verify` and semantic `identity` callbacks.
+ *
+ * @example Define a tool that fetches the current UTC time
+ * ```ts
+ * import type { AgentTool } from 'weft';
+ *
+ * const currentTimeTool: AgentTool = {
+ *   definition: {
+ *     name: 'get_current_time',
+ *     description: 'Returns the current UTC time as an ISO 8601 string.',
+ *     inputSchema: { type: 'object', properties: {} },
+ *   },
+ *   execute: async (_input: unknown) => new Date().toISOString(),
+ * };
+ * ```
+ */
 export interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -171,6 +238,29 @@ export interface TurnCostEntry {
   tools: string[];
 }
 
+/**
+ * Return value of {@link executeAgentLoop}. Contains the final text response,
+ * the full normalized conversation history, cumulative token usage, per-turn
+ * cost breakdown, and any reasoning traces captured from the provider.
+ *
+ * @example Inspect costs and reasoning after an agent run
+ * ```ts
+ * import { executeAgentLoop, type AgentResult } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const result: AgentResult = await executeAgentLoop(
+ *   { model: 'claude-sonnet-4-5', provider },
+ *   'Explain recursion in one sentence.',
+ * );
+ *
+ * console.log(result.content);
+ * console.log('Total cost:', result.totalCost);
+ * console.log('Turns:', result.turnCount);
+ * result.turnCosts.forEach((t) => console.log(`Turn ${t.turn}: ${t.cost.toFixed(4)}`));
+ * ```
+ */
 export interface AgentResult {
   content: string;
   conversation: Message[];
@@ -1215,7 +1305,28 @@ async function executeAgentTurn(runtime: AgentRuntime, turnIndex: number): Promi
   return true;
 }
 
-/** Execute a durable ReAct agent loop. Returns the final agent result. */
+/**
+ * Execute a durable ReAct agent loop. Returns the final agent result.
+ *
+ * @example Basic agent with a local tool
+ * ```ts
+ * import { executeAgentLoop, type AgentOptions, type AgentTool } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const echoCurrent: AgentTool = {
+ *   definition: { name: 'get_time', description: 'Returns current ISO time', inputSchema: { type: 'object' } },
+ *   execute: async () => new Date().toISOString(),
+ * };
+ *
+ * const result = await executeAgentLoop(
+ *   { model: 'claude-sonnet-4-5', provider, tools: [echoCurrent], maxTurns: 3 },
+ *   'What time is it?',
+ * );
+ * console.log(result.content);
+ * ```
+ */
 export async function executeAgentLoop(options: AgentOptions, input: string): Promise<AgentResult> {
   const runtime = await createAgentRuntime(options, input);
 

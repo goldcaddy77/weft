@@ -33,6 +33,16 @@ import { THRESHOLDS } from './types.ts';
  *
  * Gathers database health, workflow statistics, and queue statistics,
  * then generates recommendations based on configurable thresholds.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, collectDiagnostics } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * const report = await collectDiagnostics(storage, ':memory:');
+ * console.log(report.workflows.total);
+ * console.log(report.recommendations.length);
+ * ```
  */
 export async function collectDiagnostics(
   storage: Storage,

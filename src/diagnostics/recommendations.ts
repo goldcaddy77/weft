@@ -20,6 +20,20 @@ import { THRESHOLDS } from './types.ts';
  *
  * Rules are checked in a fixed order so that the most critical issues
  * appear first in the returned array.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, collectDiagnostics, generateRecommendations } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * const report = await collectDiagnostics(storage, ':memory:');
+ * const recs = generateRecommendations({
+ *   database: report.database,
+ *   workflows: report.workflows,
+ *   queues: report.queues,
+ * });
+ * console.log(recs.length); // 0 for a healthy instance
+ * ```
  */
 export function generateRecommendations(
   report: {

@@ -90,6 +90,32 @@ function createCursorRequestAwaiter<TCursor extends IDBCursor | IDBCursorWithVal
   };
 }
 
+/**
+ * IndexedDB-backed {@link Storage} implementation for browser and service-worker
+ * environments.
+ *
+ * Opens (or creates) an IndexedDB database with a single `'kv'` object store on
+ * construction.  All operations are async and transactional.  Use this when
+ * running weft inside a browser tab or service worker where SQLite and LMDB are
+ * unavailable.
+ *
+ * @example
+ * ```ts
+ * import { IndexedDBStorage } from 'weft/storage/indexeddb';
+ * import { Engine, type WorkflowContext } from 'weft';
+ *
+ * // Opens (or re-opens) the 'weft' IndexedDB database
+ * await using storage = new IndexedDBStorage('weft');
+ * await using engine = new Engine({ storage });
+ *
+ * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
+ *   return `Hello, ${(input as { name: string }).name}!`;
+ * });
+ *
+ * const handle = await engine.start('greet', { name: 'World' });
+ * console.log(await handle.result()); // 'Hello, World!'
+ * ```
+ */
 export class IndexedDBStorage implements Storage {
   #databaseName: string;
   #database: IDBDatabase | null = null;

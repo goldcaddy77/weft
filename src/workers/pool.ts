@@ -1,9 +1,55 @@
+/**
+ * Construction options for {@link WorkerPool}.
+ *
+ * `concurrency` sets the maximum number of Worker instances created; once this
+ * limit is reached, `acquire()` calls queue until a worker is released.
+ * `workerUrl` is the script URL passed to `new Worker()`.  Set `smol: true` on
+ * Bun to request a reduced-heap worker.
+ *
+ * @example
+ * ```ts
+ * import { WorkerPool, type WorkerPoolOptions } from 'weft';
+ *
+ * const options: WorkerPoolOptions = {
+ *   concurrency: 4,
+ *   workerUrl: new URL('./activity-worker.ts', import.meta.url),
+ *   smol: false,
+ * };
+ * using pool = new WorkerPool(options);
+ * void pool;
+ * ```
+ */
 export interface WorkerPoolOptions {
   concurrency: number;
   workerUrl: string | URL;
   smol?: boolean;
 }
 
+/**
+ * Bounded pool of Web Workers with acquire/release lifecycle management.
+ *
+ * Workers are created lazily up to `concurrency` and reused across tasks.
+ * `acquire()` returns a `Worker` immediately if one is available, creates a new
+ * one if under the limit, or queues the request until a worker is released.
+ * Use `[Symbol.asyncDispose]()` for a graceful shutdown that waits for
+ * in-flight workers to finish, or `[Symbol.dispose]()` for immediate
+ * termination.
+ *
+ * @example
+ * ```ts
+ * import { WorkerPool } from 'weft';
+ *
+ * await using pool = new WorkerPool({
+ *   concurrency: 2,
+ *   workerUrl: new URL('./worker.ts', import.meta.url),
+ * });
+ *
+ * const worker = await pool.acquire();
+ * worker.postMessage({ task: 'hello' });
+ * // ... wait for message event ...
+ * pool.release(worker);
+ * ```
+ */
 export class WorkerPool implements Disposable, AsyncDisposable {
   #workers: Set<Worker>;
   #available: Worker[];

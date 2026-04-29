@@ -9,6 +9,24 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * OAuth2 client credentials configuration used by {@link createOAuth2TokenManager}.
+ *
+ * @example Configure client credentials for a protected MCP server
+ * ```ts
+ * import { createOAuth2TokenManager, type OAuth2Config } from 'weft';
+ *
+ * const config: OAuth2Config = {
+ *   tokenEndpoint: 'https://auth.example.com/oauth/token',
+ *   clientId: process.env['CLIENT_ID'] ?? '',
+ *   clientSecret: process.env['CLIENT_SECRET'] ?? '',
+ *   scope: 'tools:invoke',
+ * };
+ *
+ * const manager = createOAuth2TokenManager(config);
+ * const token = await manager.getAccessToken();
+ * ```
+ */
 export type OAuth2Config = {
   tokenEndpoint: string;
   clientId: string;
@@ -16,6 +34,28 @@ export type OAuth2Config = {
   scope?: string;
 };
 
+/**
+ * Interface returned by {@link createOAuth2TokenManager}. Provides a single
+ * `getAccessToken()` method that returns a cached or freshly fetched OAuth2
+ * bearer token. Concurrent callers share one in-flight refresh request to avoid
+ * thundering-herd token endpoint hammering.
+ *
+ * @example Use a token manager as a dynamic header source for an MCP transport
+ * ```ts
+ * import { createOAuth2TokenManager, HttpTransport, MCPClient, type OAuth2TokenManager } from 'weft';
+ *
+ * const manager: OAuth2TokenManager = createOAuth2TokenManager({
+ *   tokenEndpoint: 'https://auth.example.com/oauth/token',
+ *   clientId: process.env['CLIENT_ID'] ?? '',
+ *   clientSecret: process.env['CLIENT_SECRET'] ?? '',
+ * });
+ *
+ * const transport = new HttpTransport({
+ *   serverUrl: 'https://tools.example.com/mcp',
+ *   headers: async () => ({ Authorization: `Bearer ${await manager.getAccessToken()}` }),
+ * });
+ * ```
+ */
 export type OAuth2TokenManager = {
   /** Get a valid access token, refreshing if necessary. */
   getAccessToken(): Promise<string>;
@@ -30,6 +70,31 @@ type CachedToken = {
 // Error
 // ---------------------------------------------------------------------------
 
+/**
+ * Thrown by {@link createOAuth2TokenManager} when the OAuth2 token endpoint
+ * returns an HTTP error status, invalid JSON, or a response body that lacks an
+ * `access_token` field. Carries the `tokenEndpoint` URL and an optional HTTP
+ * `statusCode` for programmatic error handling.
+ *
+ * @example Catch and report token fetch failures
+ * ```ts
+ * import { createOAuth2TokenManager, OAuth2TokenError } from 'weft';
+ *
+ * const manager = createOAuth2TokenManager({
+ *   tokenEndpoint: 'https://auth.example.com/oauth/token',
+ *   clientId: 'my-client',
+ *   clientSecret: 'wrong-secret',
+ * });
+ *
+ * try {
+ *   await manager.getAccessToken();
+ * } catch (error) {
+ *   if (error instanceof OAuth2TokenError) {
+ *     console.error(`Token fetch failed (${error.statusCode}): ${error.message}`);
+ *   }
+ * }
+ * ```
+ */
 export class OAuth2TokenError extends Error {
   readonly tokenEndpoint: string;
   readonly statusCode: number | undefined;
@@ -54,6 +119,22 @@ const EXPIRY_BUFFER_MS = 60_000;
  *
  * The manager caches tokens and refreshes them proactively before expiry.
  * Concurrent callers share a single in-flight refresh request.
+ *
+ * @example Get an access token and build a dynamic authorization header
+ * ```ts
+ * import { createOAuth2TokenManager } from 'weft';
+ *
+ * const tokenManager = createOAuth2TokenManager({
+ *   tokenEndpoint: 'https://auth.example.com/oauth/token',
+ *   clientId: process.env['CLIENT_ID'] ?? '',
+ *   clientSecret: process.env['CLIENT_SECRET'] ?? '',
+ * });
+ *
+ * // Concurrent calls share one in-flight refresh; cached while token is live.
+ * const token = await tokenManager.getAccessToken();
+ * const headers = { Authorization: `Bearer ${token}` };
+ * console.log(Object.keys(headers)); // ['Authorization']
+ * ```
  */
 export function createOAuth2TokenManager(config: OAuth2Config): OAuth2TokenManager {
   let cached: CachedToken | null = null;

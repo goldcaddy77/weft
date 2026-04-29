@@ -1,6 +1,24 @@
 import type { WeftAgentEventMap } from '../ai/events.ts';
 import type { ConstraintViolation } from './constraint.ts';
 
+/**
+ * Fired on the {@link Engine} when a new workflow execution begins. Listen via
+ * `engine.addEventListener('workflow:started', handler)` and read
+ * `e.workflowId`, `e.workflowType`, and `e.input` directly off the event.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowStartedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:started', (e: Event) => {
+ *   const ev = e as WorkflowStartedEvent;
+ *   console.log('started', ev.workflowId, ev.workflowType);
+ * });
+ * engine.register('ping', async function* () { return 'pong'; });
+ * await engine.start('ping', null);
+ * ```
+ */
 export class WorkflowStartedEvent extends Event {
   static readonly type = 'workflow:started' as const;
   readonly workflowId: string;
@@ -15,6 +33,24 @@ export class WorkflowStartedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a workflow finishes successfully. Contains
+ * the `result` and wall-clock `duration` in milliseconds. Read `e.workflowId`,
+ * `e.result`, and `e.duration` directly off the event object.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowCompletedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:completed', (e: Event) => {
+ *   const ev = e as WorkflowCompletedEvent;
+ *   console.log('completed in', ev.duration, 'ms, result:', ev.result);
+ * });
+ * engine.register('ping', async function* () { return 'pong'; });
+ * await (await engine.start('ping', null)).result();
+ * ```
+ */
 export class WorkflowCompletedEvent extends Event {
   static readonly type = 'workflow:completed' as const;
   readonly workflowId: string;
@@ -29,6 +65,24 @@ export class WorkflowCompletedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a workflow terminates with an unhandled error.
+ * The `error` property holds the thrown `Error` object. Listen to diagnose
+ * failures without polling `handle.state()`.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowFailedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:failed', (e: Event) => {
+ *   const ev = e as WorkflowFailedEvent;
+ *   console.error('workflow', ev.workflowId, 'failed:', ev.error.message);
+ * });
+ * engine.register('boom', async function* () { throw new Error('oops'); });
+ * await engine.start('boom', null).then(h => h.result()).catch(() => undefined);
+ * ```
+ */
 export class WorkflowFailedEvent extends Event {
   static readonly type = 'workflow:failed' as const;
   readonly workflowId: string;
@@ -41,6 +95,27 @@ export class WorkflowFailedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a workflow is cancelled via
+ * `engine.cancel(workflowId)` or `handle.cancel()`. Contains only
+ * `e.workflowId` since there is no result or error.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowCancelledEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:cancelled', (e: Event) => {
+ *   const ev = e as WorkflowCancelledEvent;
+ *   console.log('cancelled', ev.workflowId);
+ * });
+ * engine.register('slow', async function* (_ctx: import('weft').WorkflowContext, _input: unknown) {
+ *   await new Promise(() => {}); // never resolves
+ * });
+ * const handle = await engine.start('slow', null);
+ * await handle.cancel();
+ * ```
+ */
 export class WorkflowCancelledEvent extends Event {
   static readonly type = 'workflow:cancelled' as const;
   readonly workflowId: string;
@@ -51,6 +126,22 @@ export class WorkflowCancelledEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a workflow exceeds its execution or run
+ * timeout. Read `e.timeoutType` (`'execution'` or `'run'`) and `e.elapsed`
+ * (milliseconds) to understand which limit was hit.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowTimedOutEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:timed-out', (e: Event) => {
+ *   const ev = e as WorkflowTimedOutEvent;
+ *   console.log(ev.workflowId, 'timed out after', ev.elapsed, 'ms (', ev.timeoutType, ')');
+ * });
+ * ```
+ */
 export class WorkflowTimedOutEvent extends Event {
   static readonly type = 'workflow:timed-out' as const;
   readonly workflowId: string;
@@ -65,6 +156,22 @@ export class WorkflowTimedOutEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a workflow resumes execution after a signal
+ * or update delivers a result. `e.fromStep` is the checkpoint step index the
+ * workflow resumed from.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowResumedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:resumed', (e: Event) => {
+ *   const ev = e as WorkflowResumedEvent;
+ *   console.log('resumed', ev.workflowId, 'from step', ev.fromStep);
+ * });
+ * ```
+ */
 export class WorkflowResumedEvent extends Event {
   static readonly type = 'workflow:resumed' as const;
   readonly workflowId: string;
@@ -77,6 +184,22 @@ export class WorkflowResumedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when an activity begins execution. Use to
+ * trace activity scheduling latency. Read `e.operationId`, `e.workflowId`,
+ * `e.activityName`, and `e.attempt` directly off the event.
+ *
+ * @example
+ * ```ts
+ * import { Engine, ActivityStartedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('activity:started', (e: Event) => {
+ *   const ev = e as ActivityStartedEvent;
+ *   console.log('activity started:', ev.activityName, 'attempt', ev.attempt);
+ * });
+ * ```
+ */
 export class ActivityStartedEvent extends Event {
   static readonly type = 'activity:started' as const;
   readonly operationId: string;
@@ -93,6 +216,22 @@ export class ActivityStartedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when an activity execution completes successfully.
+ * Read `e.operationId`, `e.workflowId`, `e.activityName`, and `e.duration`
+ * (milliseconds) to observe activity latency.
+ *
+ * @example
+ * ```ts
+ * import { Engine, ActivityCompletedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('activity:completed', (e: Event) => {
+ *   const ev = e as ActivityCompletedEvent;
+ *   console.log(ev.activityName, 'completed in', ev.duration, 'ms');
+ * });
+ * ```
+ */
 export class ActivityCompletedEvent extends Event {
   static readonly type = 'activity:completed' as const;
   readonly operationId: string;
@@ -109,6 +248,22 @@ export class ActivityCompletedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when an activity execution throws an error.
+ * Check `e.attempt` to distinguish first-attempt failures from retries.
+ * Read `e.error` for the thrown error object.
+ *
+ * @example
+ * ```ts
+ * import { Engine, ActivityFailedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('activity:failed', (e: Event) => {
+ *   const ev = e as ActivityFailedEvent;
+ *   console.error(ev.activityName, 'attempt', ev.attempt, 'failed:', ev.error.message);
+ * });
+ * ```
+ */
 export class ActivityFailedEvent extends Event {
   static readonly type = 'activity:failed' as const;
   readonly operationId: string;
@@ -133,6 +288,22 @@ export class ActivityFailedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} for each token streamed from an LLM during an
+ * agent workflow. Read `e.workflowId`, `e.token`, and `e.model` to stream
+ * tokens to clients in real time.
+ *
+ * @example
+ * ```ts
+ * import { Engine, TokenEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('agent:token', (e: Event) => {
+ *   const ev = e as TokenEvent;
+ *   process.stdout.write(ev.token);
+ * });
+ * ```
+ */
 export class TokenEvent extends Event {
   static readonly type = 'agent:token' as const;
   readonly workflowId: string;
@@ -147,6 +318,22 @@ export class TokenEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a signal is delivered to a workflow via
+ * `engine.signal` or `handle.signal`. Read `e.workflowId`, `e.signalName`,
+ * and `e.payload` to observe signal delivery.
+ *
+ * @example
+ * ```ts
+ * import { Engine, SignalReceivedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('signal:received', (e: Event) => {
+ *   const ev = e as SignalReceivedEvent;
+ *   console.log(ev.workflowId, 'received signal', ev.signalName);
+ * });
+ * ```
+ */
 export class SignalReceivedEvent extends Event {
   static readonly type = 'signal:received' as const;
   readonly workflowId: string;
@@ -161,6 +348,22 @@ export class SignalReceivedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a pending `waitForSignal` operation in a
+ * workflow is resolved by the delivered signal. Emitted after the signal
+ * unblocks the workflow and resumes execution.
+ *
+ * @example
+ * ```ts
+ * import { Engine, SignalDeliveredEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('signal:delivered', (e: Event) => {
+ *   const ev = e as SignalDeliveredEvent;
+ *   console.log('signal', ev.signalName, 'delivered to', ev.workflowId);
+ * });
+ * ```
+ */
 export class SignalDeliveredEvent extends Event {
   static readonly type = 'signal:delivered' as const;
   readonly workflowId: string;
@@ -173,6 +376,22 @@ export class SignalDeliveredEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a workflow's search attributes are updated
+ * via `engine.setAttributes` or `ctx.setAttribute`. Read `e.changes` for the
+ * map of attribute keys to their new values.
+ *
+ * @example
+ * ```ts
+ * import { Engine, AttributesChangedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('attributes:changed', (e: Event) => {
+ *   const ev = e as AttributesChangedEvent;
+ *   console.log('attributes changed for', ev.workflowId, ev.changes);
+ * });
+ * ```
+ */
 export class AttributesChangedEvent extends Event {
   static readonly type = 'attributes:changed' as const;
   readonly workflowId: string;
@@ -185,6 +404,22 @@ export class AttributesChangedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when an update request is received for a workflow.
+ * Contains the `updateId`, `name`, and `payload`. Precedes a corresponding
+ * {@link UpdateCompletedEvent} once the workflow handler processes the update.
+ *
+ * @example
+ * ```ts
+ * import { Engine, UpdateReceivedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('update:received', (e: Event) => {
+ *   const ev = e as UpdateReceivedEvent;
+ *   console.log('update', ev.name, 'received for', ev.workflowId, '(id:', ev.updateId, ')');
+ * });
+ * ```
+ */
 export class UpdateReceivedEvent extends Event {
   static readonly type = 'update:received' as const;
   readonly updateId: string;
@@ -201,6 +436,26 @@ export class UpdateReceivedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a workflow update handler returns a result
+ * (or throws an error). Check `e.error` to distinguish success from failure;
+ * on success, `e.result` holds the handler's return value.
+ *
+ * @example
+ * ```ts
+ * import { Engine, UpdateCompletedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('update:completed', (e: Event) => {
+ *   const ev = e as UpdateCompletedEvent;
+ *   if (ev.error) {
+ *     console.error('update', ev.name, 'failed:', ev.error);
+ *   } else {
+ *     console.log('update', ev.name, 'result:', ev.result);
+ *   }
+ * });
+ * ```
+ */
 export class UpdateCompletedEvent extends Event {
   static readonly type = 'update:completed' as const;
   readonly updateId: string;
@@ -219,6 +474,22 @@ export class UpdateCompletedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a serialized checkpoint exceeds the
+ * configured size threshold ({@link DEFAULT_CHECKPOINT_SIZE_WARNING_THRESHOLD}).
+ * Read `e.sizeBytes` and `e.step` to identify the offending workflow step.
+ *
+ * @example
+ * ```ts
+ * import { Engine, CheckpointSizeWarningEvent } from 'weft';
+ *
+ * const engine = new Engine({ checkpointSizeWarningThreshold: 32_000 });
+ * engine.addEventListener('checkpoint:size-warning', (e: Event) => {
+ *   const ev = e as CheckpointSizeWarningEvent;
+ *   console.warn(ev.workflowId, 'checkpoint at step', ev.step, 'is', ev.sizeBytes, 'bytes');
+ * });
+ * ```
+ */
 export class CheckpointSizeWarningEvent extends Event {
   static readonly type = 'checkpoint:size-warning' as const;
   readonly workflowId: string;
@@ -233,6 +504,23 @@ export class CheckpointSizeWarningEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} (in development mode) when the engine detects
+ * a potentially non-deterministic value in the workflow state — such as a Date
+ * object, a function, or a class instance. Read `e.message` and `e.fieldPaths`
+ * to locate the offending fields.
+ *
+ * @example
+ * ```ts
+ * import { Engine, DevelopmentWarningEvent } from 'weft';
+ *
+ * const engine = new Engine({ development: true });
+ * engine.addEventListener('development:warning', (e: Event) => {
+ *   const ev = e as DevelopmentWarningEvent;
+ *   console.warn('[dev]', ev.message, 'paths:', ev.fieldPaths);
+ * });
+ * ```
+ */
 export class DevelopmentWarningEvent extends Event {
   static readonly type = 'development:warning' as const;
   readonly workflowId: string;
@@ -261,6 +549,22 @@ export class CleanupWarningEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when the engine measures its total storage
+ * footprint during a retention sweep. Read `e.sizeBytes` to track storage
+ * growth over time.
+ *
+ * @example
+ * ```ts
+ * import { Engine, StorageSizeReportedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('storage:size-reported', (e: Event) => {
+ *   const ev = e as StorageSizeReportedEvent;
+ *   console.log('total storage:', ev.sizeBytes, 'bytes');
+ * });
+ * ```
+ */
 export class StorageSizeReportedEvent extends Event {
   static readonly type = 'storage:size-reported' as const;
   readonly sizeBytes: number;
@@ -271,6 +575,22 @@ export class StorageSizeReportedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a built-in alert metric breaches its
+ * threshold. Read `e.metric`, `e.threshold`, `e.currentValue`, and
+ * optionally `e.window` to understand which alert triggered.
+ *
+ * @example
+ * ```ts
+ * import { Engine, AlertFiredEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('alert:fired', (e: Event) => {
+ *   const ev = e as AlertFiredEvent;
+ *   console.warn('alert fired:', ev.metric, 'current:', ev.currentValue, 'threshold:', ev.threshold);
+ * });
+ * ```
+ */
 export class AlertFiredEvent extends Event {
   static readonly type = 'alert:fired' as const;
   readonly metric: string;
@@ -287,6 +607,22 @@ export class AlertFiredEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a previously fired alert returns below its
+ * threshold. Mirrors {@link AlertFiredEvent} — read `e.metric`,
+ * `e.currentValue`, and `e.threshold` to confirm the recovery.
+ *
+ * @example
+ * ```ts
+ * import { Engine, AlertResolvedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('alert:resolved', (e: Event) => {
+ *   const ev = e as AlertResolvedEvent;
+ *   console.log('alert resolved:', ev.metric, 'value back to', ev.currentValue);
+ * });
+ * ```
+ */
 export class AlertResolvedEvent extends Event {
   static readonly type = 'alert:resolved' as const;
   readonly metric: string;
@@ -303,6 +639,23 @@ export class AlertResolvedEvent extends Event {
   }
 }
 
+/**
+ * Fired on the {@link Engine} when a domain constraint's `check` function
+ * returns `false`. Read `e.constraintName`, `e.scope`, and `e.onViolation`
+ * to identify which constraint fired and what action the engine took.
+ *
+ * @example
+ * ```ts
+ * import { Engine, ConstraintViolatedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('constraint:violated', (e: Event) => {
+ *   const ev = e as ConstraintViolatedEvent;
+ *   console.warn('constraint', ev.constraintName, 'violated in', ev.workflowId,
+ *     'action:', ev.onViolation);
+ * });
+ * ```
+ */
 export class ConstraintViolatedEvent extends Event {
   static readonly type = 'constraint:violated' as const;
   readonly workflowId: string;
@@ -324,6 +677,25 @@ export class ConstraintViolatedEvent extends Event {
   }
 }
 
+/**
+ * Union of all event types emitted by the {@link Engine}. Use this as the
+ * type parameter for {@link TypedEventTarget} to get type-safe
+ * `addEventListener` / `removeEventListener` on the engine. Each key is the
+ * event string; each value is the typed event class.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type WeftEventMap } from 'weft';
+ *
+ * function listenAll(engine: Engine) {
+ *   (engine as unknown as import('weft').TypedEventTarget<WeftEventMap>)
+ *     .addEventListener('workflow:completed', (e) => {
+ *       console.log('done', e.workflowId, e.result);
+ *     });
+ * }
+ * void listenAll;
+ * ```
+ */
 export type WeftEventMap = WeftAgentEventMap & {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
@@ -349,6 +721,27 @@ export type WeftEventMap = WeftAgentEventMap & {
   'constraint:violated': ConstraintViolatedEvent;
 };
 
+/**
+ * Typed version of the `EventTarget` interface that constrains
+ * `addEventListener` and `removeEventListener` to the keys and event types
+ * declared in `TEventMap`. The {@link Engine} implements this interface via
+ * `WeftEventMap` so callers get IntelliSense on event names and strongly-typed
+ * handler arguments.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type TypedEventTarget, type WeftEventMap } from 'weft';
+ *
+ * function addTypedListener(target: TypedEventTarget<WeftEventMap>) {
+ *   target.addEventListener('workflow:started', (e) => {
+ *     console.log('started:', e.workflowId);
+ *   });
+ * }
+ * const engine = new Engine();
+ * addTypedListener(engine as unknown as TypedEventTarget<WeftEventMap>);
+ * void engine;
+ * ```
+ */
 export interface TypedEventTarget<TEventMap extends Record<string, Event>> {
   addEventListener<K extends keyof TEventMap & string>(
     type: K,

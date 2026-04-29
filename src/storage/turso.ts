@@ -11,7 +11,19 @@ import {
 import { assertReadOnlyQuery } from './read-only-query';
 import { scopedStorage } from './scoped-storage';
 
-/** Configuration for connecting to a Turso/libSQL database. */
+/**
+ * Configuration for connecting to a Turso/libSQL database.
+ *
+ * @example
+ * ```ts
+ * import { TursoStorage, type TursoStorageOptions } from 'weft/storage/turso';
+ *
+ * const options: TursoStorageOptions = {
+ *   url: 'file:local.db',
+ * };
+ * await using storage = new TursoStorage(options);
+ * ```
+ */
 export type TursoStorageOptions = {
   /** The database URL (e.g., `libsql://your-db.turso.io`, `file:local.db`, `file::memory:`). */
   url: string;
@@ -31,6 +43,18 @@ const TABLE_INIT = `CREATE TABLE IF NOT EXISTS kv (
  * so the database can be a remote Turso instance, an embedded replica, or a local file.
  * Switch from `BunSQLiteStorage` to `TursoStorage` by changing the connection string —
  * the rest of the application stays the same.
+ *
+ * @example
+ * ```ts
+ * import { TursoStorage } from 'weft/storage/turso';
+ * import { Engine } from 'weft';
+ *
+ * await using storage = new TursoStorage({
+ *   url: 'libsql://my-db.turso.io',
+ * ...(process.env['TURSO_AUTH_TOKEN'] ? { authToken: process.env['TURSO_AUTH_TOKEN'] } : {}),
+ * });
+ * await using engine = new Engine({ storage });
+ * ```
  */
 export class TursoStorage implements Storage {
   #client: Client;

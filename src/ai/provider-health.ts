@@ -58,6 +58,30 @@ interface ProviderState {
 // ProviderHealthTracker
 // ---------------------------------------------------------------------------
 
+/**
+ * Implements a sliding-window circuit breaker for LLM providers. Records
+ * successes and failures per provider name, trips the circuit to `'open'` when
+ * the error rate within the window exceeds the configured threshold, and
+ * re-probes after a cooldown period. Dispatches {@link AgentProviderCircuitOpenEvent}
+ * on state transitions when an `eventTarget` is set.
+ *
+ * @example Track provider health and receive circuit-open notifications
+ * ```ts
+ * import { ProviderHealthTracker } from 'weft';
+ *
+ * const tracker = new ProviderHealthTracker({
+ *   errorThreshold: 0.5,
+ *   minimumRequests: 5,
+ *   windowDuration: 60_000,
+ *   cooldownDuration: 30_000,
+ * });
+ * tracker.eventTarget = new EventTarget();
+ *
+ * tracker.recordFailure('anthropic');
+ * tracker.recordSuccess('anthropic');
+ * console.log(tracker.getState('anthropic')); // 'closed' or 'open'
+ * ```
+ */
 export class ProviderHealthTracker {
   #providers: Map<string, ProviderState>;
   #options: ResolvedProviderHealthOptions;

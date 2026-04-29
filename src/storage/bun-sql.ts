@@ -17,6 +17,31 @@ import { scopedStorage } from './scoped-storage';
  */
 export { BunSQLiteStorage as SQLiteStorage };
 
+/**
+ * SQLite-backed {@link Storage} using Bun's built-in `bun:sqlite` module.
+ *
+ * Opens the database in WAL mode with prepared-statement caching so the hot
+ * `get`/`put`/`batch` paths pay zero per-call `prepare()` cost.  Pass
+ * `':memory:'` (the default) for ephemeral storage, or a file path for durable
+ * persistence across restarts.
+ *
+ * @example
+ * ```ts
+ * import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+ * import { Engine, type WorkflowContext } from 'weft';
+ *
+ * // Durable on-disk storage
+ * await using storage = new BunSQLiteStorage('./weft.db');
+ * await using engine = new Engine({ storage });
+ *
+ * engine.register('echo', async function* (ctx: WorkflowContext, input: unknown) {
+ *   return input;
+ * });
+ *
+ * const handle = await engine.start('echo', { msg: 'hi' });
+ * console.log(await handle.result()); // { msg: 'hi' }
+ * ```
+ */
 export class BunSQLiteStorage implements Storage {
   #database: Database;
   // Prepared statements are cached on the instance so the hot paths (get,

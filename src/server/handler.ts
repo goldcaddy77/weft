@@ -92,6 +92,26 @@ function matchRoute(method: string, pathname: string): RouteMatch | null {
   return null;
 }
 
+/**
+ * Extract path parameter values from a regex match against a route pattern.
+ *
+ * Pairs the ordered `parameterNames` (from the route's compiled pattern)
+ * with the corresponding capture groups in `match`, decoding each value with
+ * `decodeURIComponent`. Used by route dispatchers to turn a regex hit into a
+ * `{ paramName: value }` map for the operation handler.
+ *
+ * @example Extract route params from a matched URL
+ * ```ts
+ * import { extractRouteParameters } from 'weft/server/handler';
+ *
+ * const pattern = /^\/v1\/workflows\/([^/]+)\/signal\/([^/]+)$/;
+ * const match = pattern.exec('/v1/workflows/wf-1/signal/refund');
+ * if (match) {
+ *   const params = extractRouteParameters(['workflowId', 'signalName'], match);
+ *   console.log(params); // { workflowId: 'wf-1', signalName: 'refund' }
+ * }
+ * ```
+ */
 export function extractRouteParameters(
   parameterNames: readonly string[],
   match: Pick<RegExpExecArray, number | 'length'>,
@@ -141,6 +161,25 @@ function errorResponse(message: string, status: number): Response {
   return jsonResponse({ error: message }, status);
 }
 
+/**
+ * Extracts a named parameter from a route parameter map, throwing a descriptive
+ * `Error` if the parameter is absent.
+ *
+ * Use this inside custom REST binding handlers to fail fast with a clear message
+ * instead of silently returning `undefined`.
+ *
+ * @example
+ * ```ts
+ * import { getRequiredRouteParameter } from 'weft/server/handler';
+ *
+ * const params = { workflowId: 'wf-123' };
+ * const id = getRequiredRouteParameter(params, 'workflowId', 'GET /v1/workflows/:workflowId');
+ * console.log(id); // 'wf-123'
+ *
+ * // Throws: Missing route parameter "workflowId" for GET /v1/workflows/:workflowId
+ * getRequiredRouteParameter({}, 'workflowId', 'GET /v1/workflows/:workflowId');
+ * ```
+ */
 export function getRequiredRouteParameter(
   params: Record<string, string>,
   name: string,
@@ -237,6 +276,23 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
 // Main handler
 // ---------------------------------------------------------------------------
 
+/**
+ * Options bag passed to `handleRequest` by the HTTP server wrapper.
+ *
+ * Injects the resolved authentication context, custom metrics exporters, and
+ * an optional override for the operation registry and REST bindings.  Omit
+ * `operationRegistry` and `restBindings` together to use the live defaults.
+ *
+ * @example
+ * ```ts
+ * import { type HandlerOptions } from 'weft/server/handler';
+ *
+ * const options: HandlerOptions = {
+ *   authContext: { method: 'public' },
+ * };
+ * void options;
+ * ```
+ */
 export interface HandlerOptions {
   /**
    * Optional authenticated caller context injected by the HTTP server
@@ -299,15 +355,64 @@ function matchRestBinding(
   return null;
 }
 
+/**
+ * Count the number of `:param` placeholders in a route path pattern.
+ *
+ * Used as part of {@link shouldPreferLegacyRoute}'s tie-break: a route with
+ * fewer parameters (i.e., more specific) wins over one with more.
+ *
+ * @example Count parameters in a route pattern
+ * ```ts
+ * import { countPathParameters } from 'weft/server/handler';
+ *
+ * countPathParameters('/v1/workflows/:id/signal/:name'); // 2
+ * countPathParameters('/v1/workflows');                   // 0
+ * ```
+ */
 export function countPathParameters(pathPattern: string): number {
   return pathPattern.split('/').filter((segment) => segment.startsWith(':')).length;
 }
 
+/**
+ * Count the number of literal (non-parameter, non-empty) segments in a route
+ * path pattern. Used as the secondary tie-break in
+ * {@link shouldPreferLegacyRoute}: more literals wins.
+ *
+ * @example Count literal segments in a route pattern
+ * ```ts
+ * import { countLiteralSegments } from 'weft/server/handler';
+ *
+ * countLiteralSegments('/v1/workflows/:id/signal'); // 3 (v1, workflows, signal)
+ * countLiteralSegments('/:any');                     // 0
+ * ```
+ */
 export function countLiteralSegments(pathPattern: string): number {
   return pathPattern.split('/').filter((segment) => segment.length > 0 && !segment.startsWith(':'))
     .length;
 }
 
+/**
+ * Decide which of two competing route matches should win when both bind to
+ * the same path. Prefers the legacy binding when it is strictly more specific
+ * (fewer parameters or, on tie, more literal segments).
+ *
+ * Returns `true` when the legacy `bindingMatch` should take precedence over
+ * the catalog `routeMatch`; `false` otherwise (including when either side is
+ * null).
+ *
+ * @example Pick the winning route between a legacy binding and a catalog route
+ * ```ts
+ * import { shouldPreferLegacyRoute } from 'weft/server/handler';
+ *
+ * type Args = Parameters<typeof shouldPreferLegacyRoute>;
+ * declare const bindingMatch: Args[0];
+ * declare const routeMatch: Args[1];
+ *
+ * if (shouldPreferLegacyRoute(bindingMatch, routeMatch)) {
+ *   // dispatch via the legacy binding
+ * }
+ * ```
+ */
 export function shouldPreferLegacyRoute(
   bindingMatch: { readonly binding: UnknownRestBinding } | null,
   routeMatch: RouteMatch | null,
@@ -360,6 +465,29 @@ async function dispatchViaExecuteOperation(
   return binding.shapeFault ? binding.shapeFault(result.fault) : faultToHttpResponse(result.fault);
 }
 
+/**
+ * Type guard that returns true if the value structurally resembles an
+ * {@link OperationFault} (carries `code`, `message`, and `data` properties).
+ *
+ * Used by error handlers to decide whether a thrown value can be mapped to a
+ * structured operation fault response, vs. needing to be wrapped in a generic
+ * 500.
+ *
+ * @example Catch an unknown error and surface as a fault when it qualifies
+ * ```ts
+ * import { isOperationFaultLike } from 'weft/server/handler';
+ *
+ * try {
+ *   // operation handler runs here
+ * } catch (error) {
+ *   if (isOperationFaultLike(error)) {
+ *     // structured fault — pass through
+ *   } else {
+ *     // unknown — wrap as 500
+ *   }
+ * }
+ * ```
+ */
 export function isOperationFaultLike(value: unknown): value is OperationFault {
   if (typeof value !== 'object' || value === null) {
     return false;
@@ -426,6 +554,16 @@ export function isOperationFaultLike(value: unknown): value is OperationFault {
  * scopes. Scope-protected REST ops still dispatch through
  * `authenticateRequest` in `authentication.ts`, which adds scopes via
  * `resolveApiKeyPrincipal` / `defaultApiKeyScopes` when configured.
+ *
+ * @example
+ * ```ts
+ * import { authContextToPrincipal } from 'weft/server/handler';
+ *
+ * const principal = authContextToPrincipal({
+ *   method: 'api-key',
+ * });
+ * console.log(principal.method); // 'api-key'
+ * ```
  */
 export function authContextToPrincipal(
   authContext: AuthenticatedRequestContext | undefined,
@@ -489,7 +627,21 @@ function defaultRestBindings(): ReadonlyArray<UnknownRestBinding> {
   return _defaultRestBindings;
 }
 
-/** Pure HTTP request handler. Maps Request to Response. */
+/**
+ * Pure HTTP request handler. Maps Request to Response.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, handleRequest } from 'weft';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * engine.register('ping', async function* () { return 'pong'; });
+ *
+ * const request = new Request('http://localhost/v1/health');
+ * const response = await handleRequest(request, engine);
+ * console.log(response.status); // 200
+ * ```
+ */
 // oxlint-disable-next-line eslint(complexity) -- this request boundary intentionally owns binding-first dispatch, legacy fallback, and compatibility shims in one place.
 export async function handleRequest(
   request: Request,

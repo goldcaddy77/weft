@@ -15,9 +15,49 @@ import { MCPTransportError } from './transport';
 // Options
 // ---------------------------------------------------------------------------
 
-/** Static headers or an async factory that refreshes per-request (e.g., OAuth2 tokens). */
+/**
+ * Static headers or an async factory that refreshes per-request (e.g., OAuth2 tokens).
+ *
+ * When a function is provided it is called before every HTTP request so that
+ * short-lived credentials (OAuth2 tokens, signed URLs) are always fresh.
+ *
+ * @example Dynamic header source using an OAuth2 token manager
+ * ```ts
+ * import type { HeaderSource } from 'weft';
+ * import { createOAuth2TokenManager } from 'weft';
+ *
+ * const manager = createOAuth2TokenManager({
+ *   tokenEndpoint: 'https://auth.example.com/token',
+ *   clientId: process.env['CLIENT_ID'] ?? '',
+ *   clientSecret: process.env['CLIENT_SECRET'] ?? '',
+ * });
+ *
+ * const source: HeaderSource = async () => ({
+ *   Authorization: `Bearer ${await manager.getAccessToken()}`,
+ * });
+ * ```
+ */
 export type HeaderSource = Record<string, string> | (() => Promise<Record<string, string>>);
 
+/**
+ * Options for {@link HttpTransport}. Accepts the MCP server base URL, an
+ * optional {@link HeaderSource} (static headers or an async factory for OAuth2
+ * tokens), and an optional `timeout` in milliseconds that applies when no
+ * external `AbortSignal` is provided.
+ *
+ * @example Configure HTTP transport with static bearer auth
+ * ```ts
+ * import { HttpTransport, type HttpTransportOptions } from 'weft';
+ *
+ * const options: HttpTransportOptions = {
+ *   serverUrl: 'https://tools.example.com/mcp',
+ *   headers: { Authorization: `Bearer ${process.env['MCP_TOKEN'] ?? ''}` },
+ *   timeout: 15_000,
+ * };
+ *
+ * const transport = new HttpTransport(options);
+ * ```
+ */
 export type HttpTransportOptions = {
   serverUrl: string;
   headers?: HeaderSource | undefined;
@@ -30,6 +70,25 @@ const DEFAULT_TIMEOUT = 30_000;
 // Transport
 // ---------------------------------------------------------------------------
 
+/**
+ * {@link MCPTransport} for synchronous HTTP MCP servers. Maps MCP JSON-RPC
+ * methods to REST endpoints (`tools/list` → `GET /tools`, `tools/invoke` →
+ * `POST /tools/invoke`). Stateless — `dispose()` is a no-op. Use
+ * {@link HttpSseTransport} when the server pushes responses asynchronously.
+ *
+ * @example Wire an HTTP transport to the agent loop via MCPToolSource
+ * ```ts
+ * import { executeAgentLoop, HttpTransport, MCPClient } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const transport = new HttpTransport({ serverUrl: 'https://tools.example.com/mcp' });
+ * using client = new MCPClient({ transport });
+ * const tools = await client.discoverTools();
+ * console.log('HTTP tools:', tools.length);
+ * ```
+ */
 export class HttpTransport implements MCPTransport {
   #serverUrl: string;
   #headerSource: HeaderSource;
