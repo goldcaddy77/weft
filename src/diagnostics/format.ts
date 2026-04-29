@@ -35,6 +35,15 @@ const color = {
  * - Values under 1024^2 return '{n} KB' (1 decimal place)
  * - Values under 1024^3 return '{n} MB' (1 decimal place)
  * - Otherwise returns '{n} GB' (1 decimal place)
+ *
+ * @example
+ * ```ts
+ * import { formatBytes } from 'weft';
+ *
+ * console.log(formatBytes(0));         // '0 B'
+ * console.log(formatBytes(1024));      // '1.0 KB'
+ * console.log(formatBytes(1048576));   // '1.0 MB'
+ * ```
  */
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -52,6 +61,15 @@ export function formatBytes(bytes: number): string {
  * - Under 3600000ms: '{n} minutes' (rounded)
  * - Under 86400000ms: '{n} hours' optionally with minutes
  * - Otherwise: '{n} days' optionally with hours
+ *
+ * @example
+ * ```ts
+ * import { formatDuration } from 'weft';
+ *
+ * console.log(formatDuration(500));      // '500ms'
+ * console.log(formatDuration(90000));    // '2 minutes'
+ * console.log(formatDuration(7200000));  // '2 hours'
+ * ```
  */
 export function formatDuration(milliseconds: number): string {
   if (milliseconds < 1000) return `${milliseconds}ms`;
@@ -75,6 +93,15 @@ export function formatDuration(milliseconds: number): string {
 
 /**
  * Format a DiagnosticReport into a human-readable multi-section string.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, collectDiagnostics, formatDiagnosticReport } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * const report = await collectDiagnostics(storage, ':memory:');
+ * console.log(formatDiagnosticReport(report));
+ * ```
  */
 export function formatDiagnosticReport(report: DiagnosticReport): string {
   const lines: string[] = [];
@@ -148,6 +175,19 @@ export function formatDiagnosticReport(report: DiagnosticReport): string {
 
 /**
  * Format a VersionCheckReport into a human-readable string.
+ *
+ * @example
+ * ```ts
+ * import type { VersionCheckReport } from 'weft';
+ * import { formatVersionCheckReport } from 'weft';
+ *
+ * const report: VersionCheckReport = {
+ *   workflowTypes: [],
+ *   overallVerdict: 'safe',
+ * };
+ * console.log(formatVersionCheckReport(report));
+ * // Result: safe to deploy.
+ * ```
  */
 export function formatVersionCheckReport(report: VersionCheckReport): string {
   const lines: string[] = [];

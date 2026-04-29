@@ -10,7 +10,23 @@ import { HttpTransport } from './transport-http';
 // Options
 // ---------------------------------------------------------------------------
 
-/** Options to construct an HttpTransport automatically from a server URL. */
+/**
+ * Options to construct an HttpTransport automatically from a server URL.
+ *
+ * @example Connect to a publicly accessible MCP server
+ * ```ts
+ * import { MCPClient, type MCPClientUrlOptions } from 'weft';
+ *
+ * const options: MCPClientUrlOptions = {
+ *   serverUrl: 'https://tools.example.com/mcp',
+ *   auth: { type: 'bearer', token: process.env['MCP_TOKEN'] ?? '' },
+ *   timeout: 15_000,
+ * };
+ *
+ * const client = new MCPClient(options);
+ * const tools = await client.discoverTools();
+ * ```
+ */
 export type MCPClientUrlOptions = {
   serverUrl: string;
   /** OAuth2 is not supported via URL options — use a transport with pre-fetched headers. */
@@ -18,12 +34,51 @@ export type MCPClientUrlOptions = {
   timeout?: number;
 };
 
-/** New options: bring your own transport. */
+/**
+ * Options to supply a pre-constructed transport to an {@link MCPClient}.
+ *
+ * Use this when you need full control over transport configuration — for example
+ * to inject OAuth2 dynamic headers or to use a stdio transport for a local process.
+ *
+ * @example Attach a pre-built transport with dynamic headers
+ * ```ts
+ * import { MCPClient, type MCPClientTransportOptions, type MCPTransport } from 'weft';
+ *
+ * // Bring your own transport (e.g. an HttpTransport with OAuth2 headers).
+ * declare const myTransport: MCPTransport;
+ *
+ * const options: MCPClientTransportOptions = { transport: myTransport, timeout: 20_000 };
+ * const client = new MCPClient(options);
+ * const tools = await client.discoverTools();
+ * console.log('Discovered tools:', tools.length);
+ * ```
+ */
 export type MCPClientTransportOptions = {
   transport: MCPTransport;
   timeout?: number | undefined;
 };
 
+/**
+ * Union type for constructing an {@link MCPClient}. Use `MCPClientUrlOptions`
+ * to connect by server URL (with optional auth), or `MCPClientTransportOptions`
+ * to supply a pre-built transport for OAuth2 dynamic headers, stdio processes,
+ * or SSE streams. TypeScript narrows on the presence of `transport` vs `serverUrl`.
+ *
+ * @example Connect via URL with bearer auth
+ * ```ts
+ * import { MCPClient, type MCPClientOptions } from 'weft';
+ *
+ * const options: MCPClientOptions = {
+ *   serverUrl: 'https://tools.example.com/mcp',
+ *   auth: { type: 'bearer', token: process.env['MCP_TOKEN'] ?? '' },
+ *   timeout: 15_000,
+ * };
+ *
+ * const client = new MCPClient(options);
+ * const tools = await client.discoverTools();
+ * console.log(tools.length, 'tools discovered');
+ * ```
+ */
 export type MCPClientOptions = MCPClientUrlOptions | MCPClientTransportOptions;
 
 const DEFAULT_TIMEOUT = 30_000;
@@ -32,6 +87,34 @@ const DEFAULT_TIMEOUT = 30_000;
 // Client
 // ---------------------------------------------------------------------------
 
+/**
+ * Connects to a Model Context Protocol server to discover and invoke tools.
+ * Accepts either a server URL (with optional auth) or a pre-built
+ * {@link MCPTransport}. Implements `Disposable` — use `using client = new MCPClient(...)`
+ * or call `client[Symbol.dispose]()` to release transport resources when done.
+ *
+ * @example Discover tools from an MCP server
+ * ```ts
+ * import { MCPClient } from 'weft';
+ *
+ * using client = new MCPClient({
+ *   serverUrl: 'https://tools.example.com/mcp',
+ *   auth: { type: 'bearer', token: process.env['MCP_TOKEN'] ?? '' },
+ * });
+ *
+ * const tools = await client.discoverTools();
+ * console.log('Available tools:', tools.map((t) => t.name));
+ * ```
+ *
+ * @example Invoke a specific tool
+ * ```ts
+ * import { MCPClient } from 'weft';
+ *
+ * using client = new MCPClient({ serverUrl: 'https://tools.example.com/mcp' });
+ * const result = await client.invokeTool('search', { query: 'weft workflows' });
+ * console.log(result);
+ * ```
+ */
 export class MCPClient implements Disposable {
   #transport: MCPTransport;
   #timeout: number;
@@ -174,6 +257,25 @@ function isToolDefinition(value: unknown): value is ToolDefinition {
 // Errors
 // ---------------------------------------------------------------------------
 
+/**
+ * Thrown when an MCP server cannot be reached or returns an error during tool
+ * discovery or invocation. Carries the `serverUrl` and an optional `cause`
+ * error from the transport layer for debugging connectivity failures.
+ *
+ * @example Catch and inspect server unavailability
+ * ```ts
+ * import { MCPClient, MCPServerUnavailableError } from 'weft';
+ *
+ * try {
+ *   using client = new MCPClient({ serverUrl: 'https://tools.example.com/mcp' });
+ *   await client.discoverTools();
+ * } catch (error) {
+ *   if (error instanceof MCPServerUnavailableError) {
+ *     console.error(`MCP server unavailable: ${error.serverUrl}`);
+ *   }
+ * }
+ * ```
+ */
 export class MCPServerUnavailableError extends Error {
   readonly serverUrl: string;
 
@@ -187,6 +289,29 @@ export class MCPServerUnavailableError extends Error {
   }
 }
 
+/**
+ * Thrown when a `tools/invoke` call to an MCP server exceeds the configured
+ * timeout. Carries the `toolName` and `timeout` (ms) so callers can distinguish
+ * timeouts from other tool errors and apply different retry or fallback strategies.
+ *
+ * @example Handle tool timeouts with a fallback
+ * ```ts
+ * import { MCPClient, MCPToolTimeoutError } from 'weft';
+ *
+ * async function runQuery(): Promise<unknown> {
+ *   try {
+ *     using client = new MCPClient({ serverUrl: 'https://tools.example.com/mcp', timeout: 5_000 });
+ *     return await client.invokeTool('slow_query', { id: 42 });
+ *   } catch (error) {
+ *     if (error instanceof MCPToolTimeoutError) {
+ *       console.warn(`Tool '${error.toolName}' timed out after ${error.timeout}ms`);
+ *     }
+ *     return null;
+ *   }
+ * }
+ * void runQuery;
+ * ```
+ */
 export class MCPToolTimeoutError extends Error {
   readonly toolName: string;
   readonly timeout: number;

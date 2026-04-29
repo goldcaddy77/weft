@@ -9,6 +9,27 @@ import {
 } from './interface';
 import { scopedStorage } from './scoped-storage';
 
+/**
+ * In-memory {@link Storage} implementation.
+ *
+ * Backs the engine with a `Map<string, Uint8Array>` — fast, dependency-free,
+ * and ideal for tests, ephemeral runs, and CI. State is lost when the process
+ * exits, so don't use it for anything you care about between restarts.
+ *
+ * @example Run an engine with in-memory storage
+ * ```ts
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ * engine.register('noop', async function* () {
+ *   return 'done';
+ * });
+ *
+ * const handle = await engine.start('noop', null);
+ * const result = await handle.result();
+ * ```
+ */
 export class MemoryStorage implements Storage {
   #data: Map<string, Uint8Array>;
 

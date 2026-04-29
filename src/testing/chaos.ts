@@ -18,7 +18,20 @@ import { sleep } from '../runtime/portable.ts';
 // for backwards-compatible imports from testing/chaos.
 export type { FailureCategory } from '../core/types.ts';
 
-/** Fault classes that chaos injection can produce. */
+/**
+ * Fault classes that chaos injection can produce.
+ *
+ * @example
+ * ```ts
+ * import { withChaos, type FaultClass } from 'weft';
+ *
+ * const faults: FaultClass[] = ['transient', 'error'];
+ * const noisy = withChaos(
+ *   async (x: number) => x * 2,
+ *   { faultRate: 0.3, faults },
+ * );
+ * ```
+ */
 export type FaultClass = 'transient' | 'timeout' | 'error' | 'delay';
 
 /**
@@ -26,6 +39,18 @@ export type FaultClass = 'transient' | 'timeout' | 'error' | 'delay';
  *
  * Attach a `ChaosScenario` to `TestEngine.runN` options or pass it directly
  * to `withChaos` to control how and how often faults are injected.
+ *
+ * @example
+ * ```ts
+ * import { withChaos, type ChaosScenario } from 'weft';
+ *
+ * const scenario: ChaosScenario = {
+ *   faultRate: 0.2,
+ *   faults: ['transient', 'delay'],
+ *   seed: 42,
+ * };
+ * const noisyMock = withChaos(async (input: string) => input.toUpperCase(), scenario);
+ * ```
  */
 export interface ChaosScenario {
   /**
@@ -72,6 +97,15 @@ function makePrng(seed: number): () => number {
  * engine retry policy should re-attempt. Carries `retryable = true` so consumers
  * inspecting the error can make an informed retry decision without parsing
  * error messages.
+ *
+ * @example
+ * ```ts
+ * import { ChaosTransientError } from 'weft';
+ *
+ * const err = new ChaosTransientError();
+ * console.log(err.retryable); // true
+ * console.log(err.name);      // 'ChaosTransientError'
+ * ```
  */
 export class ChaosTransientError extends Error {
   /** Discriminator for retry-policy consumers. Always `true` for this class. */
@@ -88,6 +122,15 @@ export class ChaosTransientError extends Error {
  * error a retry policy should surface immediately without further attempts.
  * Carries `retryable = false` and a `.name` suitable for inclusion in a
  * {@link RetryPolicy.nonRetryableErrors} list.
+ *
+ * @example
+ * ```ts
+ * import { ChaosNonRetryableError } from 'weft';
+ *
+ * const err = new ChaosNonRetryableError();
+ * console.log(err.retryable); // false
+ * console.log(err.name);      // 'ChaosNonRetryableError'
+ * ```
  */
 export class ChaosNonRetryableError extends Error {
   /** Discriminator for retry-policy consumers. Always `false` for this class. */
@@ -104,6 +147,15 @@ export class ChaosNonRetryableError extends Error {
  * an `AbortSignal.timeout()` to fire. Unlike the other fault classes this is
  * emitted after the injected timeout actually elapses, so calling code
  * exercises the same async/abort shape it would see from a real slow dependency.
+ *
+ * @example
+ * ```ts
+ * import { ChaosTimeoutError } from 'weft';
+ *
+ * const err = new ChaosTimeoutError(25);
+ * console.log(err.timeoutMilliseconds); // 25
+ * console.log(err.name);               // 'ChaosTimeoutError'
+ * ```
  */
 export class ChaosTimeoutError extends Error {
   /** Milliseconds the chaos wrapper waited before raising the timeout. */
@@ -164,6 +216,17 @@ async function raiseTimeoutFault(timeoutMilliseconds: number): Promise<never> {
  * @param mock     The activity mock implementation to wrap.
  * @param scenario The `ChaosScenario` controlling fault injection.
  * @returns        A new function with the same signature that may throw.
+ *
+ * @example
+ * ```ts
+ * import { TestEngine, withChaos } from 'weft';
+ *
+ * const noisySendEmail = withChaos(
+ *   async (input: unknown) => ({ sent: true }),
+ *   { faultRate: 0.3, faults: ['transient'], seed: 1 },
+ * );
+ * // Use noisySendEmail as the activity mock in TestEngine
+ * ```
  */
 export function withChaos<TInput, TOutput>(
   mock: (input: TInput) => Promise<TOutput> | TOutput,

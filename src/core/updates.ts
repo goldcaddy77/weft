@@ -42,6 +42,29 @@ export interface UpdateRequestOptions {
 // Errors
 // ---------------------------------------------------------------------------
 
+/**
+ * Thrown by the engine when an update sent via `engine.update` or
+ * `handle.update` does not receive a response within the configured timeout.
+ * Read `updateId` to identify the stalled update.
+ *
+ * @example
+ * ```ts
+ * import { Engine, UpdateTimeoutError } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('paused', async function* () {
+ *   await new Promise(() => {}); // workflow never resolves on its own
+ * });
+ * const handle = await engine.start('paused', null);
+ * try {
+ *   await handle.update('proceed', null, { timeout: 100 });
+ * } catch (err) {
+ *   if (err instanceof UpdateTimeoutError) {
+ *     console.error('update timed out:', err.updateId);
+ *   }
+ * }
+ * ```
+ */
 export class UpdateTimeoutError extends Error {
   readonly updateId: string;
 
@@ -52,6 +75,29 @@ export class UpdateTimeoutError extends Error {
   }
 }
 
+/**
+ * Thrown when an update is sent to a workflow that is already in a terminal
+ * state (completed, failed, cancelled, or timed-out). Check `workflowId` and
+ * `status` to understand which workflow rejected the update.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowTerminalError } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('quick', async function* () { return 'done'; });
+ *
+ * const handle = await engine.start('quick', null);
+ * await handle.result();
+ * try {
+ *   await handle.update('anything', null);
+ * } catch (err) {
+ *   if (err instanceof WorkflowTerminalError) {
+ *     console.error('workflow', err.workflowId, 'is', err.status);
+ *   }
+ * }
+ * ```
+ */
 export class WorkflowTerminalError extends Error {
   readonly workflowId: string;
   readonly status: WorkflowStatus;
@@ -73,6 +119,23 @@ export class WorkflowTerminalError extends Error {
 const POLL_INTERVAL_MS = 50;
 const DEFAULT_CLEANUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * Manages the lifecycle of synchronous workflow updates: persisting requests,
+ * checking idempotency, building response batch operations, and polling for
+ * results. Used internally by the {@link Engine}; callers interact through
+ * `engine.update` or `handle.update` rather than the coordinator directly.
+ *
+ * @example
+ * ```ts
+ * import { UpdateCoordinator } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const coordinator = new UpdateCoordinator(storage);
+ * const updateId = await coordinator.createRequest('wf-1', 'increment', { by: 1 });
+ * console.log(updateId); // UUID string
+ * ```
+ */
 export class UpdateCoordinator {
   #storage: Storage;
 

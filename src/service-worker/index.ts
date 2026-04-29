@@ -36,6 +36,28 @@ interface MinimalPeriodicSyncEvent extends MinimalExtendableEvent {
 // Options
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for the Service Worker bootstrap functions
+ * (`createFetchHandler`, `createActivateHandler`, `createPeriodicSyncHandler`).
+ *
+ * Supply the {@link Engine} instance that the service worker should delegate
+ * workflow requests to.  Use `pathPrefix` to scope which fetch requests the
+ * handler intercepts (default: `'/weft/'`).
+ *
+ * @example
+ * ```ts
+ * import { createFetchHandler, type ServiceWorkerOptions } from 'weft/service-worker';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * const storage = new MemoryStorage();
+ * const engine = new Engine({ storage });
+ *
+ * const options: ServiceWorkerOptions = { engine, pathPrefix: '/weft/' };
+ * const handleFetch = createFetchHandler(options);
+ * // In a Service Worker file: self.addEventListener('fetch', handleFetch);
+ * void handleFetch;
+ * ```
+ */
 export interface ServiceWorkerOptions {
   engine: Engine;
   pathPrefix?: string;
@@ -55,6 +77,19 @@ const DEFAULT_PERIODIC_SYNC_TAG = 'weft-timers';
 /**
  * Create a fetch event handler that intercepts requests matching the given
  * path prefix and delegates them to the Weft HTTP handler.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage } from 'weft';
+ * import { createFetchHandler } from 'weft/service-worker';
+ *
+ * const engine = new Engine({ storage: new MemoryStorage() });
+ * const handler = createFetchHandler({ engine, pathPrefix: '/weft/' });
+ *
+ * // In your Service Worker:
+ * // self.addEventListener('fetch', handler);
+ * console.log(typeof handler); // 'function'
+ * ```
  */
 export function createFetchHandler(
   options: ServiceWorkerOptions,
@@ -96,6 +131,16 @@ export function createFetchHandler(
 /**
  * Create a periodic sync event handler that ticks the scheduler
  * when the matching tag fires.
+ *
+ * @example
+ * ```ts
+ * import { createPeriodicSyncHandler } from 'weft/service-worker';
+ *
+ * // scheduler is a ServiceWorkerScheduler instance
+ * // const handler = createPeriodicSyncHandler(scheduler, 'weft-timers');
+ * // self.addEventListener('periodicsync', handler);
+ * console.log('handler registered');
+ * ```
  */
 export function createPeriodicSyncHandler(
   scheduler: ServiceWorkerScheduler,
@@ -119,6 +164,18 @@ export function createPeriodicSyncHandler(
  *
  * - `install`: Calls `skipWaiting()` so the new Service Worker activates immediately.
  * - `activate`: Calls `clients.claim()` so open tabs use the new Service Worker.
+ *
+ * @example
+ * ```ts
+ * import { createLifecycleHandlers } from 'weft/service-worker';
+ *
+ * const { install, activate } = createLifecycleHandlers();
+ *
+ * // In your Service Worker file:
+ * // self.addEventListener('install', install);
+ * // self.addEventListener('activate', activate);
+ * console.log('Lifecycle handlers ready');
+ * ```
  */
 export function createLifecycleHandlers(): {
   install: (event: MinimalExtendableEvent) => void;

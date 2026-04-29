@@ -42,7 +42,21 @@ export interface StabilityResult {
   samplesAnalyzed: number;
 }
 
-/** Options for stability analysis. */
+/**
+ * Options for stability analysis.
+ *
+ * @example
+ * ```ts
+ * import { analyzeStability, type StabilityOptions } from 'weft';
+ *
+ * const options: StabilityOptions = {
+ *   maxGrowthRatePerSecond: 5 * 1024, // 5 KB/s threshold
+ *   warmupSamples: 3,
+ * };
+ * const result = analyzeStability([], options);
+ * console.log(result.stable); // true (no samples)
+ * ```
+ */
 export interface StabilityOptions {
   /**
    * Maximum acceptable RSS growth rate in bytes per second.
@@ -63,6 +77,18 @@ export interface StabilityOptions {
 /**
  * Simple least-squares linear regression over (x, y) points.
  * Returns the slope and intercept of the best-fit line y = slope * x + intercept.
+ *
+ * @example
+ * ```ts
+ * import { linearRegression } from 'weft';
+ *
+ * const points: [number, number][] = [
+ *   [0, 100], [1, 105], [2, 110], [3, 115],
+ * ];
+ * const { slope, intercept } = linearRegression(points);
+ * console.log(slope);     // ~5
+ * console.log(intercept); // ~100
+ * ```
  */
 export function linearRegression(points: [number, number][]): {
   slope: number;
@@ -106,6 +132,19 @@ export function linearRegression(points: [number, number][]): {
  * Applies linear regression to RSS values over time (in seconds) after
  * skipping a configurable warmup period. The system is considered stable
  * if the growth rate is below the configured threshold.
+ *
+ * @example
+ * ```ts
+ * import { MemoryProfiler, analyzeStability } from 'weft';
+ *
+ * const profiler = new MemoryProfiler();
+ * profiler.start(100);
+ * await new Promise((r) => setTimeout(r, 600));
+ * profiler.stop();
+ * const { samples } = profiler.profile();
+ * const stability = analyzeStability(samples, { warmupSamples: 2 });
+ * console.log(stability.stable);
+ * ```
  */
 export function analyzeStability(
   samples: MemorySample[],
@@ -149,6 +188,19 @@ export function analyzeStability(
  * Interval-based memory profiler. Call {@link start} to begin sampling and
  * {@link stop} when the workload is done. Use {@link profile} to retrieve
  * the collected samples and summary statistics.
+ *
+ * @example
+ * ```ts
+ * import { MemoryProfiler } from 'weft';
+ *
+ * const profiler = new MemoryProfiler();
+ * profiler.start(200); // sample every 200ms
+ * await new Promise((r) => setTimeout(r, 1000));
+ * profiler.stop();
+ * const { peakRss, averageRss, samples } = profiler.profile();
+ * console.log('Peak RSS:', peakRss);
+ * console.log('Samples:', samples.length);
+ * ```
  */
 export class MemoryProfiler {
   #samples: MemorySample[];

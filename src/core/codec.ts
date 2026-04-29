@@ -231,13 +231,41 @@ function replaceUndefined(value: unknown, visited: Set<object>): unknown {
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Encode a value to MessagePack bytes with structuredClone semantics. */
+/**
+ * Encode a value to MessagePack bytes with structuredClone semantics.
+ *
+ * @example
+ * ```ts
+ * import { encode, decode } from 'weft';
+ *
+ * const data = { name: 'Alice', createdAt: new Date(), tags: new Set(['admin']) };
+ * const bytes = encode(data);
+ * console.log(bytes instanceof Uint8Array); // true
+ *
+ * const restored = decode(bytes) as typeof data;
+ * console.log(restored.name);          // 'Alice'
+ * console.log(restored.tags instanceof Set); // true
+ * ```
+ */
 export function encode(value: unknown): Uint8Array {
   const preprocessed = replaceUndefined(value, new Set());
   return msgpackEncode(preprocessed, { extensionCodec });
 }
 
-/** Decode MessagePack bytes back to a value. */
+/**
+ * Decode MessagePack bytes back to a value.
+ *
+ * @example
+ * ```ts
+ * import { encode, decode } from 'weft';
+ *
+ * const original = { id: 42, labels: new Map([['env', 'prod']]) };
+ * const bytes = encode(original);
+ * const result = decode(bytes) as typeof original;
+ * console.log(result.id);                      // 42
+ * console.log(result.labels.get('env'));        // 'prod'
+ * ```
+ */
 export function decode(bytes: Uint8Array): unknown {
   return msgpackDecode(bytes, { extensionCodec });
 }
@@ -261,6 +289,19 @@ export interface CloneValidationResult {
 /**
  * Validate that a value is cloneable (structuredClone compatible).
  * Returns errors for non-cloneable values. Reports ALL errors, not just the first.
+ *
+ * @example
+ * ```ts
+ * import { validateCloneable } from 'weft';
+ *
+ * const safe = validateCloneable({ name: 'Alice', scores: [1, 2, 3] });
+ * console.log(safe.valid);   // true
+ * console.log(safe.errors);  // []
+ *
+ * const unsafe = validateCloneable({ fn: () => 42 });
+ * console.log(unsafe.valid);           // false
+ * console.log(unsafe.errors[0]?.path); // 'fn'
+ * ```
  */
 export function validateCloneable(value: unknown, path = ''): CloneValidationResult {
   const errors: CloneValidationError[] = [];

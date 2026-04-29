@@ -10,7 +10,25 @@ export interface ValidationError {
   actual?: string;
 }
 
-/** Validate a value against a JSON Schema. Minimal implementation for tool input validation. */
+/**
+ * Validate a value against a JSON Schema. Minimal implementation for tool input validation.
+ *
+ * @example Validate a tool's input object before dispatch
+ * ```ts
+ * import { validateSchema } from 'weft';
+ *
+ * const schema = {
+ *   type: 'object',
+ *   required: ['query'],
+ *   properties: { query: { type: 'string' }, limit: { type: 'number' } },
+ * };
+ *
+ * const result = validateSchema({ query: 'hello', limit: 5 }, schema);
+ * if (!result.valid) {
+ *   console.error('Validation errors:', result.errors);
+ * }
+ * ```
+ */
 export function validateSchema(value: unknown, schema: Record<string, unknown>): ValidationResult {
   const errors: ValidationError[] = [];
   validateValue(value, schema, '', errors);
@@ -99,6 +117,30 @@ function validateObjectProperties(
   }
 }
 
+/**
+ * Thrown when a tool invocation input fails JSON Schema validation before being
+ * sent to the MCP server. Carries the `toolName` and the list of
+ * `ValidationError` objects describing the path, expected type, and actual value
+ * for each failed constraint.
+ *
+ * @example Inspect validation errors for a rejected tool call
+ * ```ts
+ * import { ToolSchemaValidationError, validateSchema } from 'weft';
+ *
+ * const schema = {
+ *   type: 'object',
+ *   required: ['query'],
+ *   properties: { query: { type: 'string' } },
+ * };
+ *
+ * const result = validateSchema({ query: 42 }, schema);
+ * if (!result.valid) {
+ *   const err = new ToolSchemaValidationError('search', result.errors);
+ *   console.error(err.message);
+ *   console.error(err.errors.map((e) => `${e.path}: ${e.message}`));
+ * }
+ * ```
+ */
 export class ToolSchemaValidationError extends Error {
   readonly toolName: string;
   readonly errors: ValidationError[];

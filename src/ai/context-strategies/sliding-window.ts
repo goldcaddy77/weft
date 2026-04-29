@@ -6,6 +6,25 @@ export interface SlidingWindowOptions {
   preserveRecentCount?: number;
 }
 
+/**
+ * Returns a {@link ContextStrategy} that retains only the N most-recent
+ * conversation messages, optionally preserving the leading system message.
+ * Use with {@link ContextWindowManager} to prevent context overflow in
+ * long-running agents without summarization overhead.
+ *
+ * @example Keep the last 20 messages with a system message preserved
+ * ```ts
+ * import { slidingWindowStrategy, ContextWindowManager } from 'weft';
+ *
+ * const manager = new ContextWindowManager({
+ *   maxTokens: 32_768,
+ *   strategy: slidingWindowStrategy({
+ *     preserveSystemMessage: true,
+ *     preserveRecentCount: 20,
+ *   }),
+ * });
+ * ```
+ */
 export function slidingWindowStrategy(options?: SlidingWindowOptions): ContextStrategy {
   const preserveSystemMessage = options?.preserveSystemMessage ?? true;
   const preserveRecentCount = options?.preserveRecentCount ?? 10;
