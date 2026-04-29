@@ -181,9 +181,8 @@ export class ScopedStorage implements Storage {
  * Factory that creates a {@link ScopedStorage} view of `storage` under the
  * given `prefix`.
  *
- * Prefer this over `new ScopedStorage(...)` when you only need the
- * {@link Storage} interface back — it reads more naturally as a decorator call
- * at the Engine construction site.
+ * Prefer this over `new ScopedStorage(...)` for readability at the engine
+ * construction site — the return type and behavior are identical.
  *
  * @example
  * ```ts

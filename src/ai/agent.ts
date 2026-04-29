@@ -100,6 +100,10 @@ function isMCPToolSource(entry: AgentTool | MCPToolSource): entry is MCPToolSour
  * provider, tool list, budget, turn limit, context management, and observability
  * hooks for a single agent invocation.
  *
+ * `toolEffectLog` deduplicates tool calls across checkpoint restores.
+ * `toolCacheTTL`, `toolCacheMaxSize`, and `checkpointSizeWarningThreshold`
+ * tune in-memory caching and conversation-size warnings.
+ *
  * @example Run a tool-calling agent with a cost budget
  * ```ts
  * import { executeAgentLoop, BudgetTracker, type AgentOptions } from 'weft';
@@ -191,7 +195,7 @@ export interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
   verify?: (result: unknown) => Promise<boolean> | boolean;
-  /** See {@link AgentToolDefinition.identity}. */
+  /** Optional semantic identity for idempotent tool-call deduplication. */
   identity?: (input: unknown) => ToolIdentityResult;
 }
 
@@ -228,7 +232,12 @@ export interface ToolReturnInfo {
   success: boolean;
 }
 
-/** Per-turn cost breakdown entry returned as part of the agent result. */
+/**
+ * Per-turn cost breakdown returned in `AgentResult.turnCosts`. `tools` is an
+ * array of tool *names* invoked during this turn (not the calls themselves).
+ * `model` is the model that actually responded, which may differ from the
+ * requested model when a `ModelRouter` fallback fired.
+ */
 export interface TurnCostEntry {
   turn: number;
   inputTokens: number;
@@ -242,6 +251,9 @@ export interface TurnCostEntry {
  * Return value of {@link executeAgentLoop}. Contains the final text response,
  * the full normalized conversation history, cumulative token usage, per-turn
  * cost breakdown, and any reasoning traces captured from the provider.
+ * The optional `confidence` field is reserved for provider-surfaced confidence
+ * scores and is currently always `undefined` — `buildAgentResult` does not
+ * populate it.
  *
  * @example Inspect costs and reasoning after an agent run
  * ```ts
@@ -1306,7 +1318,10 @@ async function executeAgentTurn(runtime: AgentRuntime, turnIndex: number): Promi
 }
 
 /**
- * Execute a durable ReAct agent loop. Returns the final agent result.
+ * Execute a tool-calling agent loop and return the final result. Durability
+ * (checkpointing across crashes, tool-call dedup) is layered on by
+ * `ctx.agent()` inside a registered workflow — calling `executeAgentLoop`
+ * directly runs the loop in-memory without persistence.
  *
  * @example Basic agent with a local tool
  * ```ts

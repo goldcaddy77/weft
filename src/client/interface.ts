@@ -48,7 +48,7 @@ import type {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, type ClientHandle, type WorkflowCompletedEvent } from 'weft';
+ * import { Engine, LocalClient, MemoryStorage, type ClientHandle, type WorkflowCompletedEvent } from 'weft';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
  * engine.register('ping', async function* () { return 'pong'; });
@@ -57,7 +57,8 @@ import type {
  *   console.log('workflow', handle.id);
  * }
  *
- * const handle = await engine.start('ping', null);
+ * const client = new LocalClient(engine);
+ * const handle = await client.start('ping', null);
  * handle.addEventListener('workflow:completed', (e) => {
  *   console.log('completed', (e as WorkflowCompletedEvent).result);
  * });

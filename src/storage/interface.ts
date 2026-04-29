@@ -367,6 +367,7 @@ function formatSortableTimestamp(timestamp: number): string {
  * const checkpointKey = KEYS.checkpoint('my-workflow-id');
  * console.log(workflowKey);    // 'wf:my-workflow-id'
  * console.log(checkpointKey);  // 'wf:my-workflow-id:ckpt'
+ * console.log(KEYS.deadline(Date.now(), 'wf-1'));
  * ```
  */
 export const KEYS = {

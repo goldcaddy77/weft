@@ -1612,7 +1612,9 @@ type RefreshedScheduleState = {
  * and {@link Engine.getHandle}. Use `handle.result()` to await the final
  * value, `handle.cancel()` to stop execution, `handle.signal(name, payload)`
  * to send a signal, and `handle.update(name, payload)` to send a synchronous
- * update. Also an `AsyncIterable` of lifecycle events.
+ * update. Use `query()`, `getAttributes()`/`setAttributes()`, and
+ * `addTags()`/`removeTags()` for read-only handlers, search metadata, and tag
+ * management. Also an `AsyncIterable` of lifecycle events.
  *
  * @example
  * ```ts
@@ -1630,6 +1632,21 @@ type RefreshedScheduleState = {
  * const result = await handle.result();
  * void typedHandle;
  * console.log(result); // 'hi world'
+ * ```
+ *
+ * @example Iterate workflow lifecycle events
+ * ```ts
+ * import { Engine, type WorkflowHandle } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('ping', async function* () { return 'pong'; });
+ *
+ * const handle = await engine.start('ping', null);
+ * const typedHandle: WorkflowHandle = handle;
+ * for await (const event of handle) {
+ *   console.log(event.type);
+ * }
+ * void typedHandle;
  * ```
  */
 export class WorkflowHandle extends EventTarget implements AsyncDisposable {
@@ -1884,7 +1901,7 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
  * const engine = new Engine();
  * engine.register('daily-report', async function* () { return 'ok'; });
  *
- * const handle = await engine.schedule('0 9 * * *', 'daily-report', '');
+ * const handle = await engine.schedule('daily-report', null, '0 9 * * *');
  * const typedHandle: ScheduleHandle = handle;
  * await handle.pause();
  * const summary = await handle.describe();
@@ -1970,7 +1987,7 @@ export class ScheduleHandle {
  * @example Run with a SQLite backend
  * ```ts
  * import { Engine } from 'weft';
- * import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+ * import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
  *
  * await using storage = new BunSQLiteStorage('./weft.db');
  * await using engine = new Engine({ storage });
