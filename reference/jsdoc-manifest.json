@@ -31,8 +31,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -46,8 +45,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -61,8 +59,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -70,8 +67,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -85,8 +81,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -94,8 +89,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -103,8 +97,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -118,8 +111,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B3-ai"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -127,8 +119,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -136,8 +127,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -145,8 +135,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -160,8 +149,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -169,8 +157,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/budget-policy.ts",
@@ -184,8 +171,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/budget-policy.ts",
@@ -199,8 +185,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/budget-policy.ts",
@@ -214,8 +199,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -223,8 +207,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -238,8 +221,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -253,8 +235,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -268,8 +249,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B3-ai"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -283,8 +263,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -298,8 +277,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -307,8 +285,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -316,8 +293,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/context-strategies/sliding-window.ts",
@@ -325,8 +301,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/context-strategies/sliding-window.ts",
@@ -340,8 +315,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -349,8 +323,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -364,8 +337,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -373,8 +345,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -388,8 +359,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -397,8 +367,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -412,8 +381,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -427,8 +395,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -436,8 +403,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -445,8 +411,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -454,8 +419,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -463,8 +427,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -472,8 +435,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -481,8 +443,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -490,8 +451,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -499,8 +459,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -514,8 +473,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -529,8 +487,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -544,8 +501,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -553,8 +509,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/coordination.ts",
@@ -568,8 +523,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -583,8 +537,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -592,8 +545,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -607,8 +559,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -622,8 +573,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B3-ai"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -637,8 +587,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -652,8 +601,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -667,8 +615,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -682,8 +629,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -697,8 +643,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -706,8 +651,7 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -721,8 +665,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -736,8 +679,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -751,8 +693,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -766,8 +707,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -781,8 +721,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -796,8 +735,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -811,8 +749,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -826,8 +763,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -841,8 +777,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -850,8 +785,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/hooks.ts",
@@ -859,8 +793,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/hooks.ts",
@@ -868,8 +801,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/hooks.ts",
@@ -883,8 +815,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/hooks.ts",
@@ -892,8 +823,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/hooks.ts",
@@ -901,8 +831,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/hooks.ts",
@@ -910,8 +839,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -919,8 +847,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -928,8 +855,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -937,8 +863,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -946,8 +871,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -961,8 +885,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -976,8 +899,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -985,8 +907,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -994,8 +915,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -1003,8 +923,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -1018,8 +937,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/authentication.ts",
@@ -1033,8 +951,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/authentication.ts",
@@ -1048,8 +965,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/authentication.ts",
@@ -1063,8 +979,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1078,8 +993,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1093,8 +1007,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1108,8 +1021,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1123,8 +1035,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1138,8 +1049,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1153,8 +1063,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1168,8 +1077,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1183,8 +1091,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1198,8 +1105,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1213,8 +1119,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/registry.ts",
@@ -1228,8 +1133,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/registry.ts",
@@ -1243,8 +1147,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/registry.ts",
@@ -1258,8 +1161,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/schema-validator.ts",
@@ -1273,8 +1175,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/schema-validator.ts",
@@ -1282,8 +1183,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/mcp/schema-validator.ts",
@@ -1291,8 +1191,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/mcp/schema-validator.ts",
@@ -1306,8 +1205,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport-http-sse.ts",
@@ -1321,8 +1219,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport-http-sse.ts",
@@ -1336,8 +1233,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport-http.ts",
@@ -1351,8 +1247,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport-http.ts",
@@ -1366,8 +1261,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport-http.ts",
@@ -1381,8 +1275,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport-stdio.ts",
@@ -1396,8 +1289,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport-stdio.ts",
@@ -1411,8 +1303,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1426,8 +1317,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1441,8 +1331,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1456,8 +1345,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1471,8 +1359,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1486,8 +1373,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1501,8 +1387,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1516,8 +1401,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1525,8 +1409,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1540,8 +1423,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1555,8 +1437,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1570,8 +1451,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1579,8 +1459,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1594,8 +1473,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1609,8 +1487,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1624,8 +1501,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1639,8 +1515,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/prompt-cache.ts",
@@ -1654,8 +1529,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B3-ai"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/ai/prompt-cache.ts",
@@ -1669,8 +1543,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/prompt-cache.ts",
@@ -1684,8 +1557,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/prompt-cache.ts",
@@ -1699,8 +1571,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/prompt-cache.ts",
@@ -1714,8 +1585,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/prompt-cache.ts",
@@ -1729,8 +1599,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/prompt-cache.ts",
@@ -1744,8 +1613,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/provider-health.ts",
@@ -1753,8 +1621,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/provider-health.ts",
@@ -1762,8 +1629,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/provider-health.ts",
@@ -1777,8 +1643,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/providers/anthropic.ts",
@@ -1792,8 +1657,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/providers/anthropic.ts",
@@ -1801,8 +1665,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/providers/interface.ts",
@@ -1816,8 +1679,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/providers/interface.ts",
@@ -1831,8 +1693,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/providers/openai.ts",
@@ -1846,8 +1707,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/providers/openai.ts",
@@ -1855,8 +1715,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -1870,8 +1729,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B3-ai"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -1885,8 +1743,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -1894,8 +1751,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -1909,8 +1765,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -1924,8 +1779,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B3-ai"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -1933,8 +1787,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -1948,8 +1801,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -1957,8 +1809,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/streaming.ts",
@@ -1966,8 +1817,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/streaming.ts",
@@ -1981,8 +1831,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/streaming.ts",
@@ -1990,8 +1839,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/streaming.ts",
@@ -2005,8 +1853,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/streaming.ts",
@@ -2020,8 +1867,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/tool-effect-log.ts",
@@ -2035,8 +1881,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/tool-effect-log.ts",
@@ -2050,8 +1895,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/tool-effect-log.ts",
@@ -2065,8 +1909,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/tool-effect-log.ts",
@@ -2074,8 +1917,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/ai/tool-effect-log.ts",
@@ -2089,8 +1931,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B3-ai"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/alerting/alert-manager.ts",
@@ -2104,8 +1945,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2119,8 +1959,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2134,8 +1973,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2149,8 +1987,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2164,8 +2001,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2179,8 +2015,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2194,8 +2029,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2209,8 +2043,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/client/index.ts",
@@ -2229,8 +2062,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/client/index.ts",
@@ -2249,8 +2081,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/client/index.ts",
@@ -2269,8 +2100,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/client/interface.ts",
@@ -2289,8 +2119,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/client/interface.ts",
@@ -2304,8 +2133,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/client/interface.ts",
@@ -2324,8 +2152,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/client/interface.ts",
@@ -2344,8 +2171,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/client/local.ts",
@@ -2364,8 +2190,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/activity-registry.ts",
@@ -2379,8 +2204,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/activity-registry.ts",
@@ -2394,8 +2218,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/activity-registry.ts",
@@ -2409,8 +2232,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/checkpoint.ts",
@@ -2418,8 +2240,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/checkpoint.ts",
@@ -2427,8 +2248,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/checkpoint.ts",
@@ -2442,8 +2262,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/checkpoint.ts",
@@ -2457,8 +2276,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/checkpoint.ts",
@@ -2472,8 +2290,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/checkpoint.ts",
@@ -2487,8 +2304,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/checkpoint.ts",
@@ -2502,8 +2318,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/checkpoint.ts",
@@ -2511,8 +2326,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/codec.ts",
@@ -2520,8 +2334,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/codec.ts",
@@ -2529,8 +2342,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/codec.ts",
@@ -2544,8 +2356,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/codec.ts",
@@ -2559,8 +2370,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/codec.ts",
@@ -2574,8 +2384,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/compression.ts",
@@ -2589,8 +2398,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/compression.ts",
@@ -2604,8 +2412,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/compression.ts",
@@ -2619,8 +2426,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/compression.ts",
@@ -2628,8 +2434,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/compression.ts",
@@ -2643,8 +2448,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/compression.ts",
@@ -2658,8 +2462,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/compression.ts",
@@ -2667,8 +2470,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/compression.ts",
@@ -2676,8 +2478,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/constraint.ts",
@@ -2691,8 +2492,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/constraint.ts",
@@ -2706,8 +2506,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/constraint.ts",
@@ -2721,8 +2520,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/constraint.ts",
@@ -2736,8 +2534,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -2745,8 +2542,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -2760,8 +2556,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -2775,8 +2570,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -2790,8 +2584,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -2805,8 +2598,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -2820,8 +2612,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -2835,8 +2626,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -2850,8 +2640,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -2865,8 +2654,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2880,8 +2668,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2889,8 +2676,7 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2898,8 +2684,7 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2913,8 +2698,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2928,8 +2712,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2943,8 +2726,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2952,8 +2734,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2961,8 +2742,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2970,8 +2750,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/engine.ts",
@@ -2985,8 +2764,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3000,8 +2778,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3015,8 +2792,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3030,8 +2806,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3045,8 +2820,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3060,8 +2834,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3075,8 +2848,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3090,8 +2862,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3099,8 +2870,7 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3114,8 +2884,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3129,8 +2898,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3144,8 +2912,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3159,8 +2926,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3174,8 +2940,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3189,8 +2954,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3204,8 +2968,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3219,8 +2982,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3234,8 +2996,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3249,8 +3010,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3264,8 +3024,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3279,8 +3038,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3294,8 +3052,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3309,8 +3066,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3324,8 +3080,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/events.ts",
@@ -3339,8 +3094,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3354,8 +3108,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3369,8 +3122,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3384,8 +3136,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3399,8 +3150,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3408,8 +3158,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3417,8 +3166,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3426,8 +3174,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3435,8 +3182,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3450,8 +3196,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3465,8 +3210,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3480,8 +3224,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3495,8 +3238,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3510,8 +3252,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3525,8 +3266,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3540,8 +3280,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3555,8 +3294,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3570,8 +3308,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3585,8 +3322,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3600,8 +3336,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/scheduler.ts",
@@ -3615,8 +3350,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/scheduler.ts",
@@ -3624,8 +3358,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/scheduler.ts",
@@ -3633,8 +3366,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/scheduler.ts",
@@ -3648,8 +3380,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/scheduler.ts",
@@ -3657,8 +3388,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/scheduler.ts",
@@ -3666,8 +3396,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/scheduler.ts",
@@ -3681,8 +3410,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/search-attributes.ts",
@@ -3690,8 +3418,7 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/search-attributes.ts",
@@ -3705,8 +3432,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/search-attributes.ts",
@@ -3720,8 +3446,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/search-attributes.ts",
@@ -3735,8 +3460,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/search-attributes.ts",
@@ -3744,8 +3468,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/search-attributes.ts",
@@ -3753,8 +3476,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/shared-state.ts",
@@ -3768,8 +3490,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/shared-state.ts",
@@ -3783,8 +3504,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/shared-state.ts",
@@ -3792,8 +3512,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/shared-state.ts",
@@ -3801,8 +3520,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/step-context.ts",
@@ -3816,8 +3534,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/step-context.ts",
@@ -3831,8 +3548,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/step-context.ts",
@@ -3846,8 +3562,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/step-context.ts",
@@ -3855,8 +3570,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/step-context.ts",
@@ -3864,8 +3578,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/tenant-quotas.ts",
@@ -3879,8 +3592,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/tenant-quotas.ts",
@@ -3888,8 +3600,7 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/tenant.ts",
@@ -3903,8 +3614,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/tenant.ts",
@@ -3918,8 +3628,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/tenant.ts",
@@ -3933,8 +3642,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/timeouts.ts",
@@ -3942,8 +3650,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/timeouts.ts",
@@ -3957,8 +3664,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/timeouts.ts",
@@ -3972,8 +3678,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/timeouts.ts",
@@ -3981,8 +3686,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/timeouts.ts",
@@ -3996,8 +3700,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/timeouts.ts",
@@ -4011,8 +3714,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4026,8 +3728,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4041,8 +3742,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4056,8 +3756,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4071,8 +3770,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4080,8 +3778,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4095,8 +3792,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4110,8 +3806,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4125,8 +3820,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4140,8 +3834,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4155,8 +3848,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4170,8 +3862,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4185,8 +3876,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4200,8 +3890,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4215,8 +3904,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4230,8 +3918,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4245,8 +3932,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4260,8 +3946,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4275,8 +3960,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4284,8 +3968,7 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4293,8 +3976,7 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4302,8 +3984,7 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4317,8 +3998,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4332,8 +4012,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4347,8 +4026,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4362,8 +4040,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4377,8 +4054,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4392,8 +4068,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4407,8 +4082,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4422,8 +4096,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4437,8 +4110,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4446,8 +4118,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4455,8 +4126,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4464,8 +4134,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4473,8 +4142,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4488,8 +4156,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4503,8 +4170,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4518,8 +4184,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4533,8 +4198,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4548,8 +4212,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4563,8 +4226,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4578,8 +4240,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4593,8 +4254,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4608,8 +4268,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4623,8 +4282,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4638,8 +4296,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4653,8 +4310,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4668,8 +4324,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4677,8 +4332,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4692,8 +4346,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4707,8 +4360,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4722,8 +4374,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4737,8 +4388,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4752,8 +4402,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4767,8 +4416,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4782,8 +4430,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4797,8 +4444,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4812,8 +4458,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4827,8 +4472,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4842,8 +4486,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4857,8 +4500,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4866,8 +4508,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4875,8 +4516,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4884,8 +4524,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4899,8 +4538,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4914,8 +4552,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4929,8 +4566,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4944,8 +4580,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4959,8 +4594,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4974,8 +4608,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4989,8 +4622,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5004,8 +4636,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5019,8 +4650,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5034,8 +4664,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5049,8 +4678,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5064,8 +4692,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5079,8 +4706,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5094,8 +4720,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5109,8 +4734,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5124,8 +4748,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5139,8 +4762,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5154,8 +4776,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5169,8 +4790,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5184,8 +4804,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5199,8 +4818,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/updates.ts",
@@ -5214,8 +4832,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/updates.ts",
@@ -5223,8 +4840,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/updates.ts",
@@ -5232,8 +4848,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/updates.ts",
@@ -5241,8 +4856,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/updates.ts",
@@ -5256,8 +4870,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/updates.ts",
@@ -5271,8 +4884,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5280,8 +4892,7 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5295,8 +4906,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5310,8 +4920,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5325,8 +4934,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5334,8 +4942,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5349,8 +4956,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5358,8 +4964,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5373,8 +4978,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5388,8 +4992,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5403,8 +5006,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/versioning.ts",
@@ -5418,8 +5020,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/doctor.ts",
@@ -5433,8 +5034,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/format.ts",
@@ -5448,8 +5048,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/format.ts",
@@ -5463,8 +5062,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/format.ts",
@@ -5478,8 +5076,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/format.ts",
@@ -5493,8 +5090,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -5508,8 +5104,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -5523,8 +5118,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -5538,8 +5132,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -5553,8 +5146,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -5568,8 +5160,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -5583,8 +5174,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/memory-profiler.ts",
@@ -5598,8 +5188,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/recommendations.ts",
@@ -5613,8 +5202,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5628,8 +5216,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5643,8 +5230,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5658,8 +5244,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5673,8 +5258,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5688,8 +5272,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5703,8 +5286,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5718,8 +5300,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5733,8 +5314,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5742,8 +5322,7 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5757,8 +5336,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5772,8 +5350,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5787,8 +5364,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -5802,8 +5378,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/diagnostics/version-check.ts",
@@ -5817,8 +5392,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/index.ts",
@@ -5832,8 +5406,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/index.ts",
@@ -5847,8 +5420,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/index.ts",
@@ -5862,8 +5434,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/index.ts",
@@ -5877,8 +5448,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5886,8 +5456,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5895,8 +5464,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5904,8 +5472,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5919,8 +5486,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5928,8 +5494,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5937,8 +5502,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5946,8 +5510,7 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5955,8 +5518,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5970,8 +5532,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -5985,8 +5546,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -6000,8 +5560,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -6015,8 +5574,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/metrics.ts",
@@ -6024,8 +5582,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6033,8 +5590,7 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6048,8 +5604,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6063,8 +5618,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6078,8 +5632,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6093,8 +5646,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6102,8 +5654,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6111,8 +5662,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6126,8 +5676,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6135,8 +5684,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6144,8 +5692,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
@@ -6153,8 +5700,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/propagation.ts",
@@ -6162,8 +5708,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/propagation.ts",
@@ -6171,8 +5716,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/propagation.ts",
@@ -6186,8 +5730,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/propagation.ts",
@@ -6201,8 +5744,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/propagation.ts",
@@ -6216,8 +5758,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/observability/propagation.ts",
@@ -6225,8 +5766,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/observability/propagation.ts",
@@ -6240,8 +5780,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6255,8 +5794,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B1-core"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6270,8 +5808,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6279,8 +5816,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6288,8 +5824,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6297,8 +5832,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6312,8 +5846,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6327,8 +5860,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6336,8 +5868,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6351,8 +5882,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B1-core"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/runtime/portable.ts",
@@ -6360,8 +5890,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6375,8 +5904,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6384,8 +5912,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6399,8 +5926,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6414,8 +5940,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6429,8 +5954,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6444,8 +5968,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6459,8 +5982,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6474,8 +5996,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6489,8 +6010,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6498,8 +6018,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6513,8 +6032,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6522,8 +6040,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6531,8 +6048,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6546,8 +6062,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -6555,8 +6070,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/handler.ts",
@@ -6570,8 +6084,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/handler.ts",
@@ -6585,8 +6098,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/handler.ts",
@@ -6600,8 +6112,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/handler.ts",
@@ -6620,8 +6131,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -6635,8 +6145,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -6650,8 +6159,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -6665,8 +6173,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -6680,8 +6187,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -6695,8 +6201,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -6710,8 +6215,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/server/task-queue.ts",
@@ -6719,8 +6223,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/task-queue.ts",
@@ -6734,8 +6237,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/server/task-queue.ts",
@@ -6743,8 +6245,7 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/task-queue.ts",
@@ -6752,8 +6253,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/task-queue.ts",
@@ -6761,8 +6261,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/server/task-queue.ts",
@@ -6770,8 +6269,7 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/service-worker/index.ts",
@@ -6785,8 +6283,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/service-worker/index.ts",
@@ -6800,8 +6297,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/service-worker/index.ts",
@@ -6815,8 +6311,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/service-worker/index.ts",
@@ -6830,8 +6325,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/bun-sql.ts",
@@ -6860,8 +6354,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/compressed-storage.ts",
@@ -6875,8 +6368,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/compressed-storage.ts",
@@ -6895,8 +6387,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/indexeddb.ts",
@@ -6910,8 +6401,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -6935,8 +6425,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -6960,8 +6449,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -6985,8 +6473,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7010,8 +6497,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7035,8 +6521,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7050,8 +6535,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7065,8 +6549,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7080,8 +6563,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7095,8 +6577,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7120,8 +6601,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7135,8 +6615,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7150,8 +6629,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7165,8 +6643,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7180,8 +6657,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7205,8 +6681,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7220,8 +6695,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/lmdb.ts",
@@ -7235,8 +6709,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/memory.ts",
@@ -7260,8 +6733,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/node-sqlite.ts",
@@ -7280,8 +6752,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/scoped-storage.ts",
@@ -7300,8 +6771,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/scoped-storage.ts",
@@ -7320,8 +6790,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/turso.ts",
@@ -7335,8 +6804,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/turso.ts",
@@ -7350,8 +6818,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7359,8 +6826,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7379,8 +6845,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7388,8 +6853,7 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7408,8 +6872,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7428,8 +6891,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7448,8 +6910,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7468,8 +6929,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7488,8 +6948,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7508,8 +6967,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7528,8 +6986,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -7548,8 +7005,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -7563,8 +7019,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -7578,8 +7033,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -7593,8 +7047,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -7608,8 +7061,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -7623,8 +7075,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -7638,8 +7089,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/mocks.ts",
@@ -7653,8 +7103,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/mocks.ts",
@@ -7668,8 +7117,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/mocks.ts",
@@ -7683,8 +7131,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/mocks.ts",
@@ -7698,8 +7145,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/test-engine.ts",
@@ -7713,8 +7159,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/test-engine.ts",
@@ -7728,8 +7173,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/test-engine.ts",
@@ -7743,8 +7187,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/time-control.ts",
@@ -7758,8 +7201,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/worker/heartbeat.ts",
@@ -7773,8 +7215,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/worker/index.ts",
@@ -7782,8 +7223,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/worker/index.ts",
@@ -7797,8 +7237,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/worker/index.ts",
@@ -7806,8 +7245,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/worker/long-poll.ts",
@@ -7821,8 +7259,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/worker/long-poll.ts",
@@ -7830,8 +7267,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/worker/registry.ts",
@@ -7839,8 +7275,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/worker/registry.ts",
@@ -7848,8 +7283,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/worker/registry.ts",
@@ -7863,8 +7297,7 @@
           "kind": "type"
         }
       ],
-      "classification": "prose-only",
-      "batch": "B2-infra"
+      "classification": "prose-only"
     },
     {
       "sourceFile": "src/worker/registry.ts",
@@ -7872,8 +7305,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/worker/registry.ts",
@@ -7887,8 +7319,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/worker/registry.ts",
@@ -7896,8 +7327,7 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "not-public",
-      "batch": null
+      "classification": "not-public"
     },
     {
       "sourceFile": "src/workers/activity-runner.ts",
@@ -7911,8 +7341,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/activity-runner.ts",
@@ -7926,8 +7355,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/activity-runner.ts",
@@ -7941,8 +7369,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/activity-worker-dispatcher.ts",
@@ -7956,8 +7383,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/activity-worker-dispatcher.ts",
@@ -7971,8 +7397,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/activity-worker-entry.ts",
@@ -7986,8 +7411,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/activity-worker-entry.ts",
@@ -8001,8 +7425,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/activity-worker-entry.ts",
@@ -8016,8 +7439,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/activity-worker-entry.ts",
@@ -8031,8 +7453,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/pool.ts",
@@ -8046,8 +7467,7 @@
           "kind": "value"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/workers/pool.ts",
@@ -8061,8 +7481,7 @@
           "kind": "type"
         }
       ],
-      "classification": "example-required",
-      "batch": "B2-infra"
+      "classification": "example-required"
     }
   ]
 }

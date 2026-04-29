@@ -134,7 +134,24 @@ function main(): void {
     if (entry.batch) batchCounts.set(entry.batch, (batchCounts.get(entry.batch) ?? 0) + 1);
   }
 
-  writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+  // Strip transient fields before persisting — same pick-list as
+  // build-jsdoc-manifest.ts. `batch`, `classificationRationale`, and
+  // `currentState` are regenerated on every classify/build run and would
+  // only add noise to the diff. `classification` is the only semantic
+  // field this script writes that needs to survive.
+  const persistedEntries = manifest.entries.map((entry) => ({
+    sourceFile: entry.sourceFile,
+    sourceName: entry.sourceName,
+    kind: entry.kind,
+    subKind: entry.subKind,
+    publicFaces: entry.publicFaces,
+    classification: entry.classification,
+  }));
+  const persistedManifest = {
+    publicEntryPoints: manifest.publicEntryPoints,
+    entries: persistedEntries,
+  };
+  writeFileSync(MANIFEST_PATH, JSON.stringify(persistedManifest, null, 2) + '\n', 'utf8');
 
   console.log(
     `Classified ${manifest.entries.length} entries (${preserved} preserved from prior run):`,

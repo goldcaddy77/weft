@@ -103,15 +103,19 @@ function normalizeExportKey(importPath: string, packageName: string): string {
 }
 
 function pickTypesField(value: unknown): string | null {
-  if (typeof value === 'string') return null; // shorthand pointing at .js only
+  // Mirrors the logic in build-jsdoc-manifest.ts and audit-jsdoc-manifest.ts:
+  // a plain-string export carries no type info, and a conditional shape with
+  // platform-specific types but no top-level `types` field is ambiguous —
+  // explicit per-platform subpaths must cover those cases.
+  if (typeof value === 'string') return null;
   if (value === null || typeof value !== 'object') return null;
   const obj = value as Record<string, unknown>;
   if (typeof obj['types'] === 'string') return obj['types'];
   for (const key of ['bun', 'node', 'import', 'default'] as const) {
     const inner = obj[key];
-    if (inner && typeof inner === 'object') {
+    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
       const innerTypes = (inner as Record<string, unknown>)['types'];
-      if (typeof innerTypes === 'string') return innerTypes;
+      if (typeof innerTypes === 'string') return null;
     }
   }
   return null;
@@ -284,7 +288,11 @@ function resolveTriple(
 type PopulationItem = {
   triple: string;
   classification: Classification;
-  currentState: CurrentState;
+  // currentState is re-derived per-item from source declarations (not read
+  // from the manifest, which no longer persists this field). Only consulted
+  // when classification === 'unclassified'.
+  sourceFile: string;
+  sourceName: string;
 };
 
 function buildPopulation(selector: Selector, manifest: Manifest): PopulationItem[] {
@@ -307,7 +315,8 @@ function populationAll(manifest: Manifest): PopulationItem[] {
       out.push({
         triple: `${face.importPath}#${face.exportName}#${face.kind}`,
         classification: entry.classification,
-        currentState: entry.currentState,
+        sourceFile: entry.sourceFile,
+        sourceName: entry.sourceName,
       });
     }
   }
@@ -331,26 +340,116 @@ function populationSymbols(triples: string[], manifest: Manifest): PopulationIte
     out.push({
       triple,
       classification: entry.classification,
-      currentState: entry.currentState,
+      sourceFile: entry.sourceFile,
+      sourceName: entry.sourceName,
     });
   }
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Re-derive currentState from source declarations (used only for unclassified
+// entries — classified entries get their assertion rule from `classification`,
+// so they never need this).
+// ---------------------------------------------------------------------------
+
+function detectCurrentStateFromSource(
+  sourceFile: string,
+  sourceName: string,
+  cache: Map<string, ts.SourceFile>,
+): CurrentState {
+  const absolute = resolve(REPO_ROOT, sourceFile);
+  let parsed = cache.get(absolute);
+  if (!parsed) {
+    if (!existsSync(absolute)) return 'no-jsdoc';
+    const text = readFileSync(absolute, 'utf8');
+    parsed = ts.createSourceFile(absolute, text, ts.ScriptTarget.Latest, true);
+    cache.set(absolute, parsed);
+  }
+  let hasProse = false;
+  let hasExample = false;
+  function visit(node: ts.Node): void {
+    if (isNamedDeclarationMatch(node, sourceName)) {
+      const state = inspectJSDoc(node);
+      if (state.hasExample) hasExample = true;
+      if (state.hasProse) hasProse = true;
+    }
+    if (isVariableStatementMatch(node, sourceName)) {
+      const state = inspectJSDoc(node);
+      if (state.hasExample) hasExample = true;
+      if (state.hasProse) hasProse = true;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(parsed);
+  if (hasProse && hasExample) return 'has-example';
+  if (hasProse) return 'prose-only';
+  return 'no-jsdoc';
+}
+
+function isNamedDeclarationMatch(node: ts.Node, sourceName: string): boolean {
+  if (
+    !(
+      ts.isClassDeclaration(node) ||
+      ts.isFunctionDeclaration(node) ||
+      ts.isInterfaceDeclaration(node) ||
+      ts.isTypeAliasDeclaration(node) ||
+      ts.isEnumDeclaration(node) ||
+      ts.isModuleDeclaration(node)
+    )
+  ) {
+    return false;
+  }
+  return nameMatches(node, sourceName);
+}
+
+function isVariableStatementMatch(node: ts.Node, sourceName: string): boolean {
+  if (!ts.isVariableStatement(node)) return false;
+  return node.declarationList.declarations.some(
+    (decl) => ts.isIdentifier(decl.name) && decl.name.text === sourceName,
+  );
+}
+
+function inspectJSDoc(node: ts.Node): { hasProse: boolean; hasExample: boolean } {
+  const tags = ts.getJSDocTags(node);
+  let proseText = '';
+  for (const commentNode of ts.getJSDocCommentsAndTags(node)) {
+    if (!ts.isJSDoc(commentNode)) continue;
+    const comment = commentNode.comment;
+    if (typeof comment === 'string') proseText += comment;
+    else if (Array.isArray(comment)) {
+      for (const part of comment) {
+        if (part.kind === ts.SyntaxKind.JSDocText) proseText += part.text;
+      }
+    }
+  }
+  return {
+    hasProse: proseText.trim().length > 0,
+    hasExample: tags.some((tag) => tag.tagName.text === 'example'),
+  };
+}
+
+function nameMatches(node: ts.NamedDeclaration, sourceName: string): boolean {
+  const name = node.name;
+  if (!name) return false;
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text === sourceName;
+  return false;
+}
+
 type AssertionRule = { requireProse: boolean; requireExample: boolean } | { fail: string };
 
-function pickAssertionRule(item: PopulationItem): AssertionRule {
+function pickAssertionRule(item: PopulationItem, currentState: CurrentState): AssertionRule {
   if (item.classification === 'example-required') {
     return { requireProse: true, requireExample: true };
   }
   if (item.classification === 'prose-only') {
     return { requireProse: true, requireExample: false };
   }
-  // unclassified — derive from currentState.
-  if (item.currentState === 'has-example') {
+  // unclassified — derive from currentState (re-read from source per item).
+  if (currentState === 'has-example') {
     return { requireProse: true, requireExample: true };
   }
-  if (item.currentState === 'prose-only') {
+  if (currentState === 'prose-only') {
     return { requireProse: true, requireExample: false };
   }
   return { fail: 'currentState=no-jsdoc (unclassified entry, expected to fail)' };
@@ -363,10 +462,16 @@ function checkItem(
     string,
     { program: ts.Program; checker: ts.TypeChecker; sourceFile: ts.SourceFile }
   >,
+  sourceCache: Map<string, ts.SourceFile>,
 ): string | null {
   const result = resolveTriple(item.triple, pkg, programCache);
   if (!result.state) return `  ${item.triple}: ${result.reason ?? 'resolution failed'}`;
-  const rule = pickAssertionRule(item);
+  // Only re-derive currentState if the assertion rule needs it.
+  const currentState =
+    item.classification === 'unclassified'
+      ? detectCurrentStateFromSource(item.sourceFile, item.sourceName, sourceCache)
+      : 'no-jsdoc';
+  const rule = pickAssertionRule(item, currentState);
   if ('fail' in rule) return `  ${item.triple}: ${rule.fail}`;
   const errors: string[] = [];
   if (rule.requireProse && !result.state.hasProse) {
@@ -415,9 +520,10 @@ function main(): void {
     string,
     { program: ts.Program; checker: ts.TypeChecker; sourceFile: ts.SourceFile }
   >();
+  const sourceCache = new Map<string, ts.SourceFile>();
   const failures: string[] = [];
   for (const item of population) {
-    const failure = checkItem(item, pkg, programCache);
+    const failure = checkItem(item, pkg, programCache, sourceCache);
     if (failure) failures.push(failure);
   }
   if (failures.length > 0) {

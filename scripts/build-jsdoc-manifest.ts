@@ -138,10 +138,13 @@ function buildPublicEntryPoints(): Record<string, string> {
     // or splitting the export into explicit per-platform subpaths.
     const platformTypes = splitConditionalTypes(value);
     if (platformTypes.length === 0) continue;
-    // Has platform-specific types but no unified — verify explicit per-platform
-    // subpaths cover them, otherwise warn at build time.
-    // We don't add the conditional importPath to the manifest because there's
-    // no single source file to map it to.
+    // Has platform-specific types but no unified top-level `types` field.
+    // We deliberately skip the conditional importPath — there is no single
+    // source file to map it to, and forcing a pick (e.g. always-bun) would
+    // silently drop the other platform's surface from the manifest. The
+    // explicit per-platform subpaths (./storage/sqlite/bun, ./storage/sqlite/node)
+    // must cover both. Verify package.json if a platform source is unexpectedly
+    // absent from the manifest.
   }
   return out;
 }
