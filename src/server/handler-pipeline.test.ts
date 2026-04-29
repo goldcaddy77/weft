@@ -142,6 +142,37 @@ describe('handler pipeline — restBindings / operationRegistry pairing guard', 
   });
 });
 
+describe('handler pipeline — route precedence and legacy-route failures', () => {
+  it('returns 500 when a legacy route executor throws unexpectedly', async () => {
+    const engine = createEngine();
+    const explodingRegistry = {
+      get() {
+        throw new Error('registry exploded');
+      },
+    } as unknown as OperationRegistry;
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/v1/test/openapi-trigger',
+      pathParamNames: [],
+      operationName: 'weft.test.openapi.trigger',
+      inputSources: {},
+      extractInput: async () => ({}),
+      success: { kind: 'json', status: 200 },
+    };
+
+    const { result: response, calls } = await recordExpectedConsoleError(() =>
+      handleRequest(new Request('http://localhost/openapi.json', { method: 'GET' }), engine, {
+        operationRegistry: explodingRegistry,
+        restBindings: [binding],
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Internal server error' });
+    expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
 describe('handler pipeline — streaming binding guard', () => {
   it('returns 500 when a streaming binding has no shapeSuccess', async () => {
     const engine = createEngine();
@@ -222,6 +253,50 @@ describe('handler pipeline — streaming binding guard', () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: 'extract failed' });
+  });
+
+  it('returns 400 when RestBinding path decoding sees malformed percent encoding', async () => {
+    const engine = createEngine();
+    const registry = createOperationRegistry([
+      defineOperation({
+        name: 'weft.test.bindingdecode',
+        summary: 'binding decode path',
+        inputSchema: z.object({ workflowId: z.string() }),
+        outputSchema: z.object({ ok: z.boolean() }),
+        access: { kind: 'public' },
+        transports: {
+          http: true,
+          jsonRpcHttp: false,
+          jsonRpcWebSocket: false,
+          jsonRpcStdio: false,
+        },
+        unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+        invoke: async () => ({ ok: true }),
+      }),
+    ]);
+    const binding: UnknownRestBinding = {
+      method: 'GET',
+      path: '/v1/test/bindingdecode/:workflowId',
+      pathParamNames: ['workflowId'],
+      operationName: 'weft.test.bindingdecode',
+      inputSources: { workflowId: { kind: 'path', pathParam: 'workflowId' } },
+      extractInput: async (_request, pathParams) => ({
+        workflowId: pathParams['workflowId'] ?? '',
+      }),
+      success: { kind: 'json', status: 200 },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/test/bindingdecode/%E0%A4%A', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: registry,
+        restBindings: [binding],
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Malformed route parameter encoding' });
   });
 });
 

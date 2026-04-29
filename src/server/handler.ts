@@ -82,23 +82,33 @@ function matchRoute(method: string, pathname: string): RouteMatch | null {
     const match = route.pattern.exec(pathname);
     if (!match) continue;
 
-    const params: Record<string, string> = {};
-    for (let i = 0; i < route.paramNames.length; i++) {
-      const name = route.paramNames[i];
-      const value = match[i + 1];
-      if (name !== undefined && value !== undefined) {
-        try {
-          params[name] = decodeURIComponent(value);
-        } catch {
-          throw new MalformedRouteParameterError();
-        }
-      }
-    }
-
-    return { handler: route.handler, params, path: route.path };
+    return {
+      handler: route.handler,
+      params: extractRouteParameters(route.paramNames, match),
+      path: route.path,
+    };
   }
 
   return null;
+}
+
+export function extractRouteParameters(
+  parameterNames: readonly string[],
+  match: Pick<RegExpExecArray, number | 'length'>,
+): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (let index = 0; index < parameterNames.length; index += 1) {
+    const name = parameterNames[index];
+    const value = match[index + 1];
+    if (name !== undefined && value !== undefined) {
+      try {
+        params[name] = decodeURIComponent(value);
+      } catch {
+        throw new MalformedRouteParameterError();
+      }
+    }
+  }
+  return params;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,14 +151,6 @@ export function getRequiredRouteParameter(
     throw new Error(`Missing route parameter "${name}" for ${routeDescription}`);
   }
   return value;
-}
-
-function applyLegacyRestInputCompatibility(
-  _operationName: string,
-  input: unknown,
-  _principal: Principal,
-): { input: unknown } | { response: Response } {
-  return { input };
 }
 
 // ---------------------------------------------------------------------------
@@ -200,13 +202,10 @@ async function handleGetMetrics(
   });
 }
 
-type RouteParameterGetter = (name: string) => string;
-
 type RouteExecutionContext = {
   request: Request;
   engine: Engine;
   options: HandlerOptions | undefined;
-  param: RouteParameterGetter;
 };
 
 type RouteExecutor = (context: RouteExecutionContext) => Promise<Response>;
@@ -300,16 +299,16 @@ function matchRestBinding(
   return null;
 }
 
-function countPathParameters(pathPattern: string): number {
+export function countPathParameters(pathPattern: string): number {
   return pathPattern.split('/').filter((segment) => segment.startsWith(':')).length;
 }
 
-function countLiteralSegments(pathPattern: string): number {
+export function countLiteralSegments(pathPattern: string): number {
   return pathPattern.split('/').filter((segment) => segment.length > 0 && !segment.startsWith(':'))
     .length;
 }
 
-function shouldPreferLegacyRoute(
+export function shouldPreferLegacyRoute(
   bindingMatch: { readonly binding: UnknownRestBinding } | null,
   routeMatch: RouteMatch | null,
 ): boolean {
@@ -319,11 +318,9 @@ function shouldPreferLegacyRoute(
 
   const bindingParameterCount = countPathParameters(bindingMatch.binding.path);
   const routeParameterCount = countPathParameters(routeMatch.path);
-  if (routeParameterCount !== bindingParameterCount) {
-    return routeParameterCount < bindingParameterCount;
-  }
-
-  return countLiteralSegments(routeMatch.path) > countLiteralSegments(bindingMatch.binding.path);
+  return routeParameterCount !== bindingParameterCount
+    ? routeParameterCount < bindingParameterCount
+    : countLiteralSegments(routeMatch.path) > countLiteralSegments(bindingMatch.binding.path);
 }
 
 /**
@@ -349,11 +346,6 @@ async function dispatchViaExecuteOperation(
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(message, 400);
   }
-  const compatibility = applyLegacyRestInputCompatibility(binding.operationName, input, principal);
-  if ('response' in compatibility) {
-    return compatibility.response;
-  }
-  input = compatibility.input;
   const result = await executeOperation(binding.operationName, input, {
     principal,
     engine,
@@ -368,7 +360,7 @@ async function dispatchViaExecuteOperation(
   return binding.shapeFault ? binding.shapeFault(result.fault) : faultToHttpResponse(result.fault);
 }
 
-function isOperationFaultLike(value: unknown): value is OperationFault {
+export function isOperationFaultLike(value: unknown): value is OperationFault {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
@@ -388,9 +380,12 @@ function isOperationFaultLike(value: unknown): value is OperationFault {
   // — those would walk the prototype chain via `in` and let an
   // arbitrary thrown object impersonate a fault.
   return (
+    Object.hasOwn(candidate, 'code') &&
     typeof code === 'string' &&
     Object.hasOwn(FAULT_CODE_TO_HTTP_STATUS, code) &&
+    Object.hasOwn(candidate, 'message') &&
     typeof candidate['message'] === 'string' &&
+    Object.hasOwn(candidate, 'data') &&
     typeof candidate['data'] === 'object' &&
     candidate['data'] !== null
   );
@@ -510,19 +505,11 @@ export async function handleRequest(
   try {
     bindingMatch = matchRestBinding(request.method, url.pathname, restBindings);
   } catch (error) {
-    if (error instanceof MalformedRouteParameterError) {
-      return errorResponse(error.message, 400);
-    }
-    throw error;
-  }
-
-  let route: RouteMatch | null;
-  try {
-    route = matchRoute(request.method, url.pathname);
-  } catch (error) {
     if (error instanceof MalformedRouteParameterError) return errorResponse(error.message, 400);
     throw error;
   }
+
+  const route = matchRoute(request.method, url.pathname);
 
   if (bindingMatch !== null && !shouldPreferLegacyRoute(bindingMatch, route)) {
     try {
@@ -549,13 +536,9 @@ export async function handleRequest(
     return errorResponse(`Not found: ${request.method} ${url.pathname}`, 404);
   }
 
-  const routeDescription = `${request.method} ${url.pathname}`;
-  const param = (name: string): string =>
-    getRequiredRouteParameter(route.params, name, routeDescription);
-
   try {
     const executor = ROUTE_EXECUTORS[route.handler];
-    return await executor({ request, engine, options, param });
+    return await executor({ request, engine, options });
   } catch (error) {
     console.error('Unhandled error in handleRequest', {
       method: request.method,

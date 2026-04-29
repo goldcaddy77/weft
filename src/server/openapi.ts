@@ -126,12 +126,6 @@ function emitRoutes(
     };
     if (parameters.length > 0) entry['parameters'] = parameters;
 
-    if (route.method !== 'GET' && route.method !== 'DELETE') {
-      entry['requestBody'] = {
-        content: { 'application/json': { schema: { type: 'object' } } },
-      };
-    }
-
     paths[openApiPath][route.method.toLowerCase()] = entry;
     for (const tag of route.tags) tagSet.add(tag);
   }
