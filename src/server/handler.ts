@@ -219,6 +219,7 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     jsonResponse(
       generateOpenApiDocument({
         registry: options?.operationRegistry ?? defaultOperationRegistry(),
+        ...(options?.restBindings !== undefined ? { restBindings: options.restBindings } : {}),
       }),
     ),
   openRpcDocument: async ({ options }) =>

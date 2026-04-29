@@ -115,4 +115,56 @@ describe('Track 8 discovery registry drift', () => {
       normalizeOpenRpcDocument(routeDocument),
     );
   });
+
+  it('registry-drift: /openapi.json uses the live server restBindings, not the default', async () => {
+    const hostname = '127.0.0.1';
+    const localEngine = new Engine({ storage: new MemoryStorage() });
+    engine = localEngine;
+
+    const operationRegistry = createFilteredRegistry();
+    const restBindings = createLiveRestBindings().filter(
+      (binding) => operationRegistry.get(binding.operationName) !== undefined,
+    );
+
+    server = Bun.serve({
+      hostname,
+      port: 0,
+      fetch(request) {
+        return handleRequest(request, localEngine, { operationRegistry, restBindings });
+      },
+    });
+
+    const response = await fetch(`http://${hostname}:${server.port}/openapi.json`);
+    expect(response.status).toBe(200);
+    const document = (await response.json()) as { paths?: Record<string, Record<string, unknown>> };
+
+    const operationIds = new Set<string>();
+    for (const pathItem of Object.values(document.paths ?? {})) {
+      for (const methodEntry of Object.values(pathItem)) {
+        if (
+          typeof methodEntry === 'object' &&
+          methodEntry !== null &&
+          'operationId' in methodEntry
+        ) {
+          const operationId = (methodEntry as { operationId?: unknown }).operationId;
+          if (typeof operationId === 'string') operationIds.add(operationId);
+        }
+      }
+    }
+
+    // The filtered registry only contains weft.workflows.get* operations.
+    // /openapi.json must reflect that filter, not the default REST_BINDINGS
+    // set which includes 30+ unrelated operations.
+    for (const operationId of operationIds) {
+      if (operationId.startsWith('weft.')) {
+        expect(operationRegistry.get(operationId)).toBeDefined();
+      }
+    }
+    // And the filtered operations should appear in the document.
+    for (const operation of operationRegistry.list()) {
+      if (operation.transports.http) {
+        expect(operationIds.has(operation.name)).toBe(true);
+      }
+    }
+  });
 });

@@ -8,6 +8,8 @@
  * @module server/track8-parity-invariants
  */
 
+import { expect } from 'bun:test';
+
 export type ParityInvariants = {
   /** Success payloads are identical JSON vs. shape-equivalent (allows id/timestamp variance). */
   successPayload: 'identical-json' | 'shape-equivalent';
@@ -21,16 +23,25 @@ export type ParityInvariants = {
 
 /**
  * Assert that two JSON values are identical by deep equality.
- * Use for `successPayload: 'identical-json'` invariants.
+ * Use for `successPayload: 'identical-json'` invariants. Backed by Bun's
+ * `expect().toEqual()` — handles deep equality without key-order
+ * sensitivity. The `label` argument is preserved for call-site
+ * compatibility and surfaces in failure messages via `expect`'s
+ * built-in diff.
  */
 export function assertIdenticalJson(a: unknown, b: unknown, label: string): void {
-  const aString = sortedJson(a);
-  const bString = sortedJson(b);
-  if (aString !== bString) {
+  try {
+    expect(a).toEqual(b);
+  } catch (cause) {
+    const message =
+      cause instanceof Error
+        ? cause.message
+        : typeof cause === 'string'
+          ? cause
+          : 'unknown failure';
     throw new Error(
-      `Parity invariant violated [${label}]: identical-json expected but payloads differ.\n` +
-        `  Transport A: ${aString}\n` +
-        `  Transport B: ${bString}`,
+      `Parity invariant violated [${label}]: identical-json expected but payloads differ.\n${message}`,
+      { cause },
     );
   }
 }
@@ -56,18 +67,6 @@ export function assertIdenticalFaultCode(aCode: string, bCode: string, label: st
         `  Transport B code: ${bCode}`,
     );
   }
-}
-
-function sortedJson(value: unknown): string {
-  return JSON.stringify(value, (_, currentValue: unknown) =>
-    currentValue !== null && typeof currentValue === 'object' && !Array.isArray(currentValue)
-      ? Object.fromEntries(
-          Object.entries(currentValue as Record<string, unknown>).toSorted(([left], [right]) =>
-            left < right ? -1 : left > right ? 1 : 0,
-          ),
-        )
-      : currentValue,
-  );
 }
 
 function checkShapeRecursive(a: unknown, b: unknown, path: string): void {
