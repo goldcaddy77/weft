@@ -120,7 +120,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // handler regression tests exercise them, and it also leaves the
       // defensive malformed-route rethrow line uncovered.
       functions: 1,
-      lines: new Set([228, 232, 236, 323, 515, 516, 558, 560, 602, 735, 2170]),
+      lines: new Set([228, 232, 236, 515, 516, 558, 560, 602, 735, 2170]),
     },
   ],
   [

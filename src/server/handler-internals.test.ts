@@ -54,7 +54,7 @@ describe('handler internals', () => {
   it('prefers a legacy route with more literal segments when parameter counts tie', () => {
     expect(
       shouldPreferLegacyRoute(
-        { binding: { path: '/v1/items/:id/:action' } as never },
+        { binding: { path: '/v1/items/:id' } as never },
         { handler: 'healthCheck', params: {}, path: '/v1/items/:id/result' },
       ),
     ).toBe(true);
