@@ -89,5 +89,20 @@ describe('handler internals', () => {
         data: { reason: 'duplicate' },
       }),
     ).toBe(false);
+    expect(
+      isOperationFaultLike({
+        code: 'InvalidParams',
+        message: 'bad input',
+        data: [],
+      }),
+    ).toBe(false);
+    const throwingGetter = {
+      code: 'Conflict',
+      message: 'conflict',
+      get data() {
+        throw new Error('should not escape');
+      },
+    };
+    expect(isOperationFaultLike(throwingGetter)).toBe(false);
   });
 });

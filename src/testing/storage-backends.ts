@@ -164,7 +164,7 @@ export async function teardown(engine?: Engine, storageCleanup?: () => void): Pr
   await flush();
   // LMDB-backed tests can still have a read transaction unwinding on the next
   // turn after engine disposal under heavy suite load. Give backend cleanup one
-  // more microtask window so storage disposal does not race that shutdown path.
+  // more event-loop turn so storage disposal does not race that shutdown path.
   await flush();
   storageCleanup?.();
 }

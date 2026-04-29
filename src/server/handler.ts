@@ -366,7 +366,25 @@ export function isOperationFaultLike(value: unknown): value is OperationFault {
   }
 
   const candidate = value as Record<string, unknown>;
-  const code = candidate['code'];
+  if (
+    !Object.hasOwn(candidate, 'code') ||
+    !Object.hasOwn(candidate, 'message') ||
+    !Object.hasOwn(candidate, 'data')
+  ) {
+    return false;
+  }
+
+  let code: unknown;
+  let message: unknown;
+  let data: unknown;
+  try {
+    code = candidate['code'];
+    message = candidate['message'];
+    data = candidate['data'];
+  } catch {
+    return false;
+  }
+
   // `data` must be a non-null object: every member of the
   // `OperationFault` discriminated union types `data` as an object
   // shape (never `undefined`, never `null`). Accepting a fault with
@@ -380,14 +398,12 @@ export function isOperationFaultLike(value: unknown): value is OperationFault {
   // — those would walk the prototype chain via `in` and let an
   // arbitrary thrown object impersonate a fault.
   return (
-    Object.hasOwn(candidate, 'code') &&
     typeof code === 'string' &&
     Object.hasOwn(FAULT_CODE_TO_HTTP_STATUS, code) &&
-    Object.hasOwn(candidate, 'message') &&
-    typeof candidate['message'] === 'string' &&
-    Object.hasOwn(candidate, 'data') &&
-    typeof candidate['data'] === 'object' &&
-    candidate['data'] !== null
+    typeof message === 'string' &&
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data)
   );
 }
 
