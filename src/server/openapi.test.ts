@@ -252,7 +252,7 @@ describe('route-model helpers', () => {
 // live server actually enforces.  A request without a Bearer token must be
 // rejected (401), proving the document's bearerAuth claim is honest.
 describe('OpenAPI security schemes — live server honesty', () => {
-  it('serves /openapi.json with bearerAuth and apiKeyAuth security schemes, and the live server actually enforces the declared auth', async () => {
+  it('serves /openapi.json with only the configured auth schemes for an api-key-only server', async () => {
     // Dynamic import to avoid pulling the full serve() dependency into every
     // openapi.test.ts import scope — the pattern matches authentication.test.ts.
     const { serve } = await import('./index.ts');
@@ -274,22 +274,23 @@ describe('OpenAPI security schemes — live server honesty', () => {
       expect(docResponse.status).toBe(200);
       const doc = (await docResponse.json()) as Record<string, unknown>;
 
-      // 2. The document must declare both security schemes.
+      // 2. The document must declare only the active API key scheme.
       const components = doc['components'] as Record<string, Record<string, unknown>> | undefined;
       const schemes = components?.['securitySchemes'];
       expect(schemes).toBeDefined();
-      expect(schemes).toHaveProperty('bearerAuth');
       expect(schemes).toHaveProperty('apiKeyAuth');
+      expect(schemes).not.toHaveProperty('bearerAuth');
 
-      // 3. The document's top-level security array must reference both schemes.
+      // 3. The document's top-level security array must reference only
+      //    the configured API key scheme.
       const security = doc['security'] as Array<Record<string, unknown>> | undefined;
       expect(Array.isArray(security)).toBe(true);
       const schemeNames = (security ?? []).flatMap((entry) => Object.keys(entry));
-      expect(schemeNames).toContain('bearerAuth');
       expect(schemeNames).toContain('apiKeyAuth');
+      expect(schemeNames).not.toContain('bearerAuth');
 
-      // 4. Verify the document's bearerAuth claim is honest: a request to a
-      //    protected endpoint WITHOUT a Bearer token must be rejected with 401.
+      // 4. Verify the api-key-only claim is honest: a request to a
+      //    protected endpoint WITHOUT credentials must be rejected with 401.
       const noAuthResponse = await fetch(`${server.url}/v1/workflows`, {
         headers: { accept: 'application/json' },
       });

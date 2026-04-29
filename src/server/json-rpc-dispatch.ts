@@ -53,6 +53,21 @@ export type DispatchJsonRpcResult =
 
 const DISCOVER_METHOD_NAME = 'rpc.discover';
 
+function notificationGateResponse(methodName: string): JsonRpcResponse {
+  return {
+    jsonrpc: JSON_RPC_VERSION,
+    error: {
+      code: -32600,
+      message: `method ${methodName} does not allow notifications`,
+    },
+    id: null,
+  };
+}
+
+function methodAllowsNotifications(methodName: string, registry: OperationRegistry): boolean {
+  return registry.get(methodName)?.allowsNotifications === true;
+}
+
 /** Parse the raw body and dispatch each request. */
 export async function dispatchJsonRpc(
   body: unknown,
@@ -84,7 +99,12 @@ export async function dispatchJsonRpc(
 
   if (parsed.kind === 'single') {
     if (parsed.isNotification) {
-      // Dispatch for side effects, but drop the result.
+      if (!methodAllowsNotifications(parsed.request.method, context.registry)) {
+        return {
+          kind: 'single',
+          response: notificationGateResponse(parsed.request.method),
+        };
+      }
       await dispatchOne(parsed.request, context);
       return { kind: 'notification' };
     }
@@ -127,7 +147,9 @@ async function dispatchBatchItem(
     };
   }
   if (item.isNotification) {
-    // Fire for side effects; drop the response.
+    if (!methodAllowsNotifications(item.request.method, context.registry)) {
+      return notificationGateResponse(item.request.method);
+    }
     await dispatchOne(item.request, context);
     return undefined;
   }

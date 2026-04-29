@@ -65,21 +65,6 @@ async function collectReplayEvents(engine: Engine, workflowId: string): Promise<
   return events;
 }
 
-async function waitFor(
-  condition: () => boolean | Promise<boolean>,
-  timeoutMilliseconds = 1_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMilliseconds;
-  while (Date.now() < deadline) {
-    if (await condition()) {
-      return;
-    }
-    await Bun.sleep(5);
-  }
-
-  throw new Error('timed out waiting for condition');
-}
-
 function waitForWebSocketMessage(
   webSocket: WebSocket,
   predicate: (parsed: unknown) => boolean,
@@ -115,6 +100,151 @@ function openWebSocket(url: string): Promise<WebSocket> {
     ws.addEventListener('open', () => resolve(ws));
     ws.addEventListener('error', (event) => reject(event));
   });
+}
+
+async function collectWebSocketDeliveredEnvelopes(
+  serverUrl: string,
+  workflowId: string,
+  expectedCount: number,
+): Promise<EventEnvelope[]> {
+  const webSocketUrl = `${serverUrl.replace('http://', 'ws://')}/jsonrpc`;
+  const webSocket = await openWebSocket(webSocketUrl);
+
+  try {
+    return await new Promise<EventEnvelope[]>((resolve, reject) => {
+      const received: EventEnvelope[] = [];
+      const correlationId = `collect-${workflowId}`;
+      let subscriptionId: string | undefined;
+
+      const timer = setTimeout(() => {
+        webSocket.removeEventListener('message', handler);
+        reject(new Error('collectWebSocketDeliveredEnvelopes timed out'));
+      }, 3_000);
+
+      function finish(value: EventEnvelope[]): void {
+        clearTimeout(timer);
+        webSocket.removeEventListener('message', handler);
+        resolve(value);
+      }
+
+      function handler(event: MessageEvent): void {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(String(event.data));
+        } catch {
+          return;
+        }
+        if (typeof parsed !== 'object' || parsed === null) {
+          return;
+        }
+
+        const record = parsed as Record<string, unknown>;
+        if (record['id'] === correlationId) {
+          const result = record['result'];
+          if (typeof result === 'object' && result !== null) {
+            const candidateSubscriptionId = (result as Record<string, unknown>)['subscriptionId'];
+            if (typeof candidateSubscriptionId === 'string') {
+              subscriptionId = candidateSubscriptionId;
+              if (expectedCount === 0) {
+                finish([]);
+              }
+            }
+          }
+          return;
+        }
+
+        if (record['method'] !== 'weft.events.deliver' || subscriptionId === undefined) {
+          return;
+        }
+
+        const params = record['params'];
+        if (typeof params !== 'object' || params === null) {
+          return;
+        }
+
+        const deliverParams = params as Record<string, unknown>;
+        if (deliverParams['subscriptionId'] !== subscriptionId) {
+          return;
+        }
+
+        const envelope = deliverParams['envelope'];
+        if (typeof envelope !== 'object' || envelope === null) {
+          return;
+        }
+
+        received.push(envelope as EventEnvelope);
+        if (received.length >= expectedCount) {
+          finish(received);
+        }
+      }
+
+      webSocket.addEventListener('message', handler);
+      webSocket.send(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: correlationId,
+          method: 'weft.workflows.subscribe',
+          params: { workflowId, selector: 'events' },
+        }),
+      );
+    });
+  } finally {
+    webSocket.close();
+  }
+}
+
+function isRelevantTraceabilityRow(cells: string[]): boolean {
+  const category = cells[3] ?? '';
+  const status = cells[4] ?? '';
+  const evidenceTest = cells[8] ?? '';
+  const closeable = cells[12] ?? '';
+
+  const isRelevantCategory = category === 'behavioral' || category === 'cross-cutting-structural';
+  return (
+    isRelevantCategory &&
+    closeable === 'true' &&
+    status === 'shipped' &&
+    evidenceTest !== 'n/a' &&
+    evidenceTest !== ''
+  );
+}
+
+function parseEvidenceTestReference(
+  rowId: string,
+  evidenceTest: string,
+): { fileName: string; title: string } {
+  const normalizedEvidenceTest = evidenceTest.replaceAll('`', '').trim();
+  const colonIndex = normalizedEvidenceTest.indexOf(':');
+  if (colonIndex === -1) {
+    throw new Error(
+      `Matrix row "${rowId}" has unparseable evidence_test "${evidenceTest}" (missing colon).`,
+    );
+  }
+
+  const fileName = normalizedEvidenceTest.slice(0, colonIndex).trim();
+  const titleMatch = /"([^"]+)"/.exec(normalizedEvidenceTest.slice(colonIndex + 1));
+  if (!titleMatch) {
+    throw new Error(
+      `Matrix row "${rowId}" has unparseable evidence_test "${evidenceTest}" (missing quoted title).`,
+    );
+  }
+
+  return { fileName, title: titleMatch[1]! };
+}
+
+async function resolveTraceabilityTestFile(fileName: string): Promise<Bun.BunFile> {
+  const directFilePath = `${import.meta.dir}/${fileName}`;
+  const directFile = Bun.file(directFilePath);
+  if (await directFile.exists()) {
+    return directFile;
+  }
+
+  const matchingPaths = await Array.fromAsync(new Bun.Glob(`**/${fileName}`).scan(import.meta.dir));
+  if (matchingPaths.length === 1) {
+    return Bun.file(`${import.meta.dir}/${matchingPaths[0]}`);
+  }
+
+  return directFile;
 }
 
 describe('Track 8 acceptance coverage', () => {
@@ -183,82 +313,29 @@ describe('Track 8 acceptance coverage', () => {
   });
 
   it('One server-side event projection layer feeds every live transport. WebSocket watch and token messages, SSE responses, JSON-RPC subscription notifications, and cursor-based replay all project from the same event stream model.', async () => {
-    // MF4: exercise at least one live transport surface in addition to the
-    // projection back-end to prove the projection layer feeds it.
     const engine = createSignalWorkflowEngine();
     engines.push(engine);
     const handle = await engine.start('hold', { hello: 'world' }, {});
     await engine.signal(handle.id, 'release', 'go');
     await handle.result();
 
-    // 1. Replay via the projection back-end (proves the projection model).
     const replayed = await collectReplayEvents(engine, handle.id);
-    const directEvents = await engine.getEvents(handle.id);
-
     expect(replayed.length).toBeGreaterThan(0);
-    expect(replayed.map((envelope) => envelope.sequence)).toEqual(
-      directEvents.map((_event, index) => index),
+    server = serve({ engine, port: 0 });
+    const wireEnvelopes = await collectWebSocketDeliveredEnvelopes(
+      server.url,
+      handle.id,
+      replayed.length,
     );
 
-    // 2. Subscribe via the WebSocket live transport and confirm its envelopes
-    //    carry the same sequence numbers as those from the projection back-end.
-    //    Sequences start at 0 for each workflow — identical ordering in both
-    //    surfaces proves they draw from the same event stream model.
-    const engine2 = createSignalWorkflowEngine();
-    engines.push(engine2);
-    const handle2 = await engine2.start('hold', { hello: 'ws' }, {});
-    await waitForEventCount(engine2, handle2.id, 1);
-
-    server = serve({ engine: engine2, port: 0 });
-    const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-    const ws = await openWebSocket(wsUrl);
-
-    // Subscribe via WS to capture live envelopes.
-    const subscribeResponsePromise = waitForWebSocketMessage(
-      ws,
-      (parsed) =>
-        typeof parsed === 'object' &&
-        parsed !== null &&
-        'result' in parsed &&
-        typeof (parsed as Record<string, unknown>)['result'] === 'object',
-    );
-    ws.send(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'sub1',
-        method: 'weft.workflows.subscribe',
-        params: { workflowId: handle2.id, selector: 'events' },
-      }),
-    );
-    const subscribeResponse = (await subscribeResponsePromise) as {
-      result: { subscriptionId: string };
-    };
-    const subscriptionId = subscribeResponse.result.subscriptionId;
-
-    // Collect at least one delivered envelope.
-    const deliverPromise = waitForWebSocketMessage(
-      ws,
-      (parsed) =>
-        typeof parsed === 'object' &&
-        parsed !== null &&
-        (parsed as Record<string, unknown>)['method'] === 'weft.events.deliver' &&
-        typeof (parsed as Record<string, unknown>)['params'] === 'object' &&
-        ((parsed as Record<string, unknown>)['params'] as Record<string, unknown>)[
-          'subscriptionId'
-        ] === subscriptionId,
-    );
-
-    await engine2.signal(handle2.id, 'release', 'go');
-    const delivered = (await deliverPromise) as {
-      params: { envelope: { sequence: number; workflowId: string } };
-    };
-
-    // The WS envelope carries the same shape as the projection back-end.
-    expect(typeof delivered.params.envelope.sequence).toBe('number');
-    expect(delivered.params.envelope.sequence).toBeGreaterThanOrEqual(0);
-    expect(delivered.params.envelope.workflowId).toBe(handle2.id);
-
-    ws.close();
+    expect(wireEnvelopes).toHaveLength(replayed.length);
+    for (const [index, backendEnvelope] of replayed.entries()) {
+      const wireEnvelope = wireEnvelopes[index];
+      expect(wireEnvelope).toBeDefined();
+      expect(wireEnvelope?.sequence).toBe(backendEnvelope.sequence);
+      expect(wireEnvelope?.cursor).toBe(backendEnvelope.cursor);
+      expect(wireEnvelope?.kind).toBe(backendEnvelope.kind);
+    }
   });
 
   it('Runtime JSON-RPC methods use stable namespaced names. Examples: weft.workflows.start, weft.workflows.get, weft.workflows.signal.', async () => {
@@ -274,19 +351,23 @@ describe('Track 8 acceptance coverage', () => {
   });
 
   it('Notifications are opt-in per method. Mutating operations default to request-response so callers do not silently lose errors or authorization failures.', async () => {
-    // MF1: The system uses standard JSON-RPC 2.0 semantics: presence of an
-    // `id` field determines whether the caller expects a response.  There is
-    // no per-method notification gate — every operation is invokable as either
-    // a request (id present → response guaranteed) or a notification (id
-    // absent → fire-and-forget). The criterion's intent is that mutating
-    // operations are NOT implicitly silenced: callers that want a response
-    // MUST include an id, and the dispatcher WILL return one.  The test below
-    // proves both sides of this invariant for a mutating-style operation:
-    //   a) id present → dispatcher returns a `single` response (caller learns
-    //      of errors and auth failures)
-    //   b) id absent → dispatcher returns `notification` (caller intentionally
-    //      opted into fire-and-forget; this is explicit, not silent)
     const registry = createOperationRegistry([
+      defineOperation({
+        name: 'weft.test.notifiable',
+        summary: 'notifiable test operation',
+        inputSchema: z.object({ value: z.string() }),
+        outputSchema: z.object({ echoed: z.string() }),
+        access: { kind: 'public' },
+        transports: {
+          http: true,
+          jsonRpcHttp: true,
+          jsonRpcWebSocket: true,
+          jsonRpcStdio: true,
+        },
+        allowsNotifications: true,
+        unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+        invoke: async ({ input }) => ({ echoed: input.value }),
+      }),
       defineOperation({
         name: 'weft.test.mutate',
         summary: 'mutating test operation',
@@ -304,13 +385,48 @@ describe('Track 8 acceptance coverage', () => {
       }),
     ]);
 
-    // a) id present: caller always receives a response — errors and auth
-    //    failures cannot be silently lost.
-    const requestResult = await dispatchJsonRpc(
+    const notifiableNotificationResult = await dispatchJsonRpc(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.test.notifiable',
+        params: { value: 'hello' },
+      }),
+      {
+        principal: anonymousPrincipal(),
+        engine: {},
+        transport: 'jsonRpcHttp',
+        registry,
+      },
+    );
+    expect(notifiableNotificationResult.kind).toBe('notification');
+
+    const mutateNotificationResult = await dispatchJsonRpc(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.test.mutate',
+        params: { value: 'hello' },
+      }),
+      {
+        principal: anonymousPrincipal(),
+        engine: {},
+        transport: 'jsonRpcHttp',
+        registry,
+      },
+    );
+    expect(mutateNotificationResult.kind).toBe('single');
+    if (mutateNotificationResult.kind !== 'single') {
+      throw new Error(`expected single, got ${mutateNotificationResult.kind}`);
+    }
+    if (!('error' in mutateNotificationResult.response)) {
+      throw new Error('expected Invalid Request error response');
+    }
+    expect(mutateNotificationResult.response.error.code).toBe(-32600);
+
+    const notifiableRequestResult = await dispatchJsonRpc(
       JSON.stringify({
         jsonrpc: '2.0',
         id: 1,
-        method: 'weft.test.mutate',
+        method: 'weft.test.notifiable',
         params: { value: 'hello' },
       }),
       {
@@ -320,17 +436,19 @@ describe('Track 8 acceptance coverage', () => {
         registry,
       },
     );
-    expect(requestResult.kind).toBe('single');
+    expect(notifiableRequestResult.kind).toBe('single');
+    if (notifiableRequestResult.kind !== 'single') {
+      throw new Error(`expected single, got ${notifiableRequestResult.kind}`);
+    }
+    if ('error' in notifiableRequestResult.response) {
+      throw new Error('expected success response for notifiable request');
+    }
+    expect(notifiableRequestResult.response.result).toEqual({ echoed: 'hello' });
 
-    // b) id absent: the caller has explicitly opted into fire-and-forget.
-    //    The dispatcher honours the JSON-RPC 2.0 contract — no response is
-    //    produced.  This is the *caller's* choice; the operation itself has
-    //    no notification flag, which is the "mutating operations default to
-    //    request-response" guarantee: there is no server-side mechanism that
-    //    silently suppresses responses for mutating methods.
-    const notificationResult = await dispatchJsonRpc(
+    const mutateRequestResult = await dispatchJsonRpc(
       JSON.stringify({
         jsonrpc: '2.0',
+        id: 2,
         method: 'weft.test.mutate',
         params: { value: 'hello' },
       }),
@@ -341,113 +459,41 @@ describe('Track 8 acceptance coverage', () => {
         registry,
       },
     );
-    expect(notificationResult.kind).toBe('notification');
+    expect(mutateRequestResult.kind).toBe('single');
+    if (mutateRequestResult.kind !== 'single') {
+      throw new Error(`expected single, got ${mutateRequestResult.kind}`);
+    }
+    if ('error' in mutateRequestResult.response) {
+      throw new Error('expected success response for mutate request');
+    }
+    expect(mutateRequestResult.response.result).toEqual({ mutated: 'hello' });
   });
 
   it('Subscription notifications reuse the shared event projection layer. Watch and stream APIs are documented as projections of current engine events rather than bespoke server-side state machines.', async () => {
-    // MF4: exercise a live transport (WebSocket subscription) in addition to
-    // the feed's subscribe() back-end to prove the projection layer feeds it.
     const engine = createSignalWorkflowEngine();
     engines.push(engine);
     const handle = await engine.start('hold', { hello: 'world' }, {});
-    await waitForEventCount(engine, handle.id, 1);
-
-    // --- Feed back-end subscription (projection layer directly) ---
-    const feed = createWorkflowEventFeed(createEngineEventFeedBackend(engine));
-    feeds.push(feed);
-    const controller = new AbortController();
-
-    const received: EventEnvelope[] = [];
-    let resolveFirstRecord!: () => void;
-    const firstRecordPromise = new Promise<void>((resolve) => {
-      resolveFirstRecord = resolve;
-    });
-
-    const subscribePromise = (async () => {
-      let firstSeen = false;
-
-      for await (const envelope of feed.subscribe({
-        workflowId: handle.id,
-        selector: 'events',
-        signal: controller.signal,
-      })) {
-        received.push(envelope);
-        if (!firstSeen) {
-          firstSeen = true;
-          resolveFirstRecord();
-        }
-      }
-    })();
-
-    await firstRecordPromise;
     await engine.signal(handle.id, 'release', 'go');
     await handle.result();
 
-    const engineEvents = await engine.getEvents(handle.id);
-    await waitFor(() => received.length >= engineEvents.length);
+    const replayed = await collectReplayEvents(engine, handle.id);
+    expect(replayed.length).toBeGreaterThan(0);
 
-    controller.abort();
-    await subscribePromise;
-
-    // The projection layer's sequences match the engine's event indices.
-    expect(received.map((envelope) => envelope.sequence)).toEqual(
-      engineEvents.map((_event, index) => index),
+    server = serve({ engine, port: 0 });
+    const wireEnvelopes = await collectWebSocketDeliveredEnvelopes(
+      server.url,
+      handle.id,
+      replayed.length,
     );
 
-    // --- WebSocket transport subscription (live transport surface) ---
-    // Confirm the WS transport draws from the same projection layer by
-    // verifying that a newly-started workflow produces WS envelopes with
-    // the same sequence origin (0) and workflowId as the projection layer.
-    const engine2 = createSignalWorkflowEngine();
-    engines.push(engine2);
-    const handle2 = await engine2.start('hold', { hello: 'sub-layer' }, {});
-    await waitForEventCount(engine2, handle2.id, 1);
-
-    server = serve({ engine: engine2, port: 0 });
-    const wsUrl = `${server.url.replace('http://', 'ws://')}/jsonrpc`;
-    const ws = await openWebSocket(wsUrl);
-
-    const subResponsePromise = waitForWebSocketMessage(
-      ws,
-      (p) =>
-        typeof p === 'object' &&
-        p !== null &&
-        'result' in p &&
-        typeof (p as Record<string, unknown>)['result'] === 'object',
-    );
-    ws.send(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'sub2',
-        method: 'weft.workflows.subscribe',
-        params: { workflowId: handle2.id, selector: 'events' },
-      }),
-    );
-    const subResponse = (await subResponsePromise) as { result: { subscriptionId: string } };
-    const subId = subResponse.result.subscriptionId;
-
-    const deliverPromise2 = waitForWebSocketMessage(
-      ws,
-      (p) =>
-        typeof p === 'object' &&
-        p !== null &&
-        (p as Record<string, unknown>)['method'] === 'weft.events.deliver' &&
-        ((p as Record<string, unknown>)['params'] as Record<string, unknown>)['subscriptionId'] ===
-          subId,
-    );
-
-    await engine2.signal(handle2.id, 'release', 'go');
-    const delivered = (await deliverPromise2) as {
-      params: { envelope: { sequence: number; workflowId: string } };
-    };
-
-    // WS envelopes share projection-layer semantics: sequence is an integer
-    // and workflowId matches — same projection source, different transport.
-    expect(typeof delivered.params.envelope.sequence).toBe('number');
-    expect(delivered.params.envelope.sequence).toBeGreaterThanOrEqual(0);
-    expect(delivered.params.envelope.workflowId).toBe(handle2.id);
-
-    ws.close();
+    expect(wireEnvelopes).toHaveLength(replayed.length);
+    for (const [index, backendEnvelope] of replayed.entries()) {
+      const wireEnvelope = wireEnvelopes[index];
+      expect(wireEnvelope).toBeDefined();
+      expect(wireEnvelope?.sequence).toBe(backendEnvelope.sequence);
+      expect(wireEnvelope?.cursor).toBe(backendEnvelope.cursor);
+      expect(wireEnvelope?.kind).toBe(backendEnvelope.kind);
+    }
   });
 
   it('REST and JSON-RPC share one engine-error mapping layer. The same engine failure produces equivalent transport-level semantics across both surfaces.', async () => {
@@ -636,56 +682,34 @@ describe('Track 8 acceptance coverage', () => {
       expect(content).toContain(criterionText);
     }
 
-    // MF7: Matrix-drift guard — walk the traceability matrix and assert every
-    // closeable behavioral / cross-cutting-structural row with an evidence_test
-    // is represented in the hardcoded list above.  Simple string operations
-    // only; no markdown parser.
     const matrixPath = new URL('../../reference/track-8-traceability.md', import.meta.url).pathname;
     const matrixText = await Bun.file(matrixPath).text();
-    const hardcodedTexts = new Set(fileExpectations.map(([, text]) => text));
+    const cachedFileContents = new Map<string, string>();
 
     for (const line of matrixText.split('\n')) {
-      // Only inspect pipe-delimited data rows (not headers or non-table lines).
       if (!line.startsWith('|')) continue;
       const cells = line.split('|').map((c) => c.trim());
-      // Expected column layout (0-indexed after leading |):
-      // [0] empty, [1] id, [2] criterion, [3] category, [4] status,
-      // [5] wave, [6] evidence_file, [7] evidence_section,
-      // [8] evidence_test, [9] evidence_command, [10] evidence_pr_link,
-      // [11] rationale, [12] closeable
       if (cells.length < 13) continue;
-      const category = cells[3] ?? '';
-      const status = cells[4] ?? '';
+      if (!isRelevantTraceabilityRow(cells)) continue;
+
+      const rowId = cells[1] ?? '';
       const evidenceTest = cells[8] ?? '';
-      const closeable = cells[12] ?? '';
-
-      // Only check rows that are closeable behavioral or cross-cutting-structural.
-      const isRelevantCategory =
-        category === 'behavioral' || category === 'cross-cutting-structural';
-      if (!isRelevantCategory) continue;
-      if (closeable !== 'true') continue;
-      if (status !== 'shipped') continue;
-      if (evidenceTest === 'n/a' || evidenceTest === '') continue;
-
-      // Only guard test files already tracked in the hardcoded list — this
-      // catches a future wave adding a closeable row whose evidence_test
-      // points at one of the guarded files but forgets to extend the list.
-      const evidenceFile = evidenceTest.split(':')[0]?.replace(/`/g, '').trim() ?? '';
-      const hardcodedFiles: Set<string> = new Set(fileExpectations.map(([file]) => file as string));
-      if (!hardcodedFiles.has(evidenceFile)) continue;
-
-      // Extract the quoted test title from `filename.test.ts: "title"`.
-      const match = /:\s+"([^"]+)"/.exec(evidenceTest);
-      if (!match) continue;
-      const title = match[1]!;
-
-      // The hardcoded list must contain the first distinctive fragment of
-      // the title (truncated at 60 chars is sufficient for uniqueness).
-      const fragment = title.slice(0, 60);
-      const found = [...hardcodedTexts].some((t) => t.startsWith(fragment) || title.startsWith(t));
+      const { fileName, title } = parseEvidenceTestReference(rowId, evidenceTest);
+      const file = await resolveTraceabilityTestFile(fileName);
       expect(
-        found,
-        `Matrix row "${cells[1]}" has evidence_test "${title}" but it is not in the hardcoded fileExpectations list. Add it to final-6 or update the matrix.`,
+        await file.exists(),
+        `Matrix row "${rowId}" points at missing test file "${fileName}".`,
+      ).toBe(true);
+
+      let content = cachedFileContents.get(fileName);
+      if (content === undefined) {
+        content = await file.text();
+        cachedFileContents.set(fileName, content);
+      }
+
+      expect(
+        content.includes(title),
+        `Matrix row "${rowId}" expects test title "${title}" in "${fileName}".`,
       ).toBe(true);
     }
   });

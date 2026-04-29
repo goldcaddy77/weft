@@ -52,6 +52,7 @@ export type OperationDefinitionInput<Input, Output> = {
   readonly outputSchema: z.ZodType<Output>;
   readonly access: AccessPolicy;
   readonly transports: TransportAvailability;
+  readonly allowsNotifications?: boolean;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: OperationDefinition<Input, Output>['authorize'];
   readonly invoke: OperationDefinition<Input, Output>['invoke'];
@@ -95,6 +96,9 @@ export function defineOperation<Input, Output>(
     // hold from the moment the builder returns.
     access: copyAccessPolicy(input.access),
     transports: { ...input.transports },
+    ...(input.allowsNotifications === undefined
+      ? {}
+      : { allowsNotifications: input.allowsNotifications }),
     unknownKeyPolicy: { ...input.unknownKeyPolicy },
     ...(input.authorize === undefined ? {} : { authorize: input.authorize }),
     invoke: input.invoke,

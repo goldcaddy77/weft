@@ -61,6 +61,7 @@ function baseContext() {
       name: 'weft.test.note',
       inputSchema: z.object({}),
       outputSchema: z.object({}),
+      allowsNotifications: true,
       invoke: async () => ({}),
     }),
   ]);

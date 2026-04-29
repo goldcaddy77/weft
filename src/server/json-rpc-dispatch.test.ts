@@ -134,6 +134,7 @@ describe('dispatchJsonRpc — single request', () => {
         name: 'weft.test.note',
         inputSchema: z.object({}),
         outputSchema: z.object({}),
+        allowsNotifications: true,
         invoke: async () => ({}),
       }),
     ]);
@@ -149,6 +150,7 @@ describe('dispatchJsonRpc — single request', () => {
         name: 'weft.test.sidenote',
         inputSchema: z.object({}),
         outputSchema: z.object({}),
+        allowsNotifications: true,
         invoke: async () => {
           invoked = true;
           return {};
@@ -158,6 +160,31 @@ describe('dispatchJsonRpc — single request', () => {
     const body = JSON.stringify({ jsonrpc: '2.0', method: 'weft.test.sidenote' });
     await dispatchJsonRpc(body, { ...baseContext(), registry });
     expect(invoked).toBe(true);
+  });
+
+  it('returns Invalid Request when a method does not opt into notifications', async () => {
+    let invoked = false;
+    const registry = createOperationRegistry([
+      makeOp({
+        name: 'weft.test.requestonly',
+        inputSchema: z.object({}),
+        outputSchema: z.object({}),
+        invoke: async () => {
+          invoked = true;
+          return {};
+        },
+      }),
+    ]);
+    const body = JSON.stringify({ jsonrpc: '2.0', method: 'weft.test.requestonly' });
+    const result = await dispatchJsonRpc(body, { ...baseContext(), registry });
+    expect(result.kind).toBe('single');
+    if (result.kind !== 'single') throw new Error('shape');
+    if (!('error' in result.response)) throw new Error('expected error');
+    expect(result.response.error.code).toBe(-32600);
+    expect(result.response.error.message).toBe(
+      'method weft.test.requestonly does not allow notifications',
+    );
+    expect(invoked).toBe(false);
   });
 
   it('rejects array-form params with InvalidRequest (named-params-only policy)', async () => {
@@ -182,12 +209,14 @@ describe('dispatchJsonRpc — batch', () => {
         name: 'weft.test.one',
         inputSchema: z.object({}),
         outputSchema: z.object({ tag: z.string() }),
+        allowsNotifications: true,
         invoke: async () => ({ tag: 'one' }),
       }),
       makeOp({
         name: 'weft.test.two',
         inputSchema: z.object({}),
         outputSchema: z.object({ tag: z.string() }),
+        allowsNotifications: true,
         invoke: async () => ({ tag: 'two' }),
       }),
     ]);

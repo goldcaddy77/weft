@@ -47,6 +47,7 @@ import {
   type WebSocketData,
 } from './json-rpc-websocket-runtime.ts';
 import type { JsonRpcWebSocketSession } from './json-rpc-websocket.ts';
+import { type OpenApiSecuritySchemeName } from './openapi.ts';
 import type { Principal } from './principal.ts';
 import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
 import {
@@ -200,6 +201,19 @@ const MAX_VISIBILITY_TIMEOUT = 3_600_000;
 const MAX_WORKER_CONCURRENCY = 1_000;
 /** Reconciliation full-scan runs at this multiple of the visibility poll interval (~60s at default). */
 const RECONCILIATION_MULTIPLIER = 12;
+
+function deriveSupportedOpenApiSecuritySchemes(
+  auth: AuthConfig | undefined,
+): ReadonlySet<OpenApiSecuritySchemeName> {
+  const schemes = new Set<OpenApiSecuritySchemeName>();
+  if (auth?.jwt !== undefined) {
+    schemes.add('bearerAuth');
+  }
+  if ((auth?.apiKeys?.length ?? 0) > 0 || auth?.resolveApiKeyPrincipal !== undefined) {
+    schemes.add('apiKeyAuth');
+  }
+  return schemes;
+}
 
 /**
  * Clamp a visibility timeout to the allowed range.
@@ -888,6 +902,7 @@ export function serve(options: ServeOptions): WeftServer {
     options.metricsCollector !== undefined ? { metricsCollector: options.metricsCollector } : {},
   );
   const liveRestBindings = createLiveRestBindings();
+  const supportedAuthenticationSchemes = deriveSupportedOpenApiSecuritySchemes(options.auth);
   const eventFeedBackend = createEngineEventFeedBackend(options.engine);
   const workflowEventFeed: WorkflowEventFeed = createWorkflowEventFeed(eventFeedBackend);
   // Track every live `/jsonrpc` session so shutdown can await their
@@ -1300,6 +1315,7 @@ export function serve(options: ServeOptions): WeftServer {
           : {}),
         operationRegistry: liveOperationRegistry,
         restBindings: liveRestBindings,
+        supportedAuthenticationSchemes,
       });
     },
     websocket: {

@@ -1,12 +1,25 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 
 import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { createEngineEventFeedBackend } from './engine-event-feed-backend.ts';
+import { serve, type WeftServer } from './index.ts';
 import { parseOptionalSequenceCursor } from './sequence-cursor.ts';
 import { createWorkflowEventFeed, type EventEnvelope } from './workflow-event-feed.ts';
+
+const engines: Engine[] = [];
+const servers: WeftServer[] = [];
+
+afterEach(async () => {
+  while (servers.length > 0) {
+    await servers.pop()?.stop();
+  }
+  while (engines.length > 0) {
+    engines.pop()?.[Symbol.dispose]();
+  }
+});
 
 describe('parseOptionalSequenceCursor', () => {
   it('returns an empty result when the cursor is omitted', () => {
@@ -44,6 +57,7 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
   // Set up a workflow that emits several events.
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
+  engines.push(engine);
   engine.register('multi', async function* (ctx: WorkflowContext, _input: unknown) {
     const context = ctx as Context;
     yield* context.run(async () => 'step-1');
@@ -53,10 +67,11 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
 
   const handle = await engine.start('multi', {}, {});
   await handle.result();
-  engine[Symbol.dispose]();
 
   const backend = createEngineEventFeedBackend(engine);
   const feed = createWorkflowEventFeed(backend);
+  const server = serve({ engine, port: 0 });
+  servers.push(server);
 
   try {
     // Surface 1: replay — yields all persisted envelopes in sequence order.
@@ -65,22 +80,10 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
       replayed.push(envelope);
     }
 
-    // Surface 2: subscribe — should deliver the same events in the same order
-    // when the workflow is already complete (all events are already stored).
-    const subscribed: EventEnvelope[] = [];
-    const abortController = new AbortController();
-
-    for await (const envelope of feed.subscribe({
-      workflowId: handle.id,
-      selector: 'events',
-      signal: abortController.signal,
-    })) {
-      subscribed.push(envelope);
-      // Break after we have received everything replay yielded.
-      if (subscribed.length >= replayed.length) {
-        abortController.abort();
-      }
-    }
+    // Surface 2: WebSocket subscription — should deliver the same replayed
+    // envelopes in the same order because both transports project from the
+    // shared event feed.
+    const subscribed = await collectWebSocketDeliveredEnvelopes(server, handle.id, replayed.length);
 
     expect(replayed.length).toBeGreaterThan(0);
     expect(subscribed.length).toBe(replayed.length);
@@ -108,3 +111,101 @@ it('All live views share the same sequence and cursor semantics. Replay, resume,
     feed.dispose();
   }
 });
+
+function openWebSocket(url: string): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    const webSocket = new WebSocket(url);
+    webSocket.addEventListener('open', () => resolve(webSocket));
+    webSocket.addEventListener('error', (event) => reject(event));
+  });
+}
+
+async function collectWebSocketDeliveredEnvelopes(
+  server: WeftServer,
+  workflowId: string,
+  expectedCount: number,
+): Promise<EventEnvelope[]> {
+  const webSocket = await openWebSocket(`${server.url.replace('http://', 'ws://')}/jsonrpc`);
+
+  try {
+    return await new Promise<EventEnvelope[]>((resolve, reject) => {
+      const received: EventEnvelope[] = [];
+      const correlationId = `sequence-cursor-${workflowId}`;
+      let subscriptionId: string | undefined;
+
+      const timer = setTimeout(() => {
+        webSocket.removeEventListener('message', handler);
+        reject(new Error('collectWebSocketDeliveredEnvelopes timed out'));
+      }, 3_000);
+
+      function finish(value: EventEnvelope[]): void {
+        clearTimeout(timer);
+        webSocket.removeEventListener('message', handler);
+        resolve(value);
+      }
+
+      function handler(event: MessageEvent): void {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(String(event.data));
+        } catch {
+          return;
+        }
+        if (typeof parsed !== 'object' || parsed === null) {
+          return;
+        }
+
+        const record = parsed as Record<string, unknown>;
+        if (record['id'] === correlationId) {
+          const result = record['result'];
+          if (typeof result === 'object' && result !== null) {
+            const candidateSubscriptionId = (result as Record<string, unknown>)['subscriptionId'];
+            if (typeof candidateSubscriptionId === 'string') {
+              subscriptionId = candidateSubscriptionId;
+              if (expectedCount === 0) {
+                finish([]);
+              }
+            }
+          }
+          return;
+        }
+
+        if (record['method'] !== 'weft.events.deliver' || subscriptionId === undefined) {
+          return;
+        }
+
+        const params = record['params'];
+        if (typeof params !== 'object' || params === null) {
+          return;
+        }
+
+        const deliverParams = params as Record<string, unknown>;
+        if (deliverParams['subscriptionId'] !== subscriptionId) {
+          return;
+        }
+
+        const envelope = deliverParams['envelope'];
+        if (typeof envelope !== 'object' || envelope === null) {
+          return;
+        }
+
+        received.push(envelope as EventEnvelope);
+        if (received.length >= expectedCount) {
+          finish(received);
+        }
+      }
+
+      webSocket.addEventListener('message', handler);
+      webSocket.send(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: correlationId,
+          method: 'weft.workflows.subscribe',
+          params: { workflowId, selector: 'events' },
+        }),
+      );
+    });
+  } finally {
+    webSocket.close();
+  }
+}

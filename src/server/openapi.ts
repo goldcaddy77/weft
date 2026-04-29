@@ -13,6 +13,8 @@ import type { UnknownRestBinding } from './rest-bindings.ts';
 import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
 import { ROUTES, toOpenApiPath } from './route-model.ts';
 
+export type OpenApiSecuritySchemeName = 'bearerAuth' | 'apiKeyAuth';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -34,6 +36,11 @@ export type OpenApiOptions = {
   restBindings?: ReadonlyArray<UnknownRestBinding>;
   /** Server URL. When omitted, no `servers` array is included. */
   serverUrl?: string;
+  /**
+   * Security schemes the live server actually supports. When omitted,
+   * emit both schemes for backward-compatible call sites.
+   */
+  supportedSchemes?: ReadonlySet<OpenApiSecuritySchemeName>;
 };
 
 // ---------------------------------------------------------------------------
@@ -145,26 +152,33 @@ export function generateOpenApiDocument(options?: OpenApiOptions): Record<string
   emitRoutes(paths, tagSet, boundMethodPaths);
 
   const tags = [...tagSet].toSorted().map((name) => ({ name }));
+  const supportedSchemes =
+    options?.supportedSchemes ?? new Set<OpenApiSecuritySchemeName>(['bearerAuth', 'apiKeyAuth']);
+  const security = [...supportedSchemes].map((schemeName) => ({ [schemeName]: [] }));
+  const schemeDefinitions: Record<OpenApiSecuritySchemeName, Record<string, string>> = {
+    bearerAuth: {
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+    },
+    apiKeyAuth: {
+      type: 'apiKey',
+      in: 'header',
+      name: 'x-api-key',
+    },
+  };
+  const emittedSecuritySchemes = Object.fromEntries(
+    [...supportedSchemes].map((schemeName) => [schemeName, schemeDefinitions[schemeName]]),
+  );
 
   const document: Record<string, unknown> = {
     openapi: '3.1.0',
     info: { title, version },
     paths,
     tags,
-    security: [{ bearerAuth: [] }, { apiKeyAuth: [] }],
+    security,
     components: {
-      securitySchemes: {
-        bearerAuth: {
-          type: 'http',
-          scheme: 'bearer',
-          bearerFormat: 'JWT',
-        },
-        apiKeyAuth: {
-          type: 'apiKey',
-          in: 'header',
-          name: 'x-api-key',
-        },
-      },
+      securitySchemes: emittedSecuritySchemes,
     },
   };
 
