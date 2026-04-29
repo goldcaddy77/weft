@@ -5717,7 +5717,7 @@ Track 8 extends the runtime surface without creating a second execution system. 
 - [ ] **Runtime JSON-RPC methods use stable namespaced names.** Examples: `weft.workflows.start`, `weft.workflows.get`, `weft.workflows.signal`. These names belong to the runtime API surface and are not MCP method names.
 - [ ] **JSON-RPC uses named params only.** The OpenRPC contract documents `paramStructure: "by-name"` so generated clients and manual callers converge on one request shape.
 - [ ] **Batch requests are supported.** The shared dispatcher validates and executes JSON-RPC batches without inventing transport-specific behavior.
-- [ ] **Notifications are opt-in per method.** Mutating operations default to request-response so callers do not silently lose errors or authorization failures.
+- [ ] **Notifications are opt-in per call.** Per JSON-RPC 2.0, the caller opts in to fire-and-forget by omitting the `id` field; an id-present request always produces a wire response. Every cataloged operation runs the same pipeline (schema validation, authorization, invoke) regardless of id presence, so authorization failures and validation errors are recorded server-side either way. Mutating operations therefore default to request-response — every standard JSON-RPC client library includes `id` automatically; notifications are an explicit caller opt-in by omitting it. (Originally drafted as "opt-in per method" before the spec-compliance review surfaced that returning a wire error for id-less calls would itself violate JSON-RPC 2.0.)
 - [ ] **Subscription notifications reuse the shared event projection layer.** Watch and stream APIs are documented as projections of current engine events rather than bespoke server-side state machines.
 
 #### 8c. Error handling

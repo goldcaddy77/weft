@@ -356,7 +356,7 @@ describe('Track 8 acceptance coverage', () => {
     );
   });
 
-  it('Notifications are opt-in per method. Mutating operations default to request-response so callers do not silently lose errors or authorization failures.', async () => {
+  it('Notifications are opt-in per call. Per JSON-RPC 2.0, the caller opts in to fire-and-forget by omitting the id field; an id-present request always produces a wire response. Every cataloged operation runs the same pipeline (schema validation, authorization, invoke) regardless of id presence, so authorization failures and validation errors are recorded server-side either way. Mutating operations therefore default to request-response — every standard JSON-RPC client library includes id automatically; notifications are an explicit caller opt-in by omitting it.', async () => {
     // The criterion is satisfied at the JSON-RPC 2.0 protocol level:
     // every method is "opt-in per call" — the caller chooses by including
     // or omitting `id`. The operation pipeline (schema validation,
@@ -639,7 +639,7 @@ describe('Track 8 acceptance coverage', () => {
         'One server-side event projection layer feeds every live transport',
       ],
       ['track8-acceptance.test.ts', 'Runtime JSON-RPC methods use stable namespaced names'],
-      ['track8-acceptance.test.ts', 'Notifications are opt-in per method'],
+      ['track8-acceptance.test.ts', 'Notifications are opt-in per call'],
       [
         'track8-acceptance.test.ts',
         'Subscription notifications reuse the shared event projection layer',
