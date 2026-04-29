@@ -6102,6 +6102,48 @@
     },
     {
       "sourceFile": "src/server/handler.ts",
+      "sourceName": "countLiteralSegments",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/server/handler",
+          "exportName": "countLiteralSegments",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/server/handler.ts",
+      "sourceName": "countPathParameters",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/server/handler",
+          "exportName": "countPathParameters",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/server/handler.ts",
+      "sourceName": "extractRouteParameters",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/server/handler",
+          "exportName": "extractRouteParameters",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/server/handler.ts",
       "sourceName": "getRequiredRouteParameter",
       "kind": "value",
       "subKind": "function",
@@ -6128,6 +6170,34 @@
         {
           "importPath": "weft/server/handler",
           "exportName": "handleRequest",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/server/handler.ts",
+      "sourceName": "isOperationFaultLike",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/server/handler",
+          "exportName": "isOperationFaultLike",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/server/handler.ts",
+      "sourceName": "shouldPreferLegacyRoute",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/server/handler",
+          "exportName": "shouldPreferLegacyRoute",
           "kind": "value"
         }
       ],
