@@ -30,6 +30,27 @@ const SHARED_STATE_BASE_DELAY_MS = 5;
 /** Upper bound for each CAS retry backoff delay, in milliseconds. */
 const SHARED_STATE_MAX_DELAY_MS = 100;
 
+/**
+ * Thrown by {@link SharedState.update} when the CAS (compare-and-swap) loop
+ * exhausts its retry budget without successfully committing. Inspect
+ * `stateKey` and `attempts` to diagnose contention.
+ *
+ * @example
+ * ```ts
+ * import { SharedState, SharedStateConflictError } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const state = new SharedState<number>(storage, 'wf-1', 'counter', { maxRetries: 3 });
+ * try {
+ *   await state.update(n => n + 1, 0);
+ * } catch (err) {
+ *   if (err instanceof SharedStateConflictError) {
+ *     console.error('conflict on', err.stateKey, 'after', err.attempts, 'attempts');
+ *   }
+ * }
+ * ```
+ */
 export class SharedStateConflictError extends Error {
   readonly stateKey: string;
   readonly attempts: number;
@@ -44,6 +65,28 @@ export class SharedStateConflictError extends Error {
   }
 }
 
+/**
+ * Optimistic-concurrency key-value store for sharing mutable state across
+ * concurrent workflow executions. Uses a compare-and-swap (CAS) loop backed
+ * by the engine's storage layer. Suitable for counters, queues, or any
+ * piece of state that multiple workflow instances need to read and update
+ * without distributed locking.
+ *
+ * @example
+ * ```ts
+ * import { SharedState } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const counter = new SharedState<number>(storage, 'wf-123', 'clickCount');
+ *
+ * const { value } = await counter.get(0);
+ * console.log(value); // 0
+ *
+ * const { value: next } = await counter.update(n => n + 1, 0);
+ * console.log(next); // 1
+ * ```
+ */
 export class SharedState<T> {
   #storage: Storage;
   #workflowId: string;

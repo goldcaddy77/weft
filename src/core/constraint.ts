@@ -34,6 +34,31 @@ export interface ConstraintCheckState {
   status: 'running';
 }
 
+/**
+ * Domain invariant evaluated at every workflow checkpoint commit. Build via
+ * the {@link constraint} factory function and register on a workflow via
+ * {@link WorkflowRegistration.constraints}. When `check` returns `false` the
+ * engine reacts per `onViolation` and emits a {@link ConstraintViolatedEvent}.
+ *
+ * @example
+ * ```ts
+ * import { constraint, Engine, type ConstraintDefinition } from 'weft';
+ *
+ * let balance = 0;
+ * const positiveBalance: ConstraintDefinition = constraint('positiveBalance', {
+ *   scope: 'transaction',
+ *   check: () => balance >= 0,
+ *   onViolation: 'compensate',
+ * });
+ *
+ * const engine = new Engine();
+ * engine.register('transfer', {
+ *   handler: async function* () { return 'done'; },
+ *   constraints: [positiveBalance],
+ * });
+ * void engine;
+ * ```
+ */
 export interface ConstraintDefinition {
   name: string;
   /** Domain label for observability (e.g. 'transaction', 'budget'). */

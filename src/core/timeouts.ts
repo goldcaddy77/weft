@@ -127,6 +127,32 @@ export function timeRemaining(deadline: number | undefined, now: number): number
 // Timeout error
 // ---------------------------------------------------------------------------
 
+/**
+ * Thrown inside a workflow generator when it exceeds its configured execution
+ * or run timeout. Also available as an event via {@link WorkflowTimedOutEvent}.
+ * The `timeoutType` distinguishes `'execution'` (wall-clock cap set via
+ * {@link StartOptions.executionTimeout}) from `'run'` (per-step run timeout).
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowTimeoutError } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('slow', async function* () {
+ *   await new Promise(resolve => setTimeout(resolve, 60_000));
+ *   return 'done';
+ * });
+ *
+ * try {
+ *   const handle = await engine.start('slow', null, { executionTimeout: '1s' });
+ *   await handle.result();
+ * } catch (err) {
+ *   if (err instanceof WorkflowTimeoutError) {
+ *     console.error('timed out after', err.elapsed, 'ms, type:', err.timeoutType);
+ *   }
+ * }
+ * ```
+ */
 export class WorkflowTimeoutError extends Error {
   readonly workflowId: string;
   readonly timeoutType: 'execution' | 'run';

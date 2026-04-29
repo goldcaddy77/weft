@@ -32,10 +32,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -49,10 +49,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -66,10 +66,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/agent.ts",
@@ -77,9 +77,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -94,7 +94,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -105,9 +105,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -116,9 +116,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -133,9 +133,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -144,9 +144,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -155,9 +155,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -166,9 +166,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -183,7 +183,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -194,9 +194,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -211,7 +211,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -228,10 +228,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/budget-policy.ts",
@@ -245,10 +245,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -256,9 +256,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -273,10 +273,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -290,7 +290,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -307,10 +307,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -324,10 +324,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -341,10 +341,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/budget.ts",
@@ -352,9 +352,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -363,9 +363,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -374,9 +374,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -391,10 +391,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -402,9 +402,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -419,7 +419,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -430,9 +430,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -447,10 +447,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/context-window.ts",
@@ -458,9 +458,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -475,7 +475,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -492,7 +492,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -503,9 +503,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -514,9 +514,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -525,9 +525,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -536,9 +536,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -547,9 +547,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -558,9 +558,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -569,9 +569,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -580,9 +580,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -597,7 +597,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -614,7 +614,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -631,7 +631,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -642,9 +642,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -659,7 +659,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -676,10 +676,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -687,9 +687,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -704,10 +704,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/declaration.ts",
@@ -721,9 +721,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -738,7 +738,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -755,7 +755,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -772,10 +772,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -789,10 +789,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -806,7 +806,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -817,9 +817,9 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -834,10 +834,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -851,10 +851,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -868,10 +868,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -885,10 +885,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -902,10 +902,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -919,10 +919,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -936,10 +936,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -953,10 +953,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -970,10 +970,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/events.ts",
@@ -981,9 +981,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -992,9 +992,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1003,9 +1003,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1020,10 +1020,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/hooks.ts",
@@ -1031,9 +1031,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1042,9 +1042,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1053,9 +1053,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1064,9 +1064,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1075,9 +1075,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1086,9 +1086,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1097,9 +1097,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1114,10 +1114,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -1131,10 +1131,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/human-review.ts",
@@ -1142,9 +1142,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1153,9 +1153,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1164,9 +1164,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1181,10 +1181,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/authentication.ts",
@@ -1198,7 +1198,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1215,7 +1215,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1232,7 +1232,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1249,10 +1249,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1266,10 +1266,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1283,7 +1283,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1300,7 +1300,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1317,10 +1317,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/client.ts",
@@ -1334,10 +1334,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1351,7 +1351,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1368,10 +1368,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1385,10 +1385,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/oauth2-token-manager.ts",
@@ -1402,7 +1402,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1419,10 +1419,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/registry.ts",
@@ -1436,10 +1436,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/registry.ts",
@@ -1453,10 +1453,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/schema-validator.ts",
@@ -1470,10 +1470,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/schema-validator.ts",
@@ -1481,9 +1481,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1492,9 +1492,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1509,7 +1509,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1526,10 +1526,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport-http-sse.ts",
@@ -1543,10 +1543,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport-http.ts",
@@ -1560,7 +1560,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1577,10 +1577,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport-http.ts",
@@ -1594,10 +1594,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport-stdio.ts",
@@ -1611,10 +1611,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport-stdio.ts",
@@ -1628,10 +1628,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1645,7 +1645,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1662,10 +1662,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1679,10 +1679,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1696,10 +1696,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1713,10 +1713,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/mcp/transport.ts",
@@ -1730,7 +1730,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1747,7 +1747,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1758,9 +1758,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1775,10 +1775,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1792,10 +1792,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/model-router.ts",
@@ -1809,7 +1809,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1820,9 +1820,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -1837,7 +1837,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1854,7 +1854,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1871,7 +1871,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1888,7 +1888,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1905,9 +1905,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -1922,7 +1922,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1939,7 +1939,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1956,7 +1956,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1973,7 +1973,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -1990,7 +1990,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2007,7 +2007,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2018,9 +2018,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2029,9 +2029,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2046,10 +2046,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/anthropic.ts",
@@ -2063,10 +2063,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/anthropic.ts",
@@ -2074,9 +2074,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2091,10 +2091,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/interface.ts",
@@ -2108,10 +2108,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/openai.ts",
@@ -2125,10 +2125,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/openai.ts",
@@ -2136,9 +2136,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2153,10 +2153,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2170,10 +2170,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2181,9 +2181,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2198,10 +2198,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2215,10 +2215,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2226,9 +2226,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2243,10 +2243,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B3-ai"
     },
     {
       "sourceFile": "src/ai/providers/types.ts",
@@ -2254,9 +2254,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2265,9 +2265,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2282,7 +2282,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2293,9 +2293,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2310,7 +2310,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2327,7 +2327,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2344,7 +2344,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2361,7 +2361,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2378,7 +2378,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2389,9 +2389,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2406,7 +2406,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2423,10 +2423,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2440,10 +2440,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2457,10 +2457,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2474,10 +2474,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2491,10 +2491,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2508,10 +2508,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2525,10 +2525,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/alerting/types.ts",
@@ -2542,10 +2542,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/client/index.ts",
@@ -2564,7 +2564,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2586,7 +2586,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2608,7 +2608,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2630,7 +2630,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2647,7 +2647,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2669,9 +2669,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -2691,7 +2691,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2713,7 +2713,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2730,7 +2730,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2747,7 +2747,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2764,8 +2764,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -2775,9 +2775,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2786,9 +2786,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2803,7 +2803,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2820,7 +2820,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2837,7 +2837,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2854,7 +2854,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2871,7 +2871,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2882,9 +2882,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2893,9 +2893,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2904,9 +2904,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -2921,7 +2921,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2938,7 +2938,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2955,7 +2955,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -2972,8 +2972,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -2989,8 +2989,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3006,8 +3006,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3017,9 +3017,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3034,7 +3034,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -3051,7 +3051,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -3062,9 +3062,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3073,9 +3073,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3090,9 +3090,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -3107,8 +3107,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3124,9 +3124,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -3141,7 +3141,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -3152,9 +3152,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3169,8 +3169,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3186,10 +3186,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -3203,10 +3203,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/context.ts",
@@ -3220,8 +3220,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3237,7 +3237,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -3254,9 +3254,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -3271,8 +3271,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3288,8 +3288,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3305,7 +3305,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -3316,9 +3316,9 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3327,9 +3327,9 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3344,7 +3344,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -3361,8 +3361,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3378,8 +3378,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3389,9 +3389,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3400,9 +3400,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3411,9 +3411,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3428,8 +3428,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3445,8 +3445,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3462,8 +3462,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3479,8 +3479,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3496,8 +3496,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3513,8 +3513,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3530,8 +3530,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3547,8 +3547,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3558,9 +3558,9 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3575,8 +3575,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3592,8 +3592,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3609,8 +3609,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3626,8 +3626,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3643,8 +3643,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3660,8 +3660,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3677,8 +3677,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3694,8 +3694,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3711,8 +3711,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3728,8 +3728,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3745,8 +3745,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3762,8 +3762,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3779,8 +3779,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3796,8 +3796,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3813,8 +3813,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3830,8 +3830,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3847,8 +3847,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3864,7 +3864,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -3881,8 +3881,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3898,8 +3898,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3909,9 +3909,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3920,9 +3920,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3931,9 +3931,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3942,9 +3942,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -3959,8 +3959,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -3976,10 +3976,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -3993,10 +3993,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/interceptor.ts",
@@ -4010,8 +4010,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4027,8 +4027,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4044,8 +4044,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4061,8 +4061,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4078,8 +4078,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4095,8 +4095,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4112,7 +4112,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4129,7 +4129,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4146,7 +4146,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4157,9 +4157,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4168,9 +4168,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4185,7 +4185,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4196,9 +4196,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4207,9 +4207,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4224,7 +4224,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4235,9 +4235,9 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4252,7 +4252,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4269,7 +4269,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4286,7 +4286,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4297,9 +4297,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4308,9 +4308,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4325,8 +4325,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4342,8 +4342,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4353,9 +4353,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4364,9 +4364,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4381,8 +4381,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4398,8 +4398,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4415,7 +4415,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4426,9 +4426,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4437,9 +4437,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4454,8 +4454,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4465,9 +4465,9 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4482,7 +4482,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4499,7 +4499,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4516,7 +4516,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4527,9 +4527,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4544,8 +4544,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4561,7 +4561,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4572,9 +4572,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4589,7 +4589,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4606,7 +4606,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -4623,8 +4623,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4640,8 +4640,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4657,8 +4657,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4674,8 +4674,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4685,9 +4685,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4702,9 +4702,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -4719,9 +4719,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -4736,9 +4736,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -4753,9 +4753,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -4770,9 +4770,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -4787,10 +4787,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4804,9 +4804,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -4821,9 +4821,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -4838,9 +4838,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -4855,8 +4855,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4872,9 +4872,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -4889,10 +4889,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4906,10 +4906,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4917,9 +4917,9 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4928,9 +4928,9 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4939,9 +4939,9 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -4956,8 +4956,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -4973,10 +4973,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -4990,7 +4990,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -5007,8 +5007,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5024,7 +5024,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -5041,9 +5041,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5058,8 +5058,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5075,8 +5075,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5092,9 +5092,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5103,9 +5103,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -5114,9 +5114,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -5125,9 +5125,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -5136,9 +5136,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -5153,9 +5153,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5170,9 +5170,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5187,8 +5187,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5204,8 +5204,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5221,7 +5221,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -5238,9 +5238,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5255,9 +5255,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5272,9 +5272,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5289,8 +5289,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5306,8 +5306,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5323,9 +5323,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5340,9 +5340,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5357,9 +5357,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5368,9 +5368,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -5385,8 +5385,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5402,8 +5402,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5419,8 +5419,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5436,7 +5436,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -5453,8 +5453,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5470,8 +5470,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5487,8 +5487,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5504,9 +5504,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5521,8 +5521,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5538,9 +5538,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5555,8 +5555,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5572,9 +5572,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5583,9 +5583,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -5594,9 +5594,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -5605,9 +5605,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -5622,7 +5622,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -5639,9 +5639,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5656,8 +5656,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5673,8 +5673,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5690,8 +5690,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5707,10 +5707,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5724,8 +5724,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5741,10 +5741,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "prose-only",
       "classificationRationale": null,
-      "batch": null
+      "batch": "A1-core"
     },
     {
       "sourceFile": "src/core/types.ts",
@@ -5758,8 +5758,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5775,8 +5775,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5792,8 +5792,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5809,8 +5809,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5826,9 +5826,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5843,9 +5843,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5860,9 +5860,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5877,9 +5877,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5894,9 +5894,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5911,9 +5911,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5928,9 +5928,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classification": "prose-only",
+      "currentState": "prose-only",
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -5945,8 +5945,8 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5962,7 +5962,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -5979,8 +5979,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -5990,9 +5990,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6001,9 +6001,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6012,9 +6012,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6029,8 +6029,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -6046,8 +6046,8 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
-      "currentState": "no-jsdoc",
+      "classification": "example-required",
+      "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
     },
@@ -6057,9 +6057,9 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6074,9 +6074,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -6091,9 +6091,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -6108,9 +6108,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -6119,9 +6119,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6136,7 +6136,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6147,9 +6147,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6164,7 +6164,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6181,7 +6181,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6198,7 +6198,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6215,7 +6215,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6232,7 +6232,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6249,7 +6249,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6266,7 +6266,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6283,7 +6283,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6300,7 +6300,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6317,9 +6317,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -6334,7 +6334,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6351,9 +6351,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -6368,7 +6368,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6385,9 +6385,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -6402,7 +6402,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6419,7 +6419,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6436,7 +6436,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6453,10 +6453,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6470,10 +6470,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6487,10 +6487,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6504,10 +6504,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6521,10 +6521,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6538,10 +6538,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6555,10 +6555,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6572,10 +6572,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6583,9 +6583,9 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6600,10 +6600,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6617,10 +6617,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6634,10 +6634,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/types.ts",
@@ -6651,10 +6651,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/diagnostics/version-check.ts",
@@ -6668,10 +6668,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/index.ts",
@@ -6685,7 +6685,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6702,7 +6702,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6719,10 +6719,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/observability/index.ts",
@@ -6736,7 +6736,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6747,9 +6747,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6758,9 +6758,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6769,9 +6769,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6786,7 +6786,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6797,9 +6797,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6808,9 +6808,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6819,9 +6819,9 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6830,9 +6830,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6847,7 +6847,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6864,9 +6864,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -6881,7 +6881,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6898,7 +6898,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6909,9 +6909,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6920,9 +6920,9 @@
       "kind": "value",
       "subKind": "const",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -6937,7 +6937,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6954,7 +6954,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6971,7 +6971,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6988,7 +6988,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -6999,9 +6999,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7010,9 +7010,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7027,7 +7027,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7038,9 +7038,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7049,9 +7049,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7060,9 +7060,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7071,9 +7071,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7082,9 +7082,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7099,7 +7099,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7116,7 +7116,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7133,7 +7133,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7144,9 +7144,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7161,7 +7161,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7178,9 +7178,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -7195,7 +7195,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7206,9 +7206,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7217,9 +7217,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7228,9 +7228,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7245,7 +7245,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7262,7 +7262,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7273,9 +7273,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7290,7 +7290,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7301,9 +7301,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7318,10 +7318,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7329,9 +7329,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7346,10 +7346,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7363,10 +7363,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7380,10 +7380,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7397,10 +7397,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7414,10 +7414,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7431,10 +7431,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7448,10 +7448,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/authentication.ts",
@@ -7459,9 +7459,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7476,7 +7476,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7487,9 +7487,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7498,9 +7498,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7515,7 +7515,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7526,9 +7526,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7543,10 +7543,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/handler.ts",
@@ -7560,7 +7560,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7577,10 +7577,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/handler.ts",
@@ -7599,7 +7599,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7616,7 +7616,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7633,10 +7633,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -7650,10 +7650,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -7667,10 +7667,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/server/index.ts",
@@ -7684,7 +7684,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7701,7 +7701,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7712,9 +7712,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7729,9 +7729,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -7740,9 +7740,9 @@
       "kind": "value",
       "subKind": "class",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7751,9 +7751,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7762,9 +7762,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7773,9 +7773,9 @@
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -7790,10 +7790,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/service-worker/index.ts",
@@ -7807,7 +7807,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7824,7 +7824,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7841,7 +7841,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7883,10 +7883,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/compressed-storage.ts",
@@ -7900,7 +7900,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -7922,10 +7922,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/indexeddb.ts",
@@ -7939,10 +7939,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/interface.ts",
@@ -7966,9 +7966,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -7993,9 +7993,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -8020,7 +8020,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8047,7 +8047,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8074,7 +8074,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8091,7 +8091,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8108,7 +8108,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8125,7 +8125,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8142,7 +8142,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8169,7 +8169,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8186,7 +8186,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8203,7 +8203,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8220,7 +8220,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8237,7 +8237,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8264,7 +8264,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8281,7 +8281,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8298,7 +8298,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8325,7 +8325,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8347,10 +8347,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/scoped-storage.ts",
@@ -8369,10 +8369,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/scoped-storage.ts",
@@ -8391,10 +8391,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/turso.ts",
@@ -8408,7 +8408,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8425,7 +8425,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8436,9 +8436,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -8458,10 +8458,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8469,9 +8469,9 @@
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -8491,10 +8491,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8513,10 +8513,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8535,10 +8535,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
-      "batch": null
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8557,10 +8557,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8579,10 +8579,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8601,10 +8601,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8623,10 +8623,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/storage/typed-storage.ts",
@@ -8645,10 +8645,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -8662,7 +8662,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8679,7 +8679,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8696,7 +8696,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8713,7 +8713,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8730,7 +8730,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8747,7 +8747,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8764,10 +8764,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/testing/mocks.ts",
@@ -8781,7 +8781,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8798,10 +8798,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/testing/mocks.ts",
@@ -8815,10 +8815,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/testing/test-engine.ts",
@@ -8832,7 +8832,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8849,7 +8849,7 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -8866,10 +8866,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/testing/time-control.ts",
@@ -8883,10 +8883,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/worker/heartbeat.ts",
@@ -8900,10 +8900,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/worker/index.ts",
@@ -8911,9 +8911,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -8928,10 +8928,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/worker/index.ts",
@@ -8939,9 +8939,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -8956,10 +8956,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/worker/long-poll.ts",
@@ -8967,9 +8967,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -8978,9 +8978,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -8989,9 +8989,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -9006,9 +9006,9 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "prose-only",
       "currentState": "prose-only",
-      "classificationRationale": null,
+      "classificationRationale": "returned/read-only shape — users observe rather than construct it",
       "batch": null
     },
     {
@@ -9017,9 +9017,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -9034,10 +9034,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/worker/registry.ts",
@@ -9045,9 +9045,9 @@
       "kind": "type",
       "subKind": "interface",
       "publicFaces": [],
-      "classification": "unclassified",
+      "classification": "not-public",
       "currentState": "no-jsdoc",
-      "classificationRationale": null,
+      "classificationRationale": "exported from a source file but not re-exported through any public entry point",
       "batch": null
     },
     {
@@ -9062,10 +9062,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/workers/activity-runner.ts",
@@ -9079,10 +9079,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/workers/activity-runner.ts",
@@ -9096,10 +9096,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/workers/activity-worker-dispatcher.ts",
@@ -9113,10 +9113,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/workers/activity-worker-dispatcher.ts",
@@ -9130,10 +9130,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/workers/activity-worker-entry.ts",
@@ -9147,10 +9147,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/workers/activity-worker-entry.ts",
@@ -9164,7 +9164,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -9181,7 +9181,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -9198,7 +9198,7 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "has-example",
       "classificationRationale": null,
       "batch": null
@@ -9215,10 +9215,10 @@
           "kind": "value"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     },
     {
       "sourceFile": "src/workers/pool.ts",
@@ -9232,10 +9232,10 @@
           "kind": "type"
         }
       ],
-      "classification": "unclassified",
+      "classification": "example-required",
       "currentState": "no-jsdoc",
       "classificationRationale": null,
-      "batch": null
+      "batch": "B2-infra"
     }
   ]
 }

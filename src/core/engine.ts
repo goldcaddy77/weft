@@ -272,6 +272,29 @@ export interface AgentRegistrationOptions {
   provider: LLMProvider;
 }
 
+/**
+ * Thrown by {@link Engine.start} when a workflow with the requested ID already
+ * exists in storage. Inspect the `workflowId` property to identify the
+ * conflict. To allow deduplication semantics instead of an error, pass
+ * `idempotencyKey` in {@link StartOptions}.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowAlreadyExistsError } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('ping', async function* () { return 'pong'; });
+ *
+ * await engine.start('ping', null, { id: 'my-ping' });
+ * try {
+ *   await engine.start('ping', null, { id: 'my-ping' });
+ * } catch (err) {
+ *   if (err instanceof WorkflowAlreadyExistsError) {
+ *     console.error('already running:', err.workflowId);
+ *   }
+ * }
+ * ```
+ */
 export class WorkflowAlreadyExistsError extends Error {
   readonly workflowId: string;
 
@@ -1584,6 +1607,29 @@ type RefreshedScheduleState = {
 // WorkflowHandle
 // ---------------------------------------------------------------------------
 
+/**
+ * Handle to a running or completed workflow. Returned by {@link Engine.start}
+ * and {@link Engine.getHandle}. Use `handle.result()` to await the final
+ * value, `handle.cancel()` to stop execution, `handle.signal(name, payload)`
+ * to send a signal, and `handle.update(name, payload)` to send a synchronous
+ * update. Also an `AsyncIterable` of lifecycle events.
+ *
+ * @example
+ * ```ts
+ * import { Engine, activity } from 'weft';
+ * import type { WorkflowContext, Context } from 'weft';
+ *
+ * const greet = activity({ name: 'greet', execute: async (i: unknown) => `hi ${i}` });
+ * const engine = new Engine();
+ * engine.register('wave', async function* (ctx: WorkflowContext, input: unknown) {
+ *   return yield* (ctx as Context).run(greet, input);
+ * });
+ *
+ * const handle = await engine.start('wave', 'world');
+ * const result = await handle.result();
+ * console.log(result); // 'hi world'
+ * ```
+ */
 export class WorkflowHandle extends EventTarget implements AsyncDisposable {
   readonly id: string;
   readonly #engine: Engine;
@@ -1823,6 +1869,26 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
   }
 }
 
+/**
+ * Handle to a recurring schedule created by {@link Engine.schedule}. Use
+ * `handle.pause()`, `handle.resume()`, `handle.cancel()`, or
+ * `handle.update(cronExpression)` to manage the schedule lifecycle.
+ * `handle.describe()` returns the current {@link ScheduleSummary}.
+ *
+ * @example
+ * ```ts
+ * import { Engine } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('daily-report', async function* () { return 'ok'; });
+ *
+ * const handle = await engine.schedule('0 9 * * *', 'daily-report', '');
+ * await handle.pause();
+ * const summary = await handle.describe();
+ * console.log(summary.status); // 'paused'
+ * await handle.cancel();
+ * ```
+ */
 export class ScheduleHandle {
   readonly id: string;
   readonly #engine: Engine;

@@ -41,12 +41,48 @@ export interface ActivityInterception {
   headers: Map<string, string>;
 }
 
+/**
+ * Context object passed to a workflow interceptor's `sleep` hook. Contains the
+ * workflow ID, the requested sleep duration in milliseconds, and the outgoing
+ * headers map. Modify headers inside the hook to propagate trace context.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type SleepInterception } from 'weft';
+ * import type { WorkflowInterceptor } from 'weft';
+ *
+ * const tracer: WorkflowInterceptor = {
+ *   *sleep(ctx: SleepInterception, next) {
+ *     console.log('sleep', ctx.duration, 'ms for', ctx.workflowId);
+ *     return yield* next(ctx);
+ *   },
+ * };
+ * void tracer;
+ * ```
+ */
 export interface SleepInterception {
   workflowId: string;
   duration: number;
   headers: Map<string, string>;
 }
 
+/**
+ * Context object passed to a workflow interceptor's `waitForSignal` hook.
+ * Contains the workflow ID, signal name, optional payload, and outgoing headers.
+ *
+ * @example
+ * ```ts
+ * import { type SignalInterception, type WorkflowInterceptor } from 'weft';
+ *
+ * const tracer: WorkflowInterceptor = {
+ *   *waitForSignal(ctx: SignalInterception, next) {
+ *     console.log('waiting for signal', ctx.signalName);
+ *     return yield* next(ctx);
+ *   },
+ * };
+ * void tracer;
+ * ```
+ */
 export interface SignalInterception {
   workflowId: string;
   signalName: string;
@@ -54,6 +90,24 @@ export interface SignalInterception {
   headers: Map<string, string>;
 }
 
+/**
+ * Context object passed to a workflow interceptor's `workflowStart` hook when
+ * a new workflow begins executing. Useful for injecting trace headers or
+ * enforcing tenant-level policies at start time.
+ *
+ * @example
+ * ```ts
+ * import { type WorkflowStartInterception, type WorkflowInterceptor } from 'weft';
+ *
+ * const tracer: WorkflowInterceptor = {
+ *   workflowStart(ctx: WorkflowStartInterception, next) {
+ *     ctx.headers.set('x-trace-id', crypto.randomUUID());
+ *     next(ctx);
+ *   },
+ * };
+ * void tracer;
+ * ```
+ */
 export interface WorkflowStartInterception {
   workflowId: string;
   workflowType: string;
@@ -61,6 +115,25 @@ export interface WorkflowStartInterception {
   headers: Map<string, string>;
 }
 
+/**
+ * Context object passed to an {@link ActivityInterceptor}'s `execute` hook
+ * during activity execution. Provides the activity name, input, attempt count,
+ * headers, and optional cancellation signal for remote-worker execution.
+ *
+ * @example
+ * ```ts
+ * import { type ActivityExecutionInterception, type ActivityInterceptor } from 'weft';
+ *
+ * const logger: ActivityInterceptor = {
+ *   async execute(ctx: ActivityExecutionInterception, next) {
+ *     console.log('executing', ctx.activityName, 'attempt', ctx.attempt);
+ *     const result = await next(ctx);
+ *     return result;
+ *   },
+ * };
+ * void logger;
+ * ```
+ */
 export interface ActivityExecutionInterception {
   activityName: string;
   input: unknown;
@@ -103,6 +176,25 @@ export interface AgentToolReturnInfo {
   success: boolean;
 }
 
+/**
+ * Context object passed to a workflow interceptor's `childWorkflow` hook when
+ * a workflow spawns a child via `ctx.pipe`, `ctx.map`, or `ctx.reduce`.
+ * Includes both the child's own headers and the parent's headers for trace
+ * span linking.
+ *
+ * @example
+ * ```ts
+ * import { type ChildWorkflowInterception, type WorkflowInterceptor } from 'weft';
+ *
+ * const tracer: WorkflowInterceptor = {
+ *   async childWorkflow(ctx: ChildWorkflowInterception, next) {
+ *     console.log('spawning child', ctx.childWorkflowId, 'type:', ctx.workflowType);
+ *     return next(ctx);
+ *   },
+ * };
+ * void tracer;
+ * ```
+ */
 export interface ChildWorkflowInterception {
   workflowId: string;
   childWorkflowId: string;
@@ -113,6 +205,24 @@ export interface ChildWorkflowInterception {
   parentHeaders: Map<string, string>;
 }
 
+/**
+ * Context object passed to a workflow interceptor's `agent` hook when a
+ * workflow calls `ctx.agent()`. Includes the model, prompt, headers, and
+ * optional turn-lifecycle callbacks for telemetry.
+ *
+ * @example
+ * ```ts
+ * import { type AgentInterception, type WorkflowInterceptor } from 'weft';
+ *
+ * const monitor: WorkflowInterceptor = {
+ *   *agent(ctx: AgentInterception, next) {
+ *     console.log('agent call model:', ctx.model);
+ *     return yield* next(ctx);
+ *   },
+ * };
+ * void monitor;
+ * ```
+ */
 export interface AgentInterception {
   workflowId: string;
   model: string;
@@ -128,11 +238,47 @@ export interface AgentInterception {
   onToolReturned?: (info: AgentToolReturnInfo) => void;
 }
 
+/**
+ * Context object passed to a workflow interceptor's `query` hook when a
+ * query is evaluated. Modify `headers` to propagate trace context; read
+ * `queryName` for logging.
+ *
+ * @example
+ * ```ts
+ * import { type QueryInterception, type WorkflowInterceptor } from 'weft';
+ *
+ * const tracer: WorkflowInterceptor = {
+ *   *query(ctx: QueryInterception, next) {
+ *     console.log('query:', ctx.queryName);
+ *     return yield* next(ctx);
+ *   },
+ * };
+ * void tracer;
+ * ```
+ */
 export interface QueryInterception {
   queryName: string;
   headers: Map<string, string>;
 }
 
+/**
+ * Context object passed to a workflow interceptor's `signalReceived` hook
+ * when an inbound signal arrives at the workflow. Allows interceptors to
+ * inspect or modify the payload before the workflow handler processes it.
+ *
+ * @example
+ * ```ts
+ * import { type SignalReceivedInterception, type WorkflowInterceptor } from 'weft';
+ *
+ * const tracer: WorkflowInterceptor = {
+ *   signalReceived(ctx: SignalReceivedInterception, next) {
+ *     console.log('signal received:', ctx.signalName, 'for', ctx.workflowId);
+ *     next(ctx);
+ *   },
+ * };
+ * void tracer;
+ * ```
+ */
 export interface SignalReceivedInterception {
   workflowId: string;
   signalName: string;
@@ -144,6 +290,31 @@ export interface SignalReceivedInterception {
 // Interceptor interfaces
 // ---------------------------------------------------------------------------
 
+/**
+ * Middleware interface for workflow-side interception. Each hook is optional
+ * — implement only the hooks you need. Hooks are generator functions that
+ * receive an interception context and a `next` callback; call `yield* next(ctx)`
+ * to pass control to the next interceptor in the chain.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type WorkflowInterceptor } from 'weft';
+ *
+ * const tracer: WorkflowInterceptor = {
+ *   *activity(ctx, next) {
+ *     console.log('activity started:', ctx.activityName);
+ *     const result = yield* next(ctx);
+ *     console.log('activity done:', ctx.activityName);
+ *     return result;
+ *   },
+ * };
+ *
+ * const engine = new Engine();
+ * engine.register('ping', async function* () { return 'pong'; });
+ * void engine;
+ * void tracer;
+ * ```
+ */
 export interface WorkflowInterceptor {
   activity?(
     interception: ActivityInterception,
@@ -186,6 +357,25 @@ export interface WorkflowInterceptor {
   ): void;
 }
 
+/**
+ * Middleware interface for activity-execution interception. Runs on the
+ * side that actually executes the activity function (main thread or worker).
+ * Implement `execute` to add retry logging, tracing, or input/output transforms.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type ActivityInterceptor } from 'weft';
+ *
+ * const logger: ActivityInterceptor = {
+ *   async execute(ctx, next) {
+ *     const result = await next(ctx);
+ *     console.log(ctx.activityName, 'attempt', ctx.attempt, 'succeeded');
+ *     return result;
+ *   },
+ * };
+ * void logger;
+ * ```
+ */
 export interface ActivityInterceptor {
   execute?(
     interception: ActivityExecutionInterception,
@@ -197,6 +387,28 @@ export interface ActivityInterceptor {
 // Composed interceptor interfaces
 // ---------------------------------------------------------------------------
 
+/**
+ * The fully-composed workflow interceptor produced by
+ * {@link composeWorkflowInterceptors}. All hooks are non-optional — the
+ * composition fills in pass-through implementations for any hooks not
+ * provided by the individual interceptors. Used internally by the engine.
+ *
+ * @example
+ * ```ts
+ * import { composeWorkflowInterceptors, type ComposedWorkflowInterceptor } from 'weft';
+ * import type { WorkflowInterceptor } from 'weft';
+ *
+ * const tracer: WorkflowInterceptor = {
+ *   *activity(ctx, next) {
+ *     console.log('activity:', ctx.activityName);
+ *     return yield* next(ctx);
+ *   },
+ * };
+ *
+ * const composed: ComposedWorkflowInterceptor = composeWorkflowInterceptors([tracer]);
+ * void composed;
+ * ```
+ */
 export interface ComposedWorkflowInterceptor {
   activity(
     interception: ActivityInterception,
@@ -239,6 +451,28 @@ export interface ComposedWorkflowInterceptor {
   ): void;
 }
 
+/**
+ * The fully-composed activity interceptor produced by
+ * {@link composeActivityInterceptors}. The `execute` hook is always present.
+ * Used internally by the engine to drive activity execution.
+ *
+ * @example
+ * ```ts
+ * import { composeActivityInterceptors, type ComposedActivityInterceptor } from 'weft';
+ * import type { ActivityInterceptor } from 'weft';
+ *
+ * const logger: ActivityInterceptor = {
+ *   async execute(ctx, next) {
+ *     const result = await next(ctx);
+ *     console.log(ctx.activityName, 'done');
+ *     return result;
+ *   },
+ * };
+ *
+ * const composed: ComposedActivityInterceptor = composeActivityInterceptors([logger]);
+ * void composed;
+ * ```
+ */
 export interface ComposedActivityInterceptor {
   execute(
     interception: ActivityExecutionInterception,

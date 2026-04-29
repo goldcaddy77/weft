@@ -102,6 +102,26 @@ function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOpti
 // ActivityRegistry
 // ---------------------------------------------------------------------------
 
+/**
+ * WeakMap-backed registry mapping activity names to their execute functions
+ * and metadata. Used internally by the {@link Engine} to dispatch activities
+ * by name. Call `engine.registerActivity(name, fn, options)` rather than
+ * constructing an `ActivityRegistry` directly — the engine manages the
+ * registry lifecycle.
+ *
+ * @example
+ * ```ts
+ * import { ActivityRegistry } from 'weft';
+ *
+ * const registry = new ActivityRegistry();
+ * const fn = async (input: unknown) => ({ result: input });
+ * registry.register('processOrder', fn, { queue: 'orders', timeout: '30s' });
+ *
+ * const meta = registry.getMetadata(fn);
+ * console.log(meta?.name);   // 'processOrder'
+ * console.log(meta?.queue);  // 'orders'
+ * ```
+ */
 export class ActivityRegistry {
   /** Metadata keyed to the activity function object. */
   #metadata: WeakMap<object, ActivityMetadata>;

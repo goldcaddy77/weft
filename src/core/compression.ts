@@ -37,8 +37,43 @@ function brotliDecompressSync(data: Uint8Array): Uint8Array {
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Identifies the compression algorithm applied to storage payloads.
+ * `'gzip'` and `'brotli'` compress before storage; `'none'` disables
+ * compression. Pass to {@link EngineOptions.compression} or to
+ * {@link createCompressor}.
+ *
+ * @example
+ * ```ts
+ * import { createCompressor, type CompressionAlgorithm } from 'weft';
+ *
+ * const algorithm: CompressionAlgorithm = 'brotli';
+ * const compressor = createCompressor(algorithm);
+ * const data = new TextEncoder().encode('payload'.repeat(100));
+ * const compressed = compressor.compress(data);
+ * console.log(compressed instanceof Uint8Array); // true
+ * ```
+ */
 export type CompressionAlgorithm = 'gzip' | 'brotli' | 'none';
 
+/**
+ * Configuration for storage-layer compression. Pass as
+ * {@link EngineOptions.compression} to enable payload compression on
+ * checkpoints and activity results. `threshold` prevents compression of
+ * small payloads (default 4 096 bytes); `algorithm` picks the codec.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type CompressionOptions } from 'weft';
+ *
+ * const compression: CompressionOptions = {
+ *   algorithm: 'brotli',
+ *   threshold: 8_192,
+ * };
+ * const engine = new Engine({ compression });
+ * void engine;
+ * ```
+ */
 export type CompressionOptions = {
   /** Minimum size in bytes before compression kicks in. Default: 4096. */
   threshold?: number;
@@ -46,6 +81,23 @@ export type CompressionOptions = {
   algorithm?: CompressionAlgorithm;
 };
 
+/**
+ * A compression implementation returned by {@link createCompressor} or
+ * {@link createBunCompressor}. The `compress` method accepts raw bytes
+ * and returns compressed bytes (or a promise). Provide a custom
+ * `Compressor` if you need to swap in a different algorithm.
+ *
+ * @example
+ * ```ts
+ * import { createCompressor, type Compressor } from 'weft';
+ *
+ * const compressor: Compressor = createCompressor('gzip');
+ * const payload = new TextEncoder().encode('hello'.repeat(200));
+ * const compressed = await compressor.compress(payload);
+ * console.log(compressor.algorithm);            // 'gzip'
+ * console.log(compressed.byteLength < payload.byteLength); // true
+ * ```
+ */
 export type Compressor = {
   compress(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
   readonly algorithm: CompressionAlgorithm;
