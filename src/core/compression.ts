@@ -85,6 +85,16 @@ const HEADER_SIZE = 2;
  * - `gzip`: uses Bun's native gzip when available, otherwise `node:zlib`
  * - `brotli`: uses `node:zlib` brotli (available in both Bun and Node)
  * - `none`: pass-through (no compression)
+ *
+ * @example
+ * ```ts
+ * import { createBunCompressor } from 'weft';
+ *
+ * const compressor = createBunCompressor('gzip');
+ * const data = new TextEncoder().encode('hello world'.repeat(100));
+ * const compressed = await compressor.compress(data);
+ * console.log(compressed.byteLength < data.byteLength); // true
+ * ```
  */
 export function createBunCompressor(algorithm: CompressionAlgorithm): Compressor {
   return createCompressor(algorithm);
@@ -93,6 +103,19 @@ export function createBunCompressor(algorithm: CompressionAlgorithm): Compressor
 /**
  * Create a compressor. Preferred portable factory — delegates to the runtime
  * abstraction layer for gzip and brotli implementations.
+ *
+ * @example
+ * ```ts
+ * import { createCompressor } from 'weft';
+ *
+ * const gzip = createCompressor('gzip');
+ * const brotli = createCompressor('brotli');
+ * const none = createCompressor('none');
+ *
+ * const payload = new TextEncoder().encode('workflow state'.repeat(50));
+ * const compressed = gzip.compress(payload);
+ * console.log(compressed instanceof Uint8Array); // true
+ * ```
  */
 export function createCompressor(algorithm: CompressionAlgorithm): Compressor {
   switch (algorithm) {

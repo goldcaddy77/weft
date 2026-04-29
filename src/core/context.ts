@@ -69,6 +69,24 @@ import type {
  * boundary inside `ctx.saga`, types are erased to `unknown` — the
  * implementation guarantees that the input passed to `execute` and `compensate`
  * always matches what was supplied in the original step object.
+ *
+ * @example
+ * ```ts
+ * import { activity, type SagaStep, type WorkflowContext } from 'weft';
+ * import type { Context } from 'weft';
+ *
+ * const chargeCard = activity({
+ *   name: 'chargeCard',
+ *   execute: async (input: unknown) => ({ chargeId: 'ch-123' }),
+ *   compensate: async (_input, _output) => { return; },
+ * });
+ *
+ * const step: SagaStep<unknown, { chargeId: string }> = {
+ *   definition: chargeCard,
+ *   input: { amount: 99 },
+ * };
+ * void step;
+ * ```
  */
 export interface SagaStep<TInput = unknown, TOutput = unknown> {
   definition: ActivityDefinition<TInput, TOutput>;

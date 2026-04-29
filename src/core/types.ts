@@ -26,6 +26,19 @@ export type OperationId = string;
  * - `'planning'`  — LLM produced an invalid tool call or schema violation
  * - `'action'`    — an agent tool execution threw
  * - `'system'`    — any other failure (default for non-agent errors, storage errors, etc.)
+ *
+ * @example
+ * ```ts
+ * import { Engine, type FailureCategory } from 'weft';
+ *
+ * const engine = new Engine();
+ * // Query all workflows that failed due to a planning error:
+ * const results = await engine.list({
+ *   status: 'failed',
+ *   attributes: [{ key: 'failureCategory', value: 'planning' as FailureCategory }],
+ * });
+ * void results;
+ * ```
  */
 export type FailureCategory = 'memory' | 'reflection' | 'planning' | 'action' | 'system';
 
@@ -652,6 +665,24 @@ export interface WorkflowReduceOptions extends Record<string, unknown> {
  * `tenant` is surfaced directly on this interface (not via the cast) because
  * reading it is a common lightweight path that doesn't need the full method
  * surface.
+ *
+ * @example
+ * ```ts
+ * import { Engine, activity, type WorkflowContext } from 'weft';
+ * import type { Context } from 'weft';
+ *
+ * const engine = new Engine();
+ * const noop = activity({ name: 'noop', execute: async (i: unknown) => i });
+ *
+ * engine.register('myWorkflow', async function* (ctx: WorkflowContext, input: unknown) {
+ *   const id = ctx.workflowId;
+ *   const remaining = ctx.executionTimeRemaining;
+ *   // For run/sleep/signal, cast to the concrete Context class:
+ *   const result = yield* (ctx as Context).run(noop, input);
+ *   return result;
+ * });
+ * void engine;
+ * ```
  */
 export interface WorkflowContext {
   readonly workflowId: WorkflowId;
@@ -990,6 +1021,23 @@ export const DEFAULT_RETENTION_SWEEP_BATCH_SIZE = 1000;
 /**
  * Create an activity with colocated configuration.
  * The returned value is both an ActivityDefinition and a callable function.
+ *
+ * @example
+ * ```ts
+ * import { activity } from 'weft';
+ *
+ * const fetchUser = activity({
+ *   name: 'fetchUser',
+ *   execute: async (input: unknown) => {
+ *     const id = input as string;
+ *     return { id, name: 'Alice' };
+ *   },
+ * });
+ *
+ * // Use in a workflow via ctx.run:
+ * // const user = yield* (ctx as Context).run(fetchUser, userId);
+ * void fetchUser;
+ * ```
  */
 export function activity<TInput, TOutput>(
   options: ActivityDefinition<TInput, TOutput>,

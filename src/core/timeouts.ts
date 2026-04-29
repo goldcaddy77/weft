@@ -26,7 +26,19 @@ export interface ExpiredDeadline {
 // Deadline batch operations
 // ---------------------------------------------------------------------------
 
-/** Create batch operations for storing an execution deadline. */
+/**
+ * Create batch operations for storing an execution deadline.
+ *
+ * @example
+ * ```ts
+ * import { createDeadlineOperations } from 'weft';
+ *
+ * const ops = createDeadlineOperations('wf-123', Date.now(), '30m');
+ * // Returns a BatchOperation array to put the deadline key in storage.
+ * console.log(ops.length);      // 1
+ * console.log(ops[0]?.type);    // 'put'
+ * ```
+ */
 export function createDeadlineOperations(
   workflowId: WorkflowId,
   startedAt: number,
@@ -55,7 +67,22 @@ export function cleanupDeadlineOperations(
 // Deadline scanning
 // ---------------------------------------------------------------------------
 
-/** Scan storage for expired deadlines. Returns workflow IDs that have timed out. */
+/**
+ * Scan storage for expired deadlines. Returns workflow IDs that have timed out.
+ *
+ * @example
+ * ```ts
+ * import { checkExpiredDeadlines, createDeadlineOperations } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const ops = createDeadlineOperations('wf-abc', Date.now() - 60_000, '30s');
+ * await storage.batch(ops);
+ *
+ * const expired = await checkExpiredDeadlines(storage, Date.now());
+ * console.log(expired[0]?.workflowId); // 'wf-abc'
+ * ```
+ */
 export async function checkExpiredDeadlines(
   storage: Storage,
   now: number,
@@ -76,7 +103,21 @@ export async function checkExpiredDeadlines(
 // Time remaining
 // ---------------------------------------------------------------------------
 
-/** Calculate remaining time before deadline. Returns Infinity if no deadline. */
+/**
+ * Calculate remaining time before deadline. Returns Infinity if no deadline.
+ *
+ * @example
+ * ```ts
+ * import { timeRemaining } from 'weft';
+ *
+ * const now = Date.now();
+ * const deadline = now + 5000;
+ *
+ * console.log(timeRemaining(deadline, now));       // ~5000
+ * console.log(timeRemaining(undefined, now));      // Infinity
+ * console.log(timeRemaining(now - 1000, now) < 0); // true (expired)
+ * ```
+ */
 export function timeRemaining(deadline: number | undefined, now: number): number {
   if (deadline === undefined) return Infinity;
   return deadline - now;

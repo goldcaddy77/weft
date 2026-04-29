@@ -182,7 +182,22 @@ export function isGeneratorFunction(fn: Function): boolean {
   return Object.getPrototypeOf(fn) === SYNC_GENERATOR_FUNCTION_PROTOTYPE;
 }
 
-/** Returns `true` if `fn` is an async generator function (`async function*`). */
+/**
+ * Returns `true` if `fn` is an async generator function (`async function*`).
+ *
+ * @example
+ * ```ts
+ * import { isAsyncGeneratorFunction } from 'weft';
+ *
+ * async function* myWorkflow() { yield 1; }
+ * function* syncGen() { yield 1; }
+ * async function asyncFn() { return 1; }
+ *
+ * console.log(isAsyncGeneratorFunction(myWorkflow)); // true
+ * console.log(isAsyncGeneratorFunction(syncGen));    // false
+ * console.log(isAsyncGeneratorFunction(asyncFn));    // false
+ * ```
+ */
 export function isAsyncGeneratorFunction(fn: Function): boolean {
   return Object.getPrototypeOf(fn) === ASYNC_GENERATOR_FUNCTION_PROTOTYPE;
 }

@@ -251,7 +251,22 @@ function normalizeBulkFilterNumber(
   return Math.floor(value);
 }
 
-/** Options required when registering an AgentDefinition as a workflow. */
+/**
+ * Options required when registering an AgentDefinition as a workflow.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type AgentRegistrationOptions } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ * const options: AgentRegistrationOptions = { provider };
+ *
+ * const engine = new Engine();
+ * // engine.register(myAgentDef, options);
+ * void options;
+ * ```
+ */
 export interface AgentRegistrationOptions {
   /** The LLM provider to use when running the agent. */
   provider: LLMProvider;

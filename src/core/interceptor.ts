@@ -13,6 +13,26 @@
 // Interception contexts (what each hook receives)
 // ---------------------------------------------------------------------------
 
+/**
+ * Context object passed to workflow interceptors when an activity is scheduled.
+ * Read-only snapshot of the activity call — modify via the `next` callback.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type ActivityInterception } from 'weft';
+ * import type { WorkflowInterceptor } from 'weft';
+ *
+ * const loggingInterceptor: WorkflowInterceptor = {
+ *   *activity(ctx: ActivityInterception, next) {
+ *     console.log('activity:', ctx.activityName, 'attempt:', ctx.attempt);
+ *     return yield* next(ctx);
+ *   },
+ * };
+ * // Pass interceptors when constructing the engine:
+ * // const engine = new Engine({ workflowInterceptors: [loggingInterceptor] });
+ * void loggingInterceptor;
+ * ```
+ */
 export interface ActivityInterception {
   workflowId: string;
   activityName: string;
@@ -478,7 +498,25 @@ function composeSignalReceivedHook(
   };
 }
 
-/** Compose multiple workflow interceptors into a single interceptor chain. */
+/**
+ * Compose multiple workflow interceptors into a single interceptor chain.
+ *
+ * @example
+ * ```ts
+ * import { composeWorkflowInterceptors, type WorkflowInterceptor } from 'weft';
+ *
+ * const tracing: WorkflowInterceptor = {
+ *   *activity(ctx, next) {
+ *     console.log('start', ctx.activityName);
+ *     const result = yield* next(ctx);
+ *     console.log('end', ctx.activityName);
+ *     return result;
+ *   },
+ * };
+ * const composed = composeWorkflowInterceptors([tracing]);
+ * void composed;
+ * ```
+ */
 export function composeWorkflowInterceptors(
   interceptors: WorkflowInterceptor[],
 ): ComposedWorkflowInterceptor {
@@ -498,7 +536,24 @@ export function composeWorkflowInterceptors(
 // Composition: activity interceptors
 // ---------------------------------------------------------------------------
 
-/** Compose multiple activity interceptors into a single interceptor chain. */
+/**
+ * Compose multiple activity interceptors into a single interceptor chain.
+ *
+ * @example
+ * ```ts
+ * import { composeActivityInterceptors, type ActivityInterceptor } from 'weft';
+ *
+ * const retryLogger: ActivityInterceptor = {
+ *   async execute(ctx, next) {
+ *     const result = await next(ctx);
+ *     console.log(ctx.activityName, 'attempt', ctx.attempt, 'succeeded');
+ *     return result;
+ *   },
+ * };
+ * const composed = composeActivityInterceptors([retryLogger]);
+ * void composed;
+ * ```
+ */
 export function composeActivityInterceptors(
   interceptors: ActivityInterceptor[],
 ): ComposedActivityInterceptor {

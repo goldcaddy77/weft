@@ -129,7 +129,19 @@ export function normalizeStorageTimestamp(timestamp: number, fieldName: string):
   return normalizedTimestamp;
 }
 
-/** Parse a human-readable duration string or number to milliseconds. */
+/**
+ * Parse a human-readable duration string or number to milliseconds.
+ *
+ * @example
+ * ```ts
+ * import { parseDuration } from 'weft';
+ *
+ * console.log(parseDuration(5000));       // 5000
+ * console.log(parseDuration('30s'));      // 30000
+ * console.log(parseDuration('5 minutes')); // 300000
+ * console.log(parseDuration('2h'));       // 7200000
+ * ```
+ */
 export function parseDuration(duration: Duration): number {
   if (typeof duration === 'number') {
     assertValidDurationMilliseconds(duration, duration);
@@ -161,7 +173,25 @@ export function parseDuration(duration: Duration): number {
 // Backoff calculation
 // ---------------------------------------------------------------------------
 
-/** Calculate exponential backoff delay for a given retry attempt. */
+/**
+ * Calculate exponential backoff delay for a given retry attempt.
+ *
+ * @example
+ * ```ts
+ * import { calculateBackoff, type RetryPolicy } from 'weft';
+ *
+ * const policy: RetryPolicy = {
+ *   maxAttempts: 5,
+ *   initialBackoff: '1s',
+ *   backoffMultiplier: 2,
+ *   maxBackoff: '30s',
+ * };
+ *
+ * console.log(calculateBackoff(1, policy)); // 1000   (attempt 1: 1s)
+ * console.log(calculateBackoff(2, policy)); // 2000   (attempt 2: 2s)
+ * console.log(calculateBackoff(5, policy)); // 16000  (attempt 5: 16s, capped at 30s)
+ * ```
+ */
 export function calculateBackoff(attempt: number, policy: RetryPolicy): number {
   const initialMs = parseDuration(policy.initialBackoff);
   const maxMs = parseDuration(policy.maxBackoff);
@@ -294,7 +324,28 @@ function shouldDeleteTimerIndexWithoutLookup(entry: TimerEntry): boolean {
   return entry.kind !== 'schedule' && entry.kind !== 'terminal-cleanup';
 }
 
-/** Scheduler manages durable timers and polls for expired deadlines. */
+/**
+ * Scheduler manages durable timers and polls for expired deadlines.
+ *
+ * @example
+ * ```ts
+ * import { Scheduler } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const scheduler = new Scheduler({
+ *   storage,
+ *   onTimerFired: (entry) => {
+ *     console.log('timer fired:', entry.id, entry.kind);
+ *   },
+ *   pollIntervalMs: 500,
+ * });
+ *
+ * scheduler.start();
+ * // ... use scheduler ...
+ * scheduler.stop();
+ * ```
+ */
 export class Scheduler implements Disposable {
   readonly #storage: Storage;
   readonly #onTimerFired: (entry: TimerEntry) => void | Promise<void>;
