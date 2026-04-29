@@ -2,6 +2,10 @@ import { describe, expect, it } from 'bun:test';
 
 import { TokenEvent } from '@/core/events.ts';
 import type { ChatOptions, LLMProvider } from './providers/interface.ts';
+import {
+  createSuspendingProvider,
+  type PendingChatResumeState,
+} from './providers/suspending-provider.ts';
 import type { ChatResponse, Message, StreamChunk, TokenUsage } from './providers/types.ts';
 import {
   buildRecoveryConversation,
@@ -108,6 +112,28 @@ async function collectByteStream(stream: ReadableStream<Uint8Array>): Promise<st
   }
   output += decoder.decode();
   return output;
+}
+
+function createResumeCoordinator() {
+  const pendingState = new Map<number, PendingChatResumeState>();
+  const waiters = new Map<string, (payload: unknown) => void>();
+
+  return {
+    load: async (turnIndex: number) => pendingState.get(turnIndex),
+    store: async (turnIndex: number, state: PendingChatResumeState) => {
+      pendingState.set(turnIndex, state);
+    },
+    clear: async (turnIndex: number) => {
+      pendingState.delete(turnIndex);
+    },
+    waitForSignal: async (resumeToken: string) =>
+      await new Promise<unknown>((resolve) => {
+        waiters.set(resumeToken, resolve);
+      }),
+    resume(resumeToken: string, payload: unknown) {
+      waiters.get(resumeToken)?.(payload);
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +325,61 @@ describe('H1: executeStreamingAgent returns ReadableStream', () => {
       { id: 'call-2', name: 'broken', input: '{' },
     ]);
     expect(response.stopReason).toBe('tool_use');
+  });
+
+  it('waits for the provider resume signal before starting the streaming fetch', async () => {
+    const coordinator = createResumeCoordinator();
+    let streamStarted = false;
+    let observedResumePayload: unknown;
+
+    const provider = createSuspendingProvider(
+      {
+        name: 'resume-aware-stream',
+        async createChatResumeHint() {
+          return { resumeToken: 'stream-ready-token' };
+        },
+        async chat(): Promise<ChatResponse> {
+          throw new Error('Streaming provider chat() should not be called');
+        },
+        async stream(
+          _messages: Message[],
+          options: ChatOptions,
+        ): Promise<ReadableStream<StreamChunk>> {
+          streamStarted = true;
+          observedResumePayload = options.resumeContext?.payload;
+          return new ReadableStream<StreamChunk>({
+            start(controller) {
+              controller.enqueue({ type: 'token', token: 'Hello' });
+              controller.enqueue({
+                type: 'done',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              });
+              controller.close();
+            },
+          });
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      },
+      coordinator,
+    );
+
+    const { stream, result } = executeStreamingAgent(
+      { model: 'test-model', provider, streamTo: 'output' },
+      'Wait for stream resume',
+    );
+
+    await Bun.sleep(0);
+    expect(streamStarted).toBe(false);
+
+    coordinator.resume('stream-ready-token', { ready: true });
+
+    expect(await collectStream(stream)).toEqual(['Hello']);
+    const streamingResult = await result;
+    expect(streamingResult.content).toBe('Hello');
+    expect(streamStarted).toBe(true);
+    expect(observedResumePayload).toEqual({ ready: true });
   });
 });
 

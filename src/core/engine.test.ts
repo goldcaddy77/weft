@@ -2332,6 +2332,125 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('parks ctx.agent() on a provider resume hint when suspendOnLlmWait is enabled', async () => {
+    const engine = new Engine({ suspendOnLlmWait: true });
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('resume-agent-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).agent({
+        model: 'test-model',
+        prompt: 'Wait for the provider resume signal',
+        provider,
+      });
+    });
+
+    const handle = await engine.start('resume-agent-workflow', null);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+    expect(chatCalls).toHaveLength(0);
+
+    await engine.signal(handle.id, 'llm-ready-token', { approved: true });
+
+    await expect(handle.result()).resolves.toBe('Agent resumed successfully');
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('leaves provider chat blocking behavior unchanged when suspendOnLlmWait is disabled', async () => {
+    const engine = new Engine();
+    const chatCalls: Array<{
+      hasResumeContext: boolean;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'unused-resume-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          hasResumeContext: options.resumeContext !== undefined,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'No suspension',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('no-resume-agent-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).agent({
+        model: 'test-model',
+        prompt: 'Do not suspend',
+        provider,
+      });
+    });
+
+    const handle = await engine.start('no-resume-agent-workflow', null);
+
+    await expect(handle.result()).resolves.toBe('No suspension');
+    expect(chatCalls).toEqual([{ hasResumeContext: false, turnIndex: 0 }]);
+
+    engine[Symbol.dispose]();
+  });
+
   // ---------------------------------------------------------------------------
   // Symbol.observable error path (lines 217-220)
   // ---------------------------------------------------------------------------

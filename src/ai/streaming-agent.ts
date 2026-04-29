@@ -15,6 +15,7 @@ import { executeAgentLoop } from './agent.ts';
 import type { LLMProvider } from './providers/interface.ts';
 import type {
   ChatResponse,
+  ChatResumeHint,
   Message,
   StreamChunk,
   TokenUsage,
@@ -231,6 +232,17 @@ export function createStreamingProvider(
 
     async countTokens(messages: Message[]): Promise<number> {
       return provider.countTokens(messages);
+    },
+
+    async createChatResumeHint(
+      messages: Message[],
+      options: import('./providers/interface.ts').ChatOptions,
+    ): Promise<ChatResumeHint | undefined> {
+      return provider.createChatResumeHint?.(messages, options);
+    },
+
+    async warmup(): Promise<void> {
+      await provider.warmup?.();
     },
   };
 }

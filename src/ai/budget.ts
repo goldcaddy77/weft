@@ -323,6 +323,19 @@ export class BudgetTracker {
     return tracker;
   }
 
+  /** Replace this tracker's usage totals from serialized checkpoint state. */
+  restoreFromJSON(data: SerializedBudgetState): void {
+    this.#tokensUsed = data.tokensUsed;
+    this.#costUsed = data.costUsed;
+    this.#warningFired = data.warningFired;
+    this.#usageCount = data.breakdown.length;
+    this.#breakdown.clear();
+
+    for (const entry of data.breakdown) {
+      this.#breakdown.set(entry.model, { ...entry });
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Private
   // ---------------------------------------------------------------------------

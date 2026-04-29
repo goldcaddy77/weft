@@ -26,6 +26,16 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+export interface ChatResumeHint {
+  resumeToken: string;
+  state?: unknown;
+}
+
+export interface ChatResumeContext {
+  hint: ChatResumeHint;
+  payload: unknown;
+}
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;

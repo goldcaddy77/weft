@@ -267,6 +267,8 @@ export const KEYS = {
   streamMetadata: (workflowId: string, key: string) =>
     `blob:${encodeStorageKeyComponent(workflowId)}:${key}:meta`,
   budgetCharged: (operationId: string) => `budget-charged:${operationId}`,
+  agentExecutionState: (workflowId: string, stepIndex: number) =>
+    `agent-execution:${encodeStorageKeyComponent(workflowId)}:${String(stepIndex).padStart(10, '0')}`,
   toolEffect: (workflowId: string, agentId: string, semanticHash: string) =>
     `tool-effect:${encodeStorageKeyComponent(workflowId)}:${agentId}:${semanticHash}`,
 } as const;
