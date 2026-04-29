@@ -181,8 +181,10 @@ export class ScopedStorage implements Storage {
  * Factory that creates a {@link ScopedStorage} view of `storage` under the
  * given `prefix`.
  *
- * Prefer this over `new ScopedStorage(...)` for readability at the engine
- * construction site — the return type and behavior are identical.
+ * This is an ergonomic alternative to `new ScopedStorage(...)`: it avoids
+ * `new` at call sites and reads naturally when storage is being decorated
+ * inline. The return type and behavior are identical to constructing
+ * `ScopedStorage` directly.
  *
  * @example
  * ```ts

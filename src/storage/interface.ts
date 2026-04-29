@@ -1,4 +1,9 @@
-/** A single KV operation in a batch. */
+/**
+ * A single KV operation in a batch.
+ *
+ * Either a put (write `value` at `key`) or a delete (remove `key`). The `type`
+ * discriminant selects the variant; delete operations carry no value.
+ */
 export type BatchOperation =
   | { type: 'put'; key: string; value: Uint8Array }
   | { type: 'delete'; key: string };
@@ -40,9 +45,17 @@ export interface ScanOptions {
 /**
  * KV-oriented storage interface. All storage adapters implement this.
  *
+ * Required methods are `get`, `put`, `delete`, `scan`, and `batch`. Optional
+ * fast paths are `conditionalBatch`, `has`, `deletePrefix`, `keys`, `count`,
+ * `scoped`, and `query`. Adapters that omit optional methods get generic
+ * fallbacks via `storageHas`, `storageKeys`, `storageCount`,
+ * `storageDeletePrefix`, and `storageConditionalBatch`. Callers should use
+ * those wrappers rather than calling optional methods directly.
+ *
  * @example
  * ```ts
- * import { MemoryStorage, type Storage } from 'weft';
+ * import { MemoryStorage } from 'weft';
+ * import type { Storage } from 'weft/storage/interface';
  *
  * await using storage: Storage = new MemoryStorage();
  * const encoded = new TextEncoder().encode('hello');
@@ -79,7 +92,7 @@ export interface Storage extends Disposable {
  * import { resolvePrefixRangeEnd } from 'weft/storage/interface';
  *
  * const end = resolvePrefixRangeEnd('wf:');
- * console.log(end); // 'wg:'
+ * console.log(end); // 'wf;'
  * // Use as an exclusive upper bound in range queries
  * ```
  */
@@ -269,6 +282,11 @@ export async function storageDeletePrefix(storage: Storage, prefix: string): Pro
 /**
  * Run a conditional batch or throw when the backend does not support it.
  *
+ * Built-in Memory, BunSQLite, NodeSQLite, LMDB, Turso, and IndexedDB backends
+ * provide `conditionalBatch`; custom adapters may omit it.
+ *
+ * @throws {Error} This storage backend does not support conditionalBatch(), which is required for this operation.
+ *
  * @example
  * ```ts
  * import { MemoryStorage } from 'weft';
@@ -316,6 +334,10 @@ export function encodeStorageKeyComponent(value: string): string {
 
 /**
  * Decode a storage-key component produced by {@link encodeStorageKeyComponent}.
+ * Throws when `value` is malformed percent-encoded text. Callers handling
+ * untrusted input should prefer {@link tryDecodeStorageKeyComponent}.
+ *
+ * @throws {URIError} When `value` contains malformed percent-encoded data.
  *
  * @example
  * ```ts
