@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { sleepForTesting } from '../testing/fake-timers.ts';
+import { waitForCondition } from '../testing/fake-timers.ts';
 
 import {
   encodeStorageKeyComponent,
@@ -26,33 +26,18 @@ async function* failingWorkflow(_ctx: WorkflowContext, _input: unknown) {
   throw new Error('bulk failure');
 }
 
-async function waitForCondition(
-  predicate: () => Promise<boolean>,
-  message: string,
-  timeoutMilliseconds = 500,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMilliseconds;
-
-  while (Date.now() < deadline) {
-    if (await predicate()) {
-      return;
-    }
-
-    await sleepForTesting(5);
-  }
-
-  throw new Error(message);
-}
-
 async function waitForWorkflowStatus(
   engine: Engine,
   workflowId: string,
   status: WorkflowState['status'],
 ): Promise<void> {
-  await waitForCondition(async () => {
-    const state = await engine.get(workflowId);
-    return state?.status === status;
-  }, `Expected workflow "${workflowId}" to reach ${status}`);
+  await waitForCondition(
+    async () => {
+      const state = await engine.get(workflowId);
+      return state?.status === status;
+    },
+    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs: 500, intervalMs: 5 },
+  );
 }
 
 async function createCompletedWorkflow(

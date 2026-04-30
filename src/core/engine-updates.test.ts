@@ -125,6 +125,53 @@ function wrapStorageWithStaleWorkflowStateRead(storage: Storage): {
   };
 }
 
+function wrapStorageWithDelayedUpdateResponse(storage: Storage, result: unknown): Storage {
+  let pendingRequestKey: string | null = null;
+  let responseVisible = false;
+  let responseTimerWasScheduled = false;
+
+  return {
+    async get(key) {
+      if (key.startsWith('upr:')) {
+        const updateId = key.slice('upr:'.length);
+
+        if (!responseTimerWasScheduled) {
+          responseTimerWasScheduled = true;
+          setTimeout(() => {
+            responseVisible = true;
+          }, 1);
+        }
+
+        if (responseVisible) {
+          if (pendingRequestKey !== null) {
+            await storage.delete(pendingRequestKey);
+            pendingRequestKey = null;
+          }
+
+          return encode({ updateId, result, createdAt: Date.now() });
+        }
+
+        return null;
+      }
+
+      return storage.get(key);
+    },
+    async put(key, value) {
+      if (key.startsWith('upd:')) {
+        pendingRequestKey = key;
+      }
+
+      await storage.put(key, value);
+    },
+    delete: storage.delete.bind(storage),
+    scan: storage.scan.bind(storage),
+    batch: storage.batch.bind(storage),
+    [Symbol.dispose]() {
+      storage[Symbol.dispose]();
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -294,6 +341,35 @@ for (const backend of storageBackends) {
 
         await expect(engine.update(handle.id, 'someUpdate', 'payload')).rejects.toBeInstanceOf(
           WorkflowTerminalError,
+        );
+        expect(await collectKeys(result.storage, KEYS.updatePrefix(handle.id))).toEqual([]);
+      });
+
+      it('waits for a delayed coordinated update response before deleting a terminal-race request', async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        const staleWorkflowStateStorage = wrapStorageWithStaleWorkflowStateRead(result.storage);
+        const delayedUpdateResponseStorage = wrapStorageWithDelayedUpdateResponse(
+          staleWorkflowStateStorage.storage,
+          'late-response',
+        );
+        engine = new Engine({ storage: delayedUpdateResponseStorage });
+
+        engine.register('quick', async function* (_ctx: WorkflowContext) {
+          return 'done';
+        });
+
+        const handle = await engine.start('quick', undefined);
+        const workflowKey = KEYS.workflow(handle.id);
+        const runningStateBytes = await result.storage.get(workflowKey);
+        expect(runningStateBytes).not.toBeNull();
+        await handle.result();
+        await flush();
+
+        staleWorkflowStateStorage.armStaleWorkflowStateRead(workflowKey, runningStateBytes!);
+
+        await expect(engine.update(handle.id, 'someUpdate', 'payload')).resolves.toBe(
+          'late-response',
         );
         expect(await collectKeys(result.storage, KEYS.updatePrefix(handle.id))).toEqual([]);
       });

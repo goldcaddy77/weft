@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { waitForever } from '../testing/fake-timers.ts';
+import { waitForCondition, waitForever } from '../testing/fake-timers.ts';
 
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -8,18 +8,6 @@ import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import { CleanupWarningEvent } from './events.ts';
 import type { WorkflowContext } from './types.ts';
-
-async function waitForCondition(predicate: () => Promise<boolean>, timeoutMs = 500): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) {
-      return;
-    }
-    await flush();
-  }
-
-  throw new Error('Timed out waiting for test condition');
-}
 
 // ---------------------------------------------------------------------------
 // A5: Fire-and-forget cleanup errors dispatch CleanupWarningEvent
@@ -251,12 +239,15 @@ describe('Engine dispatches CleanupWarningEvent on cleanup errors', () => {
       id: 'budget-cleanup-warning-workflow',
     });
 
-    await waitForCondition(async () => {
-      for await (const _entry of realStorage.scan('budget-charged:')) {
-        return true;
-      }
-      return false;
-    });
+    await waitForCondition(
+      async () => {
+        for await (const _entry of realStorage.scan('budget-charged:')) {
+          return true;
+        }
+        return false;
+      },
+      { label: 'budget charged entry to be written' },
+    );
 
     const resultPromise = handle.result();
     await engine.signal(handle.id, 'finish', null);
