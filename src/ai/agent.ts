@@ -968,7 +968,10 @@ async function executeChatWithFallbacks(
       break;
     } catch (error: unknown) {
       lastError = error;
-      if (isAbortError(runtime.options.signal, error)) {
+      if (
+        isAbortError(runtime.options.signal, error) ||
+        error instanceof PendingProviderResumeError
+      ) {
         throw error;
       }
 

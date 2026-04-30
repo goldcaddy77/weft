@@ -4,6 +4,7 @@ import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message, ToolDefinition } from './providers/types';
 
 import type {
+  AgentLoopSuspendedError,
   AgentTool,
   MCPClientFactory,
   ToolCallInfo,
@@ -2088,6 +2089,83 @@ describe('executeAgentLoop', () => {
     expect(fallbackEvents[0]!.nextModel).toBe('model-b');
     expect(fallbackEvents[0]!.turnIndex).toBe(0);
     expect(fallbackEvents[0]!.workflowId).toBe('wf-fallback-event');
+  });
+
+  it('rethrows suspension before trying fallback models or recording a provider failure', async () => {
+    const fallbackEvents: AgentModelFallbackEvent[] = [];
+    const healthEvents: { type: string; provider: string }[] = [];
+    const hintedModels: string[] = [];
+    const eventTarget = new EventTarget();
+
+    eventTarget.addEventListener(AgentModelFallbackEvent.type, ((
+      event: AgentModelFallbackEvent,
+    ) => {
+      fallbackEvents.push(event);
+    }) as EventListener);
+
+    const provider = createSuspendingProvider(
+      {
+        name: 'resume-aware',
+        async createChatResumeHint(_messages, options) {
+          hintedModels.push(options.model);
+          return { resumeToken: `${options.model}-resume-token` };
+        },
+        async chat(): Promise<ChatResponse> {
+          return createChatResponse('unreachable');
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      },
+      {
+        load: async () => undefined,
+        store: async () => {},
+        clear: async () => {},
+        canSuspend: true,
+      },
+    );
+
+    const healthTracker = {
+      recordSuccess(providerName: string) {
+        healthEvents.push({ type: 'success', provider: providerName });
+      },
+      recordFailure(providerName: string) {
+        healthEvents.push({ type: 'failure', provider: providerName });
+      },
+    } as any;
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    const error = (await executeAgentLoop(
+      {
+        model: 'default',
+        provider,
+        modelRouter,
+        eventTarget,
+        workflowId: 'wf-suspend-no-fallback',
+        agentId: 'agent-1',
+        healthTracker,
+      },
+      'Hello',
+    ).catch((error_: unknown) => error_)) as AgentLoopSuspendedError;
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe('AgentLoopSuspendedError');
+    expect(error.pendingResume).toEqual({
+      turnIndex: 0,
+      hint: { resumeToken: 'model-a-resume-token' },
+      resumed: false,
+    });
+    expect(hintedModels).toEqual(['model-a']);
+    expect(fallbackEvents).toHaveLength(0);
+    expect(healthEvents).toHaveLength(0);
   });
 
   it('reports fallbackAttempts > 0 in AgentTurnCompletedEvent after fallback', async () => {
