@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import type { Context } from '../core/context.ts';
 import type { WorkflowContext } from '../core/types.ts';
@@ -16,7 +17,7 @@ import type { ChatResponse, Message } from './providers/types.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 function createMockProvider(responses: ChatResponse[]): LLMProvider {

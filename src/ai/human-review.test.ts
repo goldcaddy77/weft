@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { decode, encode } from '../core/codec.ts';
 import type { Context } from '../core/context.ts';
@@ -21,7 +22,7 @@ import {
 // ---------------------------------------------------------------------------
 
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 // ---------------------------------------------------------------------------
@@ -832,7 +833,7 @@ describe('G8: Review cleanup + timeout error', () => {
 
     // Advance time past the review timeout
     await engine.advanceTime(6000);
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     // Wait for the result rejection to settle
     await resultPromise;

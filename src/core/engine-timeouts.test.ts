@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting, waitForever } from '../testing/fake-timers.ts';
 
 import { KEYS } from '../storage/interface.ts';
 import { TestEngine } from '../testing/test-engine.ts';
@@ -13,11 +14,11 @@ import type { WorkflowContext, WorkflowState } from './types.ts';
 // ---------------------------------------------------------------------------
 
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 const slowActivity = async (..._args: unknown[]) => {
-  await Bun.sleep(999_999);
+  await waitForever();
   return 'done';
 };
 

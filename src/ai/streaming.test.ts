@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { TokenEvent } from '@/core/events.ts';
 import type { StreamChunk } from './providers/types.ts';
@@ -125,7 +126,7 @@ describe('StreamMultiplexer', () => {
     await reader.read();
 
     multiplexer.cancel();
-    await Bun.sleep(0);
+    await sleepForTesting(0);
 
     expect(multiplexer.consumerCount).toBe(0);
   });

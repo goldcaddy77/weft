@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
@@ -25,7 +26,7 @@ describe('ctx.suspendUntil', () => {
     const resultPromise = handle.result();
 
     // Let the workflow reach the yield.
-    await Bun.sleep(10);
+    await sleepForTesting(10);
 
     // Deliver the resume "signal" with the payload.
     await engine.signal(handle.id, token, { status: 'ready' });
@@ -47,9 +48,9 @@ describe('ctx.suspendUntil', () => {
     const handle = await engine.start('multi-suspend', null);
     const resultPromise = handle.result();
 
-    await Bun.sleep(10);
+    await sleepForTesting(10);
     await engine.signal(handle.id, 'token-one', { value: 3 });
-    await Bun.sleep(10);
+    await sleepForTesting(10);
     await engine.signal(handle.id, 'token-two', { value: 4 });
 
     const result = await resultPromise;

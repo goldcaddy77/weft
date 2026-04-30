@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import type { ActivityInterceptor } from '../core/interceptor.ts';
+import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 import { RemoteWorker } from './index.ts';
 
 // ---------------------------------------------------------------------------
@@ -25,6 +26,17 @@ function createTestServer(options?: {
       close(_ws) {},
     },
   });
+}
+
+async function waitForTaskResult(messages: any[], label: string): Promise<any> {
+  await waitForCondition(() => messages.some((message) => message.type === 'taskResult'), {
+    timeoutMs: 1_000,
+    label,
+  });
+
+  const taskResult = messages.find((message) => message.type === 'taskResult');
+  expect(taskResult).toBeDefined();
+  return taskResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +142,7 @@ describe('RemoteWorker', () => {
     expect(worker.connected).toBe(true);
 
     // Give time for the register message to arrive
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     const registerMessage = messages.find((m) => m.type === 'register');
     expect(registerMessage).toBeDefined();
@@ -216,11 +228,7 @@ describe('RemoteWorker', () => {
 
     await worker.connect();
 
-    // Wait for the task to be processed and result sent back
-    await Bun.sleep(200);
-
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult).toBeDefined();
+    const taskResult = await waitForTaskResult(messages, 'completed task result');
     expect(taskResult.operationId).toBe('op-1');
     expect(taskResult.status).toBe('completed');
     expect(taskResult.value).toEqual({ processed: true, orderId: 123 });
@@ -258,10 +266,8 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(200);
 
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult).toBeDefined();
+    const taskResult = await waitForTaskResult(messages, 'unknown activity task result');
     expect(taskResult.operationId).toBe('op-2');
     expect(taskResult.status).toBe('failed');
     expect(taskResult.error).toContain('Unknown activity');
@@ -301,10 +307,8 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(200);
 
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult).toBeDefined();
+    const taskResult = await waitForTaskResult(messages, 'throwing activity task result');
     expect(taskResult.operationId).toBe('op-3');
     expect(taskResult.status).toBe('failed');
     expect(taskResult.error).toBe('activity crashed');
@@ -344,10 +348,8 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(200);
 
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult).toBeDefined();
+    const taskResult = await waitForTaskResult(messages, 'non-error throw task result');
     expect(taskResult.status).toBe('failed');
     expect(taskResult.error).toBe('string error');
 
@@ -388,14 +390,14 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(100);
+    await sleepForTesting(100);
 
     // Activity should be in-flight
     expect(worker.inFlight).toBe(1);
 
     // Resolve the activity
     resolveActivity!();
-    await Bun.sleep(100);
+    await sleepForTesting(100);
 
     expect(worker.inFlight).toBe(0);
 
@@ -418,7 +420,7 @@ describe('RemoteWorker', () => {
     // Stop the server, which will trigger the close event
     server.stop(true);
     server = undefined;
-    await Bun.sleep(200);
+    await sleepForTesting(200);
 
     expect(worker.connected).toBe(false);
     worker[Symbol.dispose]();
@@ -444,7 +446,7 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(100);
+    await sleepForTesting(100);
 
     // Worker should still be connected and working fine
     expect(worker.connected).toBe(true);
@@ -506,7 +508,7 @@ describe('RemoteWorker', () => {
       });
 
       await worker.connect();
-      await Bun.sleep(50);
+      await sleepForTesting(50);
 
       expect(messages.some((message) => message.type === 'register')).toBe(true);
       expect(messages.some((message) => message.type === 'heartbeat')).toBe(true);
@@ -557,7 +559,7 @@ describe('RemoteWorker', () => {
     expect(worker.connected).toBe(true);
 
     // Wait for the shutdown message to be processed
-    await Bun.sleep(200);
+    await sleepForTesting(200);
 
     // After shutdown, the worker should have set shuttingDown to true
     // and eventually closed the connection
@@ -610,13 +612,18 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(100);
+    await waitForCondition(() => worker.inFlight === 1, {
+      timeoutMs: 500,
+      label: 'slow activity to start',
+    });
 
     // Task should be in-flight
     expect(worker.inFlight).toBe(1);
 
-    // Wait for the shutdown message to arrive
-    await Bun.sleep(100);
+    await waitForCondition(() => worker.shuttingDown, {
+      timeoutMs: 500,
+      label: 'shutdown message',
+    });
     expect(worker.shuttingDown).toBe(true);
 
     // Worker should still be connected (waiting for in-flight task)
@@ -624,7 +631,10 @@ describe('RemoteWorker', () => {
 
     // Resolve the activity so the graceful shutdown can complete
     resolveActivity!();
-    await Bun.sleep(200);
+    await waitForCondition(() => worker.inFlight === 0 && !worker.connected, {
+      timeoutMs: 500,
+      label: 'graceful shutdown completion',
+    });
 
     expect(worker.inFlight).toBe(0);
     expect(worker.connected).toBe(false);
@@ -675,7 +685,10 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(300);
+    await waitForCondition(() => tasksSentCount === 1, {
+      timeoutMs: 500,
+      label: 'post-shutdown task dispatch',
+    });
 
     // Verify the task was sent by the server
     expect(tasksSentCount).toBe(1);
@@ -724,7 +737,7 @@ describe('RemoteWorker', () => {
     await worker.connect();
 
     // Wait for the task to be picked up so inFlight increments
-    await Bun.sleep(100);
+    await sleepForTesting(100);
     expect(worker.inFlight).toBe(1);
 
     const startTime = Date.now();
@@ -783,22 +796,25 @@ describe('RemoteWorker', () => {
 
     await worker.connect();
 
-    // Wait for the task to start and the shutdown message to be received
-    await Bun.sleep(100);
+    await waitForCondition(() => worker.inFlight === 1, {
+      timeoutMs: 500,
+      label: 'hanging activity to start',
+    });
     expect(worker.inFlight).toBe(1);
 
-    // Wait for the shutdown to be acknowledged
-    await Bun.sleep(50);
+    await waitForCondition(() => worker.shuttingDown, {
+      timeoutMs: 500,
+      label: 'shutdown acknowledgement',
+    });
     expect(worker.shuttingDown).toBe(true);
 
     const startTime = Date.now();
 
-    // Wait for the graceful shutdown to time out and complete
-    // The shutdown runs async inside #handleMessage, so we poll until connected goes false
     const shutdownTimeoutMs = disconnectTimeoutMs + 500;
-    while (worker.connected && Date.now() - startTime < shutdownTimeoutMs) {
-      await Bun.sleep(50);
-    }
+    await waitForCondition(() => !worker.connected, {
+      timeoutMs: shutdownTimeoutMs,
+      label: 'shutdown timeout completion',
+    });
 
     const elapsed = Date.now() - startTime;
 
@@ -890,14 +906,14 @@ describe('RemoteWorker', () => {
 
     // First connection — server triggers shutdown
     await worker.connect();
-    await Bun.sleep(300);
+    await sleepForTesting(300);
     expect(worker.shuttingDown).toBe(true);
     expect(worker.connected).toBe(false);
 
     // Reconnect — connect() should reset #shuttingDown so tasks are accepted
     await worker.connect();
     expect(worker.shuttingDown).toBe(false);
-    await Bun.sleep(300);
+    await sleepForTesting(300);
 
     // The task sent on the second connection should have been processed
     const taskResult = messages.find((m) => m.type === 'taskResult');
@@ -976,12 +992,10 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(200);
+    const taskResult = await waitForTaskResult(messages, 'intercepted task result');
 
     expect(interceptorCalls).toEqual(['before:greet', 'after:greet']);
 
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult).toBeDefined();
     expect(taskResult.status).toBe('completed');
     expect(taskResult.value).toBe('hello world');
 
@@ -1025,10 +1039,8 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(200);
 
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult).toBeDefined();
+    const taskResult = await waitForTaskResult(messages, 'modified input task result');
     expect(taskResult.status).toBe('completed');
     expect(taskResult.value).toBe('modified');
 
@@ -1075,7 +1087,10 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(200);
+    await waitForCondition(() => capturedHeaders !== undefined, {
+      timeoutMs: 500,
+      label: 'interceptor headers',
+    });
 
     expect(capturedHeaders).toBeDefined();
     expect(capturedHeaders!.get('x-trace-id')).toBe('trace-abc');
@@ -1115,10 +1130,8 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(200);
 
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult).toBeDefined();
+    const taskResult = await waitForTaskResult(messages, 'direct activity task result');
     expect(taskResult.status).toBe('completed');
     expect(taskResult.value).toBe(42);
 
@@ -1166,7 +1179,10 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(200);
+    await waitForCondition(() => capturedOperationId !== undefined, {
+      timeoutMs: 500,
+      label: 'interceptor context',
+    });
 
     expect(capturedOperationId).toBe('op-context-check');
     expect(capturedSignal).toBeInstanceOf(AbortSignal);
@@ -1225,8 +1241,10 @@ describe('RemoteWorker', () => {
 
     await worker.connect();
 
-    // Wait for the task to start, then for the cancel to arrive and be processed
-    await Bun.sleep(400);
+    await waitForCondition(() => messages.some((message) => message.type === 'taskResult'), {
+      timeoutMs: 1_000,
+      label: 'cancelled task result',
+    });
 
     expect(taskStarted).toBe(true);
 
@@ -1263,7 +1281,7 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(100);
+    await sleepForTesting(100);
 
     // Worker should still be connected and no taskResult should have been sent
     expect(worker.connected).toBe(true);
@@ -1308,14 +1326,12 @@ describe('RemoteWorker', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(200);
+    const taskResult = await waitForTaskResult(messages, 'signal context task result');
 
     expect(receivedSignal).toBeDefined();
     expect(receivedSignal).toBeInstanceOf(AbortSignal);
     expect(receivedSignal!.aborted).toBe(false);
 
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult).toBeDefined();
     expect(taskResult.status).toBe('completed');
 
     await worker.disconnect();

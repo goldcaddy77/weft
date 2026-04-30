@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 /**
  * End-to-end tests for workflow, agent, and tool version tracking on resume.
  *
@@ -60,7 +61,7 @@ function makeMockProvider(): LLMProvider {
 
 /** Drain microtasks. */
 async function flush(): Promise<void> {
-  await Bun.sleep(20);
+  await sleepForTesting(20);
 }
 
 // ---------------------------------------------------------------------------

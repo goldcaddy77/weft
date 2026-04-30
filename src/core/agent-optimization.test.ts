@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { defineAgent } from '../ai/declaration.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
@@ -14,7 +15,7 @@ import { TestEngine } from '../testing/test-engine.ts';
 // ---------------------------------------------------------------------------
 
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 function createChatResponse(content: string): ChatResponse {

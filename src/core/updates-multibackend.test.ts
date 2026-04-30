@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { waitForever } from '../testing/fake-timers.ts';
 
 import { KEYS } from '../storage/interface.ts';
 import {
@@ -41,7 +42,7 @@ for (const backend of storageBackends) {
 
       engine.register('echo', async function* (ctx: WorkflowContext) {
         (ctx as Context).onUpdate('echo', (payload) => `echo: ${String(payload)}`);
-        await Bun.sleep(999_999);
+        await waitForever();
         return 'done';
       });
 
@@ -114,7 +115,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('no-handler', async function* (_ctx: WorkflowContext) {
-        await Bun.sleep(999_999);
+        await waitForever();
         return 'done';
       });
 
@@ -145,7 +146,7 @@ for (const backend of storageBackends) {
           counter += 1;
           return counter;
         });
-        await Bun.sleep(999_999);
+        await waitForever();
         return counter;
       });
 

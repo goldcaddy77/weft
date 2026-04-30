@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * Engine-level unit tests for the unified workflow-feed commit API:
  * `replayWorkflowFeed`, `snapshotWorkflowFeedTail`, and
@@ -40,7 +41,7 @@ async function waitForEventCount(
   while (Date.now() < deadline) {
     const events = await engine.getEvents(workflowId);
     if (events.length >= expected) return;
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
   throw new Error(
     `Engine did not accumulate ${expected} events for ${workflowId} within ${timeoutMilliseconds}ms`,
@@ -151,7 +152,7 @@ describe('Engine.subscribeWorkflowFeedCommits — listener isolation', () => {
       await engine.signal(handle.id, 'release', 'go');
       await handle.result();
       // Give microtasks a turn so any leaked rejection would land.
-      await Bun.sleep(10);
+      await sleepForTesting(10);
     } finally {
       process.off('unhandledRejection', handler);
       unsubscribeThrower();

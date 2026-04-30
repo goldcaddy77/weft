@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { z } from 'zod';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
@@ -43,7 +44,7 @@ async function waitForEventCount(
     if (events.length >= expected) {
       return;
     }
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
 
   throw new Error(`workflow ${workflowId} did not reach ${expected} events in time`);

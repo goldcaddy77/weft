@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
@@ -10,7 +11,7 @@ import { validateSessionStateLocals } from '../session-state.ts';
 import type { WorkflowContext } from '../types.ts';
 
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 describe('Acceptance criterion: Virtual-Object-style session state', () => {

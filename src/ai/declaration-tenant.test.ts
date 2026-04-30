@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { Engine } from '../core/engine.ts';
 import type { TenantContext } from '../core/tenant.ts';
@@ -56,7 +57,7 @@ function makeTool(name: string): AgentToolDefinition {
 }
 
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 // ---------------------------------------------------------------------------

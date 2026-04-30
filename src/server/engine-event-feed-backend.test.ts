@@ -1,3 +1,4 @@
+import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 /**
  * Tests for `createEngineEventFeedBackend` — the production
  * `WorkflowEventFeedBackend` implementation that wraps engine-owned
@@ -48,14 +49,16 @@ async function waitForEventCount(
   expected: number,
   timeoutMilliseconds = 500,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMilliseconds;
-  while (Date.now() < deadline) {
-    const events = await engine.getEvents(workflowId);
-    if (events.length >= expected) return;
-    await Bun.sleep(5);
-  }
-  throw new Error(
-    `Engine did not accumulate ${expected} events for ${workflowId} within ${timeoutMilliseconds}ms`,
+  await waitForCondition(
+    async () => {
+      const events = await engine.getEvents(workflowId);
+      return events.length >= expected;
+    },
+    {
+      label: `${expected} events for ${workflowId}`,
+      timeoutMs: timeoutMilliseconds,
+      intervalMs: 5,
+    },
   );
 }
 
@@ -290,7 +293,7 @@ describe('createEngineEventFeedBackend — subscribeLive(events)', () => {
     try {
       await engine.signal(handle.id, 'release', 'go');
       await handle.result();
-      await Bun.sleep(10);
+      await sleepForTesting(10);
     } finally {
       process.off('unhandledRejection', handler);
       unsubscribeThrower();
@@ -374,14 +377,16 @@ describe('createEngineEventFeedBackend — tokens selector', () => {
     expected: number,
     timeoutMilliseconds = 500,
   ): Promise<void> {
-    const deadline = Date.now() + timeoutMilliseconds;
-    while (Date.now() < deadline) {
-      const chunks = await engine.getStreamChunks(workflowId, 'tokens');
-      if (chunks.length >= expected) return;
-      await Bun.sleep(5);
-    }
-    throw new Error(
-      `Engine did not accumulate ${expected} tokens chunks within ${timeoutMilliseconds}ms`,
+    await waitForCondition(
+      async () => {
+        const chunks = await engine.getStreamChunks(workflowId, 'tokens');
+        return chunks.length >= expected;
+      },
+      {
+        label: `${expected} token chunks for ${workflowId}`,
+        timeoutMs: timeoutMilliseconds,
+        intervalMs: 5,
+      },
     );
   }
 

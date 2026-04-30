@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
+import { restoreRealTimers, sleepForTesting, useFakeTimers } from './fake-timers.ts';
 
 import type { Context } from '../core/context.ts';
 import type { WorkflowContext } from '../core/types.ts';
@@ -10,12 +11,16 @@ import { TestEngine } from './test-engine.ts';
 // ---------------------------------------------------------------------------
 
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+afterEach(() => {
+  restoreRealTimers();
+});
 
 describe('TestEngine', () => {
   it('creates with MemoryStorage', () => {
@@ -45,6 +50,16 @@ describe('TestEngine', () => {
 
     const result = await handle.result();
     expect(result).toBe('awake');
+    engine[Symbol.dispose]();
+  });
+
+  it('advanceTime settles when Bun fake timers are enabled', async () => {
+    useFakeTimers();
+    const engine = new TestEngine({ startTime: 0 });
+
+    await engine.advanceTime(1);
+
+    expect(engine.now).toBe(1);
     engine[Symbol.dispose]();
   });
 

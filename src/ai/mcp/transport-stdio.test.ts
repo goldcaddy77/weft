@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import { MCPTransportError } from './transport';
 import { StdioTransport } from './transport-stdio';
@@ -356,7 +357,7 @@ describe('StdioTransport', () => {
       await expect(transport.send({ method: 'test' })).resolves.toEqual({ result: 'ok' });
 
       // Allow the read loop finally-block to run after stdout reports `done: true`.
-      await Bun.sleep(0);
+      await sleepForTesting(0);
     } finally {
       spawnSpy.mockRestore();
     }
@@ -424,7 +425,7 @@ describe('StdioTransport', () => {
       await expect(transport.send({ method: 'test' })).resolves.toEqual({ result: 'ok' });
 
       // Allow the stderr loop to finish reading and run its cleanup path.
-      await Bun.sleep(0);
+      await sleepForTesting(0);
       expect(warnSpy).toHaveBeenCalledWith('[weft:mcp:stdio:stderr] stderr line');
     } finally {
       spawnSpy.mockRestore();

@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * End-to-end integration tests for `runStdioSession` wired to a real
  * `Engine` instance and the production `createEngineEventFeedBackend`.
@@ -161,7 +162,7 @@ async function waitForStatus(
   while (Date.now() < deadline) {
     const state = await engine.get(workflowId);
     if (state?.status === status) return;
-    await Bun.sleep(10);
+    await sleepForTesting(10);
   }
   throw new Error(`workflow ${workflowId} did not reach ${status} within ${timeoutMs}ms`);
 }
@@ -304,7 +305,7 @@ describe('runStdioSession — engine-backed integration', () => {
       // Give replay a brief moment to drain into the output buffer
       // so the baseline reflects every pre-signal delivery. Then
       // snapshot.
-      await Bun.sleep(10);
+      await sleepForTesting(10);
       const baselineSequence = highestDeliveredSequence();
 
       // Signal the workflow — this commits events that the engine-backed

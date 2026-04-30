@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import { OAuth2TokenError, createOAuth2TokenManager } from './oauth2-token-manager';
 
@@ -109,7 +110,7 @@ describe('createOAuth2TokenManager', () => {
     mockFetch(async () => {
       fetchCount++;
       // Simulate slow token endpoint
-      await Bun.sleep(50);
+      await sleepForTesting(50);
       return tokenResponse('token-shared');
     });
 
@@ -131,7 +132,7 @@ describe('createOAuth2TokenManager', () => {
 
   it('rejects all concurrent waiters when refresh fails', async () => {
     mockFetch(async () => {
-      await Bun.sleep(20);
+      await sleepForTesting(20);
       return new Response('Server Error', { status: 500 });
     });
 

@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * Tests for `WorkflowEventFeed` — the transport-neutral event-replay
  * plus live-tail abstraction that REST SSE, WebSocket watch/stream,
@@ -357,7 +358,7 @@ describe('WorkflowEventFeed — subscribe (live + replay)', () => {
     })();
 
     // Let both subscribers register their listeners before emitting.
-    await Bun.sleep(0);
+    await sleepForTesting(0);
     for (let seq = 0; seq < 3; seq += 1) {
       await backend.emitLive(makeEnvelope({ sequence: seq }));
     }
@@ -456,7 +457,7 @@ describe('WorkflowEventFeed — subscribe (live + replay)', () => {
     const iterator = iterable[Symbol.asyncIterator]();
 
     const pending = iterator.next();
-    await Bun.sleep(0);
+    await sleepForTesting(0);
     controller.abort();
 
     const result = await pending;
@@ -470,7 +471,7 @@ describe('WorkflowEventFeed — subscribe (live + replay)', () => {
     const iterator = iterable[Symbol.asyncIterator]();
 
     const pending = iterator.next();
-    await Bun.sleep(0);
+    await sleepForTesting(0);
     await backend.emitLive(makeEnvelope({ sequence: 0 }));
 
     const result = await pending;
