@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import {
+  advanceTimersByTime,
+  restoreRealTimers,
+  sleepForTesting,
+  useFakeTimers,
+} from '../testing/fake-timers.ts';
 import {
   type MemorySample,
   MemoryProfiler,
@@ -163,6 +169,10 @@ describe('analyzeStability', () => {
 // ---------------------------------------------------------------------------
 
 describe('MemoryProfiler', () => {
+  afterEach(() => {
+    restoreRealTimers();
+  });
+
   it('takes a snapshot of current memory', () => {
     const profiler = new MemoryProfiler();
     const sample = profiler.snapshot();
@@ -176,10 +186,12 @@ describe('MemoryProfiler', () => {
   });
 
   it('collects samples over an interval', async () => {
+    useFakeTimers(new Date('2026-01-01T00:00:00.000Z'));
+
     const profiler = new MemoryProfiler();
     profiler.start(50); // sample every 50ms
 
-    await Bun.sleep(250);
+    await advanceTimersByTime(250);
     profiler.stop();
 
     const profile = profiler.profile();
@@ -198,9 +210,11 @@ describe('MemoryProfiler', () => {
   });
 
   it('reset clears collected samples', async () => {
+    useFakeTimers(new Date('2026-01-01T00:00:00.000Z'));
+
     const profiler = new MemoryProfiler();
     profiler.start(50);
-    await Bun.sleep(150);
+    await advanceTimersByTime(150);
     profiler.stop();
 
     expect(profiler.profile().samples.length).toBeGreaterThan(0);
@@ -246,7 +260,7 @@ describe('engine memory stability under load', () => {
 
     // Let GC run
     Bun.gc(true);
-    await Bun.sleep(100);
+    await sleepForTesting(100);
 
     profiler.stop();
 
@@ -281,7 +295,7 @@ describe('engine memory stability under load', () => {
 
     // Force GC to let FinalizationRegistry clean up WeakRef entries
     Bun.gc(true);
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     // Verify the engine can still start new workflows (no leaked state
     // blocking new work) and that previously completed workflows report

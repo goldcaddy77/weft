@@ -1,3 +1,4 @@
+import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
 /**
  * Cold start benchmarks for Weft.
  *
@@ -103,7 +104,7 @@ async function measureColdStart(
     } catch {
       // Server not ready yet
     }
-    await Bun.sleep(5);
+    await waitForRealTimersForTesting(5);
   }
 
   proc.kill('SIGTERM');

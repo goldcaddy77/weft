@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from './testing/fake-timers.ts';
 
 import type { Context } from './core/context';
 import type { WorkflowContext } from './core/types';
@@ -6,7 +7,7 @@ import { Engine, MemoryStorage, WorkflowCompletedEvent, WorkflowStartedEvent } f
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 describe('integration: full workflow lifecycle', () => {

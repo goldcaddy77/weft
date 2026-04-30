@@ -1,4 +1,9 @@
 import { describe, expect, it } from 'bun:test';
+import {
+  sleepForTesting,
+  waitForCondition,
+  waitForRealTimersForTesting,
+} from '../../testing/fake-timers.ts';
 
 import type { LLMProvider } from '../../ai/providers/interface.ts';
 import type { ChatResponse } from '../../ai/providers/types.ts';
@@ -29,24 +34,6 @@ const retentionBudgetProvider: LLMProvider = {
   },
 };
 
-async function waitForCondition(
-  predicate: () => Promise<boolean>,
-  message: string,
-  timeoutMs = 400,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    if (await predicate()) {
-      return;
-    }
-
-    await Bun.sleep(5);
-  }
-
-  throw new Error(message);
-}
-
 async function waitForWorkflowPresence(
   engine: Engine,
   workflowId: string,
@@ -57,7 +44,11 @@ async function waitForWorkflowPresence(
       const exists = (await engine.get(workflowId)) !== null;
       return exists === shouldExist;
     },
-    `Expected workflow "${workflowId}" existence to become ${String(shouldExist)}`,
+    {
+      label: `workflow "${workflowId}" existence to become ${String(shouldExist)}`,
+      timeoutMs: 400,
+      intervalMs: 5,
+    },
   );
 }
 
@@ -104,7 +95,7 @@ class OverlapTrackingMemoryStorage extends MemoryStorage {
     );
 
     try {
-      await Bun.sleep(this.delayMs);
+      await waitForRealTimersForTesting(this.delayMs);
       await super.batch(operations);
     } finally {
       this.activePurgeBatches--;
@@ -162,10 +153,13 @@ async function createCompletedWorkflow(
 }
 
 async function waitForRunningWorkflow(engine: Engine, workflowId: string): Promise<void> {
-  await waitForCondition(async () => {
-    const state = await engine.get(workflowId);
-    return state?.status === 'running';
-  }, `Expected workflow "${workflowId}" to reach running state`);
+  await waitForCondition(
+    async () => {
+      const state = await engine.get(workflowId);
+      return state?.status === 'running';
+    },
+    { label: `workflow "${workflowId}" to reach running state`, timeoutMs: 400, intervalMs: 5 },
+  );
 }
 
 describe('workflow retention', () => {
@@ -253,7 +247,7 @@ describe('workflow retention', () => {
     expect(overview.defaultRetention).toBeNull();
     expect(overview.nextSweepAt).toBeNull();
 
-    await Bun.sleep(50);
+    await sleepForTesting(50);
     expect(await engine.get(handle.id)).not.toBeNull();
 
     engine[Symbol.dispose]();
@@ -279,15 +273,29 @@ describe('workflow retention', () => {
     const second = await engine.start('retention-batched', 'b', { id: 'batched-b' });
     await Promise.all([first.result(), second.result()]);
 
-    await waitForCondition(async () => {
-      const states = await Promise.all([engine.get(first.id), engine.get(second.id)]);
-      return states.filter((state) => state !== null).length === 1;
-    }, 'Expected the first retention sweep to delete exactly one workflow');
+    await waitForCondition(
+      async () => {
+        const states = await Promise.all([engine.get(first.id), engine.get(second.id)]);
+        return states.filter((state) => state !== null).length === 1;
+      },
+      {
+        label: 'first retention sweep to delete exactly one workflow',
+        timeoutMs: 400,
+        intervalMs: 5,
+      },
+    );
 
-    await waitForCondition(async () => {
-      const states = await Promise.all([engine.get(first.id), engine.get(second.id)]);
-      return states.every((state) => state === null);
-    }, 'Expected the second retention sweep to delete the remaining workflow');
+    await waitForCondition(
+      async () => {
+        const states = await Promise.all([engine.get(first.id), engine.get(second.id)]);
+        return states.every((state) => state === null);
+      },
+      {
+        label: 'second retention sweep to delete the remaining workflow',
+        timeoutMs: 400,
+        intervalMs: 5,
+      },
+    );
 
     engine[Symbol.dispose]();
   });
@@ -313,10 +321,17 @@ describe('workflow retention', () => {
 
     storage.shouldTrackPurgeBatches = true;
 
-    await waitForCondition(async () => {
-      const remainingStates = await Promise.all([engine.get(first.id), engine.get(second.id)]);
-      return remainingStates.filter((state) => state !== null).length === 1;
-    }, 'Expected exactly one workflow to be purged while the first retention sweep is in flight');
+    await waitForCondition(
+      async () => {
+        const remainingStates = await Promise.all([engine.get(first.id), engine.get(second.id)]);
+        return remainingStates.filter((state) => state !== null).length === 1;
+      },
+      {
+        label: 'exactly one workflow to be purged while the first retention sweep is in flight',
+        timeoutMs: 400,
+        intervalMs: 5,
+      },
+    );
 
     expect(storage.maxConcurrentPurgeBatches).toBe(1);
 
@@ -455,11 +470,18 @@ describe('workflow retention', () => {
     const handle = await engine.start('budget-blocked', null, {
       id: 'budget-cleanup-workflow',
     });
-    await waitForCondition(async () => {
-      const state = await engine.get(handle.id);
-      const chargedKeys = await collectKeys(storage, 'budget-charged:');
-      return state?.status === 'running' && chargedKeys.length === 1;
-    }, 'Expected a running workflow with an active charged-agent budget key');
+    await waitForCondition(
+      async () => {
+        const state = await engine.get(handle.id);
+        const chargedKeys = await collectKeys(storage, 'budget-charged:');
+        return state?.status === 'running' && chargedKeys.length === 1;
+      },
+      {
+        label: 'running workflow with an active charged-agent budget key',
+        timeoutMs: 400,
+        intervalMs: 5,
+      },
+    );
 
     await engine.timeout(handle.id);
     await handle.result().catch(() => {});
@@ -558,8 +580,11 @@ describe('workflow retention', () => {
           initialNextSweepAt !== null && nextSweepAt !== null && nextSweepAt > initialNextSweepAt
         );
       },
-      'Expected the retention sweep interval to remain active while retention is configured',
-      500,
+      {
+        label: 'retention sweep interval to remain active while retention is configured',
+        timeoutMs: 500,
+        intervalMs: 5,
+      },
     );
 
     engine.register('retained', async function* (ctx: WorkflowContext) {
@@ -569,9 +594,9 @@ describe('workflow retention', () => {
 
     expect(engine.getRetentionOverview().nextSweepAt).toBeNull();
 
-    await Bun.sleep(5);
+    await sleepForTesting(5);
     storage.resetTopLevelWorkflowStateEntriesSeen();
-    await Bun.sleep(75);
+    await sleepForTesting(75);
 
     expect(storage.topLevelWorkflowStateEntriesSeen).toBe(0);
 
@@ -659,10 +684,17 @@ describe('workflow retention', () => {
       new Uint8Array(),
     );
 
-    await waitForCondition(async () => {
-      const keys = await collectKeys(storage, KEYS.terminalWorkflowPrefix());
-      return keys.length === 0;
-    }, 'Expected the retention sweep to delete orphaned terminal workflow index entries');
+    await waitForCondition(
+      async () => {
+        const keys = await collectKeys(storage, KEYS.terminalWorkflowPrefix());
+        return keys.length === 0;
+      },
+      {
+        label: 'retention sweep to delete orphaned terminal workflow index entries',
+        timeoutMs: 400,
+        intervalMs: 5,
+      },
+    );
 
     now += 1;
     engine[Symbol.dispose]();

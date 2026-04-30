@@ -1,4 +1,5 @@
 import { describe, expect, it, spyOn } from 'bun:test';
+import { yieldToEventLoop } from '../testing/fake-timers.ts';
 
 import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -86,8 +87,8 @@ class ScheduleRunStartFailureStorage extends MemoryStorage {
 }
 
 async function drainEngine(): Promise<void> {
-  await Bun.sleep(0);
-  await Bun.sleep(0);
+  await yieldToEventLoop();
+  await yieldToEventLoop();
 }
 
 function registerWorkflow<TInput, TOutput>(

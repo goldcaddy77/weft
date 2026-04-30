@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { MemoryStorage } from '../storage/memory';
 import type { Context } from './context';
@@ -62,11 +63,11 @@ describe('step-context', () => {
 
     engine.register('async-steps', async (ctx: StepWorkflowContext, _input: unknown) => {
       const value = await ctx.step('fetch', async () => {
-        await Bun.sleep(1);
+        await sleepForTesting(1);
         return 42;
       });
       const doubled = await ctx.step('double', async () => {
-        await Bun.sleep(1);
+        await sleepForTesting(1);
         return value * 2;
       });
       return { value, doubled };

@@ -6,6 +6,7 @@ import type { WorkflowContext } from '../core/types.ts';
 import { handleRequest } from '../server/handler.ts';
 import { principalFromApiKey } from '../server/principal.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 import { HttpClient, HttpClientError } from './index.ts';
 import type { WeftClient } from './interface.ts';
 
@@ -510,7 +511,7 @@ describe('HttpClient', () => {
         id: 'http-client-tag-mutations',
         tags: ['alpha'],
       });
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       await handle.addTags('beta');
       await handle.removeTags('alpha');
@@ -1130,7 +1131,7 @@ describe('HttpClient request surface', () => {
     const warningHandle = await httpClient.start('echo', 'warn');
     warningHandle.addEventListener('workflow:started', (() => {}) as EventListener);
     await intervalCallback?.();
-    await Bun.sleep(0);
+    await sleepForTesting(0);
 
     expect(warnings[0]?.[0]).toBe('[weft] Event poll error:');
   });
@@ -1164,7 +1165,7 @@ describe('HttpClient request surface', () => {
       handle.addEventListener('workflow:started', () => resolve());
     });
     await intervalCallback?.();
-    await Bun.sleep(0);
+    await sleepForTesting(0);
 
     expect(clearedIntervals).toBe(1);
   });

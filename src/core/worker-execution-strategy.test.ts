@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import type { WorkerPool } from '../workers/pool.ts';
 import type { WorkerOutboundMessage } from './types.ts';
@@ -130,7 +131,7 @@ describe('WorkerExecutionStrategy', () => {
       });
 
       // Allow the async acquire to complete
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
       expect(mockPool.acquire).toHaveBeenCalled();
@@ -153,7 +154,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
       // Verify that message listeners were added to the worker
@@ -171,7 +172,7 @@ describe('WorkerExecutionStrategy', () => {
         tenant: { id: 'acme', attributes: { tier: 'gold' } },
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
       const sentMessage = worker.postMessage.mock.calls[0]![0];
@@ -191,7 +192,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
       const sentMessage = worker.postMessage.mock.calls[0]![0];
@@ -215,7 +216,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('failed');
@@ -256,7 +257,7 @@ describe('WorkerExecutionStrategy', () => {
           checkpoint: new ArrayBuffer(0),
         });
 
-        await Bun.sleep(10);
+        await sleepForTesting(10);
 
         const worker = firstWorker();
         const callsBefore = worker.postMessage.mock.calls.length;
@@ -313,7 +314,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
 
@@ -359,7 +360,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
 
@@ -390,7 +391,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
 
@@ -466,7 +467,7 @@ describe('WorkerExecutionStrategy', () => {
           checkpoint: new ArrayBuffer(0),
         });
 
-        await Bun.sleep(20);
+        await new Promise((resolve) => setTimeout(resolve, 20));
 
         for (const listener of worker.listeners.get('message') ?? []) {
           listener(
@@ -480,7 +481,7 @@ describe('WorkerExecutionStrategy', () => {
           );
         }
 
-        await Bun.sleep(50);
+        await new Promise((resolve) => setTimeout(resolve, 50));
         strategy[Symbol.dispose]();
         process.exit(0);
       `;
@@ -516,7 +517,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
       const checkpoint = new ArrayBuffer(16);
@@ -565,7 +566,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       strategy.cancelWorkflow('wf-1');
 
@@ -604,7 +605,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
 
@@ -649,7 +650,7 @@ describe('WorkerExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const worker = firstWorker();
 

@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 /**
  * `weft.workflows.get` operation + REST binding — behavior tests.
  *
@@ -37,7 +38,7 @@ async function waitForStatus(
   while (Date.now() < deadline) {
     const state = await engine.get(workflowId);
     if (state?.status === status) return;
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
   throw new Error(`Workflow ${workflowId} did not reach ${status} within ${timeoutMilliseconds}ms`);
 }

@@ -1,3 +1,4 @@
+import { waitForCondition } from '../testing/fake-timers.ts';
 /**
  * Phase 15 — Integration tests for the `handleRequest` pipeline path.
  *
@@ -38,13 +39,13 @@ function createEngine(): Engine {
 }
 
 async function waitForRunning(engine: Engine, workflowId: string): Promise<void> {
-  const deadline = Date.now() + 500;
-  while (Date.now() < deadline) {
-    const state = await engine.get(workflowId);
-    if (state?.status === 'running') return;
-    await Bun.sleep(5);
-  }
-  throw new Error(`workflow ${workflowId} did not reach running`);
+  await waitForCondition(
+    async () => {
+      const state = await engine.get(workflowId);
+      return state?.status === 'running';
+    },
+    { label: `workflow ${workflowId} to reach running`, timeoutMs: 500, intervalMs: 5 },
+  );
 }
 
 async function recordExpectedConsoleError<T>(run: () => Promise<T>): Promise<{

@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import {
+  flushMicrotasks,
+  restoreRealTimers,
+  sleepForTesting,
+  useFakeTimers,
+} from '../testing/fake-timers.ts';
 
 import type { TimerEntry } from '../core/types';
 import type { Storage } from '../storage/interface';
@@ -12,6 +18,8 @@ describe('ServiceWorkerScheduler', () => {
   let currentTime: number;
 
   beforeEach(() => {
+    useFakeTimers();
+
     storage = new MemoryStorage();
     firedEntries = [];
     currentTime = 1000000;
@@ -27,6 +35,7 @@ describe('ServiceWorkerScheduler', () => {
 
   afterEach(() => {
     scheduler[Symbol.dispose]();
+    restoreRealTimers();
   });
 
   function makeTimer(overrides: Partial<TimerEntry> = {}): TimerEntry {
@@ -213,7 +222,7 @@ describe('ServiceWorkerScheduler', () => {
     // because the scheduler has been stopped.
     const entry2 = makeTimer({ id: 'timer-2', fireAt: currentTime - 500 });
     await scheduler.schedule(entry2);
-    await Bun.sleep(200);
+    await sleepForTesting(200);
     expect(firedEntries).toHaveLength(1);
   });
 
@@ -270,8 +279,10 @@ describe('ServiceWorkerScheduler', () => {
 
     scheduler.start();
 
-    // Allow microtask for the .catch() to run plus setTimeout polling
-    await Bun.sleep(300);
+    // Allow microtask for the .catch() to schedule fallback polling.
+    await flushMicrotasks();
+    // Then advance through the fallback poll timer.
+    await sleepForTesting(300);
 
     expect(registerMock).toHaveBeenCalledTimes(1);
     expect(firedEntries.length).toBeGreaterThanOrEqual(1);
@@ -323,7 +334,7 @@ describe('ServiceWorkerScheduler', () => {
 
     scheduler.start();
 
-    await Bun.sleep(200);
+    await sleepForTesting(200);
 
     expect(firedEntries.length).toBeGreaterThanOrEqual(1);
     expect(firedEntries[0]!.id).toBe('timer-1');
@@ -356,7 +367,7 @@ describe('ServiceWorkerScheduler', () => {
     scheduler.start();
 
     // Wait long enough for multiple poll cycles
-    await Bun.sleep(400);
+    await sleepForTesting(400);
 
     // The first tick processes timer-a (callback throws, caught by try/catch
     // in tick) then continues to timer-b. The .finally() in #schedulePoll
@@ -395,7 +406,7 @@ describe('ServiceWorkerScheduler', () => {
     const entry = makeTimer({ fireAt: currentTime - 1000 });
     await scheduler.schedule(entry);
 
-    await Bun.sleep(200);
+    await sleepForTesting(200);
 
     expect(firedEntries).toHaveLength(0);
   });
@@ -427,7 +438,7 @@ describe('ServiceWorkerScheduler', () => {
     const entry = makeTimer({ fireAt: currentTime - 1000 });
     await scheduler.schedule(entry);
 
-    await Bun.sleep(200);
+    await sleepForTesting(200);
 
     expect(firedEntries).toHaveLength(0);
   });
@@ -474,7 +485,7 @@ describe('ServiceWorkerScheduler', () => {
 
     scheduler.start();
 
-    await Bun.sleep(200);
+    await sleepForTesting(200);
 
     expect(firedEntries.length).toBeGreaterThanOrEqual(1);
 
@@ -502,7 +513,7 @@ describe('ServiceWorkerScheduler', () => {
     scheduler = new ServiceWorkerScheduler({
       storage,
       onTimerFired: async (entry) => {
-        await Bun.sleep(1);
+        await sleepForTesting(1);
         asyncFired.push(entry);
       },
       getNow: () => currentTime,
@@ -535,7 +546,7 @@ describe('ServiceWorkerScheduler', () => {
     try {
       await scheduler.schedule(makeTimer({ fireAt: currentTime - 1000 }));
       scheduler.start();
-      await Bun.sleep(80);
+      await sleepForTesting(80);
 
       expect(errorSpy).toHaveBeenCalled();
     } finally {
@@ -573,7 +584,7 @@ describe('ServiceWorkerScheduler', () => {
 
     try {
       scheduler.start();
-      await Bun.sleep(80);
+      await sleepForTesting(80);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] ServiceWorkerScheduler tick failed:',

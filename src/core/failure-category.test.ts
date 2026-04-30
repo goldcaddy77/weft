@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * Tests for WorkflowState.failureCategory — populated on all failed workflows
  * and indexed so it can be queried via engine.list({ attributes: ... }).
@@ -10,7 +11,7 @@ import type { FailureCategory } from './types.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 describe('failureCategory on WorkflowState', () => {

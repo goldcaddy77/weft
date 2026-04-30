@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import { defineAgent } from '../../ai/declaration.ts';
 import type { LLMProvider } from '../../ai/providers/interface.ts';
@@ -21,7 +22,7 @@ async function waitForCheckpointStep(
     if (checkpoints.some((checkpoint) => checkpoint.step === step)) {
       return;
     }
-    await Bun.sleep(10);
+    await sleepForTesting(10);
   }
 
   throw new Error(`Checkpoint step ${step} was not recorded for workflow "${workflowId}"`);
@@ -149,7 +150,7 @@ describe('workflow forking', () => {
     expect(forkCheckpoint.createdAt).toBeGreaterThan(sourceCheckpoint.createdAt);
 
     await engine.signal(forked.id, 'continue');
-    await Bun.sleep(0);
+    await sleepForTesting(0);
 
     const forkedStateBeforeFinalAdvance = await engine.get(forked.id);
     expect(forkedStateBeforeFinalAdvance?.status).toBe('running');

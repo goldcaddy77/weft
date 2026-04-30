@@ -32,6 +32,7 @@ import {
   type SuspendingProviderCoordinator,
 } from '../ai/providers/suspending-provider.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
+import { sleep } from '../runtime/portable.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
 import type { BatchOperation, Storage as WeftStorage } from '../storage/interface.ts';
 import {
@@ -1464,6 +1465,8 @@ const ATTRIBUTE_SCAN_CONCURRENCY = 8;
 const FORK_LINEAGE_ATTRIBUTE = 'weft:forkedFrom';
 const SCHEDULE_LATE_GRACE_MILLISECONDS = 1000;
 const MAX_SCHEDULE_BACKFILL_OCCURRENCES_PER_TICK = 256;
+const COORDINATED_UPDATE_CONSUMPTION_RETRY_ATTEMPTS = 5;
+const COORDINATED_UPDATE_CONSUMPTION_RETRY_DELAY_MS = 5;
 const SCHEDULE_STATUSES = new Set<ScheduleStatus>(['active', 'paused', 'cancelled']);
 const SCHEDULE_OVERLAP_POLICIES = new Set<ScheduleOverlapPolicy>([
   'skip',
@@ -9919,11 +9922,35 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       await this.#guardTerminalWorkflow(workflowId);
     } catch (error) {
       if (error instanceof WorkflowTerminalError) {
+        if (await this.#coordinatedUpdateWasConsumed(workflowId, updateId)) {
+          return;
+        }
+
         await this.#updateCoordinator.deleteRequest(workflowId, updateId);
       }
 
       throw error;
     }
+  }
+
+  async #coordinatedUpdateWasConsumed(workflowId: string, updateId: string): Promise<boolean> {
+    for (let attempt = 0; attempt < COORDINATED_UPDATE_CONSUMPTION_RETRY_ATTEMPTS; attempt++) {
+      const response = await this.#updateCoordinator.getResponse(updateId);
+      if (response !== null) {
+        return true;
+      }
+
+      const request = await this.#storage.get(KEYS.update(workflowId, updateId));
+      if (request === null) {
+        return true;
+      }
+
+      if (attempt < COORDINATED_UPDATE_CONSUMPTION_RETRY_ATTEMPTS - 1) {
+        await sleep(COORDINATED_UPDATE_CONSUMPTION_RETRY_DELAY_MS);
+      }
+    }
+
+    return false;
   }
 
   /**

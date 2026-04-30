@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import type { ActivityInterceptor } from '../core/interceptor.ts';
+import { createDeferred, withTimeout } from '../testing/fake-timers.ts';
 import { LongPollWorker } from './long-poll.ts';
 
 // ---------------------------------------------------------------------------
@@ -126,6 +127,7 @@ describe('LongPollWorker', () => {
 
   it('polls GET /v1/tasks/:queue for tasks and executes them', async () => {
     const completedTasks: any[] = [];
+    const taskCompleted = createDeferred();
     let pollCount = 0;
 
     server = Bun.serve({
@@ -153,6 +155,7 @@ describe('LongPollWorker', () => {
         if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
           const body = await request.json();
           completedTasks.push(body);
+          taskCompleted.resolve();
           return Response.json({ ok: true });
         }
 
@@ -168,7 +171,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await Bun.sleep(500);
+    await withTimeout(taskCompleted.promise, 500, 'long-poll task completion');
     await worker.stop();
 
     expect(completedTasks.length).toBeGreaterThanOrEqual(1);
@@ -180,6 +183,7 @@ describe('LongPollWorker', () => {
 
   it('sends completion to POST /v1/tasks/:queue/result when activity throws', async () => {
     const completedTasks: any[] = [];
+    const taskCompleted = createDeferred();
     let pollCount = 0;
 
     server = Bun.serve({
@@ -202,6 +206,7 @@ describe('LongPollWorker', () => {
         if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
           const body = await request.json();
           completedTasks.push(body);
+          taskCompleted.resolve();
           return Response.json({ ok: true });
         }
 
@@ -219,7 +224,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await Bun.sleep(500);
+    await withTimeout(taskCompleted.promise, 500, 'long-poll failure completion');
     await worker.stop();
 
     const errorCompletion = completedTasks.find((t) => t.operationId === 'op-err-1');
@@ -229,6 +234,7 @@ describe('LongPollWorker', () => {
   });
 
   it('handles non-ok poll responses by backing off', async () => {
+    const pollObserved = createDeferred();
     let pollCount = 0;
 
     server = Bun.serve({
@@ -238,6 +244,7 @@ describe('LongPollWorker', () => {
 
         if (POLL_PATH_RE.test(url.pathname)) {
           pollCount++;
+          pollObserved.resolve();
           return new Response('Server Error', { status: 500 });
         }
 
@@ -253,7 +260,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await Bun.sleep(300);
+    await withTimeout(pollObserved.promise, 500, 'long-poll request');
     await worker.stop();
 
     // Should have attempted at least one poll
@@ -262,6 +269,7 @@ describe('LongPollWorker', () => {
 
   it('reports unknown activities as failures to the server', async () => {
     const completedTasks: any[] = [];
+    const taskCompleted = createDeferred();
     let pollCount = 0;
 
     server = Bun.serve({
@@ -284,6 +292,7 @@ describe('LongPollWorker', () => {
         if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
           const body = await request.json();
           completedTasks.push(body);
+          taskCompleted.resolve();
           return Response.json({ ok: true });
         }
 
@@ -299,7 +308,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await Bun.sleep(500);
+    await withTimeout(taskCompleted.promise, 500, 'unknown activity completion');
     await worker.stop();
 
     // Should have reported the unknown activity as a failure
@@ -310,6 +319,7 @@ describe('LongPollWorker', () => {
   });
 
   it('handles error completion fetch failure gracefully', async () => {
+    const activityAttempted = createDeferred();
     let pollCount = 0;
 
     server = Bun.serve({
@@ -342,13 +352,14 @@ describe('LongPollWorker', () => {
       serverUrl: `http://localhost:${server.port}`,
       activities: {
         failingActivity: async () => {
+          activityAttempted.resolve();
           throw new Error('activity failed');
         },
       },
     });
 
     worker.start();
-    await Bun.sleep(500);
+    await withTimeout(activityAttempted.promise, 500, 'failing activity attempt');
     await worker.stop();
 
     // Should not crash; worker should still stop cleanly
@@ -357,6 +368,7 @@ describe('LongPollWorker', () => {
 
   it('handles non-Error throws in activities', async () => {
     const completedTasks: any[] = [];
+    const taskCompleted = createDeferred();
     let pollCount = 0;
 
     server = Bun.serve({
@@ -379,6 +391,7 @@ describe('LongPollWorker', () => {
         if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
           const body = await request.json();
           completedTasks.push(body);
+          taskCompleted.resolve();
           return Response.json({ ok: true });
         }
 
@@ -396,7 +409,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await Bun.sleep(500);
+    await withTimeout(taskCompleted.promise, 500, 'string throw completion');
     await worker.stop();
 
     const errorCompletion = completedTasks.find((t) => t.operationId === 'op-string-throw');
@@ -406,6 +419,7 @@ describe('LongPollWorker', () => {
   });
 
   it('includes the queue name in the poll URL path', async () => {
+    const pollObserved = createDeferred();
     let capturedPath = '';
 
     server = Bun.serve({
@@ -413,6 +427,7 @@ describe('LongPollWorker', () => {
       fetch(request) {
         const url = new URL(request.url);
         capturedPath = url.pathname;
+        pollObserved.resolve();
         return new Response(null, { status: 204 });
       },
     });
@@ -426,7 +441,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await Bun.sleep(200);
+    await withTimeout(pollObserved.promise, 500, 'billing queue poll');
     await worker.stop();
 
     expect(capturedPath).toBe('/v1/tasks/billing');
@@ -438,6 +453,7 @@ describe('LongPollWorker', () => {
 
   it('runs activity interceptor around task execution', async () => {
     const completedTasks: any[] = [];
+    const taskCompleted = createDeferred();
     const interceptorOrder: string[] = [];
     let pollCount = 0;
 
@@ -461,6 +477,7 @@ describe('LongPollWorker', () => {
         if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
           const body = await request.json();
           completedTasks.push(body);
+          taskCompleted.resolve();
           return Response.json({ ok: true });
         }
 
@@ -486,7 +503,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await Bun.sleep(500);
+    await withTimeout(taskCompleted.promise, 500, 'intercepted task completion');
     await worker.stop();
 
     expect(interceptorOrder).toEqual(['before:processOrder', 'after:processOrder']);
@@ -499,6 +516,7 @@ describe('LongPollWorker', () => {
 
   it('interceptor can modify activity input in long-poll worker', async () => {
     const completedTasks: any[] = [];
+    const taskCompleted = createDeferred();
     let pollCount = 0;
 
     server = Bun.serve({
@@ -521,6 +539,7 @@ describe('LongPollWorker', () => {
         if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
           const body = await request.json();
           completedTasks.push(body);
+          taskCompleted.resolve();
           return Response.json({ ok: true });
         }
 
@@ -543,7 +562,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await Bun.sleep(500);
+    await withTimeout(taskCompleted.promise, 500, 'modified input task completion');
     await worker.stop();
 
     const taskCompletion = completedTasks.find((t) => t.operationId === 'op-lp-modify');
@@ -554,6 +573,7 @@ describe('LongPollWorker', () => {
 
   it('interceptor receives propagated headers from task response', async () => {
     const completedTasks: any[] = [];
+    const taskCompleted = createDeferred();
     let capturedHeaders: Map<string, string> | undefined;
     let pollCount = 0;
 
@@ -578,6 +598,7 @@ describe('LongPollWorker', () => {
         if (RESULT_PATH_RE.test(url.pathname) && request.method === 'POST') {
           const body = await request.json();
           completedTasks.push(body);
+          taskCompleted.resolve();
           return Response.json({ ok: true });
         }
 
@@ -601,7 +622,7 @@ describe('LongPollWorker', () => {
     });
 
     worker.start();
-    await Bun.sleep(500);
+    await withTimeout(taskCompleted.promise, 500, 'header propagation task completion');
     await worker.stop();
 
     expect(capturedHeaders).toBeDefined();

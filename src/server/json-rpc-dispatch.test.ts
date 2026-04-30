@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * Tests for `dispatchJsonRpc` — the transport-neutral JSON-RPC dispatcher
  * that every JSON-RPC transport adapter (HTTP POST, WebSocket frame,
@@ -235,7 +236,7 @@ describe('dispatchJsonRpc — batch', () => {
         inputSchema: z.object({ id: z.string() }),
         outputSchema: z.object({}),
         invoke: async ({ input }) => {
-          await Bun.sleep(delays[input.id] ?? 0);
+          await sleepForTesting(delays[input.id] ?? 0);
           callOrder.push(input.id);
           return {};
         },

@@ -1,6 +1,11 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
 
+import { restoreRealTimers, useFakeTimers } from './fake-timers.ts';
 import { flush, teardown, waitForWorkflowStatus } from './storage-backends.ts';
+
+afterEach(() => {
+  restoreRealTimers();
+});
 
 describe('waitForWorkflowStatus', () => {
   it('returns once the workflow reaches the requested status', async () => {
@@ -31,6 +36,19 @@ describe('waitForWorkflowStatus', () => {
 describe('storage backend testing helpers', () => {
   it('flush resolves without throwing', async () => {
     await expect(flush()).resolves.toBeUndefined();
+  });
+
+  it('flush advances pending zero-delay timers under fake timers', async () => {
+    useFakeTimers();
+
+    let fired = false;
+    setTimeout(() => {
+      fired = true;
+    }, 0);
+
+    await flush();
+
+    expect(fired).toBe(true);
   });
 
   it('teardown disposes the engine, flushes, and runs storage cleanup', async () => {

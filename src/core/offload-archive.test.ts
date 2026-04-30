@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { KEYS } from '../storage/interface';
 import { MemoryStorage } from '../storage/memory';
@@ -157,7 +158,7 @@ describe('offload, load, and archive', () => {
 
     const handle = await engine.start('offload-step', {});
     // Let the offload complete and the workflow pause at waitForSignal
-    await Bun.sleep(10);
+    await sleepForTesting(10);
 
     // Recover engine (simulates process restart)
     const recovered = engine.recover();

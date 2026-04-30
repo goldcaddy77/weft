@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import { decode } from '../../core/codec.ts';
 import type { Context } from '../../core/context.ts';
@@ -35,7 +36,7 @@ async function waitForWorkflowStatus(
     if (state?.status === status) {
       return;
     }
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
   throw new Error(`Workflow ${workflowId} did not reach ${status} within ${timeoutMilliseconds}ms`);
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { TokenEvent } from '@/core/events.ts';
 import type { ChatOptions, LLMProvider } from './providers/interface.ts';
@@ -1048,7 +1049,7 @@ describe('H7: Stream cancellation via AbortController', () => {
             controller.enqueue({ type: 'token', token: 'first' });
 
             // Wait a bit, then enqueue more (but abort should cancel before this)
-            await Bun.sleep(50);
+            await sleepForTesting(50);
             try {
               controller.enqueue({ type: 'token', token: 'second' });
               controller.enqueue({ type: 'done' });
@@ -1082,7 +1083,7 @@ describe('H7: Stream cancellation via AbortController', () => {
     abortController.abort();
 
     // Give the abort a moment to propagate
-    await Bun.sleep(10);
+    await sleepForTesting(10);
 
     // Subsequent reads should indicate the stream is done
     const secondRead = await reader.read();
@@ -1692,7 +1693,7 @@ describe('createSSEStream cancellation', () => {
 
     await reader.read();
     await reader.cancel();
-    await Bun.sleep(0);
+    await sleepForTesting(0);
 
     expect(true).toBe(true);
   });
