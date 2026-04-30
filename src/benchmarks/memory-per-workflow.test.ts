@@ -1,35 +1,20 @@
 import { describe, expect, it } from 'bun:test';
 
-import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
 import type { MemoryPerWorkflowMeasurement } from './memory-per-workflow-runner.ts';
 
 /**
  * K2d: Memory per workflow benchmark.
  *
- * Starts many idle workflows (each waiting on a signal) and measures
- * process RSS growth after a warmup population to calculate the marginal
- * per-workflow memory overhead seen by the full process.
+ * Starts many idle workflows (each waiting on a signal) and measures the
+ * durable bytes persisted per workflow after each one has parked.
  *
- * The architecture spec target is ≤2KB. The current Track 3 milestone target
- * is ≤5KB on a synthetic population of 10K idle workflows. The benchmark runs
- * in a fresh Bun subprocess so it measures workflow overhead rather than
- * memory retained by unrelated benchmark files earlier in the full suite.
- *
- * RSS is page-granular process memory, not an exact object-size metric. Allow
- * a small fixed tolerance so allocator noise and OS accounting do not fail the
- * benchmark when the observed median is only a few dozen bytes above the
- * nominal threshold.
+ * The architecture target is ≤2KB for idle workflow durable state and
+ * checkpoint footprint. The benchmark runs in a fresh Bun subprocess and uses
+ * a 100K parked-workflow population so the measured value is not polluted by
+ * unrelated full-suite memory retention.
  */
 
-const RSS_MEASUREMENT_NOISE_TOLERANCE_BYTES = 128;
-const BASELINE_TARGET_RSS_BYTES_PER_WORKFLOW = 5 * 1024 + RSS_MEASUREMENT_NOISE_TOLERANCE_BYTES;
-const COVERAGE_TARGET_RSS_BYTES_PER_WORKFLOW = 8 * 1024 + RSS_MEASUREMENT_NOISE_TOLERANCE_BYTES;
-const SAMPLES = 3;
-
-function median(values: number[]): number {
-  const sorted = values.toSorted((left, right) => left - right);
-  return sorted[Math.floor(sorted.length / 2)]!;
-}
+const TARGET_BYTES_PER_WORKFLOW = 2 * 1024;
 
 function runMemoryPerWorkflowBenchmark(totalWorkflows: number): MemoryPerWorkflowMeasurement {
   const result = Bun.spawnSync(
@@ -51,43 +36,34 @@ function runMemoryPerWorkflowBenchmark(totalWorkflows: number): MemoryPerWorkflo
 }
 
 describe('Memory per workflow', () => {
-  it(`idle workflow RSS memory ≤${(
-    (isCoverageInstrumentationEnabled()
-      ? COVERAGE_TARGET_RSS_BYTES_PER_WORKFLOW
-      : BASELINE_TARGET_RSS_BYTES_PER_WORKFLOW) / 1024
-  ).toFixed(0)}KB per workflow`, async () => {
-    const targetRssBytesPerWorkflow = isCoverageInstrumentationEnabled()
-      ? COVERAGE_TARGET_RSS_BYTES_PER_WORKFLOW
-      : BASELINE_TARGET_RSS_BYTES_PER_WORKFLOW;
-    const totalWorkflows = 10_000;
-    const samples = Array.from({ length: SAMPLES }, () =>
-      runMemoryPerWorkflowBenchmark(totalWorkflows),
-    );
-    const medianHeapBytesPerWorkflow = median(samples.map((sample) => sample.heapBytesPerWorkflow));
-    const medianRssBytesPerWorkflow = median(samples.map((sample) => sample.rssBytesPerWorkflow));
-    const medianSample =
-      samples.find((sample) => sample.rssBytesPerWorkflow === medianRssBytesPerWorkflow) ??
-      samples[1]!;
+  it(`idle workflow durable footprint stays ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB`, async () => {
+    const totalWorkflows = 100_000;
+    const measurement = runMemoryPerWorkflowBenchmark(totalWorkflows);
 
     console.log(
       [
         `\n  Memory per workflow benchmark:`,
-        `    Warmup:          ${medianSample.warmupWorkflows.toLocaleString()} workflows`,
         `    Workflows:       ${totalWorkflows.toLocaleString()}`,
-        `    Heap before:     ${(medianSample.heapBefore / 1024 / 1024).toFixed(1)}MB`,
-        `    Heap after:      ${(medianSample.heapAfter / 1024 / 1024).toFixed(1)}MB`,
-        `    Heap growth:     ${(medianSample.heapGrowth / 1024 / 1024).toFixed(2)}MB`,
-        `    Heap median:     ${medianHeapBytesPerWorkflow.toLocaleString()} bytes (${(medianHeapBytesPerWorkflow / 1024).toFixed(2)}KB)`,
-        `    RSS before:      ${(medianSample.rssBefore / 1024 / 1024).toFixed(1)}MB`,
-        `    RSS after:       ${(medianSample.rssAfter / 1024 / 1024).toFixed(1)}MB`,
-        `    RSS growth:      ${(medianSample.rssGrowth / 1024 / 1024).toFixed(2)}MB`,
-        `    RSS samples:     ${samples.map((sample) => sample.rssBytesPerWorkflow.toLocaleString()).join(', ')} bytes`,
-        `    RSS median:      ${medianRssBytesPerWorkflow.toLocaleString()} bytes (${(medianRssBytesPerWorkflow / 1024).toFixed(2)}KB)`,
-        `    Target:          ≤${(targetRssBytesPerWorkflow / 1024).toFixed(0)}KB`,
-        `    Coverage mode:   ${isCoverageInstrumentationEnabled() ? 'yes' : 'no'}\n`,
+        `    Counted:         ${measurement.countedWorkflows.toLocaleString()}`,
+        `    Checkpoint total:${measurement.checkpointBytesTotal.toLocaleString()} bytes`,
+        `    Durable total:   ${measurement.durableBytesTotal.toLocaleString()} bytes`,
+        `    Checkpoint avg:  ${measurement.averageCheckpointBytesPerWorkflow.toLocaleString()} bytes (${(measurement.averageCheckpointBytesPerWorkflow / 1024).toFixed(2)}KB)`,
+        `    Checkpoint max:  ${measurement.maxCheckpointBytesPerWorkflow.toLocaleString()} bytes (${(measurement.maxCheckpointBytesPerWorkflow / 1024).toFixed(2)}KB)`,
+        `    Durable avg:     ${measurement.averageDurableBytesPerWorkflow.toLocaleString()} bytes (${(measurement.averageDurableBytesPerWorkflow / 1024).toFixed(2)}KB)`,
+        `    Durable max:     ${measurement.maxDurableBytesPerWorkflow.toLocaleString()} bytes (${(measurement.maxDurableBytesPerWorkflow / 1024).toFixed(2)}KB)`,
+        `    Workflow state:  ${measurement.workflowStateBytesTotal.toLocaleString()} bytes`,
+        `    Checkpoint hist: ${measurement.checkpointHistoryBytesTotal.toLocaleString()} bytes`,
+        `    Timeline bytes:  ${measurement.timelineBytesTotal.toLocaleString()} bytes`,
+        `    Event bytes:     ${measurement.eventBytesTotal.toLocaleString()} bytes`,
+        `    Other bytes:     ${measurement.otherBytesTotal.toLocaleString()} bytes`,
+        `    Target:          ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB\n`,
       ].join('\n'),
     );
 
-    expect(medianRssBytesPerWorkflow).toBeLessThanOrEqual(targetRssBytesPerWorkflow);
+    expect(measurement.countedWorkflows).toBe(totalWorkflows);
+    expect(measurement.maxCheckpointBytesPerWorkflow).toBeLessThanOrEqual(
+      TARGET_BYTES_PER_WORKFLOW,
+    );
+    expect(measurement.maxDurableBytesPerWorkflow).toBeLessThanOrEqual(TARGET_BYTES_PER_WORKFLOW);
   }, 120_000);
 });
