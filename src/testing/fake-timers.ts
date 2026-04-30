@@ -53,16 +53,6 @@ export async function advanceTimersByTime(milliseconds: number): Promise<void> {
   await flushMicrotasks();
 }
 
-/** Run currently pending Bun fake timers, then drain timer callback continuations. */
-export async function runOnlyPendingTimers(): Promise<void> {
-  if (!jest.isFakeTimers()) {
-    useFakeTimers();
-  }
-
-  jest.runOnlyPendingTimers();
-  await flushMicrotasks();
-}
-
 /**
  * Test-only replacement for raw `Bun.sleep`.
  *

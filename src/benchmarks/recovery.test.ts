@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { sleepForTesting } from '../testing/fake-timers.ts';
+import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
 
 import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
@@ -45,7 +45,7 @@ describe('Workflow recovery', () => {
     }
 
     // Allow microtasks to settle so checkpoints are written.
-    await sleepForTesting(10);
+    await waitForRealTimersForTesting(10);
 
     // Dispose the engine (simulates process crash / restart).
     engine[Symbol.dispose]();
@@ -98,7 +98,7 @@ describe('Workflow recovery', () => {
         id: `shallow-history-${index}`,
       });
     }
-    await sleepForTesting(5);
+    await waitForRealTimersForTesting(5);
     engine1[Symbol.dispose]();
 
     // Measure shallow recovery.
@@ -141,7 +141,7 @@ describe('Workflow recovery', () => {
         id: `deep-history-${index}`,
       });
     }
-    await sleepForTesting(5);
+    await waitForRealTimersForTesting(5);
     engine3[Symbol.dispose]();
 
     // Measure deep recovery.
