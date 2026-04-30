@@ -18,6 +18,29 @@ interface ResolvedOpenAIProviderOptions {
   organization: string;
 }
 
+/**
+ * {@link LLMProvider} implementation for the OpenAI Chat Completions API.
+ * Converts weft's normalized {@link Message} format to OpenAI's format, handles
+ * function-calling tool calls, extracts reasoning traces from `reasoning_content`
+ * (o1/o3 models), and supports streaming with usage tracking via
+ * `stream_options.include_usage`.
+ *
+ * @example Create an OpenAI provider and run a simple query
+ * ```ts
+ * import { OpenAIProvider, executeAgentLoop } from 'weft';
+ *
+ * const provider = new OpenAIProvider({
+ *   apiKey: process.env['OPENAI_API_KEY'] ?? '',
+ *   defaultModel: 'gpt-4o',
+ * });
+ *
+ * const result = await executeAgentLoop(
+ *   { model: 'gpt-4o', provider, maxTurns: 3 },
+ *   'What is the capital of France?',
+ * );
+ * console.log(result.content);
+ * ```
+ */
 export class OpenAIProvider implements LLMProvider {
   readonly name = 'openai';
   #options: ResolvedOpenAIProviderOptions;

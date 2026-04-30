@@ -14,16 +14,83 @@ import {
   type Storage,
 } from './interface.ts';
 
+/**
+ * Encode/decode pair that bridges a typed domain value to and from `Uint8Array`.
+ *
+ * Implement this interface to plug a custom serialization format into
+ * {@link withCodec}. Two built-in factories — {@link jsonCodec} and
+ * {@link msgpackCodec} — cover the most common cases.
+ *
+ * @example
+ * ```ts
+ * import { type StorageCodec, withCodec, MemoryStorage } from 'weft';
+ *
+ * const encoder = new TextEncoder();
+ * const decoder = new TextDecoder();
+ *
+ * const csvCodec: StorageCodec<string[]> = {
+ *   encode: (row) => encoder.encode(row.join(',')),
+ *   decode: (bytes) => decoder.decode(bytes).split(','),
+ * };
+ *
+ * await using raw = new MemoryStorage();
+ * const store = withCodec(raw, csvCodec);
+ * await store.put('row:1', ['alice', '30', 'eng']);
+ * const row = await store.get('row:1');
+ * console.log(row?.join('|'));
+ * ```
+ */
 export interface StorageCodec<Value> {
   encode(value: Value): Uint8Array;
   decode(bytes: Uint8Array): Value;
 }
 
+/**
+ * Validator or narrowing function passed as an optional argument to
+ * {@link jsonCodec} and {@link msgpackCodec}.
+ *
+ * Receives the raw decoded value (`unknown`) and must return the strongly-typed
+ * `Value` — either by assertion after runtime validation or by throwing when the
+ * shape is unexpected.  Omitting it leaves the codec untyped (`JsonValue` /
+ * `MessagePackValue`).
+ */
 export type StorageValueParser<Value> = (value: unknown) => Value;
 
 export type JsonPrimitive = boolean | null | number | string;
+
+/**
+ * Recursive union of every value that `JSON.stringify` accepts and
+ * `JSON.parse` can produce.
+ *
+ * Use this as the generic bound when you need a storage codec that only handles
+ * plain JSON-serialisable data — numbers, strings, booleans, null, arrays, and
+ * plain objects. For richer types (Date, Map, Uint8Array) prefer
+ * {@link MessagePackValue}.
+ *
+ * @example
+ * ```ts
+ * import type { JsonValue } from 'weft';
+ *
+ * const value: JsonValue = {
+ *   ok: true,
+ *   rows: [{ id: 1, tags: ['a', 'b'] }],
+ *   empty: null,
+ * };
+ * // BigInt, Date, and Map values would be type errors here.
+ * void value;
+ * ```
+ */
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 export type MessagePackPrimitive = bigint | boolean | null | number | string | undefined;
+
+/**
+ * Recursive union of every value that MessagePack can encode and decode.
+ *
+ * A superset of {@link JsonValue} that additionally supports `Date`, `Map`,
+ * `Set`, `Uint8Array`, `RegExp`, `Error`, `ArrayBuffer`, and `bigint`.  Prefer
+ * this codec when your domain objects contain binary data or richly-typed
+ * primitives that JSON cannot represent without custom serialisation.
+ */
 export type MessagePackValue =
   | ArrayBuffer
   | Date
@@ -36,10 +103,62 @@ export type MessagePackValue =
   | Uint8Array
   | { [key: string]: MessagePackValue };
 
+/**
+ * Typed version of `BatchOperation` — a put or delete applied as part of an
+ * atomic batch in a {@link TypedStorage} instance.
+ *
+ * Build an array of these and pass it to `TypedStorage.batch()` to apply
+ * multiple mutations in a single round-trip without encoding each value
+ * individually at the call site.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, withCodec, jsonCodec, type TypedBatchOperation } from 'weft';
+ *
+ * await using raw = new MemoryStorage();
+ * const store = withCodec(raw, jsonCodec());
+ *
+ * const ops: TypedBatchOperation<{ count: number }>[] = [
+ *   { type: 'put', key: 'a', value: { count: 1 } },
+ *   { type: 'put', key: 'b', value: { count: 2 } },
+ *   { type: 'delete', key: 'old' },
+ * ];
+ * await store.batch(ops);
+ * ```
+ */
 export type TypedBatchOperation<Value> =
   | { type: 'put'; key: string; value: Value }
   | { type: 'delete'; key: string };
 
+/**
+ * Disposable typed key-value store interface over a raw {@link Storage}.
+ *
+ * Mirrors the `Storage` interface but operates on `Value` instead of
+ * `Uint8Array` — encoding and decoding is handled transparently by the
+ * underlying codec.  Obtain a `TypedStorage` via {@link withCodec},
+ * {@link jsonCodec}, or {@link msgpackCodec} rather than implementing it
+ * directly.
+ * Note: `TypedStorage` does not surface `Storage.conditionalBatch`,
+ * `Storage.query`, or `Storage.scoped` — drop down to the underlying raw
+ * storage to use those operations.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, withCodec, jsonCodec, type TypedStorage } from 'weft';
+ *
+ * type User = { name: string; age: number };
+ *
+ * await using raw = new MemoryStorage();
+ * const users: TypedStorage<User> = withCodec(
+ *   raw,
+ *   jsonCodec((v) => v as User),
+ * );
+ *
+ * await users.put('user:1', { name: 'Alice', age: 30 });
+ * const alice = await users.get('user:1');
+ * console.log(alice?.name); // 'Alice'
+ * ```
+ */
 export interface TypedStorage<Value> extends Disposable {
   get(key: string): Promise<Value | null>;
   put(key: string, value: Value): Promise<void>;
@@ -117,6 +236,31 @@ class CodecStorage<Value> implements TypedStorage<Value> {
   }
 }
 
+/**
+ * Wraps a raw {@link Storage} with a {@link StorageCodec} to produce a
+ * {@link TypedStorage} that encodes and decodes values automatically.
+ *
+ * Use the built-in {@link jsonCodec} or {@link msgpackCodec} factories as the
+ * `codec` argument, or supply a custom implementation.  The returned store
+ * disposes the underlying storage when its own `[Symbol.dispose]` is called.
+ * Because the codec store calls `[Symbol.dispose]` on the inner storage, do not
+ * share the same `Storage` between two `withCodec` wrappers — disposing the
+ * second wrapper will call dispose on already-disposed storage.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, withCodec, jsonCodec } from 'weft';
+ *
+ * type Config = { retries: number; timeout: number };
+ *
+ * await using raw = new MemoryStorage();
+ * const configStore = withCodec(raw, jsonCodec<Config>((v) => v as Config));
+ *
+ * await configStore.put('cfg:default', { retries: 3, timeout: 5000 });
+ * const cfg = await configStore.get('cfg:default');
+ * console.log(cfg?.retries); // 3
+ * ```
+ */
 export function withCodec<Value>(
   storage: Storage,
   codec: StorageCodec<Value>,
@@ -168,6 +312,32 @@ function decodeMessagePackValue(bytes: Uint8Array): MessagePackValue {
   return decodedValue as MessagePackValue;
 }
 
+/**
+ * Creates a {@link StorageCodec} that serialises values as UTF-8 JSON.
+ *
+ * Call without arguments to get a `StorageCodec<JsonValue>`.  Pass an optional
+ * {@link StorageValueParser} to narrow the output to a concrete type — useful
+ * when you have a Zod schema or manual shape check.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, withCodec, jsonCodec } from 'weft';
+ *
+ * type Point = { x: number; y: number };
+ * const isPoint = (v: unknown): v is Point =>
+ *   typeof v === 'object' && v !== null && 'x' in v && 'y' in v;
+ *
+ * await using raw = new MemoryStorage();
+ * const points = withCodec(raw, jsonCodec<Point>((v) => {
+ *   if (!isPoint(v)) throw new TypeError('not a Point');
+ *   return v;
+ * }));
+ *
+ * await points.put('p:1', { x: 10, y: 20 });
+ * const p = await points.get('p:1');
+ * console.log(p?.x); // 10
+ * ```
+ */
 export function jsonCodec(): StorageCodec<JsonValue>;
 export function jsonCodec<Value extends JsonValue>(
   parse: StorageValueParser<Value>,
@@ -186,6 +356,29 @@ export function jsonCodec<Value extends JsonValue>(
   };
 }
 
+/**
+ * Creates a {@link StorageCodec} that serialises values with MessagePack.
+ *
+ * Prefer this over {@link jsonCodec} when your domain objects contain binary
+ * data (`Uint8Array`, `ArrayBuffer`), `Date`, `Map`, or `Set` — types that
+ * JSON cannot round-trip without custom replacers.  Pass an optional
+ * {@link StorageValueParser} to narrow the decoded type.
+ *
+ * @example
+ * ```ts
+ * import { MemoryStorage, withCodec, msgpackCodec } from 'weft';
+ *
+ * type Event = { ts: Date; payload: Uint8Array };
+ *
+ * await using raw = new MemoryStorage();
+ * const events = withCodec(raw, msgpackCodec<Event>((v) => v as Event));
+ *
+ * const evt: Event = { ts: new Date(), payload: new Uint8Array([1, 2, 3]) };
+ * await events.put('evt:1', evt);
+ * const loaded = await events.get('evt:1');
+ * console.log(loaded?.ts instanceof Date); // true
+ * ```
+ */
 export function msgpackCodec(): StorageCodec<MessagePackValue>;
 export function msgpackCodec<Value extends MessagePackValue>(
   parse: StorageValueParser<Value>,

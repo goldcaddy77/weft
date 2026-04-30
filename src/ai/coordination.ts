@@ -23,6 +23,19 @@ import type { Message } from './providers/types';
  * Create a new headers map for a child agent, preserving trace context from
  * the parent workflow's headers. This ensures OpenTelemetry spans from child
  * agents link back to the parent agent's span.
+ *
+ * @example Forward trace context when handing off to a child agent
+ * ```ts
+ * import { createChildHeaders, handoff } from 'weft';
+ * import type { AgentDefinition, LLMProvider } from 'weft';
+ *
+ * declare const parent: { headers?: Map<string, string> };
+ * declare const childAgent: AgentDefinition;
+ * declare const provider: LLMProvider;
+ *
+ * const childHeaders = createChildHeaders(parent.headers);
+ * await handoff({ agent: childAgent, input: 'Process this', provider, headers: childHeaders });
+ * ```
  */
 export function createChildHeaders(parentHeaders?: Map<string, string>): Map<string, string> {
   const childHeaders = new Map<string, string>();
@@ -147,7 +160,29 @@ export function summarizeConversation(messages: Message[]): string {
 // handoff
 // ---------------------------------------------------------------------------
 
-/** Hand off execution to another agent, optionally forwarding context. */
+/**
+ * Hand off execution to another agent, optionally forwarding context.
+ *
+ * @example Hand off with a conversation summary
+ * ```ts
+ * import { handoff, defineAgent } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const summaryAgent = defineAgent({ name: 'summarizer', model: 'claude-haiku-3-5' });
+ *
+ * const { result } = await handoff({
+ *   agent: summaryAgent,
+ *   input: 'Summarize the key decisions.',
+ *   provider,
+ *   forwardContext: 'summary',
+ *   parentConversation: [{ role: 'user', content: 'We decided X.' }],
+ * });
+ *
+ * console.log(result.content);
+ * ```
+ */
 export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
   const {
     agent,
@@ -205,7 +240,25 @@ export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
 // debate
 // ---------------------------------------------------------------------------
 
-/** Run adversarial multi-agent debate. */
+/**
+ * Run adversarial multi-agent debate.
+ *
+ * @example Two-round debate between an advocate and a critic, judged by a third agent
+ * ```ts
+ * import { debate, defineAgent } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const advocate = defineAgent({ name: 'advocate', model: 'claude-sonnet-4-5', systemPrompt: 'Argue for.' });
+ * const critic   = defineAgent({ name: 'critic',   model: 'claude-sonnet-4-5', systemPrompt: 'Argue against.' });
+ * const judge    = defineAgent({ name: 'judge',    model: 'claude-sonnet-4-5', systemPrompt: 'Render a verdict.' });
+ *
+ * const { verdict, rounds } = await debate({ advocate, critic, judge, topic: 'AI is beneficial', rounds: 2, provider });
+ * console.log('Verdict:', verdict);
+ * console.log('Rounds completed:', rounds.length);
+ * ```
+ */
 export async function debate(options: DebateOptions): Promise<DebateResult> {
   const { advocate, critic, judge, topic, rounds: roundCount, provider, budget, signal } = options;
 
@@ -347,7 +400,31 @@ function resolveConsensusWinner(
 // supervise
 // ---------------------------------------------------------------------------
 
-/** Run supervised multi-agent execution with synthesis. */
+/**
+ * Run supervised multi-agent execution with synthesis.
+ *
+ * @example Run three workers in parallel and merge their answers
+ * ```ts
+ * import { supervise, defineAgent } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const worker     = defineAgent({ name: 'worker',     model: 'claude-haiku-3-5' });
+ * const supervisor = defineAgent({ name: 'supervisor', model: 'claude-sonnet-4-5' });
+ *
+ * const { finalResult, workerResults } = await supervise({
+ *   workers: [worker, worker, worker],
+ *   supervisor,
+ *   input: 'List three use cases for durable workflows.',
+ *   strategy: 'merge',
+ *   provider,
+ * });
+ *
+ * console.log('Merged answer:', finalResult);
+ * console.log('Worker responses:', workerResults.length);
+ * ```
+ */
 export async function supervise(options: SuperviseOptions): Promise<SuperviseResult> {
   const {
     workers: rawWorkers,

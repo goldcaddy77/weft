@@ -82,7 +82,34 @@ try {
   ok = false;
 }
 
-// 5) lint-staged (format staged files; always last)
+// 5) JSDoc manifest audit (only when source/manifest/package.json changed)
+const stagedTouchesPublicSurface = staged.some(
+  (file) =>
+    file.startsWith('src/') ||
+    file === 'package.json' ||
+    file === 'reference/jsdoc-manifest.json' ||
+    file.startsWith('scripts/audit-jsdoc-manifest') ||
+    file.startsWith('scripts/build-jsdoc-manifest') ||
+    file.startsWith('scripts/check-declaration-jsdoc') ||
+    file.startsWith('scripts/classify-jsdoc-manifest') ||
+    file.startsWith('scripts/extract-doctests'),
+);
+if (stagedTouchesPublicSurface) {
+  info('Running JSDoc audit…');
+  try {
+    await $`bun run scripts/audit-jsdoc-manifest.ts`;
+    success('JSDoc audit passed');
+  } catch {
+    error(
+      'JSDoc audit failed — see hint above. Run `bun run scripts/build-jsdoc-manifest.ts && bun run scripts/classify-jsdoc-manifest.ts` if a public export was added.',
+    );
+    ok = false;
+  }
+} else {
+  info('Skipping JSDoc audit (no public surface changes staged)');
+}
+
+// 6) lint-staged (format staged files; always last)
 info('Running lint-staged…');
 try {
   await $`bunx lint-staged`;

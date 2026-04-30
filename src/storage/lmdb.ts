@@ -12,10 +12,23 @@ import {
 import { scopedStorage } from './scoped-storage';
 
 /**
- * LMDB-backed storage adapter. Reads are synchronous zero-copy via
- * memory-mapped files. Writes use lmdb-js's async batching: individual
- * `put`/`remove` calls return promises that resolve once the next
- * batched transaction commits to disk.
+ * LMDB-backed storage adapter. Reads hit lmdb-js's synchronous memory-mapped
+ * path internally, but the Storage interface presents them as Promises and
+ * copies the bytes into a fresh Uint8Array on each call. Writes use lmdb-js's
+ * async batching: individual `put`/`remove` calls return promises that resolve
+ * once the next batched transaction commits to disk. The adapter resets
+ * lmdb-js's cached read transaction after every write so subsequent reads
+ * observe just-written data.
+ *
+ * @example
+ * ```ts
+ * import { LMDBStorage } from 'weft/storage/lmdb';
+ * import { Engine } from 'weft';
+ *
+ * await using storage = new LMDBStorage('./weft-data');
+ * await using engine = new Engine({ storage });
+ * engine.register('ping', async function* () { return 'pong'; });
+ * ```
  */
 export class LMDBStorage implements Storage {
   #database: lmdb.RootDatabase<Buffer, string>;

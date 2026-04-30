@@ -37,6 +37,15 @@ export type VersionCompatibility = 'compatible' | 'needs-migration' | 'incompati
  * - `"needs-migration"` — versions differ and a migration function is available.
  * - `"incompatible"` — versions differ and no migration is available; the engine
  *   will throw a {@link VersionMismatchError} instead of resuming silently.
+ *
+ * @example
+ * ```ts
+ * import { checkVersionCompatibility } from 'weft';
+ *
+ * console.log(checkVersionCompatibility('1.0.0', '1.0.0', false)); // 'compatible'
+ * console.log(checkVersionCompatibility('1.0.0', '2.0.0', true));  // 'needs-migration'
+ * console.log(checkVersionCompatibility('1.0.0', '2.0.0', false)); // 'incompatible'
+ * ```
  */
 export function checkVersionCompatibility(
   storedVersion: string,
@@ -59,6 +68,18 @@ export function checkVersionCompatibility(
  * version to another.
  *
  * The caller is responsible for serializing the result back to bytes if needed.
+ *
+ * @example
+ * ```ts
+ * import { migrateCheckpoint } from 'weft';
+ *
+ * const oldData = { step: 0, locals: { counter: 1 }, version: '1.0.0' };
+ * const migrated = migrateCheckpoint(oldData, '1.0.0', '2.0.0', (data) => {
+ *   const d = data as typeof oldData;
+ *   return { ...d, locals: { ...d.locals, newField: 'default' } };
+ * });
+ * void migrated;
+ * ```
  */
 export function migrateCheckpoint(
   checkpointData: unknown,
@@ -108,6 +129,19 @@ export type ShapeDescriptor = Record<string, string>;
  * Compare two checkpoint shape descriptors and return the field-level diffs.
  *
  * Returns an empty array when the shapes are identical.
+ *
+ * @example
+ * ```ts
+ * import { diffCheckpointShapes } from 'weft';
+ *
+ * const diffs = diffCheckpointShapes(
+ *   { userId: 'string', count: 'number' },
+ *   { userId: 'string', count: 'number', newField: 'boolean' },
+ * );
+ * console.log(diffs.length);        // 1
+ * console.log(diffs[0]?.change);    // 'added'
+ * console.log(diffs[0]?.field);     // 'newField'
+ * ```
  */
 export function diffCheckpointShapes(
   oldShape: ShapeDescriptor,
@@ -140,6 +174,16 @@ export function diffCheckpointShapes(
 /**
  * Infer a shape descriptor from an arbitrary value by walking its top-level keys
  * and recording the `typeof` of each value.
+ *
+ * @example
+ * ```ts
+ * import { inferShape } from 'weft';
+ *
+ * const shape = inferShape({ userId: 'abc', count: 42, active: true });
+ * console.log(shape['userId']); // 'string'
+ * console.log(shape['count']);  // 'number'
+ * console.log(shape['active']); // 'boolean'
+ * ```
  */
 export function inferShape(value: unknown): ShapeDescriptor {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -189,6 +233,25 @@ export type ShapeDiffOptions = {
  *
  * When version tuple information is provided, the error message includes a
  * summary of which workflow, agent, or tool versions changed.
+ *
+ * @example
+ * ```ts
+ * import { VersionMismatchError } from 'weft';
+ *
+ * try {
+ *   throw new VersionMismatchError(
+ *     'wf-123',
+ *     'orderWorkflow',
+ *     '1.0.0',
+ *     '2.0.0',
+ *   );
+ * } catch (err) {
+ *   if (err instanceof VersionMismatchError) {
+ *     console.log(err.storedVersion);     // '1.0.0'
+ *     console.log(err.registeredVersion); // '2.0.0'
+ *   }
+ * }
+ * ```
  */
 export class VersionMismatchError extends Error {
   readonly workflowId: string;

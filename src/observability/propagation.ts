@@ -42,7 +42,20 @@ const ALL_ZEROS_SPAN_ID = '0000000000000000';
 // Parsing and formatting
 // ---------------------------------------------------------------------------
 
-/** Parse a W3C traceparent header string. */
+/**
+ * Parse a W3C traceparent header string.
+ *
+ * @example
+ * ```ts
+ * import { parseTraceParent } from 'weft';
+ *
+ * const ctx = parseTraceParent(
+ *   '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+ * );
+ * console.log(ctx?.traceId);  // '4bf92f3577b34da6a3ce929d0e0e4736'
+ * console.log(ctx?.traceFlags); // 1
+ * ```
+ */
 export function parseTraceParent(value: string): TraceContext | null {
   const match = TRACEPARENT_REGEX.exec(value);
 
@@ -61,7 +74,22 @@ export function parseTraceParent(value: string): TraceContext | null {
   };
 }
 
-/** Format a TraceContext to a W3C traceparent string. */
+/**
+ * Format a TraceContext to a W3C traceparent string.
+ *
+ * @example
+ * ```ts
+ * import { formatTraceParent, generateTraceId, generateSpanId } from 'weft';
+ *
+ * const header = formatTraceParent({
+ *   version: '00',
+ *   traceId: generateTraceId(),
+ *   spanId: generateSpanId(),
+ *   traceFlags: 1,
+ * });
+ * console.log(header); // '00-<32hex>-<16hex>-01'
+ * ```
+ */
 export function formatTraceParent(context: TraceContext): string {
   const flags = context.traceFlags.toString(16).padStart(2, '0');
   return `${context.version}-${context.traceId}-${context.spanId}-${flags}`;
@@ -87,12 +115,34 @@ export function injectTraceParent(headers: Map<string, string>, context: TraceCo
 // ID generation
 // ---------------------------------------------------------------------------
 
-/** Generate a random trace ID (32 hex chars / 16 bytes). */
+/**
+ * Generate a random trace ID (32 hex chars / 16 bytes).
+ *
+ * @example
+ * ```ts
+ * import { generateTraceId } from 'weft';
+ *
+ * const traceId = generateTraceId();
+ * console.log(traceId.length);  // 32
+ * console.log(/^[0-9a-f]{32}$/.test(traceId)); // true
+ * ```
+ */
 export function generateTraceId(): string {
   return randomHex(16);
 }
 
-/** Generate a random span ID (16 hex chars / 8 bytes). */
+/**
+ * Generate a random span ID (16 hex chars / 8 bytes).
+ *
+ * @example
+ * ```ts
+ * import { generateSpanId } from 'weft';
+ *
+ * const spanId = generateSpanId();
+ * console.log(spanId.length);  // 16
+ * console.log(/^[0-9a-f]{16}$/.test(spanId)); // true
+ * ```
+ */
 export function generateSpanId(): string {
   return randomHex(8);
 }

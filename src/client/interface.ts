@@ -45,6 +45,23 @@ import type {
  * events with the same `addEventListener` / `removeEventListener` API in both
  * library mode (events flow through `EventTarget` directly) and server mode
  * (events are bridged over WebSocket).
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, LocalClient, type WorkflowCompletedEvent } from 'weft';
+ * import type { ClientHandle } from 'weft/client';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * engine.register('ping', async function* () { return 'pong'; });
+ *
+ * const client = new LocalClient(engine);
+ * const handle: ClientHandle = await client.start('ping', null);
+ * handle.addEventListener('workflow:completed', (e) => {
+ *   console.log('completed', (e as WorkflowCompletedEvent).result);
+ * });
+ * const result = await handle.result();
+ * console.log(result); // 'pong'
+ * ```
  */
 export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable {
   /** The workflow's unique identifier. */
@@ -83,6 +100,20 @@ export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable
  *
  * Mirrors the core {@link ScheduleHandle} surface without leaking the engine
  * implementation type into the transport-neutral client contract.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, LocalClient } from 'weft';
+ * import type { ClientScheduleHandle } from 'weft/client';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * engine.register('report', async function* () { return 'sent'; });
+ *
+ * const client = new LocalClient(engine);
+ * const handle: ClientScheduleHandle = await client.schedule('report', {}, '0 9 * * 1');
+ * await handle.pause();
+ * console.log(handle.id);
+ * ```
  */
 export interface ClientScheduleHandle extends Disposable {
   /** The schedule's unique identifier. */
@@ -119,7 +150,21 @@ export type UpdateResult = {
 // WeftClient interface
 // ---------------------------------------------------------------------------
 
-/** Operations shared by both in-process and HTTP clients. */
+/**
+ * Operations shared by both in-process and HTTP clients.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, LocalClient, type WeftClient } from 'weft';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * engine.register('my-workflow', async function* () { return 42; });
+ * const client: WeftClient = new LocalClient(engine);
+ * const handle = await client.start('my-workflow', { input: 42 });
+ * const result = await handle.result();
+ * console.log(result); // 42
+ * ```
+ */
 export interface WeftClient {
   /** Start a new workflow and return a handle to it. */
   start(type: string, input: unknown, options?: StartOptions): Promise<ClientHandle>;

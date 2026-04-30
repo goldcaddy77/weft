@@ -25,6 +25,21 @@
  * Opaque identifier plus free-form attributes describing which tenant is
  * running a given workflow. The attributes are free-form so callers can
  * encode things like plan tier, data residency region, feature flags, etc.
+ * `attributes` values must be structured-clone-safe — plain objects, arrays,
+ * strings, numbers, booleans, and null. Functions, class instances, and DOM
+ * nodes will crash worker dispatch with `DataCloneError`.
+ *
+ * @example
+ * ```ts
+ * import type { TenantContext } from 'weft';
+ *
+ * const tenant: TenantContext = {
+ *   id: 'acme-corp',
+ *   attributes: { tier: 'enterprise', region: 'us-east-1' },
+ * };
+ * console.log(tenant.id);               // 'acme-corp'
+ * console.log(tenant.attributes?.['tier']); // 'enterprise'
+ * ```
  */
 export interface TenantContext {
   /** Stable identifier for the tenant. */
@@ -37,13 +52,30 @@ export interface TenantContext {
  * Resolves the {@link TenantContext} for a newly starting workflow.
  *
  * The resolver is invoked exactly once per `engine.start()` call, before the
- * initial checkpoint is written. Returning `undefined` means "this workflow
- * runs without a tenant" — useful for system workflows that belong to the
- * platform itself rather than any customer.
+ * initial checkpoint is written. It receives the workflow ID, start input, and
+ * workflow type string. Returning `undefined` means "this workflow runs without
+ * a tenant" — useful for system workflows that belong to the platform itself
+ * rather than any customer.
  *
  * Resolvers may return synchronously or asynchronously; slow resolvers delay
  * workflow start, so prefer O(1) lookups (e.g. parsing the input, hitting a
  * local cache) over network calls.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type TenantResolver, type TenantContext } from 'weft';
+ *
+ * const resolver: TenantResolver = {
+ *   resolve(_workflowId, input, _workflowType) {
+ *     const record = input as Record<string, unknown>;
+ *     const id = typeof record?.['tenantId'] === 'string' ? record['tenantId'] : undefined;
+ *     return id ? { id } : undefined;
+ *   },
+ * };
+ *
+ * const engine = new Engine({ tenantResolver: resolver });
+ * void engine;
+ * ```
  */
 export interface TenantResolver {
   resolve(
@@ -60,6 +92,9 @@ export interface TenantResolver {
  *
  * @example
  * ```ts
+ * import { Engine, MemoryStorage, tenantFromInputField } from 'weft';
+ *
+ * const storage = new MemoryStorage();
  * const engine = new Engine({
  *   storage,
  *   tenantResolver: tenantFromInputField('tenantId'),

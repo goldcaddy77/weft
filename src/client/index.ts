@@ -48,7 +48,20 @@ export type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } fro
 // Options
 // ---------------------------------------------------------------------------
 
-/** Configuration for the HTTP client. */
+/**
+ * Configuration for the HTTP client.
+ *
+ * @example
+ * ```ts
+ * import { HttpClient, type HttpClientOptions } from 'weft';
+ *
+ * const options: HttpClientOptions = {
+ *   baseUrl: 'http://localhost:3000',
+ *   headers: { 'X-API-Key': 'my-secret-key' },
+ * };
+ * const client = new HttpClient(options);
+ * ```
+ */
 export interface HttpClientOptions {
   /** Base URL of the Weft server (e.g. `http://localhost:3000`). */
   baseUrl: string;
@@ -60,7 +73,23 @@ export interface HttpClientOptions {
 // Error
 // ---------------------------------------------------------------------------
 
-/** Error thrown when the server returns a non-2xx response. */
+/**
+ * Error thrown when the server returns a non-2xx response.
+ *
+ * @example
+ * ```ts
+ * import { HttpClient, HttpClientError } from 'weft';
+ *
+ * const client = new HttpClient({ baseUrl: 'http://localhost:3000' });
+ * try {
+ *   await client.cancel('nonexistent-id');
+ * } catch (err) {
+ *   if (err instanceof HttpClientError) {
+ *     console.error('HTTP', err.status, err.message);
+ *   }
+ * }
+ * ```
+ */
 export class HttpClientError extends Error {
   readonly status: number;
 
@@ -363,7 +392,44 @@ class HttpScheduleHandle implements ClientScheduleHandle {
 // HttpClient
 // ---------------------------------------------------------------------------
 
-/** Remote Weft client backed by HTTP requests. */
+/**
+ * Remote Weft client backed by HTTP requests.
+ *
+ * **Error handling**
+ *
+ * - **404 on GET → `null`:** When a GET request returns 404, the client
+ *   treats it as "resource not found" and resolves with `null` instead of
+ *   throwing `HttpClientError`. The affected methods are: `get`,
+ *   `getSchedule`, `getAttributes`, `getEvents`, `replayTo`,
+ *   `getBudgetPolicy`, and `getUpdateResult`.
+ *
+ * - **400/422 in `submitCoordinatedUpdate` → error envelope:** A 400 or 422
+ *   response from `submitCoordinatedUpdate` is translated into a
+ *   `CoordinatedUpdateResult` with an `error` field rather than throwing.
+ *   All other status codes (including 401, 500) propagate as
+ *   `HttpClientError`.
+ *
+ * @example
+ * ```ts
+ * import { HttpClient } from 'weft';
+ *
+ * const client = new HttpClient({ baseUrl: 'http://localhost:3000' });
+ * const handle = await client.start('greet', { name: 'Alice' });
+ * const result = await handle.result();
+ * console.log(result);
+ * ```
+ *
+ * @example With authentication headers
+ * ```ts
+ * import { HttpClient } from 'weft';
+ *
+ * const client = new HttpClient({
+ *   baseUrl: 'https://weft.example.com',
+ *   headers: { Authorization: 'Bearer my-token' },
+ * });
+ * const { items } = await client.list({ status: 'running' });
+ * ```
+ */
 export class HttpClient implements WeftClient {
   /** @internal Exposed for handle access. */
   readonly baseUrl: string;

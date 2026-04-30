@@ -8,16 +8,22 @@
  *
  * @example Hello world
  * ```ts
- * import { Engine, activity } from 'weft';
+ * import { activity, Engine, VERSION, type Context, type WorkflowContext } from 'weft';
  *
- * const sendEmail = activity('sendEmail', async ({ to }: { to: string }) => {
- *   await Bun.sleep(100);
- *   return { messageId: crypto.randomUUID(), to };
+ * void VERSION;
+ * const sendEmail = activity({
+ *   name: 'sendEmail',
+ *   execute: async (input: unknown) => {
+ *     const { to } = input as { to: string };
+ *     await Bun.sleep(100);
+ *     return { messageId: crypto.randomUUID(), to };
+ *   },
  * });
  *
  * const engine = new Engine();
- * engine.register('greet', async function* (ctx, input: { email: string }) {
- *   const result = yield* ctx.run(sendEmail, { to: input.email });
+ * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
+ *   const { email } = input as { email: string };
+ *   const result = yield* (ctx as Context).run(sendEmail, { to: email });
  *   return result.messageId;
  * });
  *
@@ -27,15 +33,16 @@
  *
  * @example Multi-tenant engine
  * ```ts
- * import { Engine, tenantFromInputField } from 'weft';
+ * import { Engine, VERSION, tenantFromInputField, type Context, type WorkflowContext } from 'weft';
  *
+ * void VERSION;
  * const engine = new Engine({
  *   tenantResolver: tenantFromInputField('customerId'),
  * });
  *
- * engine.register('per-tenant', async function* (ctx, input) {
+ * engine.register('per-tenant', async function* (ctx: WorkflowContext) {
  *   // ctx.tenant is { id: "acme" } when input = { customerId: "acme", ... }
- *   return ctx.tenant?.id ?? 'anonymous';
+ *   return (ctx as Context).tenant?.id ?? 'anonymous';
  * });
  * ```
  *

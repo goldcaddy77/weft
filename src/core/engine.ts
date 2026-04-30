@@ -251,12 +251,50 @@ function normalizeBulkFilterNumber(
   return Math.floor(value);
 }
 
-/** Options required when registering an AgentDefinition as a workflow. */
+/**
+ * Options required when registering an AgentDefinition as a workflow.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type AgentRegistrationOptions } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ * const options: AgentRegistrationOptions = { provider };
+ *
+ * const engine = new Engine();
+ * // engine.register(myAgentDef, options);
+ * void options;
+ * ```
+ */
 export interface AgentRegistrationOptions {
   /** The LLM provider to use when running the agent. */
   provider: LLMProvider;
 }
 
+/**
+ * Thrown by {@link Engine.start} when a workflow with the requested ID already
+ * exists in storage. Inspect the `workflowId` property to identify the
+ * conflict. To allow deduplication semantics instead of an error, pass
+ * `idempotencyKey` in {@link StartOptions}.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowAlreadyExistsError } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('ping', async function* () { return 'pong'; });
+ *
+ * await engine.start('ping', null, { id: 'my-ping' });
+ * try {
+ *   await engine.start('ping', null, { id: 'my-ping' });
+ * } catch (err) {
+ *   if (err instanceof WorkflowAlreadyExistsError) {
+ *     console.error('already running:', err.workflowId);
+ *   }
+ * }
+ * ```
+ */
 export class WorkflowAlreadyExistsError extends Error {
   readonly workflowId: string;
 
@@ -1569,6 +1607,48 @@ type RefreshedScheduleState = {
 // WorkflowHandle
 // ---------------------------------------------------------------------------
 
+/**
+ * Handle to a running or completed workflow. Returned by {@link Engine.start}
+ * and {@link Engine.getHandle}. Use `handle.result()` to await the final
+ * value, `handle.cancel()` to stop execution, `handle.signal(name, payload)`
+ * to send a signal, and `handle.update(name, payload)` to send a synchronous
+ * update. Use `query()`, `getAttributes()`/`setAttributes()`, and
+ * `addTags()`/`removeTags()` for read-only handlers, search metadata, and tag
+ * management. Also an `AsyncIterable` of lifecycle events.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowHandle, activity } from 'weft';
+ * import type { WorkflowContext, Context } from 'weft';
+ *
+ * const greet = activity({ name: 'greet', execute: async (i: unknown) => `hi ${i}` });
+ * const engine = new Engine();
+ * engine.register('wave', async function* (ctx: WorkflowContext, input: unknown) {
+ *   return yield* (ctx as Context).run(greet, input);
+ * });
+ *
+ * const handle = await engine.start('wave', 'world');
+ * const typedHandle: WorkflowHandle = handle;
+ * const result = await handle.result();
+ * void typedHandle;
+ * console.log(result); // 'hi world'
+ * ```
+ *
+ * @example Iterate workflow lifecycle events
+ * ```ts
+ * import { Engine, type WorkflowHandle } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('ping', async function* () { return 'pong'; });
+ *
+ * const handle = await engine.start('ping', null);
+ * const typedHandle: WorkflowHandle = handle;
+ * for await (const event of handle) {
+ *   console.log(event.type);
+ * }
+ * void typedHandle;
+ * ```
+ */
 export class WorkflowHandle extends EventTarget implements AsyncDisposable {
   readonly id: string;
   readonly #engine: Engine;
@@ -1808,6 +1888,28 @@ export class WorkflowHandle extends EventTarget implements AsyncDisposable {
   }
 }
 
+/**
+ * Handle to a recurring schedule created by {@link Engine.schedule}. Use
+ * `handle.pause()`, `handle.resume()`, `handle.cancel()`, or
+ * `handle.update(cronExpression)` to manage the schedule lifecycle.
+ * `handle.describe()` returns the current {@link ScheduleSummary}.
+ *
+ * @example
+ * ```ts
+ * import { Engine, ScheduleHandle } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('daily-report', async function* () { return 'ok'; });
+ *
+ * const handle = await engine.schedule('daily-report', null, '0 9 * * *');
+ * const typedHandle: ScheduleHandle = handle;
+ * await handle.pause();
+ * const summary = await handle.describe();
+ * void typedHandle;
+ * console.log(summary.status); // 'paused'
+ * await handle.cancel();
+ * ```
+ */
 export class ScheduleHandle {
   readonly id: string;
   readonly #engine: Engine;
@@ -1860,17 +1962,22 @@ export class ScheduleHandle {
  *
  * @example Run a workflow with an activity
  * ```ts
- * import { Engine, activity } from 'weft';
+ * import { activity, Engine, type Context, type WorkflowContext } from 'weft';
  *
- * const fetchUser = activity('fetchUser', async (id: string) => {
- *   const response = await fetch(`https://api.example.com/users/${id}`);
- *   return response.json();
+ * const fetchUser = activity({
+ *   name: 'fetchUser',
+ *   execute: async (input: unknown) => {
+ *     const id = input as string;
+ *     const response = await fetch(`https://api.example.com/users/${id}`);
+ *     return (await response.json()) as { name: string };
+ *   },
  * });
  *
  * const engine = new Engine();
- * engine.register('greet-user', async function* (ctx, id: string) {
- *   const user = yield* ctx.run(fetchUser, id);
- *   return `Hello, ${(user as { name: string }).name}`;
+ * engine.register('greet-user', async function* (ctx: WorkflowContext, input: unknown) {
+ *   const id = input as string;
+ *   const user = yield* (ctx as Context).run(fetchUser, id);
+ *   return `Hello, ${user.name}`;
  * });
  *
  * const handle = await engine.start('greet-user', 'user-123');
@@ -1880,7 +1987,7 @@ export class ScheduleHandle {
  * @example Run with a SQLite backend
  * ```ts
  * import { Engine } from 'weft';
- * import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+ * import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
  *
  * await using storage = new BunSQLiteStorage('./weft.db');
  * await using engine = new Engine({ storage });

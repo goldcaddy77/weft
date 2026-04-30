@@ -346,6 +346,30 @@ function trimWorkflowCreationTimestamps(
   return timestamps.filter((timestamp) => timestamp > earliestAllowedTimestamp);
 }
 
+/**
+ * Thrown by the engine during `engine.start` when a tenant's configured quota
+ * is breached. Inspect `quota` to see which limit was hit
+ * (`'maxConcurrentWorkflows'`, `'maxWorkflowCreationRate'`, or
+ * `'maxStorageBytes'`), and `currentUsage`/`limit` for the relevant numbers.
+ *
+ * @example
+ * ```ts
+ * import { Engine, QuotaExceededError } from 'weft';
+ *
+ * const engine = new Engine({
+ *   quotas: { maxConcurrentWorkflows: 1 },
+ * });
+ * engine.register('ping', async function* () { return 'pong'; });
+ * try {
+ *   await engine.start('ping', null);
+ *   await engine.start('ping', null); // may throw if tenant limit reached
+ * } catch (err) {
+ *   if (err instanceof QuotaExceededError) {
+ *     console.error('quota exceeded:', err.quota, err.currentUsage, '/', err.limit);
+ *   }
+ * }
+ * ```
+ */
 export class QuotaExceededError extends Error {
   readonly tenantId: string;
   readonly quota: 'maxConcurrentWorkflows' | 'maxWorkflowCreationRate' | 'maxStorageBytes';

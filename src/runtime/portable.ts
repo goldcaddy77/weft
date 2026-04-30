@@ -44,7 +44,21 @@ function getProcess(): typeof globalThis.process | undefined {
   return globalThis.process;
 }
 
-/** Detect the current JavaScript runtime. */
+/**
+ * Detect the current JavaScript runtime.
+ * Detection precedence is bun → node → browser → edge: a Bun process running
+ * under a Node shim still reports 'bun'; the function never falls through if
+ * `globalThis.Bun` is defined.
+ *
+ * @example
+ * ```ts
+ * import { detectRuntime } from 'weft';
+ *
+ * const runtime = detectRuntime();
+ * // Returns 'bun' | 'node' | 'browser' | 'edge'
+ * console.log(runtime); // e.g. 'bun' when running under Bun
+ * ```
+ */
 export function detectRuntime(): RuntimeKind {
   if (isBunRuntime()) return 'bun';
   const process = getProcess();
@@ -70,6 +84,19 @@ export function detectRuntime(): RuntimeKind {
  *
  * Uses `Bun.sleep` when available (microtask-friendly), otherwise wraps
  * `setTimeout` in a `Promise`.
+ *
+ * @example
+ * ```ts
+ * import { sleep } from 'weft';
+ *
+ * async function poll() {
+ *   for (let i = 0; i < 3; i++) {
+ *     await sleep(100);
+ *     console.log('tick', i);
+ *   }
+ * }
+ * await poll();
+ * ```
  */
 export function sleep(ms: number): Promise<void> {
   if (isBunRuntime()) return Bun.sleep(ms);
@@ -113,6 +140,16 @@ const textEncoder = new TextEncoder();
  * Uses FNV-1a unconditionally across all runtimes for stable output.
  * Hashes may be persisted to durable storage (event-log chains, tool-effect
  * dedup), so runtime-specific algorithms would break cross-runtime reads.
+ *
+ * @example
+ * ```ts
+ * import { hashBytes } from 'weft';
+ *
+ * const data = new TextEncoder().encode('hello');
+ * const hash = hashBytes(data);
+ * console.log(hash.length);  // 16
+ * console.log(hashBytes(data) === hash); // true (deterministic)
+ * ```
  */
 export function hashBytes(data: Uint8Array): string {
   return fnv1a64(data);
@@ -122,6 +159,16 @@ export function hashBytes(data: Uint8Array): string {
  * Hash a string to a 16-character hex string.
  *
  * Uses FNV-1a unconditionally across all runtimes for stable output.
+ *
+ * @example
+ * ```ts
+ * import { hashString } from 'weft';
+ *
+ * const h1 = hashString('workflow-key');
+ * const h2 = hashString('workflow-key');
+ * console.log(h1 === h2);   // true (stable across calls)
+ * console.log(h1.length);   // 16
+ * ```
  */
 export function hashString(data: string): string {
   return fnv1a64(textEncoder.encode(data));

@@ -168,5 +168,9 @@ export async function teardown(
 ): Promise<void> {
   engine?.[Symbol.dispose]();
   await flush();
+  // LMDB-backed tests can still have a read transaction unwinding on the next
+  // turn after engine disposal under heavy suite load. Give backend cleanup one
+  // more event-loop turn so storage disposal does not race that shutdown path.
+  await flush();
   await storageCleanup?.();
 }

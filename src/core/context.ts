@@ -69,6 +69,24 @@ import type {
  * boundary inside `ctx.saga`, types are erased to `unknown` — the
  * implementation guarantees that the input passed to `execute` and `compensate`
  * always matches what was supplied in the original step object.
+ *
+ * @example
+ * ```ts
+ * import { activity, type SagaStep, type WorkflowContext } from 'weft';
+ * import type { Context } from 'weft';
+ *
+ * const chargeCard = activity({
+ *   name: 'chargeCard',
+ *   execute: async (input: unknown) => ({ chargeId: 'ch-123' }),
+ *   compensate: async (_input, _output) => { return; },
+ * });
+ *
+ * const step: SagaStep<unknown, { chargeId: string }> = {
+ *   definition: chargeCard,
+ *   input: { amount: 99 },
+ * };
+ * void step;
+ * ```
  */
 export interface SagaStep<TInput = unknown, TOutput = unknown> {
   definition: ActivityDefinition<TInput, TOutput>;
@@ -110,12 +128,83 @@ interface ErasedSagaStep {
 // Offload reference — returned by ctx.offload(), consumed by ctx.load()
 // ---------------------------------------------------------------------------
 
+/**
+ * Reference returned by `ctx.offload(key, fn)`. Store this in a local
+ * variable or pass it downstream — the engine keeps the heavy payload in
+ * storage and only checkpoints the lightweight reference. Retrieve the
+ * original value with `ctx.load(reference)`. Offload references are plain
+ * JSON-shaped objects, so they survive structured cloning, MessagePack
+ * encoding, and worker postMessage transfers — return them as workflow
+ * results or store them in attributes.
+ *
+ * @example
+ * ```ts
+ * import { activity, Engine, type OffloadReference } from 'weft';
+ * import type { Context, WorkflowContext } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('heavy', async function* (ctx: WorkflowContext, input: unknown) {
+ *   const ref: OffloadReference = yield* (ctx as Context).offload(
+ *     'large-payload',
+ *     async () => ({ data: 'x'.repeat(100_000) }),
+ *   );
+ *   console.log(ref.sizeBytes);
+ *   const payload = yield* (ctx as Context).load(ref);
+ *   return payload;
+ * });
+ * void engine;
+ * ```
+ *
+ * @example Return a reference for downstream loading
+ * ```ts
+ * import { Engine, type OffloadReference } from 'weft';
+ * import type { Context, WorkflowContext } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('parent', async function* (ctx: WorkflowContext) {
+ *   return yield* (ctx as Context).offload('payload', async () => ({ rows: [1, 2, 3] }));
+ * });
+ * engine.register('child', async function* (ctx: WorkflowContext, input: unknown) {
+ *   const reference = input as OffloadReference;
+ *   return yield* (ctx as Context).load(reference);
+ * });
+ * ```
+ */
 export interface OffloadReference {
   key: string;
   workflowId: string;
   sizeBytes: number;
 }
 
+/**
+ * Reference to a multi-chunk stream stored via `ctx.stream(key, fn)`. Contains
+ * the storage key, workflow ID, chunk count, and total byte size. Used
+ * internally to retrieve and replay stream data during workflow recovery.
+ * Hand the reference to `WeftClient.getStreamChunks(workflowId, key)` (or
+ * `engine.getStreamChunks`) to read the persisted chunks back after the
+ * workflow resumes.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type StreamReference } from 'weft';
+ * import type { Context, WorkflowContext } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('streamer', async function* (ctx: WorkflowContext) {
+ *   const ref: StreamReference = yield* (ctx as Context).stream(
+ *     'token-stream',
+ *     async function* (sink) {
+ *       for (const token of ['hello', ' ', 'world']) {
+ *         yield token;
+ *         sink.heartbeat();
+ *       }
+ *     },
+ *   );
+ *   console.log('chunks:', ref.chunkCount, 'bytes:', ref.totalSizeBytes);
+ * });
+ * void engine;
+ * ```
+ */
 export interface StreamReference {
   key: string;
   workflowId: string;
@@ -123,11 +212,43 @@ export interface StreamReference {
   totalSizeBytes: number;
 }
 
+/**
+ * A single chunk persisted by `ctx.stream`. The `sequence` field is the
+ * zero-based chunk index used to reassemble the stream in order on replay.
+ * Users do not construct these directly; they are managed by the engine.
+ * Returned to callers via `WeftClient.getStreamChunks(workflowId, key)` so
+ * external consumers can replay persisted stream chunks after the workflow has
+ * finished.
+ */
 export interface StoredStreamChunk<T = unknown> {
   sequence: number;
   value: T;
 }
 
+/**
+ * Callback object passed to the async generator function inside `ctx.stream`.
+ * Call `sink.heartbeat()` periodically to extend the stream's visibility
+ * timeout and prevent the engine from marking it as stalled. Optionally pass a
+ * `details` argument (e.g. `{ chunk: i }`) to attach diagnostic info to the
+ * heartbeat — surfaced via the engine's worker-detail events.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type StreamSink } from 'weft';
+ * import type { Context, WorkflowContext } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('tokenStream', async function* (ctx: WorkflowContext) {
+ *   yield* (ctx as Context).stream('tokens', async function* (sink: StreamSink) {
+ *     for (let i = 0; i < 100; i++) {
+ *       yield `token-${i}`;
+ *       sink.heartbeat({ chunk: i });
+ *     }
+ *   });
+ * });
+ * void engine;
+ * ```
+ */
 export interface StreamSink {
   heartbeat(details?: unknown): void;
 }
@@ -188,6 +309,31 @@ export interface AgentContextOptions {
 // Operation request descriptors
 // ---------------------------------------------------------------------------
 
+/**
+ * Discriminated union of all operation descriptors that a workflow generator
+ * can yield to the engine. Each variant corresponds to one durable operation
+ * (activity, sleep, signal-wait, update, child workflow, parallel, race, memo,
+ * offload, load, archive, run-all, agent, speculate, stream, wait-review,
+ * handoff, debate, supervise). The engine matches the `type` field, executes
+ * the operation, and feeds the result back via `generator.next(result)`. Users
+ * do not construct these directly — they are produced by the methods on
+ * {@link Context}.
+ *
+ * @example
+ * ```ts
+ * import { type ContextOperationRequest, Engine, activity } from 'weft';
+ * import type { Context, WorkflowContext } from 'weft';
+ *
+ * const ping = activity({ name: 'ping', execute: async (i: unknown) => i });
+ * const engine = new Engine();
+ * engine.register('demo', async function* (ctx: WorkflowContext, input: unknown) {
+ *   // ctx.run() yields a ContextOperationRequest internally
+ *   const result = yield* (ctx as Context).run(ping, input);
+ *   return result;
+ * });
+ * void engine;
+ * ```
+ */
 export type ContextOperationRequest =
   | {
       type: 'activity';
@@ -380,6 +526,29 @@ function trimCallerStack(stack: string): string {
 // Context options
 // ---------------------------------------------------------------------------
 
+/**
+ * Construction options for the {@link Context} class. Populated by the engine
+ * before invoking a workflow generator; advanced consumers (test harnesses,
+ * custom execution strategies) may construct `Context` directly with these
+ * options.
+ *
+ * @example
+ * ```ts
+ * import { Context, type ContextOptions } from 'weft';
+ *
+ * // ContextOptions is populated internally by the engine.
+ * // Shown here to illustrate the shape:
+ * const controller = new AbortController();
+ * const options: ContextOptions = {
+ *   workflowId: 'wf-demo',
+ *   workflowType: 'demo',
+ *   startedAt: Date.now(),
+ *   abortController: controller,
+ * };
+ * const ctx = new Context(options);
+ * void ctx;
+ * ```
+ */
 export interface ContextOptions {
   workflowId: string;
   workflowType: string;
@@ -414,6 +583,30 @@ const EMPTY_CHECKPOINT_LOCALS = Object.freeze({}) as Record<string, unknown>;
 // Context class
 // ---------------------------------------------------------------------------
 
+/**
+ * Concrete workflow execution context injected as the first argument of every
+ * registered workflow generator. Implements all durable operations: `run`
+ * (activities), `sleep`, `waitForSignal`, `waitForUpdate`, `parallel`, `race`,
+ * `offload`, `stream`, `agent`, `saga`, and more. Cast `ctx` to `Context`
+ * inside workflow functions to access these methods.
+ *
+ * @example
+ * ```ts
+ * import { Engine, activity, type Context, type WorkflowContext } from 'weft';
+ *
+ * const ping = activity({ name: 'ping', execute: async (i: unknown) => `pong:${i}` });
+ * const engine = new Engine();
+ *
+ * engine.register('example', async function* (ctx: WorkflowContext, input: unknown) {
+ *   const result = yield* (ctx as Context).run(ping, input);
+ *   yield* (ctx as Context).sleep('1s');
+ *   return result;
+ * });
+ *
+ * const handle = await engine.start('example', 'hello');
+ * console.log(await handle.result()); // 'pong:hello'
+ * ```
+ */
 export class Context implements WorkflowContext {
   readonly workflowId: string;
   readonly workflowType: string;

@@ -32,6 +32,32 @@ const DEFAULT_POLL_TIMEOUT = 30_000;
 // LongPollWorker
 // ---------------------------------------------------------------------------
 
+/**
+ * HTTP long-poll fallback worker for environments where WebSocket connections
+ * are unavailable (e.g. certain serverless runtimes or proxied environments).
+ *
+ * Continuously polls the server for pending tasks using HTTP long-polling and
+ * executes them locally.  Supports the same activity and interceptor model as
+ * {@link RemoteWorker} but with slightly higher per-task latency due to the
+ * poll round-trip.
+ *
+ * @example
+ * ```ts
+ * import { LongPollWorker } from 'weft';
+ *
+ * using worker = new LongPollWorker({
+ *   serverUrl: 'http://localhost:3000',
+ *   activities: {
+ *     resize: async (input: unknown) => {
+ *       return `resized:${JSON.stringify(input)}`;
+ *     },
+ *   },
+ *   concurrency: 3,
+ *   queue: 'images',
+ * });
+ * worker.start();
+ * ```
+ */
 export class LongPollWorker implements Disposable {
   #options: LongPollWorkerOptions;
   #running: boolean;

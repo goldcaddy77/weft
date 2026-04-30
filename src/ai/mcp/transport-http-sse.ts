@@ -16,6 +16,31 @@ import { MCPTransportError } from './transport';
 
 import type { HeaderSource } from './transport-http';
 
+/**
+ * Options for {@link HttpSseTransport}. Accepts the MCP server base URL, an
+ * optional {@link HeaderSource} (static headers or an async factory for OAuth2
+ * tokens), and an optional `timeout` in milliseconds for both the SSE connection
+ * and individual POST requests.
+ *
+ * @example Configure SSE transport with dynamic auth headers
+ * ```ts
+ * import { HttpSseTransport, type HttpSseTransportOptions, createOAuth2TokenManager } from 'weft';
+ *
+ * const manager = createOAuth2TokenManager({
+ *   tokenEndpoint: 'https://auth.example.com/oauth/token',
+ *   clientId: process.env['CLIENT_ID'] ?? '',
+ *   clientSecret: process.env['CLIENT_SECRET'] ?? '',
+ * });
+ *
+ * const options: HttpSseTransportOptions = {
+ *   serverUrl: 'https://tools.example.com',
+ *   headers: async () => ({ Authorization: `Bearer ${await manager.getAccessToken()}` }),
+ *   timeout: 20_000,
+ * };
+ *
+ * const transport = new HttpSseTransport(options);
+ * ```
+ */
 export type HttpSseTransportOptions = {
   serverUrl: string;
   headers?: HeaderSource | undefined;
@@ -30,6 +55,26 @@ function ignoreTransportPromiseRejection(_error: unknown): void {}
 // Transport
 // ---------------------------------------------------------------------------
 
+/**
+ * {@link MCPTransport} that sends requests via HTTP POST and receives responses
+ * over a persistent Server-Sent Events stream. The SSE connection is established
+ * lazily on the first `send()`. Use this when the MCP server pushes responses
+ * asynchronously; prefer {@link HttpTransport} for synchronous request-response servers.
+ *
+ * @example Connect an SSE-based MCP server to the agent loop
+ * ```ts
+ * import { MCPClient, HttpSseTransport } from 'weft';
+ *
+ * const transport = new HttpSseTransport({
+ *   serverUrl: 'https://tools.example.com',
+ *   timeout: 30_000,
+ * });
+ *
+ * using client = new MCPClient({ transport });
+ * const tools = await client.discoverTools();
+ * console.log('SSE tools:', tools.length);
+ * ```
+ */
 export class HttpSseTransport implements MCPTransport {
   #serverUrl: string;
   #headerSource: HeaderSource;

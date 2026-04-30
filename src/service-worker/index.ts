@@ -36,6 +36,28 @@ interface MinimalPeriodicSyncEvent extends MinimalExtendableEvent {
 // Options
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for the Service Worker bootstrap functions
+ * (`createFetchHandler`, `createPeriodicSyncHandler`, `createLifecycleHandlers`).
+ *
+ * Supply the {@link Engine} instance that the service worker should delegate
+ * workflow requests to.  Use `pathPrefix` to scope which fetch requests the
+ * handler intercepts (default: `'/weft/'`).
+ *
+ * @example
+ * ```ts
+ * import { createFetchHandler, type ServiceWorkerOptions } from 'weft/service-worker';
+ * import { Engine, MemoryStorage } from 'weft';
+ *
+ * const storage = new MemoryStorage();
+ * const engine = new Engine({ storage });
+ *
+ * const options: ServiceWorkerOptions = { engine, pathPrefix: '/weft/' };
+ * const handleFetch = createFetchHandler(options);
+ * // In a Service Worker file: self.addEventListener('fetch', handleFetch);
+ * void handleFetch;
+ * ```
+ */
 export interface ServiceWorkerOptions {
   engine: Engine;
   pathPrefix?: string;
@@ -55,6 +77,28 @@ const DEFAULT_PERIODIC_SYNC_TAG = 'weft-timers';
 /**
  * Create a fetch event handler that intercepts requests matching the given
  * path prefix and delegates them to the Weft HTTP handler.
+ *
+ * The default `pathPrefix` is `'/weft/'`. A trailing slash is auto-appended
+ * when missing, so `'/weft'` and `'/weft/'` behave identically. Requests
+ * whose pathname does not start with the (normalized) prefix are passed
+ * through — the handler simply returns without calling
+ * `event.respondWith`, leaving the request to the next service-worker
+ * listener or the network. Matching requests have the prefix stripped
+ * before delegation: `/weft/v1/health` becomes `/v1/health` for
+ * {@link Engine}.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage } from 'weft';
+ * import { createFetchHandler } from 'weft/service-worker';
+ *
+ * const engine = new Engine({ storage: new MemoryStorage() });
+ * const handler = createFetchHandler({ engine, pathPrefix: '/weft/' });
+ *
+ * // In your Service Worker:
+ * // self.addEventListener('fetch', handler);
+ * console.log(typeof handler); // 'function'
+ * ```
  */
 export function createFetchHandler(
   options: ServiceWorkerOptions,
@@ -96,6 +140,30 @@ export function createFetchHandler(
 /**
  * Create a periodic sync event handler that ticks the scheduler
  * when the matching tag fires.
+ *
+ * The default `tag` is `'weft-timers'`. Events with non-matching tags are
+ * silently ignored. The returned handler invokes `scheduler.tick()` inside
+ * `event.waitUntil(...)` so the sync extends until the tick promise
+ * resolves.
+ *
+ * Note: `ServiceWorkerScheduler` is the parameter type but is not currently
+ * re-exported from `weft/service-worker` — construct the scheduler in the
+ * module that imports it directly (e.g. the dashboard runtime) and pass
+ * the instance to this factory.
+ *
+ * @example
+ * ```ts
+ * import { createPeriodicSyncHandler } from 'weft/service-worker';
+ *
+ * // In your Service Worker (with a scheduler from the runtime that imports it):
+ * declare const scheduler: { tick(): Promise<void> };
+ * const handler = createPeriodicSyncHandler(
+ *   scheduler as Parameters<typeof createPeriodicSyncHandler>[0],
+ *   'weft-timers',
+ * );
+ * // self.addEventListener('periodicsync', handler);
+ * console.log(typeof handler); // 'function'
+ * ```
  */
 export function createPeriodicSyncHandler(
   scheduler: ServiceWorkerScheduler,
@@ -119,6 +187,23 @@ export function createPeriodicSyncHandler(
  *
  * - `install`: Calls `skipWaiting()` so the new Service Worker activates immediately.
  * - `activate`: Calls `clients.claim()` so open tabs use the new Service Worker.
+ *
+ * Both handlers are defensive: when `skipWaiting` or `clients.claim` are
+ * not present on `globalThis` (e.g. when the module is imported in a unit
+ * test or an environment that is not a Service Worker scope), they silently
+ * fall back to a resolved promise so the import remains safe.
+ *
+ * @example
+ * ```ts
+ * import { createLifecycleHandlers } from 'weft/service-worker';
+ *
+ * const { install, activate } = createLifecycleHandlers();
+ *
+ * // In your Service Worker file:
+ * // self.addEventListener('install', install);
+ * // self.addEventListener('activate', activate);
+ * console.log(typeof install, typeof activate); // 'function function'
+ * ```
  */
 export function createLifecycleHandlers(): {
   install: (event: MinimalExtendableEvent) => void;

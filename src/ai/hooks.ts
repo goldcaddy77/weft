@@ -1,5 +1,30 @@
 import type { Message, ToolCall } from './providers/types.ts';
 
+/**
+ * Optional lifecycle callbacks that plug into the agent loop. `beforeTurn` can
+ * inspect or modify the message list, or skip a turn entirely and return a
+ * static result. `afterToolCall` can transform or reject a tool result before
+ * it reaches the model. `onBudgetWarning` fires once when usage crosses the
+ * configured threshold.
+ *
+ * @example Inject a freshness check before each turn
+ * ```ts
+ * import type { AgentHooks } from 'weft';
+ *
+ * const hooks: AgentHooks = {
+ *   beforeTurn: async ({ turnIndex, messages, model }) => {
+ *     if (turnIndex > 0 && messages.length > 50) {
+ *       // Skip the turn and return a canned message to stop runaway loops.
+ *       return { action: 'skip', result: 'Conversation too long — stopping.' };
+ *     }
+ *     return { action: 'continue' };
+ *   },
+ *   onBudgetWarning: ({ budgetUsedPercent }) => {
+ *     console.warn(`Budget ${budgetUsedPercent.toFixed(0)}% used`);
+ *   },
+ * };
+ * ```
+ */
 export interface AgentHooks {
   /** Runs before each LLM call. Can modify messages or skip the turn. */
   beforeTurn?: (context: BeforeTurnContext) => BeforeTurnResult | Promise<BeforeTurnResult>;

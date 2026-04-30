@@ -4513,6 +4513,59 @@ describe('Engine', () => {
       engine[Symbol.dispose]();
     });
 
+    it('terminal cleanup falls back to scan-and-batch deletion when deletePrefix is unavailable', async () => {
+      const realStorage = new MemoryStorage();
+      const deleteBatches: string[][] = [];
+      const storage: WeftStorage = {
+        get: realStorage.get.bind(realStorage),
+        put: realStorage.put.bind(realStorage),
+        delete: realStorage.delete.bind(realStorage),
+        scan: realStorage.scan.bind(realStorage),
+        batch: async (operations) => {
+          deleteBatches.push(
+            operations
+              .filter((operation) => operation.type === 'delete')
+              .map((operation) => operation.key),
+          );
+          await realStorage.batch(operations);
+        },
+        [Symbol.dispose]() {
+          realStorage[Symbol.dispose]();
+        },
+      };
+
+      const engine = new Engine({ storage });
+
+      engine.register('fallback-terminal-cleanup', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('finish');
+        return 'done';
+      });
+
+      const handle = await engine.start('fallback-terminal-cleanup', null);
+      await flush();
+
+      const signalKey = KEYS.signal(handle.id, 'pre', 'entry');
+      const reviewKey = KEYS.review(handle.id, 'manual-review');
+      const workflowHeaderKey = KEYS.workflowHeaders(handle.id);
+
+      await storage.put(signalKey, encode({ ignored: true }));
+      await storage.put(reviewKey, encode({ status: 'pending' }));
+      await storage.put(workflowHeaderKey, encode([['traceparent', '00-test']]));
+
+      const resultPromise = handle.result();
+      await engine.signal(handle.id, 'finish', null);
+      await expect(resultPromise).resolves.toBe('done');
+
+      await engine.scheduler.tick(Date.now() + 120_000);
+
+      expect(await storage.get(signalKey)).toBeNull();
+      expect(await storage.get(reviewKey)).toBeNull();
+      expect(await storage.get(workflowHeaderKey)).toBeNull();
+      expect(deleteBatches.some((keys) => keys.includes(signalKey))).toBe(true);
+
+      engine[Symbol.dispose]();
+    });
+
     it('stale terminal cleanup timers do not delete scratch data for a reused workflow id', async () => {
       const storage = new MemoryStorage();
       const workflowId = 'reused-terminal-cleanup-id';

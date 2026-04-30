@@ -25,6 +25,23 @@ interface QueuedOperation {
 // StepContext
 // ---------------------------------------------------------------------------
 
+/**
+ * Internal implementation of {@link StepWorkflowContext} for step-based
+ * ("progressive disclosure") workflows. Wraps the generator protocol in a
+ * queue so that plain `async function` workflows can be registered on the
+ * engine without writing explicit generators. Build via
+ * {@link compileStepWorkflow} rather than constructing directly.
+ *
+ * @example
+ * ```ts
+ * import { StepContext } from 'weft';
+ *
+ * const controller = new AbortController();
+ * const ctx = new StepContext('wf-demo', controller.signal);
+ * ctx.step('fetch', async () => ({ name: 'Alice' })).then(console.log);
+ * void ctx;
+ * ```
+ */
 export class StepContext implements StepWorkflowContext {
   readonly workflowId: string;
   readonly signal: AbortSignal;
@@ -86,6 +103,29 @@ export class StepContext implements StepWorkflowContext {
 // compileStepWorkflow — wraps a StepWorkflowFunction into a WorkflowFunction
 // ---------------------------------------------------------------------------
 
+/**
+ * Wraps a {@link StepWorkflowFunction} (a plain `async function` using
+ * `ctx.step`) into a durable {@link WorkflowFunction} generator that the
+ * engine can register and persist. This bridges the "progressive disclosure"
+ * API with the underlying generator protocol.
+ *
+ * @example
+ * ```ts
+ * import { Engine, compileStepWorkflow, type StepWorkflowContext } from 'weft';
+ *
+ * async function process(ctx: StepWorkflowContext, input: unknown) {
+ *   const upper = await ctx.step('uppercase', () =>
+ *     (input as string).toUpperCase(),
+ *   );
+ *   return upper;
+ * }
+ *
+ * const engine = new Engine();
+ * engine.register('process', compileStepWorkflow(process));
+ * const result = await (await engine.start('process', 'hello')).result();
+ * console.log(result); // 'HELLO'
+ * ```
+ */
 export function compileStepWorkflow<TInput = unknown, TOutput = unknown>(
   stepFunction: (context: StepWorkflowContext, input: TInput) => Promise<TOutput>,
 ): WorkflowFunction<TInput, TOutput> {
@@ -182,7 +222,22 @@ export function isGeneratorFunction(fn: Function): boolean {
   return Object.getPrototypeOf(fn) === SYNC_GENERATOR_FUNCTION_PROTOTYPE;
 }
 
-/** Returns `true` if `fn` is an async generator function (`async function*`). */
+/**
+ * Returns `true` if `fn` is an async generator function (`async function*`).
+ *
+ * @example
+ * ```ts
+ * import { isAsyncGeneratorFunction } from 'weft';
+ *
+ * async function* myWorkflow() { yield 1; }
+ * function* syncGen() { yield 1; }
+ * async function asyncFn() { return 1; }
+ *
+ * console.log(isAsyncGeneratorFunction(myWorkflow)); // true
+ * console.log(isAsyncGeneratorFunction(syncGen));    // false
+ * console.log(isAsyncGeneratorFunction(asyncFn));    // false
+ * ```
+ */
 export function isAsyncGeneratorFunction(fn: Function): boolean {
   return Object.getPrototypeOf(fn) === ASYNC_GENERATOR_FUNCTION_PROTOTYPE;
 }
