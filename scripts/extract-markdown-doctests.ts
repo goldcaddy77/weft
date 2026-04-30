@@ -265,7 +265,7 @@ function writeRunnableBlock(block: Block): string {
   return filename;
 }
 
-function typecheck(): { ok: boolean; failures: Map<string, string[]> } {
+function typecheck(expectedFileCount: number): { ok: boolean; failures: Map<string, string[]> } {
   const tsconfigPath = resolve(DOCTESTS_DIR, 'tsconfig.json');
   const config = ts.readConfigFile(tsconfigPath, (p) => readFileSync(p, 'utf8'));
   if (config.error) {
@@ -273,8 +273,19 @@ function typecheck(): { ok: boolean; failures: Map<string, string[]> } {
     process.exit(1);
   }
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, DOCTESTS_DIR);
+  if (expectedFileCount > 0 && parsed.fileNames.length === 0) {
+    console.error(
+      `extract-markdown-doctests: tsconfig resolved to zero files but ${expectedFileCount} runnable blocks were extracted; the typecheck would silently pass without checking anything.`,
+    );
+    process.exit(1);
+  }
   const program = ts.createProgram(parsed.fileNames, parsed.options);
+  // Include parsed-config errors (e.g. invalid tsconfig fields) and program
+  // option diagnostics so a misconfigured tsconfig surfaces as a failure
+  // rather than silently letting the gate pass.
   const diagnostics = [
+    ...parsed.errors,
+    ...program.getOptionsDiagnostics(),
     ...program.getSyntacticDiagnostics(),
     ...program.getSemanticDiagnostics(),
     ...program.getGlobalDiagnostics(),
@@ -361,18 +372,27 @@ function enforceSkipRatchet(blocks: Block[], baselineCounts: Record<string, numb
       skipCountsNow[r] = (skipCountsNow[r] ?? 0) + 1;
     }
   }
-  const ratchetViolations: string[] = [];
-  for (const [reason, count] of Object.entries(skipCountsNow)) {
+  // Strict equality: the live count must match the baseline exactly. If it
+  // grew, reviewers will see the bump in the diff and can ask why. If it
+  // shrank, the contributor must lower the baseline in the same change so
+  // the ceiling can't drift upward over time. Either drift is a finding.
+  const violations: string[] = [];
+  const reasons = new Set([...Object.keys(skipCountsNow), ...Object.keys(baselineCounts)]);
+  for (const reason of reasons) {
+    const live = skipCountsNow[reason] ?? 0;
     const baseline = baselineCounts[reason] ?? 0;
-    if (count > baseline) {
-      ratchetViolations.push(`  reason "${reason}": ${count} occurrences (baseline ${baseline})`);
+    if (live !== baseline) {
+      const direction = live > baseline ? 'grew' : 'shrank';
+      violations.push(
+        `  reason "${reason}": ${live} occurrences ${direction} from baseline ${baseline}`,
+      );
     }
   }
-  if (ratchetViolations.length === 0) return;
-  console.error('extract-markdown-doctests: skip-count ratchet violated:');
-  for (const v of ratchetViolations) console.error(v);
+  if (violations.length === 0) return;
+  console.error('extract-markdown-doctests: skip-count drift detected:');
+  for (const v of violations) console.error(v);
   console.error(
-    `  → Either fix the new partial block to be runnable, or update ${relative(REPO_ROOT, SKIP_COUNTS_PATH)} in a separate commit (with the reason explained in the commit body).`,
+    `  → Update ${relative(REPO_ROOT, SKIP_COUNTS_PATH)} to match the new counts. Reviewers will see the bump in the diff and can challenge the rationale. Counts must match exactly so the ceiling cannot drift upward across uncoordinated commits.`,
   );
   process.exit(1);
 }
@@ -455,7 +475,7 @@ function main(): void {
   let typecheckOk = true;
   let perFileFailures = new Map<string, string[]>();
   if (runnableBlocks.length > 0) {
-    const result = typecheck();
+    const result = typecheck(runnableBlocks.length);
     typecheckOk = result.ok;
     perFileFailures = result.failures;
   }

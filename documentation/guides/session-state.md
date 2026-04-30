@@ -28,7 +28,7 @@ engine.register('counter', async function* (ctx: WorkflowContext) {
 counter.update((current) => (current ?? 0) + 1);
 ```
 
-`clear()` removes the slot. After clearing, `get()` returns `undefined`---even if you originally provided an `initialValue`, the slot stays empty until the next write.
+`clear()` removes the stored value. After clearing, `get()` returns the handle's captured `initialValue` if you provided one, otherwise `undefined`. The handle's `initialValue` is a snapshot, so subsequent reads see the original value until the next `set` or `update`.
 
 ## Survives recovery
 
@@ -106,9 +106,9 @@ When in doubt: if the value would be wrong to recompute on replay (an LLM respon
 
 ## Child workflows
 
-When a workflow starts a child, the child gets its **own** copy of the session-state store. Mutations on either side don't propagate back to the other---each instance has independent state. The clone is structured so the child's writes can't observe parent updates that happened after spawn, and vice versa.
+Child workflows start with **empty** session state. The parent's slots aren't passed across the boundary---each child workflow is its own instance and has to seed its own keys (or rely on `initialValue`s declared at the call sites where it reads them). Session state belongs to the workflow that wrote it.
 
-If you need cross-workflow state, [`SharedState`](./shared-state.md) is the right primitive. Session state is per-instance by design.
+If you want a child to inherit context, pass the relevant values as part of the child's input. If you want shared cross-workflow state, [`SharedState`](./shared-state.md) is the right primitive: it lives in storage with optimistic concurrency, scoped to whatever key you give it.
 
 ## What's not a contract
 

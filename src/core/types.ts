@@ -975,11 +975,13 @@ export type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
  * Typed per-workflow session state slot returned by `ctx.sessionState(key)`.
  * Survives checkpoint recovery but is scoped to the current workflow instance.
  * Use `get` to read the current value, `set` or `update` to write, and `run`
- * to execute a function with access to the stored value as a generator operation.
- * `clear()` removes the slot and reverts subsequent `get()` calls to `undefined`.
- * `run` executes the function inside a memoised durable operation (the
- * function's body can call `get()` / `set()` on the slot to read or update its
- * value).
+ * to schedule a sticky durable activity that may need session-bound context.
+ * `clear()` removes the stored value; subsequent `get()` returns the handle's
+ * captured `initialValue` if one was provided, otherwise `undefined`.
+ * `run` schedules the function as a regular activity routed through sticky
+ * worker execution. The function receives only the arguments you pass to
+ * `run(...)` — it cannot read the slot from inside. Read `session.get()`
+ * before yielding the run if the function needs the current value.
  */
 export interface WorkflowSessionState<T> {
   get(): T | undefined;
