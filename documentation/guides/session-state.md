@@ -53,13 +53,13 @@ engine.register('survives-crashes', async function* (ctx: WorkflowContext) {
 `run(fn, ...args)` executes a function as a generator-yielding durable operation that's automatically routed through sticky worker execution. This is the typical path for activities that need to be co-located with their session state---LLM calls, conversation-aware tool invocations, anything where moving between workers would lose useful warm context.
 
 ```ts partial
-const session = (ctx as Context).sessionState<number>('conversation', 0);
+async function* example(ctx: Context) {
+  const session = ctx.sessionState<number>('conversation', 0);
 
-const reply =
-  yield *
-  session.run(async (input: string) => {
+  const reply = yield* session.run(async (input: string) => {
     return `processed: ${input}`;
   }, 'hello');
+}
 ```
 
 The activity dispatched by `session.run` carries `sticky: true` and any other options you pass through. The function itself runs as a regular activity---it doesn't directly read or write the session slot from inside. If it needs the current value, take it from `session.get()` before yielding the run.
