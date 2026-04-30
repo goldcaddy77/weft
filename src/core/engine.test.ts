@@ -61,6 +61,25 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('registerActivity(name, fn) registers a named activity for workflow execution', async () => {
+    const engine = new Engine();
+
+    async function double(value: unknown) {
+      return (value as number) * 2;
+    }
+
+    engine.registerActivity('double', double);
+    engine.register('double-via-registered-activity', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).run(double, 21);
+    });
+
+    const handle = await engine.start('double-via-registered-activity', undefined);
+    const result = await handle.result();
+
+    expect(result).toBe(42);
+    engine[Symbol.dispose]();
+  });
+
   it('simple workflow completes with ctx.run', async () => {
     const engine = new Engine();
     const doubleActivity = async (...args: unknown[]) => (args[0] as number) * 2;
