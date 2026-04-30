@@ -3,7 +3,6 @@ import {
   advanceTimersByTime,
   flushMicrotasks,
   restoreRealTimers,
-  sleepForTesting,
   useFakeTimers,
 } from '../testing/fake-timers.ts';
 
@@ -348,6 +347,17 @@ describe('Scheduler', () => {
   });
 
   it('Symbol.dispose stops the polling interval', async () => {
+    useFakeTimers(currentTime);
+    scheduler[Symbol.dispose]();
+    scheduler = new Scheduler({
+      storage,
+      onTimerFired: (entry) => {
+        firedEntries.push(entry);
+      },
+      pollIntervalMs: 100,
+      getNow: () => currentTime,
+    });
+
     scheduler.start();
     scheduler[Symbol.dispose]();
 
@@ -356,7 +366,8 @@ describe('Scheduler', () => {
     await scheduler.schedule(entry);
 
     // Wait for what would be a poll cycle
-    await sleepForTesting(200);
+    await advanceTimersByTime(200);
+    await flushMicrotasks(20);
 
     expect(firedEntries).toHaveLength(0);
   });
@@ -372,6 +383,17 @@ describe('Scheduler', () => {
   });
 
   it('does not fire after dispose', async () => {
+    useFakeTimers(currentTime);
+    scheduler[Symbol.dispose]();
+    scheduler = new Scheduler({
+      storage,
+      onTimerFired: (entry) => {
+        firedEntries.push(entry);
+      },
+      pollIntervalMs: 100,
+      getNow: () => currentTime,
+    });
+
     scheduler.start();
 
     const entry = makeTimer({ fireAt: currentTime - 1000 });
@@ -380,7 +402,8 @@ describe('Scheduler', () => {
     scheduler[Symbol.dispose]();
 
     // Wait for what would be a poll cycle
-    await sleepForTesting(200);
+    await advanceTimersByTime(200);
+    await flushMicrotasks(20);
 
     expect(firedEntries).toHaveLength(0);
   });
