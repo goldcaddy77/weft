@@ -225,10 +225,10 @@ Before adding anything from the research, the measured vs. spec gaps in `referen
 
 - Activity completions: spec `>30K/sec`, measured `~9K/sec` (3x short).
 - Workflow starts: spec `>50K/sec`, measured `~13K/sec` (4x short).
-- Memory per workflow: spec `≤2KB`, measured `~7–15KB` (3–7x over).
+- Memory per workflow: spec `≤2KB`, measured `~132 bytes` for the current checkpoint blob and `~743 bytes` for the total durable idle-workflow footprint across 100K parked workflows.
 - Cold start binary: spec `<100ms`, measured `~1022ms` (10x over).
 
-Helium's prompt caching and libDSE's speculative commit both improve throughput, so §5 pulls double duty here. The memory gap is more concerning — `structuredClone` + MessagePack is not cheap, and the 7–15KB per workflow is going to be load-bearing at scale. A profiling pass on `Checkpoint` serialization is probably the highest-ROI work item in the whole repo right now.
+Helium's prompt caching and libDSE's speculative commit both improve throughput, so §5 pulls double duty here. The old idle-workflow memory gap is now closed, so the next highest-ROI performance work has shifted back to throughput: start-path fsync pressure, completion-path cleanup cost, and long-run RSS stability under sustained load rather than checkpoint blob size.
 
 ---
 

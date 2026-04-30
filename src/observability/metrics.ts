@@ -95,8 +95,10 @@ export type MetricsSnapshot = Record<string, CounterMetric | HistogramMetric | G
 /**
  * Collects counters, histograms, and gauges for Weft observability.
  *
- * Thread-safe within a single Bun isolate. Call {@link snapshot} to read
- * all collected values and {@link reset} to clear them.
+ * Single-threaded — each worker constructs its own collector; concurrent
+ * `record()`/`increment()` calls from the same isolate do not require locking.
+ * Call {@link snapshot} to read all collected values and {@link reset} to
+ * clear them.
  */
 export class MetricsCollector {
   #counters: Map<string, number>;

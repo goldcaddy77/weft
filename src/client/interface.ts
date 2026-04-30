@@ -48,21 +48,18 @@ import type {
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage, type ClientHandle, type WorkflowCompletedEvent } from 'weft';
+ * import { Engine, MemoryStorage, LocalClient, type WorkflowCompletedEvent } from 'weft';
+ * import type { ClientHandle } from 'weft/client';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
  * engine.register('ping', async function* () { return 'pong'; });
  *
- * function logClientHandle(handle: ClientHandle): void {
- *   console.log('workflow', handle.id);
- * }
- *
- * const handle = await engine.start('ping', null);
+ * const client = new LocalClient(engine);
+ * const handle: ClientHandle = await client.start('ping', null);
  * handle.addEventListener('workflow:completed', (e) => {
  *   console.log('completed', (e as WorkflowCompletedEvent).result);
  * });
  * const result = await handle.result();
- * void logClientHandle;
  * console.log(result); // 'pong'
  * ```
  */
@@ -106,15 +103,14 @@ export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable
  *
  * @example
  * ```ts
- * import { Engine, MemoryStorage } from 'weft';
+ * import { Engine, MemoryStorage, LocalClient } from 'weft';
  * import type { ClientScheduleHandle } from 'weft/client';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
  * engine.register('report', async function* () { return 'sent'; });
  *
- * const handle = await engine.schedule(
- *   'report', {}, '0 9 * * 1',
- * );
+ * const client = new LocalClient(engine);
+ * const handle: ClientScheduleHandle = await client.schedule('report', {}, '0 9 * * 1');
  * await handle.pause();
  * console.log(handle.id);
  * ```
@@ -162,9 +158,11 @@ export type UpdateResult = {
  * import { Engine, MemoryStorage, LocalClient, type WeftClient } from 'weft';
  *
  * await using engine = new Engine({ storage: new MemoryStorage() });
+ * engine.register('my-workflow', async function* () { return 42; });
  * const client: WeftClient = new LocalClient(engine);
  * const handle = await client.start('my-workflow', { input: 42 });
  * const result = await handle.result();
+ * console.log(result); // 42
  * ```
  */
 export interface WeftClient {

@@ -157,9 +157,8 @@ export class WorkflowTimedOutEvent extends Event {
 }
 
 /**
- * Fired on the {@link Engine} when a workflow resumes execution after a signal
- * or update delivers a result. `e.fromStep` is the checkpoint step index the
- * workflow resumed from.
+ * Fired whenever a workflow resumes execution — after a signal, update, sleep,
+ * activity completion, or process restart recovery.
  *
  * @example
  * ```ts
@@ -251,7 +250,8 @@ export class ActivityCompletedEvent extends Event {
 /**
  * Fired on the {@link Engine} when an activity execution throws an error.
  * Check `e.attempt` to distinguish first-attempt failures from retries.
- * Read `e.error` for the thrown error object.
+ * Read `e.error` for the thrown error object. `attempt` is 1-indexed —
+ * `attempt === 1` is the first execution; `attempt > 1` indicates a retry.
  *
  * @example
  * ```ts
@@ -300,7 +300,7 @@ export class ActivityFailedEvent extends Event {
  * const engine = new Engine();
  * engine.addEventListener('agent:token', (e: Event) => {
  *   const ev = e as TokenEvent;
- *   process.stdout.write(ev.token);
+ *   console.log(ev.token);
  * });
  * ```
  */
@@ -678,17 +678,17 @@ export class ConstraintViolatedEvent extends Event {
 }
 
 /**
- * Union of all event types emitted by the {@link Engine}. Use this as the
- * type parameter for {@link TypedEventTarget} to get type-safe
- * `addEventListener` / `removeEventListener` on the engine. Each key is the
- * event string; each value is the typed event class.
+ * Record mapping each event-name string the {@link Engine} dispatches to its
+ * corresponding typed `Event` subclass. Use this as the type parameter for
+ * {@link TypedEventTarget} to get type-safe `addEventListener` /
+ * `removeEventListener` on the engine.
  *
  * @example
  * ```ts
- * import { Engine, type WeftEventMap } from 'weft';
+ * import { Engine, type TypedEventTarget, type WeftEventMap } from 'weft';
  *
  * function listenAll(engine: Engine) {
- *   (engine as unknown as import('weft').TypedEventTarget<WeftEventMap>)
+ *   (engine as TypedEventTarget<WeftEventMap>)
  *     .addEventListener('workflow:completed', (e) => {
  *       console.log('done', e.workflowId, e.result);
  *     });
@@ -738,7 +738,7 @@ export type WeftEventMap = WeftAgentEventMap & {
  *   });
  * }
  * const engine = new Engine();
- * addTypedListener(engine as unknown as TypedEventTarget<WeftEventMap>);
+ * addTypedListener(engine as TypedEventTarget<WeftEventMap>);
  * void engine;
  * ```
  */

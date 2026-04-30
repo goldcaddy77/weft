@@ -2,8 +2,14 @@
  * Platform-agnostic HTTP request handler for the workflow REST API.
  * Maps Request to Response with no Bun-specific dependencies.
  *
- * Every route delegates to an {@link Engine} method — the handler is a
- * thin translation layer between HTTP and the Engine public API.
+ * Post-Track-8 dispatch model: incoming requests are resolved first against
+ * the unified operation catalog via `RestBinding` entries (the
+ * `dispatchViaExecuteOperation` pipeline). Only four REST-only meta routes
+ * bypass that pipeline and are dispatched directly from the legacy `ROUTES`
+ * table: `GET /v1/health`, `GET /v1/metrics`, `GET /openapi.json`, and
+ * `GET /openrpc.json`. The `shouldPreferLegacyRoute` predicate enforces
+ * the precedence rule when both a `RestBinding` and a legacy `ROUTES` entry
+ * match the same path.
  *
  * @module server/handler
  */
@@ -100,15 +106,20 @@ function matchRoute(method: string, pathname: string): RouteMatch | null {
  * `decodeURIComponent`. Used by route dispatchers to turn a regex hit into a
  * `{ paramName: value }` map for the operation handler.
  *
- * @example Extract route params from a matched URL
+ * Post-Track-8 note: the only active routes dispatched through this helper
+ * are the four parameter-free meta routes (`/v1/health`, `/v1/metrics`,
+ * `/openapi.json`, `/openrpc.json`). The function is kept public for
+ * tests and any user-supplied route extensions.
+ *
+ * @example Extract route params from a synthetic custom route
  * ```ts
  * import { extractRouteParameters } from 'weft/server/handler';
  *
- * const pattern = /^\/v1\/workflows\/([^/]+)\/signal\/([^/]+)$/;
- * const match = pattern.exec('/v1/workflows/wf-1/signal/refund');
+ * const pattern = /^\/tenants\/([^/]+)\/workflows\/([^/]+)$/;
+ * const match = pattern.exec('/tenants/acme/workflows/wf-42');
  * if (match) {
- *   const params = extractRouteParameters(['workflowId', 'signalName'], match);
- *   console.log(params); // { workflowId: 'wf-1', signalName: 'refund' }
+ *   const params = extractRouteParameters(['tenantId', 'workflowId'], match);
+ *   console.log(params); // { tenantId: 'acme', workflowId: 'wf-42' }
  * }
  * ```
  */
@@ -165,8 +176,10 @@ function errorResponse(message: string, status: number): Response {
  * Extracts a named parameter from a route parameter map, throwing a descriptive
  * `Error` if the parameter is absent.
  *
- * Use this inside custom REST binding handlers to fail fast with a clear message
- * instead of silently returning `undefined`.
+ * Used by the legacy ROUTE_EXECUTOR helpers in this file and any user-supplied
+ * route handlers that extend the catalog. Post-Track-8 in-tree REST bindings
+ * do not call this function — they receive a pre-populated `pathParams` map
+ * from `bindingPathMatches` via `RestBinding.extractInput`.
  *
  * @example
  * ```ts
@@ -296,7 +309,7 @@ const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
 export interface HandlerOptions {
   /**
    * Optional authenticated caller context injected by the HTTP server
-   * wrapper. See `AuthContext` in `authentication.ts` for field docs.
+   * wrapper. See `AuthContext` in `authentication.ts` for field documentation.
    */
   authContext?: AuthContext;
   /**
@@ -399,6 +412,18 @@ export function countLiteralSegments(pathPattern: string): number {
  * Returns `true` when the legacy `bindingMatch` should take precedence over
  * the catalog `routeMatch`; `false` otherwise (including when either side is
  * null).
+ *
+ * **Post-Track-8 note:** the four remaining legacy routes in `ROUTES`
+ * (`/v1/health`, `/v1/metrics`, `/openapi.json`, `/openrpc.json`) carry zero
+ * path parameters. As a result, the `routeParameterCount < bindingParameterCount`
+ * branch in this function is currently dormant — the literal-segment count
+ * tie-break is the only branch that fires in practice. The function retains
+ * the full parameter-count logic to keep the precedence rule sound if a
+ * parameterized legacy route is ever reintroduced.
+ *
+ * The `Parameters<typeof shouldPreferLegacyRoute>` pattern in the example
+ * below is used because the `RouteMatch` type (second argument) is an
+ * internal interface not exported from this module.
  *
  * @example Pick the winning route between a legacy binding and a catalog route
  * ```ts

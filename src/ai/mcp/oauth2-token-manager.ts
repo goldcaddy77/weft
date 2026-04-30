@@ -72,9 +72,9 @@ type CachedToken = {
 
 /**
  * Thrown by {@link createOAuth2TokenManager} when the OAuth2 token endpoint
- * returns an HTTP error status, invalid JSON, or a response body that lacks an
- * `access_token` field. Carries the `tokenEndpoint` URL and an optional HTTP
- * `statusCode` for programmatic error handling.
+ * Thrown by `OAuth2TokenManager.getAccessToken()` when the OAuth2 token
+ * endpoint returns an HTTP error status, invalid JSON, or a response body that
+ * lacks an `access_token` field.
  *
  * @example Catch and report token fetch failures
  * ```ts

@@ -150,7 +150,7 @@ export type AlertStatus = 'idle' | 'firing';
  * Runtime tracking state for a single {@link AlertRule} managed by
  * {@link AlertManager}.
  *
- * Users observe this shape via `AlertManager.getStates()` to see the current
+ * Users observe this shape via `AlertManager.states` to see the current
  * metric value, firing status, and timestamps of the last transition.  It is
  * created and owned by the manager — callers do not construct it directly.
  */

@@ -46,6 +46,9 @@ function getProcess(): typeof globalThis.process | undefined {
 
 /**
  * Detect the current JavaScript runtime.
+ * Detection precedence is bun → node → browser → edge: a Bun process running
+ * under a Node shim still reports 'bun'; the function never falls through if
+ * `globalThis.Bun` is defined.
  *
  * @example
  * ```ts
