@@ -395,6 +395,20 @@ class HttpScheduleHandle implements ClientScheduleHandle {
 /**
  * Remote Weft client backed by HTTP requests.
  *
+ * **Error handling**
+ *
+ * - **404 on GET → `null`:** When a GET request returns 404, the client
+ *   treats it as "resource not found" and resolves with `null` instead of
+ *   throwing `HttpClientError`. The affected methods are: `get`,
+ *   `getSchedule`, `getAttributes`, `getEvents`, `replayTo`,
+ *   `getBudgetPolicy`, and `getUpdateResult`.
+ *
+ * - **400/422 in `submitCoordinatedUpdate` → error envelope:** A 400 or 422
+ *   response from `submitCoordinatedUpdate` is translated into a
+ *   `CoordinatedUpdateResult` with an `error` field rather than throwing.
+ *   All other status codes (including 401, 500) propagate as
+ *   `HttpClientError`.
+ *
  * @example
  * ```ts
  * import { HttpClient } from 'weft';

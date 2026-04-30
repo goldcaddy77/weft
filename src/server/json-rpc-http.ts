@@ -128,7 +128,7 @@ const CONTENT_LENGTH_PATTERN = /^(0|[1-9]\d*)$/;
  * Accepts `application/json` and `application/json; charset=...`
  * (case-insensitive on the type). Subtypes / vendor-tagged types
  * (`application/vnd.weft+json`) are NOT accepted — callers must use
- * the canonical JSON content type so the OpenRPC / OpenAPI docs
+ * the canonical JSON content type so the OpenRPC / OpenAPI documentation
  * remain consistent.
  */
 function isJsonContentType(contentType: string): boolean {

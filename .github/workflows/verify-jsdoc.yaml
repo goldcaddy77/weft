@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - 'documentation/**'
       - 'package.json'
       - 'reference/jsdoc-manifest.json'
       - 'scripts/audit-jsdoc-manifest.ts'
@@ -11,6 +12,9 @@ on:
       - 'scripts/check-declaration-jsdoc.ts'
       - 'scripts/classify-jsdoc-manifest.ts'
       - 'scripts/extract-doctests.ts'
+      - 'scripts/extract-markdown-doctests.ts'
+      - 'scripts/markdown-doctest-skip-counts.json'
+      - 'scripts/markdown-doctest-skip-reasons.txt'
       - '.github/workflows/verify-jsdoc.yaml'
   push:
     branches: [main]
@@ -44,3 +48,6 @@ jobs:
 
       - name: Verify declaration JSDoc survives the re-export chain
         run: bun run verify:jsdoc:declarations
+
+      - name: Verify markdown TypeScript doctests
+        run: bun run verify:markdown-doctests

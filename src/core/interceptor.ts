@@ -28,8 +28,7 @@
  *     return yield* next(ctx);
  *   },
  * };
- * // Pass interceptors when constructing the engine:
- * // const engine = new Engine({ workflowInterceptors: [loggingInterceptor] });
+ * // const engine = new Engine(); engine.addInterceptor(loggingInterceptor);
  * void loggingInterceptor;
  * ```
  */

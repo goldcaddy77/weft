@@ -106,7 +106,9 @@ export interface SerializedBudgetState {
  * Thrown by {@link BudgetTracker.checkBudget} when accumulated token or cost
  * usage exceeds the configured maximums. Carries `tokensUsed`, `costUsed`,
  * and the configured `maxTokens` / `maxCost` limits as properties so callers
- * can surface detailed diagnostics.
+ * can surface detailed diagnostics. Also passed to `AbortController.abort()`
+ * by `BudgetTracker.recordUsage()` when a budget cap is exceeded mid-call —
+ * observable via `controller.signal.reason` on a budget-aware abort.
  *
  * @example Catch a budget exceeded error and surface remaining info
  * ```ts

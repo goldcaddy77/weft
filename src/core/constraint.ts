@@ -58,6 +58,11 @@ export interface ConstraintCheckState {
  * });
  * void engine;
  * ```
+ *
+ * **Worker execution caveat**: constraints attached via
+ * `WorkflowRegistration.constraints` are only evaluated under the inline
+ * execution strategy. When `EngineOptions.workerExecution` is configured,
+ * constraint evaluation is silently skipped.
  */
 export interface ConstraintDefinition {
   name: string;

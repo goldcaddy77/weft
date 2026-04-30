@@ -51,6 +51,23 @@ const DEFAULT_TIMEOUT = 30_000;
  * lazily on the first `send()` call and kills it on `dispose()`. Use this for
  * local tool servers such as database adapters or file-system helpers.
  *
+ * **Observable behaviors beyond the basic JSON-RPC contract:**
+ *
+ * - The child's stderr is forwarded to a warning logger with a
+ *   `[weft:mcp:stdio:stderr]` prefix — useful for surfacing server-side
+ *   crashes without polluting stdout.
+ * - The transport's own `timeout` (default 30s) only applies when the caller
+ *   does **not** pass an `AbortSignal` to `send()`. When an external signal
+ *   is provided (e.g. from {@link MCPClient}), the transport defers timeout
+ *   handling to that signal — adding a second timer would race and produce
+ *   the wrong error type.
+ * - `healthCheck()` issues a JSON-RPC `ping` request. Servers that do not
+ *   implement `ping` will surface `MethodNotFound` here; treat a failure as
+ *   "this server cannot answer ping," not necessarily as "server is down."
+ * - Malformed JSON lines from the child are logged as warnings and dropped;
+ *   they do not reject pending calls. Pending calls rely on the abort signal
+ *   or the transport-level timeout to unblock.
+ *
  * @example Connect a local MCP server binary to the agent loop
  * ```ts
  * import { StdioTransport } from 'weft/mcp/stdio';

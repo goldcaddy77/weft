@@ -348,31 +348,31 @@ Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workf
 
 Getting started:
 
-- [Installation](docs/getting-started/installation.md)
-- [Hello World](docs/getting-started/hello-world.md)
-- [Key Concepts](docs/getting-started/key-concepts.md)
+- [Installation](documentation/getting-started/installation.md)
+- [Hello World](documentation/getting-started/hello-world.md)
+- [Key Concepts](documentation/getting-started/key-concepts.md)
 
 Guides:
 
-- [Workflows](docs/guides/workflows.md), [Activities](docs/guides/activities.md), [Storage](docs/guides/storage.md), [Server](docs/guides/server.md)
-- [Signals and Queries](docs/guides/signals-and-queries.md), [Synchronous Updates](docs/guides/synchronous-updates.md)
-- [Durable Timers](docs/guides/durable-timers.md), [Timeouts](docs/guides/timeouts.md), [Parallel Execution](docs/guides/parallel-execution.md)
-- [Search Attributes](docs/guides/search-attributes.md), [Shared State](docs/guides/shared-state.md), [Events](docs/guides/events.md)
-- [Interceptors](docs/guides/interceptors.md), [Observability](docs/guides/observability.md), [Testing](docs/guides/testing.md)
-- [Workflow Versioning](docs/guides/workflow-versioning.md), [Remote Workers](docs/guides/remote-workers.md), [Resource Management](docs/guides/resource-management.md)
+- [Workflows](documentation/guides/workflows.md), [Activities](documentation/guides/activities.md), [Storage](documentation/guides/storage.md), [Server](documentation/guides/server.md)
+- [Signals and Queries](documentation/guides/signals-and-queries.md), [Synchronous Updates](documentation/guides/synchronous-updates.md)
+- [Durable Timers](documentation/guides/durable-timers.md), [Timeouts](documentation/guides/timeouts.md), [Parallel Execution](documentation/guides/parallel-execution.md)
+- [Search Attributes](documentation/guides/search-attributes.md), [Shared State](documentation/guides/shared-state.md), [Session State](documentation/guides/session-state.md), [Events](documentation/guides/events.md)
+- [Interceptors](documentation/guides/interceptors.md), [Observability](documentation/guides/observability.md), [Testing](documentation/guides/testing.md)
+- [Workflow Versioning](documentation/guides/workflow-versioning.md), [Remote Workers](documentation/guides/remote-workers.md), [Resource Management](documentation/guides/resource-management.md)
 
 Agents:
 
-- [Agent Overview](docs/agents/agent-overview.md), [Declaration](docs/agents/agent-declaration.md), [Tools and MCP](docs/agents/agent-tools-and-mcp.md)
-- [Budget and Cost](docs/agents/agent-budget-and-cost.md), [Streaming](docs/agents/agent-streaming.md), [Context Window](docs/agents/agent-context-window.md)
-- [Model Routing](docs/agents/agent-model-routing.md), [Human Review](docs/agents/agent-human-review.md), [Coordination](docs/agents/agent-coordination.md)
-- [Provider Health](docs/agents/agent-provider-health.md), [Observability](docs/agents/agent-observability.md)
+- [Agent Overview](documentation/agents/agent-overview.md), [Declaration](documentation/agents/agent-declaration.md), [Tools and MCP](documentation/agents/agent-tools-and-mcp.md)
+- [Budget and Cost](documentation/agents/agent-budget-and-cost.md), [Streaming](documentation/agents/agent-streaming.md), [Context Window](documentation/agents/agent-context-window.md)
+- [Model Routing](documentation/agents/agent-model-routing.md), [Human Review](documentation/agents/agent-human-review.md), [Coordination](documentation/agents/agent-coordination.md)
+- [Provider Health](documentation/agents/agent-provider-health.md), [Observability](documentation/agents/agent-observability.md)
 
 Architecture and reference:
 
-- [Design Philosophy](docs/architecture/design-philosophy.md), [Checkpoint vs. Replay](docs/architecture/checkpoint-versus-replay.md), [Web Standards](docs/architecture/web-standards.md)
-- [Browser Runtime](docs/architecture/browser-runtime.md), [Web Workers](docs/architecture/web-workers.md), [Single Binary](docs/architecture/single-binary.md)
-- [API Reference](docs/reference/) (Engine, Context, Storage, Server, Workers, Agent, Testing, Events, Interceptors, Observability, CLI, Configuration, Types)
+- [Design Philosophy](documentation/architecture/design-philosophy.md), [Checkpoint vs. Replay](documentation/architecture/checkpoint-versus-replay.md), [Web Standards](documentation/architecture/web-standards.md)
+- [Browser Runtime](documentation/architecture/browser-runtime.md), [Web Workers](documentation/architecture/web-workers.md), [Single Binary](documentation/architecture/single-binary.md)
+- [API Reference](documentation/reference/) (Engine, Context, Storage, Server, Workers, Agent, Testing, Events, Interceptors, Observability, CLI, Configuration, Types)
 
 ## License
 

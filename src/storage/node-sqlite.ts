@@ -82,10 +82,16 @@ export { NodeSQLiteStorage as SQLiteStorage };
  * SQLite-backed {@link Storage} using `better-sqlite3` for Node.js 22+
  * environments.
  *
- * Implements the same interface and WAL-mode schema as {@link BunSQLiteStorage}
+ * Implements the same WAL-mode schema as {@link BunSQLiteStorage}
  * but resolves the `better-sqlite3` peer dependency lazily at construction time,
  * so the module compiles without it installed.  Import from
  * `weft/storage/sqlite/node` to use this adapter.
+ *
+ * Unlike BunSQLiteStorage, this adapter currently implements only the required
+ * Storage methods (`get`, `put`, `delete`, `scan`, `batch`, and
+ * `conditionalBatch`). The optional `has`, `keys`, `count`, `deletePrefix`, and
+ * `scoped` helpers fall back to the generic implementations in
+ * `weft/storage/interface`, and there is no SQL passthrough `query()` method.
  *
  * @example
  * ```ts

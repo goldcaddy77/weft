@@ -132,7 +132,10 @@ interface ErasedSagaStep {
  * Reference returned by `ctx.offload(key, fn)`. Store this in a local
  * variable or pass it downstream — the engine keeps the heavy payload in
  * storage and only checkpoints the lightweight reference. Retrieve the
- * original value with `ctx.load(reference)`.
+ * original value with `ctx.load(reference)`. Offload references are plain
+ * JSON-shaped objects, so they survive structured cloning, MessagePack
+ * encoding, and worker postMessage transfers — return them as workflow
+ * results or store them in attributes.
  *
  * @example
  * ```ts
@@ -151,6 +154,21 @@ interface ErasedSagaStep {
  * });
  * void engine;
  * ```
+ *
+ * @example Return a reference for downstream loading
+ * ```ts
+ * import { Engine, type OffloadReference } from 'weft';
+ * import type { Context, WorkflowContext } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.register('parent', async function* (ctx: WorkflowContext) {
+ *   return yield* (ctx as Context).offload('payload', async () => ({ rows: [1, 2, 3] }));
+ * });
+ * engine.register('child', async function* (ctx: WorkflowContext, input: unknown) {
+ *   const reference = input as OffloadReference;
+ *   return yield* (ctx as Context).load(reference);
+ * });
+ * ```
  */
 export interface OffloadReference {
   key: string;
@@ -162,6 +180,9 @@ export interface OffloadReference {
  * Reference to a multi-chunk stream stored via `ctx.stream(key, fn)`. Contains
  * the storage key, workflow ID, chunk count, and total byte size. Used
  * internally to retrieve and replay stream data during workflow recovery.
+ * Hand the reference to `WeftClient.getStreamChunks(workflowId, key)` (or
+ * `engine.getStreamChunks`) to read the persisted chunks back after the
+ * workflow resumes.
  *
  * @example
  * ```ts
@@ -195,6 +216,9 @@ export interface StreamReference {
  * A single chunk persisted by `ctx.stream`. The `sequence` field is the
  * zero-based chunk index used to reassemble the stream in order on replay.
  * Users do not construct these directly; they are managed by the engine.
+ * Returned to callers via `WeftClient.getStreamChunks(workflowId, key)` so
+ * external consumers can replay persisted stream chunks after the workflow has
+ * finished.
  */
 export interface StoredStreamChunk<T = unknown> {
   sequence: number;
@@ -204,7 +228,9 @@ export interface StoredStreamChunk<T = unknown> {
 /**
  * Callback object passed to the async generator function inside `ctx.stream`.
  * Call `sink.heartbeat()` periodically to extend the stream's visibility
- * timeout and prevent the engine from marking it as stalled.
+ * timeout and prevent the engine from marking it as stalled. Optionally pass a
+ * `details` argument (e.g. `{ chunk: i }`) to attach diagnostic info to the
+ * heartbeat — surfaced via the engine's worker-detail events.
  *
  * @example
  * ```ts
@@ -286,10 +312,12 @@ export interface AgentContextOptions {
 /**
  * Discriminated union of all operation descriptors that a workflow generator
  * can yield to the engine. Each variant corresponds to one durable operation
- * (activity, sleep, signal-wait, update, child workflow, etc.). The engine
- * matches the `type` field, executes the operation, and feeds the result back
- * via `generator.next(result)`. Users do not construct these directly — they
- * are produced by the methods on {@link Context}.
+ * (activity, sleep, signal-wait, update, child workflow, parallel, race, memo,
+ * offload, load, archive, run-all, agent, speculate, stream, wait-review,
+ * handoff, debate, supervise). The engine matches the `type` field, executes
+ * the operation, and feeds the result back via `generator.next(result)`. Users
+ * do not construct these directly — they are produced by the methods on
+ * {@link Context}.
  *
  * @example
  * ```ts
@@ -500,10 +528,10 @@ function trimCallerStack(stack: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Internal construction options for the {@link Context} class. Populated by
- * the engine before invoking a workflow generator. Users do not pass these
- * directly; they interact with the engine via {@link Engine.start} and the
- * returned {@link WorkflowHandle}.
+ * Construction options for the {@link Context} class. Populated by the engine
+ * before invoking a workflow generator; advanced consumers (test harnesses,
+ * custom execution strategies) may construct `Context` directly with these
+ * options.
  *
  * @example
  * ```ts
