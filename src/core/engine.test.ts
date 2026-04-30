@@ -68,9 +68,17 @@ describe('Engine', () => {
       return (value as number) * 2;
     }
 
+    const dispatchedDouble = Object.defineProperty(
+      async function (value: unknown) {
+        return (value as number) * 3;
+      },
+      'name',
+      { value: 'double' },
+    );
+
     engine.registerActivity('double', double);
     engine.register('double-via-registered-activity', async function* (ctx: WorkflowContext) {
-      return yield* (ctx as Context).run(double, 21);
+      return yield* (ctx as Context).run(dispatchedDouble, 21);
     });
 
     const handle = await engine.start('double-via-registered-activity', undefined);
