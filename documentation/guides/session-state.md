@@ -114,7 +114,7 @@ If you want a child to inherit context, pass the relevant values as part of the 
 
 A few behaviors aren't pinned by tests and should be treated as implementation detail:
 
-- The exact moment when a `set()` becomes visible across nested generator suspensions. The current implementation reflects writes synchronously to the same `WorkflowSessionState<T>` handle, but mixing reads and writes across multiple handles to the same key inside a single yield burst should be considered undefined.
+- Same-key handles share the same stored slot, so a write through one handle is visible to another. What is not yet a formal contract is how different `initialValue`s behave across multiple handles before the first write, or how reads interleave across nested generator suspensions.
 - The order of validation when a single `set` or `update` triggers multiple constraints (oversize + reserved key, etc.). Today the engine throws on the first failure it finds; future versions may aggregate.
 
 If you find yourself depending on either behavior, file an issue---both deserve explicit tests and a stated contract.
