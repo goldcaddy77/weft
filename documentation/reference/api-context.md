@@ -41,7 +41,9 @@ Typically constructed by the engine -- you will not create `Context` instances d
 Each durable method is a generator. Inside a workflow, call them with `yield*`:
 
 ```ts partial
-const result = yield * context.run(myActivity, 'arg1', 'arg2');
+async function* example(context: Context) {
+  const result = yield* context.run(myActivity, 'arg1', 'arg2');
+}
 ```
 
 ### `run()`
@@ -83,8 +85,10 @@ Pause the workflow for the given duration. The sleep is durable -- if the proces
 | `duration` | `Duration` | Milliseconds or a human-readable string like `'5m'`, `'1h'` |
 
 ```ts partial
-yield * context.sleep('30s');
-yield * context.sleep(5000);
+async function* example(context: Context) {
+  yield* context.sleep('30s');
+  yield* context.sleep(5000);
+}
 ```
 
 ### `waitForSignal()`
@@ -102,9 +106,11 @@ Suspend the workflow until a named signal is delivered. If the signal was alread
 **Returns:** The signal's payload, typed as `T`.
 
 ```ts partial
-const approval = yield * context.waitForSignal<{ approved: boolean }>('approval');
-if (!approval.approved) {
-  return { status: 'rejected' };
+async function* example(context: Context) {
+  const approval = yield* context.waitForSignal<{ approved: boolean }>('approval');
+  if (!approval.approved) {
+    return { status: 'rejected' };
+  }
 }
 ```
 
@@ -139,8 +145,12 @@ Run multiple durable operations in parallel. All operations must complete before
 **Returns:** An array of results in the same order as the input operations.
 
 ```ts partial
-const [user, inventory] =
-  yield * context.all([context.run(fetchUser, userId), context.run(checkInventory, sku)]);
+async function* example(context: Context) {
+  const [user, inventory] = yield* context.all([
+    context.run(fetchUser, userId),
+    context.run(checkInventory, sku),
+  ]);
+}
 ```
 
 ### `race()`
@@ -160,8 +170,12 @@ Run multiple durable operations in parallel, returning the result of whichever c
 **Returns:** The result of the first operation to complete.
 
 ```ts partial
-const result =
-  yield * context.race([context.run(fetchFromPrimary, key), context.run(fetchFromFallback, key)]);
+async function* example(context: Context) {
+  const result = yield* context.race([
+    context.run(fetchFromPrimary, key),
+    context.run(fetchFromFallback, key),
+  ]);
+}
 ```
 
 ### `memo()`
@@ -180,7 +194,9 @@ Execute a function and cache its result by key. On replay or repeated calls with
 **Returns:** The memoized result.
 
 ```ts partial
-const correlationId = yield * context.memo('correlationId', () => crypto.randomUUID());
+async function* example(context: Context) {
+  const correlationId = yield* context.memo('correlationId', () => crypto.randomUUID());
+}
 ```
 
 ### `runAll()`
@@ -200,13 +216,13 @@ Run multiple named activity branches in parallel. Returns a record mapping each 
 **Returns:** A record with the same keys, each holding the branch's result.
 
 ```ts partial
-const results =
-  yield *
-  context.runAll({
+async function* example(context: Context) {
+  const results = yield* context.runAll({
     email: [sendEmail, user.email, 'Welcome!'],
     slack: [notifySlack, '#signups', user.name],
   });
-// results.email, results.slack
+  // results.email, results.slack
+}
 ```
 
 ### `offload()`
@@ -228,14 +244,14 @@ Move large data out of the checkpoint by computing it and storing it externally.
 **Returns:** `OffloadReference` — an object containing `key`, `workflowId`, and `sizeBytes` (the byte length of the encoded data).
 
 ```ts partial
-const reference =
-  yield *
-  context.offload('large-dataset', async () => {
+async function* example(context: Context) {
+  const reference = yield* context.offload('large-dataset', async () => {
     return await fetchLargeDataset();
   });
-// reference.sizeBytes tells you how large the stored data is
-// Pass reference to load() when you need the data again
-const data = yield * context.load(reference);
+  // reference.sizeBytes tells you how large the stored data is
+  // Pass reference to load() when you need the data again
+  const data = yield* context.load(reference);
+}
 ```
 
 ### `load()`
@@ -253,9 +269,11 @@ Load data that was previously offloaded via `offload()`. Reads the encoded data 
 **Returns:** `T` — the decoded data that was originally offloaded.
 
 ```ts partial
-const reference = yield * context.offload('large-dataset', async () => bigData);
-// ... later in the workflow, or even after recovery ...
-const data = yield * context.load<MyDataType>(reference);
+async function* example(context: Context) {
+  const reference = yield* context.offload('large-dataset', async () => bigData);
+  // ... later in the workflow, or even after recovery ...
+  const data = yield* context.load<MyDataType>(reference);
+}
 ```
 
 ### `archive()`
@@ -274,12 +292,13 @@ Persist data to external archive storage, separate from the checkpoint. The data
 **Returns:** `void`
 
 ```ts partial
-yield *
-  context.archive('processing-result-batch-1', {
+async function* example(context: Context) {
+  yield* context.archive('processing-result-batch-1', {
     processedAt: new Date(),
     recordCount: records.length,
     summary: computeSummary(records),
   });
+}
 ```
 
 ### `agent()`

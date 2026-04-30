@@ -185,10 +185,12 @@ export const charge = activity({
   },
 });
 
-// In the workflow — configuration travels with the activity:
-const payment = yield * ctx.run(charge, order);
-// But you CAN override per-invocation:
-const payment = yield * ctx.run(charge, order, { timeout: '60s' });
+async function* example(ctx: Context) {
+  // In the workflow — configuration travels with the activity:
+  const payment = yield* ctx.run(charge, order);
+  // But you CAN override per-invocation:
+  const payment = yield* ctx.run(charge, order, { timeout: '60s' });
+}
 ```
 
 ## No AI/agent-native primitives

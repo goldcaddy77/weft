@@ -98,14 +98,14 @@ interface ActivityCallOptions {
 Pass these as the last argument to `ctx.run()`.
 
 ```typescript partial
-const result =
-  yield *
-  ctx.run(fetchData, url, {
+async function* example(ctx: Context) {
+  const result = yield* ctx.run(fetchData, url, {
     timeout: '60s',
     retry: { maxAttempts: 5 },
     queue: 'external-api',
     idempotencyKey: `fetch-${url}`,
   });
+}
 ```
 
 The `timeout` kills the activity after the specified duration. The `queue` routes the activity to a specific worker queue (useful for rate limiting or resource isolation). The `idempotencyKey` ensures that if the same logical operation is attempted twice, Weft deduplicates it.
@@ -156,7 +156,9 @@ const charge: ActivityDefinition<Order, PaymentResult> = {
 Now the workflow call is clean---configuration travels with the activity.
 
 ```typescript partial
-const payment = yield * ctx.run(charge.execute, order);
+async function* example(ctx: Context) {
+  const payment = yield* ctx.run(charge.execute, order);
+}
 ```
 
 ## Running activities in parallel
@@ -177,14 +179,14 @@ engine.register('parallel', async function* (ctx, input) {
 For named concurrent branches where each needs its own error handling, use `ctx.runAll()`.
 
 ```typescript partial
-const results =
-  yield *
-  ctx.runAll({
+async function* example(ctx: Context) {
+  const results = yield* ctx.runAll({
     payment: [charge.execute, order],
     inventory: [reserveInventory, order.items],
     email: [sendConfirmation, order],
   });
-// results.payment, results.inventory, results.email
+  // results.payment, results.inventory, results.email
+}
 ```
 
 Both `ctx.all()` and `ctx.runAll()` create a single checkpoint boundary---all branches complete before the workflow advances.

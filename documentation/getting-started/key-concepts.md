@@ -43,8 +43,10 @@ This is fundamentally different from replay-based systems like Temporal. Weft do
 A **signal** is an external message sent _into_ a running workflow. Use signals when something outside the workflow needs to tell it something---a user clicking "approve," a webhook arriving, a timer in another system firing.
 
 ```typescript partial
-// Inside the workflow:
-const approval = yield * ctx.waitForSignal<{ approved: boolean }>('approval');
+async function* example(ctx: Context) {
+  // Inside the workflow:
+  const approval = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
+}
 
 // From outside:
 await engine.signal(workflowId, 'approval', { approved: true });

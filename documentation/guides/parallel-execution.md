@@ -23,12 +23,12 @@ The semantics mirror `Promise.all()`---if any branch fails, the whole operation 
 You can mix operation types freely. Sleeps, signals, and activity calls all work inside `ctx.all()`:
 
 ```typescript partial
-const [result, _] =
-  yield *
-  ctx.all([
+async function* example(ctx: Context) {
+  const [result, _] = yield* ctx.all([
     ctx.run(longRunningTask, data),
     ctx.sleep('5s'), // timeout alongside the task
   ]);
+}
 ```
 
 ## First-wins with `ctx.race()`
@@ -51,16 +51,16 @@ This is useful for timeout patterns, redundant fetches, and any scenario where y
 A common pattern pairs a real operation with a sleep to implement a deadline:
 
 ```typescript partial
-const result =
-  yield *
-  ctx.race([
+async function* example(ctx: Context) {
+  const result = yield* ctx.race([
     ctx.run(callExternalApi, payload),
     ctx.sleep('30s'), // returns undefined after 30 seconds
   ]);
 
-if (result === undefined) {
-  // The sleep won---the API call took too long
-  yield * ctx.run(notifyTimeout, payload);
+  if (result === undefined) {
+    // The sleep won---the API call took too long
+    yield* ctx.run(notifyTimeout, payload);
+  }
 }
 ```
 
