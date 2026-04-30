@@ -3,25 +3,76 @@ import { Engine, ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING } from '../core/engine
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
+const WORKFLOW_ID_PREFIX = 'memory-benchmark-';
+const WORKFLOW_ID_PATTERN = /memory-benchmark-\d+/;
+
+type WorkflowFootprint = {
+  checkpointBytes: number;
+  durableBytes: number;
+};
+
 export type MemoryPerWorkflowMeasurement = {
   totalWorkflows: number;
-  warmupWorkflows: number;
-  heapBefore: number;
-  heapAfter: number;
-  heapGrowth: number;
-  heapBytesPerWorkflow: number;
-  rssBefore: number;
-  rssAfter: number;
-  rssGrowth: number;
-  rssBytesPerWorkflow: number;
+  countedWorkflows: number;
+  checkpointBytesTotal: number;
+  averageCheckpointBytesPerWorkflow: number;
+  maxCheckpointBytesPerWorkflow: number;
+  durableBytesTotal: number;
+  averageDurableBytesPerWorkflow: number;
+  maxDurableBytesPerWorkflow: number;
+  workflowStateBytesTotal: number;
+  checkpointHistoryBytesTotal: number;
+  timelineBytesTotal: number;
+  eventBytesTotal: number;
+  otherBytesTotal: number;
 };
+
+function roundBytesPerWorkflow(totalBytes: number, workflowCount: number): number {
+  if (workflowCount === 0) {
+    return 0;
+  }
+
+  return Math.round(totalBytes / workflowCount);
+}
+
+function extractBenchmarkWorkflowId(storageKey: string): string | null {
+  return storageKey.match(WORKFLOW_ID_PATTERN)?.[0] ?? null;
+}
+
+function classifyStorageKey(
+  storageKey: string,
+): keyof Pick<
+  MemoryPerWorkflowMeasurement,
+  | 'workflowStateBytesTotal'
+  | 'checkpointHistoryBytesTotal'
+  | 'timelineBytesTotal'
+  | 'eventBytesTotal'
+  | 'otherBytesTotal'
+> {
+  if (storageKey.startsWith('ev:')) {
+    return 'eventBytesTotal';
+  }
+
+  if (!storageKey.startsWith('wf:')) {
+    return 'otherBytesTotal';
+  }
+
+  if (storageKey.includes(':timeline:')) {
+    return 'timelineBytesTotal';
+  }
+
+  if (storageKey.includes(':ckpt:')) {
+    return 'checkpointHistoryBytesTotal';
+  }
+
+  return 'workflowStateBytesTotal';
+}
 
 export async function measureMemoryPerWorkflow(
   totalWorkflows: number,
 ): Promise<MemoryPerWorkflowMeasurement> {
   const storage = new BunSQLiteStorage(':memory:');
   const engine = new Engine({ storage });
-  const warmupWorkflowCount = 5_000;
 
   try {
     engine.register('idle', async function* (ctx: WorkflowContext) {
@@ -29,52 +80,95 @@ export async function measureMemoryPerWorkflow(
       return 'done';
     });
 
-    if (typeof Bun.gc === 'function') {
-      Bun.gc(true);
-    }
-    await Bun.sleep(10);
-
-    for (let index = 0; index < warmupWorkflowCount; index += 1) {
-      await engine.start('idle', index);
+    for (let index = 0; index < totalWorkflows; index += 1) {
+      await engine.start('idle', null, { id: `${WORKFLOW_ID_PREFIX}${index}` });
     }
 
-    await waitForParkedWorkflows(engine, warmupWorkflowCount);
-    await collectGarbage();
+    await waitForParkedWorkflows(engine, totalWorkflows);
 
-    const memoryBefore = process.memoryUsage();
+    const footprints = new Map<string, WorkflowFootprint>();
+    let checkpointBytesTotal = 0;
+    let durableBytesTotal = 0;
+    let workflowStateBytesTotal = 0;
+    let checkpointHistoryBytesTotal = 0;
+    let timelineBytesTotal = 0;
+    let eventBytesTotal = 0;
+    let otherBytesTotal = 0;
 
-    for (
-      let index = warmupWorkflowCount;
-      index < warmupWorkflowCount + totalWorkflows;
-      index += 1
-    ) {
-      await engine.start('idle', index);
+    for await (const [storageKey, value] of storage.scan('')) {
+      const workflowId = extractBenchmarkWorkflowId(storageKey);
+      if (workflowId === null) {
+        continue;
+      }
+
+      const bytes = value.byteLength;
+      durableBytesTotal += bytes;
+
+      const footprint = footprints.get(workflowId) ?? { checkpointBytes: 0, durableBytes: 0 };
+      footprint.durableBytes += bytes;
+      footprints.set(workflowId, footprint);
+
+      if (storageKey.startsWith(`wf:${workflowId}:ckpt`) && !storageKey.includes(':ckpt:')) {
+        checkpointBytesTotal += bytes;
+        footprint.checkpointBytes += bytes;
+      }
+
+      const category = classifyStorageKey(storageKey);
+      if (category === 'workflowStateBytesTotal') {
+        if (storageKey.startsWith(`wf:${workflowId}:ckpt`) && !storageKey.includes(':ckpt:')) {
+          continue;
+        }
+        workflowStateBytesTotal += bytes;
+        continue;
+      }
+
+      if (category === 'checkpointHistoryBytesTotal') {
+        checkpointHistoryBytesTotal += bytes;
+        continue;
+      }
+
+      if (category === 'timelineBytesTotal') {
+        timelineBytesTotal += bytes;
+        continue;
+      }
+
+      if (category === 'eventBytesTotal') {
+        eventBytesTotal += bytes;
+        continue;
+      }
+
+      otherBytesTotal += bytes;
     }
 
-    await waitForParkedWorkflows(engine, warmupWorkflowCount + totalWorkflows);
-    await collectGarbage();
+    let maxCheckpointBytesPerWorkflow = 0;
+    let maxDurableBytesPerWorkflow = 0;
+    for (const footprint of footprints.values()) {
+      maxCheckpointBytesPerWorkflow = Math.max(
+        maxCheckpointBytesPerWorkflow,
+        footprint.checkpointBytes,
+      );
+      maxDurableBytesPerWorkflow = Math.max(maxDurableBytesPerWorkflow, footprint.durableBytes);
+    }
 
-    const memoryAfter = process.memoryUsage();
-    const heapBefore = memoryBefore.heapUsed;
-    const heapAfter = memoryAfter.heapUsed;
-    const heapGrowth = heapAfter - heapBefore;
-    const heapBytesPerWorkflow = Math.round(heapGrowth / totalWorkflows);
-    const rssBefore = memoryBefore.rss;
-    const rssAfter = memoryAfter.rss;
-    const rssGrowth = rssAfter - rssBefore;
-    const rssBytesPerWorkflow = Math.round(rssGrowth / totalWorkflows);
+    const countedWorkflows = footprints.size;
 
     return {
       totalWorkflows,
-      warmupWorkflows: warmupWorkflowCount,
-      heapBefore,
-      heapAfter,
-      heapGrowth,
-      heapBytesPerWorkflow,
-      rssBefore,
-      rssAfter,
-      rssGrowth,
-      rssBytesPerWorkflow,
+      countedWorkflows,
+      checkpointBytesTotal,
+      averageCheckpointBytesPerWorkflow: roundBytesPerWorkflow(
+        checkpointBytesTotal,
+        countedWorkflows,
+      ),
+      maxCheckpointBytesPerWorkflow,
+      durableBytesTotal,
+      averageDurableBytesPerWorkflow: roundBytesPerWorkflow(durableBytesTotal, countedWorkflows),
+      maxDurableBytesPerWorkflow,
+      workflowStateBytesTotal,
+      checkpointHistoryBytesTotal,
+      timelineBytesTotal,
+      eventBytesTotal,
+      otherBytesTotal,
     };
   } finally {
     engine[Symbol.dispose]();
@@ -85,7 +179,7 @@ export async function measureMemoryPerWorkflow(
 if (import.meta.main) {
   const totalWorkflowsArgument = Bun.argv[2];
   const totalWorkflows =
-    totalWorkflowsArgument !== undefined ? Number(totalWorkflowsArgument) : 10_000;
+    totalWorkflowsArgument !== undefined ? Number(totalWorkflowsArgument) : 100_000;
 
   if (!Number.isInteger(totalWorkflows) || totalWorkflows <= 0) {
     console.error('Expected a positive integer total workflow count.');
@@ -96,16 +190,8 @@ if (import.meta.main) {
   console.log(JSON.stringify(measurement));
 }
 
-async function collectGarbage(): Promise<void> {
-  await Bun.sleep(5);
-  if (typeof Bun.gc === 'function') {
-    Bun.gc(true);
-  }
-  await Bun.sleep(5);
-}
-
 async function waitForParkedWorkflows(engine: Engine, expectedCount: number): Promise<void> {
-  const timeoutMilliseconds = 15_000;
+  const timeoutMilliseconds = 60_000;
   const deadline = Date.now() + timeoutMilliseconds;
 
   while (Date.now() < deadline) {
