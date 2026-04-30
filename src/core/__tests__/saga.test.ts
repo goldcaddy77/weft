@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 /**
  * Tests for ctx.saga() — sequential activity execution with reverse compensation.
  *
@@ -16,7 +17,7 @@ import type { ActivityContext, ActivityDefinition, WorkflowContext } from '../ty
 
 /** Drain microtasks so fire-and-forget engine work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 // ---------------------------------------------------------------------------

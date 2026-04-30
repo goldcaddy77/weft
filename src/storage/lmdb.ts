@@ -19,7 +19,8 @@ import { scopedStorage } from './scoped-storage';
  */
 export class LMDBStorage implements Storage {
   #database: lmdb.RootDatabase<Buffer, string>;
-  #requiresFreshReadSnapshot = false;
+  #isClosed = false;
+  #closePromise: Promise<void> | null = null;
 
   constructor(path: string) {
     this.#database = lmdb.open<Buffer, string>({
@@ -28,38 +29,36 @@ export class LMDBStorage implements Storage {
     });
   }
 
-  #refreshReadSnapshotIfRequired(): void {
-    if (!this.#requiresFreshReadSnapshot) {
-      return;
+  #assertOpen(): void {
+    if (this.#isClosed) {
+      throw new Error('LMDBStorage is closed');
     }
-
-    this.#database.resetReadTxn();
-    this.#requiresFreshReadSnapshot = false;
   }
 
   async get(key: string): Promise<Uint8Array | null> {
-    this.#refreshReadSnapshotIfRequired();
+    this.#assertOpen();
     const value = this.#database.get(key);
     if (value === undefined) return null;
     return new Uint8Array(value);
   }
 
   async put(key: string, value: Uint8Array): Promise<void> {
+    this.#assertOpen();
     await this.#database.put(key, Buffer.from(value));
-    this.#requiresFreshReadSnapshot = true;
   }
 
   async delete(key: string): Promise<void> {
+    this.#assertOpen();
     await this.#database.remove(key);
-    this.#requiresFreshReadSnapshot = true;
   }
 
   async has(key: string): Promise<boolean> {
-    this.#refreshReadSnapshotIfRequired();
+    this.#assertOpen();
     return this.#database.doesExist(key);
   }
 
   async deletePrefix(prefix: string): Promise<number> {
+    this.#assertOpen();
     const keys: string[] = [];
     for await (const key of this.keys(prefix)) {
       keys.push(key);
@@ -74,13 +73,12 @@ export class LMDBStorage implements Storage {
         void this.#database.remove(key);
       }
     });
-    this.#requiresFreshReadSnapshot = true;
 
     return keys.length;
   }
 
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
-    this.#refreshReadSnapshotIfRequired();
+    this.#assertOpen();
     const { limit, reverse, gt, lt, gte, lte } = options;
 
     const prefixEnd = resolvePrefixRangeEnd(prefix);
@@ -120,7 +118,7 @@ export class LMDBStorage implements Storage {
   }
 
   async *keys(prefix: string, options: ScanOptions = {}): AsyncIterable<string> {
-    this.#refreshReadSnapshotIfRequired();
+    this.#assertOpen();
     const { limit, reverse } = options;
     const prefixEnd = resolvePrefixRangeEnd(prefix);
 
@@ -158,17 +156,19 @@ export class LMDBStorage implements Storage {
   }
 
   async count(prefix: string): Promise<number> {
-    this.#refreshReadSnapshotIfRequired();
+    this.#assertOpen();
     const prefixEnd = resolvePrefixRangeEnd(prefix);
     return this.#database.getKeysCount({ start: prefix, end: prefixEnd });
   }
 
   scoped(prefix: string): Storage {
+    this.#assertOpen();
     const scoped = scopedStorage(this, prefix);
     return scoped;
   }
 
   async batch(operations: BatchOperation[]): Promise<void> {
+    this.#assertOpen();
     if (operations.length === 0) return;
 
     await this.#database.batch(() => {
@@ -180,13 +180,13 @@ export class LMDBStorage implements Storage {
         }
       }
     });
-    this.#requiresFreshReadSnapshot = true;
   }
 
   async conditionalBatch(
     conditions: ConditionalBatchCondition[],
     operations: BatchOperation[],
   ): Promise<boolean> {
+    this.#assertOpen();
     const committed = this.#database.transactionSync(() => {
       for (const condition of conditions) {
         const currentValue = this.#database.get(condition.key);
@@ -208,15 +208,21 @@ export class LMDBStorage implements Storage {
       return true;
     });
 
-    if (committed && operations.length > 0) {
-      this.#requiresFreshReadSnapshot = true;
-    }
-
     return committed;
   }
 
+  close(): Promise<void> {
+    this.#isClosed = true;
+    this.#closePromise ??= (async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+      await this.#database.close();
+    })();
+    return this.#closePromise;
+  }
+
   [Symbol.dispose](): void {
-    this.#requiresFreshReadSnapshot = false;
-    void this.#database.close();
+    void this.close();
   }
 }

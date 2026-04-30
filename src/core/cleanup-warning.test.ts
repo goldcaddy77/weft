@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { waitForever } from '../testing/fake-timers.ts';
 
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -75,7 +76,7 @@ describe('Engine dispatches CleanupWarningEvent on cleanup errors', () => {
 
     engine.register('resumable', async function* (ctx: WorkflowContext) {
       (ctx as Context).onUpdate('validate', (payload) => `validated: ${String(payload)}`);
-      await Bun.sleep(999_999);
+      await waitForever();
       return 'done';
     });
 

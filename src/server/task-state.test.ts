@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
@@ -77,7 +78,7 @@ async function connectAndRegisterWorker(
       concurrency: options.concurrency ?? 10,
     }),
   );
-  await Bun.sleep(50);
+  await sleepForTesting(50);
   return ws;
 }
 
@@ -265,13 +266,13 @@ describe('task state invariant (server integration)', () => {
     });
 
     await server.dispatchTask({ operationId: 'ws-op-1', activityName: 'charge', input: null });
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     const state = await getExclusiveTaskState(storage, 'ws-op-1');
     expect(state).toBe('inflight');
 
     ws.close();
-    await Bun.sleep(50);
+    await sleepForTesting(50);
   });
 
   it('task dispatched with no workers is in queued state (durable)', async () => {
@@ -283,7 +284,7 @@ describe('task state invariant (server integration)', () => {
       activityName: 'charge',
       input: { amount: 50 },
     });
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     const state = await getExclusiveTaskState(storage, 'lp-op-1');
     expect(state).toBe('queued');
@@ -312,13 +313,13 @@ describe('task state invariant (server integration)', () => {
     });
 
     await server.dispatchTask({ operationId: 'ws-resolve-1', activityName: 'charge', input: null });
-    await Bun.sleep(150);
+    await sleepForTesting(150);
 
     const state = await getExclusiveTaskState(storage, 'ws-resolve-1');
     expect(state).toBe('resolved');
 
     ws.close();
-    await Bun.sleep(50);
+    await sleepForTesting(50);
   });
 
   it('task is never in two states simultaneously after WS dispatch', async () => {
@@ -329,7 +330,7 @@ describe('task state invariant (server integration)', () => {
     });
 
     await server.dispatchTask({ operationId: 'excl-op-1', activityName: 'charge', input: null });
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     // Task should be in exactly one state (inflight)
     const [queued, inflight, resolved] = await Promise.all([
@@ -342,7 +343,7 @@ describe('task state invariant (server integration)', () => {
     expect(activeStates).toHaveLength(1);
 
     ws.close();
-    await Bun.sleep(50);
+    await sleepForTesting(50);
   });
 
   it('long-poll claimed task transitions from queued to inflight', async () => {
@@ -354,7 +355,7 @@ describe('task state invariant (server integration)', () => {
       activityName: 'charge',
       input: { x: 1 },
     });
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     expect(await getExclusiveTaskState(storage, 'lp-claim-1')).toBe('queued');
 
@@ -364,7 +365,7 @@ describe('task state invariant (server integration)', () => {
 
     expect(task).not.toBeNull();
     expect(task!.operationId).toBe('lp-claim-1');
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     // After claiming, the task should be inflight
     const state = await getExclusiveTaskState(storage, 'lp-claim-1');
@@ -376,11 +377,11 @@ describe('task state invariant (server integration)', () => {
 
     // Dispatch → queued
     await server.dispatchTask({ operationId: 'lp-done-1', activityName: 'charge', input: null });
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     // Claim via long-poll → inflight
     await fetch(`${server.url}/v1/tasks/default?activity=charge&timeout=1000`);
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     // Complete via POST → resolved
     await fetch(`${server.url}/v1/tasks/default/result`, {
@@ -392,7 +393,7 @@ describe('task state invariant (server integration)', () => {
         value: 'done',
       }),
     });
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     const state = await getExclusiveTaskState(storage, 'lp-done-1');
     expect(state).toBe('resolved');
@@ -406,13 +407,13 @@ describe('task state invariant (server integration)', () => {
     });
 
     await server.dispatchTask({ operationId: 'dc-op-1', activityName: 'charge', input: null });
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     expect(await getTaskState(storage, 'dc-op-1')).toBe('inflight');
 
     // Disconnect the worker — task should be requeued
     ws.close();
-    await Bun.sleep(150);
+    await sleepForTesting(150);
 
     // Task should no longer be inflight (requeued or dispatched to another worker)
     const inflight = await storage.get(KEYS.operationInflight('dc-op-1'));
@@ -432,7 +433,7 @@ describe('task state invariant (server integration)', () => {
     await server.dispatchTask({ operationId: 'find-ws-1', activityName: 'ship', input: null });
     // Long-poll task (no WS worker for 'charge')
     await server.dispatchTask({ operationId: 'find-lp-1', activityName: 'charge', input: null });
-    await Bun.sleep(50);
+    await sleepForTesting(50);
 
     const wsState = await getTaskState(storage, 'find-ws-1');
     const lpState = await getTaskState(storage, 'find-lp-1');
@@ -441,6 +442,6 @@ describe('task state invariant (server integration)', () => {
     expect(lpState).not.toBeNull();
 
     ws.close();
-    await Bun.sleep(50);
+    await sleepForTesting(50);
   });
 });

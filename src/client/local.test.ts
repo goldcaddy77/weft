@@ -5,6 +5,7 @@ import { WorkflowCompletedEvent, WorkflowFailedEvent } from '../core/events.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 import type { WeftClient } from './interface.ts';
 import { LocalClient } from './local.ts';
 
@@ -358,7 +359,7 @@ describe('LocalClient', () => {
         id: 'local-client-tags',
         tags: ['nightly'],
       });
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       await handle.addTags('v2');
       await handle.removeTags('nightly');

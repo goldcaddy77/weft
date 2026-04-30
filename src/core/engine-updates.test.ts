@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { waitForever } from '../testing/fake-timers.ts';
 
 import type { ScanOptions, Storage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -148,7 +149,7 @@ for (const backend of storageBackends) {
         engine = new Engine({ storage: result.storage });
 
         engine.register('simple', async function* (_ctx: WorkflowContext) {
-          await Bun.sleep(999_999);
+          await waitForever();
           return 'done';
         });
 
@@ -355,7 +356,7 @@ for (const backend of storageBackends) {
 
         engine.register('waiter', async function* (ctx: WorkflowContext) {
           (ctx as Context).onUpdate('greet', (payload) => `hello ${String(payload)}`);
-          await Bun.sleep(999_999);
+          await waitForever();
           return 'done';
         });
 
@@ -476,7 +477,7 @@ for (const backend of storageBackends) {
 
         engine.register('bc-test', async function* (ctx: WorkflowContext) {
           (ctx as Context).onUpdate('ping', () => 'pong');
-          await Bun.sleep(999_999);
+          await waitForever();
           return 'done';
         });
 
@@ -728,7 +729,7 @@ for (const backend of storageBackends) {
 
         engine.register('event-test', async function* (ctx: WorkflowContext) {
           (ctx as Context).onUpdate('test', (payload) => `echo: ${String(payload)}`);
-          await Bun.sleep(999_999);
+          await waitForever();
           return 'done';
         });
 
@@ -1009,7 +1010,7 @@ for (const backend of storageBackends) {
           (ctx as Context).onUpdate('bad-runtime', () => {
             return sneakyGenerator();
           });
-          await Bun.sleep(999_999);
+          await waitForever();
           return 'done';
         });
 

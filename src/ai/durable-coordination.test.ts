@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * Tests for durable multi-agent coordination operations.
  *
@@ -23,7 +24,7 @@ import type { ChatResponse } from './providers/types.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 function createMockProvider(responses: ChatResponse[]): LLMProvider {

@@ -1,4 +1,5 @@
 import { describe, expect, it, mock, spyOn } from 'bun:test';
+import { sleepForTesting, withTimeout } from '../testing/fake-timers.ts';
 
 import { BudgetPolicyEnforcer } from '../ai/budget-policy.ts';
 import { defineAgent } from '../ai/declaration.ts';
@@ -33,7 +34,7 @@ import { activity } from './types.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 // ---------------------------------------------------------------------------
@@ -671,7 +672,7 @@ describe('Engine', () => {
     const engine = new Engine();
     const fast = async () => 'fast';
     const slow = async () => {
-      await Bun.sleep(100);
+      await sleepForTesting(100);
       return 'slow';
     };
 
@@ -1578,10 +1579,11 @@ describe('Engine', () => {
 
     // Watchdog: if the iterator hangs the race returns the sentinel and the
     // test fails. The sentinel is distinct so we can detect a hang specifically.
-    const result = await Promise.race([
+    const result = await withTimeout(
       iterate.then(() => 'iterated' as const),
-      Bun.sleep(500).then(() => 'timeout' as const),
-    ]);
+      500,
+      'workflow handle iteration',
+    );
 
     expect(result).toBe('iterated');
     expect(collected).toContain('workflow:completed');
@@ -1623,10 +1625,11 @@ describe('Engine', () => {
     // hit `finishWorkflowHandleIteration` and enqueue a duplicate.
     handle.dispatchEvent(new WorkflowCompletedEvent(handle.id, 'ok', 0));
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       iterate.then(() => 'iterated' as const),
-      Bun.sleep(500).then(() => 'timeout' as const),
-    ]);
+      500,
+      'workflow handle iteration',
+    );
 
     expect(result).toBe('iterated');
     expect(collected.filter((type) => type === 'workflow:completed')).toHaveLength(1);
@@ -1749,10 +1752,11 @@ describe('Engine', () => {
       }
     })();
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       iterate.then(() => 'iterated' as const),
-      Bun.sleep(500).then(() => 'timeout' as const),
-    ]);
+      500,
+      'workflow handle iteration',
+    );
 
     expect(result).toBe('iterated');
     const failure = collected.find((event) => event instanceof WorkflowFailedEvent);
@@ -1782,10 +1786,11 @@ describe('Engine', () => {
       }
     })();
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       iterate.then(() => 'iterated' as const),
-      Bun.sleep(500).then(() => 'timeout' as const),
-    ]);
+      500,
+      'workflow handle iteration',
+    );
 
     expect(result).toBe('iterated');
     expect(collected.some((event) => event instanceof WorkflowCancelledEvent)).toBe(true);
@@ -1816,10 +1821,11 @@ describe('Engine', () => {
       }
     })();
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       iterate.then(() => 'iterated' as const),
-      Bun.sleep(500).then(() => 'timeout' as const),
-    ]);
+      500,
+      'workflow handle iteration',
+    );
 
     expect(result).toBe('iterated');
     const timedOut = collected.find((event) => event instanceof WorkflowTimedOutEvent);
@@ -1851,10 +1857,11 @@ describe('Engine', () => {
       },
     });
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       promise.then(() => 'completed' as const),
-      Bun.sleep(500).then(() => 'timeout' as const),
-    ]);
+      500,
+      'workflow observable completion',
+    );
 
     expect(result).toBe('completed');
     expect(receivedTypes).toContain('workflow:completed');
@@ -1891,10 +1898,11 @@ describe('Engine', () => {
       },
     });
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       promise.then(() => 'errored' as const),
-      Bun.sleep(500).then(() => 'timeout' as const),
-    ]);
+      500,
+      'workflow observable error',
+    );
 
     // Give any erroneously-queued `complete()` call a chance to fire so the
     // assertion below is meaningful.
@@ -1936,10 +1944,11 @@ describe('Engine', () => {
       },
     });
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       promise.then(() => 'completed' as const),
-      Bun.sleep(500).then(() => 'timeout' as const),
-    ]);
+      500,
+      'workflow observable completion',
+    );
 
     expect(result).toBe('completed');
     expect(receivedTypes).toContain('workflow:cancelled');
@@ -1985,10 +1994,11 @@ describe('Engine', () => {
       },
     });
 
-    const result = await Promise.race([
+    const result = await withTimeout(
       promise.then(() => 'errored' as const),
-      Bun.sleep(500).then(() => 'timeout' as const),
-    ]);
+      500,
+      'workflow observable error',
+    );
 
     // Give any erroneously-queued `complete()` call a chance to fire so the
     // assertion below is meaningful.
@@ -3341,7 +3351,7 @@ describe('Engine', () => {
           });
           await storage.batch(operations);
         }
-        await Bun.sleep(10);
+        await sleepForTesting(10);
       }
     })();
 
@@ -3558,7 +3568,7 @@ describe('Engine', () => {
           }>
         | undefined;
       for (let attempt = 0; waterfall === undefined && attempt < 10; attempt++) {
-        await Bun.sleep(10);
+        await sleepForTesting(10);
         waterfall = (await handle.query('agentCostWaterfall')) as typeof waterfall;
       }
 
@@ -4077,7 +4087,7 @@ describe('Engine', () => {
         });
 
         const handle = await engine.start('wf', null, { id: workflowId });
-        await Bun.sleep(25);
+        await new Promise((resolve) => setTimeout(resolve, 25));
 
         const resultPromise = handle.result().then(
           () => ({ kind: 'resolved' }),
@@ -4771,7 +4781,7 @@ describe('Engine', () => {
       };
 
       const nestedSlowActivity = async () => {
-        await Bun.sleep(100);
+        await sleepForTesting(100);
         return 'nested-slow';
       };
 
@@ -5009,7 +5019,7 @@ describe('Engine speculative execution', () => {
         return `result:${typedInput}`;
       },
       verify: async (result: string) => {
-        await Bun.sleep(10);
+        await sleepForTesting(10);
         events.push(`verify:${result}`);
         return true;
       },
@@ -5049,7 +5059,7 @@ describe('Engine speculative execution', () => {
         return `result:${typedInput}`;
       },
       verify: async (result: string) => {
-        await Bun.sleep(20);
+        await sleepForTesting(20);
         events.push(`verify:${result}`);
         return false;
       },
@@ -5121,7 +5131,7 @@ describe('Engine speculative execution', () => {
         return `result:${typedInput}`;
       },
       verify: async (result: string) => {
-        await Bun.sleep(10);
+        await sleepForTesting(10);
         events.push(`verify:${result}`);
         return false;
       },
@@ -5134,7 +5144,7 @@ describe('Engine speculative execution', () => {
       name: 'run-all-second',
       execute: async (input: unknown) => {
         const typedInput = String(input);
-        await Bun.sleep(5);
+        await sleepForTesting(5);
         events.push(`execute:${typedInput}`);
         return `result:${typedInput}`;
       },

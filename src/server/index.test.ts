@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, spyOn } from 'bun:test';
+import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
 
 import { decode, encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
@@ -23,7 +24,7 @@ import { serve, wireEventBroadcasting } from './index.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await waitForRealTimersForTesting(10);
 }
 
 /**
@@ -47,7 +48,7 @@ async function waitFor(
     } catch (error) {
       lastError = error;
     }
-    await Bun.sleep(intervalMs);
+    await waitForRealTimersForTesting(intervalMs);
   }
   const message = `Timed out after ${timeoutMs}ms waiting for ${label}`;
   throw lastError instanceof Error
@@ -233,7 +234,7 @@ describe('serve', () => {
 
     try {
       expect(() => serve({ engine, port: 0 })).toThrow('broadcast setup failed');
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       restoreAddEventListener();
     }
@@ -345,10 +346,10 @@ describe('serve', () => {
 
     // Send a message (the handler is a no-op, but ensures the message path is exercised)
     ws.send('ping');
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('handles WebSocket close event without error', async () => {
@@ -395,7 +396,7 @@ describe('serve', () => {
 
     // Wait until the serialization chain has persisted all three. Polling on
     // the observable count is deterministic across CI load — a raw
-    // `Bun.sleep(50)` was flaky on slower runners.
+    // A fixed wall-clock sleep was flaky on slower runners.
     await waitFor(async () => (await countKeys(engine, `ev:${workflowId}:`)) === 3, {
       label: '3 pre-terminal events persisted',
     });
@@ -615,7 +616,7 @@ describe('worker WebSocket protocol', () => {
         queue: options.queue ?? 'default',
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   it('tracks a worker after register message', async () => {
@@ -636,7 +637,7 @@ describe('worker WebSocket protocol', () => {
     expect(workers[0]?.concurrency).toBe(5);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('clamps worker concurrency to at least 1 when 0 is sent', async () => {
@@ -650,7 +651,7 @@ describe('worker WebSocket protocol', () => {
     expect(worker?.concurrency).toBe(1);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('clamps worker concurrency to MAX_WORKER_CONCURRENCY (1000) when a huge value is sent', async () => {
@@ -668,7 +669,7 @@ describe('worker WebSocket protocol', () => {
     expect(worker?.concurrency).toBe(1_000);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('unregisters a worker on WebSocket close', async () => {
@@ -681,7 +682,7 @@ describe('worker WebSocket protocol', () => {
     expect(server.registry.size).toBe(1);
 
     ws.close();
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     expect(server.registry.size).toBe(0);
   });
@@ -694,16 +695,16 @@ describe('worker WebSocket protocol', () => {
     await registerWorker(ws, { workerId: 'w3', activities: ['charge'] });
 
     const before = server.registry.getAll()[0]?.lastHeartbeat ?? 0;
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w3' }));
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     const after = server.registry.getAll()[0]?.lastHeartbeat ?? 0;
     expect(after).toBeGreaterThanOrEqual(before);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('extends persisted task visibility deadlines on heartbeat', async () => {
@@ -724,9 +725,9 @@ describe('worker WebSocket protocol', () => {
       deadline: number;
     };
 
-    await Bun.sleep(25);
+    await waitForRealTimersForTesting(25);
     ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-extend' }));
-    await Bun.sleep(75);
+    await waitForRealTimersForTesting(75);
 
     const after = decode((await engine.storage.get(KEYS.operationInflight('heartbeat-op')))!) as {
       deadline: number;
@@ -735,7 +736,7 @@ describe('worker WebSocket protocol', () => {
     expect(after.deadline).toBeGreaterThan(before.deadline);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('logs corrupt inflight records during heartbeat visibility extension', async () => {
@@ -757,14 +758,14 @@ describe('worker WebSocket protocol', () => {
       await storage.put(KEYS.operationInflight('heartbeat-corrupt-op'), encode({ broken: true }));
 
       ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-corrupt' }));
-      await Bun.sleep(100);
+      await waitForRealTimersForTesting(100);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Corrupt inflight record for task "heartbeat-corrupt-op" during heartbeat — skipping visibility extension',
       );
 
       ws.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       errorSpy.mockRestore();
     }
@@ -796,7 +797,7 @@ describe('worker WebSocket protocol', () => {
       });
 
       ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-write-fail' }));
-      await Bun.sleep(250);
+      await waitForRealTimersForTesting(250);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Failed to extend visibility for task "heartbeat-write-fail-op":',
@@ -804,7 +805,7 @@ describe('worker WebSocket protocol', () => {
       );
 
       ws.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       restorePut();
       errorSpy.mockRestore();
@@ -832,7 +833,7 @@ describe('worker WebSocket protocol', () => {
 
     expect(dispatched).toBe(true);
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     expect(received.length).toBe(1);
     expect(received[0]?.type).toBe('task');
@@ -840,7 +841,7 @@ describe('worker WebSocket protocol', () => {
     expect(received[0]?.activityName).toBe('charge');
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('queues task for long-poll workers when no WebSocket worker is available', async () => {
@@ -887,12 +888,12 @@ describe('worker WebSocket protocol', () => {
     expect(server.registry.getAll()[0]?.inFlight).toBe(1);
 
     // Wait for the task result to arrive
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     expect(server.registry.getAll()[0]?.inFlight).toBe(0);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('handles invalid JSON messages without crashing', async () => {
@@ -902,14 +903,14 @@ describe('worker WebSocket protocol', () => {
     const ws = await connectWorker(server);
 
     ws.send('not json at all');
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Server should still be running
     const response = await fetch(`${server.url}/v1/health`);
     expect(response.status).toBe(200);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('ignores worker protocol messages on non-worker paths', async () => {
@@ -927,13 +928,13 @@ describe('worker WebSocket protocol', () => {
         concurrency: 5,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Registry should be empty — register messages are only processed on worker paths
     expect(server.registry.size).toBe(0);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('supports multiple workers and routes to least-loaded', async () => {
@@ -961,7 +962,7 @@ describe('worker WebSocket protocol', () => {
     await server.dispatchTask({ operationId: 'op-a', activityName: 'charge', input: null });
     await server.dispatchTask({ operationId: 'op-b', activityName: 'charge', input: null });
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Each worker should have received exactly one task
     expect(received1.length).toBe(1);
@@ -969,7 +970,7 @@ describe('worker WebSocket protocol', () => {
 
     ws1.close();
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('routes via fair-share when routingPolicy is fair-share and fairShareKey is dispatched', async () => {
@@ -1014,7 +1015,7 @@ describe('worker WebSocket protocol', () => {
       expect(dispatched).toBe(true);
     }
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Every worker received exactly two alpha tasks.
     for (const [workerId, tasks] of receivedByWorker) {
@@ -1041,7 +1042,7 @@ describe('worker WebSocket protocol', () => {
       fairShareKey: 'tenant-beta',
     });
     expect(dispatchedBeta).toBe(true);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Exactly one worker picked up beta-1 — and the worker chosen had a
     // per-beta-key count of 0 before this dispatch (which is true for any of
@@ -1059,7 +1060,7 @@ describe('worker WebSocket protocol', () => {
     for (const ws of sockets) {
       ws.close();
     }
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('falls back to long-poll queue when WebSocket workers are at capacity', async () => {
@@ -1088,7 +1089,7 @@ describe('worker WebSocket protocol', () => {
     expect(server.taskQueue.pendingCount('default')).toBe(1);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('worker capacity recovers after task completion and accepts new tasks', async () => {
@@ -1121,14 +1122,14 @@ describe('worker WebSocket protocol', () => {
     expect(server.registry.getWorker('w-recover')?.inFlight).toBe(1);
 
     // Wait for task result to arrive and decrement inFlight
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
     expect(server.registry.getWorker('w-recover')?.inFlight).toBe(0);
 
     // Dispatch second task — worker should accept it since capacity recovered
     await server.dispatchTask({ operationId: 'r-2', activityName: 'compute', input: null });
     expect(server.registry.getWorker('w-recover')?.inFlight).toBe(1);
 
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
     expect(server.registry.getWorker('w-recover')?.inFlight).toBe(0);
 
     // Both tasks were dispatched directly to the WebSocket worker (not queued)
@@ -1137,7 +1138,7 @@ describe('worker WebSocket protocol', () => {
     expect(server.taskQueue.pendingCount('default')).toBe(0);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('tracks available capacity as concurrency minus inFlight through dispatch cycle', async () => {
@@ -1161,18 +1162,18 @@ describe('worker WebSocket protocol', () => {
     ws.send(
       JSON.stringify({ type: 'taskResult', operationId: 't-1', status: 'completed', value: null }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
     expect(worker().concurrency - worker().inFlight).toBe(2);
 
     // Complete the other
     ws.send(
       JSON.stringify({ type: 'taskResult', operationId: 't-2', status: 'completed', value: null }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
     expect(worker().concurrency - worker().inFlight).toBe(3);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('integrates with RemoteWorker end-to-end', async () => {
@@ -1191,7 +1192,7 @@ describe('worker WebSocket protocol', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Server should have registered the worker
     expect(server.registry.size).toBe(1);
@@ -1208,13 +1209,13 @@ describe('worker WebSocket protocol', () => {
     expect(dispatched).toBe(true);
 
     // Wait for the worker to process the task and send the result
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     // in-flight should be back to 0 after the result is received
     expect(server.registry.getAll()[0]?.inFlight).toBe(0);
 
     await worker.disconnect();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Worker should be unregistered after disconnect
     expect(server.registry.size).toBe(0);
@@ -1258,7 +1259,7 @@ describe('worker WebSocket protocol', () => {
       input: null,
       workflowId: 'wf-sticky-1',
     });
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     // Determine which worker handled the first task.
     const firstWorker = received1.some((m) => m.operationId === 'sticky-op-1')
@@ -1274,14 +1275,14 @@ describe('worker WebSocket protocol', () => {
       workflowId: 'wf-sticky-1',
       sticky: true,
     });
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     // The same worker that handled op-1 should also get op-2.
     expect(firstReceived.some((m) => m.operationId === 'sticky-op-2')).toBe(true);
 
     ws1.close();
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('sticky dispatch falls back to least-loaded when preferred worker is at capacity', async () => {
@@ -1307,7 +1308,7 @@ describe('worker WebSocket protocol', () => {
       input: null,
       workflowId: 'wf-cap',
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // w1 is now at capacity (1/1). Sticky dispatch should fall back to w2.
     await server.dispatchTask({
@@ -1317,13 +1318,13 @@ describe('worker WebSocket protocol', () => {
       workflowId: 'wf-cap',
       sticky: true,
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     expect(received2.some((m) => m.operationId === 'cap-op-2')).toBe(true);
 
     ws1.close();
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('sticky dispatch without workflowId uses normal least-loaded routing', async () => {
@@ -1347,7 +1348,7 @@ describe('worker WebSocket protocol', () => {
 
     ws1.close();
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 });
 
@@ -1390,7 +1391,7 @@ describe('queue-aware worker stream', () => {
         concurrency: options.concurrency ?? 10,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   it('extracts queue name from the connection URL', async () => {
@@ -1404,7 +1405,7 @@ describe('queue-aware worker stream', () => {
     expect(worker.queue).toBe('billing');
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('dispatches tasks only to workers on the matching queue', async () => {
@@ -1435,7 +1436,7 @@ describe('queue-aware worker stream', () => {
       queue: 'billing',
     });
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Only the billing worker should receive the task
     expect(billingReceived.length).toBe(1);
@@ -1444,7 +1445,7 @@ describe('queue-aware worker stream', () => {
 
     billingWs.close();
     shippingWs.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('falls back to long-poll queue with the correct queue name', async () => {
@@ -1484,13 +1485,13 @@ describe('queue-aware worker stream', () => {
       input: null,
     });
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     expect(received.length).toBe(1);
     expect(received[0]?.operationId).toBe('default-op');
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('workers on different queues are isolated from each other', async () => {
@@ -1520,14 +1521,14 @@ describe('queue-aware worker stream', () => {
       input: null,
     });
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     expect(defaultReceived.length).toBe(1);
     expect(billingReceived.length).toBe(0);
 
     billingWs.close();
     defaultWs.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('integrates with RemoteWorker on a custom queue', async () => {
@@ -1547,7 +1548,7 @@ describe('queue-aware worker stream', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Worker should be registered on the billing queue
     expect(server.registry.size).toBe(1);
@@ -1564,13 +1565,13 @@ describe('queue-aware worker stream', () => {
     });
     expect(dispatched).toBe(true);
 
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     // Task should be completed
     expect(registered.inFlight).toBe(0);
 
     await worker.disconnect();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 });
 
@@ -1664,7 +1665,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(ws.readyState).toBe(WebSocket.OPEN);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('receives live token events through the stream connection', async () => {
@@ -1682,12 +1683,12 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     const ws = await connectStream(server, id);
     const messages = collectMessages(ws);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Dispatch token events directly on the engine
     engine.dispatchEvent(new TokenEvent(id, 'Hello', 'gpt-4'));
     engine.dispatchEvent(new TokenEvent(id, ' world', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     // Should have received the two token events
     const tokenMessages = messages.filter((m) => m.type === TokenEvent.type);
@@ -1698,7 +1699,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(typeof tokenMessages[1]?.['sequence']).toBe('number');
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('receives live token events through the stream connection for workflow ids that require encoding', async () => {
@@ -1708,17 +1709,17 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     const workflowId = 'wf:stream/with spaces';
     const ws = await connectStream(server, workflowId);
     const messages = collectMessages(ws);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     engine.dispatchEvent(new TokenEvent(workflowId, 'encoded-live', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
     expect(tokenMessages).toHaveLength(1);
     expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'encoded-live', model: 'gpt-4' });
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('receives live watch events for workflow ids that require encoding', async () => {
@@ -1728,10 +1729,10 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     const workflowId = 'wf:watch/with spaces';
     const ws = await connectWatch(server, workflowId);
     const messages = collectMessages(ws);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     engine.dispatchEvent(new WorkflowCompletedEvent(workflowId, 'encoded-watch', 1));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const completionMessages = messages.filter(
       (message) => message.type === WorkflowCompletedEvent.type,
@@ -1743,7 +1744,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     });
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('only receives token events for the subscribed workflow', async () => {
@@ -1752,12 +1753,12 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     const ws = await connectStream(server, 'wf-a');
     const messages = collectMessages(ws);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Dispatch token events for two different workflows
     engine.dispatchEvent(new TokenEvent('wf-a', 'for-a', 'gpt-4'));
     engine.dispatchEvent(new TokenEvent('wf-b', 'for-b', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     // Should only see the event for wf-a
     const tokenMessages = messages.filter((m) => m.type === TokenEvent.type);
@@ -1765,7 +1766,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'for-a' });
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('replays existing token events on connect', async () => {
@@ -1775,12 +1776,12 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     // Dispatch token events before a client connects
     engine.dispatchEvent(new TokenEvent('wf-replay', 'first', 'gpt-4'));
     engine.dispatchEvent(new TokenEvent('wf-replay', 'second', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     // Now connect — client should receive replay of existing token events
     const ws = await connectStream(server, 'wf-replay');
     const messages = collectMessages(ws);
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const replayMessages = messages.filter((message) => message.type === TokenEvent.type);
     expect(replayMessages.length).toBeGreaterThanOrEqual(2);
@@ -1793,7 +1794,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(replayMessages.map((message) => message['sequence'])).toEqual([0, 1]);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('replays existing token events on connect for workflow ids that require encoding', async () => {
@@ -1802,11 +1803,11 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     const workflowId = 'wf:replay/with spaces';
     engine.dispatchEvent(new TokenEvent(workflowId, 'encoded', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const ws = await connectStream(server, workflowId);
     const messages = collectMessages(ws);
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const replayMessages = messages.filter((message) => message.type === TokenEvent.type);
     const replayedTokens = replayMessages.map(
@@ -1816,7 +1817,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(replayedTokens).toContain('encoded');
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('rejects malformed encoded workflow stream paths without crashing the server', async () => {
@@ -1873,7 +1874,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     server = serve({ engine, port: 0 });
 
     engine.dispatchEvent(new TokenEvent('wf-sequence', 'new', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     expect(await storage.get(KEYS.event('wf-sequence', 4))).not.toBeNull();
     expect(await storage.get(KEYS.event('wf-sequence', 5))).not.toBeNull();
@@ -1885,7 +1886,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     server = serve({ engine, port: 0 });
 
     engine.dispatchEvent(new TokenEvent('wf-token-blob', 'alpha', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const storedChunk = await storage.get(KEYS.streamChunk('wf-token-blob', 'tokens', 0));
     expect(storedChunk).not.toBeNull();
@@ -1916,9 +1917,9 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     try {
       engine.dispatchEvent(new TokenEvent('wf-sequence-retry', 'first', 'gpt-4'));
-      await Bun.sleep(200);
+      await waitForRealTimersForTesting(200);
       engine.dispatchEvent(new TokenEvent('wf-sequence-retry', 'second', 'gpt-4'));
-      await Bun.sleep(200);
+      await waitForRealTimersForTesting(200);
 
       expect(await storage.get(KEYS.event('wf-sequence-retry', 0))).not.toBeNull();
       expect(errorSpy).toHaveBeenCalled();
@@ -1979,11 +1980,11 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     engine.dispatchEvent(new TokenEvent('wf-resume', 'first', 'gpt-4'));
     engine.dispatchEvent(new TokenEvent('wf-resume', 'second', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const ws = await connectStream(server, 'wf-resume', { resumeFrom: 0 });
     const messages = collectMessages(ws);
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const replayMessages = messages.filter((message) => message.type === TokenEvent.type);
     expect(replayMessages).toHaveLength(1);
@@ -1991,7 +1992,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(replayMessages[0]?.['data']).toMatchObject({ token: 'second' });
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('clamps resumeFrom above the durable token range so live tokens still arrive', async () => {
@@ -1999,14 +2000,14 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     server = serve({ engine, port: 0 });
 
     engine.dispatchEvent(new TokenEvent('wf-resume-clamped', 'first', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const ws = await connectStream(server, 'wf-resume-clamped', { resumeFrom: 999 });
     const messages = collectMessages(ws);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     engine.dispatchEvent(new TokenEvent('wf-resume-clamped', 'second', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
     expect(tokenMessages).toHaveLength(1);
@@ -2014,7 +2015,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'second', model: 'gpt-4' });
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('treats a resume cursor with no durable token chunks as an empty replay cursor', async () => {
@@ -2023,10 +2024,10 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     const ws = await connectStream(server, 'wf-resume-empty', { resumeFrom: 999 });
     const messages = collectMessages(ws);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     engine.dispatchEvent(new TokenEvent('wf-resume-empty', 'live', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
     expect(tokenMessages).toHaveLength(1);
@@ -2034,7 +2035,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'live', model: 'gpt-4' });
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('treats missing or malformed durable token sequences as an empty replay cursor', async () => {
@@ -2048,10 +2049,10 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     const ws = await connectStream(server, 'wf-resume-malformed', { resumeFrom: 999 });
     const messages = collectMessages(ws);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     engine.dispatchEvent(new TokenEvent('wf-resume-malformed', 'live', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
     expect(tokenMessages).toHaveLength(1);
@@ -2059,7 +2060,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(tokenMessages[0]?.['data']).toMatchObject({ token: 'live', model: 'gpt-4' });
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('buffers live token events that arrive while replay is still in progress', async () => {
@@ -2068,7 +2069,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     engine.dispatchEvent(new TokenEvent('wf-overlap', 'first', 'gpt-4'));
     engine.dispatchEvent(new TokenEvent('wf-overlap', 'second', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const originalGetStreamChunks = engine.getStreamChunks.bind(engine);
     let releaseReplay!: () => void;
@@ -2093,13 +2094,13 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     const ws = await connectStream(server, 'wf-overlap', { resumeFrom: 0 });
     const messages = collectMessages(ws);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     engine.dispatchEvent(new TokenEvent('wf-overlap', 'third', 'gpt-4'));
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     releaseReplay();
-    await Bun.sleep(250);
+    await waitForRealTimersForTesting(250);
 
     const tokenMessages = messages.filter((message) => message.type === TokenEvent.type);
     expect(tokenMessages.map((message) => message['sequence'])).toEqual([1, 2]);
@@ -2109,7 +2110,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     engine.getStreamChunks = originalGetStreamChunks;
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('replays stored token chunks after a server restart', async () => {
@@ -2122,7 +2123,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     server = serve({ engine, port: 0 });
 
     engine.dispatchEvent(new TokenEvent('wf-restart', 'persisted', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     await server.stop();
     engine[Symbol.dispose]();
@@ -2135,7 +2136,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     const ws = await connectStream(server, 'wf-restart', { resumeFrom: -1 });
     const messages = collectMessages(ws);
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const replayMessages = messages.filter((message) => message.type === TokenEvent.type);
     expect(replayMessages).toHaveLength(1);
@@ -2143,7 +2144,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     expect(replayMessages[0]?.['data']).toMatchObject({ token: 'persisted' });
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('logs replay failures when stored token scanning throws', async () => {
@@ -2164,7 +2165,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     try {
       const ws = await connectStream(server, 'wf-replay-failure');
-      await Bun.sleep(100);
+      await waitForRealTimersForTesting(100);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Failed to replay token stream for workflow "wf-replay-failure":',
@@ -2172,7 +2173,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
       );
 
       ws.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       restoreScan();
       errorSpy.mockRestore();
@@ -2194,13 +2195,13 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
         concurrency: 5,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Registry should be empty — register messages are only for worker paths
     expect(server.registry.size).toBe(0);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('supports multiple concurrent stream clients for the same workflow', async () => {
@@ -2211,10 +2212,10 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
     const ws2 = await connectStream(server, 'wf-multi');
     const messages1 = collectMessages(ws1);
     const messages2 = collectMessages(ws2);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     engine.dispatchEvent(new TokenEvent('wf-multi', 'shared-token', 'gpt-4'));
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     // Both clients should receive the token event
     const tokens1 = messages1.filter((m) => m.type === TokenEvent.type);
@@ -2224,7 +2225,7 @@ describe('token streaming WebSocket (WS /v1/workflows/:id/stream)', () => {
 
     ws1.close();
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 });
 
@@ -2304,7 +2305,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     const pollPromise = fetch(`${server.url}/v1/tasks/default?activity=charge&timeout=5000`);
 
     // Wait a bit, then enqueue a task
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
     await server.dispatchTask({
       operationId: 'op-delayed',
       activityName: 'charge',
@@ -2466,7 +2467,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     });
 
     worker.start();
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     // Dispatch a task — no WebSocket workers, so it goes to the queue
     await server.dispatchTask({
@@ -2476,7 +2477,7 @@ describe('long-poll endpoints (GET /v1/tasks/:queue, POST /v1/tasks/:queue/resul
     });
 
     // Wait for the worker to poll, execute, and complete
-    await Bun.sleep(500);
+    await waitForRealTimersForTesting(500);
 
     // Worker should be running with no in-flight tasks
     expect(worker.running).toBe(true);
@@ -2527,7 +2528,7 @@ describe('task assignment deduplication', () => {
         concurrency: options.concurrency ?? 10,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   it('rejects duplicate dispatch of the same operationId to WebSocket workers', async () => {
@@ -2557,13 +2558,13 @@ describe('task assignment deduplication', () => {
     expect(first).toBe(true);
     expect(second).toBe(false);
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Worker should receive exactly one task
     expect(received.length).toBe(1);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('rejects duplicate dispatch when the first went to the long-poll queue', async () => {
@@ -2613,7 +2614,7 @@ describe('task assignment deduplication', () => {
     expect(server.taskQueue.pendingCount('default')).toBe(0);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('uses assignTask for WebSocket dispatch so in-flight tasks are tracked', async () => {
@@ -2633,7 +2634,7 @@ describe('task assignment deduplication', () => {
     expect(server.registry.isAssigned('tracked-op')).toBe(true);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('clears in-flight tracking when worker sends taskResult with operationId', async () => {
@@ -2667,14 +2668,14 @@ describe('task assignment deduplication', () => {
 
     expect(server.registry.isAssigned('clear-op')).toBe(true);
 
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     // After the result arrives, the task should no longer be tracked
     expect(server.registry.isAssigned('clear-op')).toBe(false);
     expect(server.registry.getWorker('w1')?.inFlight).toBe(0);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('treats unexpected worker taskResult statuses as failed', async () => {
@@ -2704,13 +2705,13 @@ describe('task assignment deduplication', () => {
         input: null,
       });
 
-      await Bun.sleep(100);
+      await waitForRealTimersForTesting(100);
 
       expect(server.registry.isAssigned('unexpected-status-op')).toBe(false);
       expect(warningSpy).toHaveBeenCalled();
 
       ws.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       warningSpy.mockRestore();
     }
@@ -2741,13 +2742,13 @@ describe('task assignment deduplication', () => {
       input: null,
     });
 
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     expect(await engine.storage.get(KEYS.operationInflight('cancelled-status-op'))).toBeNull();
     expect(await engine.storage.get(KEYS.operationResolved('cancelled-status-op'))).not.toBeNull();
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('logs task result persistence failures when inflight resolution cannot be stored', async () => {
@@ -2790,7 +2791,7 @@ describe('task assignment deduplication', () => {
         input: null,
       });
 
-      await Bun.sleep(150);
+      await waitForRealTimersForTesting(150);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Failed to transition task "task-result-fail" to resolved — inflight record may leak:',
@@ -2798,7 +2799,7 @@ describe('task assignment deduplication', () => {
       );
 
       ws.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       restoreBatch();
       errorSpy.mockRestore();
@@ -2836,7 +2837,7 @@ describe('task assignment deduplication', () => {
       );
 
       ws.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       warningSpy.mockRestore();
     }
@@ -2855,13 +2856,13 @@ describe('task assignment deduplication', () => {
       await registerWorker(ws2, { workerId: 'reconnecting-worker', activities: ['charge'] });
 
       ws1.close();
-      await Bun.sleep(100);
+      await waitForRealTimersForTesting(100);
 
       expect(server.registry.getWorker('reconnecting-worker')).toBeDefined();
       expect(warningSpy).toHaveBeenCalled();
 
       ws2.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       warningSpy.mockRestore();
     }
@@ -2893,7 +2894,7 @@ describe('task assignment deduplication', () => {
 
     // First dispatch
     await server.dispatchTask({ operationId: 'reuse-op', activityName: 'charge', input: null });
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     // After completion, dispatch the same operationId again
     const second = await server.dispatchTask({
@@ -2903,14 +2904,14 @@ describe('task assignment deduplication', () => {
     });
     expect(second).toBe(true);
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Worker should have received two tasks
     const taskMessages = received.filter((m) => m.type === 'task');
     expect(taskMessages.length).toBe(2);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 });
 
@@ -2959,7 +2960,7 @@ describe('visibility timeout persistence', () => {
         concurrency: options.concurrency ?? 10,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   it('persists in-flight record to storage on dispatch', async () => {
@@ -2974,7 +2975,7 @@ describe('visibility timeout persistence', () => {
       activityName: 'charge',
       input: { amount: 100 },
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     const key = KEYS.operationInflight('vt-op-1');
     const raw = await storage.get(key);
@@ -2986,7 +2987,7 @@ describe('visibility timeout persistence', () => {
     expect(record.deadline).toBeGreaterThan(Date.now());
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('removes in-flight record from storage on task completion', async () => {
@@ -3013,14 +3014,14 @@ describe('visibility timeout persistence', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     await server.dispatchTask({ operationId: 'vt-op-2', activityName: 'charge', input: null });
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     const key = KEYS.operationInflight('vt-op-2');
     const raw = await storage.get(key);
     expect(raw).toBeNull();
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('uses custom visibility timeout from TaskDispatch', async () => {
@@ -3037,7 +3038,7 @@ describe('visibility timeout persistence', () => {
       input: null,
       visibilityTimeout: customTimeout,
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     const key = KEYS.operationInflight('vt-op-3');
     const raw = await storage.get(key);
@@ -3053,7 +3054,7 @@ describe('visibility timeout persistence', () => {
     expect(record.deadline).toBeGreaterThan(Date.now() + 100_000);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('defaults visibility timeout to 30 seconds when not specified', async () => {
@@ -3064,7 +3065,7 @@ describe('visibility timeout persistence', () => {
     await registerWorker(ws, { workerId: 'w1', activities: ['charge'], concurrency: 5 });
 
     await server.dispatchTask({ operationId: 'vt-op-4', activityName: 'charge', input: null });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     const key = KEYS.operationInflight('vt-op-4');
     const raw = await storage.get(key);
@@ -3074,7 +3075,7 @@ describe('visibility timeout persistence', () => {
     expect(record.visibilityTimeout).toBe(30_000);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('restores in-flight tasks from storage on server restart', async () => {
@@ -3096,7 +3097,7 @@ describe('visibility timeout persistence', () => {
 
     // Start the server — it should restore the in-flight record
     server = serve({ engine, port: 0 });
-    await Bun.sleep(100); // Allow async restore to complete
+    await waitForRealTimersForTesting(100); // Allow async restore to complete
 
     // The registry should now track the restored task
     expect(server.registry.isAssigned('restored-op')).toBe(true);
@@ -3119,7 +3120,7 @@ describe('visibility timeout persistence', () => {
     await storage.put(KEYS.operationInflight('restored-cancel-op'), encode(inflightRecord));
 
     server = serve({ engine, port: 0 });
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     const ws = await connectWorker(server);
     const received: Array<{ type: string; operationId?: string }> = [];
@@ -3133,7 +3134,7 @@ describe('visibility timeout persistence', () => {
     });
 
     engine.dispatchEvent(new WorkflowCancelledEvent('wf-restored-cancel'));
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     expect(
       received.some((message) => {
@@ -3142,7 +3143,7 @@ describe('visibility timeout persistence', () => {
     ).toBe(true);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('logs corrupt persisted inflight records during restore', async () => {
@@ -3152,7 +3153,7 @@ describe('visibility timeout persistence', () => {
 
     try {
       server = serve({ engine, port: 0 });
-      await Bun.sleep(100);
+      await waitForRealTimersForTesting(100);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Corrupt inflight record at "op:inflight:restore-corrupt-op" during restore — skipping',
@@ -3181,7 +3182,7 @@ describe('visibility timeout persistence', () => {
 
     try {
       server = serve({ engine, port: 0 });
-      await Bun.sleep(250);
+      await waitForRealTimersForTesting(250);
 
       expect(warningSpy).toHaveBeenCalled();
       expect(errorSpy).toHaveBeenCalledWith(
@@ -3212,7 +3213,7 @@ describe('visibility timeout persistence', () => {
     await storage.put(KEYS.operationInflight('expired-op'), encode(expiredRecord));
 
     server = serve({ engine, port: 0 });
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     // The expired record should be removed from storage
     const raw = await storage.get(KEYS.operationInflight('expired-op'));
@@ -3271,7 +3272,7 @@ describe('worker disconnection triggers task reassignment', () => {
         concurrency: options.concurrency ?? 10,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   it('requeues in-flight tasks to another worker on disconnect', async () => {
@@ -3296,20 +3297,20 @@ describe('worker disconnection triggers task reassignment', () => {
       activityName: 'charge',
       input: { amount: 42 },
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     expect(server.registry.isAssigned('requeue-op-1')).toBe(true);
 
     // Disconnect w1 — its in-flight task should be reassigned to w2
     ws1.close();
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const taskMessages = received.filter((m) => m.type === 'task');
     expect(taskMessages.length).toBe(1);
     expect(taskMessages[0]?.operationId).toBe('requeue-op-1');
 
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('increments attempt count on reassigned tasks', async () => {
@@ -3333,18 +3334,18 @@ describe('worker disconnection triggers task reassignment', () => {
       input: null,
       attempt: 2, // Already on attempt 2
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Disconnect w1 — task should be re-dispatched with attempt 3
     ws1.close();
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const taskMessages = received.filter((m) => m.type === 'task');
     expect(taskMessages.length).toBe(1);
     expect(taskMessages[0]?.attempt).toBe(3);
 
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('cleans up in-flight storage record on disconnect and reassignment', async () => {
@@ -3362,7 +3363,7 @@ describe('worker disconnection triggers task reassignment', () => {
       activityName: 'charge',
       input: null,
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Verify the original in-flight record exists
     const keyBefore = KEYS.operationInflight('cleanup-op');
@@ -3370,14 +3371,14 @@ describe('worker disconnection triggers task reassignment', () => {
 
     // Disconnect w1
     ws1.close();
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     // The old in-flight record should be deleted (a new one is created for w2)
     // The task should now be assigned in the registry (to w2)
     expect(server.registry.isAssigned('cleanup-op')).toBe(true);
 
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('requeues to long-poll queue when no other WebSocket worker is available', async () => {
@@ -3392,13 +3393,13 @@ describe('worker disconnection triggers task reassignment', () => {
       activityName: 'charge',
       input: { amount: 99 },
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     expect(server.registry.isAssigned('fallback-op')).toBe(true);
 
     // Disconnect the only worker — task should go to long-poll queue
     ws.close();
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     // The task should be available via long-poll
     expect(server.taskQueue.pendingCount('default')).toBe(1);
@@ -3423,7 +3424,7 @@ describe('worker disconnection triggers task reassignment', () => {
     await server.dispatchTask({ operationId: 'multi-op-1', activityName: 'charge', input: null });
     await server.dispatchTask({ operationId: 'multi-op-2', activityName: 'ship', input: null });
     await server.dispatchTask({ operationId: 'multi-op-3', activityName: 'charge', input: null });
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     // Record which tasks w1 has in-flight (via the registry).
     const w1Tasks = server.registry.getWorkerTasks('w1');
@@ -3434,7 +3435,7 @@ describe('worker disconnection triggers task reassignment', () => {
 
     // Disconnect w1 — tasks assigned to w1 should be reassigned to w2.
     ws1.close();
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     const taskMessages = received.filter((m) => m.type === 'task');
     const reassignedIds = taskMessages
@@ -3444,7 +3445,7 @@ describe('worker disconnection triggers task reassignment', () => {
     expect(reassignedIds).toEqual(w1TaskIds);
 
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('logs corrupt inflight records when a disconnected worker task cannot be decoded', async () => {
@@ -3461,11 +3462,11 @@ describe('worker disconnection triggers task reassignment', () => {
         activityName: 'charge',
         input: null,
       });
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
       await storage.put(KEYS.operationInflight('disconnect-corrupt-op'), encode({ bad: true }));
 
       ws.close();
-      await Bun.sleep(150);
+      await waitForRealTimersForTesting(150);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Corrupt inflight record for task "disconnect-corrupt-op" — skipping reassignment',
@@ -3489,11 +3490,11 @@ describe('worker disconnection triggers task reassignment', () => {
         activityName: 'charge',
         input: null,
       });
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
       await storage.delete(KEYS.operationInflight('disconnect-missing-op'));
 
       ws.close();
-      await Bun.sleep(150);
+      await waitForRealTimersForTesting(150);
 
       expect(warningSpy).toHaveBeenCalledWith(
         '[weft] No inflight record found in storage for task "disconnect-missing-op" — skipping reassignment',
@@ -3526,10 +3527,10 @@ describe('worker disconnection triggers task reassignment', () => {
         activityName: 'charge',
         input: null,
       });
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
 
       ws.close();
-      await Bun.sleep(150);
+      await waitForRealTimersForTesting(150);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Failed to reassign task "disconnect-get-fail-op" from worker "w-disconnect-get-fail":',
@@ -3566,10 +3567,10 @@ describe('worker disconnection triggers task reassignment', () => {
         activityName: 'charge',
         input: null,
       });
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
 
       ws.close();
-      await Bun.sleep(150);
+      await waitForRealTimersForTesting(150);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Redispatch failed for "disconnect-redispatch-fail-op":',
@@ -3592,7 +3593,7 @@ describe('worker disconnection triggers task reassignment', () => {
 
     // Disconnect without any dispatched tasks
     ws.close();
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     // Worker should be unregistered, no tasks in queue
     expect(server.registry.size).toBe(0);
@@ -3648,7 +3649,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
         concurrency: options.concurrency ?? 10,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   it('reassigns tasks whose visibility timeout has expired via storage scan', async () => {
@@ -3688,13 +3689,13 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       input: { amount: 42 },
       visibilityTimeout: 100, // 100ms — will expire quickly
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Task should be assigned
     expect(server.registry.isAssigned('expiry-op-1')).toBe(true);
 
     // Wait for the visibility timeout to expire and the scanner to pick it up
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     // The worker should have received the task at least twice (original + reassignment)
     const taskMessages = received.filter(
@@ -3706,7 +3707,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(taskMessages[1]?.attempt).toBe(2);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('increments attempt count on tasks reassigned due to timeout expiry', async () => {
@@ -3745,7 +3746,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       attempt: 2,
       visibilityTimeout: 100,
     });
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     const taskMessages = received.filter(
       (m) => m.type === 'task' && m.operationId === 'attempt-expiry-op',
@@ -3756,7 +3757,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(taskMessages[1]?.attempt).toBe(3);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('does not reassign tasks that have not expired', async () => {
@@ -3779,7 +3780,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       input: null,
       visibilityTimeout: 60_000,
     });
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     // The task should still be assigned, not reassigned
     expect(server.registry.isAssigned('noexpiry-op')).toBe(true);
@@ -3790,7 +3791,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(taskMessages.length).toBe(1);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('cleans up old storage record and creates new one on reassignment', async () => {
@@ -3825,7 +3826,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       input: null,
       visibilityTimeout: 100,
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Verify original record exists
     const inflightKey = KEYS.operationInflight('cleanup-expiry-op');
@@ -3835,7 +3836,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(recordBefore.attempt).toBe(1);
 
     // Wait for expiry and reassignment
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     // After the scanner re-dispatches with attempt=2, the worker completes it
     // and the in-flight record is removed from storage.
@@ -3843,7 +3844,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(rawAfter).toBeNull();
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('falls back to long-poll queue when no WebSocket worker available for expired task', async () => {
@@ -3859,12 +3860,12 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       input: null,
       visibilityTimeout: 100,
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Unregister the worker before the timeout expires, but don't close the WS
     // (simulating a worker that stops heartbeating). Instead, just disconnect:
     ws.close();
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     // The expired task should have been cleaned up from storage or requeued to long-poll
     // (worker disconnect already handles this, but storage scan covers edge cases)
@@ -3891,7 +3892,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
 
     // Wait for startup restore to complete, then insert an orphaned expired record.
     // This simulates a record that slipped through (e.g., created by another process).
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
     const expiredRecord = {
       operationId: 'orphan-op',
       workerId: 'ghost-worker',
@@ -3908,7 +3909,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     // Orphaned records (not tracked in the deadline heap) are only discovered
     // by the periodic full-storage reconciliation, which runs at 12x the
     // visibility poll interval (50ms * 12 = 600ms here).
-    await Bun.sleep(800);
+    await waitForRealTimersForTesting(800);
 
     const taskMessages = received.filter((m) => m.type === 'task' && m.operationId === 'orphan-op');
     expect(taskMessages.length).toBe(1);
@@ -3923,7 +3924,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     }
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('does not reassign a task when a heartbeat extended its deadline past a stale heap entry', async () => {
@@ -3948,7 +3949,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       (await storage.get(KEYS.operationInflight('heartbeat-stale-heap-op')))!,
     ) as { deadline: number };
 
-    await Bun.sleep(40);
+    await waitForRealTimersForTesting(40);
     ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-stale-heap' }));
 
     let extendedDeadline = initialRecord.deadline;
@@ -3958,14 +3959,14 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       ) as { deadline: number };
       extendedDeadline = persisted.deadline;
       if (extendedDeadline > initialRecord.deadline) break;
-      await Bun.sleep(10);
+      await waitForRealTimersForTesting(10);
     }
 
     expect(extendedDeadline).toBeGreaterThan(initialRecord.deadline);
 
     const beforeScanTaskCount = received.filter((message) => message.type === 'task').length;
     const staleDeadlineDelay = Math.max(0, initialRecord.deadline - Date.now()) + 40;
-    await Bun.sleep(staleDeadlineDelay);
+    await waitForRealTimersForTesting(staleDeadlineDelay);
     const afterScanTaskCount = received.filter((message) => message.type === 'task').length;
 
     expect(afterScanTaskCount).toBe(beforeScanTaskCount);
@@ -3980,7 +3981,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(persisted.deadline).toBeGreaterThanOrEqual(extendedDeadline);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('keeps an in-flight task when the expiry scan encounters a stale heap entry', async () => {
@@ -4037,7 +4038,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
 
     try {
       server = serve({ engine, port: 0, visibilityPollIntervalMs: 25 });
-      await Bun.sleep(200);
+      await waitForRealTimersForTesting(200);
 
       expect(injectedStaleEntry).toBe(true);
       expect(addCountForOperation).toBeGreaterThanOrEqual(2);
@@ -4068,17 +4069,17 @@ describe('visibility timeout expiry triggers task reassignment', () => {
         input: null,
         visibilityTimeout: 100,
       });
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
       await storage.put(KEYS.operationInflight('visibility-corrupt-op'), encode({ invalid: true }));
 
-      await Bun.sleep(200);
+      await waitForRealTimersForTesting(200);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Corrupt inflight record for task "visibility-corrupt-op" — skipping',
       );
 
       ws.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       errorSpy.mockRestore();
     }
@@ -4166,7 +4167,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
           concurrency: 1,
         }),
       );
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
 
       await localServer.dispatchTask({
         operationId: targetOperationId,
@@ -4182,13 +4183,13 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       // 120ms (10ms × RECONCILIATION_MULTIPLIER). The delayed read parks for
       // 200ms, spanning at least one reconciliation tick, so the bug would
       // produce a duplicate failure event.
-      await Bun.sleep(700);
+      await waitForRealTimersForTesting(700);
 
       const relevant = failedOperationIds.filter((id) => id === targetOperationId);
       expect(relevant.length).toBe(1);
 
       ws.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       await localServer.stop();
       localEngine[Symbol.dispose]();
@@ -4218,7 +4219,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
         input: null,
         visibilityTimeout: 100,
       });
-      await Bun.sleep(200);
+      await waitForRealTimersForTesting(200);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Failed to process expired task "visibility-retry-op" — will retry:',
@@ -4226,7 +4227,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       );
 
       ws.close();
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
     } finally {
       restoreGet();
       errorSpy.mockRestore();
@@ -4244,7 +4245,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
         throw new Error('drain expired failed');
       };
 
-      await Bun.sleep(80);
+      await waitForRealTimersForTesting(80);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Visibility timeout scanner error:',
@@ -4281,7 +4282,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     });
     await registerWorker(ws, { workerId: 'w-reconcile-track', activities: ['charge'] });
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
     await storage.put(
       KEYS.operationInflight('orphan-track-op'),
       encode({
@@ -4296,14 +4297,14 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       }),
     );
 
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     const earlyTaskMessages = received.filter((message) => {
       return message.type === 'task' && message.operationId === 'orphan-track-op';
     });
     expect(earlyTaskMessages).toHaveLength(0);
 
-    await Bun.sleep(500);
+    await waitForRealTimersForTesting(500);
 
     const taskMessages = received.filter((message) => {
       return message.type === 'task' && message.operationId === 'orphan-track-op';
@@ -4312,7 +4313,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(taskMessages[0]?.attempt).toBe(2);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('logs per-record reconciliation failures and skips the bad entry', async () => {
@@ -4321,10 +4322,10 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     server = serve({ engine, port: 0, visibilityPollIntervalMs: 20 });
 
     try {
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
       await storage.put(KEYS.operationInflight('reconcile-bad-op'), new Uint8Array([1, 2, 3]));
 
-      await Bun.sleep(300);
+      await waitForRealTimersForTesting(300);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Failed to reconcile inflight record — skipping:',
@@ -4355,7 +4356,7 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     server = serve({ engine, port: 0, visibilityPollIntervalMs: 20 });
 
     try {
-      await Bun.sleep(320);
+      await waitForRealTimersForTesting(320);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Reconciliation scanner error:',
@@ -4453,7 +4454,7 @@ describe('concurrent scanner deduplication', () => {
         concurrency: options.concurrency ?? 10,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   it('does not double-process an operationId when scanExpiredTasks and reconcileOrphanedRecords overlap', async () => {
@@ -4504,12 +4505,12 @@ describe('concurrent scanner deduplication', () => {
       input: null,
       visibilityTimeout: 60, // expires in 60ms, well before the 600ms reconciliation
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
     expect(server.registry.isAssigned('dedup-scan-op')).toBe(true);
 
     // Wait for at least one full reconciliation cycle (600ms) plus some slack
     // so both scanners have had multiple chances to process the expired record.
-    await Bun.sleep(800);
+    await waitForRealTimersForTesting(800);
 
     // The task must be re-dispatched exactly once (attempt 2). If the guard
     // were absent, the worker would receive attempt 2 more than once.
@@ -4520,7 +4521,7 @@ describe('concurrent scanner deduplication', () => {
     expect(attempt2Messages.length).toBe(1);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('does not double-process an orphaned operationId visible only to reconcileOrphanedRecords', async () => {
@@ -4558,7 +4559,7 @@ describe('concurrent scanner deduplication', () => {
 
     // Wait for the server's startup restore scan to finish before inserting
     // the orphan so it is not accidentally restored as a valid in-flight task.
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     const orphanRecord = {
       operationId: 'dedup-orphan-op',
@@ -4575,7 +4576,7 @@ describe('concurrent scanner deduplication', () => {
     // Wait for two full reconciliation cycles (2 * 600ms = 1200ms) plus slack.
     // Without the deduplication guard a second concurrent reconciliation cycle
     // would re-dispatch the same record a second time.
-    await Bun.sleep(1400);
+    await waitForRealTimersForTesting(1400);
 
     // The orphaned task must be re-dispatched exactly once.
     const taskMessages = received.filter(
@@ -4585,7 +4586,7 @@ describe('concurrent scanner deduplication', () => {
     expect(taskMessages[0]?.attempt).toBe(2);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('re-adds a drained heap entry when reconciliation is already processing the same operation', async () => {
@@ -4671,7 +4672,7 @@ describe('concurrent scanner deduplication', () => {
 
     try {
       server = serve({ engine, port: 0, visibilityPollIntervalMs: 25 });
-      await Bun.sleep(100);
+      await waitForRealTimersForTesting(100);
 
       await innerStorage.put(
         KEYS.operationInflight(operationId),
@@ -4691,7 +4692,7 @@ describe('concurrent scanner deduplication', () => {
 
       let observedReadd = false;
       for (let attempt = 0; attempt < 20; attempt++) {
-        await Bun.sleep(25);
+        await waitForRealTimersForTesting(25);
         observedReadd = readdedEntries > 0;
         if (observedReadd) break;
       }
@@ -4700,7 +4701,7 @@ describe('concurrent scanner deduplication', () => {
       expect(readdedEntries).toBe(1);
 
       releaseBlockedBatch();
-      await Bun.sleep(100);
+      await waitForRealTimersForTesting(100);
 
       expect(await innerStorage.get(KEYS.operationQueued(operationId))).not.toBeNull();
     } finally {
@@ -4759,7 +4760,7 @@ describe('retry policy respected on reassignment', () => {
         concurrency: options.concurrency ?? 10,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   const testRetryPolicy: RetryPolicy = {
@@ -4789,12 +4790,12 @@ describe('retry policy respected on reassignment', () => {
       visibilityTimeout: 100,
       retryPolicy: testRetryPolicy, // maxAttempts = 2, already at attempt 2
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     expect(server.registry.isAssigned('max-attempt-expiry-op')).toBe(true);
 
     // Wait for the visibility timeout to expire and the scanner to run
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     // The task should NOT be re-dispatched — only the initial dispatch should exist
     const taskMessages = received.filter(
@@ -4809,7 +4810,7 @@ describe('retry policy respected on reassignment', () => {
     expect(record).toBeNull();
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('does not re-dispatch when maxAttempts exceeded on worker disconnect', async () => {
@@ -4835,11 +4836,11 @@ describe('retry policy respected on reassignment', () => {
       attempt: 2,
       retryPolicy: testRetryPolicy, // maxAttempts = 2, already at attempt 2
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Disconnect w1 — task should NOT be reassigned to w2 since maxAttempts reached
     ws1.close();
-    await Bun.sleep(200);
+    await waitForRealTimersForTesting(200);
 
     const taskMessages = received.filter(
       (m) => m.type === 'task' && m.operationId === 'max-attempt-disconnect-op',
@@ -4852,7 +4853,7 @@ describe('retry policy respected on reassignment', () => {
     expect(record).toBeNull();
 
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('re-dispatches when within maxAttempts on visibility timeout expiry', async () => {
@@ -4890,10 +4891,10 @@ describe('retry policy respected on reassignment', () => {
       visibilityTimeout: 100,
       retryPolicy: { ...testRetryPolicy, maxAttempts: 3 },
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Wait for the visibility timeout to expire and the scanner to re-dispatch
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     const taskMessages = received.filter(
       (m) => m.type === 'task' && m.operationId === 'within-limit-expiry-op',
@@ -4903,7 +4904,7 @@ describe('retry policy respected on reassignment', () => {
     expect(taskMessages[1]?.attempt).toBe(2);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('applies backoff delay before re-dispatch on visibility timeout expiry', async () => {
@@ -4945,7 +4946,7 @@ describe('retry policy respected on reassignment', () => {
     });
 
     // Wait long enough for: visibility timeout (80ms) + backoff (100ms) + scanner intervals
-    await Bun.sleep(500);
+    await waitForRealTimersForTesting(500);
 
     // Should have received both dispatches
     expect(timestamps.length).toBeGreaterThanOrEqual(2);
@@ -4956,7 +4957,7 @@ describe('retry policy respected on reassignment', () => {
     expect(gap).toBeGreaterThanOrEqual(150);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('applies backoff delay before re-dispatch on worker disconnect', async () => {
@@ -4989,13 +4990,13 @@ describe('retry policy respected on reassignment', () => {
       input: null,
       retryPolicy: { ...testRetryPolicy, maxAttempts: 3, initialBackoff: 150 },
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Disconnect w1 — should apply backoff before re-dispatching to w2
     ws1.close();
 
     // Wait for the backoff delay to complete
-    await Bun.sleep(400);
+    await waitForRealTimersForTesting(400);
 
     expect(timestamps.length).toBe(1);
     // The re-dispatch should have been delayed by at least the backoff (150ms)
@@ -5003,7 +5004,7 @@ describe('retry policy respected on reassignment', () => {
     expect(gap).toBeGreaterThanOrEqual(150);
 
     ws2.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('logs delayed redispatch failures when backoff requeue dispatch throws', async () => {
@@ -5029,10 +5030,10 @@ describe('retry policy respected on reassignment', () => {
         input: null,
         retryPolicy: { ...testRetryPolicy, maxAttempts: 3, initialBackoff: 50, maxBackoff: 50 },
       });
-      await Bun.sleep(50);
+      await waitForRealTimersForTesting(50);
 
       ws.close();
-      await Bun.sleep(250);
+      await waitForRealTimersForTesting(250);
 
       expect(errorSpy).toHaveBeenCalledWith(
         '[weft] Delayed redispatch failed for "delayed-redispatch-fail-op":',
@@ -5057,7 +5058,7 @@ describe('retry policy respected on reassignment', () => {
       input: null,
       retryPolicy: testRetryPolicy,
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     const inflightKey = KEYS.operationInflight('policy-stored-op');
     const raw = await storage.get(inflightKey);
@@ -5067,7 +5068,7 @@ describe('retry policy respected on reassignment', () => {
     expect(record.retryPolicy).toEqual(testRetryPolicy);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('defaults to no maxAttempts limit when retryPolicy is not provided', async () => {
@@ -5104,10 +5105,10 @@ describe('retry policy respected on reassignment', () => {
       input: null,
       visibilityTimeout: 100,
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Wait for visibility timeout expiry + scanner
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     const taskMessages = received.filter(
       (m) => m.type === 'task' && m.operationId === 'no-policy-op',
@@ -5115,7 +5116,7 @@ describe('retry policy respected on reassignment', () => {
     expect(taskMessages.length).toBeGreaterThanOrEqual(2);
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 });
 
@@ -5157,7 +5158,7 @@ describe('worker shutdown and cancel propagation', () => {
         concurrency: options.concurrency ?? 10,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   it('shutdownWorker sends shutdown message and waits for disconnect', async () => {
@@ -5187,7 +5188,7 @@ describe('worker shutdown and cancel propagation', () => {
     expect(shutdownMessage).toBeDefined();
 
     // The worker should be unregistered after disconnect
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
     expect(server.registry.getWorker('shutdown-w1')).toBeUndefined();
   });
 
@@ -5204,7 +5205,7 @@ describe('worker shutdown and cancel propagation', () => {
     expect(server.registry.getWorker('shutdown-timeout-w1')).toBeDefined();
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('shutdownWorker returns false for unknown worker', async () => {
@@ -5239,7 +5240,7 @@ describe('worker shutdown and cancel propagation', () => {
 
     await server.shutdownAllWorkers({ timeoutMs: 5000 });
 
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
     expect(server.registry.size).toBe(0);
   });
 
@@ -5282,19 +5283,19 @@ describe('worker shutdown and cancel propagation', () => {
       activityName: 'charge',
       input: { amount: 100 },
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     const result = server.cancelTask('cancel-op-1');
 
     expect(result).toBe(true);
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     const cancelMessage = received.find((m) => m.type === 'cancel');
     expect(cancelMessage).toBeDefined();
     expect(cancelMessage!.operationId).toBe('cancel-op-1');
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('cancelTask returns false when no worker has the task', async () => {
@@ -5325,20 +5326,20 @@ describe('worker shutdown and cancel propagation', () => {
       input: { amount: 100 },
       workflowId: 'workflow-to-cancel',
     });
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     // Simulate workflow cancellation by dispatching the event on the engine
     const { WorkflowCancelledEvent: CancelledEvent } = await import('../core/events.ts');
     engine.dispatchEvent(new CancelledEvent('workflow-to-cancel'));
 
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     const cancelMessages = received.filter((m) => m.type === 'cancel');
     expect(cancelMessages.length).toBe(1);
     expect(cancelMessages[0]!.operationId).toBe('wf-cancel-op-1');
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 });
 
@@ -5376,7 +5377,7 @@ describe('header propagation in task dispatch', () => {
         concurrency: options.concurrency ?? 10,
       }),
     );
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   }
 
   it('includes headers when dispatching to WebSocket workers', async () => {
@@ -5399,7 +5400,7 @@ describe('header propagation in task dispatch', () => {
       headers: { 'x-trace-id': 'trace-123', 'x-auth': 'bearer-token' },
     });
 
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     const taskMessage = received.find((m) => m['type'] === 'task');
     expect(taskMessage).toBeDefined();
@@ -5409,7 +5410,7 @@ describe('header propagation in task dispatch', () => {
     });
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('omits headers field when no headers are provided', async () => {
@@ -5435,14 +5436,14 @@ describe('header propagation in task dispatch', () => {
       input: { amount: 50 },
     });
 
-    await Bun.sleep(100);
+    await waitForRealTimersForTesting(100);
 
     const taskMessage = received.find((m) => m['type'] === 'task');
     expect(taskMessage).toBeDefined();
     expect(taskMessage!['headers']).toBeUndefined();
 
     ws.close();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('includes headers when dispatching to long-poll workers via task queue', async () => {
@@ -5497,7 +5498,7 @@ describe('header propagation in task dispatch', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     expect(server.registry.size).toBe(1);
 
@@ -5510,7 +5511,7 @@ describe('header propagation in task dispatch', () => {
     expect(dispatched).toBe(true);
 
     // Wait for the worker to process the task through its interceptor chain
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     // The interceptor should have captured the headers as a Map
     expect(capturedHeaders).toBeDefined();
@@ -5521,7 +5522,7 @@ describe('header propagation in task dispatch', () => {
     expect(server.registry.getAll()[0]?.inFlight).toBe(0);
 
     await worker.disconnect();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 
   it('propagates empty headers map to interceptor when dispatch includes no headers', async () => {
@@ -5550,7 +5551,7 @@ describe('header propagation in task dispatch', () => {
     });
 
     await worker.connect();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
 
     await server.dispatchTask({
       operationId: 'header-e2e-no-op',
@@ -5558,13 +5559,13 @@ describe('header propagation in task dispatch', () => {
       input: 'payload',
     });
 
-    await Bun.sleep(300);
+    await waitForRealTimersForTesting(300);
 
     // The interceptor should still receive a headers Map, just empty
     expect(capturedHeaders).toBeDefined();
     expect(capturedHeaders!.size).toBe(0);
 
     await worker.disconnect();
-    await Bun.sleep(50);
+    await waitForRealTimersForTesting(50);
   });
 });

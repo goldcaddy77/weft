@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * End-to-end integration — `serve()` routes POST `/jsonrpc` into the
  * JSON-RPC HTTP adapter against the live operation registry.
@@ -36,7 +37,7 @@ async function waitForStatus(
   while (Date.now() < deadline) {
     const state = await engine.get(workflowId);
     if (state?.status === status) return;
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
   throw new Error(`workflow ${workflowId} did not reach ${status} in time`);
 }

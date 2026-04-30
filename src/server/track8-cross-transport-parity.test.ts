@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
@@ -40,7 +41,7 @@ async function waitForStatus(
   while (Date.now() < deadline) {
     const state = await engine.get(workflowId);
     if (state?.status === status) return;
-    await Bun.sleep(10);
+    await sleepForTesting(10);
   }
 
   throw new Error(`workflow ${workflowId} did not reach ${status} in time`);

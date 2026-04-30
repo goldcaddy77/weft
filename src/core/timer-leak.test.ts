@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { waitForever } from '../testing/fake-timers.ts';
 
 import { flush, storageBackends, teardown } from '../testing/storage-backends.ts';
 import type { Context } from './context.ts';
@@ -35,7 +36,7 @@ for (const backend of storageBackends) {
           return count;
         });
         // Keep the workflow alive
-        await Bun.sleep(999_999);
+        await waitForever();
         return count;
       });
 

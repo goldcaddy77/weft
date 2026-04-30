@@ -1,4 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import {
+  advanceTimersByTime,
+  flushMicrotasks,
+  restoreRealTimers,
+  sleepForTesting,
+  useFakeTimers,
+} from '../testing/fake-timers.ts';
 
 import { KEYS } from '../storage/interface';
 import { MemoryStorage } from '../storage/memory';
@@ -183,6 +190,7 @@ describe('Scheduler', () => {
 
   afterEach(() => {
     scheduler[Symbol.dispose]();
+    restoreRealTimers();
   });
 
   function makeTimer(overrides: Partial<TimerEntry> = {}): TimerEntry {
@@ -348,7 +356,7 @@ describe('Scheduler', () => {
     await scheduler.schedule(entry);
 
     // Wait for what would be a poll cycle
-    await Bun.sleep(200);
+    await sleepForTesting(200);
 
     expect(firedEntries).toHaveLength(0);
   });
@@ -372,7 +380,7 @@ describe('Scheduler', () => {
     scheduler[Symbol.dispose]();
 
     // Wait for what would be a poll cycle
-    await Bun.sleep(200);
+    await sleepForTesting(200);
 
     expect(firedEntries).toHaveLength(0);
   });
@@ -389,6 +397,8 @@ describe('Scheduler', () => {
   });
 
   it('polling loop fires expired timers automatically', async () => {
+    useFakeTimers(currentTime);
+
     // Use a very short poll interval so the interval actually fires
     scheduler[Symbol.dispose]();
     scheduler = new Scheduler({
@@ -405,8 +415,8 @@ describe('Scheduler', () => {
 
     scheduler.start();
 
-    // Wait for the poll cycle to fire
-    await Bun.sleep(100);
+    await advanceTimersByTime(20);
+    await flushMicrotasks(20);
 
     expect(firedEntries).toHaveLength(1);
     expect(firedEntries[0]!.id).toBe('timer-1');

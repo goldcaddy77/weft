@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * End-to-end integration — `serve()` WebSocket /jsonrpc endpoint wired to
  * the JSON-RPC WebSocket session adapter.
@@ -68,7 +69,7 @@ async function waitForStatus(
   while (Date.now() < deadline) {
     const state = await engine.get(workflowId);
     if (state?.status === status) return;
-    await Bun.sleep(10);
+    await sleepForTesting(10);
   }
   throw new Error(`workflow ${workflowId} did not reach ${status} in time`);
 }
@@ -244,7 +245,7 @@ describe('serve() — WebSocket /jsonrpc', () => {
       // runs. This short sleep is a cross-handler handoff, not a
       // correctness assertion — the test's real assertion is on
       // `leakedRejection`.
-      await Bun.sleep(50);
+      await sleepForTesting(50);
     } finally {
       process.off('unhandledRejection', rejectionHandler);
     }
@@ -475,7 +476,7 @@ describe('serve() — WebSocket /jsonrpc', () => {
 
     // Close A — B must keep receiving deliveries.
     wsA.close();
-    await Bun.sleep(20);
+    await sleepForTesting(20);
 
     const deliverBPromise = waitForMessage(
       wsB,

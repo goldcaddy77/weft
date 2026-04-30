@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { decode, encode } from '../core/codec.ts';
 import type { Context } from '../core/context.ts';
@@ -19,7 +20,7 @@ import { principalFromApiKey } from './principal.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 /**
@@ -47,7 +48,7 @@ async function waitForCondition(
       return;
     }
 
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
 
   throw new Error(message);
@@ -2164,7 +2165,7 @@ describe('handleRequest', () => {
             );
             await storage.batch(operations);
           }
-          await Bun.sleep(10);
+          await sleepForTesting(10);
         }
       })();
 
@@ -2553,7 +2554,7 @@ describe('handleRequest', () => {
             );
             await storage.batch(ops);
           }
-          await Bun.sleep(10);
+          await sleepForTesting(10);
         }
       })();
 
@@ -2596,7 +2597,7 @@ describe('handleRequest', () => {
             );
             await storage.batch(ops);
           }
-          await Bun.sleep(10);
+          await sleepForTesting(10);
         }
       })();
 

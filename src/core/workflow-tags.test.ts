@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { KEYS, type BatchOperation, type ScanOptions, type Storage } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -133,7 +134,7 @@ class WorkflowStateWriteTrackingStorage implements Storage {
     );
 
     try {
-      await Bun.sleep(25);
+      await sleepForTesting(25);
       await writeOperation();
     } finally {
       this.activeWorkflowWrites--;
@@ -207,7 +208,7 @@ describe('workflow tags', () => {
         id: 'durable-tags',
         tags: ['alpha'],
       });
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       await handle.addTags('beta', 'alpha');
       await handle.removeTags('alpha');
@@ -272,7 +273,7 @@ describe('workflow tags', () => {
         id: 'tag-limit-after-add',
         tags: Array.from({ length: MAX_WORKFLOW_TAGS - 1 }, (_, index) => `tag-${index}`),
       });
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       await expect(handle.addTags('overflow-a', 'overflow-b')).rejects.toThrow(
         `Workflow tags must contain at most ${MAX_WORKFLOW_TAGS} tags`,
@@ -296,7 +297,7 @@ describe('workflow tags', () => {
         id: 'tag-validation-context',
         tags: ['alpha'],
       });
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       await expect(handle.addTags('')).rejects.toThrow('Workflow tags must not contain empty tags');
     } finally {
@@ -315,10 +316,10 @@ describe('workflow tags', () => {
         id: workflowId,
         tags: ['alpha'],
       });
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const addTagsPromise = handle.addTags('beta');
-      await Bun.sleep(0);
+      await sleepForTesting(0);
       const signalPromise = handle.signal('continue', 'done');
 
       await Promise.all([addTagsPromise, signalPromise]);
@@ -373,7 +374,7 @@ describe('workflow tags', () => {
         tags: ['nightly'],
         searchAttributes: { priority: 'high' },
       });
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const attributes = await engine.getAttributes('tag-distinction');
       expect(attributes).toEqual({ priority: 'high' });

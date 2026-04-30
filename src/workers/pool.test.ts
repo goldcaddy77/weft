@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { WorkerPool } from './pool';
 
@@ -325,11 +326,11 @@ describe('WorkerPool', () => {
       });
 
       // Not yet disposed because workers are in use
-      await Bun.sleep(10);
+      await sleepForTesting(10);
       expect(disposed).toBe(false);
 
       pool.release(w1);
-      await Bun.sleep(10);
+      await sleepForTesting(10);
       expect(disposed).toBe(false);
 
       pool.release(w2);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../../testing/fake-timers.ts';
 
 import type { LLMProvider } from '../../ai/providers/interface.ts';
 import type { ChatResponse } from '../../ai/providers/types.ts';
@@ -41,7 +42,7 @@ async function waitForCondition(
       return;
     }
 
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
 
   throw new Error(message);
@@ -104,7 +105,7 @@ class OverlapTrackingMemoryStorage extends MemoryStorage {
     );
 
     try {
-      await Bun.sleep(this.delayMs);
+      await sleepForTesting(this.delayMs);
       await super.batch(operations);
     } finally {
       this.activePurgeBatches--;
@@ -253,7 +254,7 @@ describe('workflow retention', () => {
     expect(overview.defaultRetention).toBeNull();
     expect(overview.nextSweepAt).toBeNull();
 
-    await Bun.sleep(50);
+    await sleepForTesting(50);
     expect(await engine.get(handle.id)).not.toBeNull();
 
     engine[Symbol.dispose]();
@@ -569,9 +570,9 @@ describe('workflow retention', () => {
 
     expect(engine.getRetentionOverview().nextSweepAt).toBeNull();
 
-    await Bun.sleep(5);
+    await sleepForTesting(5);
     storage.resetTopLevelWorkflowStateEntriesSeen();
-    await Bun.sleep(75);
+    await sleepForTesting(75);
 
     expect(storage.topLevelWorkflowStateEntriesSeen).toBe(0);
 

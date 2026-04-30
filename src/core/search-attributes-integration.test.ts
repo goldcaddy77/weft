@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { KEYS } from '../storage/interface.ts';
 import {
@@ -852,7 +853,7 @@ for (const backend of storageBackends) {
         // Run an activity first to give time for the update to be queued
         yield* context.run(async () => {
           // This gives the engine time to process the update request
-          await Bun.sleep(50);
+          await sleepForTesting(50);
           return 'activity-done';
         });
         const { payload, respond } = yield* context.waitForUpdate<string>('pending');

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { waitForCondition } from './testing/fake-timers.ts';
 
 import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1029,22 +1030,17 @@ describe('CLI direct execution', () => {
     );
 
     try {
-      // Wait for server to start
-      let started = false;
-      for (let attempt = 0; attempt < 30; attempt++) {
-        await Bun.sleep(100);
-        try {
-          const response = await fetch(`http://localhost:${port}/v1/health`);
-          if (response.ok) {
-            started = true;
-            break;
+      await waitForCondition(
+        async () => {
+          try {
+            const response = await fetch(`http://localhost:${port}/v1/health`);
+            return response.ok;
+          } catch {
+            return false;
           }
-        } catch {
-          // Server not ready yet
-        }
-      }
-
-      expect(started).toBe(true);
+        },
+        { timeoutMs: 3_000, intervalMs: 25, label: 'CLI health endpoint' },
+      );
     } finally {
       process.kill('SIGTERM');
       await process.exited;

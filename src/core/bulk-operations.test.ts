@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import {
   encodeStorageKeyComponent,
@@ -37,7 +38,7 @@ async function waitForCondition(
       return;
     }
 
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
 
   throw new Error(message);

@@ -9277,11 +9277,33 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       await this.#guardTerminalWorkflow(workflowId);
     } catch (error) {
       if (error instanceof WorkflowTerminalError) {
+        if (await this.#coordinatedUpdateWasConsumed(workflowId, updateId)) {
+          return;
+        }
+
         await this.#updateCoordinator.deleteRequest(workflowId, updateId);
       }
 
       throw error;
     }
+  }
+
+  async #coordinatedUpdateWasConsumed(workflowId: string, updateId: string): Promise<boolean> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const response = await this.#updateCoordinator.getResponse(updateId);
+      if (response !== null) {
+        return true;
+      }
+
+      const request = await this.#storage.get(KEYS.update(workflowId, updateId));
+      if (request === null) {
+        return true;
+      }
+
+      await Promise.resolve();
+    }
+
+    return false;
   }
 
   /**

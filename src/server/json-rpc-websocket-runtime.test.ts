@@ -1,4 +1,5 @@
 import { describe, expect, it, spyOn } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import {
   closeJsonRpcSessionsForShutdown,
@@ -82,7 +83,7 @@ describe('json-rpc websocket runtime helpers', () => {
         },
         Buffer.from('{"jsonrpc":"2.0"}'),
       );
-      await Bun.sleep(0);
+      await sleepForTesting(0);
 
       expect(closeCalls).toEqual([]);
       expect(errorSpy).toHaveBeenCalledWith('[weft] /jsonrpc WS message error', expect.any(Error));
@@ -171,7 +172,7 @@ describe('json-rpc websocket runtime helpers', () => {
 
     try {
       closeJsonRpcWebSocketSession({ session, activeSessions });
-      await Bun.sleep(0);
+      await sleepForTesting(0);
 
       expect(activeSessions.size).toBe(0);
       expect(errorSpy).toHaveBeenCalledWith('[weft] /jsonrpc WS session close error', closeFailure);

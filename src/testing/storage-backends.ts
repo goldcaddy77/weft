@@ -16,6 +16,7 @@ import {
 import { LMDBStorage } from '../storage/lmdb.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { TursoStorage } from '../storage/turso.ts';
+import { sleepForTesting, yieldToEventLoop } from './fake-timers.ts';
 
 /**
  * A factory function that creates a fresh storage instance and returns
@@ -24,7 +25,7 @@ import { TursoStorage } from '../storage/turso.ts';
  */
 export type StorageFactory = () => {
   storage: Storage;
-  cleanup: () => void;
+  cleanup: () => void | Promise<void>;
 };
 
 /** Descriptor for a storage backend used in parametrized tests. */
@@ -69,8 +70,8 @@ export const storageBackends: StorageBackendDescriptor[] = [
       const storage = new LMDBStorage(path);
       return {
         storage,
-        cleanup: () => {
-          storage[Symbol.dispose]();
+        cleanup: async () => {
+          await storage.close();
           if (existsSync(path)) {
             rmSync(path, { recursive: true, force: true });
           }
@@ -131,7 +132,9 @@ export async function storageHas(storage: Storage, key: string): Promise<boolean
 
 /** Drain microtasks so fire-and-forget work completes. */
 export async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  for (let i = 0; i < 5; i++) {
+    await yieldToEventLoop();
+  }
 }
 
 export async function waitForWorkflowStatus(
@@ -148,7 +151,7 @@ export async function waitForWorkflowStatus(
       return;
     }
 
-    await flush();
+    await sleepForTesting(1);
   }
 
   throw new Error(`Expected workflow "${workflowId}" to reach status "${status}"`);
@@ -159,8 +162,11 @@ export async function waitForWorkflowStatus(
  * This ordering prevents "client closed" errors from backends like Turso
  * where async operations may still reference storage after engine disposal.
  */
-export async function teardown(engine?: Engine, storageCleanup?: () => void): Promise<void> {
+export async function teardown(
+  engine?: Engine,
+  storageCleanup?: () => void | Promise<void>,
+): Promise<void> {
   engine?.[Symbol.dispose]();
   await flush();
-  storageCleanup?.();
+  await storageCleanup?.();
 }

@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * Phase 15 — Integration tests for the `handleRequest` pipeline path.
  *
@@ -42,7 +43,7 @@ async function waitForRunning(engine: Engine, workflowId: string): Promise<void>
   while (Date.now() < deadline) {
     const state = await engine.get(workflowId);
     if (state?.status === 'running') return;
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
   throw new Error(`workflow ${workflowId} did not reach running`);
 }

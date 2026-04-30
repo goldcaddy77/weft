@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * Tests for `createEngineEventFeedBackend` — the production
  * `WorkflowEventFeedBackend` implementation that wraps engine-owned
@@ -52,7 +53,7 @@ async function waitForEventCount(
   while (Date.now() < deadline) {
     const events = await engine.getEvents(workflowId);
     if (events.length >= expected) return;
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
   throw new Error(
     `Engine did not accumulate ${expected} events for ${workflowId} within ${timeoutMilliseconds}ms`,
@@ -290,7 +291,7 @@ describe('createEngineEventFeedBackend — subscribeLive(events)', () => {
     try {
       await engine.signal(handle.id, 'release', 'go');
       await handle.result();
-      await Bun.sleep(10);
+      await sleepForTesting(10);
     } finally {
       process.off('unhandledRejection', handler);
       unsubscribeThrower();
@@ -378,7 +379,7 @@ describe('createEngineEventFeedBackend — tokens selector', () => {
     while (Date.now() < deadline) {
       const chunks = await engine.getStreamChunks(workflowId, 'tokens');
       if (chunks.length >= expected) return;
-      await Bun.sleep(5);
+      await sleepForTesting(5);
     }
     throw new Error(
       `Engine did not accumulate ${expected} tokens chunks within ${timeoutMilliseconds}ms`,
