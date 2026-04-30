@@ -4,6 +4,7 @@ import { BudgetPolicyEnforcer } from '../ai/budget-policy.ts';
 import { defineAgent } from '../ai/declaration.ts';
 import { AgentBudgetExceededEvent, AgentBudgetWarningEvent } from '../ai/events.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
+import type { PendingChatResumeState } from '../ai/providers/suspending-provider.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
 import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
 import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
@@ -14,6 +15,7 @@ import {
   Engine,
   ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING,
   ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING,
+  withPendingChatResumeTurnIndex,
   WorkflowHandle,
 } from './engine.ts';
 import {
@@ -2566,6 +2568,24 @@ describe('Engine', () => {
     ]);
 
     engine[Symbol.dispose]();
+  });
+
+  it('prefers the explicit turn index when persisting pending chat resume state', () => {
+    const pendingResumeStateWithHiddenTurnIndex: PendingChatResumeState & {
+      turnIndex: number;
+    } = {
+      hint: { resumeToken: 'llm-ready-token' },
+      payload: { approved: true },
+      resumed: true,
+      turnIndex: 2,
+    };
+
+    expect(withPendingChatResumeTurnIndex(7, pendingResumeStateWithHiddenTurnIndex)).toEqual({
+      hint: { resumeToken: 'llm-ready-token' },
+      payload: { approved: true },
+      resumed: true,
+      turnIndex: 7,
+    });
   });
 
   it('falls back to in-memory waiting when agent suspension cannot park and preserves the workflow signal', async () => {

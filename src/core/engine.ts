@@ -374,6 +374,21 @@ type StoredPendingAgentExecutionState = {
   pendingResume: PendingProviderResumeState;
 };
 
+/**
+ * Apply the authoritative turn index to a pending provider resume snapshot,
+ * even when the runtime object being merged carries its own hidden
+ * `turnIndex` property.
+ */
+export function withPendingChatResumeTurnIndex(
+  turnIndex: number,
+  state: PendingChatResumeState,
+): PendingProviderResumeState {
+  return {
+    ...state,
+    turnIndex,
+  };
+}
+
 type AgentOperationDisposition = { kind: 'completed'; value: unknown } | { kind: 'parked' };
 
 type WorkflowHandleEventQueue = {
@@ -9073,10 +9088,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     await this.#storePendingAgentExecutionState(workflowId, stepIndex, {
       ...executionState,
-      pendingResume: {
-        turnIndex,
-        ...state,
-      },
+      pendingResume: withPendingChatResumeTurnIndex(turnIndex, state),
     });
   }
 
