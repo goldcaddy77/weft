@@ -149,7 +149,23 @@ class LocalScheduleHandle implements ClientScheduleHandle {
 // LocalClient
 // ---------------------------------------------------------------------------
 
-/** In-process Weft client backed by a local {@link Engine}. */
+/**
+ * In-process Weft client backed by a local {@link Engine}.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, LocalClient, type WorkflowContext } from 'weft';
+ *
+ * await using engine = new Engine({ storage: new MemoryStorage() });
+ * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
+ *   return `Hello, ${(input as { name: string }).name}!`;
+ * });
+ *
+ * const client = new LocalClient(engine);
+ * const handle = await client.start('greet', { name: 'World' });
+ * console.log(await handle.result()); // 'Hello, World!'
+ * ```
+ */
 export class LocalClient implements WeftClient {
   readonly #engine: Engine;
 

@@ -37,7 +37,23 @@ import { KEYS } from '../storage/interface';
 // Types
 // ---------------------------------------------------------------------------
 
-/** A tool-call effect record stored in the log. */
+/**
+ * A tool-call effect record stored in the log. The `status` field drives the
+ * deduplication logic in the agent loop.
+ *
+ * @example Inspect the record returned by ToolEffectLog.lookup
+ * ```ts
+ * import type { EffectRecord } from 'weft';
+ *
+ * function describeRecord(record: EffectRecord): string {
+ *   switch (record.status) {
+ *     case 'in-flight': return `${record.toolName} started at ${record.recordedAt}`;
+ *     case 'committed': return `${record.toolName} → ${record.output}`;
+ *     case 'aborted':   return `${record.toolName} failed: ${record.reason}`;
+ *   }
+ * }
+ * ```
+ */
 export type EffectRecord =
   | { status: 'in-flight'; toolName: string; recordedAt: number }
   | { status: 'committed'; toolName: string; output: string; completedAt: number }
@@ -67,6 +83,22 @@ export type ToolEffectLogLike = Pick<
  *
  * Callers should escalate (e.g. human review) rather than silently
  * re-executing a potentially non-idempotent tool.
+ *
+ * @example Catch a replay conflict and route to human review
+ * ```ts
+ * import { ToolCallReplayConflictError } from 'weft';
+ *
+ * try {
+ *   // ... agent loop execution
+ * } catch (error) {
+ *   if (error instanceof ToolCallReplayConflictError) {
+ *     console.error(
+ *       `Conflict for tool "${error.toolName}" (hash ${error.semanticHash}).`,
+ *       'Route to human review before retrying.',
+ *     );
+ *   }
+ * }
+ * ```
  */
 export class ToolCallReplayConflictError extends Error {
   readonly toolName: string;
@@ -99,6 +131,16 @@ export class ToolCallReplayConflictError extends Error {
  * fields (e.g. payment recipient + amount) before hashing, ignoring fields
  * whose variance does not affect the tool's observable effect (retry counters,
  * timestamps, nonces).
+ *
+ * @example Hash only the fields that determine a payment's observable effect
+ * ```ts
+ * import { computeSemanticHash } from 'weft';
+ *
+ * const hash = computeSemanticHash({ recipient: 'alice', amount: 100 });
+ * // Key order is irrelevant — same hash regardless of property insertion order.
+ * const sameHash = computeSemanticHash({ amount: 100, recipient: 'alice' });
+ * console.log(hash === sameHash); // true
+ * ```
  */
 export function computeSemanticHash(input: unknown): string {
   const canonical = canonicalize(input);
@@ -174,6 +216,22 @@ function isEffectRecord(value: unknown): value is EffectRecord {
  * `agentId` is the `operationId` assigned at `ctx.agent()` call-time — it is
  * stable across checkpoint-restore cycles because the engine derives it from
  * the workflow step index, not from a random source.
+ *
+ * @example Create and use a ToolEffectLog for durable deduplication
+ * ```ts
+ * import { ToolEffectLog, computeSemanticHash } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const log = new ToolEffectLog(storage, 'workflow-abc', 'agent-1');
+ *
+ * const hash = computeSemanticHash({ recipient: 'alice', amount: 100 });
+ * await log.record(hash, 'charge');
+ * await log.commit(hash, 'charge', JSON.stringify({ success: true }));
+ *
+ * const record = await log.lookup(hash);
+ * console.log(record?.status); // 'committed'
+ * ```
  */
 export class ToolEffectLog {
   readonly #storage: Storage;

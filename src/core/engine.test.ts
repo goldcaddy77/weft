@@ -10,7 +10,12 @@ import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
 import type { Context, StreamReference } from './context.ts';
-import { Engine, ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING, WorkflowHandle } from './engine.ts';
+import {
+  Engine,
+  ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING,
+  ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING,
+  WorkflowHandle,
+} from './engine.ts';
 import {
   CheckpointSizeWarningEvent,
   CleanupWarningEvent,
@@ -367,6 +372,53 @@ describe('Engine', () => {
     await expect(recoveredHandles[0]!.result()).resolves.toBe('resumed:value');
 
     engine2[Symbol.dispose]();
+  });
+
+  it('cleans up a signal waiter when a buffered signal scan fails after registration', async () => {
+    const workflowId = 'signal-waiter-cleanup';
+    const storage = new MemoryStorage();
+    const originalScan = storage.scan.bind(storage);
+    const targetPrefix = `sig:${encodeStorageKeyComponent(workflowId)}:approval:`;
+    let approvalScanCount = 0;
+
+    storage.scan = function scan(
+      prefix: string,
+      options?: ScanOptions,
+    ): AsyncIterable<[string, Uint8Array]> {
+      if (prefix === targetPrefix) {
+        approvalScanCount += 1;
+        if (approvalScanCount === 2) {
+          return (async function* (): AsyncIterable<[string, Uint8Array]> {
+            throw new Error('simulated signal scan failure');
+          })();
+        }
+      }
+
+      return originalScan(prefix, options);
+    };
+
+    const engine = new Engine({ storage });
+    engine.register('signal-waiter-cleanup', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('approval');
+      return 'unreached';
+    });
+
+    const handle = await engine.start('signal-waiter-cleanup', null, { id: workflowId });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (approvalScanCount === 2) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(approvalScanCount).toBe(2);
+    expect(engine[ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING]()).toBe(0);
+    const resultPromise = handle.result().catch(() => undefined);
+    await engine.cancel(handle.id);
+    await resultPromise;
+
+    engine[Symbol.dispose]();
   });
 
   it('WorkflowCancelledEvent fires on cancel', async () => {
@@ -2371,6 +2423,81 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('closes workflow agent interceptors before parking a suspended ctx.agent()', async () => {
+    const engine = new Engine({ suspendOnLlmWait: true });
+    let interceptorClosedCount = 0;
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    engine.addInterceptor({
+      *agent(interception, next) {
+        try {
+          return yield* next(interception);
+        } finally {
+          interceptorClosedCount += 1;
+        }
+      },
+    } satisfies WorkflowInterceptor);
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('agent-interceptor-parked-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).agent({
+        model: 'test-model',
+        prompt: 'Wait for the provider resume signal',
+        provider,
+      });
+    });
+
+    const handle = await engine.start('agent-interceptor-parked-workflow', null);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+    expect(chatCalls).toHaveLength(0);
+    expect(interceptorClosedCount).toBe(1);
+
+    await engine.signal(handle.id, 'llm-ready-token', { approved: true });
+
+    await expect(handle.result()).resolves.toBe('Agent resumed successfully');
+    expect(interceptorClosedCount).toBe(2);
+
+    engine[Symbol.dispose]();
+  });
+
   it('parks ctx.agent() on a provider resume hint when suspendOnLlmWait is enabled', async () => {
     const engine = new Engine({ suspendOnLlmWait: true });
     const chatCalls: Array<{
@@ -2514,6 +2641,101 @@ describe('Engine', () => {
         turnIndex: 0,
       },
     ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('buffers the public signal and matching internal resume signal in one storage batch', async () => {
+    const storage = new MemoryStorage();
+    const originalBatch = storage.batch.bind(storage);
+    const signalBatchKeys: string[][] = [];
+
+    storage.batch = async (operations) => {
+      const keys = operations.map((operation) => operation.key);
+      if (keys.some((key) => key.startsWith('sig:'))) {
+        signalBatchKeys.push(keys);
+      }
+
+      return await originalBatch(operations);
+    };
+
+    const engine = new Engine({ storage, suspendOnLlmWait: true });
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('batched-resume-signal-workflow', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.onUpdate('touch', () => 'ok');
+      const agentResult = yield* context.agent({
+        model: 'test-model',
+        prompt: 'Wait for the provider resume signal',
+        provider,
+      });
+      const signalPayload = yield* context.waitForSignal<{ approved: boolean }>('llm-ready-token');
+      return {
+        agentResult,
+        signalPayload,
+      };
+    });
+
+    const handle = await engine.start('batched-resume-signal-workflow', null);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (chatCalls.length === 0) {
+        await flush();
+      }
+    }
+
+    signalBatchKeys.length = 0;
+    await engine.signal(handle.id, 'llm-ready-token', { approved: true });
+
+    await expect(handle.result()).resolves.toEqual({
+      agentResult: 'Agent resumed successfully',
+      signalPayload: { approved: true },
+    });
+
+    expect(signalBatchKeys).toHaveLength(1);
+    expect(signalBatchKeys[0]).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          new RegExp(`^sig:${encodeStorageKeyComponent(handle.id)}:llm-ready-token:`),
+        ),
+        expect.stringMatching(
+          new RegExp(
+            `^sig:${encodeStorageKeyComponent(handle.id)}:agent-resume:0000000000:llm-ready-token:`,
+          ),
+        ),
+      ]),
+    );
 
     engine[Symbol.dispose]();
   });
@@ -4734,6 +4956,59 @@ describe('Engine', () => {
 
       expect(await storage.get(reviewKey)).toBeNull();
       expect(warnings).toEqual([]);
+
+      engine[Symbol.dispose]();
+    });
+
+    it('terminal cleanup falls back to scan-and-batch deletion when deletePrefix is unavailable', async () => {
+      const realStorage = new MemoryStorage();
+      const deleteBatches: string[][] = [];
+      const storage: WeftStorage = {
+        get: realStorage.get.bind(realStorage),
+        put: realStorage.put.bind(realStorage),
+        delete: realStorage.delete.bind(realStorage),
+        scan: realStorage.scan.bind(realStorage),
+        batch: async (operations) => {
+          deleteBatches.push(
+            operations
+              .filter((operation) => operation.type === 'delete')
+              .map((operation) => operation.key),
+          );
+          await realStorage.batch(operations);
+        },
+        [Symbol.dispose]() {
+          realStorage[Symbol.dispose]();
+        },
+      };
+
+      const engine = new Engine({ storage });
+
+      engine.register('fallback-terminal-cleanup', async function* (ctx: WorkflowContext) {
+        yield* (ctx as Context).waitForSignal('finish');
+        return 'done';
+      });
+
+      const handle = await engine.start('fallback-terminal-cleanup', null);
+      await flush();
+
+      const signalKey = KEYS.signal(handle.id, 'pre', 'entry');
+      const reviewKey = KEYS.review(handle.id, 'manual-review');
+      const workflowHeaderKey = KEYS.workflowHeaders(handle.id);
+
+      await storage.put(signalKey, encode({ ignored: true }));
+      await storage.put(reviewKey, encode({ status: 'pending' }));
+      await storage.put(workflowHeaderKey, encode([['traceparent', '00-test']]));
+
+      const resultPromise = handle.result();
+      await engine.signal(handle.id, 'finish', null);
+      await expect(resultPromise).resolves.toBe('done');
+
+      await engine.scheduler.tick(Date.now() + 120_000);
+
+      expect(await storage.get(signalKey)).toBeNull();
+      expect(await storage.get(reviewKey)).toBeNull();
+      expect(await storage.get(workflowHeaderKey)).toBeNull();
+      expect(deleteBatches.some((keys) => keys.includes(signalKey))).toBe(true);
 
       engine[Symbol.dispose]();
     });

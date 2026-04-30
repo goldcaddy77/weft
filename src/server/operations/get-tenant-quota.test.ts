@@ -209,4 +209,32 @@ describe('weft.tenants.quota.get', () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: 'Internal server error' });
   });
+
+  it('uses the fallback HTTP mapper for non-special-cased faults', async () => {
+    engine = createEngine();
+
+    const conflictOperation = {
+      ...getTenantQuotaOperation,
+      invoke: async () => {
+        throw {
+          code: 'Conflict',
+          message: 'quota conflict',
+          data: { reason: 'quota conflict' },
+        } satisfies OperationFault;
+      },
+    };
+
+    const response = await handleRequest(
+      new Request('http://localhost/v1/tenants/acme/quota', { method: 'GET' }),
+      engine,
+      {
+        operationRegistry: createOperationRegistry([conflictOperation]),
+        restBindings: [getTenantQuotaRestBinding],
+        ...quotaAuthContext(),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'quota conflict' });
+  });
 });

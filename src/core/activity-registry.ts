@@ -17,7 +17,22 @@ import type { Duration, RetryPolicy } from './types.ts';
 // Public types
 // ---------------------------------------------------------------------------
 
-/** Metadata stored per-activity, keyed to the function reference in a WeakMap. */
+/**
+ * Metadata stored per-activity, keyed to the function reference in a WeakMap.
+ *
+ * @example
+ * ```ts
+ * import { ActivityRegistry, type ActivityMetadata } from 'weft';
+ *
+ * const registry = new ActivityRegistry();
+ * const fn = async (input: unknown) => ({ result: input });
+ * registry.register('processOrder', fn, { queue: 'orders', timeout: '30s' });
+ *
+ * const meta: ActivityMetadata | undefined = registry.getMetadata(fn);
+ * console.log(meta?.name);   // 'processOrder'
+ * console.log(meta?.queue);  // 'orders'
+ * ```
+ */
 export interface ActivityMetadata {
   name: string;
   queue: string;
@@ -26,7 +41,24 @@ export interface ActivityMetadata {
   idempotent?: boolean;
 }
 
-/** Optional overrides when registering an activity. */
+/**
+ * Optional overrides when registering an activity.
+ *
+ * @example
+ * ```ts
+ * import { ActivityRegistry, type ActivityRegistrationOptions } from 'weft';
+ *
+ * const options: ActivityRegistrationOptions = {
+ *   queue: 'high-priority',
+ *   timeout: '60s',
+ *   idempotent: true,
+ * };
+ *
+ * const registry = new ActivityRegistry();
+ * const fn = async (input: unknown) => input;
+ * registry.register('sendNotification', fn, options);
+ * ```
+ */
 export interface ActivityRegistrationOptions {
   queue?: string;
   retry?: RetryPolicy;
@@ -70,6 +102,26 @@ function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOpti
 // ActivityRegistry
 // ---------------------------------------------------------------------------
 
+/**
+ * WeakMap-backed registry mapping activity names to their execute functions
+ * and metadata. Used internally by the {@link Engine} to dispatch activities
+ * by name. Call `engine.registerActivity(name, fn, options)` rather than
+ * constructing an `ActivityRegistry` directly — the engine manages the
+ * registry lifecycle.
+ *
+ * @example
+ * ```ts
+ * import { ActivityRegistry } from 'weft';
+ *
+ * const registry = new ActivityRegistry();
+ * const fn = async (input: unknown) => ({ result: input });
+ * registry.register('processOrder', fn, { queue: 'orders', timeout: '30s' });
+ *
+ * const meta = registry.getMetadata(fn);
+ * console.log(meta?.name);   // 'processOrder'
+ * console.log(meta?.queue);  // 'orders'
+ * ```
+ */
 export class ActivityRegistry {
   /** Metadata keyed to the activity function object. */
   #metadata: WeakMap<object, ActivityMetadata>;

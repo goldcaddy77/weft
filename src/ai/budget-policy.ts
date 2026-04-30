@@ -15,6 +15,30 @@ import { KEYS } from '../storage/interface.ts';
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Options for registering an organization-level budget policy on a
+ * {@link BudgetPolicyEnforcer}. Specifies the namespace plus optional daily
+ * and monthly cost caps enforced before each agent call.
+ *
+ * @example Set daily and monthly caps for an organization namespace
+ * ```ts
+ * import type { BudgetPolicyOptions } from 'weft';
+ * import { BudgetPolicyEnforcer } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const enforcer = new BudgetPolicyEnforcer(storage);
+ *
+ * const policy: BudgetPolicyOptions = {
+ *   namespace: 'acme',
+ *   daily: { maxCost: 10.0 },
+ *   monthly: { maxCost: 200.0 },
+ * };
+ *
+ * enforcer.setPolicy(policy);
+ * await enforcer.checkBudget('acme'); // throws if over limit
+ * ```
+ */
 export interface BudgetPolicyOptions {
   namespace: string;
   daily?: { maxCost: number };
@@ -32,6 +56,29 @@ interface BudgetPolicyCounter {
 // Error
 // ---------------------------------------------------------------------------
 
+/**
+ * Thrown by {@link BudgetPolicyEnforcer.checkBudget} when a namespace's daily
+ * or monthly cost limit has been exceeded. Carries the `namespace`, `period`
+ * ('daily' | 'monthly'), actual `costUsed`, and configured `limit` as properties.
+ *
+ * @example Catch a monthly limit violation
+ * ```ts
+ * import { OrganizationBudgetExceededError, BudgetPolicyEnforcer } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const enforcer = new BudgetPolicyEnforcer(storage);
+ * enforcer.setPolicy({ namespace: 'acme', monthly: { maxCost: 100.0 } });
+ *
+ * try {
+ *   await enforcer.checkBudget('acme');
+ * } catch (error) {
+ *   if (error instanceof OrganizationBudgetExceededError) {
+ *     console.error(`${error.period} budget exceeded: ${error.costUsed.toFixed(2)} / ${error.limit}`);
+ *   }
+ * }
+ * ```
+ */
 export class OrganizationBudgetExceededError extends Error {
   readonly namespace: string;
   readonly period: 'daily' | 'monthly';
@@ -62,6 +109,27 @@ export class OrganizationBudgetExceededError extends Error {
  * increments due to stale reads. Multi-writer safety requires an atomic
  * increment operation on the Storage interface (e.g., SQL UPSERT), which is
  * deferred to a future iteration.
+ *
+ * @example Enforce daily and monthly cost limits per organization namespace
+ * ```ts
+ * import { BudgetPolicyEnforcer } from 'weft';
+ * import { MemoryStorage } from 'weft/storage/memory';
+ *
+ * const storage = new MemoryStorage();
+ * const enforcer = new BudgetPolicyEnforcer(storage);
+ *
+ * enforcer.setPolicy({
+ *   namespace: 'acme',
+ *   daily: { maxCost: 10.0 },
+ *   monthly: { maxCost: 200.0 },
+ * });
+ *
+ * // Before each agent call, check the policy (throws OrganizationBudgetExceededError if over limit).
+ * await enforcer.checkBudget('acme');
+ *
+ * // After the agent call completes, record cost usage.
+ * await enforcer.recordCost('acme', 0.05);
+ * ```
  */
 export class BudgetPolicyEnforcer {
   #policies: Map<string, BudgetPolicyOptions> = new Map();

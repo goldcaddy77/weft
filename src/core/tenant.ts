@@ -25,6 +25,18 @@
  * Opaque identifier plus free-form attributes describing which tenant is
  * running a given workflow. The attributes are free-form so callers can
  * encode things like plan tier, data residency region, feature flags, etc.
+ *
+ * @example
+ * ```ts
+ * import type { TenantContext } from 'weft';
+ *
+ * const tenant: TenantContext = {
+ *   id: 'acme-corp',
+ *   attributes: { tier: 'enterprise', region: 'us-east-1' },
+ * };
+ * console.log(tenant.id);               // 'acme-corp'
+ * console.log(tenant.attributes?.['tier']); // 'enterprise'
+ * ```
  */
 export interface TenantContext {
   /** Stable identifier for the tenant. */
@@ -44,6 +56,22 @@ export interface TenantContext {
  * Resolvers may return synchronously or asynchronously; slow resolvers delay
  * workflow start, so prefer O(1) lookups (e.g. parsing the input, hitting a
  * local cache) over network calls.
+ *
+ * @example
+ * ```ts
+ * import { Engine, type TenantResolver, type TenantContext } from 'weft';
+ *
+ * const resolver: TenantResolver = {
+ *   resolve(_workflowId, input) {
+ *     const record = input as Record<string, unknown>;
+ *     const id = typeof record?.['tenantId'] === 'string' ? record['tenantId'] : undefined;
+ *     return id ? { id } : undefined;
+ *   },
+ * };
+ *
+ * const engine = new Engine({ tenantResolver: resolver });
+ * void engine;
+ * ```
  */
 export interface TenantResolver {
   resolve(
@@ -60,6 +88,9 @@ export interface TenantResolver {
  *
  * @example
  * ```ts
+ * import { Engine, MemoryStorage, tenantFromInputField } from 'weft';
+ *
+ * const storage = new MemoryStorage();
  * const engine = new Engine({
  *   storage,
  *   tenantResolver: tenantFromInputField('tenantId'),

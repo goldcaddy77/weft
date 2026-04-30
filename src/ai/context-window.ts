@@ -2,7 +2,29 @@ import type { Message } from './providers/types.ts';
 
 import { estimateTokens } from './token-counting.ts';
 
-/** Strategy for compacting conversation history. Returns a generator for durable operations. */
+/**
+ * Strategy for compacting conversation history. Returns a generator for durable operations.
+ *
+ * @example Implement a truncation strategy that keeps only the last N messages
+ * ```ts
+ * import type { ContextStrategy } from 'weft';
+ * import { ContextWindowManager } from 'weft';
+ *
+ * const keepLastN = (n: number): ContextStrategy => ({
+ *   name: `keep-last-${n}`,
+ *   async *compact(messages) {
+ *     const kept = messages.slice(-n);
+ *     yield kept;
+ *     return kept;
+ *   },
+ * });
+ *
+ * const manager = new ContextWindowManager({
+ *   maxTokens: 8192,
+ *   strategy: keepLastN(20),
+ * });
+ * ```
+ */
 export interface ContextStrategy {
   /** Human-readable label identifying this strategy (e.g. 'sliding-window', 'summarize'). */
   name: string;
@@ -33,6 +55,29 @@ export interface ContextWindowCheckpoint {
 
 type ResolvedContextWindowOptions = Required<ContextWindowOptions>;
 
+/**
+ * Manages context window compaction for long-running agent conversations.
+ * Monitors token count against a configured limit, invokes the active
+ * {@link ContextStrategy} when the window fills, and checkpoints compacted
+ * state via {@link ContextWindowManager.checkpoint} for crash recovery.
+ *
+ * @example Use a sliding-window strategy and check compaction threshold
+ * ```ts
+ * import { ContextWindowManager, slidingWindowStrategy } from 'weft';
+ *
+ * const manager = new ContextWindowManager({
+ *   maxTokens: 100_000,
+ *   reservedForOutput: 8_192,
+ *   compactAt: 0.85,
+ *   strategy: slidingWindowStrategy({ preserveRecentCount: 30 }),
+ * });
+ *
+ * // Check whether the current token count warrants compaction
+ * const needsCompaction = manager.shouldCompact(90_000);
+ * console.log('Input budget:', manager.inputBudget);
+ * console.log('Needs compaction:', needsCompaction);
+ * ```
+ */
 export class ContextWindowManager {
   #options: ResolvedContextWindowOptions;
   #compactedMessages: Message[] | null = null;
@@ -121,7 +166,22 @@ export class ContextWindowManager {
   }
 }
 
-/** Compose multiple strategies: apply in sequence, checkpoint between each. */
+/**
+ * Compose multiple strategies: apply in sequence, checkpoint between each.
+ *
+ * @example Chain a sliding-window pass followed by a custom summariser
+ * ```ts
+ * import { composeStrategies, noopStrategy, ContextWindowManager } from 'weft';
+ *
+ * // Compose two strategies: run the first, then the second on the result.
+ * const combined = composeStrategies(noopStrategy(), noopStrategy());
+ *
+ * const manager = new ContextWindowManager({
+ *   maxTokens: 16_384,
+ *   strategy: combined,
+ * });
+ * ```
+ */
 export function composeStrategies(...strategies: ContextStrategy[]): ContextStrategy {
   return {
     name: `compose(${strategies.map((s) => s.name).join(', ')})`,
@@ -146,7 +206,24 @@ export function composeStrategies(...strategies: ContextStrategy[]): ContextStra
   };
 }
 
-/** No-op pass-through strategy (default). */
+/**
+ * No-op pass-through strategy (default).
+ *
+ * Returns the original message array unchanged. Used as the default
+ * {@link ContextWindowManager} strategy when none is specified.
+ *
+ * @example Explicitly opt in to the no-op default
+ * ```ts
+ * import { noopStrategy, ContextWindowManager } from 'weft';
+ *
+ * const manager = new ContextWindowManager({
+ *   maxTokens: 4096,
+ *   strategy: noopStrategy(),
+ * });
+ *
+ * // manager.shouldCompact(tokenCount) will still fire, but compact() is a no-op.
+ * ```
+ */
 export function noopStrategy(): ContextStrategy {
   return {
     name: 'noop',

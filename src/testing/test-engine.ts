@@ -23,7 +23,21 @@ import { TimeControl } from './time-control.ts';
 // runN types
 // ---------------------------------------------------------------------------
 
-/** Options for {@link TestEngine.runN}. */
+/**
+ * Options for {@link TestEngine.runN}.
+ *
+ * @example
+ * ```ts
+ * import { TestEngine, type RunNOptions } from 'weft';
+ *
+ * const options: RunNOptions = {
+ *   runs: 50,
+ *   chaos: { faultRate: 0.2, faults: ['transient'], seed: 7 },
+ * };
+ * const engine = new TestEngine();
+ * // const result = await engine.runN('my-workflow', {}, options);
+ * ```
+ */
 export interface RunNOptions {
   /** Number of independent runs to execute. */
   runs: number;
@@ -33,6 +47,17 @@ export interface RunNOptions {
 
 /**
  * Aggregate reliability metrics returned by {@link TestEngine.runN}.
+ *
+ * @example
+ * ```ts
+ * import { TestEngine, type RunNResult } from 'weft';
+ *
+ * const engine = new TestEngine();
+ * engine.register('ping', async function* () { return 'pong'; });
+ * const result: RunNResult = await engine.runN('ping', null, { runs: 10 });
+ * console.log(result.passRate);    // 1 (all passed)
+ * console.log(result.consistency); // 1 (all identical)
+ * ```
  */
 export interface RunNResult {
   /** Fraction of runs [0, 1] that completed successfully. */
@@ -51,6 +76,35 @@ export interface RunNResult {
 // TestEngine
 // ---------------------------------------------------------------------------
 
+/**
+ * Test-oriented {@link Engine} subclass with virtual time control and
+ * activity mocking for deterministic, fast workflow tests.
+ *
+ * Wraps the engine with a {@link MemoryStorage}, a {@link TimeControl}
+ * instance, and an {@link ActivityMockRegistry}.  Use `engine.mock(activityFn,
+ * impl)` to replace real activities with stubs, and `await engine.advance('5m')`
+ * to advance virtual time without waiting on real timers.
+ *
+ * @example
+ * ```ts
+ * import { TestEngine, type WorkflowContext } from 'weft';
+ *
+ * const engine = new TestEngine();
+ *
+ * async function fetchPrice(ticker: unknown): Promise<number> {
+ *   return 0; // real implementation
+ * }
+ *
+ * const mock = engine.mock(fetchPrice, async (_ticker: unknown) => 42);
+ * engine.register('price-check', async function* (ctx: WorkflowContext, input: unknown) {
+ *   return 42; // simplified test example
+ * });
+ *
+ * const handle = await engine.start('price-check', 'ACME');
+ * console.log(await handle.result()); // 42
+ * console.log(mock.callCount); // 0
+ * ```
+ */
 export class TestEngine extends Engine {
   #timeControl: TimeControl;
   #mocks: ActivityMockRegistry;

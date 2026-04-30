@@ -8,6 +8,31 @@ import type { ToolDefinition } from './providers/types.ts';
 /** @internal Brand string for runtime identification of AgentDefinition objects. */
 const AGENT_DEFINITION_BRAND = '__weft_agent_definition__' as const;
 
+/**
+ * The runtime shape of an agent definition returned by {@link defineAgent}.
+ * Carries the model name, optional tools, budget policy, context strategy,
+ * lifecycle hooks, and per-tenant callbacks. Register it on an {@link Engine}
+ * directly or invoke it from inside a workflow via `ctx.agent()`.
+ *
+ * @example Create and register an agent definition
+ * ```ts
+ * import { Engine, defineAgent, type AgentDefinition } from 'weft';
+ * import type { LLMProvider } from 'weft';
+ *
+ * declare const provider: LLMProvider;
+ *
+ * const assistant = defineAgent({
+ *   name: 'summarizer',
+ *   model: 'claude-sonnet-4-5',
+ *   systemPrompt: 'Summarize the given text concisely.',
+ *   maxTurns: 3,
+ * });
+ *
+ * // assistant satisfies AgentDefinition
+ * const engine = new Engine();
+ * engine.register(assistant, { provider });
+ * ```
+ */
 export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   /** @internal Runtime brand for identification via isAgentDefinition(). */
   readonly _brand: string;
@@ -60,6 +85,38 @@ export interface ToolIdentityResult {
   intentCriticalFields: string[];
 }
 
+/**
+ * A tool declaration for use inside an {@link AgentDefinition}. Extends the
+ * base {@link ToolDefinition} schema with an async `execute` function, an
+ * optional post-execution `verify` callback, semantic versioning, and an
+ * optional `identity` function for effect-log deduplication across checkpoint
+ * restores.
+ *
+ * @example Define a tool with semantic identity for deduplication
+ * ```ts
+ * import { computeSemanticHash, type AgentToolDefinition } from 'weft';
+ *
+ * const sendEmailTool: AgentToolDefinition = {
+ *   definition: {
+ *     name: 'send_email',
+ *     description: 'Sends an email to a recipient.',
+ *     inputSchema: {
+ *       type: 'object',
+ *       required: ['to', 'subject'],
+ *       properties: { to: { type: 'string' }, subject: { type: 'string' } },
+ *     },
+ *   },
+ *   execute: async (input: unknown) => {
+ *     const { to, subject } = input as { to: string; subject: string };
+ *     return { sent: true, to, subject };
+ *   },
+ *   identity: (input) => {
+ *     const { to, subject } = input as { to: string; subject: string };
+ *     return { semanticHash: computeSemanticHash({ to, subject }), intentCriticalFields: ['to', 'subject'] };
+ *   },
+ * };
+ * ```
+ */
 export interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -126,7 +183,27 @@ export interface AgentDefinitionOptions<TInput = unknown, TOutput = unknown> {
   readonly _outputType?: TOutput;
 }
 
-/** Runtime check: is the value an AgentDefinition created by defineAgent()? */
+/**
+ * Runtime check: is the value an AgentDefinition created by {@link defineAgent}?
+ *
+ * @example Guard before calling engine.register with an unknown value
+ * ```ts
+ * import { isAgentDefinition, defineAgent } from 'weft';
+ *
+ * const definition = defineAgent({ name: 'my-agent', model: 'claude-sonnet-4-5' });
+ *
+ * function registerIfAgent(value: unknown): void {
+ *   if (isAgentDefinition(value)) {
+ *     console.log('Registering agent:', value.name);
+ *   } else {
+ *     console.log('Not an agent definition');
+ *   }
+ * }
+ *
+ * registerIfAgent(definition);  // logs: Registering agent: my-agent
+ * registerIfAgent({ name: 'x' }); // logs: Not an agent definition
+ * ```
+ */
 export function isAgentDefinition(value: unknown): value is AgentDefinition {
   if (typeof value !== 'object' || value === null) return false;
   const obj = value as Record<string, unknown>;
@@ -149,14 +226,19 @@ export function isAgentDefinition(value: unknown): value is AgentDefinition {
  *
  * @example Standalone agent registered on an engine
  * ```ts
- * import { Engine, defineAgent } from 'weft';
+ * import { Engine, defineAgent, type LLMProvider } from 'weft';
+ *
+ * declare const myProvider: LLMProvider;
  *
  * const assistant = defineAgent({
  *   name: 'travel-assistant',
  *   model: 'claude-sonnet-4-5',
  *   systemPrompt: 'You help users book trips.',
  *   maxTurns: 5,
- *   budget: { maxCost: 1.0 },
+ *   budget: {
+ *     maxCost: 1.0,
+ *     models: { 'claude-sonnet-4-5': { inputCostPer1K: 0.003, outputCostPer1K: 0.015 } },
+ *   },
  * });
  *
  * const engine = new Engine();
@@ -168,14 +250,22 @@ export function isAgentDefinition(value: unknown): value is AgentDefinition {
  *
  * @example Per-tenant tool customization
  * ```ts
- * const searchTool = { definition: { name: 'search', ... }, execute: async () => [] };
- * const adminTool = { definition: { name: 'refund', ... }, execute: async () => null };
+ * import { defineAgent, type AgentToolDefinition } from 'weft';
+ *
+ * const searchTool: AgentToolDefinition = {
+ *   definition: { name: 'search', description: 'search', inputSchema: { type: 'object' } },
+ *   execute: async () => [],
+ * };
+ * const adminTool: AgentToolDefinition = {
+ *   definition: { name: 'refund', description: 'refund', inputSchema: { type: 'object' } },
+ *   execute: async () => null,
+ * };
  *
  * const agent = defineAgent({
  *   name: 'support-agent',
  *   model: 'claude-sonnet-4-5',
  *   toolsForTenant(tenant) {
- *     if (tenant?.attributes?.role === 'admin') return [searchTool, adminTool];
+ *     if (tenant?.attributes?.['role'] === 'admin') return [searchTool, adminTool];
  *     return [searchTool];
  *   },
  *   validateInput(input, tenant) {

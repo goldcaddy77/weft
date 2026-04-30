@@ -7,16 +7,11 @@ import type {
   StreamChunk,
 } from './types';
 
-export interface PendingChatResumeState {
-  hint: ChatResumeHint;
-  resumed: boolean;
-  payload?: unknown;
-}
+export type PendingChatResumeState =
+  | { hint: ChatResumeHint; resumed: false }
+  | { hint: ChatResumeHint; resumed: true; payload: unknown };
 
-export interface ConsumedSignalResult {
-  found: boolean;
-  payload?: unknown;
-}
+export type ConsumedSignalResult = { found: false } | { found: true; payload: unknown };
 
 export interface SuspendingProviderCoordinator {
   load(turnIndex: number): Promise<PendingChatResumeState | undefined>;

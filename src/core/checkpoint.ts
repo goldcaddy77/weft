@@ -30,7 +30,19 @@ export interface CheckpointDivergence {
 // Serialization
 // ---------------------------------------------------------------------------
 
-/** Serialize a Checkpoint to bytes. */
+/**
+ * Serialize a Checkpoint to bytes.
+ *
+ * @example
+ * ```ts
+ * import { createCheckpoint, serializeCheckpoint } from 'weft';
+ *
+ * const checkpoint = createCheckpoint('wf-123', '1.0.0');
+ * const bytes = serializeCheckpoint(checkpoint);
+ * console.log(bytes instanceof Uint8Array); // true
+ * console.log(bytes.byteLength > 0);        // true
+ * ```
+ */
 export function serializeCheckpoint(checkpoint: Checkpoint, serializer?: Serializer): Uint8Array {
   if (serializer) {
     return serializer.serialize(checkpoint);
@@ -38,7 +50,20 @@ export function serializeCheckpoint(checkpoint: Checkpoint, serializer?: Seriali
   return encode(checkpoint);
 }
 
-/** Deserialize bytes to a Checkpoint. Throws if invalid. */
+/**
+ * Deserialize bytes to a Checkpoint. Throws if invalid.
+ *
+ * @example
+ * ```ts
+ * import { createCheckpoint, serializeCheckpoint, deserializeCheckpoint } from 'weft';
+ *
+ * const checkpoint = createCheckpoint('wf-456', '1.0.0');
+ * const bytes = serializeCheckpoint(checkpoint);
+ * const restored = deserializeCheckpoint(bytes);
+ * console.log(restored.workflowId); // 'wf-456'
+ * console.log(restored.step);       // 0
+ * ```
+ */
 export function deserializeCheckpoint(bytes: Uint8Array, serializer?: Serializer): Checkpoint {
   let decoded: unknown;
 
@@ -56,7 +81,19 @@ export function deserializeCheckpoint(bytes: Uint8Array, serializer?: Serializer
 // Creation and advancement
 // ---------------------------------------------------------------------------
 
-/** Create a fresh checkpoint for a new workflow. */
+/**
+ * Create a fresh checkpoint for a new workflow.
+ *
+ * @example
+ * ```ts
+ * import { createCheckpoint } from 'weft';
+ *
+ * const checkpoint = createCheckpoint('wf-789', '1.0.0');
+ * console.log(checkpoint.workflowId); // 'wf-789'
+ * console.log(checkpoint.step);       // 0
+ * console.log(checkpoint.version);    // '1.0.0'
+ * ```
+ */
 export function createCheckpoint(
   workflowId: WorkflowId,
   version: string,
@@ -74,7 +111,19 @@ export function createCheckpoint(
   };
 }
 
-/** Advance a checkpoint to the next step with new locals. */
+/**
+ * Advance a checkpoint to the next step with new locals.
+ *
+ * @example
+ * ```ts
+ * import { createCheckpoint, advanceCheckpoint } from 'weft';
+ *
+ * const checkpoint = createCheckpoint('wf-abc', '1.0.0');
+ * const next = advanceCheckpoint(checkpoint, { userId: 'u-1', status: 'active' });
+ * console.log(next.step);            // 1
+ * console.log(next.locals['userId']);   // 'u-1'
+ * ```
+ */
 export function advanceCheckpoint(
   checkpoint: Checkpoint,
   locals: Record<string, unknown>,
@@ -144,7 +193,21 @@ export function validateCheckpointRoundTrip(
   };
 }
 
-/** Get the serialized size of a checkpoint in bytes. */
+/**
+ * Get the serialized size of a checkpoint in bytes.
+ *
+ * @example
+ * ```ts
+ * import { createCheckpoint, advanceCheckpoint, checkpointSizeBytes } from 'weft';
+ *
+ * const cp = advanceCheckpoint(
+ *   createCheckpoint('wf-size', '1.0.0'),
+ *   { items: Array.from({ length: 100 }, (_, i) => i) },
+ * );
+ * const bytes = checkpointSizeBytes(cp);
+ * console.log(bytes > 0); // true
+ * ```
+ */
 export function checkpointSizeBytes(checkpoint: Checkpoint, serializer?: Serializer): number {
   return serializeCheckpoint(checkpoint, serializer).byteLength;
 }
