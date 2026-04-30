@@ -25,6 +25,10 @@ export { BunSQLiteStorage as SQLiteStorage };
  * `':memory:'` (the default) for ephemeral storage, or a file path for durable
  * persistence across restarts.
  *
+ * `query<T>(sql, params?)` runs read-only SQL against the underlying database
+ * after validation with `assertReadOnlyQuery`. It is intended for dashboards or
+ * debugging; arbitrary mutations are rejected.
+ *
  * @example
  * ```ts
  * import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';

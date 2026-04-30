@@ -100,7 +100,11 @@ export type AnnotatedMessage = Message & {
 
 /** Returned by {@link PromptCache.annotate}. */
 export interface AnnotateResult {
-  /** The message array with cache_control markers on the prefix boundary. */
+  /**
+   * On a hit, a shallow-copied array with the boundary message replaced by an
+   * annotated copy. On a miss, the original input array is returned unchanged
+   * (no allocation).
+   */
   messages: AnnotatedMessage[];
   /** True when a prefix of ≥2 messages was found in the trie. */
   hit: boolean;
@@ -221,6 +225,12 @@ function subtreeContains(from: TrieNode, target: TrieNode): boolean {
 
 /**
  * Templated radix trie for LLM prompt prefix sharing.
+ *
+ * The constructor accepts `{ maxEntries?: number; metrics?: MetricsCollector }`.
+ * `maxEntries` defaults to 1000 — the oldest terminal entry is evicted when
+ * the cap is reached. `metrics`, when provided, increments
+ * `PROMPT_CACHE_HIT_METRIC` and `PROMPT_CACHE_MISS_METRIC` on every
+ * `annotate()` call.
  *
  * @example Basic usage
  * ```ts

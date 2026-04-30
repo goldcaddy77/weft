@@ -37,6 +37,7 @@ import {
  * const store = withCodec(raw, csvCodec);
  * await store.put('row:1', ['alice', '30', 'eng']);
  * const row = await store.get('row:1');
+ * console.log(row?.join('|'));
  * ```
  */
 export interface StorageCodec<Value> {
@@ -65,6 +66,19 @@ export type JsonPrimitive = boolean | null | number | string;
  * plain JSON-serialisable data — numbers, strings, booleans, null, arrays, and
  * plain objects. For richer types (Date, Map, Uint8Array) prefer
  * {@link MessagePackValue}.
+ *
+ * @example
+ * ```ts
+ * import type { JsonValue } from 'weft';
+ *
+ * const value: JsonValue = {
+ *   ok: true,
+ *   rows: [{ id: 1, tags: ['a', 'b'] }],
+ *   empty: null,
+ * };
+ * // BigInt, Date, and Map values would be type errors here.
+ * void value;
+ * ```
  */
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 export type MessagePackPrimitive = bigint | boolean | null | number | string | undefined;
@@ -124,6 +138,9 @@ export type TypedBatchOperation<Value> =
  * underlying codec.  Obtain a `TypedStorage` via {@link withCodec},
  * {@link jsonCodec}, or {@link msgpackCodec} rather than implementing it
  * directly.
+ * Note: `TypedStorage` does not surface `Storage.conditionalBatch`,
+ * `Storage.query`, or `Storage.scoped` — drop down to the underlying raw
+ * storage to use those operations.
  *
  * @example
  * ```ts
@@ -226,6 +243,9 @@ class CodecStorage<Value> implements TypedStorage<Value> {
  * Use the built-in {@link jsonCodec} or {@link msgpackCodec} factories as the
  * `codec` argument, or supply a custom implementation.  The returned store
  * disposes the underlying storage when its own `[Symbol.dispose]` is called.
+ * Because the codec store calls `[Symbol.dispose]` on the inner storage, do not
+ * share the same `Storage` between two `withCodec` wrappers — disposing the
+ * second wrapper will call dispose on already-disposed storage.
  *
  * @example
  * ```ts

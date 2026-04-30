@@ -225,7 +225,9 @@ async function raiseTimeoutFault(timeoutMilliseconds: number): Promise<never> {
  *   async (input: unknown) => ({ sent: true }),
  *   { faultRate: 0.3, faults: ['transient'], seed: 1 },
  * );
- * // Use noisySendEmail as the activity mock in TestEngine
+ * const realSendEmail = async (i: unknown) => ({ sent: true });
+ * const engine = new TestEngine();
+ * engine.mock(realSendEmail, noisySendEmail);
  * ```
  */
 export function withChaos<TInput, TOutput>(

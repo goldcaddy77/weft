@@ -40,7 +40,7 @@ const TABLE_INIT = `CREATE TABLE IF NOT EXISTS kv (
  * Storage adapter backed by Turso/libSQL for distributed SQLite deployments.
  *
  * Implements the same `Storage` interface as `BunSQLiteStorage`, but uses `@libsql/client`
- * so the database can be a remote Turso instance, an embedded replica, or a local file.
+ * so the database can be a remote Turso instance or a local file.
  * Switch from `BunSQLiteStorage` to `TursoStorage` by changing the connection string —
  * the rest of the application stays the same.
  *

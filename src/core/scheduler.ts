@@ -137,10 +137,15 @@ export function normalizeStorageTimestamp(timestamp: number, fieldName: string):
  * import { parseDuration } from 'weft';
  *
  * console.log(parseDuration(5000));       // 5000
+ * console.log(parseDuration('250ms'));    // 250
  * console.log(parseDuration('30s'));      // 30000
  * console.log(parseDuration('5 minutes')); // 300000
  * console.log(parseDuration('2h'));       // 7200000
+ * console.log(parseDuration('1d'));       // 86400000
  * ```
+ *
+ * @throws Error when the string uses an invalid format or unknown unit.
+ * @throws RangeError when the resulting duration is negative or non-finite.
  */
 export function parseDuration(duration: Duration): number {
   if (typeof duration === 'number') {
@@ -175,6 +180,9 @@ export function parseDuration(duration: Duration): number {
 
 /**
  * Calculate exponential backoff delay for a given retry attempt.
+ * `attempt` is 1-indexed: `calculateBackoff(1, policy)` returns
+ * `initialBackoff` directly. Pass `0` only for non-retry probes; the result is
+ * `initialBackoff / backoffMultiplier`.
  *
  * @example
  * ```ts

@@ -5444,7 +5444,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Span hierarchy is correct.** Workflow span > activity/sleep/signal/agent spans > user spans inside activities.
 - [x] **OpenTelemetry metrics defined.** `weft.workflow.duration`, `weft.activity.duration`, `weft.activity.attempts`, `weft.workflow.active`.
 - [x] **Metrics exportable to Prometheus via standard OTel exporter.** `/v1/metrics` backed by OTel metrics.
-- [x] **Remote worker example in documentation.** Shows `interceptors: [activity]` on remote worker constructor. (See `docs/guides/remote-workers.md`; search for `const { activity } = createObservabilityInterceptors()` and the nearby `new RemoteWorker({ … interceptors: [activity] })` example.)
+- [x] **Remote worker example in documentation.** Shows `interceptors: [activity]` on remote worker constructor. (See `documentation/guides/remote-workers.md`; search for `const { activity } = createObservabilityInterceptors()` and the nearby `new RemoteWorker({ … interceptors: [activity] })` example.)
 - [x] **Composable with other interceptors.** Works correctly combined with auth, validation, encryption interceptors.
 
 ### DX

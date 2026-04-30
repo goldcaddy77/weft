@@ -28,12 +28,16 @@ import {
 /**
  * Options for agent-aware compression in {@link CompressedStorage}.
  *
+ * `agentWorkflowIds` is the gate for agent-aware compression. When omitted,
+ * `agentAlgorithm` and `agentThreshold` are ignored.
+ *
  * @example
  * ```ts
  * import { MemoryStorage } from 'weft';
  * import { CompressedStorage, type AgentCompressionOptions } from 'weft/storage/compressed';
  *
  * const agentOptions: AgentCompressionOptions = {
+ *   agentWorkflowIds: () => new Set(['my-agent-workflow-id']),
  *   agentAlgorithm: 'brotli',
  *   agentThreshold: 512,
  * };

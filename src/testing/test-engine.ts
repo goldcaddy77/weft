@@ -82,8 +82,9 @@ export interface RunNResult {
  *
  * Wraps the engine with a {@link MemoryStorage}, a {@link TimeControl}
  * instance, and an {@link ActivityMockRegistry}.  Use `engine.mock(activityFn,
- * impl)` to replace real activities with stubs, and `await engine.advance('5m')`
- * to advance virtual time without waiting on real timers.
+ * impl)` to replace real activities with stubs, and
+ * `await engine.advanceTime('5m')` to advance virtual time without waiting on
+ * real timers.
  *
  * @example
  * ```ts

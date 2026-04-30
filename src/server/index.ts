@@ -221,6 +221,12 @@ export interface TaskDispatch {
  * in TypeScript 5.2+ to have the server stop automatically when the enclosing
  * block exits.
  *
+ * **Type availability note:** `registry` is typed as `WorkerRegistry`, which
+ * is exported from `'weft'` but not from `'weft/server'`. `taskQueue` is typed
+ * as `TaskQueue`, which is an internal type not re-exported from any public
+ * entry point. Prefer using `WeftServer` methods (`dispatchTask`,
+ * `shutdownWorker`, etc.) rather than reaching into `taskQueue` directly.
+ *
  * @example
  * ```ts
  * import { serve, type WeftServer } from 'weft/server';
@@ -487,8 +493,16 @@ function getWorkflowIdFromEvent(event: Event): string | undefined {
 
 /**
  * Attach event listeners to the engine that broadcast events via WebSocket
- * and persist each event to storage so GET /v1/workflows/:id/events returns data.
+ * and persist each event to storage so `GET /v1/workflows/:id/events` returns data.
  * Returns a handle exposing a cleanup function and a per-workflow eviction hook.
+ *
+ * @param engine - The engine whose events will be listened to.
+ * @param server - The Bun server used to `server.publish()` WebSocket messages.
+ * @param options.publishTokenMessage - Optional override for token-event delivery.
+ *   When provided, this callback is called instead of `server.publish()` for
+ *   `TokenEvent` messages, enabling per-workflow stream sockets to be used in
+ *   place of the default pub/sub channel. Leave unset unless you manage stream
+ *   sockets separately (as `serve()` does internally).
  *
  * @example
  * ```ts
@@ -498,8 +512,15 @@ function getWorkflowIdFromEvent(event: Event): string | undefined {
  * await using engine = new Engine({ storage: new MemoryStorage() });
  * const bunServer = Bun.serve({ fetch: () => new Response('ok') });
  * const handle = wireEventBroadcasting(engine, bunServer);
- * // events are now broadcast to WebSocket subscribers
- * handle.dispose(); // cleanup on shutdown
+ *
+ * // Wire a terminal-event listener to clean up per-workflow bookkeeping.
+ * engine.addEventListener('workflow:completed', (e) => {
+ *   const workflowId = (e as { workflowId?: string }).workflowId;
+ *   if (workflowId) handle.cleanupWorkflow(workflowId);
+ * });
+ *
+ * // On server shutdown, remove all event listeners.
+ * handle.dispose();
  * ```
  */
 export function wireEventBroadcasting(
@@ -758,6 +779,15 @@ export function wireEventBroadcasting(
 /**
  * Start the Weft HTTP + WebSocket server with embedded dashboard.
  *
+ * `serve()` validates the supplied `auth` configuration synchronously and
+ * throws `Error` before binding the port if any auth setting is invalid.
+ * In-flight task records from previous server runs are restored from storage
+ * on startup so no tasks are silently lost across restarts.
+ *
+ * The returned `WeftServer.taskQueue` field is intentionally opaque — prefer
+ * `WeftServer` methods (`dispatchTask`, `shutdownWorker`, etc.) over reaching
+ * into it directly.
+ *
  * @example
  * ```ts
  * import { Engine, MemoryStorage } from 'weft';
@@ -768,9 +798,8 @@ export function wireEventBroadcasting(
  *   return `Hello, ${(input as { name: string }).name}!`;
  * });
  *
- * const server = serve({ engine, port: 7233 });
+ * await using server = serve({ engine, port: 7233 });
  * console.log(`Weft listening on ${server.url}`);
- * await server.stop();
  * ```
  */
 export function serve(options: ServeOptions): WeftServer {

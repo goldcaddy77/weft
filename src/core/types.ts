@@ -41,7 +41,7 @@ export type OperationId = string;
  * via `engine.list({ attributes: [{ key: 'failureCategory', value: 'planning' }] })`.
  *
  * - `'memory'`    — context window exceeded (LLM / agent)
- * - `'reflection'` — reserved for future use (complex to detect automatically)
+ * - `'reflection'` — never assigned by the engine today; reserved as a typed slot for future categorisation
  * - `'planning'`  — LLM produced an invalid tool call or schema violation
  * - `'action'`    — an agent tool execution threw
  * - `'system'`    — any other failure (default for non-agent errors, storage errors, etc.)
@@ -90,7 +90,11 @@ export type WorkflowStatus =
  *
  * Returned by `handle.state()` and `engine.get(workflowId)`. Users observe
  * this shape — they don't construct it. Includes the input, current status,
- * tenant, attributes, retention policy snapshot, and lineage information.
+ * tenant, attributes, retention policy snapshot, and lineage information,
+ * plus `failureCategory` (populated on failed workflows), `agentVersion` and
+ * `toolVersions` (set when registered via an AgentDefinition), `forkedFrom`
+ * lineage metadata, and the optional `executionDeadline`/`terminalCleanupToken`
+ * housekeeping fields.
  */
 export interface WorkflowState {
   id: WorkflowId;
@@ -288,6 +292,10 @@ export type WorkflowTimelineStatus = 'running' | 'completed' | 'failed' | 'cance
  * A single chronological entry in a workflow's execution timeline, summarising
  * one operation (activity call, sleep, signal wait, etc.). Returned by
  * `engine.getTimeline(workflowId)` for replay and debugging.
+ * The optional `versionTuple` field is populated only for entries produced by
+ * versioned workflows or agents and carries the
+ * `(workflowVersion, agentVersion, toolVersions[])` tuple captured at the time
+ * of the operation.
  */
 export type WorkflowTimelineEntry = {
   step: number;
@@ -432,6 +440,10 @@ export type SearchAttributeSchema = Record<string, SearchAttributeDefinition>;
  * execution; `tags` and `searchAttributes` make the workflow discoverable
  * via filters.
  *
+ * `HttpClient.start` does not yet forward `idempotencyKey` or
+ * `searchAttributes` to the server (silent drop) — pass `LocalClient` for
+ * full StartOptions support, or add the fields after start via `setAttributes`.
+ *
  * @example Start a delayed workflow with tags and search attributes
  * ```ts
  * import { Engine, type StartOptions } from 'weft';
@@ -492,6 +504,10 @@ export interface ForkOptions {
  * Pluggable serialization interface for workflow checkpoints and activity
  * payloads. Implement this to substitute MessagePack with a custom codec
  * (e.g. CBOR, Protobuf, JSON). Pass an instance to {@link EngineOptions.serializer}.
+ * Switching serializers on an engine with persisted state is a breaking
+ * change — checkpoints written with the previous serializer will fail to
+ * decode. Migrate state explicitly (e.g. read with the old serializer,
+ * re-write with the new) before flipping the option.
  *
  * @example
  * ```ts
@@ -522,10 +538,10 @@ export interface Serializer {
 /**
  * Configuration options for the {@link Engine} constructor.
  *
- * All fields are optional. The most common overrides are `storage` (swap
- * in-memory for a durable backend), `retention` (auto-delete old workflows),
- * and `development` (enable extra runtime warnings). For multi-tenant
- * deployments combine `tenantResolver` with `quotas`.
+ * All fields are optional. Common overrides include `storage`, `retention`,
+ * `development`, `serializer`, `compression`, `workerExecution`,
+ * `defaultModelRouter`, `alerts`, and `tenantResolver`/`quotas` for
+ * multi-tenant deployments.
  *
  * @example
  * ```ts
@@ -848,6 +864,9 @@ export type WorkerOutboundMessage =
  * and the start `input`, then drives the generator by feeding operation
  * results back via `next`. Cast `ctx` to the concrete {@link Context} class
  * to access `run`, `sleep`, `agent`, and other execution primitives.
+ * Use `yield*` (delegated yield) when calling Context methods
+ * (`(ctx as Context).run(...)`, `.sleep(...)`, `.agent(...)`); a bare `yield`
+ * will not produce the operation results expected by the engine.
  *
  * @example
  * ```ts
@@ -928,9 +947,10 @@ export type StepWorkflowFunction<TInput = unknown, TOutput = unknown> = (
 ) => Promise<TOutput>;
 
 /**
- * The generator type returned by operations on {@link WorkflowContext} such as
- * `ctx.pipe()`, `ctx.map()`, and `ctx.reduce()`. Use `yield*` to consume it
- * inside a workflow generator function; the result type is `TResult`.
+ * Returned by composition operators on {@link WorkflowContext} and durable
+ * operation methods on {@link Context} (run, sleep, race, offload, etc.).
+ * Use `yield*` to consume it inside a workflow generator function; the result
+ * type is `TResult`.
  *
  * @example
  * ```ts
@@ -955,7 +975,13 @@ export type WorkflowOperation<TResult> = Generator<unknown, TResult, unknown>;
  * Typed per-workflow session state slot returned by `ctx.sessionState(key)`.
  * Survives checkpoint recovery but is scoped to the current workflow instance.
  * Use `get` to read the current value, `set` or `update` to write, and `run`
- * to execute a function with access to the stored value as a generator operation.
+ * to schedule a sticky durable activity that may need session-bound context.
+ * `clear()` removes the stored value; subsequent `get()` returns the handle's
+ * captured `initialValue` if one was provided, otherwise `undefined`.
+ * `run` schedules the function as a regular activity routed through sticky
+ * worker execution. The function receives only the arguments you pass to
+ * `run(...)` — it cannot read the slot from inside. Read `session.get()`
+ * before yielding the run if the function needs the current value.
  */
 export interface WorkflowSessionState<T> {
   get(): T | undefined;
@@ -973,6 +999,9 @@ export interface WorkflowSessionState<T> {
  * (`ctx.pipe`, `ctx.map`, `ctx.reduce`): a registered workflow name string,
  * a {@link WorkflowFunction} reference, or a {@link StepWorkflowFunction}
  * reference. The engine resolves the actual workflow type at runtime.
+ * Function references must be passed to `engine.register(name, fn)` *before*
+ * they appear in composition operators — passing an unregistered function
+ * reference throws at runtime.
  *
  * @example
  * ```ts
@@ -999,7 +1028,8 @@ export type ChildWorkflowTarget<TInput = unknown, TOutput = unknown> =
 /**
  * Options passed to child workflow invocations within `ctx.pipe`, `ctx.map`,
  * or `ctx.reduce`. Currently accepts an optional `id` to control the child
- * workflow ID; additional fields are passed through as-is for future extension.
+ * workflow ID; additional fields are reserved for future fields; today the
+ * engine reads only `id` from this record and ignores other keys.
  */
 export type ChildWorkflowOptions = Record<string, unknown> & {
   id?: string;
@@ -1069,6 +1099,9 @@ export type WorkflowPipeStageDefinition<TInput = unknown, TOutput = unknown> =
  * Options for `ctx.map(items, workflowType, options)`. Controls the maximum
  * number of child workflows that run simultaneously. Defaults to running all
  * items in parallel when `concurrency` is not set.
+ * The actual fan-out is also bounded by `EngineOptions.maxNestingDepth`
+ * (default 10) — passing a `concurrency` higher than the remaining nesting
+ * budget will surface a runtime error, not silently throttle.
  *
  * @example
  * ```ts
@@ -1264,7 +1297,8 @@ export interface WorkflowContext {
  * Full registration descriptor used when calling `engine.register(type, registration)`.
  * Bundles the workflow handler with optional metadata: version for live
  * migration, `searchAttributes` schema for indexing, a `retention` policy,
- * and domain `constraints` evaluated at every checkpoint.
+ * domain `constraints`, and a `migrate` callback that transforms checkpoint
+ * state when versions differ.
  *
  * @example
  * ```ts
@@ -1414,7 +1448,7 @@ export interface TenantQuotaOptions {
 /**
  * Current usage and configured limit for a single tenant quota dimension.
  * `limit` is `null` when no limit was configured for this dimension.
- * Returned as part of {@link TenantQuotaUsage} from `engine.getTenantQuotaUsage`.
+ * Returned as part of {@link TenantQuotaUsage} from `engine.getQuotaUsage`.
  */
 export interface TenantQuotaMetricUsage {
   used: number;
@@ -1432,7 +1466,7 @@ export interface TenantWorkflowCreationRateUsage extends TenantQuotaMetricUsage 
 
 /**
  * Snapshot of all quota usage metrics for a specific tenant. Returned by
- * `engine.getTenantQuotaUsage(tenantId)`. Read `activeWorkflows.used` vs
+ * `engine.getQuotaUsage(tenantId)`. Read `activeWorkflows.used` vs
  * `activeWorkflows.limit` to determine headroom before hitting concurrency limits.
  */
 export interface TenantQuotaUsage {
@@ -1458,7 +1492,9 @@ export interface AttributeFilter {
 /**
  * Generic paginated response envelope returned by list operations such as
  * {@link Engine.list} and `engine.listSchedules`. `total` is the full count
- * matching the filter; `items` is the current page slice.
+ * matching the filter; `items` is the current page slice. `items.length` is
+ * bounded by `limit`; the consumer reaches the end of the result set when
+ * `offset + items.length >= total`.
  */
 export interface PaginatedResult<T> {
   items: T[];
@@ -1475,6 +1511,9 @@ export interface PaginatedResult<T> {
  * Lightweight summary of a workflow returned by list operations. Contains
  * identity and lifecycle fields but not the full input, result, or checkpoint.
  * Use {@link Engine.get} to retrieve the complete {@link WorkflowState}.
+ * Notably absent from the summary: `input`, `result`, `error`, `tenant`,
+ * `failureCategory`, and `forkedFrom` — fetch the full `WorkflowState` via
+ * `engine.get(id)` to access those.
  */
 export interface WorkflowSummary {
   id: WorkflowId;
@@ -1557,7 +1596,7 @@ export type ScheduleStatus = 'active' | 'paused' | 'cancelled';
  * const engine = new Engine();
  * engine.register('hourly', async function* () { return 'done'; });
  * const policy: ScheduleOverlapPolicy = 'skip';
- * await engine.schedule('0 * * * *', 'hourly', '', { overlap: policy });
+ * await engine.schedule('hourly', null, '0 * * * *', { overlap: policy });
  * ```
  */
 export type ScheduleOverlapPolicy = 'skip' | 'queue' | 'cancel-running' | 'allow';
@@ -1575,7 +1614,7 @@ export type ScheduleOverlapPolicy = 'skip' | 'queue' | 'cancel-running' | 'allow
  * const engine = new Engine();
  * engine.register('report', async function* () { return 'ok'; });
  * const options: ScheduleOptions = { id: 'daily-report', overlap: 'skip', backfill: false };
- * const handle = await engine.schedule('0 9 * * *', 'report', '', options);
+ * const handle = await engine.schedule('report', null, '0 9 * * *', options);
  * void handle;
  * ```
  */
@@ -1586,9 +1625,10 @@ export interface ScheduleOptions {
 }
 
 /**
- * Full persisted state of a recurring schedule. Returned by
- * `engine.getSchedule(id)`. Use {@link ScheduleSummary} for the lightweight
- * list variant that omits the tenant field.
+ * Full persisted state of a recurring schedule. Returned by `engine.getSchedule(id)`.
+ * Use {@link ScheduleSummary} (returned by list operations and `engine.getSchedule()`)
+ * for the lightweight variant — it omits `input` and `tenant` to keep payloads
+ * small and avoid exposing tenant context to unrelated callers.
  */
 export interface ScheduleState {
   id: string;
@@ -1655,9 +1695,10 @@ export interface ScheduleFilter {
 // ---------------------------------------------------------------------------
 
 /**
- * Raw event record stored in the engine's event log for a workflow. Returned
- * by `engine.getEvents(workflowId)`. Each entry carries a free-form `data`
- * map; use the typed {@link WeftEventMap} subclasses for richer access.
+ * Event entries returned by `engine.getEvents()` are stored records — use
+ * `engine.addEventListener(type, handler)` with the typed `Event` subclasses
+ * (e.g. `WorkflowCompletedEvent`) for live observation; the stored `data` map
+ * is provided for replay/audit.
  */
 export interface WorkflowEvent {
   type: string;
@@ -1668,7 +1709,7 @@ export interface WorkflowEvent {
 /**
  * Full replay package for a workflow step, combining the checkpoint state,
  * the accumulated operation results up to that step, and the event log.
- * Returned by `engine.replayWorkflow` for time-travel debugging.
+ * Returned by `engine.replayTo(workflowId, step)` for time-travel debugging.
  */
 export type WorkflowReplay = {
   checkpoint: CheckpointState;
@@ -1726,6 +1767,10 @@ export interface SubmitReviewOptions {
  * Result of a coordinated update sent via `engine.submitCoordinatedUpdate`.
  * Contains the `updateId` and either the resolved `result` or an `error`
  * string if the workflow handler threw.
+ * Exactly one of `result` or `error` is populated for a settled update:
+ * `result` on handler success, `error` (a stringified failure message) on
+ * handler throw. Both may be `undefined` on transport-level rejections from
+ * `HttpClient.submitCoordinatedUpdate`.
  */
 export interface CoordinatedUpdateResult {
   updateId: string;
@@ -1771,7 +1816,7 @@ export type BulkDeleteResult = {
 };
 
 /**
- * Result of a bulk tag operation (`engine.addTagsAll` / `engine.removeTagsAll`).
+ * Result of a bulk tag operation (`engine.tagAll` / `engine.untagAll`).
  * Reports how many workflows had their tags modified.
  */
 export type BulkTagResult = {

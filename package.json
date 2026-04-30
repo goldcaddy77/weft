@@ -140,6 +140,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "lint": "oxlint --type-aware --tsconfig ./tsconfig.json",
     "lint:fix": "oxlint --fix --type-aware --tsconfig ./tsconfig.json",
+    "markdown-doctests:inventory": "bun run scripts/extract-markdown-doctests.ts inventory",
     "prepack": "bun run build && bun run verify:exports && bun run verify:portability",
     "pr:title": "bun run scripts/pr-title.ts",
     "prepare": "husky",
@@ -153,7 +154,8 @@
     "verify:jsdoc": "bun run scripts/audit-jsdoc-manifest.ts",
     "verify:jsdoc:declarations": "bun run scripts/check-declaration-jsdoc.ts --all",
     "verify:jsdoc:doctests": "bun run scripts/extract-doctests.ts && bunx tsc --noEmit -p tmp/doctests/",
-    "verify:jsdoc:full": "bun run build && bun run verify:jsdoc && bun run verify:jsdoc:doctests && bun run verify:jsdoc:declarations",
+    "verify:jsdoc:full": "bun run build && bun run verify:jsdoc && bun run verify:jsdoc:doctests && bun run verify:jsdoc:declarations && bun run verify:markdown-doctests",
+    "verify:markdown-doctests": "bun run scripts/extract-markdown-doctests.ts verify",
     "verify:portability": "bun run scripts/verify-portability.ts",
     "verify:release-version": "bun run scripts/verify-release-version.ts"
   },
