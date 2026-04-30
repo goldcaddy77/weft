@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { sleepForTesting } from '../testing/fake-timers.ts';
+import { sleepForTesting, waitForRealTimersForTesting } from '../testing/fake-timers.ts';
 
 import { KEYS, type BatchOperation, type ScanOptions, type Storage } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -134,7 +134,7 @@ class WorkflowStateWriteTrackingStorage implements Storage {
     );
 
     try {
-      await sleepForTesting(25);
+      await waitForRealTimersForTesting(25);
       await writeOperation();
     } finally {
       this.activeWorkflowWrites--;

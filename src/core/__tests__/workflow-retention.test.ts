@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { sleepForTesting } from '../../testing/fake-timers.ts';
+import { sleepForTesting, waitForRealTimersForTesting } from '../../testing/fake-timers.ts';
 
 import type { LLMProvider } from '../../ai/providers/interface.ts';
 import type { ChatResponse } from '../../ai/providers/types.ts';
@@ -105,7 +105,7 @@ class OverlapTrackingMemoryStorage extends MemoryStorage {
     );
 
     try {
-      await sleepForTesting(this.delayMs);
+      await waitForRealTimersForTesting(this.delayMs);
       await super.batch(operations);
     } finally {
       this.activePurgeBatches--;

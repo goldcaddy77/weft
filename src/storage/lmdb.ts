@@ -227,9 +227,7 @@ export class LMDBStorage implements Storage {
   close(): Promise<void> {
     this.#isClosed = true;
     this.#closePromise ??= (async () => {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 0);
-      });
+      await Promise.resolve();
       await this.#database.close();
     })();
     return this.#closePromise;
