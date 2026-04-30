@@ -4,9 +4,9 @@ The question was: what database should a durable execution engine use by default
 
 ## SQLite as the default
 
-Weft uses SQLite via `Bun.SQL` as its default storage backend. Not Postgres. Not MySQL. Not Redis. SQLite.
+Weft uses SQLite via `bun:sqlite` as its default storage backend. Not Postgres. Not MySQL. Not Redis. SQLite.
 
-The reasoning is straightforward. `Bun.SQL` ships _inside_ the Bun runtime. It compiles into single binaries with `bun build --compile`---zero configuration, zero native addons, zero external processes. And it gives us SQL, which is invaluable for the dashboard, ad-hoc debugging queries, and the list/filter API.
+The reasoning is straightforward. `bun:sqlite` ships _inside_ the Bun runtime. It compiles into single binaries with `bun build --compile`---zero configuration, zero native addons, zero external processes. And it gives us SQL, which is invaluable for the dashboard, ad-hoc debugging queries, and the list/filter API.
 
 For development, this means `bun add weft` and you're running. No Docker Compose, no connection strings, no database server to manage. For small-to-medium production deployments, SQLite in WAL mode handles the load without operational complexity.
 
@@ -16,7 +16,7 @@ For teams running Weft at high scale---north of 30,000 workflows per second---LM
 
 Here's how the options compare.
 
-|                          | SQLite (Bun.SQL)           | LMDB (lmdb-js)                           |
+|                          | SQLite (bun:sqlite)        | LMDB (lmdb-js)                           |
 | ------------------------ | -------------------------- | ---------------------------------------- |
 | **Built into Bun**       | Yes                        | No---npm dependency with native addon    |
 | **Compiles into binary** | Automatically              | Needs native addon bundled               |
@@ -40,7 +40,7 @@ The durable execution hot path is _many small reads and writes_, not complex rel
 
 The storage interface is KV-oriented (not SQL-oriented) so it can support SQLite, LMDB, and IndexedDB with the same contract.
 
-```typescript
+```typescript partial
 interface Storage {
   get(key: string): Promise<Uint8Array | null>;
   put(key: string, value: Uint8Array): Promise<void>;
@@ -52,6 +52,9 @@ interface Storage {
   query?<T>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 ```
+
+> [!NOTE]
+> The full interface in `src/storage/interface.ts` extends `Disposable` and includes additional optional methods: `conditionalBatch`, `has`, `deletePrefix`, `keys`, `count`, and `scoped`.
 
 The `scan` method returns entries in key order, which is the foundation of the entire key layout design. The `batch` method provides atomic multi-key writes---critical for operations like "update the checkpoint and schedule the next operation" in a single transaction.
 
@@ -94,6 +97,10 @@ The performance PRAGMAs matter too.
 PRAGMA journal_mode = WAL;       -- Write-ahead logging: readers don't block writers
 PRAGMA synchronous = NORMAL;     -- Durability with less fsync overhead
 PRAGMA cache_size = -64000;      -- 64MB page cache
+-- Also set in src/storage/bun-sql.ts:
+PRAGMA mmap_size = 268435456;    -- Memory-mapped I/O
+PRAGMA temp_store = MEMORY;      -- Keep temporary tables in memory
+PRAGMA wal_autocheckpoint = 10000;
 ```
 
 WAL mode is essential. It allows unlimited concurrent readers while writes happen---the workflow engine reads checkpoints constantly while periodically writing new ones.
@@ -102,7 +109,7 @@ WAL mode is essential. It allows unlimited concurrent readers while writes happe
 
 The browser storage backend uses IndexedDB, which provides the same key-value semantics. Range scans use `IDBKeyRange.bound()`, and batch writes use a single `readwrite` transaction.
 
-```typescript
+```typescript partial
 class IndexedDBStorage implements Storage {
   async get(key: string): Promise<Uint8Array | null> {
     const db = await this.open();

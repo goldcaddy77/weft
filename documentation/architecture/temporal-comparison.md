@@ -49,7 +49,7 @@ In Temporal, you discover serialization problems at replay time in production. I
 
 **The Weft answer.** Checkpointing means code before the current checkpoint never re-executes. Changing steps after the current checkpoint is inherently safe. Versioning only matters for the step you're currently on---and even then, the migration path is a pure data transformation on the checkpoint, not code-path branching.
 
-```typescript
+```typescript pseudocode
 // Temporal: version branches that accumulate forever
 if (workflow.patched('v2-shipping')) {
   await ship(order, { express: true });
@@ -79,7 +79,7 @@ Weft also provides a `weft version:check` CLI command that analyzes registered w
 
 For developers who don't know generators, a `ctx.step()` sugar API wraps checkpoint boundaries in a familiar async function pattern.
 
-```typescript
+```typescript partial
 const handle = await engine.start(
   'onboard',
   async (ctx) => {
@@ -126,7 +126,7 @@ The engine tracks checkpoint size automatically and warns you when it exceeds a 
 
 The isolation that Temporal achieves through Webpack plus a sandbox, Weft achieves through Web Workers. Workers provide process-level isolation without restricting the JavaScript language.
 
-```typescript
+```typescript pseudocode
 // Temporal: 4 lines of ceremony before your first activity call
 import type * as activities from './activities';
 const { charge, ship } = proxyActivities<typeof activities>({
@@ -167,7 +167,7 @@ There is no `continueAsNew`, no history limit, no manual state serialization. A 
 
 Activities can declare their own operational characteristics with a colocated configuration pattern.
 
-```typescript
+```typescript partial
 import { activity } from 'weft';
 
 export const charge = activity({
@@ -199,24 +199,34 @@ Temporal's determinism constraint forces agent loops into one of two bad choices
 
 **The Weft answer.** `ctx.agent()` as a first-class primitive with durable tool execution, token streaming, budget enforcement, and human-in-the-loop built in. Each tool call is a separate `yield*` boundary, independently checkpointed. Token streaming flows through the standard `EventTarget` and `WebSocket` systems.
 
-```typescript
+```typescript partial
 async function* researchWorkflow(ctx: Weft.Context, topic: string) {
   const research = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-5',
+    provider: 'anthropic',
     prompt: `Research: ${topic}`,
     tools: [webSearch],
   });
 
   const critique = yield* ctx.agent({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-5',
+    provider: 'anthropic',
     prompt: `Review:\n${research}`,
     tools: [factCheck],
   });
 
   // Parallel: run multiple agents simultaneously
   const [legal, technical] = yield* ctx.all([
-    ctx.agent({ model: 'claude-sonnet-4-20250514', prompt: `Legal review: ${report}` }),
-    ctx.agent({ model: 'claude-sonnet-4-20250514', prompt: `Technical review: ${report}` }),
+    ctx.agent({
+      model: 'claude-sonnet-4-5',
+      provider: 'anthropic',
+      prompt: `Legal review: ${report}`,
+    }),
+    ctx.agent({
+      model: 'claude-sonnet-4-5',
+      provider: 'anthropic',
+      prompt: `Technical review: ${report}`,
+    }),
   ]);
 
   return { report, reviews: { legal, technical } };
@@ -231,7 +241,7 @@ Agents compose with the same primitives as everything else---`ctx.run()`, `ctx.a
 
 **The Weft answer.** Checkpoints store only the current state---the values of local variables at the pause point. Activity inputs aren't stored in the checkpoint. Previous activity results are only stored if they're still live in a local variable.
 
-```typescript
+```typescript partial
 async function* imageWorkflow(ctx: Weft.Context, urls: string[]) {
   let summary = { processed: 0, totalSize: 0 };
 

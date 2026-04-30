@@ -28,7 +28,7 @@ This relies on the TC39 Stage 4 Explicit Resource Management proposal, supported
 
 ## Memory Management
 
-Long-running engines need disciplined memory management. The checkpoint cache uses `WeakRef` so the garbage collector can reclaim inactive checkpoints (the engine re-reads from storage on cache miss). `FinalizationRegistry` cleans up stale `Map` entries pointing to collected `WeakRef` targets. The activity registry uses `WeakMap` to tie metadata to function references. The handle registry uses `WeakRef` so the engine doesn't prevent garbage collection of handles the user has dropped.
+Long-running engines need disciplined memory management. The handle registry uses `WeakRef<WorkflowHandle>` so the engine doesn't prevent garbage collection of handles the user has dropped. `FinalizationRegistry` cleans up stale `Map` entries pointing to collected `WeakRef` targets. The activity registry uses `WeakMap` to tie metadata to function references.
 
 These three primitives---`WeakRef`, `WeakMap`, and `FinalizationRegistry`---eliminate entire categories of memory leaks in long-running processes. See [Web Standards architecture](../architecture/web-standards.md).
 
@@ -40,7 +40,7 @@ See [Events guide](../guides/events.md).
 
 ## The Database Decision
 
-SQLite via `Bun.SQL` is the default storage backend. It ships inside the Bun runtime, compiles into single binaries with zero configuration, and gives you full SQL for dashboard queries and ad-hoc debugging. LMDB (`lmdb-js`) is the high-performance option for deployments exceeding 30K workflows per second---its memory-mapped, zero-copy reads are unbeatable for hot-path operations. LevelDB was ruled out: it's single-process only and slower on writes than both alternatives.
+SQLite via `bun:sqlite` is the default storage backend (class: `BunSQLiteStorage`). It ships inside the Bun runtime, compiles into single binaries with zero configuration, and gives you full SQL for dashboard queries and ad-hoc debugging. LMDB (`lmdb-js`) is the high-performance option for deployments exceeding 30K workflows per second---its memory-mapped, zero-copy reads are unbeatable for hot-path operations. LevelDB was ruled out: it's single-process only and slower on writes than both alternatives.
 
 The storage interface is KV-oriented (not SQL-oriented) so all backends share the same contract. See [Database Decisions](../architecture/database-decisions.md) and [Storage guide](../guides/storage.md).
 
@@ -52,13 +52,13 @@ See [Single Binary architecture](../architecture/single-binary.md).
 
 ## Service Worker: The Browser Runtime
 
-A Service Worker acts as the browser equivalent of the Bun server process. It intercepts `fetch` events, runs the same engine code with IndexedDB storage, and persists workflow state across tab closes. The same `handleHTTP` function powers both the Bun server and the Service Worker---one handler, two deployment targets. This enables offline-first durable workflows and hybrid local/remote operation.
+A Service Worker acts as the browser equivalent of the Bun server process. It intercepts `fetch` events, runs the same engine code with IndexedDB storage, and persists workflow state across tab closes. The same `handleRequest` function powers both the Bun server and the Service Worker---one handler, two deployment targets. This enables offline-first durable workflows and hybrid local/remote operation.
 
 Browser background execution has limits, so truly long-running workflows still need a server. See [Browser Runtime](../architecture/browser-runtime.md).
 
 ## HTTP + WebSocket---No gRPC, No Protobuf
 
-The API uses Bun's route-based `Bun.serve()` for JSON-over-HTTP plus native WebSocket pub/sub for real-time streaming. Bun's built-in WebSocket pub/sub (`ws.subscribe()`/`ws.publish()`) eliminates the need for Redis or any external message broker. gRPC was rejected because it adds a code generation step, a protobuf dependency, and doesn't work in browsers. Every HTTP client and every WebSocket client already exists.
+The API uses Bun's route-based `Bun.serve()` for JSON-over-HTTP plus native WebSocket pub/sub for real-time streaming. As of Track 8 (PRs #144–#157), the server also exposes a unified operation catalog over JSON-RPC transports: JSON-RPC over HTTP, JSON-RPC over WebSocket, and JSON-RPC over stdio (see `src/server/operation-catalog.ts`, `json-rpc-http.ts`, `json-rpc-websocket-runtime.ts`, `stdio-session.ts`). Bun's built-in WebSocket pub/sub (`ws.subscribe()`/`ws.publish()`) eliminates the need for Redis or any external message broker. gRPC was rejected because it adds a code generation step, a protobuf dependency, and doesn't work in browsers. Every HTTP client and every WebSocket client already exists.
 
 See [Server guide](../guides/server.md).
 
@@ -104,6 +104,14 @@ Signals are fire-and-forget; updates are request-response. The caller blocks unt
 
 See [Synchronous Updates guide](../guides/synchronous-updates.md).
 
+## Session State
+
+Per-workflow session state (added in PR #149) provides a virtual-object-style mutable store scoped to a single workflow execution. Workflows access it via `ctx.state`---a plain object that is serialized atomically with the checkpoint. Session state is capped at 256 keys, 256-byte key names, and 32 KB total serialized size. Mutations are validated against these invariants at each checkpoint boundary.
+
+This covers the use case of workflows that accumulate small amounts of evolving metadata (counters, flags, lookup tables) without requiring a separate `ctx.setAttribute()` round-trip or bespoke local variable discipline.
+
+See `src/core/session-state.ts` for the implementation.
+
 ## Interceptors and Middleware
 
 Interceptors are composable hooks that wrap context operations (`ctx.run()`, `ctx.sleep()`, `ctx.agent()`, etc.) for cross-cutting concerns. They compose via `next()` delegation (like Koa middleware) and are registered on the engine, not on individual workflows. The `headers` Map propagates metadata---trace context, auth tokens, tenant IDs---across thread and network boundaries. Observability, validation, encryption, and auth propagation are all built on this foundation.
@@ -112,7 +120,7 @@ See [Interceptors guide](../guides/interceptors.md).
 
 ## Observability
 
-OpenTelemetry integration is opt-in, implemented as a pre-built interceptor pair. Import `createObservabilityInterceptors` from `weft/observability` and you get auto-created spans for all context operations, W3C Trace Context propagation through the `headers` mechanism, and standard OTel metrics. If you don't import it, no OpenTelemetry code is loaded. The `@opentelemetry/api` package is a no-op unless an SDK is configured, so there's zero overhead when tracing is disabled.
+OpenTelemetry integration is opt-in, implemented as a pre-built interceptor pair. Import `createObservabilityInterceptors` from `weft` and you get auto-created spans for all context operations, W3C Trace Context propagation through the `headers` mechanism, and standard OTel metrics. If you don't import it, no OpenTelemetry code is loaded. The `@opentelemetry/api` package is a no-op unless an SDK is configured, so there's zero overhead when tracing is disabled.
 
 See [Observability guide](../guides/observability.md).
 

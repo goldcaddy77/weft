@@ -8,9 +8,9 @@ Weft takes a different path. Instead of replaying, Weft _checkpoints_. At each `
 
 ## How it works
 
-Workflows in Weft are `AsyncGenerator` functions. Each `yield*` is a checkpoint boundary. The engine captures the state at that boundary using `structuredClone` semantics---the same serialization algorithm browsers use for `postMessage`.
+Workflows in Weft are `AsyncGenerator` functions. Each `yield*` is a checkpoint boundary. The engine captures the state at that boundary using a MessagePack codec with structuredClone-compatible semantics---the same serialization algorithm browsers use for `postMessage`.
 
-```typescript
+```typescript partial
 export async function* orderWorkflow(ctx: Weft.Context, order: Order) {
   const payment = yield* ctx.run(charge, order); // checkpoint 1
   const shipment = yield* ctx.run(ship, { order, payment }); // checkpoint 2
@@ -37,7 +37,7 @@ The only rule is `yield*` for durable operations. That's it.
 
 ## What structuredClone can and cannot serialize
 
-Since checkpoints use `structuredClone` semantics, there are boundaries on what can live in your workflow's local variables at a `yield*` point.
+Since checkpoints use a MessagePack codec with structuredClone-compatible semantics, there are boundaries on what can live in your workflow's local variables at a `yield*` point.
 
 **Can serialize:** primitives, plain objects, arrays, `Date`, `Map`, `Set`, `RegExp`, `ArrayBuffer`, `TypedArray`.
 
@@ -49,7 +49,7 @@ The practical implication: keep your local variables as plain data at yield boun
 
 The most common bug Weft developers will hit is accidentally putting a non-cloneable value into their checkpoint state. In Temporal, you discover this at replay time in production. In Weft, development mode catches it immediately.
 
-```typescript
+```typescript partial
 const engine = new Engine({
   storage: new MemoryStorage(),
   development: true,

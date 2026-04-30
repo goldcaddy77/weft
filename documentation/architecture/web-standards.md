@@ -19,17 +19,19 @@ Here's how the layers break down.
 │   Server (Bun)       │        Browser                       │
 │   Bun.serve()        │   Service Worker (fetch event)       │
 │   Web Workers        │   Web Workers                        │
-│   Bun.SQL (SQLite)   │   IndexedDB                          │
+│   bun:sqlite         │   IndexedDB                          │
 │   BroadcastChannel   │   BroadcastChannel                   │
 │   WebSocket          │   WebSocket (to remote server)       │
 ├──────────────────────┴──────────────────────────────────────┤
 │                   Wire Protocol                             │
-│           HTTP (REST) + WebSocket + SSE                     │
-│        JSON (default) / MessagePack (opt-in)                │
+│           REST + SSE + JSON-RPC (HTTP / WebSocket / stdio)  │
+│        JSON (wire) / MessagePack (checkpoint storage)       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 The engine row is the key. Everything there is a web standard that works in any JavaScript runtime. The server and browser rows are where platform-specific implementations live---but they implement the same interfaces.
+
+The wire protocol uses JSON over HTTP, WebSocket, and stdio transports. MessagePack is the default codec for checkpoint storage, not an alternative HTTP body format.
 
 ## The primitive mapping
 
@@ -68,8 +70,8 @@ The portability story breaks down into three tiers.
 
 **Runs in Bun and browsers**: `Worker`, `BroadcastChannel`, `postMessage` with transferables, `WebSocket`. This covers execution isolation and inter-thread coordination.
 
-**Bun-specific**: `Bun.serve()`, `Bun.SQL`, `bun build --compile`, the `smol` option for Workers. This covers the server shell and embedded storage.
+**Bun-specific**: `Bun.serve()`, `bun:sqlite`, `bun build --compile`, the `smol` option for Workers. This covers the server shell and embedded storage.
 
-The browser equivalents slot in naturally: `Bun.serve()` becomes a Service Worker `fetch` event handler, `Bun.SQL` (SQLite) becomes IndexedDB, and the rest is identical.
+The browser equivalents slot in naturally: `Bun.serve()` becomes a Service Worker `fetch` event handler, `bun:sqlite` (SQLite) becomes IndexedDB, and the rest is identical.
 
 This layering means the same workflow code runs in both environments without modification. The engine doesn't know or care whether it's running on a server or in a browser tab. It just uses web standards, and the platform provides the implementations.

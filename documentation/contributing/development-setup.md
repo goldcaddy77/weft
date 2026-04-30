@@ -17,7 +17,7 @@ Verify with `bun --version`. That's the only prerequisite---no Docker, no separa
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/weft/weft.git
+git clone https://github.com/stevekinney/weft.git
 cd weft
 bun install
 ```
@@ -59,6 +59,9 @@ bun test --coverage       # Generate a coverage report
 bun test --parallel       # Parallel execution across files
 ```
 
+> [!NOTE]
+> The project's `bun run test` script wraps `bun test --timeout 15000`. Use `bun run test:coverage` (which sets `WEFT_COVERAGE_MODE=1`) for coverage with the project's configured timeout and environment.
+
 ### Testing conventions
 
 Test files live next to the source they test, using the `.test.ts` suffix. A separate `tsconfig.test.json` provides relaxed TypeScript settings for test code. Oxlint rules are also relaxed for test files (`*.test.ts`, `*.spec.ts`, `test/**`, `__tests__/**`)---you can freely use `any`, non-null assertions, unused variables, and other patterns that would normally be flagged in production code.
@@ -81,6 +84,24 @@ To clean build artifacts, coverage output, and caches:
 
 ```bash
 bun run clean
+```
+
+### Verification scripts
+
+Several `verify:*` scripts run additional checks beyond lint and typecheck:
+
+```bash
+bun run verify:exports          # Check all public exports resolve correctly
+bun run verify:portability      # Check that code avoids Bun-only APIs in portable modules
+bun run verify:jsdoc            # Validate JSDoc coverage on public API
+bun run verify:markdown-doctests # Check TypeScript code blocks in documentation
+bun run verify:release-version  # Confirm version consistency before a release
+```
+
+For dashboard development, run:
+
+```bash
+bun run dev:dashboard  # Start the Svelte dashboard dev server
 ```
 
 There's also a combined validation command that runs lint, typecheck, and tests together:

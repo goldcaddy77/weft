@@ -7,11 +7,11 @@
 A single CI pipeline produces binaries for five targets.
 
 ```bash
-bun build --compile --target=bun-darwin-arm64  src/cli.ts --outfile dist/weft-darwin-arm64
-bun build --compile --target=bun-darwin-x64    src/cli.ts --outfile dist/weft-darwin-x64
-bun build --compile --target=bun-linux-x64     src/cli.ts --outfile dist/weft-linux-x64
-bun build --compile --target=bun-linux-arm64   src/cli.ts --outfile dist/weft-linux-arm64
-bun build --compile --target=bun-windows-x64   src/cli.ts --outfile dist/weft-windows-x64.exe
+bun build --compile --target=bun-darwin-arm64  src/cli-main.ts --outfile dist/weft-darwin-arm64
+bun build --compile --target=bun-darwin-x64    src/cli-main.ts --outfile dist/weft-darwin-x64
+bun build --compile --target=bun-linux-x64     src/cli-main.ts --outfile dist/weft-linux-x64
+bun build --compile --target=bun-linux-arm64   src/cli-main.ts --outfile dist/weft-linux-arm64
+bun build --compile --target=bun-windows-x64   src/cli-main.ts --outfile dist/weft-windows-x64.exe
 ```
 
 Cross-compilation works from any OS. Build all five on your Mac, on a Linux CI runner, wherever.
@@ -22,7 +22,7 @@ The binary bundles everything the engine needs to run:
 
 - The Bun runtime (includes SQLite, HTTP server, WebSocket, and more)
 - Weft engine, server, and worker code
-- The web dashboard (pre-built React SPA, embedded as assets)
+- The web dashboard (pre-built Svelte SPA, embedded as assets)
 - Default configuration
 
 What does _not_ ship inside (and shouldn't): LMDB native bindings (opt-in via `bun add lmdb` when you need them) and your workflow/activity code (loaded at runtime or compiled into your own binary).
@@ -32,7 +32,7 @@ What does _not_ ship inside (and shouldn't): LMDB native bindings (opt-in via `b
 **Standalone server.** Download and run. SQLite is auto-created. The dashboard is available immediately.
 
 ```bash
-curl -L https://github.com/weft/weft/releases/download/v1/weft-darwin-arm64 -o weft
+curl -L https://github.com/stevekinney/weft/releases/download/v1/weft-darwin-arm64 -o weft
 chmod +x weft
 ./weft --port 7233
 ```
