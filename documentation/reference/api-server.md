@@ -4,13 +4,13 @@ Weft includes a built-in HTTP + WebSocket server that exposes workflows over a R
 
 ## `serve()`
 
-```ts
+```ts partial
 function serve(options: ServeOptions): WeftServer;
 ```
 
 Start the Weft HTTP + WebSocket server. Returns a `WeftServer` handle for introspection and shutdown.
 
-```ts
+```ts partial
 import { Engine, serve } from 'weft';
 
 const engine = new Engine();
@@ -26,7 +26,7 @@ console.log(`Weft server running at ${server.url}`);
 
 ## `ServeOptions`
 
-```ts
+```ts partial
 interface ServeOptions {
   engine: Engine;
   port?: number;
@@ -79,7 +79,7 @@ interface WeftServer extends AsyncDisposable {
 | `stop()`                  | `() => Promise<void>` | Gracefully shut down the server                   |
 | `[Symbol.asyncDispose]()` | `() => Promise<void>` | Same as `stop()` -- supports `await using` syntax |
 
-```ts
+```ts partial
 {
   await using server = serve({ engine });
   // server shuts down when this block exits
@@ -90,7 +90,7 @@ interface WeftServer extends AsyncDisposable {
 
 ## `handleRequest()`
 
-```ts
+```ts partial
 async function handleRequest(
   request: Request,
   engine: Engine,
@@ -102,7 +102,7 @@ A pure HTTP request handler that maps a `Request` to a `Response`. Has no Bun-sp
 
 `HandlerOptions` accepts an operation registry, REST bindings, and a Prometheus exporter. Omit it to use defaults.
 
-```ts
+```ts partial
 import { handleRequest } from 'weft';
 
 // Use inside a custom Bun.serve, Deno.serve, or any framework
@@ -267,7 +267,7 @@ All errors return JSON with an `error` field:
 
 The `weft/service-worker` module provides bootstrap functions for running the Weft engine inside a Service Worker. These functions wire `handleRequest()` into the Service Worker event model.
 
-```ts
+```ts partial
 import {
   createFetchHandler,
   createPeriodicSyncHandler,
@@ -280,7 +280,7 @@ import {
 
 ### `ServiceWorkerOptions`
 
-```ts
+```ts partial
 interface ServiceWorkerOptions {
   engine: Engine;
   pathPrefix?: string;
@@ -296,13 +296,13 @@ interface ServiceWorkerOptions {
 
 ### `createFetchHandler()`
 
-```ts
+```ts partial
 function createFetchHandler(options: ServiceWorkerOptions): (event: FetchEvent) => void;
 ```
 
 Returns a `fetch` event listener. When the request URL matches the `pathPrefix`, the listener calls `event.respondWith()` with the result of `handleRequest()`. Non-matching requests pass through to the network.
 
-```ts
+```ts partial
 self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/' }));
 ```
 
@@ -310,7 +310,7 @@ self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/'
 
 ### `createPeriodicSyncHandler()`
 
-```ts
+```ts partial
 function createPeriodicSyncHandler(
   scheduler: ServiceWorkerScheduler,
   tag?: string,
@@ -324,7 +324,7 @@ Returns a `periodicsync` event listener. When the event tag matches (default `'w
 | `scheduler` | `ServiceWorkerScheduler` | (required)      | The scheduler instance that manages timer wakeup |
 | `tag`       | `string`                 | `'weft-timers'` | Periodic sync tag to match against               |
 
-```ts
+```ts partial
 self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
 ```
 
@@ -332,7 +332,7 @@ self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
 
 ### `createLifecycleHandlers()`
 
-```ts
+```ts partial
 function createLifecycleHandlers(): {
   install: (event: ExtendableEvent) => void;
   activate: (event: ExtendableEvent) => void;
@@ -344,7 +344,7 @@ Returns `install` and `activate` event handlers.
 - **`install`**: Calls `skipWaiting()` so the new Service Worker activates immediately without waiting for existing clients to close.
 - **`activate`**: Calls `clients.claim()` so the Service Worker takes control of all open tabs without requiring a page reload.
 
-```ts
+```ts partial
 const { install, activate } = createLifecycleHandlers();
 self.addEventListener('install', install);
 self.addEventListener('activate', activate);
@@ -354,7 +354,7 @@ self.addEventListener('activate', activate);
 
 ### `ServiceWorkerScheduler`
 
-```ts
+```ts partial
 class ServiceWorkerScheduler
 ```
 
@@ -362,11 +362,11 @@ Manages timer wakeup in the Service Worker environment. Checks storage for expir
 
 #### Constructor
 
-```ts
+```ts partial
 new ServiceWorkerScheduler(options: ServiceWorkerSchedulerOptions)
 ```
 
-```ts
+```ts partial
 interface ServiceWorkerSchedulerOptions {
   storage: Storage;
   onTimerFired: (entry: TimerEntry) => void | Promise<void>;
@@ -388,7 +388,7 @@ interface ServiceWorkerSchedulerOptions {
 
 When Periodic Background Sync is available, the browser wakes the Service Worker at the registered interval. When it is not available (Firefox, Safari), the scheduler falls back to `setTimeout`-based polling, which only works while a tab is open.
 
-```ts
+```ts partial
 const scheduler = new ServiceWorkerScheduler({
   storage,
   onTimerFired: (entry) => engine.processTimer(entry),

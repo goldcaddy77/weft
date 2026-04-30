@@ -14,7 +14,7 @@ type WorkflowId = string;
 
 ### `WorkflowStatus`
 
-```ts
+```ts partial
 type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timed-out';
 ```
 
@@ -22,7 +22,7 @@ type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelle
 
 Persisted workflow state stored in the storage backend.
 
-```ts
+```ts partial
 interface WorkflowState {
   id: WorkflowId;
   type: string;
@@ -41,7 +41,7 @@ interface WorkflowState {
 
 The signature of a workflow generator function.
 
-```ts
+```ts partial
 type WorkflowFunction<TInput = unknown, TOutput = unknown> = (
   context: WorkflowContext,
   input: TInput,
@@ -52,7 +52,7 @@ type WorkflowFunction<TInput = unknown, TOutput = unknown> = (
 
 The context object passed as the first argument to every workflow function.
 
-```ts
+```ts partial
 interface WorkflowContext {
   readonly workflowId: WorkflowId;
   readonly signal: AbortSignal;
@@ -85,7 +85,7 @@ The full `Context` class exposes additional concrete methods documented in the [
 
 Types for `ctx.pipe()`, `ctx.map()`, and `ctx.reduce()` durable composition operators.
 
-```ts
+```ts partial
 /** A pending durable composition result. Yield with `yield*` inside a workflow. */
 interface WorkflowOperation<TResult> {
   readonly operationId: string;
@@ -120,7 +120,7 @@ type WorkflowPipeStage<TInput = unknown, TOutput = unknown> =
 
 Per-workflow durable state slot returned by `ctx.sessionState(key, initialValue?)`. Checkpointed with the workflow.
 
-```ts
+```ts partial
 interface WorkflowSessionState<T> {
   get(): T | undefined;
   set(value: T): T;
@@ -135,7 +135,7 @@ interface WorkflowSessionState<T> {
 
 ### `WorkflowRegistration`
 
-```ts
+```ts partial
 interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
   version?: string;
   handler: WorkflowFunction<TInput, TOutput>;
@@ -156,7 +156,7 @@ type WorkflowRegistry = Record<string, { input: unknown; output: unknown }>;
 
 A number (milliseconds) or a human-readable string like `'5s'`, `'2m'`, `'1h'`.
 
-```ts
+```ts partial
 type Duration = number | string;
 ```
 
@@ -164,7 +164,7 @@ type Duration = number | string;
 
 Snapshot of workflow state at a `yield*` boundary.
 
-```ts
+```ts partial
 interface Checkpoint {
   workflowId: WorkflowId;
   step: number;
@@ -178,7 +178,7 @@ interface Checkpoint {
 
 ### `RetryPolicy`
 
-```ts
+```ts partial
 interface RetryPolicy {
   maxAttempts: number;
   initialBackoff: Duration;
@@ -210,7 +210,7 @@ interface ActivityContext {
 
 ### `ActivityDefinition`
 
-```ts
+```ts partial
 interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
   name: string;
   execute: ActivityFunction<TInput, TOutput>;
@@ -225,7 +225,7 @@ interface ActivityDefinition<TInput = unknown, TOutput = unknown> {
 
 Per-invocation options when calling an activity from a workflow.
 
-```ts
+```ts partial
 interface ActivityCallOptions {
   timeout?: Duration;
   queue?: string;
@@ -237,7 +237,7 @@ interface ActivityCallOptions {
 
 ### `EngineOptions`
 
-```ts
+```ts partial
 interface EngineOptions {
   storage?: Storage;
   development?: boolean;
@@ -261,7 +261,7 @@ See [Configuration](./configuration.md) for detailed field descriptions and defa
 
 ### `StartOptions`
 
-```ts
+```ts partial
 interface StartOptions {
   id?: string;
   idempotencyKey?: string;
@@ -283,7 +283,7 @@ interface Serializer {
 
 ### `SearchAttributeValue`
 
-```ts
+```ts partial
 type SearchAttributeValue = string | number | boolean | Date | string[];
 ```
 
@@ -299,7 +299,7 @@ interface SearchAttributeDefinition {
 
 ### `ListFilter`
 
-```ts
+```ts partial
 interface ListFilter {
   status?: WorkflowStatus | WorkflowStatus[];
   type?: string;
@@ -333,7 +333,7 @@ interface PaginatedResult<T> {
 
 Returned by `engine.list()`.
 
-```ts
+```ts partial
 interface WorkflowSummary {
   id: WorkflowId;
   type: string;
@@ -353,7 +353,7 @@ interface WorkflowSummary {
 
 Maps event type strings to their corresponding event classes.
 
-```ts
+```ts partial
 interface WeftEventMap {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
@@ -406,7 +406,7 @@ interface TypedEventTarget<TEventMap extends Record<string, Event>> {
 
 Discriminated union of all operation descriptors yielded by `Context` methods. The engine inspects the `type` field to decide what to execute.
 
-```ts
+```ts partial
 type ContextOperationRequest =
   | {
       type: 'activity';
@@ -441,7 +441,7 @@ type ContextOperationRequest =
 
 Options passed to construct a `Context` instance (internal).
 
-```ts
+```ts partial
 interface ContextOptions {
   workflowId: string;
   workflowType: string;
@@ -568,7 +568,7 @@ interface ActivityExecutionInterception {
 
 KV-oriented storage interface. All storage adapters (`MemoryStorage`, `BunSQLiteStorage`) implement this.
 
-```ts
+```ts partial
 interface Storage extends Disposable {
   get(key: string): Promise<Uint8Array | null>;
   put(key: string, value: Uint8Array): Promise<void>;
@@ -581,7 +581,7 @@ interface Storage extends Disposable {
 
 ### `BatchOperation`
 
-```ts
+```ts partial
 type BatchOperation =
   | { type: 'put'; key: string; value: Uint8Array }
   | { type: 'delete'; key: string };
@@ -606,7 +606,7 @@ interface ScanOptions {
 
 ### `ServeOptions`
 
-```ts
+```ts partial
 interface ServeOptions {
   engine: Engine;
   port?: number;
@@ -661,7 +661,7 @@ interface MockCall<TArgs extends unknown[], TResult> {
 
 ### `AgentOptions`
 
-```ts
+```ts partial
 interface AgentOptions {
   model: string;
   provider: LLMProvider;
@@ -710,7 +710,7 @@ interface TurnCostEntry {
 
 ### `AgentTool`
 
-```ts
+```ts partial
 interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -792,7 +792,7 @@ interface RoutingContext {
 
 ### `MCPAuthConfig`
 
-```ts
+```ts partial
 type MCPAuthConfig =
   | { type: 'bearer'; token: string }
   | { type: 'api-key'; headerName: string; apiKey: string }

@@ -6,7 +6,7 @@ A workflow that runs forever is a workflow that consumes resources forever. Acti
 
 Pass `executionTimeout` when starting a workflow. It accepts any `Duration`---a number in milliseconds or a human-readable string.
 
-```typescript
+```typescript partial
 const handle = await engine.start('order', orderData, {
   executionTimeout: '24 hours',
 });
@@ -18,7 +18,7 @@ The deadline is computed at start time (`startedAt + parseDuration(executionTime
 
 Inside a workflow, `ctx.executionTimeRemaining` returns the milliseconds left before the deadline fires. It returns `Infinity` if no timeout was set.
 
-```typescript
+```typescript partial
 async function* orderWorkflow(ctx: Context, order: Order) {
   const payment = yield* ctx.run(charge, order);
 
@@ -34,7 +34,7 @@ async function* orderWorkflow(ctx: Context, order: Order) {
 
 The standalone `timeRemaining()` utility does the same calculation outside of a context:
 
-```typescript
+```typescript partial
 import { timeRemaining } from 'weft';
 
 const remaining = timeRemaining(deadline, Date.now());
@@ -48,7 +48,7 @@ The `checkExpiredDeadlines()` function scans storage for workflows whose deadlin
 2. The workflow is marked as `'timed-out'`.
 3. A `WorkflowTimeoutError` is thrown with the workflow ID, timeout type, and elapsed time.
 
-```typescript
+```typescript partial
 try {
   const result = await handle.result();
 } catch (error) {

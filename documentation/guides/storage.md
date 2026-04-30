@@ -6,7 +6,7 @@ Every checkpoint, workflow state, signal, and timer in Weft is ultimately a key-
 
 All storage adapters implement this interface.
 
-```typescript
+```typescript partial
 interface Storage extends Disposable {
   get(key: string): Promise<Uint8Array | null>;
   put(key: string, value: Uint8Array): Promise<void>;
@@ -33,7 +33,7 @@ interface ScanOptions {
 
 The `batch` method writes multiple operations atomically. This is critical for consistency---Weft often needs to update a workflow state and write a checkpoint in a single atomic operation.
 
-```typescript
+```typescript partial
 type BatchOperation =
   | { type: 'put'; key: string; value: Uint8Array }
   | { type: 'delete'; key: string };
@@ -67,7 +67,7 @@ All timestamps are zero-padded to 16 digits for correct lexicographic ordering. 
 
 This is the default for production. It uses Bun's built-in SQLite via `bun:sqlite`, which means zero external dependencies and seamless single-binary compilation with `bun build --compile`.
 
-```typescript
+```typescript partial
 import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 using storage = new BunSQLiteStorage('./weft.db');
@@ -78,7 +78,7 @@ Under the hood, it creates a single `kv` table (`key TEXT PRIMARY KEY, value BLO
 
 The SQLite adapter also exposes an optional `query()` method for ad-hoc SQL queries, which is invaluable for debugging and building dashboards.
 
-```typescript
+```typescript partial
 const rows = await storage.query<{ key: string }>('SELECT key FROM kv WHERE key LIKE ?', ['wf:%']);
 ```
 
@@ -97,14 +97,14 @@ const engine = new Engine({ storage });
 
 It also exposes a few `MemoryStorage`-only conveniences: the `size` getter, `clear()`, and `snapshot()` (returns a deep copy of the internal map). The `has()` and `keys()` methods are part of the optional `Storage` interface and are also available on other adapters.
 
-```typescript
+```typescript partial
 expect(storage.size).toBe(2);
 expect(storage.has('wf:order-1')).toBe(true);
 ```
 
 If you do not pass a storage option to the `Engine` constructor, it defaults to `MemoryStorage`---so for quick experiments and tests, you can skip storage configuration entirely.
 
-```typescript
+```typescript partial
 const engine = new Engine(); // uses MemoryStorage
 ```
 
@@ -112,7 +112,7 @@ const engine = new Engine(); // uses MemoryStorage
 
 `IndexedDBStorage` is the browser equivalent of `BunSQLiteStorage`. It persists workflow state to IndexedDB, making it suitable for Service Worker deployments where the engine runs entirely inside the browser.
 
-```typescript
+```typescript partial
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
 
 using storage = new IndexedDBStorage('weft');

@@ -12,7 +12,7 @@ For a guided walkthrough, see the [Agent guide](../guides/agent-loop.md).
 
 The primary entry point. Drives a multi-turn conversation where the model can invoke tools, receive results, and continue reasoning until it produces a final answer or an exit condition is reached.
 
-```ts
+```ts partial
 async function executeAgentLoop(options: AgentOptions, input: string): Promise<AgentResult>;
 ```
 
@@ -49,7 +49,7 @@ async function executeAgentLoop(options: AgentOptions, input: string): Promise<A
 
 #### `AgentTool`
 
-```ts
+```ts partial
 interface AgentTool {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -118,7 +118,7 @@ interface ToolReturnInfo {
 
 **Example:**
 
-```ts
+```ts partial
 import { executeAgentLoop } from 'weft';
 
 const result = await executeAgentLoop(
@@ -144,7 +144,7 @@ console.log(`Used ${result.totalTokens.totalTokens} tokens over ${result.turnCou
 
 Declares a reusable agent definition. Returns an `AgentDefinition` object that can be passed to coordination functions or used as a template.
 
-```ts
+```ts partial
 function defineAgent<TInput = unknown, TOutput = unknown>(
   options: AgentDefinitionOptions<TInput, TOutput>,
 ): AgentDefinition<TInput, TOutput>;
@@ -178,7 +178,7 @@ interface AgentToolDefinition {
 
 **Example:**
 
-```ts
+```ts partial
 import { defineAgent } from 'weft';
 
 const researcher = defineAgent({
@@ -258,7 +258,7 @@ interface BudgetWarningContext {
 
 Tracks LLM token usage and cost against configurable budgets. Fires warning and exceeded callbacks, and optionally aborts an `AbortController` when the budget is exceeded.
 
-```ts
+```ts partial
 class BudgetTracker {
   constructor(options: BudgetOptions, callbacks?: BudgetCallbacks);
 
@@ -326,7 +326,7 @@ interface ModelUsageEntry {
 
 ### `BudgetExceededError`
 
-```ts
+```ts partial
 class BudgetExceededError extends Error {
   readonly tokensUsed: number;
   readonly costUsed: number;
@@ -343,7 +343,7 @@ class BudgetExceededError extends Error {
 
 Manages conversation context size by applying compaction strategies when token count exceeds a threshold.
 
-```ts
+```ts partial
 class ContextWindowManager {
   constructor(options: ContextWindowOptions);
 
@@ -392,7 +392,7 @@ interface CompactOptions {
 
 Compose multiple strategies in sequence.
 
-```ts
+```ts partial
 function composeStrategies(...strategies: ContextStrategy[]): ContextStrategy;
 ```
 
@@ -400,7 +400,7 @@ function composeStrategies(...strategies: ContextStrategy[]): ContextStrategy;
 
 A pass-through strategy that returns messages unchanged. This is the default.
 
-```ts
+```ts partial
 function noopStrategy(): ContextStrategy;
 ```
 
@@ -408,7 +408,7 @@ function noopStrategy(): ContextStrategy;
 
 Keeps the system message and the most recent N messages, dropping older conversation history.
 
-```ts
+```ts partial
 function slidingWindowStrategy(options?: SlidingWindowOptions): ContextStrategy;
 ```
 
@@ -429,7 +429,7 @@ Multi-agent coordination primitives for sequential handoffs, adversarial debates
 
 Hand off execution to another agent, optionally forwarding conversation context.
 
-```ts
+```ts partial
 async function handoff(options: HandoffOptions): Promise<HandoffResult>;
 ```
 
@@ -447,7 +447,7 @@ async function handoff(options: HandoffOptions): Promise<HandoffResult>;
 
 #### `HandoffResult`
 
-```ts
+```ts partial
 interface HandoffResult {
   result: AgentResult;
   contextForwarded: ForwardContext;
@@ -458,7 +458,7 @@ interface HandoffResult {
 
 Run an adversarial multi-agent debate with advocate, critic, and judge roles.
 
-```ts
+```ts partial
 async function debate(options: DebateOptions): Promise<DebateResult>;
 ```
 
@@ -493,7 +493,7 @@ interface DebateRound {
 
 Run supervised multi-agent execution where multiple workers process the same input, then a supervisor synthesizes results.
 
-```ts
+```ts partial
 async function supervise(options: SuperviseOptions): Promise<SuperviseResult>;
 ```
 
@@ -529,7 +529,7 @@ interface SuperviseResult {
 
 Coordinates human-in-the-loop review requests, decisions, and escalation chains.
 
-```ts
+```ts partial
 class ReviewCoordinator {
   constructor(storage: Storage, options?: ReviewCoordinatorOptions);
 
@@ -613,7 +613,7 @@ type EscalationAction =
 
 ### `ReviewTimeoutError`
 
-```ts
+```ts partial
 class ReviewTimeoutError extends Error {
   readonly reviewId: string;
   readonly elapsed: number;
@@ -628,7 +628,7 @@ class ReviewTimeoutError extends Error {
 
 Multiplexes a single source `ReadableStream<StreamChunk>` to multiple consumers without duplicating the source. Late consumers receive buffered chunks first.
 
-```ts
+```ts partial
 class StreamMultiplexer {
   constructor(source: ReadableStream<StreamChunk>, options?: MultiplexerOptions);
 
@@ -649,7 +649,7 @@ class StreamMultiplexer {
 
 Bridges a `ReadableStream<StreamChunk>` to an `EventTarget`, dispatching `TokenEvent` for each token chunk.
 
-```ts
+```ts partial
 class TokenBridge {
   constructor(target: EventTarget, workflowId: string, model: string);
 
@@ -663,7 +663,7 @@ class TokenBridge {
 
 Accumulates completed turn text for replaying to reconnecting clients.
 
-```ts
+```ts partial
 class ReconnectionBuffer {
   constructor(options?: ReconnectionBufferOptions);
 
@@ -689,7 +689,7 @@ class ReconnectionBuffer {
 
 HTTP client for discovering and invoking tools on an MCP server.
 
-```ts
+```ts partial
 class MCPClient {
   constructor(options: MCPClientOptions);
 
@@ -705,7 +705,7 @@ class MCPClient {
 
 **URL form:**
 
-```ts
+```ts partial
 interface MCPClientUrlOptions {
   serverUrl: string;
   auth?: MCPAuthConfig;
@@ -715,7 +715,7 @@ interface MCPClientUrlOptions {
 
 **Transport form:**
 
-```ts
+```ts partial
 interface MCPClientTransportOptions {
   transport: MCPTransport;
   timeout?: number;
@@ -731,7 +731,7 @@ interface MCPClientTransportOptions {
 
 ### `MCPServerUnavailableError`
 
-```ts
+```ts partial
 class MCPServerUnavailableError extends Error {
   readonly serverUrl: string;
 }
@@ -739,7 +739,7 @@ class MCPServerUnavailableError extends Error {
 
 ### `MCPToolTimeoutError`
 
-```ts
+```ts partial
 class MCPToolTimeoutError extends Error {
   readonly toolName: string;
   readonly timeout: number;
@@ -750,7 +750,7 @@ class MCPToolTimeoutError extends Error {
 
 Unified registry for local and MCP-sourced tools with conflict detection.
 
-```ts
+```ts partial
 class ToolRegistry {
   registerLocal(definition: ToolDefinition, execute: (input: unknown) => Promise<unknown>): void;
   registerMCP(
@@ -783,7 +783,7 @@ interface RegistryTool {
 
 ### `ToolNameConflictError`
 
-```ts
+```ts partial
 class ToolNameConflictError extends Error {
   readonly toolName: string;
   readonly sources: string[];
@@ -794,13 +794,13 @@ class ToolNameConflictError extends Error {
 
 Build HTTP authentication headers from an `MCPAuthConfig`.
 
-```ts
+```ts partial
 function buildAuthHeaders(auth: MCPAuthConfig): Record<string, string>;
 ```
 
 #### `MCPAuthConfig`
 
-```ts
+```ts partial
 type MCPAuthConfig =
   | { type: 'bearer'; token: string }
   | { type: 'api-key'; headerName: string; apiKey: string }
@@ -811,7 +811,7 @@ type MCPAuthConfig =
 
 Minimal JSON Schema validator for tool input validation.
 
-```ts
+```ts partial
 function validateSchema(value: unknown, schema: Record<string, unknown>): ValidationResult;
 ```
 
@@ -833,7 +833,7 @@ interface ValidationError {
 
 ### `ToolSchemaValidationError`
 
-```ts
+```ts partial
 class ToolSchemaValidationError extends Error {
   readonly toolName: string;
   readonly errors: ValidationError[];
@@ -914,7 +914,7 @@ interface ModelSelection {
 
 Always returns the primary model with a static fallback list.
 
-```ts
+```ts partial
 function staticFallbackRouter(primary: string, fallbacks: string[]): ModelRouter;
 ```
 
@@ -922,7 +922,7 @@ function staticFallbackRouter(primary: string, fallbacks: string[]): ModelRouter
 
 Switches models based on remaining budget. Tiers are sorted by `maxCostRemaining` descending; the first eligible tier is selected.
 
-```ts
+```ts partial
 function costTierRouter(tiers: CostTier[]): ModelRouter;
 ```
 
@@ -939,7 +939,7 @@ interface CostTier {
 
 Deterministic A/B routing based on workflow ID hash (FNV-1a). The same workflow ID always yields the same variant.
 
-```ts
+```ts partial
 function abTestRouter(variants: WeightedVariant[]): ModelRouter;
 ```
 
@@ -955,7 +955,7 @@ interface WeightedVariant {
 
 Creates a router from a custom selection function.
 
-```ts
+```ts partial
 function customRouter(fn: (context: RoutingContext) => ModelSelection): ModelRouter;
 ```
 
@@ -967,7 +967,7 @@ function customRouter(fn: (context: RoutingContext) => ModelSelection): ModelRou
 
 Tracks success/failure rates per provider using a sliding time window and implements a circuit breaker that trips when the error rate exceeds a configurable threshold.
 
-```ts
+```ts partial
 class ProviderHealthTracker {
   constructor(options?: ProviderHealthOptions);
 

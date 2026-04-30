@@ -8,7 +8,7 @@ Most configuration flows through typed option objects rather than environment va
 
 Passed to the `Engine` constructor. All fields are optional with sensible defaults.
 
-```ts
+```ts partial
 interface EngineOptions {
   storage?: Storage;
   development?: boolean;
@@ -66,7 +66,7 @@ const engine = new Engine({
 
 Passed to the `serve()` function to start the Weft HTTP + WebSocket server.
 
-```ts
+```ts partial
 interface ServeOptions {
   engine: Engine;
   port?: number;
@@ -100,7 +100,7 @@ The returned `WeftServer` exposes the resolved `port`, `hostname`, and `url`, al
 
 **Example:**
 
-```ts
+```ts partial
 import { Engine, serve } from 'weft';
 
 const engine = new Engine();
@@ -114,7 +114,7 @@ console.log(`Weft server running at ${server.url}`);
 
 Passed to `executeAgentLoop()`. See the [Agent API reference](./api-agent.md) for the full table.
 
-```ts
+```ts partial
 interface AgentOptions {
   model: string;
   provider: LLMProvider;
@@ -162,7 +162,7 @@ interface AgentOptions {
 
 Controls retry behavior for activity execution.
 
-```ts
+```ts partial
 interface RetryPolicy {
   maxAttempts: number;
   initialBackoff: Duration;
@@ -188,7 +188,7 @@ The backoff for attempt N is `min(initialBackoff * backoffMultiplier^(N-1), maxB
 
 ### `DEFAULT_RETRY_POLICY`
 
-```ts
+```ts partial
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxAttempts: 3,
   initialBackoff: 1000,

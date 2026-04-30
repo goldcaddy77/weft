@@ -14,7 +14,7 @@ Use signals when you're pushing data in (e.g., "here's the customer's new addres
 
 The callback-style pattern uses `ctx.onUpdate()` to register a handler that runs at any checkpoint boundary when an update of that name arrives. The handler is a plain function---not a generator---so it cannot yield. It reads and modifies workflow state through closure over local variables.
 
-```typescript
+```typescript partial
 async function* cartWorkflow(ctx: Context, cart: Cart) {
   let appliedCoupons: string[] = [];
   let cartTotal = cart.total;
@@ -51,7 +51,7 @@ You can register multiple update handlers. Each one handles a different update n
 
 From the caller side, use `handle.update()` on a workflow handle. It returns a promise that resolves when the workflow processes the update and responds.
 
-```typescript
+```typescript partial
 const handle = engine.getHandle('wf-cart-abc');
 
 const result = await handle.update(
@@ -102,7 +102,7 @@ If the server crashes between receiving the request and delivering the response,
 
 For coordinated updates, an optional `idempotencyKey` prevents duplicate processing. If you send the same update twice with the same key, the second call returns the existing response without re-running the handler. The in-process handle path does not accept an idempotency key:
 
-```typescript
+```typescript partial
 const result = await handle.update(
   'validate_coupon',
   { code: 'SAVE20' },
@@ -120,7 +120,7 @@ The mapping from idempotency key to update ID is stored at `upk:{workflowId}:{ke
 
 When an update times out, the `UpdateTimeoutError` includes the `updateId`. The update is still pending in storage---the workflow will eventually process it. You can check the result later:
 
-```typescript
+```typescript partial
 try {
   const result = await handle.update('validate_coupon', payload, { timeout: 2000 });
 } catch (error) {

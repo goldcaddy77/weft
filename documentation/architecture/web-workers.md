@@ -57,7 +57,7 @@ The fundamental insight: you don't need to hobble the language to get safety. Yo
 
 The main thread and workers communicate via `postMessage`, the standard Web Worker messaging API.
 
-```typescript
+```typescript partial
 // Main thread: spawn a workflow worker
 const worker = new Worker(new URL('./workflow-runner.ts', import.meta.url), {
   smol: true, // Bun-specific: reduce memory footprint
@@ -80,7 +80,7 @@ Note the transfer list on that `postMessage` call. When you pass an `ArrayBuffer
 
 The worker side is equally straightforward.
 
-```typescript
+```typescript partial
 // workflow-runner.ts (runs inside a Web Worker)
 /// <reference lib="webworker" />
 
@@ -100,7 +100,7 @@ self.onmessage = async (event) => {
 
 The main thread listens for results and dispatches accordingly---checkpoints get persisted, completions get recorded, failures get logged.
 
-```typescript
+```typescript partial
 worker.onmessage = (event) => {
   const { type, workflowId, checkpoint, result, operationRequest } = event.data;
 
@@ -125,7 +125,7 @@ worker.onmessage = (event) => {
 
 Weft uses `BroadcastChannel` for engine-wide coordination without direct Worker-to-Worker references.
 
-```typescript
+```typescript partial
 // On any thread:
 const bus = new BroadcastChannel('weft:events');
 
@@ -150,7 +150,7 @@ Long-running processes like workflow engines are prime targets for memory leaks.
 
 When a workflow is actively being advanced, we cache its deserialized checkpoint in memory to avoid repeated deserialization. But we don't want to hold every checkpoint forever---that's a memory leak for an engine running thousands of workflows.
 
-```typescript
+```typescript partial
 class CheckpointCache {
   #cache = new Map<string, WeakRef<GeneratorState>>();
   #registry = new FinalizationRegistry<string>((workflowId) => {
@@ -188,7 +188,7 @@ A regular `Map<string, GeneratorState>` would hold strong references to every ch
 
 Activity functions are registered by reference, with metadata (name, retry policy, queue) attached. A `WeakMap` ties metadata to the function object itself. If the function is garbage collected---say, a dynamically registered activity in a hot-reload scenario---the metadata is automatically cleaned up.
 
-```typescript
+```typescript partial
 class ActivityRegistry {
   #metadata = new WeakMap<Function, ActivityMetadata>();
   #nameIndex = new Map<string, WeakRef<Function>>();

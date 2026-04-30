@@ -8,7 +8,7 @@ That is what a Weft workflow gives you.
 
 If you are not familiar with generators, Weft provides a simpler entry point. Register a plain `async` function and use `ctx.step()` for each durable operation:
 
-```typescript
+```typescript partial
 import { Engine } from 'weft';
 
 const engine = new Engine();
@@ -29,7 +29,7 @@ The step-based API is a subset of the full API. It supports sequential steps onl
 
 A workflow is an `async function*` that receives a context and an input. The generator syntax is the key: every `yield*` expression is a **checkpoint boundary** where Weft snapshots your entire local scope.
 
-```typescript
+```typescript partial
 import { Engine } from 'weft';
 
 const engine = new Engine();
@@ -83,7 +83,7 @@ The practical rule: if you can `structuredClone` it, it survives a checkpoint. I
 
 Set `development: true` when constructing your engine and Weft will validate every checkpoint round-trip as it happens. If a local variable would not survive serialization, you get a `DevelopmentWarningEvent` with the exact field paths that failed.
 
-```typescript
+```typescript partial
 const engine = new Engine({ development: true });
 
 engine.addEventListener('development:warning', (event) => {
@@ -97,7 +97,7 @@ This is cheap insurance during development. Turn it off in production---the vali
 
 The simplest registration passes a name and a handler.
 
-```typescript
+```typescript partial
 engine.register('order', async function* (ctx, input) {
   // ...
 });
@@ -105,7 +105,7 @@ engine.register('order', async function* (ctx, input) {
 
 When you need versioning or migration support, pass an object instead.
 
-```typescript
+```typescript partial
 engine.register('order', {
   version: '2',
   handler: async function* (ctx, input) {
@@ -126,7 +126,7 @@ The registration object also accepts `searchAttributes` (declare indexed attribu
 
 Call `engine.start()` with the registered name and your input. You get back a `WorkflowHandle`---a lightweight reference you can use to await the result, send [signals](signals-and-queries.md), or cancel execution.
 
-```typescript
+```typescript partial
 const handle = await engine.start('welcome', { name: 'World' });
 const result = await handle.result();
 // { greeting: 'Hello, World!', notified: true }
@@ -134,7 +134,7 @@ const result = await handle.result();
 
 You can also provide options when starting a workflow.
 
-```typescript
+```typescript partial
 const handle = await engine.start('order', orderData, {
   id: 'order-abc-123', // deterministic ID instead of random UUID
   executionTimeout: '30 minutes', // hard deadline for the entire workflow
@@ -157,7 +157,7 @@ While Weft's checkpoints stay constant-size by default, the data _inside_ your c
 
 When a workflow produces a large value that it needs later --- a batch of 10,000 processed records, a large API response --- keeping it in a local variable bloats the checkpoint. Use `ctx.offload()` to store the data separately, leaving only a lightweight reference in the checkpoint:
 
-```typescript
+```typescript partial
 engine.register('process-batch', async function* (ctx, input) {
   const { batchId } = input as { batchId: string };
 
@@ -183,7 +183,7 @@ The offloaded data survives engine recovery --- it is persisted to the same stor
 
 Use `ctx.archive()` when you want to preserve data for auditing or debugging but do not need it again in the workflow. Archived data is stored at `archive:{workflowId}:{key}` and can be queried externally, but the workflow does not load it back:
 
-```typescript
+```typescript partial
 engine.register('order-pipeline', async function* (ctx, input) {
   const order = input as Order;
 
@@ -212,7 +212,7 @@ Sometimes a workflow needs to kick off a sub-process that should be independentl
 
 Use `yield* context.startChild()` to start a child workflow from within a parent. The parent suspends at the `yield*` boundary until the child completes or fails.
 
-```typescript
+```typescript partial
 engine.register('process-payment', async function* (ctx, input) {
   const { amount } = input as { amount: number };
   // ... payment logic ...
@@ -233,7 +233,7 @@ engine.register('order', async function* (ctx, input) {
 
 If a child workflow throws, the error propagates into the parent. You can catch it with a standard `try/catch` block.
 
-```typescript
+```typescript partial
 engine.register('parent', async function* (ctx, input) {
   const context = ctx as Context;
   try {
@@ -249,7 +249,7 @@ engine.register('parent', async function* (ctx, input) {
 
 Child workflows can themselves start child workflows, creating a nesting hierarchy. To prevent runaway recursion, the engine enforces a maximum nesting depth. The default limit is 10 levels. You can configure it when creating the engine.
 
-```typescript
+```typescript partial
 const engine = new Engine({ maxNestingDepth: 5 });
 ```
 

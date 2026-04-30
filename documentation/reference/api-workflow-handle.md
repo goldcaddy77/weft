@@ -10,7 +10,7 @@ For a guided walkthrough, see the [Workflows guide](../guides/workflows.md).
 
 ## Class Signature
 
-```ts
+```ts partial
 class WorkflowHandle extends EventTarget implements AsyncDisposable {
   readonly id: string;
 
@@ -31,7 +31,7 @@ class WorkflowHandle extends EventTarget implements AsyncDisposable {
 
 ### `id`
 
-```ts
+```ts partial
 readonly id: string;
 ```
 
@@ -43,7 +43,7 @@ The unique workflow identifier. This is either the ID you passed via `StartOptio
 
 ### `result()`
 
-```ts
+```ts partial
 async result(): Promise<unknown>;
 ```
 
@@ -51,26 +51,26 @@ Returns a promise that resolves with the workflow's return value when it complet
 
 For workflows that are already complete when you call `result()`, the promise resolves immediately from stored state.
 
-```ts
+```ts partial
 const handle = await engine.start('order-processing', { orderId: '123' });
 const output = await handle.result();
 ```
 
 ### `signal(name, payload?)`
 
-```ts
+```ts partial
 async signal(name: string, payload?: unknown): Promise<void>;
 ```
 
 Send a named signal to the workflow. If the workflow is currently waiting for this signal (via `ctx.waitForSignal(name)`), it resumes immediately. Otherwise, the signal is persisted and delivered when the workflow reaches a `waitForSignal` call for that name.
 
-```ts
+```ts partial
 await handle.signal('approve', { approvedBy: 'alice' });
 ```
 
 ### `update(name, payload?, options?)`
 
-```ts
+```ts partial
 async update(
   name: string,
   payload?: unknown,
@@ -88,13 +88,13 @@ Send a synchronous update to the workflow and wait for the result. Unlike signal
 
 Throws if the handler throws or the timeout is exceeded.
 
-```ts
+```ts partial
 const count = await handle.update('getProgress');
 ```
 
 ### `cancel()`
 
-```ts
+```ts partial
 async cancel(): Promise<void>;
 ```
 
@@ -106,7 +106,7 @@ Cancel the workflow. This:
 4. Dispatches a `WorkflowCancelledEvent`
 5. Rejects the `result()` promise with a cancellation error
 
-```ts
+```ts partial
 await handle.cancel();
 ```
 
@@ -116,7 +116,7 @@ await handle.cancel();
 
 `WorkflowHandle` extends `EventTarget`, so you can listen for lifecycle events using the standard `addEventListener` / `removeEventListener` API. Events are forwarded from the engine to the handle.
 
-```ts
+```ts partial
 handle.addEventListener('workflow:completed', (event) => {
   console.log('Workflow completed!');
 });
@@ -144,7 +144,7 @@ Event types forwarded to the handle:
 
 ### `Symbol.asyncIterator`
 
-```ts
+```ts partial
 async *[Symbol.asyncIterator](): AsyncIterableIterator<Event>;
 ```
 
@@ -152,7 +152,7 @@ Yields workflow lifecycle events as they occur. The iterator completes when the 
 
 Listened event types: `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`, `activity:started`, `activity:completed`, `signal:received`, `update:received`, `update:completed`.
 
-```ts
+```ts partial
 const handle = await engine.start('my-workflow', input);
 
 for await (const event of handle) {
@@ -163,7 +163,7 @@ for await (const event of handle) {
 
 ### `Symbol.observable`
 
-```ts
+```ts partial
 [Symbol.observable](): {
   subscribe: (observer: {
     next?: (event: Event) => void;
@@ -175,7 +175,7 @@ for await (const event of handle) {
 
 Returns an observable-like object compatible with the TC39 Observable proposal. The observer receives lifecycle events via `next()`, a `complete()` call on `workflow:completed`, and an `error()` call on `workflow:failed`.
 
-```ts
+```ts partial
 const observable = handle[Symbol.observable]();
 const subscription = observable.subscribe({
   next: (event) => console.log(event.type),
@@ -191,13 +191,13 @@ Observed event types: `workflow:completed`, `workflow:failed`, `workflow:cancell
 
 ### `Symbol.asyncDispose`
 
-```ts
+```ts partial
 async [Symbol.asyncDispose](): Promise<void>;
 ```
 
 No-op for now -- handles are lightweight and do not hold resources that need cleanup. This allows `WorkflowHandle` to be used with `await using`:
 
-```ts
+```ts partial
 await using handle = await engine.start('my-workflow', input);
 const result = await handle.result();
 // handle is disposed when scope exits

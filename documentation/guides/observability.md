@@ -6,7 +6,7 @@ Your workflows are running in production. Something is slow, but you can't tell 
 
 Import the factory, pass the engine as the `eventTarget`, and register the interceptors.
 
-```typescript
+```typescript partial
 import { createObservabilityInterceptors } from 'weft';
 
 const { workflow, activity, dispose } = createObservabilityInterceptors({
@@ -25,7 +25,7 @@ When tearing down the engine, call `dispose()` to unsubscribe those listeners an
 
 The `createObservabilityInterceptors()` factory accepts options for controlling what gets recorded:
 
-```typescript
+```typescript partial
 interface ObservabilityOptions {
   tracerName?: string; // Name passed to trace.getTracer(). Default: 'weft'.
   tracerVersion?: string; // Version passed to trace.getTracer().
@@ -42,7 +42,7 @@ interface ObservabilityOptions {
 
 Use `recordPayloads` and `maxPayloadSize` to control payload attributes, `attributeExtractor` to add domain-specific span attributes, and `eventTarget` to let the interceptor factory close root spans from engine lifecycle events.
 
-```typescript
+```typescript partial
 const { workflow, activity } = createObservabilityInterceptors({
   eventTarget: engine,
   recordPayloads: true,
@@ -119,7 +119,7 @@ Each metric has a `name`, `description`, `unit`, and `type` (counter, gauge, or 
 
 Observability interceptors are just regular interceptors. Compose them with your own by controlling registration order. The first registered interceptor is the outermost wrapper.
 
-```typescript
+```typescript partial
 engine.addInterceptor(authInterceptor); // 1. Check auth
 engine.addInterceptor(validationInterceptor); // 2. Validate inputs
 engine.addInterceptor(observabilityWorkflow); // 3. Trace the validated, authorized call
@@ -130,7 +130,7 @@ In this arrangement, the observability span captures the call _after_ auth and v
 
 The activity interceptor follows the same pattern:
 
-```typescript
+```typescript partial
 engine.addActivityInterceptor(observabilityActivity);
 engine.addActivityInterceptor(decryptionInterceptor);
 ```

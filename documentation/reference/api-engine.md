@@ -4,13 +4,13 @@ The `Engine` class is the central orchestrator in Weft. It manages workflow regi
 
 ## `Engine`
 
-```ts
+```ts partial
 class Engine extends EventTarget implements Disposable, AsyncDisposable
 ```
 
 ### Constructor
 
-```ts
+```ts partial
 new Engine(options?: Partial<EngineOptions>)
 ```
 
@@ -46,7 +46,7 @@ const engine = new Engine({
 
 ### `register()`
 
-```ts
+```ts partial
 register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void
 register(name: string, registration: WorkflowRegistration): void
 register(agentDef: AgentDefinition, options?: AgentRegistrationOptions): void
@@ -54,7 +54,7 @@ register(agentDef: AgentDefinition, options?: AgentRegistrationOptions): void
 
 Register a workflow by name. The simple form accepts a generator or step-based workflow function directly. The registration form accepts a `WorkflowRegistration` object with additional metadata like `version` and `migrate`. Agent definitions can also be registered directly with optional agent registration options.
 
-```ts
+```ts partial
 engine.register('send-email', async function* (context, input) {
   const result = yield* context.run(sendEmail, input.to, input.body);
   return result;
@@ -71,7 +71,7 @@ engine.register('send-email', {
 
 ### `start()`
 
-```ts
+```ts partial
 async start(type: string, input: unknown, options?: StartOptions): Promise<WorkflowHandle>
 ```
 
@@ -83,7 +83,7 @@ Start a new workflow execution. Throws if `type` is not registered or a workflow
 | `input`   | `unknown`      | Input data passed to the workflow generator |
 | `options` | `StartOptions` | Optional start configuration                |
 
-```ts
+```ts partial
 const handle = await engine.start('send-email', {
   to: 'user@example.com',
   body: 'Hello!',
@@ -92,19 +92,19 @@ const handle = await engine.start('send-email', {
 
 ### `signal()`
 
-```ts
+```ts partial
 async signal(workflowId: string, name: string, payload?: unknown): Promise<void>
 ```
 
 Deliver a named signal to a running workflow. If the workflow is currently waiting for this signal via `context.waitForSignal()`, it resumes immediately. Otherwise the signal is persisted and consumed when the workflow next waits for it.
 
-```ts
+```ts partial
 await engine.signal(handle.id, 'approval', { approved: true });
 ```
 
 ### `update()`
 
-```ts
+```ts partial
 async update(
   workflowId: string,
   name: string,
@@ -115,13 +115,13 @@ async update(
 
 Send a synchronous update to a running workflow and wait for the handler's return value. If the workflow has registered an `onUpdate` handler for `name`, the handler runs immediately and its return value is sent back. Falls back to the `UpdateCoordinator` with polling if no active handler is found. Default timeout is 5000ms.
 
-```ts
+```ts partial
 const count = await engine.update(handle.id, 'getProgress');
 ```
 
 ### `cancel()`
 
-```ts
+```ts partial
 async cancel(workflowId: string): Promise<void>
 ```
 
@@ -129,19 +129,19 @@ Cancel a running workflow. Aborts the workflow's `AbortController`, cleans up th
 
 ### `list()`
 
-```ts
+```ts partial
 async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>>
 ```
 
 List workflows with optional filtering and pagination. Scans all persisted workflow state and applies filters in memory.
 
-```ts
+```ts partial
 const running = await engine.list({ status: 'running', limit: 20 });
 ```
 
 ### `getHandle()`
 
-```ts
+```ts partial
 getHandle(workflowId: string): WorkflowHandle
 ```
 
@@ -149,7 +149,7 @@ Retrieve a `WorkflowHandle` for an existing workflow by ID. Uses a `WeakRef` cac
 
 ### `addInterceptor()`
 
-```ts
+```ts partial
 addInterceptor(interceptor: WorkflowInterceptor): void
 ```
 
@@ -157,7 +157,7 @@ Register a workflow-level interceptor. See the [Interceptors reference](./api-in
 
 ### `addActivityInterceptor()`
 
-```ts
+```ts partial
 addActivityInterceptor(interceptor: ActivityInterceptor): void
 ```
 
@@ -165,7 +165,7 @@ Register an activity-level interceptor. See the [Interceptors reference](./api-i
 
 ### `storage` (getter)
 
-```ts
+```ts partial
 get storage(): Storage
 ```
 
@@ -173,7 +173,7 @@ Direct access to the underlying storage backend. Primarily useful for `TestEngin
 
 ### `scheduler` (getter)
 
-```ts
+```ts partial
 get scheduler(): Scheduler
 ```
 
@@ -181,14 +181,14 @@ Direct access to the underlying scheduler. Primarily useful for `TestEngine` and
 
 ### Disposal
 
-```ts
+```ts partial
 [Symbol.dispose](): void
 [Symbol.asyncDispose](): Promise<void>
 ```
 
 Clean up all engine resources -- aborts the scheduler, clears active generators, handles, resolvers, signal waiters, sleep resolvers, and closes the `BroadcastChannel` if active. Supports both `using` and `await using` syntax.
 
-```ts
+```ts partial
 {
   using engine = new Engine();
   // engine is disposed when this block exits
@@ -199,7 +199,7 @@ Clean up all engine resources -- aborts the scheduler, clears active generators,
 
 ## `WorkflowHandle`
 
-```ts
+```ts partial
 class WorkflowHandle extends EventTarget implements AsyncDisposable
 ```
 
@@ -207,7 +207,7 @@ A lightweight handle to an individual workflow execution. Returned by `engine.st
 
 ### `id`
 
-```ts
+```ts partial
 readonly id: string
 ```
 
@@ -215,20 +215,20 @@ The workflow's unique identifier.
 
 ### `result()`
 
-```ts
+```ts partial
 async result(): Promise<unknown>
 ```
 
 Await the workflow's final result. Resolves when the workflow completes, rejects if it fails or is cancelled.
 
-```ts
+```ts partial
 const handle = await engine.start('process-order', order);
 const receipt = await handle.result();
 ```
 
 ### `signal()`
 
-```ts
+```ts partial
 async signal(name: string, payload?: unknown): Promise<void>
 ```
 
@@ -236,7 +236,7 @@ Shorthand for `engine.signal(handle.id, name, payload)`.
 
 ### `cancel()`
 
-```ts
+```ts partial
 async cancel(): Promise<void>
 ```
 
@@ -244,7 +244,7 @@ Shorthand for `engine.cancel(handle.id)`.
 
 ### `update()`
 
-```ts
+```ts partial
 async update(name: string, payload?: unknown, options?: { timeout?: number }): Promise<unknown>
 ```
 
@@ -252,13 +252,13 @@ Shorthand for `engine.update(handle.id, name, payload, options)`.
 
 ### `[Symbol.asyncIterator]()`
 
-```ts
+```ts partial
 async *[Symbol.asyncIterator](): AsyncIterableIterator<Event>
 ```
 
 Iterate over workflow lifecycle events as they happen. Yields events for `workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`, `activity:started`, `activity:completed`, `signal:received`, `update:received`, and `update:completed`. The iterator completes when a terminal event (`completed`, `failed`, `cancelled`) fires.
 
-```ts
+```ts partial
 for await (const event of handle) {
   console.log(event.type);
 }
@@ -270,7 +270,7 @@ Returns an observable-compatible object with a `subscribe` method for frameworks
 
 ### `[Symbol.asyncDispose]()`
 
-```ts
+```ts partial
 async [Symbol.asyncDispose](): Promise<void>
 ```
 
@@ -282,7 +282,7 @@ No-op disposal -- handles are lightweight and do not hold expensive resources.
 
 ### `EngineOptions`
 
-```ts
+```ts partial
 interface EngineOptions {
   storage?: Storage;
   development?: boolean;
@@ -306,7 +306,7 @@ See [Configuration](./configuration.md) for defaults. See [types.md](./types.md)
 
 ### `StartOptions`
 
-```ts
+```ts partial
 interface StartOptions {
   id?: string;
   idempotencyKey?: string;
@@ -324,7 +324,7 @@ interface StartOptions {
 
 ### `ListFilter`
 
-```ts
+```ts partial
 interface ListFilter {
   status?: WorkflowStatus | WorkflowStatus[];
   type?: string;
@@ -347,7 +347,7 @@ interface PaginatedResult<T> {
 
 ### `WorkflowSummary`
 
-```ts
+```ts partial
 interface WorkflowSummary {
   id: WorkflowId;
   type: string;
@@ -361,13 +361,13 @@ interface WorkflowSummary {
 
 ### `WorkflowStatus`
 
-```ts
+```ts partial
 type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timed-out';
 ```
 
 ### `WorkflowFunction`
 
-```ts
+```ts partial
 type WorkflowFunction<TInput = unknown, TOutput = unknown> = (
   context: WorkflowContext,
   input: TInput,
@@ -378,7 +378,7 @@ See also `StepWorkflowFunction` in [types.md](./types.md) — the step-based var
 
 ### `WorkflowRegistration`
 
-```ts
+```ts partial
 interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
   version?: string;
   handler: WorkflowFunction<TInput, TOutput>;
@@ -389,7 +389,7 @@ interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
 
 ### `Duration`
 
-```ts
+```ts partial
 type Duration = number | string;
 ```
 

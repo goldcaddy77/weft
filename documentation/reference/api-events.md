@@ -10,7 +10,7 @@ All event classes extend the built-in `Event` with a static `type` property matc
 
 Emitted when a workflow begins execution.
 
-```ts
+```ts partial
 class WorkflowStartedEvent extends Event {
   static readonly type = 'workflow:started';
   readonly workflowId: string;
@@ -23,7 +23,7 @@ class WorkflowStartedEvent extends Event {
 
 Emitted when a workflow finishes successfully.
 
-```ts
+```ts partial
 class WorkflowCompletedEvent extends Event {
   static readonly type = 'workflow:completed';
   readonly workflowId: string;
@@ -36,7 +36,7 @@ class WorkflowCompletedEvent extends Event {
 
 Emitted when a workflow throws an unhandled error.
 
-```ts
+```ts partial
 class WorkflowFailedEvent extends Event {
   static readonly type = 'workflow:failed';
   readonly workflowId: string;
@@ -48,7 +48,7 @@ class WorkflowFailedEvent extends Event {
 
 Emitted when a workflow is explicitly cancelled.
 
-```ts
+```ts partial
 class WorkflowCancelledEvent extends Event {
   static readonly type = 'workflow:cancelled';
   readonly workflowId: string;
@@ -59,7 +59,7 @@ class WorkflowCancelledEvent extends Event {
 
 Emitted when a workflow exceeds its execution or run deadline.
 
-```ts
+```ts partial
 class WorkflowTimedOutEvent extends Event {
   static readonly type = 'workflow:timed-out';
   readonly workflowId: string;
@@ -72,7 +72,7 @@ class WorkflowTimedOutEvent extends Event {
 
 Emitted when a paused or suspended workflow is explicitly resumed.
 
-```ts
+```ts partial
 class WorkflowResumedEvent extends Event {
   static readonly type = 'workflow:resumed';
   readonly workflowId: string;
@@ -83,7 +83,7 @@ class WorkflowResumedEvent extends Event {
 
 Emitted when an activity begins executing.
 
-```ts
+```ts partial
 class ActivityStartedEvent extends Event {
   static readonly type = 'activity:started';
   readonly operationId: string;
@@ -97,7 +97,7 @@ class ActivityStartedEvent extends Event {
 
 Emitted when an activity finishes successfully.
 
-```ts
+```ts partial
 class ActivityCompletedEvent extends Event {
   static readonly type = 'activity:completed';
   readonly operationId: string;
@@ -111,7 +111,7 @@ class ActivityCompletedEvent extends Event {
 
 Emitted when an activity throws an error (may be retried).
 
-```ts
+```ts partial
 class ActivityFailedEvent extends Event {
   static readonly type = 'activity:failed';
   readonly operationId: string;
@@ -126,7 +126,7 @@ class ActivityFailedEvent extends Event {
 
 Emitted when a signal is delivered to the engine for a workflow.
 
-```ts
+```ts partial
 class SignalReceivedEvent extends Event {
   static readonly type = 'signal:received';
   readonly workflowId: string;
@@ -139,7 +139,7 @@ class SignalReceivedEvent extends Event {
 
 Emitted when a signal is consumed by a waiting workflow.
 
-```ts
+```ts partial
 class SignalDeliveredEvent extends Event {
   static readonly type = 'signal:delivered';
   readonly workflowId: string;
@@ -151,7 +151,7 @@ class SignalDeliveredEvent extends Event {
 
 Emitted when an update request is sent to a workflow.
 
-```ts
+```ts partial
 class UpdateReceivedEvent extends Event {
   static readonly type = 'update:received';
   readonly updateId: string;
@@ -165,7 +165,7 @@ class UpdateReceivedEvent extends Event {
 
 Emitted when an update handler finishes processing.
 
-```ts
+```ts partial
 class UpdateCompletedEvent extends Event {
   static readonly type = 'update:completed';
   readonly updateId: string;
@@ -180,7 +180,7 @@ class UpdateCompletedEvent extends Event {
 
 Emitted when search attributes are persisted.
 
-```ts
+```ts partial
 class AttributesChangedEvent extends Event {
   static readonly type = 'attributes:changed';
   readonly workflowId: string;
@@ -192,7 +192,7 @@ class AttributesChangedEvent extends Event {
 
 Emitted when a checkpoint exceeds the configured size threshold.
 
-```ts
+```ts partial
 class CheckpointSizeWarningEvent extends Event {
   static readonly type = 'checkpoint:size-warning';
   readonly workflowId: string;
@@ -205,7 +205,7 @@ class CheckpointSizeWarningEvent extends Event {
 
 Emitted in development mode when a checkpoint round-trip detects non-serializable fields.
 
-```ts
+```ts partial
 class DevelopmentWarningEvent extends Event {
   static readonly type = 'development:warning';
   readonly workflowId: string;
@@ -218,7 +218,7 @@ class DevelopmentWarningEvent extends Event {
 
 Emitted periodically with storage utilization metrics.
 
-```ts
+```ts partial
 class StorageSizeReportedEvent extends Event {
   static readonly type = 'storage:size-reported';
   readonly totalBytes: number;
@@ -230,7 +230,7 @@ class StorageSizeReportedEvent extends Event {
 
 Emitted when a metric crosses an alert threshold.
 
-```ts
+```ts partial
 class AlertFiredEvent extends Event {
   static readonly type = 'alert:fired';
   readonly metric: string;
@@ -243,7 +243,7 @@ class AlertFiredEvent extends Event {
 
 Emitted when a previously fired alert metric returns below its threshold.
 
-```ts
+```ts partial
 class AlertResolvedEvent extends Event {
   static readonly type = 'alert:resolved';
   readonly metric: string;
@@ -255,7 +255,7 @@ class AlertResolvedEvent extends Event {
 
 Emitted when a quota or constraint is violated (e.g., tenant workflow creation rate limit).
 
-```ts
+```ts partial
 class ConstraintViolatedEvent extends Event {
   static readonly type = 'constraint:violated';
   readonly constraint: string;
@@ -267,7 +267,7 @@ class ConstraintViolatedEvent extends Event {
 
 Emitted for streaming token output from AI agent operations.
 
-```ts
+```ts partial
 class TokenEvent extends Event {
   static readonly type = 'agent:token';
   readonly workflowId: string;
@@ -284,7 +284,7 @@ class TokenEvent extends Event {
 
 Emitted at the start of each agent LLM turn.
 
-```ts
+```ts partial
 class AgentTurnStartedEvent extends Event {
   static readonly type = 'agent:turn:started';
   readonly workflowId: string;
@@ -300,7 +300,7 @@ class AgentTurnStartedEvent extends Event {
 
 Emitted when an agent turn finishes. Contains full cost and token telemetry.
 
-```ts
+```ts partial
 class AgentTurnCompletedEvent extends Event {
   static readonly type = 'agent:turn:completed';
   readonly workflowId: string;
@@ -323,7 +323,7 @@ class AgentTurnCompletedEvent extends Event {
 
 Emitted when an agent invokes a tool.
 
-```ts
+```ts partial
 class AgentToolCalledEvent extends Event {
   static readonly type = 'agent:tool:called';
   readonly workflowId: string;
@@ -340,7 +340,7 @@ class AgentToolCalledEvent extends Event {
 
 Emitted when a tool call completes.
 
-```ts
+```ts partial
 class AgentToolReturnedEvent extends Event {
   static readonly type = 'agent:tool:returned';
   readonly workflowId: string;
@@ -357,7 +357,7 @@ class AgentToolReturnedEvent extends Event {
 
 Emitted when an agent's budget consumption exceeds a warning threshold.
 
-```ts
+```ts partial
 class AgentBudgetWarningEvent extends Event {
   static readonly type = 'agent:budget:warning';
   readonly workflowId: string;
@@ -373,7 +373,7 @@ class AgentBudgetWarningEvent extends Event {
 
 Emitted when an agent exceeds its allocated budget.
 
-```ts
+```ts partial
 class AgentBudgetExceededEvent extends Event {
   static readonly type = 'agent:budget:exceeded';
   readonly workflowId: string;
@@ -389,7 +389,7 @@ class AgentBudgetExceededEvent extends Event {
 
 Emitted when an agent's conversation history is compacted by a context strategy.
 
-```ts
+```ts partial
 class AgentContextCompactedEvent extends Event {
   static readonly type = 'agent:context:compacted';
   readonly workflowId: string;
@@ -405,7 +405,7 @@ class AgentContextCompactedEvent extends Event {
 
 Emitted when an agent resumes from a persisted checkpoint after a process restart.
 
-```ts
+```ts partial
 class AgentCheckpointResumedEvent extends Event {
   static readonly type = 'agent:checkpoint:resumed';
   readonly workflowId: string;
@@ -418,7 +418,7 @@ class AgentCheckpointResumedEvent extends Event {
 
 Emitted when a model call fails and the agent falls back to an alternative model.
 
-```ts
+```ts partial
 class AgentModelFallbackEvent extends Event {
   static readonly type = 'agent:model:fallback';
   readonly workflowId: string;
@@ -435,7 +435,7 @@ class AgentModelFallbackEvent extends Event {
 
 Emitted when a provider's error rate trips the circuit breaker.
 
-```ts
+```ts partial
 class AgentProviderCircuitOpenEvent extends Event {
   static readonly type = 'agent:provider:circuit-open';
   readonly provider: string;
@@ -449,7 +449,7 @@ class AgentProviderCircuitOpenEvent extends Event {
 
 Emitted when an agent operation requires human review before proceeding.
 
-```ts
+```ts partial
 class HumanReviewRequestedEvent extends Event {
   static readonly type = 'human-review:requested';
   readonly workflowId: string;
@@ -463,7 +463,7 @@ class HumanReviewRequestedEvent extends Event {
 
 Emitted when a human review decision is submitted.
 
-```ts
+```ts partial
 class HumanReviewCompletedEvent extends Event {
   static readonly type = 'human-review:completed';
   readonly workflowId: string;
@@ -482,7 +482,7 @@ class HumanReviewCompletedEvent extends Event {
 
 A complete mapping of event type strings to their event classes. Use this with `TypedEventTarget` for fully typed `addEventListener` calls.
 
-```ts
+```ts partial
 interface WeftEventMap extends WeftAgentEventMap {
   'workflow:started': WorkflowStartedEvent;
   'workflow:completed': WorkflowCompletedEvent;
@@ -512,7 +512,7 @@ interface WeftEventMap extends WeftAgentEventMap {
 
 The agent-specific subset of the event map.
 
-```ts
+```ts partial
 interface WeftAgentEventMap {
   'agent:turn:started': AgentTurnStartedEvent;
   'agent:turn:completed': AgentTurnCompletedEvent;
@@ -550,7 +550,7 @@ interface TypedEventTarget<TEventMap extends Record<string, Event>> {
 
 ### Listening to Events
 
-```ts
+```ts partial
 engine.addEventListener('workflow:completed', (event) => {
   // event is WorkflowCompletedEvent
   console.log(`Workflow ${event.workflowId} completed in ${event.duration}ms`);

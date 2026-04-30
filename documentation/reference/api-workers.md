@@ -12,7 +12,7 @@ For a guided walkthrough, see the [Remote Workers guide](../guides/remote-worker
 
 A bounded pool of Bun Web Workers with acquire/release semantics. Implements both `Disposable` (immediate termination) and `AsyncDisposable` (graceful shutdown -- waits for in-flight workers to be released before terminating).
 
-```ts
+```ts partial
 class WorkerPool implements Disposable, AsyncDisposable {
   constructor(options: WorkerPoolOptions);
 
@@ -48,7 +48,7 @@ class WorkerPool implements Disposable, AsyncDisposable {
 
 **Example:**
 
-```ts
+```ts partial
 import { WorkerPool } from 'weft';
 
 await using pool = new WorkerPool({
@@ -67,7 +67,7 @@ pool.release(worker);
 
 Execute an activity function with error handling and abort support. Returns a structured result indicating success or failure.
 
-```ts
+```ts partial
 async function executeActivity(
   request: ActivityExecutionRequest,
   activityFunction: (...arguments_: unknown[]) => unknown,
@@ -107,7 +107,7 @@ If `signal` is already aborted when called, returns a failed result immediately 
 
 WebSocket-based remote worker client. Connects to the Weft server, registers its available activities, and processes tasks dispatched by the server. Implements `Disposable`.
 
-```ts
+```ts partial
 class RemoteWorker implements Disposable {
   constructor(options: RemoteWorkerOptions);
 
@@ -176,7 +176,7 @@ await worker.disconnect();
 
 Manages periodic heartbeat signals for keeping visibility timeouts alive.
 
-```ts
+```ts partial
 class HeartbeatManager {
   constructor(
     sendHeartbeat: (details?: unknown) => void,
@@ -203,7 +203,7 @@ class HeartbeatManager {
 
 HTTP long-poll fallback for environments without WebSocket support. Polls the server's `/poll` endpoint for tasks and reports results via `/complete`. Implements `Disposable`.
 
-```ts
+```ts partial
 class LongPollWorker implements Disposable {
   constructor(options: LongPollWorkerOptions);
 
@@ -252,7 +252,7 @@ await worker.stop();
 
 Server-side worker tracking and least-loaded routing. The server uses this to track connected workers, assign tasks, and detect expired visibility timeouts.
 
-```ts
+```ts partial
 class WorkerRegistry {
   constructor(options?: WorkerRegistryOptions);
 
@@ -275,7 +275,7 @@ class WorkerRegistry {
 
 #### `WorkerRegistryOptions`
 
-```ts
+```ts partial
 interface WorkerRegistryOptions {
   policy?: RoutingPolicy;
 }

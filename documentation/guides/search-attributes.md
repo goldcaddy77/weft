@@ -6,7 +6,7 @@ Your workflows are running, but you can't find the one you need. Filtering by st
 
 Search attributes are declared at registration time. This prevents typos and gives the engine enough type information to build correct indexes.
 
-```typescript
+```typescript partial
 engine.register('order', {
   handler: orderWorkflow,
   searchAttributes: {
@@ -23,7 +23,7 @@ The supported types are `string`, `number`, `boolean`, `datetime`, and `keyword_
 
 The TypeScript type backing these values is `SearchAttributeValue`:
 
-```typescript
+```typescript partial
 type SearchAttributeValue = string | number | boolean | Date | string[];
 ```
 
@@ -31,7 +31,7 @@ type SearchAttributeValue = string | number | boolean | Date | string[];
 
 `ctx.setAttribute()` and `ctx.setAttributes()` are synchronous calls---they don't yield. You call them anywhere in your workflow, and the values are persisted at the next checkpoint boundary, batched with the checkpoint write. No extra I/O.
 
-```typescript
+```typescript partial
 async function* orderWorkflow(ctx: Context, order: Order) {
   ctx.setAttributes({
     customerId: order.customerId,
@@ -60,7 +60,7 @@ Notice how `setAttributes()` does a bulk set while `setAttribute()` sets a singl
 
 You can read attribute values within the workflow using `ctx.getAttribute()` and `ctx.getAttributes()`:
 
-```typescript
+```typescript partial
 const region = ctx.getAttribute<string>('region');
 const allAttributes = ctx.getAttributes(); // Readonly snapshot
 ```
@@ -71,7 +71,7 @@ The generic parameter on `getAttribute` gives you type narrowing without a cast.
 
 The real payoff comes when you query. The `engine.list()` method accepts an `attributes` filter array with support for exact matches and range queries.
 
-```typescript
+```typescript partial
 // Find all workflows for a specific customer
 const result = await engine.list({
   attributes: [{ key: 'customerId', value: 'cust-123' }],

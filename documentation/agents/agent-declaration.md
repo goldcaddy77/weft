@@ -6,7 +6,7 @@ You want to define an agent once and use it in two places: as a standalone workf
 
 The `defineAgent()` function takes an `AgentDefinitionOptions` object and returns an `AgentDefinition`. Think of it as the agent's blueprint—what model it uses, what tools it has, how it behaves.
 
-```typescript
+```typescript partial
 import { defineAgent } from 'weft';
 
 const researcher = defineAgent({
@@ -44,7 +44,7 @@ const researcher = defineAgent({
 
 Every field except `name` and `model` is optional. A minimal declaration looks like this:
 
-```typescript
+```typescript partial
 const simple = defineAgent({
   name: 'summarizer',
   model: 'claude-haiku-4-5-20251001',
@@ -75,7 +75,7 @@ The `toolsForTenant` callback lets you expose different tool sets to different t
 
 Each `AgentToolDefinition` pairs a `ToolDefinition` (name, description, input schema) with an `execute` function:
 
-```typescript
+```typescript partial
 interface AgentToolDefinition {
   definition: ToolDefinition;
   execute: (input: unknown) => Promise<unknown>;
@@ -93,7 +93,7 @@ The `AgentHooks` interface provides three injection points into the agent loop. 
 
 **`beforeTurn`** fires before each LLM call. You can inspect or modify the messages being sent, or skip the turn entirely.
 
-```typescript
+```typescript partial
 hooks: {
   beforeTurn: async ({ turnIndex, messages, model }) => {
     // Inject fresh context
@@ -110,7 +110,7 @@ Returning `{ action: 'skip', result: 'some value' }` short-circuits the loop—t
 
 **`afterToolCall`** fires after each tool execution. You can modify the result before it goes back to the model, or reject it.
 
-```typescript
+```typescript partial
 hooks: {
   afterToolCall: async ({ turnIndex, toolCall, result }) => {
     if (toolCall.name === 'executeCode' && containsDangerousPatterns(result)) {
@@ -125,7 +125,7 @@ Rejecting a tool call sends an error message back to the model instead of the to
 
 **`onBudgetWarning`** fires when the budget warning threshold is crossed (default 80%). This is a notification-only hook; it doesn't return a value.
 
-```typescript
+```typescript partial
 hooks: {
   onBudgetWarning: async ({ tokensRemaining, costRemaining, budgetUsedPercent }) => {
     console.warn(`Budget at ${budgetUsedPercent}%, $${costRemaining} remaining`);
@@ -137,7 +137,7 @@ hooks: {
 
 Register the agent definition with an engine and start it like any workflow:
 
-```typescript
+```typescript partial
 import { Engine, type LLMProvider } from 'weft';
 
 const engine = new Engine({
@@ -192,7 +192,7 @@ Each `ctx.agent()` call creates checkpoint boundaries at every tool call within 
 
 `defineAgent()` accepts type parameters for input and output:
 
-```typescript
+```typescript partial
 interface ResearchInput {
   prompt: string;
 }

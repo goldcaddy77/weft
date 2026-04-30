@@ -6,7 +6,7 @@ Sometimes a workflow needs to wait for something that is not an activity result 
 
 Inside a workflow, `yield* ctx.waitForSignal<T>(name)` pauses execution until a signal with that name arrives. The workflow is checkpointed at the pause point---it costs nothing to wait, even for days.
 
-```typescript
+```typescript partial
 engine.register('approval', async function* (ctx, input) {
   const { orderId } = input as { orderId: string };
 
@@ -29,7 +29,7 @@ The generic type parameter `<{ approved: boolean }>` is purely for TypeScript---
 
 From outside the workflow, use `engine.signal()` or `handle.signal()` to deliver data.
 
-```typescript
+```typescript partial
 const handle = await engine.start('approval', { orderId: 'order-1' });
 
 // Some time later, when the human clicks "Approve":
@@ -41,7 +41,7 @@ const result = await handle.result();
 
 You can also signal through the handle directly.
 
-```typescript
+```typescript partial
 await handle.signal('approval', { approved: true });
 ```
 
@@ -61,7 +61,7 @@ This durability guarantee is what makes signals safe for human-in-the-loop workf
 
 A workflow can wait for multiple signals, either sequentially or with different names.
 
-```typescript
+```typescript partial
 engine.register('multi-step-approval', async function* (ctx, input) {
   const { orderId } = input as { orderId: string };
 
@@ -84,7 +84,7 @@ Each `waitForSignal` is an independent checkpoint boundary with its own signal n
 
 You can inspect workflows from outside through the engine's `list()` method, which supports filtering by status and type.
 
-```typescript
+```typescript partial
 const running = await engine.list({ status: 'running' });
 const failed = await engine.list({ status: 'failed', type: 'order' });
 const all = await engine.list({ limit: 50, offset: 0 });

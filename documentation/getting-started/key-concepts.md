@@ -6,7 +6,7 @@ Weft has a handful of core ideas that show up everywhere. This page defines each
 
 A **workflow** is a multi-step durable process defined as a generator function. It's the orchestrator---it decides what to do and in what order. Workflows don't perform side effects directly. Instead, they dispatch activities and coordinate the results.
 
-```typescript
+```typescript partial
 engine.register('checkout', async function* (ctx, order) {
   const charge = yield* ctx.run(chargeCard, order.payment);
   yield* ctx.run(reserveInventory, order.items);
@@ -42,7 +42,7 @@ This is fundamentally different from replay-based systems like Temporal. Weft do
 
 A **signal** is an external message sent _into_ a running workflow. Use signals when something outside the workflow needs to tell it something---a user clicking "approve," a webhook arriving, a timer in another system firing.
 
-```typescript
+```typescript partial
 // Inside the workflow:
 const approval = yield * ctx.waitForSignal<{ approved: boolean }>('approval');
 
@@ -70,7 +70,7 @@ Weft also uses standard Web Workers internally to isolate workflow execution fro
 
 A **search attribute** is user-defined indexed metadata on a workflow---things like customer ID, region, or priority. You set them inside a workflow with `ctx.setAttribute()`, and they become queryable through the list API. They're stored as secondary indexes in the storage layer.
 
-```typescript
+```typescript partial
 engine.register('order', async function* (ctx, input) {
   ctx.setAttribute('customerId', input.customerId);
   ctx.setAttribute('status', 'processing');
@@ -84,7 +84,7 @@ engine.register('order', async function* (ctx, input) {
 
 **Session state** is per-workflow durable state addressable by key, returned as a typed `WorkflowSessionState<T>` slot from `ctx.sessionState(key, initialValue?)`. Unlike search attributes (which are queryable indexes), session state is private to the workflow and survives checkpoint recovery. Access it with `.get()`, `.set()`, `.update()`, `.clear()`, or `.run()` for memoized operations over the slot's value.
 
-```typescript
+```typescript partial
 engine.register('counter', async function* (ctx, input) {
   const counter = ctx.sessionState<number>('count', 0);
   counter.set((counter.get() ?? 0) + 1);

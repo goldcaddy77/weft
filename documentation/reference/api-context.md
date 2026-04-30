@@ -6,13 +6,13 @@ Context does not execute activities or interact with storage directly.
 
 ## `Context`
 
-```ts
+```ts partial
 class Context implements WorkflowContext
 ```
 
 ### Constructor
 
-```ts
+```ts partial
 new Context(options: ContextOptions)
 ```
 
@@ -40,13 +40,13 @@ Typically constructed by the engine -- you will not create `Context` instances d
 
 Each durable method is a generator. Inside a workflow, call them with `yield*`:
 
-```ts
+```ts partial
 const result = yield * context.run(myActivity, 'arg1', 'arg2');
 ```
 
 ### `run()`
 
-```ts
+```ts partial
 *run<TResult>(
   fn: (...args: unknown[]) => Promise<TResult> | TResult,
   ...args: unknown[]
@@ -62,7 +62,7 @@ Execute an activity function durably. The engine checkpoints before the call and
 
 **Returns:** The activity's return value.
 
-```ts
+```ts partial
 async function* orderWorkflow(context: Context, order: Order) {
   const receipt = yield* context.run(chargeCard, order.cardToken, order.total);
   yield* context.run(sendConfirmation, order.email, receipt);
@@ -72,7 +72,7 @@ async function* orderWorkflow(context: Context, order: Order) {
 
 ### `sleep()`
 
-```ts
+```ts partial
 *sleep(duration: Duration): Generator<ContextOperationRequest, void, unknown>
 ```
 
@@ -82,14 +82,14 @@ Pause the workflow for the given duration. The sleep is durable -- if the proces
 | ---------- | ---------- | ----------------------------------------------------------- |
 | `duration` | `Duration` | Milliseconds or a human-readable string like `'5m'`, `'1h'` |
 
-```ts
+```ts partial
 yield * context.sleep('30s');
 yield * context.sleep(5000);
 ```
 
 ### `waitForSignal()`
 
-```ts
+```ts partial
 *waitForSignal<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown>
 ```
 
@@ -101,7 +101,7 @@ Suspend the workflow until a named signal is delivered. If the signal was alread
 
 **Returns:** The signal's payload, typed as `T`.
 
-```ts
+```ts partial
 const approval = yield * context.waitForSignal<{ approved: boolean }>('approval');
 if (!approval.approved) {
   return { status: 'rejected' };
@@ -110,7 +110,7 @@ if (!approval.approved) {
 
 ### `waitForUpdate()`
 
-```ts
+```ts partial
 *waitForUpdate<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown>
 ```
 
@@ -124,7 +124,7 @@ Suspend the workflow until a named update is received. Similar to `waitForSignal
 
 ### `all()`
 
-```ts
+```ts partial
 *all(
   operations: Generator<ContextOperationRequest, unknown, unknown>[],
 ): Generator<ContextOperationRequest, unknown[], unknown>
@@ -138,14 +138,14 @@ Run multiple durable operations in parallel. All operations must complete before
 
 **Returns:** An array of results in the same order as the input operations.
 
-```ts
+```ts partial
 const [user, inventory] =
   yield * context.all([context.run(fetchUser, userId), context.run(checkInventory, sku)]);
 ```
 
 ### `race()`
 
-```ts
+```ts partial
 *race(
   operations: Generator<ContextOperationRequest, unknown, unknown>[],
 ): Generator<ContextOperationRequest, unknown, unknown>
@@ -159,14 +159,14 @@ Run multiple durable operations in parallel, returning the result of whichever c
 
 **Returns:** The result of the first operation to complete.
 
-```ts
+```ts partial
 const result =
   yield * context.race([context.run(fetchFromPrimary, key), context.run(fetchFromFallback, key)]);
 ```
 
 ### `memo()`
 
-```ts
+```ts partial
 *memo<T>(key: string, fn: () => T | Promise<T>): Generator<ContextOperationRequest, T, unknown>
 ```
 
@@ -179,13 +179,13 @@ Execute a function and cache its result by key. On replay or repeated calls with
 
 **Returns:** The memoized result.
 
-```ts
+```ts partial
 const correlationId = yield * context.memo('correlationId', () => crypto.randomUUID());
 ```
 
 ### `runAll()`
 
-```ts
+```ts partial
 *runAll<T extends Record<string, [Function, ...unknown[]]>>(
   branches: T,
 ): Generator<ContextOperationRequest, Record<keyof T, unknown>, unknown>
@@ -199,7 +199,7 @@ Run multiple named activity branches in parallel. Returns a record mapping each 
 
 **Returns:** A record with the same keys, each holding the branch's result.
 
-```ts
+```ts partial
 const results =
   yield *
   context.runAll({
@@ -211,7 +211,7 @@ const results =
 
 ### `offload()`
 
-```ts
+```ts partial
 *offload<T>(
   key: string,
   fn: () => Promise<T>,
@@ -227,7 +227,7 @@ Move large data out of the checkpoint by computing it and storing it externally.
 
 **Returns:** `OffloadReference` — an object containing `key`, `workflowId`, and `sizeBytes` (the byte length of the encoded data).
 
-```ts
+```ts partial
 const reference =
   yield *
   context.offload('large-dataset', async () => {
@@ -240,7 +240,7 @@ const data = yield * context.load(reference);
 
 ### `load()`
 
-```ts
+```ts partial
 *load<T>(reference: OffloadReference): Generator<ContextOperationRequest, T, unknown>
 ```
 
@@ -252,7 +252,7 @@ Load data that was previously offloaded via `offload()`. Reads the encoded data 
 
 **Returns:** `T` — the decoded data that was originally offloaded.
 
-```ts
+```ts partial
 const reference = yield * context.offload('large-dataset', async () => bigData);
 // ... later in the workflow, or even after recovery ...
 const data = yield * context.load<MyDataType>(reference);
@@ -260,7 +260,7 @@ const data = yield * context.load<MyDataType>(reference);
 
 ### `archive()`
 
-```ts
+```ts partial
 *archive(key: string, data: unknown): Generator<ContextOperationRequest, void, unknown>
 ```
 
@@ -273,7 +273,7 @@ Persist data to external archive storage, separate from the checkpoint. The data
 
 **Returns:** `void`
 
-```ts
+```ts partial
 yield *
   context.archive('processing-result-batch-1', {
     processedAt: new Date(),
@@ -284,7 +284,7 @@ yield *
 
 ### `agent()`
 
-```ts
+```ts partial
 *agent(options: AgentContextOptions): Generator<ContextOperationRequest, unknown, unknown>
 ```
 
@@ -292,7 +292,7 @@ Execute an AI agent loop as a durable operation. See the agent guides for detail
 
 ### `startChild()`
 
-```ts
+```ts partial
 *startChild<TResult = unknown>(
   workflowType: string,
   input: unknown,
@@ -312,7 +312,7 @@ Start a child workflow and wait for its result. The child workflow is independen
 
 If the child workflow throws, the error propagates into the parent and can be caught with `try/catch`.
 
-```ts
+```ts partial
 async function* parentWorkflow(ctx: WorkflowContext, order: Order) {
   const context = ctx as Context;
 
@@ -344,7 +344,7 @@ These methods do not yield and can be called directly (no `yield*`).
 
 ### `setAttribute()`
 
-```ts
+```ts partial
 setAttribute(key: string, value: SearchAttributeValue): void
 ```
 
@@ -352,7 +352,7 @@ Set a single search attribute on the workflow. The change is batched and persist
 
 ### `setAttributes()`
 
-```ts
+```ts partial
 setAttributes(attributes: Record<string, SearchAttributeValue>): void
 ```
 
@@ -360,7 +360,7 @@ Set multiple search attributes at once.
 
 ### `getAttribute()`
 
-```ts
+```ts partial
 getAttribute<T extends SearchAttributeValue = SearchAttributeValue>(key: string): T | undefined
 ```
 
@@ -368,7 +368,7 @@ Read a search attribute by key.
 
 ### `getAttributes()`
 
-```ts
+```ts partial
 getAttributes(): Readonly<Record<string, SearchAttributeValue>>
 ```
 
@@ -376,20 +376,20 @@ Read all search attributes as a frozen snapshot.
 
 ### `onUpdate()`
 
-```ts
+```ts partial
 onUpdate(name: string, handler: (payload: unknown) => unknown): void
 ```
 
 Register a synchronous handler for named updates. When `engine.update()` is called with this name, the handler runs immediately and its return value is sent back to the caller.
 
-```ts
+```ts partial
 let progress = 0;
 context.onUpdate('getProgress', () => progress);
 ```
 
 ### `expose()`
 
-```ts
+```ts partial
 expose(accessors: Record<string, () => unknown>): void
 ```
 
@@ -397,7 +397,7 @@ Expose named read-only accessors for external introspection.
 
 ### `explain()`
 
-```ts
+```ts partial
 explain(enabled?: boolean): void
 ```
 
@@ -405,7 +405,7 @@ Enable or disable explain mode. When enabled, durable operations log detailed ch
 
 ### `setBudget()`
 
-```ts
+```ts partial
 setBudget(options: BudgetOptions): void
 ```
 
@@ -413,7 +413,7 @@ Attach a budget tracker to this context for agent cost/token tracking.
 
 ### `budgetRemaining()`
 
-```ts
+```ts partial
 budgetRemaining(): BudgetState | undefined
 ```
 
@@ -421,7 +421,7 @@ Query the current budget state. Returns `undefined` if no budget is set.
 
 ### `sessionState()`
 
-```ts
+```ts partial
 sessionState<T>(key: string, initialValue?: T): WorkflowSessionState<T>
 ```
 
@@ -434,7 +434,7 @@ Return a typed session-state slot keyed by `key`. The slot is durable: its value
 
 **Returns:** `WorkflowSessionState<T>` — a slot with `.get()`, `.set()`, `.update()`, `.clear()`, and `.run()`.
 
-```ts
+```ts partial
 engine.register('order', async function* (ctx, order) {
   const attempts = ctx.sessionState<number>('chargeAttempts', 0);
   attempts.set((attempts.get() ?? 0) + 1);
@@ -468,7 +468,7 @@ The step context is a subset of the full `Context`. It exposes `workflowId`, `si
 
 ### `step()`
 
-```ts
+```ts partial
 step<T>(name: string, fn: () => Promise<T> | T): Promise<T>
 ```
 
@@ -481,7 +481,7 @@ Execute a named step as a durable operation. Under the hood, each `step()` call 
 
 **Returns:** A promise that resolves with the step function's return value.
 
-```ts
+```ts partial
 engine.register('onboard', async (ctx, input) => {
   const { name } = input as { name: string };
   const user = await ctx.step('create-user', () => createUser(name));
@@ -498,7 +498,7 @@ The conversion from step-based to generator-based happens at registration time. 
 
 ### `ContextOptions`
 
-```ts
+```ts partial
 interface ContextOptions {
   workflowId: string;
   workflowType: string;
@@ -517,7 +517,7 @@ interface ContextOptions {
 
 A discriminated union describing the operation the workflow wants the engine to perform:
 
-```ts
+```ts partial
 type ContextOperationRequest =
   | { type: 'activity'; operationId: string; activityName: string; fn: Function; args: unknown[]; ... }
   | { type: 'sleep'; operationId: string; duration: number; scheduledFireAt: number }

@@ -32,7 +32,7 @@ The **input budget** is `maxTokens - reservedForOutput`. So with 128K total and 
 
 Check whether compaction is needed:
 
-```typescript
+```typescript partial
 const tokenCount = await provider.countTokens(conversation);
 if (contextManager.shouldCompact(tokenCount)) {
   const result = await contextManager.compact(conversation);
@@ -47,7 +47,7 @@ The `compact()` method returns the compacted messages along with metrics about w
 
 You can check the input budget directly:
 
-```typescript
+```typescript partial
 console.log(contextManager.inputBudget); // 96000
 ```
 
@@ -94,7 +94,7 @@ const strategy = slidingWindowStrategy({
 
 Wire it into the manager:
 
-```typescript
+```typescript partial
 const contextManager = new ContextWindowManager({
   maxTokens: 128_000,
   strategy,
@@ -109,7 +109,7 @@ This works well for agents where recent context matters most. Early tool call re
 
 If you don't want any compaction—say you're using a model with a massive context window and you'd rather hit the API limit than lose context—use the pass-through strategy:
 
-```typescript
+```typescript partial
 import { noopStrategy } from 'weft';
 
 const contextManager = new ContextWindowManager({
@@ -139,7 +139,7 @@ const strategy = composeStrategies(
 
 Implement the `ContextStrategy` interface to build your own:
 
-```typescript
+```typescript partial
 import type { ContextStrategy, CompactOptions } from 'weft';
 import type { Message } from 'weft';
 

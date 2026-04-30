@@ -212,7 +212,7 @@ Fires after an agent loop completes when the effect log replayed at least one co
 
 All agent events flow through the standard `EventTarget` API. Listen on the engine for global events, or on a specific workflow handle for scoped events:
 
-```typescript
+```typescript partial
 // Global: all agent budget warnings across all workflows
 engine.addEventListener(AgentBudgetWarningEvent.type, (e) => {
   const event = e as AgentBudgetWarningEvent;
@@ -235,7 +235,7 @@ The engine's `addEventListener` is typed via `WeftAgentEventMap`, which provides
 
 **Cost waterfall logging.** Track per-turn costs to identify expensive turns:
 
-```typescript
+```typescript partial
 engine.addEventListener(AgentTurnCompletedEvent.type, (e) => {
   const event = e as AgentTurnCompletedEvent;
   const entry = {
@@ -254,7 +254,7 @@ engine.addEventListener(AgentTurnCompletedEvent.type, (e) => {
 
 **Tool performance monitoring.** Pair called/returned events to measure tool latency:
 
-```typescript
+```typescript partial
 const pending = new Map<string, number>();
 
 engine.addEventListener(AgentToolCalledEvent.type, (e) => {
@@ -274,7 +274,7 @@ engine.addEventListener(AgentToolReturnedEvent.type, (e) => {
 
 **Budget alerting.** Send alerts when budgets are running low:
 
-```typescript
+```typescript partial
 engine.addEventListener(AgentBudgetWarningEvent.type, (e) => {
   const event = e as AgentBudgetWarningEvent;
   alerting.send({
@@ -289,7 +289,7 @@ engine.addEventListener(AgentBudgetWarningEvent.type, (e) => {
 
 Agent events live alongside the core workflow events (`WorkflowStartedEvent`, `ActivityCompletedEvent`, `CheckpointSizeWarningEvent`, and so on) in the same `EventTarget`. You can build unified observability pipelines that handle both:
 
-```typescript
+```typescript partial
 import { WorkflowCompletedEvent, AgentTurnCompletedEvent } from 'weft';
 
 engine.addEventListener(WorkflowCompletedEvent.type, (e) => {

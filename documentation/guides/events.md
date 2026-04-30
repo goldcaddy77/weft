@@ -6,7 +6,7 @@ You want to know when a workflow starts, when an activity fails, when a signal a
 
 Both `Engine` and `WorkflowHandle` extend `EventTarget`---the same interface that DOM elements, `WebSocket`, `AbortSignal`, and `BroadcastChannel` use. No custom event emitter. No `.on()` / `.off()` / `.emit()`. Just `addEventListener`, `removeEventListener`, and `dispatchEvent`.
 
-```typescript
+```typescript partial
 engine.addEventListener('workflow:completed', (event) => {
   console.log(`Workflow ${event.workflowId} completed in ${event.duration}ms`);
 });
@@ -18,7 +18,7 @@ This is a deliberate choice. `EventTarget` is a web standard with built-in suppo
 
 Weft defines proper `Event` subclasses rather than wrapping data in `CustomEvent` with a `.detail` bag. This means you get named properties directly on the event object and full TypeScript inference without casts.
 
-```typescript
+```typescript partial
 engine.addEventListener(WorkflowCompletedEvent.type, (event) => {
   // event.workflowId: string
   // event.result: unknown
@@ -79,7 +79,7 @@ When running AI agent [workflows](workflows.md), a separate set of events tracks
 
 All event types are collected into `WeftEventMap`, a TypeScript interface that maps event type strings to their concrete event classes. You can use it with the `TypedEventTarget` interface for full type safety.
 
-```typescript
+```typescript partial
 import type { WeftEventMap, TypedEventTarget } from 'weft';
 
 const typedEngine = engine as unknown as TypedEventTarget<WeftEventMap>;
@@ -94,7 +94,7 @@ typedEngine.addEventListener('workflow:completed', (event) => {
 
 _Pattern 1: addEventListener._ The classic approach. Best for persistent listeners that run for the lifetime of the engine.
 
-```typescript
+```typescript partial
 const controller = new AbortController();
 
 engine.addEventListener(
@@ -113,7 +113,7 @@ Using `AbortSignal` for cleanup is the modern best practice. One `abort()` call 
 
 _Pattern 2: Async iteration._ `WorkflowHandle` implements `Symbol.asyncIterator`, so you can `for await...of` over events from a specific workflow.
 
-```typescript
+```typescript partial
 const handle = await engine.start('order', orderData);
 
 for await (const event of handle) {
@@ -131,7 +131,7 @@ This is useful for streaming progress to a client or building real-time UIs. The
 
 _Pattern 3: Observable._ `WorkflowHandle` also implements `Symbol.observable`, making it compatible with RxJS and other reactive libraries.
 
-```typescript
+```typescript partial
 const handle = await engine.start('order', orderData);
 const observable = handle[Symbol.observable]();
 

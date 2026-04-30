@@ -6,7 +6,7 @@ A workflow engine is a long-running process. It holds database connections, work
 
 When you declare a variable with `using`, its `[Symbol.dispose]()` method is called when the enclosing block exits. `await using` does the same but calls `[Symbol.asyncDispose]()` for async cleanup. No try/finally. No manual `.close()` calls.
 
-```typescript
+```typescript partial
 import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 {
@@ -26,7 +26,7 @@ Every major Weft object implements `Disposable`, `AsyncDisposable`, or both.
 
 _Engine_ implements both. `Symbol.dispose` does immediate teardown---aborts all pending operations, terminates the worker pool, stops the scheduler, and clears caches. `Symbol.asyncDispose` does the same thing (it delegates to the synchronous dispose internally, though future versions may add graceful drain semantics).
 
-```typescript
+```typescript partial
 {
   await using engine = new Engine({ storage });
   // ... run workflows ...
@@ -35,7 +35,7 @@ _Engine_ implements both. `Symbol.dispose` does immediate teardown---aborts all 
 
 _WorkflowHandle_ implements `AsyncDisposable`. Handles are lightweight, so disposal is currently a no-op---but declaring `await using` on handles is good practice because it documents intent and future-proofs your code.
 
-```typescript
+```typescript partial
 {
   await using handle = await engine.start('order', input);
   const result = await handle.result();
@@ -46,7 +46,7 @@ _BunSQLiteStorage_ implements `Disposable`. Disposal closes the underlying SQLit
 
 `IndexedDBStorage` is the browser-environment equivalent---also `Disposable`---and uses the `await using` pattern. Import it from `'weft/storage/indexeddb'`.
 
-```typescript
+```typescript partial
 {
   using storage = new BunSQLiteStorage('./weft.db');
   const engine = new Engine({ storage });
@@ -62,7 +62,7 @@ _Scheduler_ implements `Disposable`. Disposal stops the polling interval.
 
 When you have multiple resources that need coordinated cleanup, use `AsyncDisposableStack`. It disposes resources in reverse order of registration---like Go's `defer`, but type-safe and automatic.
 
-```typescript
+```typescript partial
 async function runServer(port: number) {
   await using stack = new AsyncDisposableStack();
 

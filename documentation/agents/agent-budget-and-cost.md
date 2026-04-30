@@ -30,7 +30,7 @@ The **`warningThreshold`** is a fraction between 0 and 1. When token usage or co
 
 After each LLM call, record how many tokens were consumed:
 
-```typescript
+```typescript partial
 const withinBudget = budget.recordUsage('claude-sonnet-4-20250514', 1200, 450);
 // true if budget still has room, false if exceeded
 ```
@@ -43,7 +43,7 @@ The agent loop calls this automatically after every turn—you typically don't c
 
 Call `budgetRemaining()` at any point to see where you stand:
 
-```typescript
+```typescript partial
 const remaining = budget.budgetRemaining();
 // {
 //   tokensUsed: 15_000,
@@ -64,7 +64,7 @@ When `maxTokens` or `maxCost` is unset, the corresponding `tokensRemaining` or `
 
 Once you have some usage history, `budgetProjection()` estimates how many turns you have left based on average burn rate:
 
-```typescript
+```typescript partial
 const projection = budget.budgetProjection();
 // {
 //   estimatedTurnsRemaining: 12,
@@ -78,7 +78,7 @@ The projection is clamped to `maxCost` if set. If no usage has been recorded yet
 
 `checkBudget()` throws a `BudgetExceededError` if the budget is already exhausted:
 
-```typescript
+```typescript partial
 import { BudgetExceededError } from 'weft';
 
 try {
@@ -96,7 +96,7 @@ The agent loop calls this at the top of each turn—if the budget is blown, the 
 
 For real-time enforcement, connect an `AbortController` to the budget tracker:
 
-```typescript
+```typescript partial
 const controller = new AbortController();
 budget.setAbortController(controller);
 
@@ -120,7 +120,7 @@ The same `AbortSignal` composes with workflow cancellation and timeouts via `Abo
 
 Pass callbacks when constructing the tracker to react to budget events:
 
-```typescript
+```typescript partial
 const budget = new BudgetTracker(
   {
     maxTokens: 200_000,
@@ -147,7 +147,7 @@ The warning callback fires at most once per tracker instance. The exceeded callb
 
 `BudgetTracker.clone()` creates an independent copy of the current tracker state—same running totals, same limits, same pricing—without mutating the original. This is useful when you want to run a speculative agent branch and discard its cost if the branch is abandoned:
 
-```typescript
+```typescript partial
 const speculative = budget.clone();
 // Run a speculative agent branch using `speculative`
 // If the branch is abandoned, discard `speculative`—the original `budget` is unchanged
@@ -159,7 +159,7 @@ Cloned trackers do not share `AbortController` or event callbacks with the sourc
 
 When running inside a Weft engine, the agent loop emits `AgentBudgetWarningEvent` and `AgentBudgetExceededEvent` through the standard `EventTarget` system. See the [observability guide](./agent-observability.md) for the full event payload.
 
-```typescript
+```typescript partial
 engine.addEventListener('agent:budget:warning', (event) => {
   console.warn(
     `Workflow ${event.workflowId}: budget at ${event.budgetUsedPercent}%`,
@@ -179,7 +179,7 @@ engine.addEventListener('agent:budget:exceeded', (event) => {
 
 Budget state survives process crashes. Call `toJSON()` to serialize and `BudgetTracker.fromJSON()` to restore:
 
-```typescript
+```typescript partial
 // Save
 const serialized = budget.toJSON();
 // { tokensUsed, costUsed, breakdown, warningFired }

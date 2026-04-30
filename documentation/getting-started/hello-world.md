@@ -16,7 +16,7 @@ bun add weft
 
 Create a file called `index.ts` and paste this:
 
-```typescript
+```typescript partial
 import { Engine, MemoryStorage } from 'weft';
 
 const engine = new Engine({ storage: new MemoryStorage() });
@@ -53,7 +53,7 @@ That's a durable workflow. Let's break down what just happened.
 
 If generators are unfamiliar, you can write the same workflow with plain `async`/`await`:
 
-```typescript
+```typescript partial
 import { Engine, MemoryStorage } from 'weft';
 
 const engine = new Engine({ storage: new MemoryStorage() });
@@ -95,7 +95,7 @@ There's no replay happening here. Weft doesn't re-execute your workflow from the
 
 Durable sleeps are one of the things that make this interesting. A normal `setTimeout` dies with the process. A Weft sleep survives restarts.
 
-```typescript
+```typescript partial
 engine.register('onboarding', async function* (ctx, input: { name: string }) {
   const greeting = yield* ctx.run(greet, input.name);
   yield* ctx.sleep('1h');
@@ -110,7 +110,7 @@ engine.register('onboarding', async function* (ctx, input: { name: string }) {
 
 Workflows often need to wait for something external---a user clicking "approve," a webhook arriving, a payment confirmation. Signals handle this.
 
-```typescript
+```typescript partial
 engine.register('approval', async function* (ctx, input: { orderId: string }) {
   const approval = yield* ctx.waitForSignal<{ approved: boolean }>('approval');
   return { orderId: input.orderId, approved: approval.approved };
@@ -132,7 +132,7 @@ console.log(result);
 
 When you have independent work, run it concurrently with `ctx.all()`:
 
-```typescript
+```typescript partial
 const double = async (n: number) => n * 2;
 const triple = async (n: number) => n * 3;
 

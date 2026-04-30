@@ -6,7 +6,7 @@ One agent can research. Another can write. A third can critique. The interesting
 
 When one agent finishes its work and another needs to pick up where it left off, `handoff()` transfers the task with optional context forwarding.
 
-```typescript
+```typescript partial
 import { handoff } from 'weft';
 
 const result = await handoff({
@@ -41,7 +41,7 @@ The **`forwardContext`** option controls what the receiving agent sees from the 
 
 The result includes the agent's output and which forwarding mode was used:
 
-```typescript
+```typescript partial
 interface HandoffResult {
   result: AgentResult;
   contextForwarded: ForwardContext;
@@ -50,7 +50,7 @@ interface HandoffResult {
 
 A typical pipeline chains handoffs:
 
-```typescript
+```typescript partial
 async function* researchPipeline(ctx: Weft.Context, topic: string) {
   const research = yield* ctx.agent({
     model: researcherAgent.model,
@@ -82,7 +82,7 @@ async function* researchPipeline(ctx: Weft.Context, topic: string) {
 
 Sometimes you want two agents to argue opposing positions before a third renders judgment. `debate()` runs structured rounds of advocate-critic exchange, then asks a judge to decide.
 
-```typescript
+```typescript partial
 import { debate } from 'weft';
 
 const result = await debate({
@@ -133,7 +133,7 @@ Debate is particularly useful for high-stakes decisions where you want the syste
 
 `supervise()` runs multiple worker agents in parallel on the same input, then asks a supervisor to synthesize their outputs.
 
-```typescript
+```typescript partial
 import { supervise, defineAgent } from 'weft';
 
 const result = await supervise({
@@ -179,7 +179,7 @@ You get the final synthesized answer _and_ each worker's individual result, so y
 
 When parallel agents need to write to shared mutable state, Weft's `SharedState` provides compare-and-swap semantics backed by storage. Multiple agents can read and update the same state without conflicts—on write collision, the update function retries with the latest value.
 
-```typescript
+```typescript partial
 import { SharedState } from 'weft';
 
 const initialFindings = { articles: [], totalCost: 0 };

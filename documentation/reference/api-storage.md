@@ -4,7 +4,7 @@ Weft's storage layer is a key-value interface with ordered range scans and atomi
 
 ## `Storage` Interface
 
-```ts
+```ts partial
 interface Storage extends Disposable {
   get(key: string): Promise<Uint8Array | null>;
   put(key: string, value: Uint8Array): Promise<void>;
@@ -17,7 +17,7 @@ interface Storage extends Disposable {
 
 ### `get()`
 
-```ts
+```ts partial
 get(key: string): Promise<Uint8Array | null>
 ```
 
@@ -25,7 +25,7 @@ Retrieve a value by exact key. Returns `null` if the key does not exist.
 
 ### `put()`
 
-```ts
+```ts partial
 put(key: string, value: Uint8Array): Promise<void>
 ```
 
@@ -33,7 +33,7 @@ Write a key-value pair. Overwrites any existing value at the same key.
 
 ### `delete()`
 
-```ts
+```ts partial
 delete(key: string): Promise<void>
 ```
 
@@ -41,7 +41,7 @@ Remove a key-value pair. No-op if the key does not exist.
 
 ### `scan()`
 
-```ts
+```ts partial
 scan(prefix: string, options?: ScanOptions): AsyncIterable<[string, Uint8Array]>
 ```
 
@@ -49,7 +49,7 @@ Iterate over all key-value pairs whose keys start with `prefix`, in lexicographi
 
 ### `batch()`
 
-```ts
+```ts partial
 batch(operations: BatchOperation[]): Promise<void>
 ```
 
@@ -57,7 +57,7 @@ Execute multiple put/delete operations atomically. In `BunSQLiteStorage`, this r
 
 ### `query()` (optional)
 
-```ts
+```ts partial
 query?<T>(sql: string, params?: unknown[]): Promise<T[]>
 ```
 
@@ -73,7 +73,7 @@ All storage adapters implement `Disposable`. For `BunSQLiteStorage`, this closes
 
 ### `BatchOperation`
 
-```ts
+```ts partial
 type BatchOperation =
   | { type: 'put'; key: string; value: Uint8Array }
   | { type: 'delete'; key: string };
@@ -105,7 +105,7 @@ interface ScanOptions {
 
 ## `KEYS`
 
-```ts
+```ts partial
 const KEYS: {
   workflow: (id: string) => string;
   checkpoint: (id: string) => string;
@@ -144,7 +144,7 @@ const signalKey = KEYS.signal('wf-123', 'approval', 'sig-456');
 
 ## `BunSQLiteStorage`
 
-```ts
+```ts partial
 class BunSQLiteStorage implements Storage
 ```
 
@@ -152,7 +152,7 @@ SQLite-backed storage using Bun's native `bun:sqlite` module. Suitable for produ
 
 ### Constructor
 
-```ts
+```ts partial
 new BunSQLiteStorage(path?: string)
 ```
 
@@ -178,13 +178,13 @@ All methods from the `Storage` interface, plus:
 
 #### `query()`
 
-```ts
+```ts partial
 async query<T>(sql: string, parameters?: SQLQueryBindings[]): Promise<T[]>
 ```
 
 Execute raw SQL against the underlying database. Returns all matching rows.
 
-```ts
+```ts partial
 const rows = await storage.query<{ key: string }>('SELECT key FROM kv WHERE key LIKE ?', ['wf:%']);
 ```
 
@@ -196,7 +196,7 @@ Closes the SQLite database connection.
 
 ## `MemoryStorage`
 
-```ts
+```ts partial
 class MemoryStorage implements Storage
 ```
 
@@ -204,7 +204,7 @@ In-memory storage backed by a `Map<string, Uint8Array>`. Ideal for tests, develo
 
 ### Constructor
 
-```ts
+```ts partial
 new MemoryStorage();
 ```
 
@@ -216,7 +216,7 @@ All methods from the `Storage` interface, plus:
 
 #### `size` (getter)
 
-```ts
+```ts partial
 get size(): number
 ```
 
@@ -224,7 +224,7 @@ Number of entries currently stored.
 
 #### `clear()`
 
-```ts
+```ts partial
 clear(): void
 ```
 
@@ -232,7 +232,7 @@ Remove all entries.
 
 #### `has()`
 
-```ts
+```ts partial
 has(key: string): Promise<boolean>
 ```
 
@@ -240,7 +240,7 @@ Check whether a key exists.
 
 #### `keys()`
 
-```ts
+```ts partial
 keys(prefix: string, options?: ScanOptions): AsyncIterable<string>
 ```
 
@@ -248,7 +248,7 @@ Iterate over all keys with the given prefix in lexicographic order.
 
 #### `snapshot()`
 
-```ts
+```ts partial
 snapshot(): Map<string, Uint8Array>
 ```
 
@@ -262,7 +262,7 @@ Clears all stored data.
 
 ## `IndexedDBStorage`
 
-```ts
+```ts partial
 class IndexedDBStorage implements Storage
 ```
 
@@ -276,7 +276,7 @@ Browser consumers must use the subpath import `weft/storage/indexeddb`. The main
 
 ### Constructor
 
-```ts
+```ts partial
 new IndexedDBStorage(databaseName?: string)
 ```
 
@@ -284,7 +284,7 @@ new IndexedDBStorage(databaseName?: string)
 | -------------- | -------- | -------- | ------------------------------ |
 | `databaseName` | `string` | `'weft'` | Name of the IndexedDB database |
 
-```ts
+```ts partial
 const storage = new IndexedDBStorage('my-app');
 ```
 
@@ -305,7 +305,7 @@ All required Storage methods are supported. `query()` is not available since Ind
 
 Closes the IndexedDB database connection. Supports the `using` pattern for automatic cleanup.
 
-```ts
+```ts partial
 {
   using storage = new IndexedDBStorage('weft');
   // storage is open...

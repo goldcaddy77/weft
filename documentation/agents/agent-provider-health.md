@@ -30,7 +30,7 @@ The `minimumRequests` threshold prevents a single failed request from tripping t
 
 After each LLM call, record whether it succeeded or failed:
 
-```typescript
+```typescript partial
 try {
   const response = await provider.chat(messages, options);
   healthTracker.recordSuccess('anthropic');
@@ -52,7 +52,7 @@ Each provider independently moves through three states:
 
 Check a provider's state:
 
-```typescript
+```typescript partial
 const state = healthTracker.getState('anthropic');
 // 'closed' | 'open' | 'half-open'
 
@@ -62,7 +62,7 @@ const healthy = healthTracker.isHealthy('anthropic');
 
 Get the current error rate:
 
-```typescript
+```typescript partial
 const errorRate = healthTracker.getErrorRate('anthropic');
 // 0.0 to 1.0
 ```
@@ -71,7 +71,7 @@ const errorRate = healthTracker.getErrorRate('anthropic');
 
 Register a callback to react when a provider's circuit state changes:
 
-```typescript
+```typescript partial
 healthTracker.onStateChange = (provider, from, to) => {
   console.warn(`Provider ${provider}: circuit ${from} → ${to}`);
 };
@@ -83,7 +83,7 @@ This fires on every transition: closed-to-open, open-to-half-open, half-open-to-
 
 When a circuit opens, the engine dispatches `AgentProviderCircuitOpenEvent`:
 
-```typescript
+```typescript partial
 engine.addEventListener('agent:provider:circuit-open', (event) => {
   console.warn(
     `Provider ${event.provider} circuit opened:`,
@@ -102,7 +102,7 @@ See the [observability guide](./agent-observability.md) for the full event refer
 
 Provider health works best alongside [model routing](./agent-model-routing.md). When the health tracker reports a provider as unhealthy, the model router's fallback chain kicks in. A custom router can check health explicitly:
 
-```typescript
+```typescript partial
 import { customRouter } from 'weft';
 
 const router = customRouter((context) => {

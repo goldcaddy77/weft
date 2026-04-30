@@ -8,7 +8,7 @@ This isn't a simple "pause and wait for a boolean." It's a structured review pro
 
 The `ReviewCoordinator` takes a `Storage` instance and manages the lifecycle of review requests:
 
-```typescript
+```typescript partial
 import { ReviewCoordinator } from 'weft';
 
 const coordinator = new ReviewCoordinator(storage);
@@ -49,7 +49,7 @@ The `artifact` field is intentionally `unknown`—pass whatever the reviewer nee
 
 When a reviewer makes their decision, complete the review through the engine:
 
-```typescript
+```typescript partial
 await engine.submitReview(review.reviewId, {
   decision: 'approved',
   reviewer: 'jane@legal.example.com',
@@ -72,7 +72,7 @@ interface ReviewDecision {
 
 When `allowPartial` is true on the request, reviewers can approve or reject individual sections:
 
-```typescript
+```typescript partial
 await engine.submitReview(review.reviewId, {
   decision: 'needs-changes',
   reviewer: 'jane@legal.example.com',
@@ -94,7 +94,7 @@ Note: `coordinator.submitDecision()` is a low-level helper that constructs and r
 
 Fetch a specific review or list all pending ones:
 
-```typescript
+```typescript partial
 const review = await coordinator.getReview('workflow-123', reviewId);
 const pending = await coordinator.listPendingReviews();
 ```
@@ -105,7 +105,7 @@ const pending = await coordinator.listPendingReviews();
 
 Reviews that sit too long need escalation. Define a chain of escalation steps when creating the review:
 
-```typescript
+```typescript partial
 const review = await coordinator.createReview(workflowId, {
   artifact: report,
   reviewers: ['legal-team'],
@@ -120,7 +120,7 @@ Each `EscalationStep` has an `after` field (milliseconds since creation) and eit
 
 Check for triggered escalations:
 
-```typescript
+```typescript partial
 const action = coordinator.checkEscalations(review, escalationSteps, Date.now());
 
 if (action?.type === 'escalate') {
@@ -137,7 +137,7 @@ if (action?.type === 'escalate') {
 
 If the review exceeds its timeout without a decision, throw `ReviewTimeoutError`:
 
-```typescript
+```typescript partial
 import { ReviewTimeoutError } from 'weft';
 
 const elapsed = Date.now() - review.createdAt;
@@ -154,7 +154,7 @@ The engine throws `ReviewTimeoutError` automatically when a workflow waiting on 
 
 The engine dispatches events when reviews are created and completed:
 
-```typescript
+```typescript partial
 engine.addEventListener('human-review:requested', (event) => {
   console.log(
     `Review ${event.reviewId} requested for workflow ${event.workflowId}`,
@@ -178,7 +178,7 @@ Review state is stored in Weft's standard storage layer. If the process crashes 
 
 Cleanup after a completed review is straightforward:
 
-```typescript
+```typescript partial
 const operations = coordinator.cleanupOperations(workflowId, reviewId);
 await storage.batch(operations);
 ```

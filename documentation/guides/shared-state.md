@@ -10,7 +10,7 @@ Imagine a multi-agent workflow where three branches run in [parallel](./parallel
 
 `SharedState` is a class that wraps a named state slot in storage with optimistic concurrency control. You create one by providing the storage, workflow ID, and a key name.
 
-```typescript
+```typescript partial
 import { SharedState } from 'weft';
 
 const counter = new SharedState<number>(engine.storage, workflowId, 'progress-counter');
@@ -18,7 +18,7 @@ const counter = new SharedState<number>(engine.storage, workflowId, 'progress-co
 
 An optional `maxRetries` controls how many times a conflicting update retries before giving up (default: 10).
 
-```typescript
+```typescript partial
 const counter = new SharedState<number>(engine.storage, workflowId, 'progress-counter', {
   maxRetries: 5,
 });
@@ -28,7 +28,7 @@ const counter = new SharedState<number>(engine.storage, workflowId, 'progress-co
 
 The `get()` method returns the current value and its version number. You provide an initial value that's returned if no state has been written yet.
 
-```typescript
+```typescript partial
 const { value, version } = await counter.get(0);
 console.log(`Current count: ${value}, version: ${version}`);
 ```
@@ -39,7 +39,7 @@ The version starts at `0` for uninitialized state and increments with each succe
 
 The `update()` method applies a transformation function with optimistic concurrency. It reads the current value, applies your function, checks that the version hasn't changed since the read, and returns batch operations for atomic commit.
 
-```typescript
+```typescript partial
 const { value, version, operations } = await counter.update(
   (current) => current + 1,
   0, // initial value if state doesn't exist yet
@@ -63,7 +63,7 @@ This is textbook optimistic concurrency---no locks, no blocking, just retry on c
 
 When contention is high enough to exhaust retries, you get a `SharedStateConflictError`:
 
-```typescript
+```typescript partial
 try {
   const { value, operations } = await counter.update((n) => n + 1, 0);
 } catch (error) {

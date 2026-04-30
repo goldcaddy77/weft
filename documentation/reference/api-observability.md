@@ -10,7 +10,7 @@ For a guided walkthrough, see the [Observability guide](../guides/observability.
 
 Factory that creates a matched pair of workflow and activity interceptors. The workflow interceptor propagates trace context and emits spans for workflow start, activity calls, sleeps, and signal waits. The activity interceptor extracts trace context from headers and wraps activity execution in a span.
 
-```ts
+```ts partial
 function createObservabilityInterceptors(options?: ObservabilityOptions): {
   workflow: WorkflowInterceptor;
   activity: ActivityInterceptor;
@@ -87,7 +87,7 @@ engine.addActivityInterceptor(activity);
 
 A catalogue of metric definitions emitted by Weft. Each entry contains the metric `name`, `description`, `unit`, and `type`. These follow OpenTelemetry conventions and can be consumed by any metrics backend.
 
-```ts
+```ts partial
 const METRICS: {
   workflowDuration: MetricDefinition;
   activityDuration: MetricDefinition;
@@ -132,7 +132,7 @@ Implements parsing, formatting, and injection/extraction of the W3C `traceparent
 
 Generate a random trace ID -- 32 hex characters (16 bytes).
 
-```ts
+```ts partial
 function generateTraceId(): string;
 ```
 
@@ -140,7 +140,7 @@ function generateTraceId(): string;
 
 Generate a random span ID -- 16 hex characters (8 bytes).
 
-```ts
+```ts partial
 function generateSpanId(): string;
 ```
 
@@ -148,7 +148,7 @@ function generateSpanId(): string;
 
 Format a `TraceContext` to a W3C traceparent string.
 
-```ts
+```ts partial
 function formatTraceParent(context: TraceContext): string;
 // Returns: "00-<traceId>-<spanId>-<flags>"
 ```
@@ -157,7 +157,7 @@ function formatTraceParent(context: TraceContext): string;
 
 Parse a W3C traceparent header string. Returns `null` if the format is invalid or IDs are all zeros.
 
-```ts
+```ts partial
 function parseTraceParent(value: string): TraceContext | null;
 ```
 

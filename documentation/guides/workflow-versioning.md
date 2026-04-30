@@ -12,7 +12,7 @@ No replay means no code-path determinism requirement. No `getVersion()` gates. N
 
 When `engine.start()` creates a workflow, it records the version of the currently registered handler in the workflow state. The default version is `'1'` if you don't specify one.
 
-```typescript
+```typescript partial
 // Shorthand: version defaults to '1'
 engine.register('order', orderWorkflow);
 
@@ -37,7 +37,7 @@ The comparison logic is straightforward:
 
 The `migrate` function receives the checkpoint data and the version it came from. It returns the transformed checkpoint.
 
-```typescript
+```typescript partial
 engine.register('order', {
   version: '2.0.0',
   handler: orderWorkflowV2,
@@ -56,7 +56,7 @@ engine.register('order', {
 
 The `migrateCheckpoint()` utility runs this function internally:
 
-```typescript
+```typescript partial
 const migrated = migrateCheckpoint(
   checkpointData,
   storedVersion,
@@ -71,7 +71,7 @@ After a successful migration, the updated checkpoint and new version are written
 
 If your new code can't handle the checkpoint shape and no migration was provided (or the migration throws), the workflow fails with a `VersionMismatchError`. The error includes everything you need to diagnose the problem:
 
-```typescript
+```typescript partial
 try {
   await handle.result();
 } catch (error) {
@@ -90,7 +90,7 @@ try {
 
 For simple changes where the checkpoint shape didn't change---you only modified logic after the current pause point---skip the migration entirely:
 
-```typescript
+```typescript partial
 engine.register('order', {
   version: '1.1.0',
   handler: orderWorkflowV1WithBugfix,
@@ -100,7 +100,7 @@ engine.register('order', {
 
 For additive changes where you need a new field with a default:
 
-```typescript
+```typescript partial
 engine.register('order', {
   version: '2.0.0',
   handler: orderWorkflowV2,
@@ -115,7 +115,7 @@ engine.register('order', {
 
 For breaking changes across multiple major versions, chain the transformations:
 
-```typescript
+```typescript partial
 engine.register('order', {
   version: '3.0.0',
   handler: orderWorkflowV3,

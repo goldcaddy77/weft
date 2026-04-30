@@ -6,7 +6,7 @@ You've built your workflows and tested them locally. Now you need to expose them
 
 The `serve()` function takes an engine and optional network configuration, and returns a `WeftServer` handle.
 
-```typescript
+```typescript partial
 import { Engine } from 'weft';
 import { serve } from 'weft/server';
 
@@ -20,7 +20,7 @@ console.log(`Weft server listening at ${server.url}`);
 
 The `ServeOptions` interface:
 
-```typescript
+```typescript partial
 interface ServeOptions {
   engine: Engine;
   port?: number;
@@ -38,7 +38,7 @@ interface ServeOptions {
 
 `serve()` returns a `WeftServer` that exposes the resolved port, hostname, URL, and a `stop()` method that returns `Promise<void>`. It also implements `AsyncDisposable`, so you can use it with `await using` for correct async cleanup.
 
-```typescript
+```typescript partial
 interface WeftServer extends AsyncDisposable {
   readonly port: number;
   readonly hostname: string;
@@ -53,7 +53,7 @@ interface WeftServer extends AsyncDisposable {
 }
 ```
 
-```typescript
+```typescript partial
 {
   await using server = serve({ engine });
   // Server is running...
@@ -186,7 +186,7 @@ Three WebSocket routes are available:
 
 Under the hood, `serve()` delegates to `handleRequest()`---a pure function that maps a `Request` to a `Response` with no Bun-specific dependencies. This is intentional. If you need to embed Weft's API inside an existing server or use a different HTTP framework, import `handleRequest` directly:
 
-```typescript
+```typescript partial
 import { handleRequest } from 'weft/server/handler';
 
 // Inside your existing server
@@ -205,7 +205,7 @@ The same `handleRequest()` function that powers the Bun server also powers the S
 
 The `weft/service-worker` module provides bootstrap functions that wire everything together.
 
-```typescript
+```typescript partial
 /// <reference lib="webworker" />
 import { Engine } from 'weft';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
@@ -234,7 +234,7 @@ self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
 
 Creates a `fetch` event listener that intercepts requests matching the path prefix and routes them through `handleRequest()`. Non-matching requests pass through to the network.
 
-```typescript
+```typescript partial
 function createFetchHandler(options: ServiceWorkerOptions): (event: FetchEvent) => void;
 ```
 
@@ -247,7 +247,7 @@ function createFetchHandler(options: ServiceWorkerOptions): (event: FetchEvent) 
 
 Creates a `periodicsync` event listener that fires expired timers. Workflows that use `ctx.sleep()` or `ctx.timer()` depend on periodic wakeup to advance. The Periodic Background Sync API serves this role in the browser.
 
-```typescript
+```typescript partial
 function createPeriodicSyncHandler(
   scheduler: ServiceWorkerScheduler,
   tag?: string,
@@ -260,7 +260,7 @@ The `tag` parameter defaults to `'weft-timers'` and must match the tag used when
 
 Returns `install` and `activate` event handlers. The `install` handler calls `skipWaiting()` so the new Service Worker activates immediately. The `activate` handler calls `clients.claim()` so the Service Worker takes control of all open tabs without requiring a page reload.
 
-```typescript
+```typescript partial
 function createLifecycleHandlers(): {
   install: (event: ExtendableEvent) => void;
   activate: (event: ExtendableEvent) => void;

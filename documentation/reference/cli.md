@@ -73,7 +73,7 @@ weft version:check --database ./weft.db --workflows ./src/workflows.ts --json
 
 The workflows module must default-export a `Record<string, WorkflowRegistration>`:
 
-```typescript
+```typescript partial
 import type { WorkflowRegistration } from 'weft';
 
 export default {

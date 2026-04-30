@@ -22,7 +22,7 @@ One endpoint, all operations, named by method. Use JSON-RPC HTTP when:
 
 A minimal client looks like this:
 
-```ts
+```ts partial
 type JsonRpcError = { code: number; data?: unknown; message: string };
 type JsonRpcEnvelope =
   | { error: JsonRpcError; result?: never }

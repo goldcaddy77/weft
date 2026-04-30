@@ -6,7 +6,7 @@ Your [workflow](workflows.md) is the orchestrator. It decides _what_ happens and
 
 You invoke an activity with `yield* ctx.run(fn, ...args)`. The function you pass is a real function reference, not a proxy or a type stub. "Go to definition" takes you to the implementation.
 
-```typescript
+```typescript partial
 const greet = async (name: string) => `Hello, ${name}!`;
 const notify = async (message: string) => `Notified: ${message}`;
 
@@ -24,7 +24,7 @@ Each `yield* ctx.run()` is a checkpoint boundary. If the process crashes after `
 
 Activities fail. Networks flake, services go down, rate limits hit. Weft retries activities automatically using exponential backoff, and you control the behavior through a `RetryPolicy`.
 
-```typescript
+```typescript partial
 interface RetryPolicy {
   maxAttempts: number;
   initialBackoff: Duration; // number (ms) or string like "1s"
@@ -36,7 +36,7 @@ interface RetryPolicy {
 
 The default policy is sensible for most use cases.
 
-```typescript
+```typescript partial
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxAttempts: 3,
   initialBackoff: 1000, // 1 second
@@ -60,7 +60,7 @@ interface ActivityContext {
 
 The `signal` is an `AbortSignal` that fires when the workflow is cancelled or the activity times out. Pass it to `fetch`, database clients, or anything else that accepts an abort signal.
 
-```typescript
+```typescript partial
 const fetchData = async (url: string, context?: ActivityContext) => {
   const response = await fetch(url, { signal: context?.signal });
   return response.json();
@@ -69,7 +69,7 @@ const fetchData = async (url: string, context?: ActivityContext) => {
 
 The `heartbeat()` function tells Weft your activity is still alive. For activities that run for minutes (processing a large file, running a machine learning job), heartbeating prevents Weft from assuming the activity is stuck and retrying it.
 
-```typescript
+```typescript partial
 const processLargeFile = async (path: string, context?: ActivityContext) => {
   const lines = await readLines(path);
   for (const [index, line] of lines.entries()) {
@@ -84,7 +84,7 @@ const processLargeFile = async (path: string, context?: ActivityContext) => {
 
 You can override retry, timeout, queue, and idempotency settings on a per-invocation basis using `ActivityCallOptions`.
 
-```typescript
+```typescript partial
 interface ActivityCallOptions {
   timeout?: Duration;
   queue?: string;
@@ -97,7 +97,7 @@ interface ActivityCallOptions {
 
 Pass these as the last argument to `ctx.run()`.
 
-```typescript
+```typescript partial
 const result =
   yield *
   ctx.run(fetchData, url, {
@@ -114,7 +114,7 @@ The `timeout` kills the activity after the specified duration. The `queue` route
 
 When you find yourself specifying the same retry policy and timeout at every call site, it is time to colocate that configuration with the activity itself using `ActivityDefinition`.
 
-```typescript
+```typescript partial
 interface ActivityDefinition<TInput, TOutput> {
   name: string;
   execute: ActivityFunction<TInput, TOutput>;
@@ -129,7 +129,7 @@ See the JSDoc on `ActivityDefinition` for additional fields: `verify` (post-exec
 
 Here is what that looks like in practice.
 
-```typescript
+```typescript partial
 const charge: ActivityDefinition<Order, PaymentResult> = {
   name: 'charge',
   retry: {
@@ -155,7 +155,7 @@ const charge: ActivityDefinition<Order, PaymentResult> = {
 
 Now the workflow call is clean---configuration travels with the activity.
 
-```typescript
+```typescript partial
 const payment = yield * ctx.run(charge.execute, order);
 ```
 
@@ -163,7 +163,7 @@ const payment = yield * ctx.run(charge.execute, order);
 
 When activities are independent of each other, run them concurrently with `ctx.all()`.
 
-```typescript
+```typescript partial
 const double = async (n: number) => n * 2;
 const triple = async (n: number) => n * 3;
 
@@ -176,7 +176,7 @@ engine.register('parallel', async function* (ctx, input) {
 
 For named concurrent branches where each needs its own error handling, use `ctx.runAll()`.
 
-```typescript
+```typescript partial
 const results =
   yield *
   ctx.runAll({

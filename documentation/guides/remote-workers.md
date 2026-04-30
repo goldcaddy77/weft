@@ -123,7 +123,7 @@ The `headers` Map is the important piece for remote workers. When a workflow int
 
 The most common use case is observability. The built-in `createObservabilityInterceptors()` factory returns a matched pair of workflow and activity interceptors that share trace context across the boundary. Pass the activity half to every remote worker that should show up in your traces:
 
-```typescript
+```typescript partial
 import { createObservabilityInterceptors } from 'weft';
 
 const { activity } = createObservabilityInterceptors();
@@ -146,7 +146,7 @@ Multiple interceptors compose like middleware: the first one in the array is the
 
 The `HeartbeatManager` sends periodic keep-alive messages (every 10 seconds by default) to prevent the server from considering the worker dead. It starts automatically on connection and stops on disconnect.
 
-```typescript
+```typescript partial
 // Internally, the worker does:
 this.#heartbeat = new HeartbeatManager(() => {
   this.#sendMessage({ type: 'heartbeat', workerId: this.#options.workerId });
@@ -233,7 +233,7 @@ Error handling is built in---network failures trigger a 1-second backoff, abort 
 
 Both worker types support graceful shutdown. The `RemoteWorker` drains in-flight tasks before closing the WebSocket:
 
-```typescript
+```typescript partial
 await worker.disconnect();
 ```
 
@@ -241,7 +241,7 @@ The server can also initiate shutdown by sending a `{ type: 'shutdown' }` messag
 
 Both classes implement `Disposable` for use with `using`:
 
-```typescript
+```typescript partial
 {
   using worker = new RemoteWorker(options);
   await worker.connect();

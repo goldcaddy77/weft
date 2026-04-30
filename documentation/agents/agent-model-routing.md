@@ -31,7 +31,7 @@ The `reason` field is optional but valuable—it shows up in `AgentTurnCompleted
 
 Pass a router to `defineAgent()` or `executeAgentLoop()`:
 
-```typescript
+```typescript partial
 const agent = defineAgent({
   name: 'analyst',
   model: 'claude-sonnet-4-20250514',
@@ -74,7 +74,7 @@ Tiers are sorted internally by `maxCostRemaining` descending. On each turn, the 
 
 You can also use `maxTokensRemaining` for token-based thresholds:
 
-```typescript
+```typescript partial
 const router = costTierRouter([
   { model: 'claude-sonnet-4-20250514', maxTokensRemaining: 100_000 },
   { model: 'claude-haiku-4-5-20251001' },
@@ -106,7 +106,7 @@ Because the selection is based on a hash of the workflow ID, the same workflow a
 
 Each variant can include its own fallback chain:
 
-```typescript
+```typescript partial
 const router = abTestRouter([
   { model: 'claude-sonnet-4-20250514', weight: 0.8, fallback: ['claude-haiku-4-5-20251001'] },
   { model: 'gpt-4o', weight: 0.2, fallback: ['gpt-4o-mini'] },
@@ -146,7 +146,7 @@ Custom routers have access to everything in `RoutingContext`: the turn index, co
 
 When a model fails and the engine tries the next one in the fallback chain, it dispatches `AgentModelFallbackEvent`:
 
-```typescript
+```typescript partial
 engine.addEventListener('agent:model:fallback', (event) => {
   console.warn(
     `Turn ${event.turnIndex}: ${event.failedModel} failed (${event.failedReason}),`,

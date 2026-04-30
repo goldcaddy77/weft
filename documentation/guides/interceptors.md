@@ -12,7 +12,7 @@ There are two categories. **Workflow interceptors** wrap operations inside the w
 
 The `WorkflowInterceptor` interface has eight optional hooks:
 
-```typescript
+```typescript partial
 interface WorkflowInterceptor {
   activity?(
     interception: ActivityInterception,
@@ -143,7 +143,7 @@ const loggingInterceptor: WorkflowInterceptor = {
 
 An input validation interceptor using Zod:
 
-```typescript
+```typescript partial
 function validationInterceptor(schemas: Record<string, ZodSchema>): WorkflowInterceptor {
   return {
     *activity(interception, next) {
@@ -189,7 +189,7 @@ const authActivityInterceptor: ActivityInterceptor = {
 
 `composeWorkflowInterceptors()` and `composeActivityInterceptors()` combine multiple interceptors into a single chain. The chain is built once per engine, not per operation---zero overhead when no interceptors are registered.
 
-```typescript
+```typescript partial
 import { composeWorkflowInterceptors, composeActivityInterceptors } from 'weft';
 
 const composed = composeWorkflowInterceptors([
@@ -199,7 +199,7 @@ const composed = composeWorkflowInterceptors([
 ]);
 ```
 
-```typescript
+```typescript partial
 engine.addInterceptor(composed);
 engine.addActivityInterceptor(composeActivityInterceptors([authActivityInterceptor]));
 ```

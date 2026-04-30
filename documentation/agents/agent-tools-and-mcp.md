@@ -6,7 +6,7 @@ Your agent is only as useful as the tools it can call. A model that can't search
 
 The `AgentTool` interface pairs a tool definition with an execute function:
 
-```typescript
+```typescript partial
 import type { AgentTool } from 'weft';
 
 const webSearch: AgentTool = {
@@ -36,7 +36,7 @@ The `AgentTool` interface also exposes optional `verify` and `identity` callback
 
 Pass tools directly to `defineAgent()` or `executeAgentLoop()`:
 
-```typescript
+```typescript partial
 const agent = defineAgent({
   name: 'researcher',
   model: 'claude-sonnet-4-20250514',
@@ -59,7 +59,7 @@ const client = new MCPClient({
 
 `MCPClientOptions` also accepts a `transport` field for cases where you need to inject a pre-built transport (stdio, SSE, or an OAuth2-authenticated transport):
 
-```typescript
+```typescript partial
 const client = new MCPClient({ transport: myTransport });
 ```
 
@@ -67,14 +67,14 @@ When you need to pick a transport dynamically, use `inferTransportKind()` to det
 
 Discover what tools the server offers:
 
-```typescript
+```typescript partial
 const tools = await client.discoverTools();
 // Returns ToolDefinition[] — name, description, inputSchema for each
 ```
 
 Invoke a specific tool:
 
-```typescript
+```typescript partial
 const result = await client.invokeTool('readFile', { path: '/etc/hosts' });
 ```
 
@@ -82,7 +82,7 @@ The `invokeTool` method accepts an optional `AbortSignal` for cancellation. If t
 
 You can also health-check the server before starting an agent loop:
 
-```typescript
+```typescript partial
 const healthy = await client.healthCheck();
 if (!healthy) {
   throw new Error('MCP server is down');
@@ -93,7 +93,7 @@ if (!healthy) {
 
 MCP servers often require authentication. `MCPAuthConfig` supports four authentication modes for agent MCP sources, while `MCPClient` supports three direct authentication modes through its `serverUrl` options:
 
-```typescript
+```typescript partial
 // Bearer token
 const client = new MCPClient({
   serverUrl: 'https://api.example.com/mcp',
@@ -139,7 +139,7 @@ const client = new MCPClient({
 
 When your agent uses tools from multiple sources—local functions, one or more MCP servers—you need a way to merge them into a single set. `ToolRegistry` handles this.
 
-```typescript
+```typescript partial
 import { MCPClient, ToolRegistry } from 'weft';
 
 const registry = new ToolRegistry();
@@ -160,7 +160,7 @@ registry.registerMCP(mcpTools, 'http://localhost:3000/mcp', (toolName, input) =>
 
 Retrieve tools by name or get the full list:
 
-```typescript
+```typescript partial
 const tool = registry.get('readFile'); // RegistryTool | undefined
 const all = registry.getAll(); // RegistryTool[]
 const definitions = registry.getDefinitions(); // ToolDefinition[]
@@ -172,7 +172,7 @@ Each `RegistryTool` carries a `source` field (`'local'` or `'mcp'`) and an optio
 
 If two sources register a tool with the same name, the registry stores both but only returns the first one registered when you call `get()`. To catch this early, call `validate()` after registration:
 
-```typescript
+```typescript partial
 try {
   registry.validate();
 } catch (error) {
@@ -188,7 +188,7 @@ try {
 
 Before dispatching a tool call to the LLM's chosen tool, you can validate the input against the tool's JSON Schema using `validateSchema()`:
 
-```typescript
+```typescript partial
 import { validateSchema, ToolSchemaValidationError } from 'weft';
 
 const result = validateSchema(inputFromModel, tool.definition.inputSchema);

@@ -6,7 +6,7 @@ You have three API calls that don't depend on each other, and you're running the
 
 `ctx.all()` takes an array of generator operations and runs them in parallel. Every branch gets its own checkpoint. When all branches complete, you get an array of results in the same order you passed the operations.
 
-```typescript
+```typescript partial
 async function* enrichOrder(ctx: Context, order: Order) {
   const [inventory, shipping, tax] = yield* ctx.all([
     ctx.run(checkInventory, order.items),
@@ -22,7 +22,7 @@ The semantics mirror `Promise.all()`---if any branch fails, the whole operation 
 
 You can mix operation types freely. Sleeps, signals, and activity calls all work inside `ctx.all()`:
 
-```typescript
+```typescript partial
 const [result, _] =
   yield *
   ctx.all([
@@ -35,7 +35,7 @@ const [result, _] =
 
 `ctx.race()` returns the result of whichever operation finishes first. The remaining operations are effectively abandoned---their results are discarded.
 
-```typescript
+```typescript partial
 async function* fetchWithFallback(ctx: Context, url: string) {
   const result = yield* ctx.race([
     ctx.run(fetchFromPrimary, url),
@@ -50,7 +50,7 @@ This is useful for timeout patterns, redundant fetches, and any scenario where y
 
 A common pattern pairs a real operation with a sleep to implement a deadline:
 
-```typescript
+```typescript partial
 const result =
   yield *
   ctx.race([
@@ -70,7 +70,7 @@ Both `ctx.all()` and `ctx.race()` work by collecting the first yielded operation
 
 Note that `ctx.race()` emits `{ type: 'race', ... }` rather than `{ type: 'parallel', ... }`. Each sub-operation also advances the workflow's `stepIndex`, which is why subsequent steps remain replay-stable after a parallel or race completes.
 
-```typescript
+```typescript partial
 // What ctx.all() yields to the engine:
 {
   type: 'parallel',

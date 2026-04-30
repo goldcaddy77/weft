@@ -30,7 +30,7 @@ interface WorkflowInterceptor {
 
 All hooks are optional. Implement only the ones you need. Each hook is a generator (except `workflowStart`) that receives the interception context and a `next` function. Call `yield* next(interception)` to delegate to the rest of the chain.
 
-```ts
+```ts partial
 import type { WorkflowInterceptor, ActivityInterception } from 'weft';
 
 const loggingInterceptor: WorkflowInterceptor = {
@@ -60,7 +60,7 @@ interface ActivityInterceptor {
 
 Activity interceptors run around activity execution specifically. Unlike workflow interceptors, the `execute` hook is async (not a generator), making it suitable for wrapping activity calls with retry logic, timeouts, or observability.
 
-```ts
+```ts partial
 import type { ActivityInterceptor } from 'weft';
 
 const timingInterceptor: ActivityInterceptor = {
@@ -174,7 +174,7 @@ interface WorkflowStartInterception {
 
 ### `composeWorkflowInterceptors()`
 
-```ts
+```ts partial
 function composeWorkflowInterceptors(
   interceptors: WorkflowInterceptor[],
 ): ComposedWorkflowInterceptor;
@@ -184,7 +184,7 @@ Compose an array of workflow interceptors into a single `ComposedWorkflowInterce
 
 The first interceptor in the array is the outermost wrapper; the last is closest to the final execute function.
 
-```ts
+```ts partial
 import { composeWorkflowInterceptors } from 'weft';
 
 const composed = composeWorkflowInterceptors([loggingInterceptor, tracingInterceptor]);
@@ -218,7 +218,7 @@ interface ComposedWorkflowInterceptor {
 
 ### `composeActivityInterceptors()`
 
-```ts
+```ts partial
 function composeActivityInterceptors(
   interceptors: ActivityInterceptor[],
 ): ComposedActivityInterceptor;

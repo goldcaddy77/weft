@@ -6,7 +6,7 @@ You need a workflow to wait---maybe for an hour before sending a reminder, maybe
 
 Call `yield* ctx.sleep()` with a human-readable duration string.
 
-```typescript
+```typescript partial
 engine.register('trial-expiry', async function* (ctx, input) {
   const { userId } = input as { userId: string };
   yield* ctx.run(activateTrial, userId);
@@ -44,7 +44,7 @@ parseDuration(5000); // 5000 (passthrough)
 
 Sometimes you need to compute something once and cache it across checkpoints---a configuration lookup, a random seed, a timestamp for "now." That is what `ctx.memo()` is for.
 
-```typescript
+```typescript partial
 engine.register('memo-test', async function* (ctx) {
   const a = yield* ctx.memo('expensive-value', async () => {
     return await computeSomethingExpensive();

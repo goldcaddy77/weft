@@ -6,7 +6,7 @@ Your user is staring at a blank screen. The agent has been running for 12 second
 
 `TokenBridge` connects a `ReadableStream<StreamChunk>` to an `EventTarget`. As each token arrives from the LLM provider's stream, the bridge dispatches a `TokenEvent` so that local listeners—loggers, WebSocket forwarders, UI renderers—receive tokens as they're generated.
 
-```typescript
+```typescript partial
 import { TokenBridge } from 'weft';
 
 const bridge = new TokenBridge(eventTarget, 'workflow-123', 'claude-sonnet-4-20250514');
@@ -16,7 +16,7 @@ The constructor takes three arguments: the `EventTarget` to dispatch events on, 
 
 Pipe a stream through the bridge to start dispatching:
 
-```typescript
+```typescript partial
 const accumulatedText = await bridge.pipe(stream);
 ```
 
@@ -28,7 +28,7 @@ The bridge is intentionally simple. It doesn't buffer, doesn't retry, doesn't ma
 
 When multiple consumers need the same stream—say, a checkpoint accumulator, an EventTarget bridge, and a set of WebSocket subscribers—you don't want to duplicate the LLM API call. `StreamMultiplexer` fans out a single source stream to any number of consumers.
 
-```typescript
+```typescript partial
 import { StreamMultiplexer } from 'weft';
 
 const multiplexer = new StreamMultiplexer(sourceStream, {
@@ -40,7 +40,7 @@ The `maxBufferSize` option (defaults to 1000) controls how many chunks are buffe
 
 Create consumer streams:
 
-```typescript
+```typescript partial
 const checkpointStream = multiplexer.createConsumer();
 const observerStream = multiplexer.createConsumer();
 ```
@@ -49,19 +49,19 @@ Each consumer is an independent `ReadableStream<StreamChunk>`. The multiplexer s
 
 Check how many consumers are active:
 
-```typescript
+```typescript partial
 console.log(multiplexer.consumerCount); // 2
 ```
 
 Cancel the entire multiplexer to close all consumers and release the source:
 
-```typescript
+```typescript partial
 multiplexer.cancel();
 ```
 
 A practical setup might look like this:
 
-```typescript
+```typescript partial
 const multiplexer = new StreamMultiplexer(llmStream);
 
 // Consumer 1: accumulate text for the checkpoint
@@ -94,14 +94,14 @@ The `maxTurns` option (defaults to 10) caps how many turns are kept. Once the bu
 
 Record completed turns as they finish:
 
-```typescript
+```typescript partial
 buffer.addTurn('The research indicates three key findings...');
 buffer.addTurn('Based on the analysis, I recommend...');
 ```
 
 When a client reconnects, replay the buffer:
 
-```typescript
+```typescript partial
 const turns = buffer.getTurns(); // string[]
 for (const turn of turns) {
   websocket.send(JSON.stringify({ type: 'replay', content: turn }));
@@ -111,7 +111,7 @@ for (const turn of turns) {
 
 Check the buffer state or clear it:
 
-```typescript
+```typescript partial
 console.log(buffer.turnCount); // 2
 console.log(buffer.byteSize); // approximate byte size of buffered turns
 buffer.clear();
@@ -131,7 +131,7 @@ The text generated so far in completed turns is included in the checkpoint state
 
 There is no engine-level streaming config—backpressure limits are set per-instance. Pass `maxBufferSize` to `StreamMultiplexer` to cap how many chunks are buffered for late-joining consumers. For completed-turn replay, pass `maxBytes` alongside `maxTurns` to `ReconnectionBuffer`:
 
-```typescript
+```typescript partial
 const multiplexer = new StreamMultiplexer(llmStream, {
   maxBufferSize: 1000, // max chunks buffered per consumer
 });

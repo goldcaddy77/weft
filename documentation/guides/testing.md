@@ -6,7 +6,7 @@ Durable workflows are inherently hard to test. They span time---sleeps, retries,
 
 `TestEngine` is a subclass of `Engine` backed by in-memory storage and a virtual clock. Everything behaves like the real engine, but you control time and can mock activities.
 
-```typescript
+```typescript partial
 import { TestEngine } from 'weft';
 
 const engine = new TestEngine();
@@ -18,7 +18,7 @@ const handle = await engine.start('order', { items: ['widget'], total: 99 });
 
 The constructor accepts an optional `startTime` (milliseconds since epoch) for the virtual clock. If omitted, it uses the real `Date.now()` at construction time.
 
-```typescript
+```typescript partial
 const engine = new TestEngine({ startTime: 1700000000000 });
 ```
 
@@ -26,7 +26,7 @@ const engine = new TestEngine({ startTime: 1700000000000 });
 
 The killer feature. `advanceTime()` moves the virtual clock forward, firing any timers---both `TimeControl` timers and the engine's durable scheduler timers---that fall within the window.
 
-```typescript
+```typescript partial
 // Workflow sleeps for 1 hour
 engine.register('delayed', async function* (ctx) {
   yield* ctx.sleep('1 hour');
@@ -46,7 +46,7 @@ expect(result).toBe('done');
 
 Check the current virtual time with `engine.now`:
 
-```typescript
+```typescript partial
 console.log(engine.now); // milliseconds since epoch
 ```
 
@@ -69,7 +69,7 @@ console.log(clock.now); // 1700001000000
 
 `TimeControl` doesn't monkey-patch global timers. It provides an explicit `now` property and a `schedule()` method for registering callbacks that fire when virtual time passes their target.
 
-```typescript
+```typescript partial
 const cancel = clock.schedule(clock.now + 5000, () => {
   console.log('Fired at', clock.now);
 });
@@ -87,7 +87,7 @@ Useful properties for assertions:
 
 `TestEngine.mock()` registers a fake implementation for an activity function. When the engine encounters that activity during workflow execution, it calls your mock instead.
 
-```typescript
+```typescript partial
 async function charge(order: Order): Promise<PaymentResult> {
   // Real implementation hits Stripe
 }
@@ -132,7 +132,7 @@ interface MockCall<TArgs, TResult> {
 
 Use it in assertions:
 
-```typescript
+```typescript partial
 expect(mockCharge.callCount).toBe(1);
 expect(mockCharge.lastCall?.args).toEqual([{ items: ['widget'], total: 99 }]);
 expect(mockCharge.lastCall?.result).toEqual({
@@ -146,7 +146,7 @@ expect(mockCharge.lastCall?.result).toEqual({
 
 Chain `.mockReturnValueOnce()` and `.mockRejectionOnce()` for per-call behavior. These are consumed in order---after they're exhausted, the base implementation runs.
 
-```typescript
+```typescript partial
 const mockShip = engine.mock(ship, () => ({ tracking: 'TRACK-001' }));
 
 // First call fails, second succeeds
@@ -161,7 +161,7 @@ This is perfect for testing retry logic. The first attempt fails, the engine ret
 
 `TestEngine.recover()` creates a new engine backed by a copy of the current engine's storage, simulating a process restart. The new engine sees all persisted state but has fresh in-memory structures.
 
-```typescript
+```typescript partial
 engine.register('resilient', async function* (ctx) {
   const step1 = yield* ctx.run(doFirstThing);
 
@@ -189,7 +189,7 @@ The recovered engine has its own `TimeControl` initialized to the current engine
 
 Here's a complete test combining everything:
 
-```typescript
+```typescript partial
 import { describe, expect, it } from 'bun:test';
 import { TestEngine } from 'weft';
 

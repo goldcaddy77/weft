@@ -4,13 +4,13 @@ Weft ships a purpose-built testing layer with deterministic time control and act
 
 ## `TestEngine`
 
-```ts
+```ts partial
 class TestEngine extends Engine
 ```
 
 ### Constructor
 
-```ts
+```ts partial
 new TestEngine(options?: { startTime?: number })
 ```
 
@@ -28,7 +28,7 @@ const engine = new TestEngine({ startTime: 0 });
 
 ### `advanceTime()`
 
-```ts
+```ts partial
 async advanceTime(duration: Duration): Promise<void>
 ```
 
@@ -38,14 +38,14 @@ Advance virtual time by the given duration. This fires any `TimeControl` timers 
 | ---------- | ---------- | ----------------------------------------------------------- |
 | `duration` | `Duration` | Milliseconds or a human-readable string like `'5m'`, `'1h'` |
 
-```ts
+```ts partial
 await engine.advanceTime('30s');
 await engine.advanceTime(60_000);
 ```
 
 ### `now` (getter)
 
-```ts
+```ts partial
 get now(): number
 ```
 
@@ -53,7 +53,7 @@ Current virtual time in milliseconds since epoch.
 
 ### `mock()`
 
-```ts
+```ts partial
 mock<TArgs extends unknown[], TResult>(
   activity: (...args: TArgs) => Promise<TResult> | TResult,
   implementation: (...args: TArgs) => TResult | Promise<TResult>,
@@ -67,7 +67,7 @@ Register a mock implementation for an activity function. When the engine encount
 | `activity`       | `Function` | The original activity function to mock |
 | `implementation` | `Function` | The mock implementation to use instead |
 
-```ts
+```ts partial
 const handle = engine.mock(sendEmail, async (to, body) => {
   return { messageId: 'mock-123' };
 });
@@ -75,13 +75,13 @@ const handle = engine.mock(sendEmail, async (to, body) => {
 
 ### `recover()`
 
-```ts
+```ts partial
 recover(): TestEngine
 ```
 
 Create a new `TestEngine` backed by a copy of the current storage, simulating an engine restart. The new engine sees all persisted state but has fresh in-memory structures (no active generators, resolvers, etc.). Useful for testing workflow recovery after process restarts. You must re-register workflow handlers on the recovered engine — only persisted state survives the simulated restart.
 
-```ts
+```ts partial
 const recovered = engine.recover();
 // recovered engine has the same storage data but no running workflows
 // Re-register handlers before starting new workflows on the recovered engine
@@ -89,20 +89,20 @@ const recovered = engine.recover();
 
 ### `storage` (getter)
 
-```ts
+```ts partial
 override get storage(): MemoryStorage
 ```
 
 Direct access to the underlying `MemoryStorage`. Useful for assertions.
 
-```ts
+```ts partial
 expect(engine.storage.size).toBeGreaterThan(0);
 expect(await engine.storage.has(KEYS.workflow('my-id'))).toBe(true);
 ```
 
 ### `mocks` (getter)
 
-```ts
+```ts partial
 get mocks(): ActivityMockRegistry
 ```
 
@@ -112,7 +112,7 @@ Direct access to the mock registry.
 
 ## `TimeControl`
 
-```ts
+```ts partial
 class TimeControl
 ```
 
@@ -120,7 +120,7 @@ A deterministic virtual clock for testing. Does not monkey-patch global timers -
 
 ### Constructor
 
-```ts
+```ts partial
 new TimeControl(startTime?: number)
 ```
 
@@ -130,7 +130,7 @@ new TimeControl(startTime?: number)
 
 ### `now` (getter)
 
-```ts
+```ts partial
 get now(): number
 ```
 
@@ -138,7 +138,7 @@ Current virtual time in milliseconds since epoch.
 
 ### `advance()`
 
-```ts
+```ts partial
 async advance(duration: Duration): Promise<void>
 ```
 
@@ -146,7 +146,7 @@ Advance time by the given duration. Fires all timers that fall within the window
 
 ### `advanceTo()`
 
-```ts
+```ts partial
 async advanceTo(timestamp: number): Promise<void>
 ```
 
@@ -154,13 +154,13 @@ Advance time to a specific timestamp. Throws if the target is in the past. Fires
 
 ### `schedule()`
 
-```ts
+```ts partial
 schedule(fireAt: number, callback: () => void | Promise<void>): () => void
 ```
 
 Schedule a timer callback at a specific virtual time. Returns a cancel function.
 
-```ts
+```ts partial
 const cancel = timeControl.schedule(timeControl.now + 5000, () => {
   console.log('5 seconds elapsed');
 });
@@ -171,7 +171,7 @@ cancel();
 
 ### `pendingTimerCount` (getter)
 
-```ts
+```ts partial
 get pendingTimerCount(): number
 ```
 
@@ -179,7 +179,7 @@ Number of pending (non-cancelled, not-yet-fired) timers.
 
 ### `nextTimerAt` (getter)
 
-```ts
+```ts partial
 get nextTimerAt(): number | undefined
 ```
 
@@ -187,7 +187,7 @@ The fire time of the next pending timer, or `undefined` if no timers are schedul
 
 ### `reset()`
 
-```ts
+```ts partial
 reset(startTime?: number): void
 ```
 
@@ -197,7 +197,7 @@ Reset the clock to initial state. Clears all pending timers and resets the time.
 
 ## `ActivityMockRegistry`
 
-```ts
+```ts partial
 class ActivityMockRegistry
 ```
 
@@ -205,7 +205,7 @@ Registry for activity mocks. Manages mock implementations and provides lookup du
 
 ### `mock()`
 
-```ts
+```ts partial
 mock<TArgs extends unknown[], TResult>(
   activity: (...args: TArgs) => Promise<TResult> | TResult,
   implementation: (...args: TArgs) => TResult | Promise<TResult>,
@@ -216,7 +216,7 @@ Register a mock for an activity function. Returns a `MockHandle` for configuring
 
 ### `has()`
 
-```ts
+```ts partial
 has(activity: Function): boolean
 ```
 
@@ -224,7 +224,7 @@ Check whether a mock is registered for the given activity.
 
 ### `get()`
 
-```ts
+```ts partial
 get(activity: Function): MockedActivity | undefined
 ```
 
@@ -232,7 +232,7 @@ Retrieve the internal mock entry for an activity.
 
 ### `restore()`
 
-```ts
+```ts partial
 restore(activity: Function): void
 ```
 
@@ -240,7 +240,7 @@ Remove the mock for a specific activity, restoring original behavior.
 
 ### `restoreAll()`
 
-```ts
+```ts partial
 restoreAll(): void
 ```
 
@@ -276,7 +276,7 @@ A handle to a mocked activity, returned by `testEngine.mock()` or `registry.mock
 | `resetCalls()`               | Clear the call history                      |
 | `restore()`                  | Remove the mock from the registry           |
 
-```ts
+```ts partial
 const handle = engine.mock(sendEmail, async () => ({ messageId: 'ok' }));
 
 // Queue a one-shot failure, then succeed
@@ -314,7 +314,7 @@ A single recorded call to a mocked activity.
 
 ## Complete Test Example
 
-```ts
+```ts partial
 import { describe, it, expect } from 'bun:test';
 import { TestEngine } from 'weft';
 
