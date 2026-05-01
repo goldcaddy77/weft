@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, jest } from 'bun:test';
 
 import {
   advanceTimersByTime,
@@ -11,6 +11,7 @@ import {
   waitForCondition,
   waitForRealTimersForTesting,
   waitForever,
+  withTimeout,
   yieldToEventLoop,
 } from './fake-timers.ts';
 
@@ -32,6 +33,14 @@ describe('fake timer testing helpers', () => {
 
     await advanceTimersByTime(1);
     expect(fired).toBe(true);
+  });
+
+  it('advanceTimersByTime enables fake timers when they are not already active', async () => {
+    expect(jest.isFakeTimers()).toBe(false);
+
+    await advanceTimersByTime(0);
+
+    expect(jest.isFakeTimers()).toBe(true);
   });
 
   it('advances Bun sleep promises through the fake clock', async () => {
@@ -150,5 +159,62 @@ describe('fake timer testing helpers', () => {
     await expect(
       waitForCondition(() => false, { timeoutMs: 10, intervalMs: 5, label: 'never true' }),
     ).rejects.toThrow('Timed out after 10ms waiting for never true');
+  });
+
+  it('withTimeout rejects when the timeout wins', async () => {
+    useFakeTimers();
+
+    const timed = withTimeout(waitForever(), 10, 'stalled operation');
+
+    await advanceTimersByTime(10);
+
+    await expect(timed).rejects.toThrow('Timed out after 10ms waiting for stalled operation');
+  });
+
+  it('waitForCondition retries after predicate errors under fake timers', async () => {
+    useFakeTimers();
+
+    let attempts = 0;
+    setTimeout(() => {
+      attempts = 2;
+    }, 5);
+
+    await waitForCondition(() => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error('not yet');
+      }
+
+      return attempts >= 3;
+    });
+  });
+
+  it('waitForCondition validates intervalMs', async () => {
+    await expect(waitForCondition(() => true, { intervalMs: 0 })).rejects.toThrow(
+      'intervalMs must be a finite, positive number',
+    );
+  });
+
+  it('waitForCondition includes the last real-timer predicate error in timeout failures', async () => {
+    await expect(
+      waitForCondition(
+        () => {
+          throw new Error('still waiting');
+        },
+        { timeoutMs: 5, intervalMs: 1, label: 'real timers' },
+      ),
+    ).rejects.toThrow('Timed out after 5ms waiting for real timers: still waiting');
+  });
+
+  it('waitForCondition returns a plain real-timer timeout when the predicate never throws', async () => {
+    await expect(
+      waitForCondition(() => false, { timeoutMs: 5, intervalMs: 1, label: 'plain timeout' }),
+    ).rejects.toThrow('Timed out after 5ms waiting for plain timeout');
+  });
+
+  it('rejects negative timer durations', async () => {
+    await expect(advanceTimersByTime(-1)).rejects.toThrow(
+      'milliseconds must be a finite, non-negative number',
+    );
   });
 });
