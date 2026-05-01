@@ -10,7 +10,11 @@
  * @module core/engine
  */
 
-import type { VerificationRecorder } from '../ai/agent.ts';
+import type {
+  PendingProviderResumeState,
+  PersistedAgentLoopState,
+  VerificationRecorder,
+} from '../ai/agent.ts';
 import { isAgentDefinition, type AgentDefinition } from '../ai/declaration.ts';
 import { HumanReviewCompletedEvent, HumanReviewRequestedEvent } from '../ai/events.ts';
 import {
@@ -21,6 +25,12 @@ import {
   type ReviewRequest,
 } from '../ai/human-review.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
+import {
+  createSuspendingProvider,
+  type ConsumedSignalResult,
+  type PendingChatResumeState,
+  type SuspendingProviderCoordinator,
+} from '../ai/providers/suspending-provider.ts';
 import { AlertManager } from '../alerting/alert-manager.ts';
 import { sleep } from '../runtime/portable.ts';
 import { CompressedStorage } from '../storage/compressed-storage.ts';
@@ -330,6 +340,7 @@ interface ResolvedOptions {
   checkpointSizeWarningThreshold: number;
   maxNestingDepth: number;
   broadcastEvents: boolean;
+  suspendOnLlmWait: boolean;
   retention: NormalizedRetentionPolicy | null;
   retentionSweepIntervalMs: number;
   retentionSweepBatchSize: number;
@@ -359,12 +370,27 @@ type ActivityFunctionWithMetadata = ((...arguments_: unknown[]) => unknown) & {
   compensate?: (input: unknown, output: unknown) => Promise<void> | void;
 };
 
-type ConsumedSignalResult =
-  | { found: false }
-  | {
-      found: true;
-      payload: unknown;
-    };
+type StoredPendingAgentExecutionState = {
+  loopState: PersistedAgentLoopState;
+  pendingResume: PendingProviderResumeState;
+};
+
+/**
+ * Apply the authoritative turn index to a pending provider resume snapshot,
+ * even when the runtime object being merged carries its own hidden
+ * `turnIndex` property.
+ */
+export function withPendingChatResumeTurnIndex(
+  turnIndex: number,
+  state: PendingChatResumeState,
+): PendingProviderResumeState {
+  return {
+    ...state,
+    turnIndex,
+  };
+}
+
+type AgentOperationDisposition = { kind: 'completed'; value: unknown } | { kind: 'parked' };
 
 type WorkflowHandleEventQueue = {
   events: Event[];
@@ -380,6 +406,16 @@ type TrackedWaiterKeys = string | Set<string>;
 type PendingTimelineEntry = {
   startedAt: number;
   entry: WorkflowTimelineEntry;
+};
+
+type BufferedSignalOptions = {
+  emitPublicEvent?: boolean;
+};
+
+type BufferedSignalDelivery = {
+  signalName: string;
+  payload: unknown;
+  options?: BufferedSignalOptions;
 };
 
 /**
@@ -409,6 +445,62 @@ const STREAM_CHUNK_KIND = 'stream:chunk';
  */
 function workflowFeedListenerKey(workflowId: string, selector: WorkflowFeedSelector): string {
   return `${workflowId}\0${selector}`;
+}
+
+function agentExecutionStateStoragePrefix(workflowId: string): string {
+  return `agent-execution:${encodeStorageKeyComponent(workflowId)}:`;
+}
+
+function parseAgentExecutionStepIndex(key: string): number | undefined {
+  const stepIndexText = key.slice(key.lastIndexOf(':') + 1);
+  const stepIndex = Number.parseInt(stepIndexText, 10);
+  if (!Number.isSafeInteger(stepIndex) || stepIndex < 0) {
+    return undefined;
+  }
+
+  return stepIndex;
+}
+
+function isPersistedAgentLoopStateValue(value: unknown): value is PersistedAgentLoopState {
+  return (
+    isRecord(value) &&
+    Array.isArray(value['conversation']) &&
+    Array.isArray(value['toolCacheEntries']) &&
+    isRecord(value['totalTokens']) &&
+    typeof value['totalTokens']['inputTokens'] === 'number' &&
+    typeof value['totalTokens']['outputTokens'] === 'number' &&
+    typeof value['totalTokens']['totalTokens'] === 'number' &&
+    typeof value['totalCost'] === 'number' &&
+    typeof value['turnCount'] === 'number' &&
+    typeof value['lastContent'] === 'string' &&
+    typeof value['sizeWarningFired'] === 'boolean' &&
+    typeof value['budgetWarningFired'] === 'boolean' &&
+    Array.isArray(value['previousModels']) &&
+    Array.isArray(value['reasoningTraces']) &&
+    Array.isArray(value['turnCosts'])
+  );
+}
+
+function isStoredPendingAgentExecutionState(
+  value: unknown,
+): value is StoredPendingAgentExecutionState {
+  if (
+    !isRecord(value) ||
+    !isPersistedAgentLoopStateValue(value['loopState']) ||
+    !isRecord(value['pendingResume']) ||
+    typeof value['pendingResume']['turnIndex'] !== 'number' ||
+    !isRecord(value['pendingResume']['hint']) ||
+    typeof value['pendingResume']['hint']['resumeToken'] !== 'string' ||
+    typeof value['pendingResume']['resumed'] !== 'boolean'
+  ) {
+    return false;
+  }
+
+  if (!value['pendingResume']['resumed']) {
+    return true;
+  }
+
+  return 'payload' in value['pendingResume'];
 }
 
 /**
@@ -1280,6 +1372,7 @@ function resolveEngineOptions(
     checkpointSizeWarningThreshold: options?.checkpointSizeWarningThreshold ?? 65_536,
     maxNestingDepth: options?.maxNestingDepth ?? 10,
     broadcastEvents: options?.broadcastEvents ?? false,
+    suspendOnLlmWait: options?.suspendOnLlmWait ?? false,
     retention: normalizeRetentionPolicy(options?.retention, 'options.retention'),
     retentionSweepIntervalMs:
       normalizeRetentionDuration(
@@ -1385,7 +1478,7 @@ const HANDLE_RESULT_PROMISE = Symbol('handleResultPromise');
 export const ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING = Symbol(
   'engineParkedWorkflowCountForTesting',
 );
-
+export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiterCountForTesting');
 function intersectIdentifierSets(idSets: Set<string>[]): Set<string> | null {
   const [firstSet, ...remainingSets] = idSets;
   if (!firstSet) {
@@ -2377,6 +2470,20 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         reverseIndex.set(workflowId, remainingWaiterKey);
       }
     }
+  }
+
+  #releaseSignalWaiter(workflowId: string, waiterKey: string, expectedResolve?: () => void): void {
+    const currentWaiter = this.#signalWaiters.get(waiterKey);
+    if (!currentWaiter) {
+      return;
+    }
+
+    if (expectedResolve && currentWaiter !== expectedResolve) {
+      return;
+    }
+
+    this.#signalWaiters.delete(waiterKey);
+    this.#untrackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
   }
 
   async #handleReviewEscalationTimer(
@@ -3575,6 +3682,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       `archive:${encodedWorkflowId}:`,
       `blob:${encodedWorkflowId}:`,
       `shared:${encodedWorkflowId}:`,
+      `agent-execution:${encodedWorkflowId}:`,
       `tool-effect:${encodedWorkflowId}:`,
       `upk:${encodedWorkflowId}:`,
     ]) {
@@ -4236,6 +4344,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return this.#parkedInlineWorkflows.size;
   }
 
+  [ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING](): number {
+    return this.#signalWaiters.size;
+  }
+
   async #bootstrapWorkflowResultResolver(
     workflowId: string,
     waiter: WorkflowResultWaiter,
@@ -4518,40 +4630,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       signalName: string,
       signalPayload: unknown,
     ): Promise<void> => {
-      const targetState = await this.#loadWorkflowState(targetWorkflowId);
-      if (targetState && isTerminalWorkflowStatus(targetState.status)) {
-        return;
-      }
-
-      const signalId = crypto.randomUUID();
-      const signalKey = KEYS.signal(targetWorkflowId, signalName, signalId);
-      const operations: BatchOperation[] = [
-        { type: 'put', key: signalKey, value: encode(signalPayload) },
-      ];
-      if (!this.#workflowsNeedingTerminalCleanup.has(targetWorkflowId)) {
-        this.#workflowsNeedingTerminalCleanup.add(targetWorkflowId);
-        operations.push({
-          type: 'put',
-          key: KEYS.terminalCleanupNeeded(targetWorkflowId),
-          value: EMPTY_STORAGE_VALUE,
+      const deliveries: BufferedSignalDelivery[] = [{ signalName, payload: signalPayload }];
+      for (const internalSignalName of await this.#findMatchingAgentResumeSignalNames(
+        targetWorkflowId,
+        signalName,
+      )) {
+        deliveries.push({
+          signalName: internalSignalName,
+          payload: signalPayload,
+          options: { emitPublicEvent: false },
         });
       }
-      await this.#storage.batch(operations);
 
-      this.dispatchEvent(new SignalReceivedEvent(targetWorkflowId, signalName, signalPayload));
-
-      this.#broadcast({ type: 'signal:received', workflowId: targetWorkflowId, signalName });
-
-      // Check if workflow is waiting for this signal
-      const waiterKey = `${targetWorkflowId}:${signalName}`;
-      const waiter = this.#signalWaiters.get(waiterKey);
-      if (waiter) {
-        this.#signalWaiters.delete(waiterKey);
-        this.#untrackWaiterKey(this.#signalWaitersByWorkflow, targetWorkflowId, waiterKey);
-        waiter();
-      } else if (this.#parkedInlineWorkflows.has(targetWorkflowId)) {
-        void this.#swallowPromiseRejection(this.#resumeParkedInlineWorkflow(targetWorkflowId));
-      }
+      await this.#bufferSignalPayloads(targetWorkflowId, deliveries);
     };
 
     // Run signalReceived interceptor hook wrapping actual delivery
@@ -4591,6 +4682,101 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     } else {
       await deliverSignal(workflowId, name, payload);
     }
+  }
+
+  async #bufferSignalPayload(
+    workflowId: string,
+    signalName: string,
+    payload: unknown,
+    options: BufferedSignalOptions = {},
+  ): Promise<void> {
+    return this.#bufferSignalPayloads(workflowId, [{ signalName, payload, options }]);
+  }
+
+  async #bufferSignalPayloads(
+    workflowId: string,
+    deliveries: BufferedSignalDelivery[],
+  ): Promise<void> {
+    if (deliveries.length === 0) {
+      return;
+    }
+
+    const targetState = await this.#loadWorkflowState(workflowId);
+    if (targetState && isTerminalWorkflowStatus(targetState.status)) {
+      return;
+    }
+
+    const operations: BatchOperation[] = deliveries.map(({ signalName, payload }) => ({
+      type: 'put',
+      key: KEYS.signal(workflowId, signalName, crypto.randomUUID()),
+      value: encode(payload),
+    }));
+    if (!this.#workflowsNeedingTerminalCleanup.has(workflowId)) {
+      this.#workflowsNeedingTerminalCleanup.add(workflowId);
+      operations.push({
+        type: 'put',
+        key: KEYS.terminalCleanupNeeded(workflowId),
+        value: EMPTY_STORAGE_VALUE,
+      });
+    }
+    await this.#storage.batch(operations);
+
+    let shouldResumeParkedWorkflow = false;
+    for (const { signalName, payload, options } of deliveries) {
+      if (options?.emitPublicEvent !== false) {
+        this.dispatchEvent(new SignalReceivedEvent(workflowId, signalName, payload));
+        this.#broadcast({ type: 'signal:received', workflowId, signalName });
+      }
+
+      const waiterKey = `${workflowId}:${signalName}`;
+      const waiter = this.#signalWaiters.get(waiterKey);
+      if (waiter) {
+        this.#releaseSignalWaiter(workflowId, waiterKey, waiter);
+        waiter();
+        continue;
+      }
+
+      if (this.#parkedInlineWorkflows.has(workflowId)) {
+        shouldResumeParkedWorkflow = true;
+      }
+    }
+
+    if (shouldResumeParkedWorkflow) {
+      void this.#swallowPromiseRejection(this.#resumeParkedInlineWorkflow(workflowId));
+    }
+  }
+
+  #createAgentResumeSignalName(stepIndex: number, resumeToken: string): string {
+    return `agent-resume:${String(stepIndex).padStart(10, '0')}:${resumeToken}`;
+  }
+
+  async #findMatchingAgentResumeSignalNames(
+    workflowId: string,
+    resumeToken: string,
+  ): Promise<string[]> {
+    const matchingSignalNames = new Set<string>();
+    const prefix = agentExecutionStateStoragePrefix(workflowId);
+
+    for await (const [key, value] of this.#storage.scan(prefix)) {
+      const decoded = decode(value);
+      if (!isStoredPendingAgentExecutionState(decoded)) {
+        continue;
+      }
+
+      const pendingResume = decoded.pendingResume;
+      if (pendingResume.resumed || pendingResume.hint.resumeToken !== resumeToken) {
+        continue;
+      }
+
+      const stepIndex = parseAgentExecutionStepIndex(key);
+      if (stepIndex === undefined) {
+        continue;
+      }
+
+      matchingSignalNames.add(this.#createAgentResumeSignalName(stepIndex, resumeToken));
+    }
+
+    return [...matchingSignalNames];
   }
 
   // -------------------------------------------------------------------------
@@ -6316,6 +6502,60 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return false;
     }
 
+    const publishedParkedMarker = await this.#publishParkedInlineWorkflowMarker(workflowId);
+    if (!publishedParkedMarker) {
+      return false;
+    }
+
+    // Close the race where a signal arrives after the pre-park scan above but
+    // before the workflow becomes visibly parked. Once the parked marker is
+    // published, a second buffered-signal check lets us resume immediately
+    // instead of leaving a durable signal stranded in storage.
+    if (await this.#hasBufferedSignal(workflowId, operation.signalName)) {
+      await this.#resumeParkedInlineWorkflow(workflowId);
+    }
+
+    return true;
+  }
+
+  async #parkInlineWorkflowForAgentSuspension(
+    workflowId: string,
+    stepIndex: number,
+    resumeToken: string,
+  ): Promise<boolean> {
+    if (this.#inlineStrategy === null) {
+      return false;
+    }
+
+    const context = this.#inlineStrategy.getContext(workflowId);
+    if (context?.hasUpdateHandlers || context?.hasExposedAccessors) {
+      return false;
+    }
+
+    const internalSignalName = this.#createAgentResumeSignalName(stepIndex, resumeToken);
+    if (await this.#hasBufferedSignal(workflowId, internalSignalName)) {
+      return false;
+    }
+
+    const publishedParkedMarker = await this.#publishParkedInlineWorkflowMarker(workflowId);
+    if (!publishedParkedMarker) {
+      return false;
+    }
+
+    if (await this.#hasBufferedSignal(workflowId, internalSignalName)) {
+      await this.#resumeParkedInlineWorkflow(workflowId);
+    }
+
+    return true;
+  }
+
+  async #publishParkedInlineWorkflowMarker(workflowId: string): Promise<boolean> {
+    if (this.#inlineStrategy === null) {
+      return false;
+    }
+
+    const inlineStrategy = this.#inlineStrategy;
+
     // Publish the parked marker in the same serialized section that terminal
     // state writes use so cancel/timeout cannot clean up before the add lands.
     const publishedParkedMarker = await this.#runSerializedWorkflowStateWrite(
@@ -6337,14 +6577,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
     if (!publishedParkedMarker) {
       return false;
-    }
-
-    // Close the race where a signal arrives after the pre-park scan above but
-    // before the workflow becomes visibly parked. Once the parked marker is
-    // published, a second buffered-signal check lets us resume immediately
-    // instead of leaving a durable signal stranded in storage.
-    if (await this.#hasBufferedSignal(workflowId, operation.signalName)) {
-      await this.#resumeParkedInlineWorkflow(workflowId);
     }
 
     return true;
@@ -6804,42 +7036,51 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   ): Promise<void> {
     const abortSignal = this.#abortController.signal;
     const waiterKey = `${workflowId}:${operation.signalName}`;
+    let pendingWaiterResolve: (() => void) | undefined;
 
-    while (true) {
-      if (abortSignal.aborted) {
-        return;
-      }
-
-      const existingPayload = await this.#consumeSignal(workflowId, operation.signalName);
-      if (existingPayload.found) {
-        this.#completeOperation(workflowId, existingPayload.payload);
-        return;
-      }
-
-      const { promise, resolve } = Promise.withResolvers<void>();
-      this.#signalWaiters.set(waiterKey, resolve);
-      this.#trackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
-
-      if (abortSignal.aborted) {
-        this.#signalWaiters.delete(waiterKey);
-        this.#untrackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
-        return;
-      }
-
-      const bufferedPayload = await this.#consumeSignal(workflowId, operation.signalName);
-      if (bufferedPayload.found) {
-        if (this.#signalWaiters.get(waiterKey) === resolve) {
-          this.#signalWaiters.delete(waiterKey);
-          this.#untrackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
+    try {
+      while (true) {
+        if (abortSignal.aborted) {
+          return;
         }
-        this.#completeOperation(workflowId, bufferedPayload.payload);
-        return;
+
+        const existingPayload = await this.#consumeSignal(workflowId, operation.signalName);
+        if (existingPayload.found) {
+          this.#completeOperation(workflowId, existingPayload.payload);
+          return;
+        }
+
+        const { promise, resolve } = Promise.withResolvers<void>();
+        this.#signalWaiters.set(waiterKey, resolve);
+        this.#trackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
+        pendingWaiterResolve = resolve;
+
+        if (abortSignal.aborted) {
+          this.#releaseSignalWaiter(workflowId, waiterKey, resolve);
+          pendingWaiterResolve = undefined;
+          return;
+        }
+
+        const bufferedPayload = await this.#consumeSignal(workflowId, operation.signalName);
+        if (bufferedPayload.found) {
+          this.#releaseSignalWaiter(workflowId, waiterKey, resolve);
+          pendingWaiterResolve = undefined;
+          this.#completeOperation(workflowId, bufferedPayload.payload);
+          return;
+        }
+
+        await promise;
+        pendingWaiterResolve = undefined;
+
+        if (abortSignal.aborted) {
+          return;
+        }
       }
-
-      await promise;
-
-      if (abortSignal.aborted) {
-        return;
+    } catch (error) {
+      this.#failOperation(workflowId, operation, error);
+    } finally {
+      if (pendingWaiterResolve) {
+        this.#releaseSignalWaiter(workflowId, waiterKey, pendingWaiterResolve);
       }
     }
   }
@@ -7185,9 +7426,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'agent' }>,
   ): Promise<void> {
-    return this.#runOperationWithResult(workflowId, operation, () =>
-      this.#executeAgentContextOperationResult(workflowId, operation),
-    );
+    try {
+      const disposition = await this.#executeAgentContextOperationResult(workflowId, operation);
+      if (disposition.kind === 'parked') {
+        return;
+      }
+
+      this.#completeOperation(workflowId, disposition.value);
+    } catch (error) {
+      this.#failOperation(workflowId, operation, error);
+    }
   }
 
   async #processSpeculateOperation(
@@ -7202,8 +7450,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async #executeAgentContextOperationResult(
     workflowId: string,
     operation: Extract<ContextOperationRequest, { type: 'agent' }>,
-  ): Promise<unknown> {
-    const { executeAgentLoop } = await import('../ai/agent.ts');
+  ): Promise<AgentOperationDisposition> {
+    const { AgentLoopSuspendedError, executeAgentLoopWithState } = await import('../ai/agent.ts');
     const {
       prompt,
       budget: budgetOptions,
@@ -7211,6 +7459,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       contextStrategy: _contextStrategy,
       ...rest
     } = operation.options;
+    let pendingExecutionState = await this.#loadPendingAgentExecutionState(
+      workflowId,
+      operation.stepIndex,
+    );
     const budgetTracker = await this.#createAgentBudgetTracker(
       workflowId,
       operation,
@@ -7225,34 +7477,92 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const agentInterception = this.#createAgentInterception(workflowId, rest.model, prompt);
     const agentInterceptorGenerator = this.#openAgentInterceptor(agentInterception);
+    let agentInterceptorClosed = false;
     const { ToolEffectLog } = await import('../ai/tool-effect-log.ts');
     const toolEffectLog = new ToolEffectLog(this.#storage, workflowId, operation.operationId);
-    const agentResult = await executeAgentLoop(
-      {
-        ...rest,
-        modelRouter: rest.modelRouter ?? this.#defaultModelRouter,
-        budget: budgetTracker,
-        eventTarget: this,
-        workflowId,
-        agentId: operation.operationId,
-        onTurnStarted: agentInterception.onTurnStarted,
-        onTurnCompleted: agentInterception.onTurnCompleted,
-        onToolCalled: agentInterception.onToolCalled,
-        onToolReturned: agentInterception.onToolReturned,
-        toolEffectLog,
-      },
-      prompt,
-    );
-    this.#closeAgentInterceptor(agentInterceptorGenerator, agentResult.content);
-    this.#exposeAgentObservability(context, agentResult, rest.maxTurns ?? 10);
-    this.#recordAgentContextCost(context, agentResult.totalCost);
-    await this.#recordAgentBudgetCost(
-      workflowId,
-      operation.operationId,
-      resolvedBudgetNamespace,
-      agentResult.totalCost,
-    );
-    return agentResult.content;
+    const provider = this.#createAgentProvider(workflowId, operation.stepIndex, rest.provider);
+
+    try {
+      while (true) {
+        try {
+          const agentResult = await executeAgentLoopWithState(
+            {
+              ...rest,
+              provider,
+              modelRouter: rest.modelRouter ?? this.#defaultModelRouter,
+              budget: budgetTracker,
+              eventTarget: this,
+              workflowId,
+              agentId: operation.operationId,
+              onTurnStarted: agentInterception.onTurnStarted,
+              onTurnCompleted: agentInterception.onTurnCompleted,
+              onToolCalled: agentInterception.onToolCalled,
+              onToolReturned: agentInterception.onToolReturned,
+              toolEffectLog,
+            },
+            prompt,
+            pendingExecutionState?.loopState,
+          );
+          this.#closeAgentInterceptor(agentInterceptorGenerator, agentResult.content);
+          agentInterceptorClosed = true;
+          this.#exposeAgentObservability(context, agentResult, rest.maxTurns ?? 10);
+          this.#recordAgentContextCost(context, agentResult.totalCost);
+          await this.#recordAgentBudgetCost(
+            workflowId,
+            operation.operationId,
+            resolvedBudgetNamespace,
+            agentResult.totalCost,
+          );
+          await this.#clearPendingAgentExecutionState(workflowId, operation.stepIndex);
+          return { kind: 'completed', value: agentResult.content };
+        } catch (error) {
+          if (!(error instanceof AgentLoopSuspendedError)) {
+            await this.#clearPendingAgentExecutionState(workflowId, operation.stepIndex);
+            throw error;
+          }
+
+          await this.#storePendingAgentExecutionState(workflowId, operation.stepIndex, {
+            loopState: error.loopState,
+            pendingResume: error.pendingResume,
+          });
+
+          if (
+            await this.#parkInlineWorkflowForAgentSuspension(
+              workflowId,
+              operation.stepIndex,
+              error.pendingResume.hint.resumeToken,
+            )
+          ) {
+            return { kind: 'parked' };
+          }
+
+          const payload = await this.#waitForSignalPayload(
+            workflowId,
+            this.#createAgentResumeSignalName(
+              operation.stepIndex,
+              error.pendingResume.hint.resumeToken,
+            ),
+          );
+          if (this.#abortController.signal.aborted) {
+            return { kind: 'parked' };
+          }
+          await this.#markPendingAgentResumeStateResumed(
+            workflowId,
+            operation.stepIndex,
+            error.pendingResume.turnIndex,
+            payload,
+          );
+          pendingExecutionState = await this.#loadPendingAgentExecutionState(
+            workflowId,
+            operation.stepIndex,
+          );
+        }
+      }
+    } finally {
+      if (!agentInterceptorClosed) {
+        this.#cancelAgentInterceptor(agentInterceptorGenerator);
+      }
+    }
   }
 
   async #executeSpeculativeBranch(
@@ -7486,6 +7796,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   ): void {
     if (generator) {
       generator.next(content);
+    }
+  }
+
+  #cancelAgentInterceptor(generator: Generator<unknown, unknown, unknown> | undefined): void {
+    if (generator) {
+      generator.return(undefined);
     }
   }
 
@@ -7835,6 +8151,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         const agentResult = await executeAgentLoop(
           {
             ...rest,
+            provider: rest.provider,
             budget: budgetTracker,
             // Thread the abort signal so losing branches of `ctx.race()`
             // stop consuming budget after the race settles.
@@ -8637,6 +8954,224 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return { found: true, payload: decode(value) };
     }
     return { found: false };
+  }
+
+  async #waitForSignalPayload(workflowId: string, signalName: string): Promise<unknown> {
+    const abortSignal = this.#abortController.signal;
+    const waiterKey = `${workflowId}:${signalName}`;
+    let pendingWaiterResolve: (() => void) | undefined;
+
+    try {
+      while (true) {
+        if (abortSignal.aborted) {
+          return undefined;
+        }
+
+        const existingPayload = await this.#consumeSignal(workflowId, signalName);
+        if (existingPayload.found) {
+          return existingPayload.payload;
+        }
+
+        const { promise, resolve } = Promise.withResolvers<void>();
+        this.#signalWaiters.set(waiterKey, resolve);
+        this.#trackWaiterKey(this.#signalWaitersByWorkflow, workflowId, waiterKey);
+        pendingWaiterResolve = resolve;
+
+        if (abortSignal.aborted) {
+          this.#releaseSignalWaiter(workflowId, waiterKey, resolve);
+          pendingWaiterResolve = undefined;
+          return undefined;
+        }
+
+        const bufferedPayload = await this.#consumeSignal(workflowId, signalName);
+        if (bufferedPayload.found) {
+          this.#releaseSignalWaiter(workflowId, waiterKey, resolve);
+          pendingWaiterResolve = undefined;
+          return bufferedPayload.payload;
+        }
+
+        await promise;
+        pendingWaiterResolve = undefined;
+      }
+    } finally {
+      if (pendingWaiterResolve) {
+        this.#releaseSignalWaiter(workflowId, waiterKey, pendingWaiterResolve);
+      }
+    }
+  }
+
+  #createAgentProvider(workflowId: string, stepIndex: number, provider: LLMProvider): LLMProvider {
+    if (!this.#options.suspendOnLlmWait) {
+      return provider;
+    }
+
+    return createSuspendingProvider(
+      provider,
+      this.#createSuspendingProviderCoordinator(workflowId, stepIndex),
+    );
+  }
+
+  #createSuspendingProviderCoordinator(
+    workflowId: string,
+    stepIndex: number,
+  ): SuspendingProviderCoordinator {
+    const toInternalSignalName = (resumeToken: string) =>
+      this.#createAgentResumeSignalName(stepIndex, resumeToken);
+
+    return {
+      load: this.#loadPendingChatResumeState.bind(this, workflowId, stepIndex),
+      store: this.#storePendingChatResumeState.bind(this, workflowId, stepIndex),
+      clear: this.#clearPendingChatResumeState.bind(this, workflowId, stepIndex),
+      consumeSignal: (resumeToken: string) =>
+        this.#consumeSignal(workflowId, toInternalSignalName(resumeToken)),
+      waitForSignal: (resumeToken: string) =>
+        this.#waitForSignalPayload(workflowId, toInternalSignalName(resumeToken)),
+      // Force the provider wrapper to yield control back to the engine before
+      // waiting so the full agent loop state can be persisted first.
+      canSuspend: true,
+    };
+  }
+
+  async #mirrorBufferedSignalPayload(
+    workflowId: string,
+    sourceSignalName: string,
+    targetSignalName: string,
+  ): Promise<void> {
+    if (await this.#hasBufferedSignal(workflowId, targetSignalName)) {
+      return;
+    }
+
+    const prefix = `sig:${encodeStorageKeyComponent(workflowId)}:${sourceSignalName}:`;
+    for await (const [_key, value] of this.#storage.scan(prefix, { limit: 1 })) {
+      await this.#bufferSignalPayload(workflowId, targetSignalName, decode(value), {
+        emitPublicEvent: false,
+      });
+      return;
+    }
+  }
+
+  async #clearBufferedSignals(workflowId: string, signalName: string): Promise<void> {
+    const prefix = `sig:${encodeStorageKeyComponent(workflowId)}:${signalName}:`;
+    const keysToDelete: string[] = [];
+
+    for await (const [key] of this.#storage.scan(prefix)) {
+      keysToDelete.push(key);
+    }
+
+    if (keysToDelete.length === 0) {
+      return;
+    }
+
+    await this.#storage.batch(keysToDelete.map((key) => ({ type: 'delete' as const, key })));
+  }
+
+  async #loadPendingChatResumeState(
+    workflowId: string,
+    stepIndex: number,
+    turnIndex: number,
+  ): Promise<PendingChatResumeState | undefined> {
+    const executionState = await this.#loadPendingAgentExecutionState(workflowId, stepIndex);
+    if (!executionState || executionState.pendingResume.turnIndex !== turnIndex) {
+      return undefined;
+    }
+
+    return executionState.pendingResume;
+  }
+
+  async #storePendingChatResumeState(
+    workflowId: string,
+    stepIndex: number,
+    turnIndex: number,
+    state: PendingChatResumeState,
+  ): Promise<void> {
+    const executionState = await this.#loadPendingAgentExecutionState(workflowId, stepIndex);
+    if (!executionState) {
+      return;
+    }
+
+    await this.#storePendingAgentExecutionState(workflowId, stepIndex, {
+      ...executionState,
+      pendingResume: withPendingChatResumeTurnIndex(turnIndex, state),
+    });
+  }
+
+  async #clearPendingChatResumeState(
+    workflowId: string,
+    stepIndex: number,
+    turnIndex: number,
+  ): Promise<void> {
+    const executionState = await this.#loadPendingAgentExecutionState(workflowId, stepIndex);
+    if (!executionState || executionState.pendingResume.turnIndex !== turnIndex) {
+      return;
+    }
+
+    await this.#clearPendingAgentExecutionState(workflowId, stepIndex);
+  }
+
+  async #loadPendingAgentExecutionState(
+    workflowId: string,
+    stepIndex: number,
+  ): Promise<StoredPendingAgentExecutionState | undefined> {
+    const bytes = await this.#storage.get(KEYS.agentExecutionState(workflowId, stepIndex));
+    if (!bytes) {
+      return undefined;
+    }
+
+    const decoded = decode(bytes);
+    if (!isStoredPendingAgentExecutionState(decoded)) {
+      return undefined;
+    }
+
+    return decoded;
+  }
+
+  async #storePendingAgentExecutionState(
+    workflowId: string,
+    stepIndex: number,
+    state: StoredPendingAgentExecutionState,
+  ): Promise<void> {
+    await this.#storage.put(KEYS.agentExecutionState(workflowId, stepIndex), encode(state));
+
+    if (!state.pendingResume.resumed) {
+      await this.#mirrorBufferedSignalPayload(
+        workflowId,
+        state.pendingResume.hint.resumeToken,
+        this.#createAgentResumeSignalName(stepIndex, state.pendingResume.hint.resumeToken),
+      );
+    }
+  }
+
+  async #clearPendingAgentExecutionState(workflowId: string, stepIndex: number): Promise<void> {
+    const existingState = await this.#loadPendingAgentExecutionState(workflowId, stepIndex);
+    if (existingState) {
+      await this.#clearBufferedSignals(
+        workflowId,
+        this.#createAgentResumeSignalName(stepIndex, existingState.pendingResume.hint.resumeToken),
+      );
+    }
+
+    await this.#storage.delete(KEYS.agentExecutionState(workflowId, stepIndex));
+  }
+
+  async #markPendingAgentResumeStateResumed(
+    workflowId: string,
+    stepIndex: number,
+    turnIndex: number,
+    payload: unknown,
+  ): Promise<void> {
+    const executionState = await this.#loadPendingAgentExecutionState(workflowId, stepIndex);
+    if (!executionState || executionState.pendingResume.turnIndex !== turnIndex) {
+      return;
+    }
+
+    await this.#storePendingAgentExecutionState(workflowId, stepIndex, {
+      ...executionState,
+      pendingResume: {
+        ...executionState.pendingResume,
+        resumed: true,
+        payload,
+      },
+    });
   }
 
   /**

@@ -566,11 +566,11 @@ describe('RemoteWorker', () => {
     await worker.connect();
     expect(worker.connected).toBe(true);
 
-    // Wait for the shutdown message to be processed
-    await sleepForTesting(200);
+    await waitForCondition(() => worker.shuttingDown && !worker.connected, {
+      timeoutMs: 500,
+      label: 'worker shutdown state transition',
+    });
 
-    // After shutdown, the worker should have set shuttingDown to true
-    // and eventually closed the connection
     expect(worker.shuttingDown).toBe(true);
     expect(worker.connected).toBe(false);
 
@@ -744,8 +744,10 @@ describe('RemoteWorker', () => {
 
     await worker.connect();
 
-    // Wait for the task to be picked up so inFlight increments
-    await sleepForTesting(100);
+    await waitForCondition(() => worker.inFlight === 1, {
+      timeoutMs: 500,
+      label: 'disconnect inFlight increment',
+    });
     expect(worker.inFlight).toBe(1);
 
     const startTime = Date.now();
@@ -930,8 +932,7 @@ describe('RemoteWorker', () => {
     });
 
     // The task sent on the second connection should have been processed
-    const taskResult = messages.find((m) => m.type === 'taskResult');
-    expect(taskResult).toBeDefined();
+    const taskResult = await waitForTaskResult(messages, 'post-reconnect task result');
     expect(taskResult.operationId).toBe('op-post-reconnect');
     expect(taskResult.status).toBe('completed');
 

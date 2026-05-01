@@ -68,6 +68,46 @@ export interface ToolDefinition {
 }
 
 /**
+ * Provider-supplied metadata that tells Weft which workflow signal should
+ * resume a paused chat turn. Providers may also attach provider-specific
+ * state that should round-trip through durable suspension.
+ *
+ * @example Return a resume hint from a provider implementation
+ * ```ts
+ * import type { ChatResumeHint } from 'weft';
+ *
+ * const hint: ChatResumeHint = {
+ *   resumeToken: 'llm-ready-token',
+ *   state: { requestId: 'req-123' },
+ * };
+ * ```
+ */
+export interface ChatResumeHint {
+  resumeToken: string;
+  state?: unknown;
+}
+
+/**
+ * Resume payload delivered back to the provider after a matching workflow
+ * signal arrives. The original {@link ChatResumeHint} is preserved alongside
+ * the signal payload so providers can correlate the resumed request.
+ *
+ * @example Pass resume context back into a provider chat call
+ * ```ts
+ * import type { ChatResumeContext } from 'weft';
+ *
+ * const resumeContext: ChatResumeContext = {
+ *   hint: { resumeToken: 'llm-ready-token' },
+ *   payload: { approved: true },
+ * };
+ * ```
+ */
+export interface ChatResumeContext {
+  hint: ChatResumeHint;
+  payload: unknown;
+}
+
+/**
  * Token consumption summary returned inside {@link ChatResponse.usage} and
  * {@link StreamChunk.usage}. Provides `inputTokens`, `outputTokens`, and their
  * sum `totalTokens`. Used by {@link BudgetTracker} to compute per-turn cost.

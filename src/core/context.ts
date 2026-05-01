@@ -421,6 +421,7 @@ export type ContextOperationRequest =
   | {
       type: 'agent';
       operationId: string;
+      stepIndex: number;
       options: AgentContextOptions;
       callerStack?: string;
     }
@@ -1789,6 +1790,7 @@ export class Context implements WorkflowContext {
     const result = yield {
       type: 'agent' as const,
       operationId,
+      stepIndex: step,
       options,
       callerStack,
     };
