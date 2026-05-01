@@ -119,6 +119,102 @@ function withResumeContext(
   };
 }
 
+function wrapStreamWithResumeCleanup(
+  stream: ReadableStream<StreamChunk>,
+  turnIndex: number,
+  coordinator: SuspendingProviderCoordinator,
+): ReadableStream<StreamChunk> {
+  const reader = stream.getReader();
+  let canceled = false;
+  let sourceCompleted = false;
+  let sourceError: unknown;
+  const bufferedChunks: StreamChunk[] = [];
+  let notifyPull: (() => void) | undefined;
+
+  function wakePull(): void {
+    notifyPull?.();
+    notifyPull = undefined;
+  }
+
+  async function waitForSourceProgress(): Promise<void> {
+    if (bufferedChunks.length > 0 || sourceCompleted || sourceError !== undefined || canceled) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      notifyPull = resolve;
+    });
+  }
+
+  async function pumpSource(): Promise<void> {
+    try {
+      while (true) {
+        if (canceled) {
+          return;
+        }
+
+        const result = await reader.read();
+        if (result.done) {
+          sourceCompleted = true;
+          wakePull();
+          return;
+        }
+
+        bufferedChunks.push(result.value);
+        wakePull();
+      }
+    } catch (error) {
+      if (!canceled) {
+        sourceError = error;
+        wakePull();
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // Ignore duplicate release attempts during stream teardown.
+      }
+    }
+  }
+
+  return new ReadableStream<StreamChunk>({
+    start() {
+      void pumpSource();
+    },
+    async pull(controller) {
+      while (true) {
+        const chunk = bufferedChunks.shift();
+        if (chunk !== undefined) {
+          controller.enqueue(chunk);
+          return;
+        }
+
+        if (sourceError !== undefined) {
+          controller.error(sourceError);
+          return;
+        }
+
+        if (sourceCompleted) {
+          await coordinator.clear(turnIndex);
+          controller.close();
+          return;
+        }
+
+        if (canceled) {
+          return;
+        }
+
+        await waitForSourceProgress();
+      }
+    },
+    async cancel(reason) {
+      canceled = true;
+      wakePull();
+      await reader.cancel(reason);
+    },
+  });
+}
+
 /**
  * Wrap an LLM provider so chat and stream calls can pause on an external
  * resume signal before the blocking provider fetch begins.
@@ -141,13 +237,13 @@ export function createSuspendingProvider(
     },
     async stream(messages: Message[], options: ChatOptions): Promise<ReadableStream<StreamChunk>> {
       const resumeContext = await resolveResumeContext(provider, coordinator, messages, options);
-      try {
-        return await provider.stream(messages, withResumeContext(options, resumeContext));
-      } finally {
-        if (resumeContext !== undefined && options.turnIndex !== undefined) {
-          await coordinator.clear(options.turnIndex);
-        }
+      const stream = await provider.stream(messages, withResumeContext(options, resumeContext));
+
+      if (resumeContext === undefined || options.turnIndex === undefined) {
+        return stream;
       }
+
+      return wrapStreamWithResumeCleanup(stream, options.turnIndex, coordinator);
     },
     async countTokens(messages: Message[]): Promise<number> {
       return provider.countTokens(messages);

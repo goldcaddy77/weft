@@ -382,6 +382,139 @@ describe('H1: executeStreamingAgent returns ReadableStream', () => {
     expect(streamStarted).toBe(true);
     expect(observedResumePayload).toEqual({ ready: true });
   });
+
+  it('clears stored resume state only after the wrapped stream consumer drains the final chunk', async () => {
+    const turnIndex = 3;
+    const resumeState: PendingChatResumeState = {
+      hint: { resumeToken: 'stream-ready-token' },
+      resumed: true,
+      payload: { ready: true },
+    };
+    const pendingState = new Map<number, PendingChatResumeState>([[turnIndex, resumeState]]);
+
+    const provider = createSuspendingProvider(
+      {
+        name: 'resume-aware-stream',
+        async createChatResumeHint() {
+          return { resumeToken: 'stream-ready-token' };
+        },
+        async chat(): Promise<ChatResponse> {
+          throw new Error('Streaming provider chat() should not be called');
+        },
+        async stream(): Promise<ReadableStream<StreamChunk>> {
+          return new ReadableStream<StreamChunk>({
+            start(controller) {
+              controller.enqueue({ type: 'token', token: 'Hello' });
+              controller.enqueue({
+                type: 'done',
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              });
+              controller.close();
+            },
+          });
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      },
+      {
+        load: async (currentTurnIndex: number) => pendingState.get(currentTurnIndex),
+        store: async (currentTurnIndex: number, state: PendingChatResumeState) => {
+          pendingState.set(currentTurnIndex, state);
+        },
+        clear: async (currentTurnIndex: number) => {
+          pendingState.delete(currentTurnIndex);
+        },
+      },
+    );
+
+    const stream = await provider.stream([{ role: 'user', content: 'Hello' }], {
+      model: 'test-model',
+      turnIndex,
+    });
+
+    expect(pendingState.get(turnIndex)).toEqual(resumeState);
+
+    const reader = stream.getReader();
+    expect(await reader.read()).toEqual({
+      done: false,
+      value: { type: 'token', token: 'Hello' },
+    });
+    expect(pendingState.get(turnIndex)).toEqual(resumeState);
+
+    expect(await reader.read()).toEqual({
+      done: false,
+      value: {
+        type: 'done',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      },
+    });
+    expect(pendingState.has(turnIndex)).toBe(false);
+
+    expect(await reader.read()).toEqual({ done: true, value: undefined });
+  });
+
+  it('preserves stored resume state when the wrapped stream fails mid-consumption', async () => {
+    const turnIndex = 7;
+    const resumeState: PendingChatResumeState = {
+      hint: { resumeToken: 'stream-ready-token' },
+      resumed: true,
+      payload: { ready: true },
+    };
+    const pendingState = new Map<number, PendingChatResumeState>([[turnIndex, resumeState]]);
+    const streamError = new Error('stream failed');
+    let emittedToken = false;
+
+    const provider = createSuspendingProvider(
+      {
+        name: 'resume-aware-stream',
+        async createChatResumeHint() {
+          return { resumeToken: 'stream-ready-token' };
+        },
+        async chat(): Promise<ChatResponse> {
+          throw new Error('Streaming provider chat() should not be called');
+        },
+        async stream(): Promise<ReadableStream<StreamChunk>> {
+          return new ReadableStream<StreamChunk>({
+            pull(controller) {
+              if (!emittedToken) {
+                emittedToken = true;
+                controller.enqueue({ type: 'token', token: 'Hello' });
+                return;
+              }
+
+              throw streamError;
+            },
+          });
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      },
+      {
+        load: async (currentTurnIndex: number) => pendingState.get(currentTurnIndex),
+        store: async (currentTurnIndex: number, state: PendingChatResumeState) => {
+          pendingState.set(currentTurnIndex, state);
+        },
+        clear: async (currentTurnIndex: number) => {
+          pendingState.delete(currentTurnIndex);
+        },
+      },
+    );
+
+    const stream = await provider.stream([{ role: 'user', content: 'Hello' }], {
+      model: 'test-model',
+      turnIndex,
+    });
+
+    const reader = stream.getReader();
+    expect(await reader.read()).toEqual({
+      done: false,
+      value: { type: 'token', token: 'Hello' },
+    });
+    await expect(reader.read()).rejects.toThrow(streamError.message);
+    expect(pendingState.get(turnIndex)).toEqual(resumeState);
+  });
 });
 
 // ---------------------------------------------------------------------------
