@@ -1,0 +1,74 @@
+{
+  "scenario": "signal-and-wait",
+  "description": "A workflow waits for a signal and completes with the delivered payload.",
+  "events": [
+    {
+      "type": "workflow:checkpoint",
+      "timestamp": 0,
+      "data": {
+        "step": 1
+      }
+    },
+    {
+      "type": "workflow:checkpoint",
+      "timestamp": 0,
+      "data": {
+        "step": 2
+      }
+    }
+  ],
+  "timeline": [
+    {
+      "step": 1,
+      "operationType": "wait-signal",
+      "operationLabel": "go",
+      "inputSummary": "{\"signalName\":\"go\"}",
+      "timestamp": 0,
+      "status": "running",
+      "versionTuple": {
+        "workflowVersion": "1"
+      }
+    },
+    {
+      "step": 2,
+      "operationType": "wait-signal",
+      "operationLabel": "go",
+      "inputSummary": "{\"signalName\":\"go\"}",
+      "timestamp": 0,
+      "status": "completed",
+      "versionTuple": {
+        "workflowVersion": "1"
+      },
+      "outputSummary": "\"proceed\"",
+      "duration": 0
+    }
+  ],
+  "finalState": {
+    "id": "wf-signal-and-wait",
+    "type": "signal-and-wait",
+    "status": "completed",
+    "input": null,
+    "version": "1",
+    "createdAt": 0,
+    "startedAt": 0,
+    "updatedAt": 0,
+    "result": {
+      "received": "proceed"
+    },
+    "terminalCleanupToken": "00000000-0000-4000-8000-000000000004"
+  },
+  "storage": {
+    "ev:wf-signal-and-wait:0000000000": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLJ3Zi1zaWduYWwtYW5kLXdhaXSoc2VxdWVuY2UAqHByZXZIYXNosDAwMDAwMDAwMDAwMDAwMDCncGF5bG9hZIGkc3RlcAGpdGltZXN0YW1wAKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqEx",
+    "ev:wf-signal-and-wait:0000000001": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLJ3Zi1zaWduYWwtYW5kLXdhaXSoc2VxdWVuY2UBqHByZXZIYXNosDA2NmFlMDg4ZDE2Y2RlN2KncGF5bG9hZIGkc3RlcAKpdGltZXN0YW1wAKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqEx",
+    "ev:wf-signal-and-wait:head": "gqhzZXF1ZW5jZQGobGFzdEhhc2iwNzJmNDg2OTA2OTFjY2QyMw==",
+    "wf-cleanup-needed:wf-signal-and-wait": "",
+    "wf-cleanup:0000000000060000:terminal-cleanup%3Apreserve-output%3A00000000-0000-4000-8000-000000000004": "sndmLXNpZ25hbC1hbmQtd2FpdA==",
+    "wf-terminal:0000000000000000:wf-signal-and-wait": "",
+    "wf:wf-signal-and-wait": "iqJpZLJ3Zi1zaWduYWwtYW5kLXdhaXSkdHlwZa9zaWduYWwtYW5kLXdhaXSmc3RhdHVzqWNvbXBsZXRlZKVpbnB1dMCndmVyc2lvbqExqWNyZWF0ZWRBdACpc3RhcnRlZEF0AKl1cGRhdGVkQXQApnJlc3VsdIGocmVjZWl2ZWSncHJvY2VlZLR0ZXJtaW5hbENsZWFudXBUb2tlbtkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDA0",
+    "wf:wf-signal-and-wait:ckpt": "iKp3b3JrZmxvd0lksndmLXNpZ25hbC1hbmQtd2FpdKRzdGVwAqZsb2NhbHOAsmFjY3VtdWxhdGVkUmVzdWx0c5CucGVuZGluZ1NpZ25hbHOQsHNlYXJjaEF0dHJpYnV0ZXOAp3ZlcnNpb26hMaljcmVhdGVkQXQA",
+    "wf:wf-signal-and-wait:ckpt:0000000001": "iKp3b3JrZmxvd0lksndmLXNpZ25hbC1hbmQtd2FpdKRzdGVwAaZsb2NhbHOAsmFjY3VtdWxhdGVkUmVzdWx0c5CucGVuZGluZ1NpZ25hbHOQsHNlYXJjaEF0dHJpYnV0ZXOAp3ZlcnNpb26hMaljcmVhdGVkQXQA",
+    "wf:wf-signal-and-wait:ckpt:0000000002": "iKp3b3JrZmxvd0lksndmLXNpZ25hbC1hbmQtd2FpdKRzdGVwAqZsb2NhbHOAsmFjY3VtdWxhdGVkUmVzdWx0c5CucGVuZGluZ1NpZ25hbHOQsHNlYXJjaEF0dHJpYnV0ZXOAp3ZlcnNpb26hMaljcmVhdGVkQXQA",
+    "wf:wf-signal-and-wait:timeline:0000000001": "h6RzdGVwAa1vcGVyYXRpb25UeXBlq3dhaXQtc2lnbmFsrm9wZXJhdGlvbkxhYmVsomdvrGlucHV0U3VtbWFyebN7InNpZ25hbE5hbWUiOiJnbyJ9qXRpbWVzdGFtcACmc3RhdHVzp3J1bm5pbmesdmVyc2lvblR1cGxlga93b3JrZmxvd1ZlcnNpb26hMQ==",
+    "wf:wf-signal-and-wait:timeline:0000000002": "iaRzdGVwAq1vcGVyYXRpb25UeXBlq3dhaXQtc2lnbmFsrm9wZXJhdGlvbkxhYmVsomdvrGlucHV0U3VtbWFyebN7InNpZ25hbE5hbWUiOiJnbyJ9qXRpbWVzdGFtcACmc3RhdHVzqWNvbXBsZXRlZKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqExrW91dHB1dFN1bW1hcnmpInByb2NlZWQiqGR1cmF0aW9uAA=="
+  }
+}

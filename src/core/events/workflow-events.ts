@@ -1,0 +1,181 @@
+/**
+ * Fired on the {@link Engine} when a new workflow execution begins. Listen via
+ * `engine.addEventListener('workflow:started', handler)` and read
+ * `e.workflowId`, `e.workflowType`, and `e.input` directly off the event.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowStartedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:started', (e: Event) => {
+ *   const ev = e as WorkflowStartedEvent;
+ *   console.log('started', ev.workflowId, ev.workflowType);
+ * });
+ * engine.register('ping', async function* () { return 'pong'; });
+ * await engine.start('ping', null);
+ * ```
+ */
+export class WorkflowStartedEvent extends Event {
+  static readonly type = 'workflow:started' as const;
+  readonly workflowId: string;
+  readonly workflowType: string;
+  readonly input: unknown;
+
+  constructor(workflowId: string, workflowType: string, input: unknown) {
+    super(WorkflowStartedEvent.type);
+    this.workflowId = workflowId;
+    this.workflowType = workflowType;
+    this.input = input;
+  }
+}
+
+/**
+ * Fired on the {@link Engine} when a workflow finishes successfully. Contains
+ * the `result` and wall-clock `duration` in milliseconds. Read `e.workflowId`,
+ * `e.result`, and `e.duration` directly off the event object.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowCompletedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:completed', (e: Event) => {
+ *   const ev = e as WorkflowCompletedEvent;
+ *   console.log('completed in', ev.duration, 'ms, result:', ev.result);
+ * });
+ * engine.register('ping', async function* () { return 'pong'; });
+ * await (await engine.start('ping', null)).result();
+ * ```
+ */
+export class WorkflowCompletedEvent extends Event {
+  static readonly type = 'workflow:completed' as const;
+  readonly workflowId: string;
+  readonly result: unknown;
+  readonly duration: number;
+
+  constructor(workflowId: string, result: unknown, duration: number) {
+    super(WorkflowCompletedEvent.type);
+    this.workflowId = workflowId;
+    this.result = result;
+    this.duration = duration;
+  }
+}
+
+/**
+ * Fired on the {@link Engine} when a workflow terminates with an unhandled error.
+ * The `error` property holds the thrown `Error` object. Listen to diagnose
+ * failures without polling `handle.state()`.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowFailedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:failed', (e: Event) => {
+ *   const ev = e as WorkflowFailedEvent;
+ *   console.error('workflow', ev.workflowId, 'failed:', ev.error.message);
+ * });
+ * engine.register('boom', async function* () { throw new Error('oops'); });
+ * await engine.start('boom', null).then(h => h.result()).catch(() => undefined);
+ * ```
+ */
+export class WorkflowFailedEvent extends Event {
+  static readonly type = 'workflow:failed' as const;
+  readonly workflowId: string;
+  readonly error: Error;
+
+  constructor(workflowId: string, error: Error) {
+    super(WorkflowFailedEvent.type);
+    this.workflowId = workflowId;
+    this.error = error;
+  }
+}
+
+/**
+ * Fired on the {@link Engine} when a workflow is cancelled via
+ * `engine.cancel(workflowId)` or `handle.cancel()`. Contains only
+ * `e.workflowId` since there is no result or error.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowCancelledEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:cancelled', (e: Event) => {
+ *   const ev = e as WorkflowCancelledEvent;
+ *   console.log('cancelled', ev.workflowId);
+ * });
+ * engine.register('slow', async function* (_ctx: import('weft').WorkflowContext, _input: unknown) {
+ *   await new Promise(() => {}); // never resolves
+ * });
+ * const handle = await engine.start('slow', null);
+ * await handle.cancel();
+ * ```
+ */
+export class WorkflowCancelledEvent extends Event {
+  static readonly type = 'workflow:cancelled' as const;
+  readonly workflowId: string;
+
+  constructor(workflowId: string) {
+    super(WorkflowCancelledEvent.type);
+    this.workflowId = workflowId;
+  }
+}
+
+/**
+ * Fired on the {@link Engine} when a workflow exceeds its execution or run
+ * timeout. Read `e.timeoutType` (`'execution'` or `'run'`) and `e.elapsed`
+ * (milliseconds) to understand which limit was hit.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowTimedOutEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:timed-out', (e: Event) => {
+ *   const ev = e as WorkflowTimedOutEvent;
+ *   console.log(ev.workflowId, 'timed out after', ev.elapsed, 'ms (', ev.timeoutType, ')');
+ * });
+ * ```
+ */
+export class WorkflowTimedOutEvent extends Event {
+  static readonly type = 'workflow:timed-out' as const;
+  readonly workflowId: string;
+  readonly timeoutType: 'execution' | 'run';
+  readonly elapsed: number;
+
+  constructor(workflowId: string, timeoutType: 'execution' | 'run', elapsed: number) {
+    super(WorkflowTimedOutEvent.type);
+    this.workflowId = workflowId;
+    this.timeoutType = timeoutType;
+    this.elapsed = elapsed;
+  }
+}
+
+/**
+ * Fired whenever a workflow resumes execution — after a signal, update, sleep,
+ * activity completion, or process restart recovery.
+ *
+ * @example
+ * ```ts
+ * import { Engine, WorkflowResumedEvent } from 'weft';
+ *
+ * const engine = new Engine();
+ * engine.addEventListener('workflow:resumed', (e: Event) => {
+ *   const ev = e as WorkflowResumedEvent;
+ *   console.log('resumed', ev.workflowId, 'from step', ev.fromStep);
+ * });
+ * ```
+ */
+export class WorkflowResumedEvent extends Event {
+  static readonly type = 'workflow:resumed' as const;
+  readonly workflowId: string;
+  readonly fromStep: number;
+
+  constructor(workflowId: string, fromStep: number) {
+    super(WorkflowResumedEvent.type);
+    this.workflowId = workflowId;
+    this.fromStep = fromStep;
+  }
+}

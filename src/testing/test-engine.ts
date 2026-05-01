@@ -234,6 +234,7 @@ export class TestEngine extends Engine {
    * @param options `{ runs, chaos? }` — number of runs and optional scenario.
    * @returns       `{ passRate, consistency, categories }` aggregate metrics.
    */
+  // oxlint-disable-next-line complexity -- ID:testing-test-engine-run-n-complexity
   async runN(type: string, input: unknown, options: RunNOptions): Promise<RunNResult> {
     const { runs, chaos } = options;
 

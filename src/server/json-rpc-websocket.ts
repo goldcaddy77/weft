@@ -16,12 +16,12 @@
  */
 
 import { dispatchJsonRpc } from './json-rpc-dispatch.ts';
+import { JSON_RPC_ERROR_CODES, JSON_RPC_VERSION, type JsonRpcId } from './json-rpc-protocol.ts';
 import {
-  JSON_RPC_ERROR_CODES,
-  JSON_RPC_VERSION,
-  isValidJsonRpcId,
-  type JsonRpcId,
-} from './json-rpc-protocol.ts';
+  validateMessageFrame,
+  validateSessionPrimitiveFrame,
+  validateSubscribeParams,
+} from './json-rpc-websocket-validation.ts';
 import type { OperationRegistry } from './operation-catalog.ts';
 import type { Principal } from './principal.ts';
 import type {
@@ -161,49 +161,14 @@ export function createJsonRpcWebSocketSession(
     request: SessionRequest,
     params: Record<string, unknown> | undefined,
   ): Promise<void> {
-    const workflowId = params?.['workflowId'];
-    const rawSelector = params?.['selector'];
-    const rawFromCursor = params?.['fromCursor'];
-    if (typeof workflowId !== 'string' || workflowId.length === 0) {
+    const validation = validateSubscribeParams(params);
+    if (!validation.ok) {
       emitResponse(request, {
         jsonrpc: JSON_RPC_VERSION,
-        error: {
-          code: JSON_RPC_ERROR_CODES.INVALID_PARAMS,
-          message: 'params.workflowId must be a non-empty string',
-          data: { weftCode: 'InvalidParams', httpStatus: 400 },
-        },
+        error: validation.error,
         id: request.id ?? null,
       });
       return;
-    }
-    if (rawSelector !== 'events' && rawSelector !== 'tokens') {
-      emitResponse(request, {
-        jsonrpc: JSON_RPC_VERSION,
-        error: {
-          code: JSON_RPC_ERROR_CODES.INVALID_PARAMS,
-          message: "params.selector must be 'events' or 'tokens'",
-          data: { weftCode: 'InvalidParams', httpStatus: 400 },
-        },
-        id: request.id ?? null,
-      });
-      return;
-    }
-    const selector: EventSelector = rawSelector;
-    let fromCursor: Cursor | undefined;
-    if (rawFromCursor !== undefined) {
-      if (typeof rawFromCursor !== 'string') {
-        emitResponse(request, {
-          jsonrpc: JSON_RPC_VERSION,
-          error: {
-            code: JSON_RPC_ERROR_CODES.INVALID_PARAMS,
-            message: 'params.fromCursor must be a string when present',
-            data: { weftCode: 'InvalidParams', httpStatus: 400 },
-          },
-          id: request.id ?? null,
-        });
-        return;
-      }
-      fromCursor = rawFromCursor;
     }
 
     if (subscriptions.size >= maxSubscriptions) {
@@ -231,7 +196,7 @@ export function createJsonRpcWebSocketSession(
     // before sequence 0, not at sequence 0: replay uses strict
     // greater-than semantics, so returning `'0'` would skip the first
     // event if a client reconnects before receiving any deliveries.
-    const startingCursor: Cursor = fromCursor ?? INITIAL_SUBSCRIPTION_CURSOR;
+    const startingCursor: Cursor = validation.fromCursor ?? INITIAL_SUBSCRIPTION_CURSOR;
 
     emitResponse(request, {
       jsonrpc: JSON_RPC_VERSION,
@@ -241,9 +206,9 @@ export function createJsonRpcWebSocketSession(
 
     const pump = pumpSubscription(
       subscriptionId,
-      workflowId,
-      selector,
-      fromCursor,
+      validation.workflowId,
+      validation.selector,
+      validation.fromCursor,
       controller.signal,
     );
     subscriptions.set(subscriptionId, {
@@ -369,114 +334,49 @@ export function createJsonRpcWebSocketSession(
   async function handleMessage(frame: string): Promise<void> {
     if (disposed || emitterBroken) return;
 
-    // Reject frames over the size cap before `JSON.parse` touches the
-    // payload. A runaway producer otherwise forces an unbounded parse
-    // allocation inside the adapter. Measure UTF-8 BYTE length, not
-    // string length (`frame.length` counts UTF-16 code units, so a
-    // multi-byte unicode payload could slip past the cap).
-    const frameByteLength = Buffer.byteLength(frame, 'utf8');
-    if (frameByteLength > maxFrameBytes) {
+    const validation = validateMessageFrame(frame, maxFrameBytes);
+    if (!validation.ok) {
       emit({
         jsonrpc: JSON_RPC_VERSION,
-        error: {
-          code: JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-          message: `frame size exceeds limit of ${maxFrameBytes} bytes`,
-        },
-        id: null,
+        error: validation.error,
+        id: validation.id,
       });
       return;
     }
 
-    // Quick peek at the parsed shape to route subscribe/unsubscribe
-    // before the dispatcher would classify them as "unknown method".
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(frame);
-    } catch {
-      emit({
-        jsonrpc: JSON_RPC_VERSION,
-        error: { code: JSON_RPC_ERROR_CODES.PARSE_ERROR, message: 'Parse error' },
-        id: null,
-      });
-      return;
-    }
-
-    if (Array.isArray(parsed)) {
-      emit({
-        jsonrpc: JSON_RPC_VERSION,
-        error: {
-          code: JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-          message: 'batch frames are not supported over WebSocket',
-        },
-        id: null,
-      });
-      return;
-    }
-
-    if (!isPlainObject(parsed)) {
-      emit({
-        jsonrpc: JSON_RPC_VERSION,
-        error: {
-          code: JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-          message: 'request must be a JSON object',
-        },
-        id: null,
-      });
-      return;
-    }
-
-    // Narrow id via the runtime guard rather than an `as` cast —
-    // invalid ids (booleans, objects, NaN) become `undefined` instead
-    // of silently flowing through as garbage.
-    const rawId = parsed['id'];
-    const hasRequestId = Object.hasOwn(parsed, 'id');
-    const narrowedId: JsonRpcId | undefined = isValidJsonRpcId(rawId) ? rawId : undefined;
-    const rawParams = parsed['params'];
-    const narrowedParams: Record<string, unknown> | undefined = isPlainObject(rawParams)
-      ? rawParams
-      : undefined;
-
-    const method = parsed['method'];
     // Session-primitive routing shares the same jsonrpc-version
     // validation the standard dispatcher enforces — otherwise
     // subscribe/unsubscribe would silently accept frames missing or
     // with the wrong `jsonrpc` field while every other method
     // rejects them as InvalidRequest.
-    if (method === SESSION_METHODS.SUBSCRIBE || method === SESSION_METHODS.UNSUBSCRIBE) {
-      if (parsed['jsonrpc'] !== JSON_RPC_VERSION) {
+    if (
+      validation.method === SESSION_METHODS.SUBSCRIBE ||
+      validation.method === SESSION_METHODS.UNSUBSCRIBE
+    ) {
+      const sessionPrimitiveError = validateSessionPrimitiveFrame(validation);
+      if (sessionPrimitiveError !== null) {
         emit({
           jsonrpc: JSON_RPC_VERSION,
-          error: {
-            code: JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-            message: `jsonrpc field must be exactly "${JSON_RPC_VERSION}"`,
-          },
-          id: narrowedId ?? null,
+          error: sessionPrimitiveError.error,
+          id: sessionPrimitiveError.id,
         });
         return;
       }
-      if (hasRequestId && !isValidJsonRpcId(rawId)) {
-        emit({
-          jsonrpc: JSON_RPC_VERSION,
-          error: {
-            code: JSON_RPC_ERROR_CODES.INVALID_REQUEST,
-            message: 'id must be a string, number, null, or absent',
-          },
-          id: null,
-        });
-        return;
-      }
-      const request: SessionRequest = { id: narrowedId, expectsResponse: hasRequestId };
-      if (method === SESSION_METHODS.SUBSCRIBE) {
-        await handleSubscribe(request, narrowedParams);
+      const request: SessionRequest = {
+        id: validation.id,
+        expectsResponse: validation.hasRequestId,
+      };
+      if (validation.method === SESSION_METHODS.SUBSCRIBE) {
+        await handleSubscribe(request, validation.params);
       } else {
-        handleUnsubscribe(request, narrowedParams);
+        handleUnsubscribe(request, validation.params);
       }
       return;
     }
 
     // Standard dispatch — the dispatcher handles parse-error / invalid-
     // request / notification elision / success / error mapping.
-    const result = await dispatchJsonRpc(parsed, {
+    const result = await dispatchJsonRpc(validation.parsed, {
       registry,
       engine,
       principal,
@@ -504,8 +404,4 @@ export function createJsonRpcWebSocketSession(
   }
 
   return { handleMessage, close };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

@@ -1,0 +1,10 @@
+[
+  {
+    "internalsModule": "src/core/context/internals.ts",
+    "allowedFrom": "src/core/context/**"
+  },
+  {
+    "internalsModule": "src/core/engine/internals.ts",
+    "allowedFrom": "src/core/engine/**"
+  }
+]

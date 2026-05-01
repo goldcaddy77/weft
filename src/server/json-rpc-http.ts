@@ -52,6 +52,7 @@ function textResponse(body: string, status: number, extra?: HeadersInit): Respon
 }
 
 /** Handle a POST `/jsonrpc` request end-to-end. */
+// oxlint-disable-next-line complexity -- ID:server-json-rpc-http-handle-json-rpc-http-request-complexity
 export async function handleJsonRpcHttpRequest(
   request: Request,
   context: JsonRpcHttpContext,

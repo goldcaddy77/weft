@@ -1,0 +1,51 @@
+{
+  "scenario": "two-parallel",
+  "description": "A workflow runs two durable activities in parallel and joins both results.",
+  "events": [
+    {
+      "type": "workflow:checkpoint",
+      "timestamp": 0,
+      "data": {
+        "step": 1
+      }
+    }
+  ],
+  "timeline": [
+    {
+      "step": 1,
+      "operationType": "parallel",
+      "operationLabel": "parallel",
+      "inputSummary": "{\"operationCount\":2}",
+      "timestamp": 0,
+      "status": "completed",
+      "versionTuple": {
+        "workflowVersion": "1"
+      },
+      "outputSummary": "[\"left:data\",\"right:data\"]",
+      "duration": 0
+    }
+  ],
+  "finalState": {
+    "id": "wf-two-parallel",
+    "type": "two-parallel",
+    "status": "completed",
+    "input": "data",
+    "version": "1",
+    "createdAt": 0,
+    "startedAt": 0,
+    "updatedAt": 0,
+    "result": {
+      "a": "left:data",
+      "b": "right:data"
+    }
+  },
+  "storage": {
+    "ev:wf-two-parallel:0000000000": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZK93Zi10d28tcGFyYWxsZWyoc2VxdWVuY2UAqHByZXZIYXNosDAwMDAwMDAwMDAwMDAwMDCncGF5bG9hZIGkc3RlcAGpdGltZXN0YW1wAKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqEx",
+    "ev:wf-two-parallel:head": "gqhzZXF1ZW5jZQCobGFzdEhhc2iwMjI1ODRkNGIwMzdkM2Q2Ng==",
+    "wf-terminal:0000000000000000:wf-two-parallel": "",
+    "wf:wf-two-parallel": "iaJpZK93Zi10d28tcGFyYWxsZWykdHlwZax0d28tcGFyYWxsZWymc3RhdHVzqWNvbXBsZXRlZKVpbnB1dKRkYXRhp3ZlcnNpb26hMaljcmVhdGVkQXQAqXN0YXJ0ZWRBdACpdXBkYXRlZEF0AKZyZXN1bHSCoWGpbGVmdDpkYXRhoWKqcmlnaHQ6ZGF0YQ==",
+    "wf:wf-two-parallel:ckpt": "iKp3b3JrZmxvd0lkr3dmLXR3by1wYXJhbGxlbKRzdGVwAaZsb2NhbHOAsmFjY3VtdWxhdGVkUmVzdWx0c5CucGVuZGluZ1NpZ25hbHOQsHNlYXJjaEF0dHJpYnV0ZXOAp3ZlcnNpb26hMaljcmVhdGVkQXQA",
+    "wf:wf-two-parallel:ckpt:0000000001": "iKp3b3JrZmxvd0lkr3dmLXR3by1wYXJhbGxlbKRzdGVwAaZsb2NhbHOAsmFjY3VtdWxhdGVkUmVzdWx0c5CucGVuZGluZ1NpZ25hbHOQsHNlYXJjaEF0dHJpYnV0ZXOAp3ZlcnNpb26hMaljcmVhdGVkQXQA",
+    "wf:wf-two-parallel:timeline:0000000001": "iaRzdGVwAa1vcGVyYXRpb25UeXBlqHBhcmFsbGVsrm9wZXJhdGlvbkxhYmVsqHBhcmFsbGVsrGlucHV0U3VtbWFyebR7Im9wZXJhdGlvbkNvdW50Ijoyfal0aW1lc3RhbXAApnN0YXR1c6ljb21wbGV0ZWSsdmVyc2lvblR1cGxlga93b3JrZmxvd1ZlcnNpb26hMa1vdXRwdXRTdW1tYXJ5ulsibGVmdDpkYXRhIiwicmlnaHQ6ZGF0YSJdqGR1cmF0aW9uAA=="
+  }
+}

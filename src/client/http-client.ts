@@ -1,0 +1,490 @@
+import type { BudgetPolicyOptions } from '../ai/budget-policy.ts';
+import { assertScopedBulkWorkflowFilter } from '../core/bulk-workflow-filter.ts';
+import type { StoredStreamChunk } from '../core/context.ts';
+import type {
+  BulkCancelResult,
+  BulkDeleteResult,
+  BulkSignalResult,
+  BulkTagResult,
+  CoordinatedUpdateResult,
+  ForkOptions,
+  ListFilter,
+  PaginatedResult,
+  PurgeResult,
+  RetentionOverview,
+  ScheduleFilter,
+  ScheduleOptions,
+  ScheduleSummary,
+  SearchAttributeValue,
+  StartOptions,
+  SubmitReviewOptions,
+  TenantQuotaUsage,
+  WorkflowEvent,
+  WorkflowReplay,
+  WorkflowState,
+  WorkflowSummary,
+  WorkflowTimelineEntry,
+} from '../core/types.ts';
+import { HttpHandle } from './http-handle.ts';
+import { HttpClientError, request, type HttpClientOptions } from './http-request.ts';
+import { HttpScheduleHandle } from './http-schedule-handle.ts';
+import type { ClientHandle, ClientScheduleHandle, UpdateResult, WeftClient } from './interface.ts';
+import { buildScheduleListSearchParams } from './schedule-list-search-params.ts';
+import { buildWorkflowListSearchParams } from './search-params.ts';
+import { buildStartBody } from './start-body.ts';
+
+/**
+ * Remote Weft client backed by HTTP requests.
+ *
+ * **Error handling**
+ *
+ * - **404 on GET → `null`:** When a GET request returns 404, the client
+ *   treats it as "resource not found" and resolves with `null` instead of
+ *   throwing `HttpClientError`.
+ * - **400/422 in `submitCoordinatedUpdate` → error envelope:** A 400 or 422
+ *   response from `submitCoordinatedUpdate` is translated into a
+ *   `CoordinatedUpdateResult` with an `error` field rather than throwing.
+ *
+ * @example
+ * ```ts
+ * import { HttpClient } from 'weft';
+ *
+ * const client = new HttpClient({
+ *   baseUrl: 'http://localhost:3000',
+ *   headers: { Authorization: 'Bearer my-token' },
+ * });
+ * const handle = await client.start('greet', { name: 'Alice' });
+ * const result = await handle.result();
+ * void result;
+ * ```
+ */
+export class HttpClient implements WeftClient {
+  /** @internal Exposed for handle access. */
+  readonly baseUrl: string;
+  /** @internal Exposed for handle access. */
+  readonly headers: Record<string, string>;
+
+  constructor(options: HttpClientOptions) {
+    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.headers = options.headers ?? {};
+  }
+
+  async start(type: string, input: unknown, options?: StartOptions): Promise<ClientHandle> {
+    const body = buildStartBody(type, input, options);
+    const response = await request<{ id: string }>(this.baseUrl, '/workflows', this.headers, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    return new HttpHandle(response.id, this);
+  }
+
+  async schedule(
+    type: string,
+    input: unknown,
+    cronExpression: string,
+    options?: ScheduleOptions,
+  ): Promise<ClientScheduleHandle> {
+    const body: Record<string, unknown> = {
+      type,
+      input,
+      cronExpression,
+    };
+    if (options?.id !== undefined) body['id'] = options.id;
+    if (options?.overlap !== undefined) body['overlap'] = options.overlap;
+    if (options?.backfill !== undefined) body['backfill'] = options.backfill;
+
+    const response = await request<{ id: string }>(this.baseUrl, '/schedules', this.headers, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+
+    return new HttpScheduleHandle(response.id, this);
+  }
+
+  async get(id: string): Promise<WorkflowState | null> {
+    return request<WorkflowState | null>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}`,
+      this.headers,
+    );
+  }
+
+  async getSchedule(id: string): Promise<ScheduleSummary | null> {
+    return request<ScheduleSummary | null>(
+      this.baseUrl,
+      `/schedules/${encodeURIComponent(id)}`,
+      this.headers,
+    );
+  }
+
+  async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
+    const params = buildWorkflowListSearchParams(filter);
+    const query = params.toString();
+    const path = query ? `/workflows?${query}` : '/workflows';
+
+    return request<PaginatedResult<WorkflowSummary>>(this.baseUrl, path, this.headers);
+  }
+
+  async listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>> {
+    const params = buildScheduleListSearchParams(filter);
+    const query = params.toString();
+    const path = query ? `/schedules?${query}` : '/schedules';
+
+    return request<PaginatedResult<ScheduleSummary>>(this.baseUrl, path, this.headers);
+  }
+
+  async cancel(id: string): Promise<void> {
+    return request<void>(this.baseUrl, `/workflows/${encodeURIComponent(id)}`, this.headers, {
+      method: 'DELETE',
+    });
+  }
+
+  async pauseSchedule(id: string): Promise<void> {
+    return request<void>(this.baseUrl, `/schedules/${encodeURIComponent(id)}/pause`, this.headers, {
+      method: 'POST',
+    });
+  }
+
+  async resumeSchedule(id: string): Promise<void> {
+    return request<void>(
+      this.baseUrl,
+      `/schedules/${encodeURIComponent(id)}/resume`,
+      this.headers,
+      { method: 'POST' },
+    );
+  }
+
+  async cancelSchedule(id: string): Promise<void> {
+    return request<void>(this.baseUrl, `/schedules/${encodeURIComponent(id)}`, this.headers, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateSchedule(id: string, newCronExpression: string): Promise<void> {
+    return request<void>(this.baseUrl, `/schedules/${encodeURIComponent(id)}`, this.headers, {
+      method: 'PATCH',
+      body: JSON.stringify({ cronExpression: newCronExpression }),
+    });
+  }
+
+  async signal(id: string, name: string, payload?: unknown): Promise<void> {
+    await request<unknown>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/signal/${encodeURIComponent(name)}`,
+      this.headers,
+      {
+        method: 'POST',
+        body: JSON.stringify({ payload }),
+      },
+    );
+  }
+
+  async query(id: string, name: string): Promise<unknown> {
+    const response = await request<{ result: unknown }>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/query/${encodeURIComponent(name)}`,
+      this.headers,
+    );
+    return response?.result;
+  }
+
+  async update(
+    id: string,
+    name: string,
+    payload?: unknown,
+    options?: { timeout?: number },
+  ): Promise<unknown> {
+    const body: Record<string, unknown> = { payload };
+    if (options?.timeout !== undefined) body['timeout'] = options.timeout;
+
+    const response = await request<{ result: unknown }>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/update/${encodeURIComponent(name)}`,
+      this.headers,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+    );
+    return response?.result;
+  }
+
+  async resume(id: string): Promise<ClientHandle> {
+    const response = await request<{ id: string }>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/resume`,
+      this.headers,
+      { method: 'POST' },
+    );
+    return new HttpHandle(response.id, this);
+  }
+
+  async recoverAll(): Promise<ClientHandle[]> {
+    const response = await request<{ recovered: string[] }>(
+      this.baseUrl,
+      '/recover',
+      this.headers,
+      { method: 'POST' },
+    );
+    return response.recovered.map((id) => new HttpHandle(id, this));
+  }
+
+  async timeout(id: string): Promise<void> {
+    return request<void>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/timeout`,
+      this.headers,
+      { method: 'POST' },
+    );
+  }
+
+  async getAttributes(id: string): Promise<Record<string, SearchAttributeValue> | null> {
+    return request<Record<string, SearchAttributeValue> | null>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/attributes`,
+      this.headers,
+    );
+  }
+
+  async setAttributes(id: string, attributes: Record<string, SearchAttributeValue>): Promise<void> {
+    await request<unknown>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/attributes`,
+      this.headers,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ attributes }),
+      },
+    );
+  }
+
+  async addTags(id: string, ...tags: string[]): Promise<void> {
+    await request<unknown>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/tags`,
+      this.headers,
+      {
+        method: 'POST',
+        body: JSON.stringify({ tags }),
+      },
+    );
+  }
+
+  async removeTags(id: string, ...tags: string[]): Promise<void> {
+    await request<unknown>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/tags`,
+      this.headers,
+      {
+        method: 'DELETE',
+        body: JSON.stringify({ tags }),
+      },
+    );
+  }
+
+  async getEvents(id: string): Promise<WorkflowEvent[]> {
+    const response = await request<{ events: WorkflowEvent[] } | null>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/events`,
+      this.headers,
+    );
+    if (response === null) return [];
+    return response.events;
+  }
+
+  async getTimeline(id: string): Promise<WorkflowTimelineEntry[]> {
+    const response = await request<WorkflowTimelineEntry[] | null>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/timeline`,
+      this.headers,
+    );
+    return response ?? [];
+  }
+
+  async replayTo(id: string, step: number): Promise<WorkflowReplay | null> {
+    return request<WorkflowReplay | null>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/replay/${step}`,
+      this.headers,
+    );
+  }
+
+  async listReviews(): Promise<Array<Record<string, unknown>>> {
+    const response = await request<{ items: Array<Record<string, unknown>> }>(
+      this.baseUrl,
+      '/reviews',
+      this.headers,
+    );
+    return response.items;
+  }
+
+  async submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void> {
+    await request<unknown>(
+      this.baseUrl,
+      `/reviews/${encodeURIComponent(reviewId)}/decision`,
+      this.headers,
+      {
+        method: 'POST',
+        body: JSON.stringify(options),
+      },
+    );
+  }
+
+  async setBudgetPolicy(options: BudgetPolicyOptions): Promise<void> {
+    await request<unknown>(this.baseUrl, '/budget-policy', this.headers, {
+      method: 'PUT',
+      body: JSON.stringify(options),
+    });
+  }
+
+  async getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null> {
+    return request<BudgetPolicyOptions | null>(
+      this.baseUrl,
+      `/budget-policy/${encodeURIComponent(namespace)}`,
+      this.headers,
+    );
+  }
+
+  async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
+    return request<TenantQuotaUsage>(
+      this.baseUrl,
+      `/tenants/${encodeURIComponent(tenantId)}/quota`,
+      this.headers,
+    );
+  }
+
+  async getStreamChunks(
+    workflowId: string,
+    key: string,
+    options?: { after?: number },
+  ): Promise<StoredStreamChunk[]> {
+    const search = new URLSearchParams();
+    if (options?.after !== undefined) {
+      search.set('after', String(options.after));
+    }
+
+    const query = search.size > 0 ? `?${search.toString()}` : '';
+    const response = await request<{ chunks: StoredStreamChunk[] }>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(workflowId)}/streams/${encodeURIComponent(key)}${query}`,
+      this.headers,
+    );
+    return response.chunks;
+  }
+
+  async fork(id: string, options?: ForkOptions): Promise<ClientHandle> {
+    const body: Record<string, unknown> = {};
+    if (options?.fromStep !== undefined) {
+      body['fromStep'] = options.fromStep;
+    }
+
+    const response = await request<{ id: string }>(
+      this.baseUrl,
+      `/workflows/${encodeURIComponent(id)}/fork`,
+      this.headers,
+      {
+        method: 'POST',
+        body: JSON.stringify(body),
+      },
+    );
+    return new HttpHandle(response.id, this);
+  }
+
+  async getRetentionOverview(): Promise<RetentionOverview> {
+    return request<RetentionOverview>(this.baseUrl, '/retention', this.headers);
+  }
+
+  async purge(filter?: ListFilter): Promise<PurgeResult> {
+    return request<PurgeResult>(this.baseUrl, '/workflows/purge', this.headers, {
+      method: 'POST',
+      body: JSON.stringify({ filter }),
+    });
+  }
+
+  async cancelAll(filter: ListFilter): Promise<BulkCancelResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    return request<BulkCancelResult>(this.baseUrl, '/workflows/bulk/cancel', this.headers, {
+      method: 'POST',
+      body: JSON.stringify({ filter }),
+    });
+  }
+
+  async signalAll(filter: ListFilter, name: string, payload?: unknown): Promise<BulkSignalResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    if (name.length === 0) {
+      throw new Error('Field "name" must be a non-empty string');
+    }
+    return request<BulkSignalResult>(this.baseUrl, '/workflows/bulk/signal', this.headers, {
+      method: 'POST',
+      body: JSON.stringify({ filter, name, payload }),
+    });
+  }
+
+  async deleteAll(filter: ListFilter): Promise<BulkDeleteResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    return request<BulkDeleteResult>(this.baseUrl, '/workflows/bulk', this.headers, {
+      method: 'DELETE',
+      body: JSON.stringify({ filter }),
+    });
+  }
+
+  async tagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    return request<BulkTagResult>(this.baseUrl, '/workflows/bulk/tags', this.headers, {
+      method: 'PATCH',
+      body: JSON.stringify({ filter, tags, operation: 'add' }),
+    });
+  }
+
+  async untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
+    assertScopedBulkWorkflowFilter(filter);
+    return request<BulkTagResult>(this.baseUrl, '/workflows/bulk/tags', this.headers, {
+      method: 'PATCH',
+      body: JSON.stringify({ filter, tags, operation: 'remove' }),
+    });
+  }
+
+  async submitCoordinatedUpdate(
+    id: string,
+    name: string,
+    payload?: unknown,
+    options?: { timeout?: number; idempotencyKey?: string },
+  ): Promise<CoordinatedUpdateResult> {
+    const body: Record<string, unknown> = { payload };
+    if (options?.timeout !== undefined) body['timeout'] = options.timeout;
+    if (options?.idempotencyKey !== undefined) body['idempotencyKey'] = options.idempotencyKey;
+
+    try {
+      return await request<CoordinatedUpdateResult>(
+        this.baseUrl,
+        `/workflows/${encodeURIComponent(id)}/update/${encodeURIComponent(name)}`,
+        this.headers,
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        },
+      );
+    } catch (error) {
+      if (error instanceof HttpClientError && (error.status === 400 || error.status === 422)) {
+        return { updateId: '', error: error.message };
+      }
+      throw error;
+    }
+  }
+
+  async getUpdateResult(updateId: string): Promise<UpdateResult> {
+    const response = await request<{ status: string; result?: unknown; error?: string } | null>(
+      this.baseUrl,
+      `/updates/${encodeURIComponent(updateId)}`,
+      this.headers,
+    );
+
+    if (response === null || response.status === 'pending') return null;
+
+    const out: NonNullable<UpdateResult> = { updateId };
+    if (response.result !== undefined) out.result = response.result;
+    if (response.error !== undefined) out.error = response.error;
+    return out;
+  }
+}

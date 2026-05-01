@@ -161,6 +161,7 @@ export function validateRegistrations(
  *
  * Returns `{ registrations, activities }` extracted from the module.
  */
+// oxlint-disable-next-line complexity -- ID:diagnostics-validate-load-registrations-from-module-complexity
 export async function loadRegistrationsFromModule(modulePath: string): Promise<{
   registrations: Record<string, WorkflowRegistration>;
   activities: ActivityDefinition[];

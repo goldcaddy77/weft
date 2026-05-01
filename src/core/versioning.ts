@@ -261,6 +261,7 @@ export class VersionMismatchError extends Error {
   readonly fieldDiffs: FieldDiff[] | undefined;
   readonly versionDiff: WorkflowVersionDiff | undefined;
 
+  // oxlint-disable-next-line complexity -- ID:core-versioning-constructor-complexity
   constructor(
     workflowId: string,
     workflowType: string,

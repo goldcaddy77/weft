@@ -74,6 +74,7 @@ export async function collectDiagnostics(
 // Database health
 // ---------------------------------------------------------------------------
 
+// oxlint-disable-next-line complexity -- ID:diagnostics-doctor-collect-database-health-complexity
 async function collectDatabaseHealth(
   storage: Storage,
   databasePath: string,
@@ -143,6 +144,7 @@ async function collectDatabaseHealth(
 // Workflow statistics
 // ---------------------------------------------------------------------------
 
+// oxlint-disable-next-line complexity -- ID:diagnostics-doctor-collect-workflow-statistics-complexity
 async function collectWorkflowStatistics(
   storage: Storage,
   now: number,

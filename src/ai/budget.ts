@@ -224,6 +224,7 @@ export class BudgetTracker {
   }
 
   /** Record token usage from an LLM call. Returns true if budget still available. */
+  // oxlint-disable-next-line complexity -- ID:ai-budget-record-usage-complexity
   recordUsage(model: string, inputTokens: number, outputTokens: number): boolean {
     const cost = computeCost(model, inputTokens, outputTokens, this.#options.models);
     const totalTokens = inputTokens + outputTokens;

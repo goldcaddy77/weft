@@ -68,6 +68,7 @@ function classifyStorageKey(
   return 'workflowStateBytesTotal';
 }
 
+// oxlint-disable-next-line complexity -- ID:benchmarks-memory-per-workflow-runner-measure-memory-per-workflow-complexity
 export async function measureMemoryPerWorkflow(
   totalWorkflows: number,
 ): Promise<MemoryPerWorkflowMeasurement> {

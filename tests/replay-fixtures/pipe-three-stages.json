@@ -1,0 +1,103 @@
+{
+  "scenario": "pipe-three-stages",
+  "description": "A workflow pipes data through three registered child workflow stages.",
+  "events": [
+    {
+      "type": "workflow:checkpoint",
+      "timestamp": 0,
+      "data": {
+        "step": 1
+      }
+    },
+    {
+      "type": "workflow:checkpoint",
+      "timestamp": 0,
+      "data": {
+        "step": 2
+      }
+    },
+    {
+      "type": "workflow:checkpoint",
+      "timestamp": 0,
+      "data": {
+        "step": 3
+      }
+    }
+  ],
+  "timeline": [
+    {
+      "step": 1,
+      "operationType": "child-workflow",
+      "operationLabel": "stage1",
+      "inputSummary": "{\"workflowType\":\"stage1\",\"input\":\"start\"}",
+      "timestamp": 0,
+      "status": "completed",
+      "versionTuple": {
+        "workflowVersion": "1"
+      },
+      "outputSummary": "\"s1:start\"",
+      "duration": 0
+    },
+    {
+      "step": 2,
+      "operationType": "child-workflow",
+      "operationLabel": "stage2",
+      "inputSummary": "{\"workflowType\":\"stage2\",\"input\":\"s1:start\"}",
+      "timestamp": 0,
+      "status": "completed",
+      "versionTuple": {
+        "workflowVersion": "1"
+      },
+      "outputSummary": "\"s2:s1:start\"",
+      "duration": 0
+    },
+    {
+      "step": 3,
+      "operationType": "child-workflow",
+      "operationLabel": "stage3",
+      "inputSummary": "{\"workflowType\":\"stage3\",\"input\":\"s2:s1:start\"}",
+      "timestamp": 0,
+      "status": "completed",
+      "versionTuple": {
+        "workflowVersion": "1"
+      },
+      "outputSummary": "\"s3:s2:s1:start\"",
+      "duration": 0
+    }
+  ],
+  "finalState": {
+    "id": "wf-pipe-three-stages",
+    "type": "pipe-three-stages",
+    "status": "completed",
+    "input": "start",
+    "version": "1",
+    "createdAt": 0,
+    "startedAt": 0,
+    "updatedAt": 0,
+    "result": "s3:s2:s1:start"
+  },
+  "storage": {
+    "ev:wf-pipe-three-stages:0000000000": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLR3Zi1waXBlLXRocmVlLXN0YWdlc6hzZXF1ZW5jZQCocHJldkhhc2iwMDAwMDAwMDAwMDAwMDAwMKdwYXlsb2FkgaRzdGVwAal0aW1lc3RhbXAArHZlcnNpb25UdXBsZYGvd29ya2Zsb3dWZXJzaW9uoTE=",
+    "ev:wf-pipe-three-stages:0000000001": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLR3Zi1waXBlLXRocmVlLXN0YWdlc6hzZXF1ZW5jZQGocHJldkhhc2iwN2Q2ZGE3OGZkYjQ4ZTUyMKdwYXlsb2FkgaRzdGVwAql0aW1lc3RhbXAArHZlcnNpb25UdXBsZYGvd29ya2Zsb3dWZXJzaW9uoTE=",
+    "ev:wf-pipe-three-stages:0000000002": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLR3Zi1waXBlLXRocmVlLXN0YWdlc6hzZXF1ZW5jZQKocHJldkhhc2iwMGJjODJmODljODNhNDg5OadwYXlsb2FkgaRzdGVwA6l0aW1lc3RhbXAArHZlcnNpb25UdXBsZYGvd29ya2Zsb3dWZXJzaW9uoTE=",
+    "ev:wf-pipe-three-stages:head": "gqhzZXF1ZW5jZQKobGFzdEhhc2iwNWIwMjk3YmFkNWQ3Y2ZlMw==",
+    "wf-terminal:0000000000000000:wf-pipe-three-stages": "",
+    "wf-terminal:0000000000000000:wf-pipe-three-stages%3Apipe%3A0%3A0": "",
+    "wf-terminal:0000000000000000:wf-pipe-three-stages%3Apipe%3A0%3A1": "",
+    "wf-terminal:0000000000000000:wf-pipe-three-stages%3Apipe%3A0%3A2": "",
+    "wf:wf-pipe-three-stages": "iaJpZLR3Zi1waXBlLXRocmVlLXN0YWdlc6R0eXBlsXBpcGUtdGhyZWUtc3RhZ2VzpnN0YXR1c6ljb21wbGV0ZWSlaW5wdXSlc3RhcnSndmVyc2lvbqExqWNyZWF0ZWRBdACpc3RhcnRlZEF0AKl1cGRhdGVkQXQApnJlc3VsdK5zMzpzMjpzMTpzdGFydA==",
+    "wf:wf-pipe-three-stages%3Apipe%3A0%3A0": "iaJpZL13Zi1waXBlLXRocmVlLXN0YWdlczpwaXBlOjA6MKR0eXBlpnN0YWdlMaZzdGF0dXOpY29tcGxldGVkpWlucHV0pXN0YXJ0p3ZlcnNpb26hMaljcmVhdGVkQXQAqXN0YXJ0ZWRBdACpdXBkYXRlZEF0AKZyZXN1bHSoczE6c3RhcnQ=",
+    "wf:wf-pipe-three-stages%3Apipe%3A0%3A0:ckpt": "iKp3b3JrZmxvd0lkvXdmLXBpcGUtdGhyZWUtc3RhZ2VzOnBpcGU6MDowpHN0ZXAApmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkK5wZW5kaW5nU2lnbmFsc5Cwc2VhcmNoQXR0cmlidXRlc4CndmVyc2lvbqExqWNyZWF0ZWRBdAA=",
+    "wf:wf-pipe-three-stages%3Apipe%3A0%3A1": "iaJpZL13Zi1waXBlLXRocmVlLXN0YWdlczpwaXBlOjA6MaR0eXBlpnN0YWdlMqZzdGF0dXOpY29tcGxldGVkpWlucHV0qHMxOnN0YXJ0p3ZlcnNpb26hMaljcmVhdGVkQXQAqXN0YXJ0ZWRBdACpdXBkYXRlZEF0AKZyZXN1bHSrczI6czE6c3RhcnQ=",
+    "wf:wf-pipe-three-stages%3Apipe%3A0%3A1:ckpt": "iKp3b3JrZmxvd0lkvXdmLXBpcGUtdGhyZWUtc3RhZ2VzOnBpcGU6MDoxpHN0ZXAApmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkK5wZW5kaW5nU2lnbmFsc5Cwc2VhcmNoQXR0cmlidXRlc4CndmVyc2lvbqExqWNyZWF0ZWRBdAA=",
+    "wf:wf-pipe-three-stages%3Apipe%3A0%3A2": "iaJpZL13Zi1waXBlLXRocmVlLXN0YWdlczpwaXBlOjA6MqR0eXBlpnN0YWdlM6ZzdGF0dXOpY29tcGxldGVkpWlucHV0q3MyOnMxOnN0YXJ0p3ZlcnNpb26hMaljcmVhdGVkQXQAqXN0YXJ0ZWRBdACpdXBkYXRlZEF0AKZyZXN1bHSuczM6czI6czE6c3RhcnQ=",
+    "wf:wf-pipe-three-stages%3Apipe%3A0%3A2:ckpt": "iKp3b3JrZmxvd0lkvXdmLXBpcGUtdGhyZWUtc3RhZ2VzOnBpcGU6MDoypHN0ZXAApmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkK5wZW5kaW5nU2lnbmFsc5Cwc2VhcmNoQXR0cmlidXRlc4CndmVyc2lvbqExqWNyZWF0ZWRBdAA=",
+    "wf:wf-pipe-three-stages:ckpt": "iKp3b3JrZmxvd0lktHdmLXBpcGUtdGhyZWUtc3RhZ2VzpHN0ZXADpmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkpIAqHMxOnN0YXJ0kgGrczI6czE6c3RhcnSucGVuZGluZ1NpZ25hbHOQsHNlYXJjaEF0dHJpYnV0ZXOAp3ZlcnNpb26hMaljcmVhdGVkQXQA",
+    "wf:wf-pipe-three-stages:ckpt:0000000001": "iKp3b3JrZmxvd0lktHdmLXBpcGUtdGhyZWUtc3RhZ2VzpHN0ZXABpmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkK5wZW5kaW5nU2lnbmFsc5Cwc2VhcmNoQXR0cmlidXRlc4CndmVyc2lvbqExqWNyZWF0ZWRBdAA=",
+    "wf:wf-pipe-three-stages:ckpt:0000000002": "iKp3b3JrZmxvd0lktHdmLXBpcGUtdGhyZWUtc3RhZ2VzpHN0ZXACpmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkZIAqHMxOnN0YXJ0rnBlbmRpbmdTaWduYWxzkLBzZWFyY2hBdHRyaWJ1dGVzgKd2ZXJzaW9uoTGpY3JlYXRlZEF0AA==",
+    "wf:wf-pipe-three-stages:ckpt:0000000003": "iKp3b3JrZmxvd0lktHdmLXBpcGUtdGhyZWUtc3RhZ2VzpHN0ZXADpmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkpIAqHMxOnN0YXJ0kgGrczI6czE6c3RhcnSucGVuZGluZ1NpZ25hbHOQsHNlYXJjaEF0dHJpYnV0ZXOAp3ZlcnNpb26hMaljcmVhdGVkQXQA",
+    "wf:wf-pipe-three-stages:timeline:0000000001": "iaRzdGVwAa1vcGVyYXRpb25UeXBlrmNoaWxkLXdvcmtmbG93rm9wZXJhdGlvbkxhYmVspnN0YWdlMaxpbnB1dFN1bW1hcnnZKXsid29ya2Zsb3dUeXBlIjoic3RhZ2UxIiwiaW5wdXQiOiJzdGFydCJ9qXRpbWVzdGFtcACmc3RhdHVzqWNvbXBsZXRlZKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqExrW91dHB1dFN1bW1hcnmqInMxOnN0YXJ0IqhkdXJhdGlvbgA=",
+    "wf:wf-pipe-three-stages:timeline:0000000002": "iaRzdGVwAq1vcGVyYXRpb25UeXBlrmNoaWxkLXdvcmtmbG93rm9wZXJhdGlvbkxhYmVspnN0YWdlMqxpbnB1dFN1bW1hcnnZLHsid29ya2Zsb3dUeXBlIjoic3RhZ2UyIiwiaW5wdXQiOiJzMTpzdGFydCJ9qXRpbWVzdGFtcACmc3RhdHVzqWNvbXBsZXRlZKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqExrW91dHB1dFN1bW1hcnmtInMyOnMxOnN0YXJ0IqhkdXJhdGlvbgA=",
+    "wf:wf-pipe-three-stages:timeline:0000000003": "iaRzdGVwA61vcGVyYXRpb25UeXBlrmNoaWxkLXdvcmtmbG93rm9wZXJhdGlvbkxhYmVspnN0YWdlM6xpbnB1dFN1bW1hcnnZL3sid29ya2Zsb3dUeXBlIjoic3RhZ2UzIiwiaW5wdXQiOiJzMjpzMTpzdGFydCJ9qXRpbWVzdGFtcACmc3RhdHVzqWNvbXBsZXRlZKx2ZXJzaW9uVHVwbGWBr3dvcmtmbG93VmVyc2lvbqExrW91dHB1dFN1bW1hcnmwInMzOnMyOnMxOnN0YXJ0IqhkdXJhdGlvbgA="
+  }
+}

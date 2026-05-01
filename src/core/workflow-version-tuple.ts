@@ -66,6 +66,7 @@ export function collectToolVersions(
  * Only fields that actually differ are included in the output. An empty
  * object means the tuples are identical.
  */
+// oxlint-disable-next-line complexity -- ID:core-workflow-version-tuple-diff-workflow-version-tuples-complexity
 export function diffWorkflowVersionTuples(
   stored: WorkflowVersionTuple,
   registered: WorkflowVersionTuple,

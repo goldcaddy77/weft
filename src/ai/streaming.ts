@@ -111,6 +111,7 @@ export class StreamMultiplexer {
     this.#finished = true;
   }
 
+  // oxlint-disable-next-line complexity -- ID:ai-streaming-pump-complexity
   async #pump(): Promise<void> {
     this.#reader = this.#source.getReader();
 

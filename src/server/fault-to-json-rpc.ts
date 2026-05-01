@@ -48,6 +48,7 @@ export function faultToJsonRpcError(fault: OperationFault): JsonRpcError {
  * to (and verify no field collides with the envelope's `weftCode` /
  * `httpStatus` keys).
  */
+// oxlint-disable-next-line complexity -- ID:server-fault-to-json-rpc-extract-fault-data-payload-complexity
 function extractFaultDataPayload(fault: OperationFault): Record<string, unknown> {
   switch (fault.code) {
     case 'NotImplemented':

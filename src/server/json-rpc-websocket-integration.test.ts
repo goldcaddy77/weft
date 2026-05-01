@@ -413,7 +413,6 @@ describe('serve() — WebSocket /jsonrpc', () => {
     const ws = await new Promise<WebSocket>((resolve, reject) => {
       const socket = new WebSocket(wsUrl, {
         headers: { authorization: `Bearer ${apiKey}` },
-        // oxlint-disable-next-line typescript/no-explicit-any -- Bun's WebSocket accepts a headers init option not in the lib.dom type.
       } as any);
       socket.addEventListener('open', () => resolve(socket));
       socket.addEventListener('error', (event: Event) => reject(event));

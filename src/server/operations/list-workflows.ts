@@ -93,6 +93,7 @@ export const listWorkflowsOperation = defineOperation<ListWorkflowsInput, ListWo
   },
 });
 
+// oxlint-disable-next-line complexity -- ID:server-operations-list-workflows-extract-list-workflows-input-complexity
 function extractListWorkflowsInput(request: Request): ListWorkflowsInput {
   const url = new URL(request.url);
   const filter: ListWorkflowsInput = {};

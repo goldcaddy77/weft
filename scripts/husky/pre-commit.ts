@@ -70,7 +70,7 @@ try {
 // `bun test src/benchmarks/`.
 info('Running test…');
 try {
-  const glob = new Bun.Glob('src/**/*.test.ts');
+  const glob = new Bun.Glob('{src,tests}/**/*.test.ts');
   const testFiles = [];
   for await (const file of glob.scan('.')) {
     if (!file.includes('/benchmarks/')) testFiles.push(file);

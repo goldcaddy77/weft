@@ -75,6 +75,7 @@ export interface ActivityRegistrationOptions {
  * The helper assigns `name`, `execute`, and optionally `retry`, `timeout`,
  * `queue`, and `idempotent` as own properties on the returned function.
  */
+// oxlint-disable-next-line complexity -- ID:core-activity-registry-extract-definition-metadata-complexity
 function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOptions> {
   const result: Partial<ActivityRegistrationOptions> = {};
   const record = fn as Record<string, unknown>;
@@ -145,8 +146,8 @@ export class ActivityRegistry {
    * auto-extracted from its colocated properties. Explicit `options`
    * take precedence over auto-extracted values.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generic constraint must use
   // `any` to accept functions of any parameter type (contravariance prevents `unknown` here).
+  // oxlint-disable-next-line complexity -- ID:core-activity-registry-constructor-complexity
   register<T extends (...arguments_: any[]) => any>(
     name: string,
     fn: T,
@@ -203,7 +204,6 @@ export class ActivityRegistry {
   }
 
   /** Get metadata for a function reference. Returns `undefined` if the function was never registered. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getMetadata<T extends (...arguments_: any[]) => any>(fn: T): ActivityMetadata | undefined {
     return this.#metadata.get(fn);
   }

@@ -172,6 +172,37 @@ function wrapStorageWithDelayedUpdateResponse(storage: Storage, result: unknown)
   };
 }
 
+function wrapStorageWithPostDeleteUpdateResponse(storage: Storage, result: unknown): Storage {
+  let visibleUpdateResponseId: string | null = null;
+
+  return {
+    async get(key) {
+      if (key.startsWith('upr:')) {
+        const updateId = key.slice('upr:'.length);
+        if (visibleUpdateResponseId === updateId) {
+          return encode({ updateId, result, createdAt: Date.now() });
+        }
+
+        return null;
+      }
+
+      return storage.get(key);
+    },
+    put: storage.put.bind(storage),
+    async delete(key) {
+      await storage.delete(key);
+      if (key.startsWith('upd:')) {
+        visibleUpdateResponseId = key.slice(key.lastIndexOf(':') + 1);
+      }
+    },
+    scan: storage.scan.bind(storage),
+    batch: storage.batch.bind(storage),
+    [Symbol.dispose]() {
+      storage[Symbol.dispose]();
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -370,6 +401,35 @@ for (const backend of storageBackends) {
 
         await expect(engine.update(handle.id, 'someUpdate', 'payload')).resolves.toBe(
           'late-response',
+        );
+        expect(await collectKeys(result.storage, KEYS.updatePrefix(handle.id))).toEqual([]);
+      });
+
+      it('post-delete response check prevents terminal error when update was consumed just after delete', async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        const staleWorkflowStateStorage = wrapStorageWithStaleWorkflowStateRead(result.storage);
+        const postDeleteResponseStorage = wrapStorageWithPostDeleteUpdateResponse(
+          staleWorkflowStateStorage.storage,
+          'post-delete-response',
+        );
+        engine = new Engine({ storage: postDeleteResponseStorage });
+
+        engine.register('quick', async function* (_ctx: WorkflowContext) {
+          return 'done';
+        });
+
+        const handle = await engine.start('quick', undefined);
+        const workflowKey = KEYS.workflow(handle.id);
+        const runningStateBytes = await result.storage.get(workflowKey);
+        expect(runningStateBytes).not.toBeNull();
+        await handle.result();
+        await flush();
+
+        staleWorkflowStateStorage.armStaleWorkflowStateRead(workflowKey, runningStateBytes!);
+
+        await expect(engine.update(handle.id, 'someUpdate', 'payload')).resolves.toBe(
+          'post-delete-response',
         );
         expect(await collectKeys(result.storage, KEYS.updatePrefix(handle.id))).toEqual([]);
       });

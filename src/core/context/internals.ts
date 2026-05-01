@@ -1,0 +1,65 @@
+import type { BudgetTracker } from '../../ai/budget.ts';
+import type { SearchAttributeSchema, SearchAttributeValue } from '../types.ts';
+import type { Context, ContextOptions } from './index.ts';
+import { createCheckpointLocals } from './session-state.ts';
+
+export interface ContextInternals {
+  context: Context;
+  abortController: AbortController;
+  stepIndex: number;
+  accumulatedResults: Map<number, unknown> | undefined;
+  checkpointLocals: Record<string, unknown>;
+  sessionState: Record<string, unknown> | undefined;
+  searchAttributes: Record<string, SearchAttributeValue>;
+  searchAttributeSchema: SearchAttributeSchema | undefined;
+  pendingAttributeChanges: Record<string, SearchAttributeValue> | undefined;
+  updateHandlers: Map<string, (payload: unknown) => unknown> | undefined;
+  exposedValues: Map<string, () => unknown> | undefined;
+  memoCache: Map<string, unknown> | undefined;
+  deadline: number | undefined;
+  getNow: () => number;
+  sleepReferenceTime: number | undefined;
+  explainMode: boolean;
+  budgetTracker: BudgetTracker | undefined;
+  nestingDepth: number;
+  tenant: import('../tenant.ts').TenantContext | undefined;
+  resolveWorkflowType: ((target: string | Function) => string) | undefined;
+}
+
+const INTERNALS = new WeakMap<Context, ContextInternals>();
+
+export function initializeInternals(
+  context: Context,
+  options: ContextOptions,
+  initialSessionState: Record<string, unknown> | undefined,
+): void {
+  const internals: ContextInternals = {
+    context,
+    abortController: options.abortController,
+    stepIndex: options.initialStep ?? 0,
+    accumulatedResults: options.accumulatedResults,
+    sessionState: initialSessionState,
+    checkpointLocals: createCheckpointLocals(initialSessionState, options.locals),
+    searchAttributes: options.searchAttributes ? { ...options.searchAttributes } : {},
+    searchAttributeSchema: options.searchAttributeSchema,
+    pendingAttributeChanges: undefined,
+    updateHandlers: undefined,
+    exposedValues: undefined,
+    memoCache: undefined,
+    deadline: options.deadline,
+    getNow: options.getNow ?? Date.now,
+    sleepReferenceTime: options.sleepReferenceTime,
+    explainMode: false,
+    budgetTracker: undefined,
+    nestingDepth: options.nestingDepth ?? 0,
+    tenant: options.tenant,
+    resolveWorkflowType: options.resolveWorkflowType,
+  };
+  INTERNALS.set(context, internals);
+}
+
+export function getInternals(context: Context): ContextInternals {
+  const internals = INTERNALS.get(context);
+  if (!internals) throw new Error('Context internals not initialized');
+  return internals;
+}

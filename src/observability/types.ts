@@ -1,0 +1,110 @@
+import type {
+  ActivityInterception,
+  AgentInterception,
+  ChildWorkflowInterception,
+  SignalInterception,
+  SignalReceivedInterception,
+  SleepInterception,
+  WorkflowStartInterception,
+} from '../core/interceptor';
+import type { MetricsCollector as MetricsCollectorClass } from './metrics';
+import type { OtelApi, OtelSpan, OtelTracer } from './no-op-telemetry';
+
+/**
+ * Union of all interception context types the attributeExtractor receives.
+ *
+ * @example
+ * ```ts
+ * import { createObservabilityInterceptors, type InterceptionContext } from 'weft';
+ *
+ * const { workflow, activity } = createObservabilityInterceptors({
+ *   attributeExtractor: (ctx: InterceptionContext) => {
+ *     if ('workflowId' in ctx) return { workflowId: ctx.workflowId };
+ *     return {};
+ *   },
+ * });
+ * ```
+ */
+export type InterceptionContext =
+  | WorkflowStartInterception
+  | ActivityInterception
+  | SleepInterception
+  | SignalInterception
+  | AgentInterception
+  | ChildWorkflowInterception
+  | SignalReceivedInterception;
+
+/**
+ * Configuration for {@link createObservabilityInterceptors}, which produces
+ * workflow and activity interceptors that propagate W3C trace context and emit
+ * OpenTelemetry spans.
+ *
+ * All fields are optional. Omit `otelApi` in production — it is auto-detected
+ * from `@opentelemetry/api` when installed, and all operations fall back to
+ * no-ops when it is absent. Pass your `Engine` instance as `eventTarget` so
+ * root workflow spans are closed correctly on terminal lifecycle events.
+ *
+ * @example
+ * ```ts
+ * import { Engine, MemoryStorage, createObservabilityInterceptors, type ObservabilityOptions } from 'weft';
+ *
+ * await using storage = new MemoryStorage();
+ * await using engine = new Engine({ storage });
+ *
+ * const options: ObservabilityOptions = {
+ *   tracerName: 'my-service',
+ *   recordPayloads: false,
+ *   eventTarget: engine,
+ * };
+ * const { workflow, activity } = createObservabilityInterceptors(options);
+ * void workflow;
+ * void activity;
+ * ```
+ */
+export type ObservabilityOptions = {
+  /** Name passed to `trace.getTracer()`. Default: `'weft'`. */
+  tracerName?: string;
+  /** Version passed to `trace.getTracer()`. */
+  tracerVersion?: string;
+  /** Whether to record activity/workflow inputs as span attributes. Default: false. */
+  recordPayloads?: boolean;
+  /** Maximum serialized payload size in bytes before truncation. Default: 1024. */
+  maxPayloadSize?: number;
+  /**
+   * Extract custom span attributes from each interception context.
+   * Receives the actual interception object—not a synthetic wrapper.
+   */
+  attributeExtractor?: (
+    interception: InterceptionContext,
+  ) => Record<string, string | number | boolean>;
+  /** Metrics collector for recording counters, histograms, and gauges. */
+  metrics?: MetricsCollectorClass;
+  /**
+   * Override the OTel API instance used by the interceptors.
+   * Primarily for testing—production code should omit this so `getOtelApi()`
+   * auto-detects whether `@opentelemetry/api` is installed.
+   */
+  otelApi?: OtelApi;
+  /**
+   * Event target that the engine dispatches lifecycle events on.
+   *
+   * When provided, root workflow spans are closed on terminal lifecycle events,
+   * and agent child spans are created from agent turn/tool events.
+   */
+  eventTarget?: EventTarget;
+};
+
+export type WorkflowSpanEntry = { span: OtelSpan; createdAt: number };
+
+export type ObservabilityState = {
+  readonly api: OtelApi;
+  readonly trace: OtelApi['trace'];
+  readonly SpanStatusCode: OtelApi['SpanStatusCode'];
+  readonly tracer: OtelTracer;
+  readonly recordPayloads: boolean;
+  readonly maxPayloadSize: number;
+  readonly attributeExtractor: ObservabilityOptions['attributeExtractor'] | undefined;
+  readonly eventTarget: EventTarget | undefined;
+  readonly metrics: MetricsCollectorClass;
+  readonly workflowSpans: Map<string, WorkflowSpanEntry>;
+};

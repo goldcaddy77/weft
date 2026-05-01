@@ -145,6 +145,7 @@ export function decodeAttributeValue(encoded: string, type: string): SearchAttri
  * Validate that a value's runtime type matches the declared schema type.
  * Throws a descriptive error on mismatch.
  */
+// oxlint-disable-next-line complexity -- ID:core-search-attributes-validate-attribute-type-complexity
 export function validateAttributeType(
   attributeName: string,
   value: SearchAttributeValue,
@@ -225,6 +226,7 @@ const EMPTY_VALUE = new Uint8Array(0);
  * console.log(ops.length > 0); // true
  * ```
  */
+// oxlint-disable-next-line complexity -- ID:core-search-attributes-build-index-operations-complexity
 export function buildIndexOperations(
   workflowId: string,
   previous: Record<string, SearchAttributeValue>,

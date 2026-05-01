@@ -193,6 +193,7 @@ export class IndexedDBStorage implements Storage {
     });
   }
 
+  // oxlint-disable-next-line complexity -- ID:storage-indexeddb-delete-prefix-complexity
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     const { limit, reverse, gt, lt, gte, lte } = options;
     const database = await this.#databasePromise;

@@ -189,6 +189,7 @@ export class WorkerRegistry {
    * 3. Workers at `inFlight >= concurrency` are excluded.
    * 4. A `sticky` worker that also satisfies the above wins regardless of policy.
    */
+  // oxlint-disable-next-line complexity -- ID:worker-registry-find-worker-complexity
   findWorker(activityName: string, options?: RoutingOptions): WorkerInfo | undefined {
     const queue = options?.queue;
     const stickyId = options?.sticky;
@@ -255,6 +256,7 @@ export class WorkerRegistry {
    * workers so no worker becomes the "tenant X worker". Ties are broken by
    * overall inFlight count, then by stable worker id order.
    */
+  // oxlint-disable-next-line complexity -- ID:worker-registry-pick-fair-share-complexity
   #pickFairShare(
     eligible: WorkerInfo[],
     _queue: string | undefined,

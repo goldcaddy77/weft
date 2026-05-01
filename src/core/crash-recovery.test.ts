@@ -11,7 +11,10 @@ import { describe, expect, it } from 'bun:test';
 
 import type { LLMProvider } from '../ai/providers/interface.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
+import type { BatchOperation, ScanOptions, Storage } from '../storage/interface.ts';
+import { KEYS as STORAGE_KEYS, encodeStorageKeyComponent } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import { encode } from './codec.ts';
 import type { Context } from './context.ts';
 import { ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING, Engine } from './engine.ts';
 import { WorkflowResumedEvent } from './events.ts';
@@ -20,6 +23,237 @@ import type { WorkflowContext } from './types.ts';
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
   await sleepForTesting(10);
+}
+
+type ResumeAwareChatCall = {
+  resumePayload: unknown;
+  resumeToken: string | undefined;
+  turnIndex: number | undefined;
+};
+
+function suppressResult(handle: { result(): Promise<unknown> }): void {
+  handle.result().catch(() => {});
+}
+
+function createResumeAwareProvider(chatCalls: ResumeAwareChatCall[]): LLMProvider {
+  return {
+    name: 'resume-aware',
+    async createChatResumeHint() {
+      return { resumeToken: 'llm-ready-token' };
+    },
+    async chat(_messages, options): Promise<ChatResponse> {
+      chatCalls.push({
+        resumePayload: options.resumeContext?.payload,
+        resumeToken: options.resumeContext?.hint.resumeToken,
+        turnIndex: options.turnIndex,
+      });
+      return {
+        content: 'Agent resumed successfully',
+        toolCalls: [],
+        usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+        model: 'test-model',
+        stopReason: 'end_turn',
+      };
+    },
+    async stream() {
+      return new ReadableStream();
+    },
+    async countTokens(): Promise<number> {
+      return 100;
+    },
+  };
+}
+
+async function collectStorageKeys(storage: Storage, prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  for await (const [key] of storage.scan(prefix)) {
+    keys.push(key);
+  }
+  return keys;
+}
+
+function agentExecutionStatePrefix(workflowId: string): string {
+  return `agent-execution:${encodeStorageKeyComponent(workflowId)}:`;
+}
+
+function internalAgentResumeSignalPrefix(workflowId: string, resumeToken: string): string {
+  return `sig:${encodeStorageKeyComponent(workflowId)}:agent-resume:0000000000:${resumeToken}:`;
+}
+
+function isAgentExecutionStateKey(key: string): boolean {
+  return key.startsWith('agent-execution:');
+}
+
+function writesAgentExecutionState(operation: BatchOperation): boolean {
+  return operation.type === 'put' && isAgentExecutionStateKey(operation.key);
+}
+
+function deletesInternalAgentResumeSignal(operation: BatchOperation): boolean {
+  return operation.type === 'delete' && operation.key.includes(':agent-resume:');
+}
+
+function copyOptionalStorageMethods(wrapped: Storage, storage: Storage): Storage {
+  if (storage.has) {
+    wrapped.has = storage.has.bind(storage);
+  }
+
+  if (storage.deletePrefix) {
+    wrapped.deletePrefix = storage.deletePrefix.bind(storage);
+  }
+
+  if (storage.keys) {
+    wrapped.keys = storage.keys.bind(storage);
+  }
+
+  if (storage.count) {
+    wrapped.count = storage.count.bind(storage);
+  }
+
+  if (storage.scoped) {
+    wrapped.scoped = storage.scoped.bind(storage);
+  }
+
+  if (storage.query) {
+    wrapped.query = storage.query.bind(storage);
+  }
+
+  return wrapped;
+}
+
+function wrapStorageWithAgentExecutionStateWriteHook(
+  storage: Storage,
+  onAgentExecutionStateWrite: () => void,
+): Storage {
+  let hookHasRun = false;
+
+  const runHookOnce = () => {
+    if (hookHasRun) {
+      return;
+    }
+
+    hookHasRun = true;
+    onAgentExecutionStateWrite();
+  };
+
+  const wrapped: Storage = {
+    get: storage.get.bind(storage),
+    async put(key, value) {
+      await storage.put(key, value);
+      if (isAgentExecutionStateKey(key)) {
+        runHookOnce();
+      }
+    },
+    delete: storage.delete.bind(storage),
+    scan: storage.scan.bind(storage),
+    async batch(operations) {
+      await storage.batch(operations);
+      if (operations.some(writesAgentExecutionState)) {
+        runHookOnce();
+      }
+    },
+    [Symbol.dispose]() {
+      storage[Symbol.dispose]();
+    },
+  };
+
+  return copyOptionalStorageMethods(wrapped, storage);
+}
+
+function wrapStorageWithCrashAfterAgentExecutionStateWrite(storage: Storage): {
+  storage: Storage;
+  crashed: () => boolean;
+} {
+  return wrapStorageWithCrashAfterWrite(
+    storage,
+    (key) => isAgentExecutionStateKey(key),
+    (operations) => operations.some(writesAgentExecutionState),
+    'simulated crash after pending agent execution state write',
+  );
+}
+
+function wrapStorageWithCrashAfterInternalResumeSignalDelete(storage: Storage): {
+  storage: Storage;
+  crashed: () => boolean;
+} {
+  return wrapStorageWithCrashAfterWrite(
+    storage,
+    () => false,
+    (operations) => operations.some(deletesInternalAgentResumeSignal),
+    'simulated crash after internal agent resume signal delete',
+  );
+}
+
+function wrapStorageWithCrashAfterWrite(
+  storage: Storage,
+  shouldCrashAfterPut: (key: string) => boolean,
+  shouldCrashAfterBatch: (operations: BatchOperation[]) => boolean,
+  message: string,
+): { storage: Storage; crashed: () => boolean } {
+  let hasCrashed = false;
+  const crashError = new Error(message);
+
+  const throwIfCrashed = () => {
+    if (hasCrashed) {
+      throw crashError;
+    }
+  };
+
+  const crash = (): never => {
+    hasCrashed = true;
+    throw crashError;
+  };
+
+  const wrapped: Storage = {
+    async get(key) {
+      throwIfCrashed();
+      return storage.get(key);
+    },
+    async put(key, value) {
+      throwIfCrashed();
+      await storage.put(key, value);
+      if (shouldCrashAfterPut(key)) {
+        crash();
+      }
+    },
+    async delete(key) {
+      throwIfCrashed();
+      return storage.delete(key);
+    },
+    scan(prefix, options?: ScanOptions) {
+      return (async function* () {
+        throwIfCrashed();
+        for await (const entry of storage.scan(prefix, options)) {
+          throwIfCrashed();
+          yield entry;
+        }
+      })();
+    },
+    async batch(operations) {
+      throwIfCrashed();
+      await storage.batch(operations);
+      if (shouldCrashAfterBatch(operations)) {
+        crash();
+      }
+    },
+    [Symbol.dispose]() {
+      storage[Symbol.dispose]();
+    },
+  };
+
+  return {
+    storage: copyOptionalStorageMethods(wrapped, storage),
+    crashed: () => hasCrashed,
+  };
+}
+
+async function waitForCrash(crashed: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (crashed()) {
+      return;
+    }
+
+    await flush();
+  }
 }
 
 describe('crash recovery', () => {
@@ -372,6 +606,195 @@ describe('crash recovery', () => {
       signalPayload: { approved: true },
     });
     expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
+
+    engine2[Symbol.dispose]();
+  });
+
+  it('abort-during-suspension does not mark resume satisfied', async () => {
+    const baseStorage = new MemoryStorage();
+    let engineToAbort: Engine | undefined;
+    const storage = wrapStorageWithAgentExecutionStateWriteHook(baseStorage, () => {
+      engineToAbort?.[Symbol.dispose]();
+    });
+    const chatCalls: ResumeAwareChatCall[] = [];
+    const provider = createResumeAwareProvider(chatCalls);
+
+    const registerWorkflow = (engine: Engine) => {
+      engine.register('abort-during-agent-suspension', async function* (ctx: WorkflowContext) {
+        return yield* (ctx as Context).agent({
+          model: 'test-model',
+          prompt: 'Wait for the provider resume signal',
+          provider,
+        });
+      });
+    };
+
+    const engine1 = new Engine({ storage, suspendOnLlmWait: true });
+    engineToAbort = engine1;
+    registerWorkflow(engine1);
+
+    const handle1 = await engine1.start('abort-during-agent-suspension', null, {
+      id: 'wf-agent-abort-during-suspension',
+    });
+    suppressResult(handle1);
+    await flush();
+    expect(chatCalls).toHaveLength(0);
+
+    const engine2 = new Engine({ storage: baseStorage, suspendOnLlmWait: true });
+    registerWorkflow(engine2);
+
+    const handles = await engine2.recoverAll();
+    expect(handles).toHaveLength(1);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await flush();
+    }
+
+    expect(chatCalls).toHaveLength(0);
+
+    await engine2.signal('wf-agent-abort-during-suspension', 'llm-ready-token', {
+      approved: true,
+    });
+
+    await expect(handles[0]!.result()).resolves.toBe('Agent resumed successfully');
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
+
+    engine2[Symbol.dispose]();
+  });
+
+  it('storePendingAgentExecutionState is recoverable if crash occurs between writes', async () => {
+    const baseStorage = new MemoryStorage();
+    const crashingStorage = wrapStorageWithCrashAfterAgentExecutionStateWrite(baseStorage);
+    const chatCalls: ResumeAwareChatCall[] = [];
+    const provider = createResumeAwareProvider(chatCalls);
+
+    const registerWorkflow = (engine: Engine) => {
+      engine.register('agent-store-crash-window', async function* (ctx: WorkflowContext) {
+        return yield* (ctx as Context).agent({
+          model: 'test-model',
+          prompt: 'Wait for the provider resume signal',
+          provider,
+        });
+      });
+    };
+
+    const engine1 = new Engine({ storage: crashingStorage.storage, suspendOnLlmWait: true });
+    registerWorkflow(engine1);
+
+    await engine1.signal('wf-agent-store-crash-window', 'llm-ready-token', {
+      approved: true,
+    });
+    const handle1 = await engine1.start('agent-store-crash-window', null, {
+      id: 'wf-agent-store-crash-window',
+    });
+    suppressResult(handle1);
+    await waitForCrash(crashingStorage.crashed);
+    expect(crashingStorage.crashed()).toBe(true);
+    engine1[Symbol.dispose]();
+
+    expect(
+      await collectStorageKeys(
+        baseStorage,
+        internalAgentResumeSignalPrefix('wf-agent-store-crash-window', 'llm-ready-token'),
+      ),
+    ).toHaveLength(1);
+
+    const engine2 = new Engine({ storage: baseStorage, suspendOnLlmWait: true });
+    registerWorkflow(engine2);
+
+    const handles = await engine2.recoverAll();
+    expect(handles).toHaveLength(1);
+    await expect(handles[0]!.result()).resolves.toBe('Agent resumed successfully');
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
+
+    engine2[Symbol.dispose]();
+  });
+
+  it('clearPendingAgentExecutionState is safe if crash occurs between deletes', async () => {
+    const baseStorage = new MemoryStorage();
+    const crashingStorage = wrapStorageWithCrashAfterInternalResumeSignalDelete(baseStorage);
+    const chatCalls: ResumeAwareChatCall[] = [];
+    const provider = createResumeAwareProvider(chatCalls);
+
+    const registerWorkflow = (engine: Engine) => {
+      engine.register('agent-clear-crash-window', async function* (ctx: WorkflowContext) {
+        return yield* (ctx as Context).agent({
+          model: 'test-model',
+          prompt: 'Wait for the provider resume signal',
+          provider,
+        });
+      });
+    };
+
+    const engine1 = new Engine({ storage: crashingStorage.storage, suspendOnLlmWait: true });
+    registerWorkflow(engine1);
+
+    const handle1 = await engine1.start('agent-clear-crash-window', null, {
+      id: 'wf-agent-clear-crash-window',
+    });
+    suppressResult(handle1);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine1[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine1[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+
+    await baseStorage.put(
+      STORAGE_KEYS.signal(
+        'wf-agent-clear-crash-window',
+        'agent-resume:0000000000:llm-ready-token',
+        'extra-buffered-resume',
+      ),
+      encode({ approved: true }),
+    );
+
+    await engine1.signal('wf-agent-clear-crash-window', 'llm-ready-token', {
+      approved: true,
+    });
+    await waitForCrash(crashingStorage.crashed);
+    expect(crashingStorage.crashed()).toBe(true);
+    engine1[Symbol.dispose]();
+
+    expect(
+      await collectStorageKeys(
+        baseStorage,
+        agentExecutionStatePrefix('wf-agent-clear-crash-window'),
+      ),
+    ).toEqual([]);
+
+    const engine2 = new Engine({ storage: baseStorage, suspendOnLlmWait: true });
+    registerWorkflow(engine2);
+
+    const handles = await engine2.recoverAll();
+    expect(handles).toHaveLength(1);
+    await expect(handles[0]!.result()).resolves.toBe('Agent resumed successfully');
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
       {
         resumePayload: { approved: true },
         resumeToken: 'llm-ready-token',

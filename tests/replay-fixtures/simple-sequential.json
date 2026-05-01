@@ -1,0 +1,48 @@
+{
+  "scenario": "simple-sequential",
+  "description": "A workflow runs one durable activity and completes with its result.",
+  "events": [
+    {
+      "type": "workflow:checkpoint",
+      "timestamp": 0,
+      "data": {
+        "step": 1
+      }
+    }
+  ],
+  "timeline": [
+    {
+      "step": 1,
+      "operationType": "activity",
+      "operationLabel": "anonymous",
+      "inputSummary": "\"hello\"",
+      "timestamp": 0,
+      "status": "completed",
+      "versionTuple": {
+        "workflowVersion": "1"
+      },
+      "outputSummary": "\"processed:hello\"",
+      "duration": 0
+    }
+  ],
+  "finalState": {
+    "id": "wf-simple-sequential",
+    "type": "simple-sequential",
+    "status": "completed",
+    "input": "hello",
+    "version": "1",
+    "createdAt": 0,
+    "startedAt": 0,
+    "updatedAt": 0,
+    "result": "processed:hello"
+  },
+  "storage": {
+    "ev:wf-simple-sequential:0000000000": "h6R0eXBls3dvcmtmbG93OmNoZWNrcG9pbnSqd29ya2Zsb3dJZLR3Zi1zaW1wbGUtc2VxdWVudGlhbKhzZXF1ZW5jZQCocHJldkhhc2iwMDAwMDAwMDAwMDAwMDAwMKdwYXlsb2FkgaRzdGVwAal0aW1lc3RhbXAArHZlcnNpb25UdXBsZYGvd29ya2Zsb3dWZXJzaW9uoTE=",
+    "ev:wf-simple-sequential:head": "gqhzZXF1ZW5jZQCobGFzdEhhc2iwZjU1OTAxNjgzNTU1YzI0OQ==",
+    "wf-terminal:0000000000000000:wf-simple-sequential": "",
+    "wf:wf-simple-sequential": "iaJpZLR3Zi1zaW1wbGUtc2VxdWVudGlhbKR0eXBlsXNpbXBsZS1zZXF1ZW50aWFspnN0YXR1c6ljb21wbGV0ZWSlaW5wdXSlaGVsbG+ndmVyc2lvbqExqWNyZWF0ZWRBdACpc3RhcnRlZEF0AKl1cGRhdGVkQXQApnJlc3VsdK9wcm9jZXNzZWQ6aGVsbG8=",
+    "wf:wf-simple-sequential:ckpt": "iKp3b3JrZmxvd0lktHdmLXNpbXBsZS1zZXF1ZW50aWFspHN0ZXABpmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkK5wZW5kaW5nU2lnbmFsc5Cwc2VhcmNoQXR0cmlidXRlc4CndmVyc2lvbqExqWNyZWF0ZWRBdAA=",
+    "wf:wf-simple-sequential:ckpt:0000000001": "iKp3b3JrZmxvd0lktHdmLXNpbXBsZS1zZXF1ZW50aWFspHN0ZXABpmxvY2Fsc4CyYWNjdW11bGF0ZWRSZXN1bHRzkK5wZW5kaW5nU2lnbmFsc5Cwc2VhcmNoQXR0cmlidXRlc4CndmVyc2lvbqExqWNyZWF0ZWRBdAA=",
+    "wf:wf-simple-sequential:timeline:0000000001": "iaRzdGVwAa1vcGVyYXRpb25UeXBlqGFjdGl2aXR5rm9wZXJhdGlvbkxhYmVsqWFub255bW91c6xpbnB1dFN1bW1hcnmnImhlbGxvIql0aW1lc3RhbXAApnN0YXR1c6ljb21wbGV0ZWSsdmVyc2lvblR1cGxlga93b3JrZmxvd1ZlcnNpb26hMa1vdXRwdXRTdW1tYXJ5sSJwcm9jZXNzZWQ6aGVsbG8iqGR1cmF0aW9uAA=="
+  }
+}

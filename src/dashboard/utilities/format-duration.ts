@@ -4,6 +4,7 @@ export function formatDuration(
   start: Date | string | number | null,
   end: Date | string | number | null,
 ): string;
+// oxlint-disable-next-line complexity -- ID:dashboard-utilities-format-duration-format-duration-complexity
 export function formatDuration(
   startOrMilliseconds: number | Date | string | null,
   end?: Date | string | number | null,

@@ -14,7 +14,7 @@ import {
   TIMELINE_HELP_TEXT,
   VALIDATE_HELP_TEXT,
   VERSION_CHECK_HELP_TEXT,
-} from './cli.ts';
+} from './cli/index.ts';
 import { Engine } from './core/engine.ts';
 import { serve } from './server/index.ts';
 

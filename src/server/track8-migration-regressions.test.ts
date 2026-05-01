@@ -152,8 +152,7 @@ function openWebSocket(url: string, token?: string): Promise<WebSocket> {
     const socket =
       token === undefined
         ? new WebSocket(url)
-        : // oxlint-disable-next-line typescript/no-explicit-any -- Bun's WebSocket accepts a headers init option not in the lib.dom type.
-          new WebSocket(url, { headers: { authorization: `Bearer ${token}` } } as any);
+        : new WebSocket(url, { headers: { authorization: `Bearer ${token}` } } as any);
     socket.addEventListener('open', () => resolve(socket));
     socket.addEventListener('error', (event: Event) => reject(event));
   });

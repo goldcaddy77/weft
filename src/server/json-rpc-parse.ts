@@ -155,6 +155,7 @@ function parseBatchItem(item: unknown): ParsedBatchItem {
   };
 }
 
+// oxlint-disable-next-line complexity -- ID:server-json-rpc-parse-parse-single-object-complexity
 function parseSingleObject(
   object: Record<string, unknown>,
 ): Extract<ParseResult, { kind: 'single' | 'invalid-request' }> {

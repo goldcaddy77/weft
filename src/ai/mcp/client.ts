@@ -138,6 +138,7 @@ export class MCPClient implements Disposable {
   }
 
   /** Discover available tools from the MCP server. */
+  // oxlint-disable-next-line complexity -- ID:ai-mcp-client-discover-tools-complexity
   async discoverTools(): Promise<ToolDefinition[]> {
     let response;
     try {

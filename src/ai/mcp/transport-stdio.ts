@@ -270,6 +270,7 @@ export class StdioTransport implements MCPTransport {
     }
   }
 
+  // oxlint-disable-next-line complexity -- ID:ai-mcp-transport-stdio-start-read-loop-complexity
   async #startReadLoop(proc: ReturnType<typeof Bun.spawn>): Promise<void> {
     if (this.#readLoopActive) return;
     this.#readLoopActive = true;

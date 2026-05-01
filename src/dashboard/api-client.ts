@@ -174,6 +174,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export class ApiClient {
   /** List workflows with optional filtering. */
+  // oxlint-disable-next-line complexity -- ID:dashboard-api-client-list-workflows-complexity
   async listWorkflows(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
     const params = new URLSearchParams();
 
