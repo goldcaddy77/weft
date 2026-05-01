@@ -428,7 +428,10 @@ describe('RemoteWorker', () => {
     // Stop the server, which will trigger the close event
     server.stop(true);
     server = undefined;
-    await sleepForTesting(200);
+    await waitForCondition(() => !worker.connected, {
+      timeoutMs: 1_000,
+      label: 'worker close event disconnect',
+    });
 
     expect(worker.connected).toBe(false);
     worker[Symbol.dispose]();
