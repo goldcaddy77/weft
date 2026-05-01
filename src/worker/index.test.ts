@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import type { ActivityInterceptor } from '../core/interceptor.ts';
-import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
+import { restoreRealTimers, sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 import { RemoteWorker } from './index.ts';
 
 // ---------------------------------------------------------------------------
@@ -48,6 +48,8 @@ describe('RemoteWorker', () => {
   let server: ReturnType<typeof Bun.serve> | undefined;
 
   afterEach(() => {
+    restoreRealTimers();
+
     if (server) {
       server.stop(true);
       server = undefined;
@@ -391,8 +393,8 @@ describe('RemoteWorker', () => {
 
     await worker.connect();
     await waitForCondition(() => worker.inFlight === 1, {
-      timeoutMs: 500,
-      label: 'slow activity inFlight increment',
+      timeoutMs: 1_000,
+      label: 'worker inFlight increment',
     });
 
     // Activity should be in-flight
@@ -401,8 +403,8 @@ describe('RemoteWorker', () => {
     // Resolve the activity
     resolveActivity!();
     await waitForCondition(() => worker.inFlight === 0, {
-      timeoutMs: 500,
-      label: 'slow activity completion',
+      timeoutMs: 1_000,
+      label: 'worker inFlight drain',
     });
 
     expect(worker.inFlight).toBe(0);
@@ -426,7 +428,10 @@ describe('RemoteWorker', () => {
     // Stop the server, which will trigger the close event
     server.stop(true);
     server = undefined;
-    await sleepForTesting(200);
+    await waitForCondition(() => !worker.connected, {
+      timeoutMs: 1_000,
+      label: 'worker close event disconnect',
+    });
 
     expect(worker.connected).toBe(false);
     worker[Symbol.dispose]();
@@ -915,8 +920,8 @@ describe('RemoteWorker', () => {
     // First connection — server triggers shutdown
     await worker.connect();
     await waitForCondition(() => worker.shuttingDown && !worker.connected, {
-      timeoutMs: 500,
-      label: 'initial graceful shutdown',
+      timeoutMs: 1_000,
+      label: 'graceful shutdown before reconnect',
     });
     expect(worker.shuttingDown).toBe(true);
     expect(worker.connected).toBe(false);
@@ -924,6 +929,10 @@ describe('RemoteWorker', () => {
     // Reconnect — connect() should reset #shuttingDown so tasks are accepted
     await worker.connect();
     expect(worker.shuttingDown).toBe(false);
+    await waitForCondition(() => messages.some((message) => message.type === 'taskResult'), {
+      timeoutMs: 1_000,
+      label: 'post-reconnect task result',
+    });
 
     // The task sent on the second connection should have been processed
     const taskResult = await waitForTaskResult(messages, 'post-reconnect task result');

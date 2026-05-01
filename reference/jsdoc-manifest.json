@@ -2835,6 +2835,14 @@
       "classification": "example-required"
     },
     {
+      "sourceFile": "src/core/engine.ts",
+      "sourceName": "withPendingChatResumeTurnIndex",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
       "sourceFile": "src/core/events.ts",
       "sourceName": "ActivityCompletedEvent",
       "kind": "value",

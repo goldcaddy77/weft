@@ -2340,6 +2340,19 @@ describe('Engine', () => {
     expect(typeof sendEmail).toBe('function');
   });
 
+  it('registerActivity() accepts a named activity registration', () => {
+    const engine = new Engine();
+
+    expect(() =>
+      engine.registerActivity('sendEmail', async (input: unknown) => {
+        const message = input as { to: string; body: string };
+        return `sent to ${message.to}: ${message.body}`;
+      }),
+    ).not.toThrow();
+
+    engine[Symbol.dispose]();
+  });
+
   // ---------------------------------------------------------------------------
   // Development mode DevelopmentWarningEvent
   // ---------------------------------------------------------------------------

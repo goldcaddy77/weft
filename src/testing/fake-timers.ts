@@ -117,17 +117,13 @@ export async function yieldToEventLoop(): Promise<void> {
 
 /** Create a promise whose settlement is controlled by the test. */
 export function createDeferred<T = void>(): Deferred<T> {
-  let resolveDeferred: Deferred<T>['resolve'] | undefined;
-  let rejectDeferred: Deferred<T>['reject'] | undefined;
+  let resolveDeferred!: Deferred<T>['resolve'];
+  let rejectDeferred!: Deferred<T>['reject'];
 
   const promise = new Promise<T>((resolve, reject) => {
     resolveDeferred = resolve;
     rejectDeferred = reject;
   });
-
-  if (resolveDeferred === undefined || rejectDeferred === undefined) {
-    throw new Error('Failed to create deferred promise');
-  }
 
   return { promise, resolve: resolveDeferred, reject: rejectDeferred };
 }
