@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-
-import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
+import { fileURLToPath } from 'node:url';
 import type { WorkerSpawnMeasurement } from './worker-spawn-runner.ts';
 
 /**
@@ -14,15 +13,14 @@ import type { WorkerSpawnMeasurement } from './worker-spawn-runner.ts';
  * Architecture target: <5ms median on Bun.
  *
  * Runs in a fresh Bun subprocess so full-suite scheduler noise does not
- * inflate the measurement. That lets the default non-coverage gate enforce the
- * actual `<5ms` architecture target instead of a relaxed in-process floor.
- *
- * Coverage mode gets a slightly looser floor because instrumentation adds
- * measurable overhead to worker bootstrap and message dispatch.
+ * inflate the measurement. Bun does not propagate `bun test --coverage`
+ * instrumentation into `bun run`, so the child measurement path is the same in
+ * covered and non-covered parent runs. This benchmark therefore enforces the
+ * same `<5ms` architecture target in both modes instead of pretending the child
+ * is running with extra coverage overhead.
  */
 
-const BASELINE_TARGET_MILLISECONDS = 5;
-const COVERAGE_TARGET_MILLISECONDS = 7;
+const TARGET_MILLISECONDS = 5;
 const BENCHMARK_ENVIRONMENT_KEYS = [
   'HOME',
   'NODE_V8_COVERAGE',
@@ -32,6 +30,7 @@ const BENCHMARK_ENVIRONMENT_KEYS = [
   'USERPROFILE',
   'WEFT_COVERAGE_MODE',
 ] as const;
+const workerSpawnRunnerPath = fileURLToPath(new URL('./worker-spawn-runner.ts', import.meta.url));
 
 function isWorkerSpawnMeasurement(value: unknown): value is WorkerSpawnMeasurement {
   if (typeof value !== 'object' || value === null) {
@@ -47,8 +46,10 @@ function isWorkerSpawnMeasurement(value: unknown): value is WorkerSpawnMeasureme
     Number.isInteger(candidate['measuredSamples']) &&
     candidate['measuredSamples'] > 0 &&
     Array.isArray(candidate['samples']) &&
-    candidate['samples'].every((sample) => typeof sample === 'number') &&
-    typeof candidate['medianMilliseconds'] === 'number'
+    candidate['samples'].length === candidate['measuredSamples'] &&
+    candidate['samples'].every((sample) => typeof sample === 'number' && Number.isFinite(sample)) &&
+    typeof candidate['medianMilliseconds'] === 'number' &&
+    Number.isFinite(candidate['medianMilliseconds'])
   );
 }
 
@@ -66,7 +67,7 @@ function createBenchmarkEnvironment(): Record<string, string> {
 }
 
 function runWorkerSpawnBenchmark(): WorkerSpawnMeasurement {
-  const result = Bun.spawnSync([process.execPath, 'run', 'src/benchmarks/worker-spawn-runner.ts'], {
+  const result = Bun.spawnSync([process.execPath, 'run', workerSpawnRunnerPath], {
     cwd: process.cwd(),
     stdout: 'pipe',
     stderr: 'pipe',
@@ -78,7 +79,17 @@ function runWorkerSpawnBenchmark(): WorkerSpawnMeasurement {
     throw new Error(`Worker spawn benchmark subprocess failed: ${errorOutput}`);
   }
 
-  const parsed = JSON.parse(new TextDecoder().decode(result.stdout)) as unknown;
+  const outputLines = new TextDecoder()
+    .decode(result.stdout)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const lastOutputLine = outputLines.at(-1);
+  if (lastOutputLine === undefined) {
+    throw new Error('Worker spawn benchmark subprocess produced no measurement output');
+  }
+
+  const parsed = JSON.parse(lastOutputLine) as unknown;
   if (!isWorkerSpawnMeasurement(parsed)) {
     throw new Error('Worker spawn benchmark subprocess returned an invalid measurement payload');
   }
@@ -87,14 +98,8 @@ function runWorkerSpawnBenchmark(): WorkerSpawnMeasurement {
 }
 
 describe('Worker spawn latency', () => {
-  it(`worker spawn median stays below ${(isCoverageInstrumentationEnabled()
-    ? COVERAGE_TARGET_MILLISECONDS
-    : BASELINE_TARGET_MILLISECONDS
-  ).toFixed(0)}ms`, async () => {
+  it(`worker spawn median stays below ${TARGET_MILLISECONDS.toFixed(0)}ms`, async () => {
     const measurement = runWorkerSpawnBenchmark();
-    const targetMilliseconds = isCoverageInstrumentationEnabled()
-      ? COVERAGE_TARGET_MILLISECONDS
-      : BASELINE_TARGET_MILLISECONDS;
 
     console.log(
       [
@@ -103,11 +108,11 @@ describe('Worker spawn latency', () => {
         `    Measured:        ${measurement.measuredSamples.toLocaleString()}`,
         `    Samples (ms):    ${measurement.samples.map((sample) => sample.toFixed(2)).join(', ')}`,
         `    Median (ms):     ${measurement.medianMilliseconds.toFixed(2)}`,
-        `    Target (ms):     <${targetMilliseconds.toFixed(2)}`,
-        `    Coverage mode:   ${isCoverageInstrumentationEnabled() ? 'yes' : 'no'}\n`,
+        `    Target (ms):     <${TARGET_MILLISECONDS.toFixed(2)}`,
+        `    Child coverage:  no (Bun does not cover \`bun run\` subprocesses)\n`,
       ].join('\n'),
     );
 
-    expect(measurement.medianMilliseconds).toBeLessThan(targetMilliseconds);
+    expect(measurement.medianMilliseconds).toBeLessThan(TARGET_MILLISECONDS);
   }, 30_000);
 });
