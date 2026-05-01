@@ -558,11 +558,11 @@ describe('RemoteWorker', () => {
     await worker.connect();
     expect(worker.connected).toBe(true);
 
-    // Wait for the shutdown message to be processed
-    await sleepForTesting(200);
+    await waitForCondition(() => worker.shuttingDown && !worker.connected, {
+      timeoutMs: 500,
+      label: 'worker shutdown state transition',
+    });
 
-    // After shutdown, the worker should have set shuttingDown to true
-    // and eventually closed the connection
     expect(worker.shuttingDown).toBe(true);
     expect(worker.connected).toBe(false);
 
