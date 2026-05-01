@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
-
-import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
+import { fileURLToPath } from 'node:url';
+import type { WorkerSpawnMeasurement } from './worker-spawn-runner.ts';
 
 /**
  * K2f: Worker spawn benchmark.
@@ -12,96 +12,107 @@ import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
  *
  * Architecture target: <5ms median on Bun.
  *
- * Re-measured on April 29, 2026, isolated direct runs cluster around ~3ms,
- * while default full-suite `bun test` concurrency can push the same
- * round-trip into the mid-5ms range on this machine. Until a stable strict
- * proof for `<5ms` exists inside the default suite, this benchmark enforces a
- * `<7ms` regression floor and leaves the architecture target open in the
- * roadmap.
- *
- * Coverage mode gets a slightly looser floor because instrumentation adds
- * measurable overhead to worker bootstrap and message dispatch.
+ * Runs in a fresh Bun subprocess so full-suite scheduler noise does not
+ * inflate the measurement. Bun does not propagate `bun test --coverage`
+ * instrumentation into `bun run`, so the child measurement path is the same in
+ * covered and non-covered parent runs. This benchmark therefore enforces the
+ * same `<5ms` architecture target in both modes instead of pretending the child
+ * is running with extra coverage overhead.
  */
 
-const workerUrl = new URL('../workers/test-worker.ts', import.meta.url);
-const WARMUP_SAMPLES = 5;
-const MEASURED_SAMPLES = 20;
-const BASELINE_TARGET_MILLISECONDS = 7;
-const COVERAGE_TARGET_MILLISECONDS = 9;
+const TARGET_MILLISECONDS = 5;
+const BENCHMARK_ENVIRONMENT_KEYS = [
+  'HOME',
+  'NODE_V8_COVERAGE',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'USERPROFILE',
+  'WEFT_COVERAGE_MODE',
+] as const;
+const workerSpawnRunnerPath = fileURLToPath(new URL('./worker-spawn-runner.ts', import.meta.url));
 
-function median(values: number[]): number {
-  const sorted = values.toSorted((left, right) => left - right);
-  const middleIndex = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 0) {
-    return (sorted[middleIndex - 1]! + sorted[middleIndex]!) / 2;
+function isWorkerSpawnMeasurement(value: unknown): value is WorkerSpawnMeasurement {
+  if (typeof value !== 'object' || value === null) {
+    return false;
   }
 
-  return sorted[middleIndex]!;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate['warmupSamples'] === 'number' &&
+    Number.isInteger(candidate['warmupSamples']) &&
+    candidate['warmupSamples'] >= 0 &&
+    typeof candidate['measuredSamples'] === 'number' &&
+    Number.isInteger(candidate['measuredSamples']) &&
+    candidate['measuredSamples'] > 0 &&
+    Array.isArray(candidate['samples']) &&
+    candidate['samples'].length === candidate['measuredSamples'] &&
+    candidate['samples'].every((sample) => typeof sample === 'number' && Number.isFinite(sample)) &&
+    typeof candidate['medianMilliseconds'] === 'number' &&
+    Number.isFinite(candidate['medianMilliseconds'])
+  );
 }
 
-async function measureWorkerSpawnRoundTrip(): Promise<number> {
-  const start = performance.now();
-  const worker = new Worker(workerUrl);
+function createBenchmarkEnvironment(): Record<string, string> {
+  const environment: Record<string, string> = {};
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error('Worker spawn benchmark timed out')),
-        1_000,
-      );
-
-      const handleMessage = (): void => {
-        clearTimeout(timeout);
-        resolve();
-      };
-
-      const handleError = (): void => {
-        clearTimeout(timeout);
-        reject(new Error('Worker spawn benchmark worker error'));
-      };
-
-      worker.addEventListener('message', handleMessage, { once: true });
-      worker.addEventListener('error', handleError, { once: true });
-      worker.postMessage('ready');
-    });
-
-    return performance.now() - start;
-  } finally {
-    worker.terminate();
+  for (const key of BENCHMARK_ENVIRONMENT_KEYS) {
+    const value = process.env[key];
+    if (typeof value === 'string') {
+      environment[key] = value;
+    }
   }
+
+  return environment;
+}
+
+function runWorkerSpawnBenchmark(): WorkerSpawnMeasurement {
+  const result = Bun.spawnSync([process.execPath, 'run', workerSpawnRunnerPath], {
+    cwd: process.cwd(),
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: createBenchmarkEnvironment(),
+  });
+
+  if (result.exitCode !== 0) {
+    const errorOutput = new TextDecoder().decode(result.stderr).trim();
+    throw new Error(`Worker spawn benchmark subprocess failed: ${errorOutput}`);
+  }
+
+  const outputLines = new TextDecoder()
+    .decode(result.stdout)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const lastOutputLine = outputLines.at(-1);
+  if (lastOutputLine === undefined) {
+    throw new Error('Worker spawn benchmark subprocess produced no measurement output');
+  }
+
+  const parsed = JSON.parse(lastOutputLine) as unknown;
+  if (!isWorkerSpawnMeasurement(parsed)) {
+    throw new Error('Worker spawn benchmark subprocess returned an invalid measurement payload');
+  }
+
+  return parsed;
 }
 
 describe('Worker spawn latency', () => {
-  it(`worker spawn median stays below ${(isCoverageInstrumentationEnabled()
-    ? COVERAGE_TARGET_MILLISECONDS
-    : BASELINE_TARGET_MILLISECONDS
-  ).toFixed(0)}ms`, async () => {
-    for (let sample = 0; sample < WARMUP_SAMPLES; sample += 1) {
-      await measureWorkerSpawnRoundTrip();
-    }
-
-    const samples: number[] = [];
-    for (let sample = 0; sample < MEASURED_SAMPLES; sample += 1) {
-      samples.push(await measureWorkerSpawnRoundTrip());
-    }
-
-    const medianMilliseconds = median(samples);
-    const targetMilliseconds = isCoverageInstrumentationEnabled()
-      ? COVERAGE_TARGET_MILLISECONDS
-      : BASELINE_TARGET_MILLISECONDS;
+  it(`worker spawn median stays below ${TARGET_MILLISECONDS.toFixed(0)}ms`, async () => {
+    const measurement = runWorkerSpawnBenchmark();
 
     console.log(
       [
         `\n  Worker spawn latency benchmark:`,
-        `    Warmup samples:  ${WARMUP_SAMPLES.toLocaleString()}`,
-        `    Measured:        ${MEASURED_SAMPLES.toLocaleString()}`,
-        `    Samples (ms):    ${samples.map((sample) => sample.toFixed(2)).join(', ')}`,
-        `    Median (ms):     ${medianMilliseconds.toFixed(2)}`,
-        `    Target (ms):     <${targetMilliseconds.toFixed(2)}`,
-        `    Coverage mode:   ${isCoverageInstrumentationEnabled() ? 'yes' : 'no'}\n`,
+        `    Warmup samples:  ${measurement.warmupSamples.toLocaleString()}`,
+        `    Measured:        ${measurement.measuredSamples.toLocaleString()}`,
+        `    Samples (ms):    ${measurement.samples.map((sample) => sample.toFixed(2)).join(', ')}`,
+        `    Median (ms):     ${measurement.medianMilliseconds.toFixed(2)}`,
+        `    Target (ms):     <${TARGET_MILLISECONDS.toFixed(2)}`,
+        `    Child coverage:  no (Bun does not cover \`bun run\` subprocesses)\n`,
       ].join('\n'),
     );
 
-    expect(medianMilliseconds).toBeLessThan(targetMilliseconds);
+    expect(measurement.medianMilliseconds).toBeLessThan(TARGET_MILLISECONDS);
   }, 30_000);
 });
