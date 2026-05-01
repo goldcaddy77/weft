@@ -4,6 +4,7 @@ import type { LLMProvider } from './providers/interface';
 import type { ChatResponse, Message, ToolDefinition } from './providers/types';
 
 import type {
+  AgentLoopSuspendedError,
   AgentTool,
   MCPClientFactory,
   ToolCallInfo,
@@ -22,6 +23,10 @@ import { MCPClient } from './mcp/client';
 import { ToolNameConflictError } from './mcp/registry';
 import type { MCPRequest, MCPResponse, MCPTransport } from './mcp/transport';
 import type { ModelRouter, RoutingContext } from './model-router';
+import {
+  createSuspendingProvider,
+  type PendingChatResumeState,
+} from './providers/suspending-provider';
 import type { CacheEntry } from './tool-cache';
 import { setToolCacheEntry } from './tool-cache';
 import type { EffectRecord, ToolEffectLogLike } from './tool-effect-log';
@@ -93,6 +98,28 @@ function createFakeToolEffectLog(
   };
 }
 
+function createResumeCoordinator() {
+  const pendingState = new Map<number, PendingChatResumeState>();
+  const waiters = new Map<string, (payload: unknown) => void>();
+
+  return {
+    load: async (turnIndex: number) => pendingState.get(turnIndex),
+    store: async (turnIndex: number, state: PendingChatResumeState) => {
+      pendingState.set(turnIndex, state);
+    },
+    clear: async (turnIndex: number) => {
+      pendingState.delete(turnIndex);
+    },
+    waitForSignal: async (resumeToken: string) =>
+      await new Promise<unknown>((resolve) => {
+        waiters.set(resumeToken, resolve);
+      }),
+    resume(resumeToken: string, payload: unknown) {
+      waiters.get(resumeToken)?.(payload);
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -106,6 +133,56 @@ describe('executeAgentLoop', () => {
     expect(result.content).toBe('Hello, world!');
     expect(result.turnCount).toBe(1);
     expect(result.conversation.length).toBeGreaterThan(0);
+  });
+
+  it('waits for the provider resume signal before starting a chat turn', async () => {
+    const coordinator = createResumeCoordinator();
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider = createSuspendingProvider(
+      {
+        name: 'resume-aware',
+        async createChatResumeHint() {
+          return { resumeToken: 'llm-ready-token' };
+        },
+        async chat(_messages, options): Promise<ChatResponse> {
+          chatCalls.push({
+            resumePayload: options.resumeContext?.payload,
+            resumeToken: options.resumeContext?.hint.resumeToken,
+            turnIndex: options.turnIndex,
+          });
+          return createChatResponse('resumed answer');
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      },
+      coordinator,
+    );
+
+    const resultPromise = executeAgentLoop({ model: 'test-model', provider }, 'Wait for resume');
+    await Bun.sleep(0);
+
+    expect(chatCalls).toHaveLength(0);
+
+    coordinator.resume('llm-ready-token', { approved: true });
+
+    const result = await resultPromise;
+
+    expect(result.content).toBe('resumed answer');
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]).toEqual({
+      resumePayload: { approved: true },
+      resumeToken: 'llm-ready-token',
+      turnIndex: 0,
+    });
   });
 
   it('executes a tool call and returns the final answer', async () => {
@@ -2012,6 +2089,83 @@ describe('executeAgentLoop', () => {
     expect(fallbackEvents[0]!.nextModel).toBe('model-b');
     expect(fallbackEvents[0]!.turnIndex).toBe(0);
     expect(fallbackEvents[0]!.workflowId).toBe('wf-fallback-event');
+  });
+
+  it('rethrows suspension before trying fallback models or recording a provider failure', async () => {
+    const fallbackEvents: AgentModelFallbackEvent[] = [];
+    const healthEvents: { type: string; provider: string }[] = [];
+    const hintedModels: string[] = [];
+    const eventTarget = new EventTarget();
+
+    eventTarget.addEventListener(AgentModelFallbackEvent.type, ((
+      event: AgentModelFallbackEvent,
+    ) => {
+      fallbackEvents.push(event);
+    }) as EventListener);
+
+    const provider = createSuspendingProvider(
+      {
+        name: 'resume-aware',
+        async createChatResumeHint(_messages, options) {
+          hintedModels.push(options.model);
+          return { resumeToken: `${options.model}-resume-token` };
+        },
+        async chat(): Promise<ChatResponse> {
+          return createChatResponse('unreachable');
+        },
+        async stream() {
+          return new ReadableStream();
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      },
+      {
+        load: async () => undefined,
+        store: async () => {},
+        clear: async () => {},
+        canSuspend: true,
+      },
+    );
+
+    const healthTracker = {
+      recordSuccess(providerName: string) {
+        healthEvents.push({ type: 'success', provider: providerName });
+      },
+      recordFailure(providerName: string) {
+        healthEvents.push({ type: 'failure', provider: providerName });
+      },
+    } as any;
+
+    const modelRouter: ModelRouter = {
+      select() {
+        return { model: 'model-a', fallback: ['model-b'] };
+      },
+    };
+
+    const error = (await executeAgentLoop(
+      {
+        model: 'default',
+        provider,
+        modelRouter,
+        eventTarget,
+        workflowId: 'wf-suspend-no-fallback',
+        agentId: 'agent-1',
+        healthTracker,
+      },
+      'Hello',
+    ).catch((error_: unknown) => error_)) as AgentLoopSuspendedError;
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe('AgentLoopSuspendedError');
+    expect(error.pendingResume).toEqual({
+      turnIndex: 0,
+      hint: { resumeToken: 'model-a-resume-token' },
+      resumed: false,
+    });
+    expect(hintedModels).toEqual(['model-a']);
+    expect(fallbackEvents).toHaveLength(0);
+    expect(healthEvents).toHaveLength(0);
   });
 
   it('reports fallbackAttempts > 0 in AgentTurnCompletedEvent after fallback', async () => {

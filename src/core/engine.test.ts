@@ -5,13 +5,20 @@ import { BudgetPolicyEnforcer } from '../ai/budget-policy.ts';
 import { defineAgent } from '../ai/declaration.ts';
 import { AgentBudgetExceededEvent, AgentBudgetWarningEvent } from '../ai/events.ts';
 import type { LLMProvider } from '../ai/providers/interface.ts';
+import type { PendingChatResumeState } from '../ai/providers/suspending-provider.ts';
 import type { ChatResponse } from '../ai/providers/types.ts';
 import type { ScanOptions, Storage as WeftStorage } from '../storage/interface.ts';
 import { encodeStorageKeyComponent, KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
 import type { Context, StreamReference } from './context.ts';
-import { Engine, ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING, WorkflowHandle } from './engine.ts';
+import {
+  Engine,
+  ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING,
+  ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING,
+  withPendingChatResumeTurnIndex,
+  WorkflowHandle,
+} from './engine.ts';
 import {
   CheckpointSizeWarningEvent,
   CleanupWarningEvent,
@@ -355,6 +362,92 @@ describe('Engine', () => {
     const stateBytes = await storage.get(KEYS.workflow(handle.id));
     const state = decode(stateBytes!) as WorkflowState;
     expect(state.status).toBe('cancelled');
+    engine[Symbol.dispose]();
+  });
+
+  it('engine disposal leaves waitForSignal suspended for recovery instead of resuming with undefined', async () => {
+    const storage = new MemoryStorage();
+    let resumedAfterWait = false;
+
+    const registerWorkflow = (engine: Engine) => {
+      engine.register('dispose-wait-signal', async function* (ctx: WorkflowContext) {
+        const value = yield* (ctx as Context).waitForSignal<string>('go');
+        resumedAfterWait = true;
+        return `resumed:${value}`;
+      });
+    };
+
+    const engine1 = new Engine({ storage });
+    registerWorkflow(engine1);
+
+    await engine1.start('dispose-wait-signal', null, { id: 'dispose-wait-signal' });
+    await flush();
+
+    engine1[Symbol.dispose]();
+    await flush();
+
+    expect(resumedAfterWait).toBe(false);
+
+    const stateBytes = await storage.get(KEYS.workflow('dispose-wait-signal'));
+    const state = decode(stateBytes!) as WorkflowState;
+    expect(state.status).toBe('running');
+
+    const engine2 = new Engine({ storage });
+    registerWorkflow(engine2);
+
+    const recoveredHandles = await engine2.recoverAll();
+    expect(recoveredHandles).toHaveLength(1);
+
+    await engine2.signal('dispose-wait-signal', 'go', 'value');
+    await expect(recoveredHandles[0]!.result()).resolves.toBe('resumed:value');
+
+    engine2[Symbol.dispose]();
+  });
+
+  it('cleans up a signal waiter when a buffered signal scan fails after registration', async () => {
+    const workflowId = 'signal-waiter-cleanup';
+    const storage = new MemoryStorage();
+    const originalScan = storage.scan.bind(storage);
+    const targetPrefix = `sig:${encodeStorageKeyComponent(workflowId)}:approval:`;
+    let approvalScanCount = 0;
+
+    storage.scan = function scan(
+      prefix: string,
+      options?: ScanOptions,
+    ): AsyncIterable<[string, Uint8Array]> {
+      if (prefix === targetPrefix) {
+        approvalScanCount += 1;
+        if (approvalScanCount === 2) {
+          return (async function* (): AsyncIterable<[string, Uint8Array]> {
+            throw new Error('simulated signal scan failure');
+          })();
+        }
+      }
+
+      return originalScan(prefix, options);
+    };
+
+    const engine = new Engine({ storage });
+    engine.register('signal-waiter-cleanup', async function* (ctx: WorkflowContext) {
+      yield* (ctx as Context).waitForSignal('approval');
+      return 'unreached';
+    });
+
+    const handle = await engine.start('signal-waiter-cleanup', null, { id: workflowId });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (approvalScanCount === 2) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(approvalScanCount).toBe(2);
+    expect(engine[ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING]()).toBe(0);
+    const resultPromise = handle.result().catch(() => undefined);
+    await engine.cancel(handle.id);
+    await resultPromise;
+
     engine[Symbol.dispose]();
   });
 
@@ -2366,6 +2459,390 @@ describe('Engine', () => {
     expect(result).toBe('Agent intercepted result');
     expect(seenPrompts).toEqual(['Intercept me']);
     expect(interceptorResumed).toBe(true);
+    engine[Symbol.dispose]();
+  });
+
+  it('closes workflow agent interceptors before parking a suspended ctx.agent()', async () => {
+    const engine = new Engine({ suspendOnLlmWait: true });
+    let interceptorClosedCount = 0;
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    engine.addInterceptor({
+      *agent(interception, next) {
+        try {
+          return yield* next(interception);
+        } finally {
+          interceptorClosedCount += 1;
+        }
+      },
+    } satisfies WorkflowInterceptor);
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('agent-interceptor-parked-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).agent({
+        model: 'test-model',
+        prompt: 'Wait for the provider resume signal',
+        provider,
+      });
+    });
+
+    const handle = await engine.start('agent-interceptor-parked-workflow', null);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+    expect(chatCalls).toHaveLength(0);
+    expect(interceptorClosedCount).toBe(1);
+
+    await engine.signal(handle.id, 'llm-ready-token', { approved: true });
+
+    await expect(handle.result()).resolves.toBe('Agent resumed successfully');
+    expect(interceptorClosedCount).toBe(2);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('parks ctx.agent() on a provider resume hint when suspendOnLlmWait is enabled', async () => {
+    const engine = new Engine({ suspendOnLlmWait: true });
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('resume-agent-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).agent({
+        model: 'test-model',
+        prompt: 'Wait for the provider resume signal',
+        provider,
+      });
+    });
+
+    const handle = await engine.start('resume-agent-workflow', null);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+    expect(chatCalls).toHaveLength(0);
+
+    await engine.signal(handle.id, 'llm-ready-token', { approved: true });
+
+    await expect(handle.result()).resolves.toBe('Agent resumed successfully');
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('prefers the explicit turn index when persisting pending chat resume state', () => {
+    const pendingResumeStateWithHiddenTurnIndex: PendingChatResumeState & {
+      turnIndex: number;
+    } = {
+      hint: { resumeToken: 'llm-ready-token' },
+      payload: { approved: true },
+      resumed: true,
+      turnIndex: 2,
+    };
+
+    expect(withPendingChatResumeTurnIndex(7, pendingResumeStateWithHiddenTurnIndex)).toEqual({
+      hint: { resumeToken: 'llm-ready-token' },
+      payload: { approved: true },
+      resumed: true,
+      turnIndex: 7,
+    });
+  });
+
+  it('falls back to in-memory waiting when agent suspension cannot park and preserves the workflow signal', async () => {
+    const engine = new Engine({ suspendOnLlmWait: true });
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('non-parkable-resume-agent-workflow', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.onUpdate('touch', () => 'ok');
+      const agentResult = yield* context.agent({
+        model: 'test-model',
+        prompt: 'Wait for the provider resume signal',
+        provider,
+      });
+      const signalPayload = yield* context.waitForSignal<{ approved: boolean }>('llm-ready-token');
+      return {
+        agentResult,
+        signalPayload,
+      };
+    });
+
+    const handle = await engine.start('non-parkable-resume-agent-workflow', null);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (chatCalls.length === 0) {
+        await flush();
+      }
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(chatCalls).toHaveLength(0);
+
+    await engine.signal(handle.id, 'llm-ready-token', { approved: true });
+
+    await expect(handle.result()).resolves.toEqual({
+      agentResult: 'Agent resumed successfully',
+      signalPayload: { approved: true },
+    });
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('buffers the public signal and matching internal resume signal in one storage batch', async () => {
+    const storage = new MemoryStorage();
+    const originalBatch = storage.batch.bind(storage);
+    const signalBatchKeys: string[][] = [];
+
+    storage.batch = async (operations) => {
+      const keys = operations.map((operation) => operation.key);
+      if (keys.some((key) => key.startsWith('sig:'))) {
+        signalBatchKeys.push(keys);
+      }
+
+      return await originalBatch(operations);
+    };
+
+    const engine = new Engine({ storage, suspendOnLlmWait: true });
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('batched-resume-signal-workflow', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.onUpdate('touch', () => 'ok');
+      const agentResult = yield* context.agent({
+        model: 'test-model',
+        prompt: 'Wait for the provider resume signal',
+        provider,
+      });
+      const signalPayload = yield* context.waitForSignal<{ approved: boolean }>('llm-ready-token');
+      return {
+        agentResult,
+        signalPayload,
+      };
+    });
+
+    const handle = await engine.start('batched-resume-signal-workflow', null);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (chatCalls.length === 0) {
+        await flush();
+      }
+    }
+
+    signalBatchKeys.length = 0;
+    await engine.signal(handle.id, 'llm-ready-token', { approved: true });
+
+    await expect(handle.result()).resolves.toEqual({
+      agentResult: 'Agent resumed successfully',
+      signalPayload: { approved: true },
+    });
+
+    expect(signalBatchKeys).toHaveLength(1);
+    expect(signalBatchKeys[0]).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          new RegExp(`^sig:${encodeStorageKeyComponent(handle.id)}:llm-ready-token:`),
+        ),
+        expect.stringMatching(
+          new RegExp(
+            `^sig:${encodeStorageKeyComponent(handle.id)}:agent-resume:0000000000:llm-ready-token:`,
+          ),
+        ),
+      ]),
+    );
+
+    engine[Symbol.dispose]();
+  });
+
+  it('leaves provider chat blocking behavior unchanged when suspendOnLlmWait is disabled', async () => {
+    const engine = new Engine();
+    const chatCalls: Array<{
+      hasResumeContext: boolean;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'unused-resume-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          hasResumeContext: options.resumeContext !== undefined,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'No suspension',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    engine.register('no-resume-agent-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).agent({
+        model: 'test-model',
+        prompt: 'Do not suspend',
+        provider,
+      });
+    });
+
+    const handle = await engine.start('no-resume-agent-workflow', null);
+
+    await expect(handle.result()).resolves.toBe('No suspension');
+    expect(chatCalls).toEqual([{ hasResumeContext: false, turnIndex: 0 }]);
+
     engine[Symbol.dispose]();
   });
 

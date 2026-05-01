@@ -9,9 +9,11 @@ import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { describe, expect, it } from 'bun:test';
 
+import type { LLMProvider } from '../ai/providers/interface.ts';
+import type { ChatResponse } from '../ai/providers/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { Context } from './context.ts';
-import { Engine } from './engine.ts';
+import { ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING, Engine } from './engine.ts';
 import { WorkflowResumedEvent } from './events.ts';
 import type { WorkflowContext } from './types.ts';
 
@@ -186,6 +188,196 @@ describe('crash recovery', () => {
     await engine2.signal('wf-signal', 'approval', { approved: true });
     const result = await handles[0]!.result();
     expect(result).toEqual({ approved: true });
+
+    engine2[Symbol.dispose]();
+  });
+
+  it('resumes a parked ctx.agent() turn after crash and restores the resume payload', async () => {
+    const storage = new MemoryStorage();
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const registerWorkflow = (engine: Engine) => {
+      engine.register('resume-agent-workflow', async function* (ctx: WorkflowContext) {
+        return yield* (ctx as Context).agent({
+          model: 'test-model',
+          prompt: 'Wait for the provider resume signal',
+          provider,
+        });
+      });
+    };
+
+    const engine1 = new Engine({ storage, suspendOnLlmWait: true });
+    registerWorkflow(engine1);
+
+    await engine1.start('resume-agent-workflow', null, { id: 'wf-agent-parked' });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine1[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine1[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+    expect(chatCalls).toHaveLength(0);
+
+    engine1[Symbol.dispose]();
+
+    const engine2 = new Engine({ storage, suspendOnLlmWait: true });
+    registerWorkflow(engine2);
+
+    const handles = await engine2.recoverAll();
+    expect(handles).toHaveLength(1);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine2[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine2[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+    expect(chatCalls).toHaveLength(0);
+
+    await engine2.signal('wf-agent-parked', 'llm-ready-token', { approved: true });
+
+    await expect(handles[0]!.result()).resolves.toBe('Agent resumed successfully');
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
+
+    engine2[Symbol.dispose]();
+  });
+
+  it('resumes a non-parkable ctx.agent() turn after crash without losing the matching workflow signal', async () => {
+    const storage = new MemoryStorage();
+    const chatCalls: Array<{
+      resumePayload: unknown;
+      resumeToken: string | undefined;
+      turnIndex: number | undefined;
+    }> = [];
+
+    const provider: LLMProvider = {
+      name: 'resume-aware',
+      async createChatResumeHint() {
+        return { resumeToken: 'llm-ready-token' };
+      },
+      async chat(_messages, options): Promise<ChatResponse> {
+        chatCalls.push({
+          resumePayload: options.resumeContext?.payload,
+          resumeToken: options.resumeContext?.hint.resumeToken,
+          turnIndex: options.turnIndex,
+        });
+        return {
+          content: 'Agent resumed successfully',
+          toolCalls: [],
+          usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+          model: 'test-model',
+          stopReason: 'end_turn',
+        };
+      },
+      async stream() {
+        return new ReadableStream();
+      },
+      async countTokens(): Promise<number> {
+        return 100;
+      },
+    };
+
+    const registerWorkflow = (engine: Engine) => {
+      engine.register('non-parkable-resume-agent-workflow', async function* (ctx: WorkflowContext) {
+        const context = ctx as Context;
+        context.onUpdate('touch', () => 'ok');
+        const agentResult = yield* context.agent({
+          model: 'test-model',
+          prompt: 'Wait for the provider resume signal',
+          provider,
+        });
+        const signalPayload = yield* context.waitForSignal<{ approved: boolean }>(
+          'llm-ready-token',
+        );
+        return {
+          agentResult,
+          signalPayload,
+        };
+      });
+    };
+
+    const engine1 = new Engine({ storage, suspendOnLlmWait: true });
+    registerWorkflow(engine1);
+
+    await engine1.start('non-parkable-resume-agent-workflow', null, {
+      id: 'wf-agent-non-parkable',
+    });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await flush();
+    }
+
+    expect(engine1[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(chatCalls).toHaveLength(0);
+
+    engine1[Symbol.dispose]();
+
+    const engine2 = new Engine({ storage, suspendOnLlmWait: true });
+    registerWorkflow(engine2);
+
+    const handles = await engine2.recoverAll();
+    expect(handles).toHaveLength(1);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await flush();
+    }
+
+    expect(engine2[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    expect(chatCalls).toHaveLength(0);
+
+    await engine2.signal('wf-agent-non-parkable', 'llm-ready-token', { approved: true });
+
+    await expect(handles[0]!.result()).resolves.toEqual({
+      agentResult: 'Agent resumed successfully',
+      signalPayload: { approved: true },
+    });
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
 
     engine2[Symbol.dispose]();
   });

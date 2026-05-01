@@ -397,6 +397,8 @@ export type { ChatOptions, LLMProvider } from './ai/providers/interface';
 export { OpenAIProvider } from './ai/providers/openai';
 export type {
   ChatResponse,
+  ChatResumeContext,
+  ChatResumeHint,
   Message,
   StreamChunk,
   TokenUsage,

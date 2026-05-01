@@ -611,6 +611,14 @@ export interface EngineOptions {
    */
   defaultModelRouter?: ModelRouter | undefined;
 
+  /**
+   * When providers expose async resume hints, park inline `ctx.agent()` turns
+   * before the blocking LLM call begins. Non-parkable contexts fall back to an
+   * in-memory wait. Off by default because only some providers can participate
+   * in asynchronous resume flows.
+   */
+  suspendOnLlmWait?: boolean;
+
   /** Built-in alerting configuration. */
   alerts?: AlertingOptions;
 

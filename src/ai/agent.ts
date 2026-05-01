@@ -8,7 +8,7 @@
  * @module agent
  */
 
-import type { BudgetTracker } from './budget';
+import type { BudgetTracker, SerializedBudgetState } from './budget';
 import { BudgetExceededError } from './budget';
 import type { ContextWindowManager } from './context-window';
 import type { ToolIdentityResult } from './declaration';
@@ -34,6 +34,7 @@ import { createTransportForSource } from './mcp/transport-factory';
 import type { ModelRouter, RoutingContext } from './model-router';
 import type { ProviderHealthTracker } from './provider-health';
 import type { LLMProvider } from './providers/interface';
+import { PendingProviderResumeError } from './providers/suspending-provider';
 import type {
   ChatResponse,
   Message,
@@ -330,6 +331,46 @@ interface AgentLoopState {
   turnCosts: TurnCostEntry[];
 }
 
+export interface PersistedAgentLoopState {
+  conversation: Message[];
+  toolCacheEntries: Array<[string, CacheEntry]>;
+  totalTokens: TokenUsage;
+  totalCost: number;
+  turnCount: number;
+  lastContent: string;
+  sizeWarningFired: boolean;
+  budgetWarningFired: boolean;
+  previousModels: string[];
+  reasoningTraces: string[];
+  turnCosts: TurnCostEntry[];
+  budgetState?: SerializedBudgetState;
+}
+
+export type PendingProviderResumeState =
+  | {
+      turnIndex: number;
+      hint: import('./providers/types').ChatResumeHint;
+      resumed: false;
+    }
+  | {
+      turnIndex: number;
+      hint: import('./providers/types').ChatResumeHint;
+      resumed: true;
+      payload: unknown;
+    };
+
+export class AgentLoopSuspendedError extends Error {
+  readonly loopState: PersistedAgentLoopState;
+  readonly pendingResume: PendingProviderResumeState;
+
+  constructor(loopState: PersistedAgentLoopState, pendingResume: PendingProviderResumeState) {
+    super(`Agent loop suspended before turn ${String(pendingResume.turnIndex)} provider fetch`);
+    this.name = 'AgentLoopSuspendedError';
+    this.loopState = loopState;
+    this.pendingResume = pendingResume;
+  }
+}
+
 interface AgentRuntime {
   options: ResolvedAgentOptions;
   toolMap: Map<string, RegistryTool>;
@@ -535,8 +576,80 @@ function createInitialConversation(systemPrompt: string | undefined, input: stri
   return conversation;
 }
 
-async function createAgentRuntime(options: AgentOptions, input: string): Promise<AgentRuntime> {
+function createInitialAgentLoopState(
+  systemPrompt: string | undefined,
+  input: string,
+): AgentLoopState {
+  return {
+    conversation: createInitialConversation(systemPrompt, input),
+    toolCache: new Map<string, CacheEntry>(),
+    totalTokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    totalCost: 0,
+    turnCount: 0,
+    lastContent: '',
+    sizeWarningFired: false,
+    budgetWarningFired: false,
+    previousModels: [],
+    reasoningTraces: [],
+    turnCosts: [],
+  };
+}
+
+function restoreAgentLoopState(
+  persistedState: PersistedAgentLoopState | undefined,
+  systemPrompt: string | undefined,
+  input: string,
+): AgentLoopState {
+  if (persistedState === undefined) {
+    return createInitialAgentLoopState(systemPrompt, input);
+  }
+
+  return {
+    conversation: [...persistedState.conversation],
+    toolCache: new Map<string, CacheEntry>(persistedState.toolCacheEntries),
+    totalTokens: { ...persistedState.totalTokens },
+    totalCost: persistedState.totalCost,
+    turnCount: persistedState.turnCount,
+    lastContent: persistedState.lastContent,
+    sizeWarningFired: persistedState.sizeWarningFired,
+    budgetWarningFired: persistedState.budgetWarningFired,
+    previousModels: [...persistedState.previousModels],
+    reasoningTraces: [...persistedState.reasoningTraces],
+    turnCosts: [...persistedState.turnCosts],
+  };
+}
+
+function snapshotAgentLoopState(
+  state: AgentLoopState,
+  budgetTracker: BudgetTracker | undefined,
+): PersistedAgentLoopState {
+  return {
+    conversation: [...state.conversation],
+    toolCacheEntries: [...state.toolCache.entries()].map(([key, entry]) => [key, { ...entry }]),
+    totalTokens: { ...state.totalTokens },
+    totalCost: state.totalCost,
+    turnCount: state.turnCount,
+    lastContent: state.lastContent,
+    sizeWarningFired: state.sizeWarningFired,
+    budgetWarningFired: state.budgetWarningFired,
+    previousModels: [...state.previousModels],
+    reasoningTraces: [...state.reasoningTraces],
+    turnCosts: [...state.turnCosts],
+    ...(budgetTracker ? { budgetState: budgetTracker.toJSON() } : {}),
+  };
+}
+
+async function createAgentRuntime(
+  options: AgentOptions,
+  input: string,
+  persistedState?: PersistedAgentLoopState,
+): Promise<AgentRuntime> {
   const resolvedOptions = resolveAgentOptions(options);
+  if (resolvedOptions.budget && persistedState?.budgetState) {
+    const restoredBudget = resolvedOptions.budget.clone();
+    restoredBudget.restoreFromJSON(persistedState.budgetState);
+    resolvedOptions.budget = restoredBudget;
+  }
   const { registry, dispose } = await initializeTools(options.tools ?? [], resolvedOptions.signal);
   const { toolMap, toolDefinitions } = createToolLookups(registry.getAll());
 
@@ -545,19 +658,7 @@ async function createAgentRuntime(options: AgentOptions, input: string): Promise
     toolMap,
     toolDefinitions,
     dispose,
-    state: {
-      conversation: createInitialConversation(resolvedOptions.systemPrompt, input),
-      toolCache: new Map<string, CacheEntry>(),
-      totalTokens: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      totalCost: 0,
-      turnCount: 0,
-      lastContent: '',
-      sizeWarningFired: false,
-      budgetWarningFired: false,
-      previousModels: [],
-      reasoningTraces: [],
-      turnCosts: [],
-    },
+    state: restoreAgentLoopState(persistedState, resolvedOptions.systemPrompt, input),
   };
 }
 
@@ -729,8 +830,9 @@ async function prepareTurn(runtime: AgentRuntime, turnIndex: number): Promise<Pr
 function createChatOptions(
   runtime: AgentRuntime,
   model: string,
+  turnIndex: number,
 ): import('./providers/interface').ChatOptions {
-  const chatOptions: import('./providers/interface').ChatOptions = { model };
+  const chatOptions: import('./providers/interface').ChatOptions = { model, turnIndex };
   if (runtime.toolDefinitions.length > 0) {
     chatOptions.tools = runtime.toolDefinitions;
   }
@@ -859,14 +961,17 @@ async function executeChatWithFallbacks(
     try {
       response = await runtime.options.provider.chat(
         preparedTurn.messagesToSend,
-        createChatOptions(runtime, attemptModel),
+        createChatOptions(runtime, attemptModel, turnIndex),
       );
       runtime.options.healthTracker?.recordSuccess(runtime.options.provider.name);
       currentModel = attemptModel;
       break;
     } catch (error: unknown) {
       lastError = error;
-      if (isAbortError(runtime.options.signal, error)) {
+      if (
+        isAbortError(runtime.options.signal, error) ||
+        error instanceof PendingProviderResumeError
+      ) {
         throw error;
       }
 
@@ -1343,10 +1448,22 @@ async function executeAgentTurn(runtime: AgentRuntime, turnIndex: number): Promi
  * ```
  */
 export async function executeAgentLoop(options: AgentOptions, input: string): Promise<AgentResult> {
-  const runtime = await createAgentRuntime(options, input);
+  return executeAgentLoopWithState(options, input);
+}
+
+export async function executeAgentLoopWithState(
+  options: AgentOptions,
+  input: string,
+  persistedState?: PersistedAgentLoopState,
+): Promise<AgentResult> {
+  const runtime = await createAgentRuntime(options, input, persistedState);
 
   try {
-    for (let turnIndex = 0; turnIndex < runtime.options.maxTurns; turnIndex++) {
+    for (
+      let turnIndex = runtime.state.turnCount;
+      turnIndex < runtime.options.maxTurns;
+      turnIndex++
+    ) {
       const shouldContinue = await executeAgentTurn(runtime, turnIndex);
       if (!shouldContinue) {
         break;
@@ -1373,6 +1490,19 @@ export async function executeAgentLoop(options: AgentOptions, input: string): Pr
     }
 
     return buildAgentResult(runtime.state);
+  } catch (error) {
+    if (error instanceof PendingProviderResumeError) {
+      throw new AgentLoopSuspendedError(
+        snapshotAgentLoopState(runtime.state, runtime.options.budget),
+        {
+          turnIndex: error.turnIndex,
+          hint: error.hint,
+          resumed: false,
+        },
+      );
+    }
+
+    throw error;
   } finally {
     runtime.dispose();
   }
