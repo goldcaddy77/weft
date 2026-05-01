@@ -7,6 +7,7 @@ import type { WorkflowContext } from '../core/types.ts';
 import type { WeftServer } from '../server/index.ts';
 import { serve } from '../server/index.ts';
 import { MemoryStorage } from '../storage/memory.ts';
+import { waitForRealTimersForTesting } from '../testing/fake-timers.ts';
 import { isCoverageInstrumentationEnabled } from './coverage-mode.ts';
 
 /**
@@ -190,7 +191,7 @@ describe('Token stream latency', () => {
 
     for (let sample = 0; sample < WARMUP_SAMPLES; sample += 1) {
       await measureTokenLatency(engine, handle.id, streamSocket, `warmup-${String(sample)}`);
-      await Bun.sleep(5);
+      await waitForRealTimersForTesting(5);
     }
 
     const samples: number[] = [];
@@ -198,7 +199,7 @@ describe('Token stream latency', () => {
       samples.push(
         await measureTokenLatency(engine, handle.id, streamSocket, `token-${String(sample)}`),
       );
-      await Bun.sleep(5);
+      await waitForRealTimersForTesting(5);
     }
 
     streamSocket.close();

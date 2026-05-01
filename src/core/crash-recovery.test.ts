@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * End-to-end crash recovery tests.
  *
@@ -16,7 +17,7 @@ import type { WorkflowContext } from './types.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 describe('crash recovery', () => {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { waitForever } from '../testing/fake-timers.ts';
 
 import { collectKeys, flush, storageBackends, teardown } from '../testing/storage-backends.ts';
 import { Engine } from './engine.ts';
@@ -38,7 +39,7 @@ for (const backend of storageBackends) {
       engine.register('attr-test', {
         handler: async function* (_ctx: WorkflowContext) {
           // Keep workflow alive so attributes are not cleaned up
-          await Bun.sleep(999_999);
+          await waitForever();
           return 'done';
         },
         version: '1',
@@ -67,7 +68,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('idx-test', async function* (_ctx: WorkflowContext) {
-        await Bun.sleep(999_999);
+        await waitForever();
         return 'done';
       });
 
@@ -92,7 +93,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('merge-test', async function* (_ctx: WorkflowContext) {
-        await Bun.sleep(999_999);
+        await waitForever();
         return 'done';
       });
 
@@ -123,7 +124,7 @@ for (const backend of storageBackends) {
 
       engine.register('schema-test', {
         handler: async function* (_ctx: WorkflowContext) {
-          await Bun.sleep(999_999);
+          await waitForever();
           return 'done';
         },
         version: '1',
@@ -158,7 +159,7 @@ for (const backend of storageBackends) {
 
       engine.register('type-mismatch', {
         handler: async function* (_ctx: WorkflowContext) {
-          await Bun.sleep(999_999);
+          await waitForever();
           return 'done';
         },
         version: '1',
@@ -188,7 +189,7 @@ for (const backend of storageBackends) {
       engine = new Engine({ storage: result.storage });
 
       engine.register('size-test', async function* (_ctx: WorkflowContext) {
-        await Bun.sleep(999_999);
+        await waitForever();
         return 'done';
       });
 
@@ -215,7 +216,7 @@ for (const backend of storageBackends) {
 
       engine.register('filterable', async function* (_ctx: WorkflowContext) {
         // Keep alive so attributes are not cleaned up on completion
-        await Bun.sleep(999_999);
+        await waitForever();
         return 'done';
       });
 
@@ -248,7 +249,7 @@ for (const backend of storageBackends) {
 
       engine.register('types-test', async function* (_ctx: WorkflowContext) {
         // Keep alive so attributes persist
-        await Bun.sleep(999_999);
+        await waitForever();
         return 'done';
       });
 

@@ -414,9 +414,15 @@ describe('delayed workflow start', () => {
     const engine = new TestEngine({ startTime: 1_000 });
 
     engine.register('timeout-delayed', async function* (ctx: WorkflowContext) {
-      while (!ctx.signal.aborted) {
-        await Bun.sleep(0);
-      }
+      await new Promise<void>((resolve) => {
+        if (ctx.signal.aborted) {
+          resolve();
+          return;
+        }
+
+        ctx.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+
       return 'never';
     });
 

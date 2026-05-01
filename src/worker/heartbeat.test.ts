@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { restoreRealTimers, sleepForTesting, useFakeTimers } from '../testing/fake-timers.ts';
 import { HeartbeatManager } from './heartbeat.ts';
 
 describe('HeartbeatManager', () => {
@@ -6,12 +7,15 @@ describe('HeartbeatManager', () => {
   let manager: HeartbeatManager;
 
   beforeEach(() => {
+    useFakeTimers();
+
     sendHeartbeat = mock(() => {});
     manager = new HeartbeatManager(sendHeartbeat, 50);
   });
 
   afterEach(() => {
     manager.stop();
+    restoreRealTimers();
   });
 
   it('beat calls sendHeartbeat with details', () => {
@@ -34,7 +38,7 @@ describe('HeartbeatManager', () => {
 
     // Wait for several intervals to fire. The window is generous because
     // setInterval drift under CI parallel load can stretch the first fire.
-    await Bun.sleep(250);
+    await sleepForTesting(250);
 
     // At least 2 heartbeats should have fired in ~250ms with 50ms interval
     expect(sendHeartbeat.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -42,12 +46,12 @@ describe('HeartbeatManager', () => {
 
   it('stop stops heartbeats', async () => {
     manager.start();
-    await Bun.sleep(60);
+    await sleepForTesting(60);
 
     manager.stop();
     const countAfterStop = sendHeartbeat.mock.calls.length;
 
-    await Bun.sleep(100);
+    await sleepForTesting(100);
 
     // No additional heartbeats after stop
     expect(sendHeartbeat).toHaveBeenCalledTimes(countAfterStop);

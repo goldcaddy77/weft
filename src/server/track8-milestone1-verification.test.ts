@@ -1,3 +1,4 @@
+import { sleepForTesting } from '../testing/fake-timers.ts';
 /**
  * Track 8 acceptance — verifies that `serve()` wires the live
  * `OperationRegistry` + `REST_BINDINGS` into `handleRequest`, and that
@@ -36,7 +37,7 @@ async function waitForStatus(
   while (Date.now() < deadline) {
     const state = await engine.get(workflowId);
     if (state?.status === status) return;
-    await Bun.sleep(5);
+    await sleepForTesting(5);
   }
   throw new Error(`workflow ${workflowId} did not reach ${status} in time`);
 }

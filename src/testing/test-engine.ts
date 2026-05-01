@@ -11,10 +11,10 @@
 import { Engine } from '../core/engine.ts';
 import { parseDuration } from '../core/scheduler.ts';
 import type { Duration } from '../core/types.ts';
-import { sleep } from '../runtime/portable.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { ChaosScenario, FailureCategory } from './chaos.ts';
 import { withChaos } from './chaos.ts';
+import { yieldToEventLoop } from './fake-timers.ts';
 import type { MockHandle } from './mocks.ts';
 import { ActivityMockRegistry } from './mocks.ts';
 import { TimeControl } from './time-control.ts';
@@ -143,8 +143,15 @@ export class TestEngine extends Engine {
     // Tick the scheduler at the new time to fire durable timers
     await this.scheduler.tick(target);
 
-    // Allow microtasks to settle
-    await sleep(1);
+    // Allow microtasks to settle without spending wall-clock time.
+    for (let i = 0; i < 3; i++) {
+      await Promise.resolve();
+    }
+
+    // Some workflow continuations are queued onto the next event-loop turn.
+    // Yield once without using Bun.sleep so virtual-time tests still avoid
+    // wall-clock sleeps while letting those continuations run.
+    await yieldToEventLoop();
   }
 
   /** Current virtual time in milliseconds since epoch. */

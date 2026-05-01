@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 import type { ActivityExecutionRequest, ActivityExecutionResult } from './activity-runner.ts';
 import { executeActivity } from './activity-runner.ts';
 
@@ -29,7 +30,7 @@ describe('executeActivity', () => {
     };
 
     const result = await executeActivity(request, async (input: unknown) => {
-      await Bun.sleep(1);
+      await sleepForTesting(1);
       return (input as number) * 2;
     });
 

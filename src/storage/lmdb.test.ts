@@ -213,11 +213,11 @@ describe('LMDBStorage', () => {
     storage[Symbol.dispose]();
   });
 
-  it('[Symbol.dispose] closes the environment', () => {
+  it('[Symbol.dispose] closes the environment', async () => {
     const storage = createStorage();
     storage[Symbol.dispose]();
     // After dispose, reads should throw because the environment is closed.
-    expect(() => storage.get('key')).toThrow();
+    await expect(storage.get('key')).rejects.toThrow('LMDBStorage is closed');
   });
 
   it('binary values round-trip correctly', async () => {

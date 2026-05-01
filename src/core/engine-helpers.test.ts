@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import type { Storage as WeftStorage } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -169,7 +170,7 @@ describe('engine helpers', () => {
     );
 
     cleanupTick();
-    await Bun.sleep(0);
+    await sleepForTesting(0);
 
     expect(cleanupCalls).toBe(1);
   });
@@ -188,7 +189,7 @@ describe('engine helpers', () => {
     );
 
     cleanupTick();
-    await Bun.sleep(0);
+    await sleepForTesting(0);
 
     expect(failures).toHaveLength(1);
     expect(failures[0]!.source).toBe('cleanupExpiredResponses');

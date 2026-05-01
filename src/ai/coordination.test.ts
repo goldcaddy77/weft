@@ -1,4 +1,5 @@
 import { describe, expect, it, spyOn } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { BudgetTracker } from './budget';
 import type { LLMProvider } from './providers/interface';
@@ -677,7 +678,7 @@ describe('supervise', () => {
       signal: controller.signal,
     });
 
-    await Bun.sleep(0);
+    await sleepForTesting(0);
     controller.abort(new Error('parent aborted'));
 
     await expect(resultPromise).rejects.toThrow('parent aborted');

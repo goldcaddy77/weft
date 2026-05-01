@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { unlinkSync } from 'node:fs';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 import type { Context } from './context.ts';
@@ -122,7 +123,7 @@ describe('Engine with tenantResolver', () => {
   it('awaits async resolvers', async () => {
     const resolver: TenantResolver = {
       resolve: async (_id, input) => {
-        await Bun.sleep(1);
+        await sleepForTesting(1);
         if (input && typeof input === 'object' && 'tenantId' in input) {
           return { id: String((input as Record<string, unknown>)['tenantId']) };
         }
@@ -196,7 +197,7 @@ describe('Engine with tenantResolver', () => {
     });
 
     await firstEngine.start('park-and-capture', { note: 'initial' }, { id: workflowId });
-    await Bun.sleep(10);
+    await sleepForTesting(10);
 
     // Tear the first engine down without completing the workflow.
     firstEngine[Symbol.dispose]();
@@ -216,7 +217,7 @@ describe('Engine with tenantResolver', () => {
     const handle = secondEngine.getHandle(workflowId);
     const resultPromise = handle.result();
 
-    await Bun.sleep(10);
+    await sleepForTesting(10);
     await secondEngine.signal(workflowId, 'go', { ok: true });
 
     const result = (await resultPromise) as {

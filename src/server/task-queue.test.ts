@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { restoreRealTimers, sleepForTesting, useFakeTimers } from '../testing/fake-timers.ts';
 
 import type { PendingTask, TaskResult } from './task-queue.ts';
 import { TaskQueue } from './task-queue.ts';
@@ -460,6 +461,14 @@ describe('TaskQueue', () => {
   });
 
   describe('pending task expiration', () => {
+    beforeEach(() => {
+      useFakeTimers();
+    });
+
+    afterEach(() => {
+      restoreRealTimers();
+    });
+
     it('removes a pending task after the TTL expires', async () => {
       const queue = new TaskQueue({ pendingTaskTimeToLive: 50 });
 
@@ -468,7 +477,7 @@ describe('TaskQueue', () => {
       expect(queue.isTracked('ttl-1')).toBe(true);
 
       // Wait for the TTL to fire
-      await Bun.sleep(100);
+      await sleepForTesting(100);
 
       expect(queue.pendingCount('default')).toBe(0);
       expect(queue.isTracked('ttl-1')).toBe(false);
@@ -482,7 +491,7 @@ describe('TaskQueue', () => {
         results.push(result),
       );
 
-      await Bun.sleep(100);
+      await sleepForTesting(100);
 
       expect(results).toHaveLength(1);
       expect(results[0]?.operationId).toBe('ttl-cb');
@@ -505,7 +514,7 @@ describe('TaskQueue', () => {
       expect(task?.operationId).toBe('ttl-polled');
 
       // Wait past the original TTL
-      await Bun.sleep(150);
+      await sleepForTesting(150);
 
       // Callback should not have been invoked by expiration
       expect(results).toHaveLength(0);
@@ -531,7 +540,7 @@ describe('TaskQueue', () => {
       expect(task?.operationId).toBe('ttl-direct');
 
       // Wait past TTL
-      await Bun.sleep(100);
+      await sleepForTesting(100);
 
       // No expiration callback should have fired
       expect(results).toHaveLength(0);
@@ -543,7 +552,7 @@ describe('TaskQueue', () => {
       queue.enqueue('default', makeTask({ operationId: 'ttl-reuse' }));
 
       // Wait for expiration
-      await Bun.sleep(100);
+      await sleepForTesting(100);
 
       expect(queue.isTracked('ttl-reuse')).toBe(false);
 
@@ -557,7 +566,7 @@ describe('TaskQueue', () => {
 
       queue.enqueue('default', makeTask({ operationId: 'ttl-inf', activityName: 'charge' }));
 
-      await Bun.sleep(50);
+      await sleepForTesting(50);
 
       expect(queue.pendingCount('default')).toBe(1);
       expect(queue.isTracked('ttl-inf')).toBe(true);
@@ -568,7 +577,7 @@ describe('TaskQueue', () => {
 
       queue.enqueue('default', makeTask({ operationId: 'ttl-zero', activityName: 'charge' }));
 
-      await Bun.sleep(50);
+      await sleepForTesting(50);
 
       expect(queue.pendingCount('default')).toBe(1);
       expect(queue.isTracked('ttl-zero')).toBe(true);
@@ -580,7 +589,7 @@ describe('TaskQueue', () => {
       // Enqueue without a callback
       queue.enqueue('default', makeTask({ operationId: 'ttl-no-cb' }));
 
-      await Bun.sleep(100);
+      await sleepForTesting(100);
 
       // Task should be cleaned up without errors
       expect(queue.pendingCount('default')).toBe(0);

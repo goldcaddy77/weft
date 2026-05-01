@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 
 import { decode, encode } from '../core/codec.ts';
 import type { Context } from '../core/context.ts';
@@ -19,7 +20,7 @@ import { principalFromApiKey } from './principal.ts';
 
 /** Drain microtasks so fire-and-forget work completes. */
 async function flush(): Promise<void> {
-  await Bun.sleep(10);
+  await sleepForTesting(10);
 }
 
 /**
@@ -35,33 +36,18 @@ function apiKeyAuth() {
   };
 }
 
-async function waitForCondition(
-  predicate: () => Promise<boolean>,
-  message: string,
-  timeoutMilliseconds = 500,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMilliseconds;
-
-  while (Date.now() < deadline) {
-    if (await predicate()) {
-      return;
-    }
-
-    await Bun.sleep(5);
-  }
-
-  throw new Error(message);
-}
-
 async function waitForWorkflowStatus(
   engine: Engine,
   workflowId: string,
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timed-out',
 ): Promise<void> {
-  await waitForCondition(async () => {
-    const state = await engine.get(workflowId);
-    return state?.status === status;
-  }, `Expected workflow "${workflowId}" to reach ${status}`);
+  await waitForCondition(
+    async () => {
+      const state = await engine.get(workflowId);
+      return state?.status === status;
+    },
+    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs: 500, intervalMs: 5 },
+  );
 }
 
 async function* waitingWorkflow(ctx: WorkflowContext, input: unknown) {
@@ -2164,7 +2150,7 @@ describe('handleRequest', () => {
             );
             await storage.batch(operations);
           }
-          await Bun.sleep(10);
+          await sleepForTesting(10);
         }
       })();
 
@@ -2553,7 +2539,7 @@ describe('handleRequest', () => {
             );
             await storage.batch(ops);
           }
-          await Bun.sleep(10);
+          await sleepForTesting(10);
         }
       })();
 
@@ -2596,7 +2582,7 @@ describe('handleRequest', () => {
             );
             await storage.batch(ops);
           }
-          await Bun.sleep(10);
+          await sleepForTesting(10);
         }
       })();
 

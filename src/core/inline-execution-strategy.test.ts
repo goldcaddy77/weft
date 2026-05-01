@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { Context } from './context.ts';
 import { InlineExecutionStrategy } from './inline-execution-strategy.ts';
@@ -71,7 +72,7 @@ describe('InlineExecutionStrategy', () => {
       });
 
       // Allow microtask to complete
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('completed');
@@ -104,7 +105,7 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('checkpoint');
@@ -120,7 +121,7 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('failed');
@@ -146,7 +147,7 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('failed');
@@ -180,7 +181,7 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const pendingTurn = strategy.waitForWorkflowTurn('wf-1');
       expect(pendingTurn).toBeDefined();
@@ -226,7 +227,7 @@ describe('InlineExecutionStrategy', () => {
           checkpoint: new ArrayBuffer(0),
         });
 
-        await Bun.sleep(50);
+        await new Promise((resolve) => setTimeout(resolve, 50));
         strategy[Symbol.dispose]();
         process.exit(0);
       `;
@@ -278,12 +279,12 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
       messages.length = 0;
 
       strategy.continueWorkflow('wf-1', 42);
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('completed');
@@ -322,12 +323,12 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
       messages.length = 0;
 
       strategy.throwIntoWorkflow('wf-1', new Error('activity failed'));
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('failed');
@@ -364,12 +365,12 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
       messages.length = 0;
 
       strategy.throwIntoWorkflow('wf-1', new Error('oops'));
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('completed');
@@ -407,7 +408,7 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       expect(strategy.hasGenerator('wf-1')).toBe(true);
       expect(strategy.getContext('wf-1')).toBeDefined();
@@ -473,7 +474,7 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
       messages.length = 0;
 
       strategy.resumeWorkflow({
@@ -482,7 +483,7 @@ describe('InlineExecutionStrategy', () => {
         operationResult: { status: 'completed', value: 'hello' },
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('completed');
@@ -514,7 +515,7 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
       messages.length = 0;
 
       strategy.resumeWorkflow({
@@ -523,7 +524,7 @@ describe('InlineExecutionStrategy', () => {
         operationResult: { status: 'failed', error: 'oops' },
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       const message = firstMessage();
       expect(message.type).toBe('failed');
@@ -561,7 +562,7 @@ describe('InlineExecutionStrategy', () => {
         checkpoint: new ArrayBuffer(0),
       });
 
-      await Bun.sleep(10);
+      await sleepForTesting(10);
 
       strategy[Symbol.dispose]();
 

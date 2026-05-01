@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import type {
   AfterToolCallContext,
@@ -174,7 +175,7 @@ describe('AgentHooks', () => {
       const beforeTurn: NonNullable<AgentHooks['beforeTurn']> = async (
         _context: BeforeTurnContext,
       ): Promise<BeforeTurnResult> => {
-        await Bun.sleep(1);
+        await sleepForTesting(1);
         return { action: 'continue', messages: [{ role: 'user', content: 'async' }] };
       };
 
@@ -195,7 +196,7 @@ describe('AgentHooks', () => {
       const afterToolCall: NonNullable<AgentHooks['afterToolCall']> = async (
         _context: AfterToolCallContext,
       ): Promise<AfterToolCallResult> => {
-        await Bun.sleep(1);
+        await sleepForTesting(1);
         return { action: 'reject', reason: 'async rejection' };
       };
 
@@ -218,7 +219,7 @@ describe('AgentHooks', () => {
       const onBudgetWarning: NonNullable<AgentHooks['onBudgetWarning']> = async (
         _context: BudgetWarningContext,
       ): Promise<void> => {
-        await Bun.sleep(1);
+        await sleepForTesting(1);
         called = true;
       };
 
