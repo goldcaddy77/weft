@@ -66,12 +66,13 @@ async function completeWorkflowBatch(
   workflowStartIndex: number,
   workflowBatchSize: number,
 ): Promise<void> {
-  const handles = [];
+  const startPromises = [];
 
   for (let index = 0; index < workflowBatchSize; index += 1) {
-    handles.push(await engine.start('noop', workflowStartIndex + index));
+    startPromises.push(engine.start('noop', workflowStartIndex + index));
   }
 
+  const handles = await Promise.all(startPromises);
   await Promise.all(handles.map((handle) => handle.result()));
 }
 
@@ -88,7 +89,9 @@ async function runWarmup(engine: Engine): Promise<void> {
     await completeWorkflowBatch(engine, workflowStartIndex, workflowBatchSize);
   }
 
-  Bun.gc(true);
+  if (typeof Bun.gc === 'function') {
+    Bun.gc(true);
+  }
 }
 
 function summarizeSamples(samples: MemorySample[]): {
@@ -155,8 +158,8 @@ async function runSustainedLoad(
     await completeWorkflowBatch(engine, totalWorkflows, DEFAULT_BATCH_SIZE);
     totalWorkflows += DEFAULT_BATCH_SIZE;
 
-    const sample = profiler.snapshot();
-    if (sample.timestamp - lastSampleTimestamp >= sampleIntervalMilliseconds) {
+    if (Date.now() - lastSampleTimestamp >= sampleIntervalMilliseconds) {
+      const sample = profiler.snapshot();
       samples.push(sample);
       lastSampleTimestamp = sample.timestamp;
     }
