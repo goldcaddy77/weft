@@ -6,6 +6,7 @@ import {
   type BudgetOptions,
   type BudgetState,
   type ModelPricing,
+  type SerializedBudgetState,
 } from './budget.ts';
 
 const TEST_MODELS: Record<string, ModelPricing> = {
@@ -334,26 +335,26 @@ describe('BudgetTracker', () => {
 
       const restoredState = {
         tokensUsed: 3_000,
-        costUsed: 0.75,
+        costUsed: 0.12,
         breakdown: [
           {
-            model: 'gpt-3.5',
-            inputTokens: 1_000,
-            outputTokens: 500,
-            cost: 0.25,
+            model: 'gpt-4',
+            inputTokens: 2_000,
+            outputTokens: 1_000,
+            cost: 0.12,
           },
         ],
         warningFired: true,
-      };
+      } satisfies SerializedBudgetState;
 
       tracker.restoreFromJSON(restoredState);
 
       expect(tracker.toJSON()).toEqual(restoredState);
       expect(tracker.budgetRemaining()).toEqual({
         tokensUsed: 3_000,
-        costUsed: 0.75,
+        costUsed: 0.12,
         tokensRemaining: -2_000,
-        costRemaining: 0.25,
+        costRemaining: 0.88,
         breakdown: restoredState.breakdown,
       });
     });

@@ -554,7 +554,7 @@ describe('H1: executeStreamingAgent returns ReadableStream', () => {
     expect(pendingState.get(turnIndex)).toEqual(resumeState);
   });
 
-  it('cancelling the wrapped resume stream cancels the source reader without clearing state', async () => {
+  it('cancelling the wrapped resume stream cancels the source reader and clears stored state', async () => {
     const turnIndex = 9;
     const resumeState: PendingChatResumeState = {
       hint: { resumeToken: 'stream-ready-token' },

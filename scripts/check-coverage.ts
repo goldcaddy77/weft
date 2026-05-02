@@ -73,7 +73,6 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // not untested user-visible behavior.
       functions: 9,
       lines: createMergedLineSet(
-        new Set([4683]),
         createLineSet(2574, 2578),
         createLineSet(8297, 8299),
         new Set([8363]),
