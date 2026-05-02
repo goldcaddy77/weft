@@ -278,6 +278,44 @@ describe('H1: executeStreamingAgent returns ReadableStream', () => {
     expect(countedMessages).toEqual(messages);
   });
 
+  it('createStreamingProvider forwards resume hints and warmup to the base provider', async () => {
+    let hintedMessages: Message[] | undefined;
+    let hintedModel = '';
+    let warmupCalls = 0;
+
+    const baseProvider: LLMProvider = {
+      name: 'passthrough-provider',
+      async chat(): Promise<ChatResponse> {
+        throw new Error('Should not be called');
+      },
+      async stream(): Promise<ReadableStream<StreamChunk>> {
+        throw new Error('Should not be called');
+      },
+      async countTokens(): Promise<number> {
+        return 0;
+      },
+      async createChatResumeHint(messages, options) {
+        hintedMessages = messages;
+        hintedModel = options.model;
+        return { resumeToken: 'resume-token' };
+      },
+      async warmup(): Promise<void> {
+        warmupCalls += 1;
+      },
+    };
+
+    const wrapped = createStreamingProvider(baseProvider, () => {});
+    const messages: Message[] = [{ role: 'user', content: 'Hello' }];
+
+    await expect(
+      wrapped.createChatResumeHint?.(messages, { model: 'wrapped-model' }),
+    ).resolves.toEqual({ resumeToken: 'resume-token' });
+    await expect(wrapped.warmup?.()).resolves.toBeUndefined();
+    expect(hintedMessages).toEqual(messages);
+    expect(hintedModel).toBe('wrapped-model');
+    expect(warmupCalls).toBe(1);
+  });
+
   it('gracefully handles missing and malformed streaming tool call input fragments', async () => {
     const provider: LLMProvider = {
       name: 'tool-call-stream',
@@ -514,6 +552,106 @@ describe('H1: executeStreamingAgent returns ReadableStream', () => {
     });
     await expect(reader.read()).rejects.toThrow(streamError.message);
     expect(pendingState.get(turnIndex)).toEqual(resumeState);
+  });
+
+  it('cancelling the wrapped resume stream cancels the source reader without clearing state', async () => {
+    const turnIndex = 9;
+    const resumeState: PendingChatResumeState = {
+      hint: { resumeToken: 'stream-ready-token' },
+      resumed: true,
+      payload: { ready: true },
+    };
+    const pendingState = new Map<number, PendingChatResumeState>([[turnIndex, resumeState]]);
+    const cancelReasons: unknown[] = [];
+
+    const provider = createSuspendingProvider(
+      {
+        name: 'resume-aware-stream',
+        async createChatResumeHint() {
+          return { resumeToken: 'stream-ready-token' };
+        },
+        async chat(): Promise<ChatResponse> {
+          throw new Error('Streaming provider chat() should not be called');
+        },
+        async stream(): Promise<ReadableStream<StreamChunk>> {
+          return new ReadableStream<StreamChunk>({
+            start(controller) {
+              controller.enqueue({ type: 'token', token: 'Hello' });
+            },
+            cancel(reason) {
+              cancelReasons.push(reason);
+            },
+          });
+        },
+        async countTokens(): Promise<number> {
+          return 100;
+        },
+      },
+      {
+        load: async (currentTurnIndex: number) => pendingState.get(currentTurnIndex),
+        store: async (currentTurnIndex: number, state: PendingChatResumeState) => {
+          pendingState.set(currentTurnIndex, state);
+        },
+        clear: async (currentTurnIndex: number) => {
+          pendingState.delete(currentTurnIndex);
+        },
+      },
+    );
+
+    const stream = await provider.stream([{ role: 'user', content: 'Hello' }], {
+      model: 'test-model',
+      turnIndex,
+    });
+
+    const reader = stream.getReader();
+    expect(await reader.read()).toEqual({
+      done: false,
+      value: { type: 'token', token: 'Hello' },
+    });
+
+    await expect(reader.cancel('consumer aborted')).resolves.toBeUndefined();
+    expect(cancelReasons).toEqual(['consumer aborted']);
+    expect(pendingState.has(turnIndex)).toBe(false);
+  });
+
+  it('createSuspendingProvider forwards optional helpers to the base provider', async () => {
+    let hintedMessages: Message[] | undefined;
+    let hintedModel = '';
+    let warmupCalls = 0;
+
+    const provider = createSuspendingProvider(
+      {
+        name: 'resume-aware',
+        async chat(): Promise<ChatResponse> {
+          throw new Error('Should not be called');
+        },
+        async stream(): Promise<ReadableStream<StreamChunk>> {
+          throw new Error('Should not be called');
+        },
+        async countTokens(): Promise<number> {
+          return 42;
+        },
+        async createChatResumeHint(messages, options) {
+          hintedMessages = messages;
+          hintedModel = options.model;
+          return { resumeToken: 'resume-token' };
+        },
+        async warmup(): Promise<void> {
+          warmupCalls += 1;
+        },
+      },
+      createResumeCoordinator(),
+    );
+
+    const messages: Message[] = [{ role: 'user', content: 'Hello' }];
+    await expect(provider.countTokens(messages)).resolves.toBe(42);
+    await expect(
+      provider.createChatResumeHint?.(messages, { model: 'wrapped-model' }),
+    ).resolves.toEqual({ resumeToken: 'resume-token' });
+    await expect(provider.warmup?.()).resolves.toBeUndefined();
+    expect(hintedMessages).toEqual(messages);
+    expect(hintedModel).toBe('wrapped-model');
+    expect(warmupCalls).toBe(1);
   });
 });
 

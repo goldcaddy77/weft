@@ -326,6 +326,37 @@ describe('BudgetTracker', () => {
 
       expect(warnings).toHaveLength(1); // still just 1
     });
+
+    it('restoreFromJSON replaces an existing tracker state in place', () => {
+      const options = createOptions({ maxTokens: 1_000, maxCost: 1 });
+      const tracker = new BudgetTracker(options);
+      tracker.recordUsage('gpt-4', 200, 100);
+
+      const restoredState = {
+        tokensUsed: 3_000,
+        costUsed: 0.75,
+        breakdown: [
+          {
+            model: 'gpt-3.5',
+            inputTokens: 1_000,
+            outputTokens: 500,
+            cost: 0.25,
+          },
+        ],
+        warningFired: true,
+      };
+
+      tracker.restoreFromJSON(restoredState);
+
+      expect(tracker.toJSON()).toEqual(restoredState);
+      expect(tracker.budgetRemaining()).toEqual({
+        tokensUsed: 3_000,
+        costUsed: 0.75,
+        tokensRemaining: -2_000,
+        costRemaining: 0.25,
+        breakdown: restoredState.breakdown,
+      });
+    });
   });
 
   describe('clone', () => {

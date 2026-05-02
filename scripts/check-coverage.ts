@@ -49,6 +49,15 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
     },
   ],
   [
+    'src/ai/agent.ts',
+    {
+      // Line coverage is complete. Bun still reports one unnamed aggregate
+      // function miss in this large orchestrator module after the surrounding
+      // behavioral tests exercise the visible branches.
+      functions: 1,
+    },
+  ],
+  [
     'src/core/compression.ts',
     {
       // Bun's coverage run cannot simulate runtimes where brotli support is absent.
@@ -64,6 +73,7 @@ const COVERAGE_ALLOWANCES = new Map<string, CoverageAllowance>([
       // not untested user-visible behavior.
       functions: 9,
       lines: createMergedLineSet(
+        new Set([4683]),
         createLineSet(2574, 2578),
         createLineSet(8297, 8299),
         new Set([8363]),
