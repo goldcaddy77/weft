@@ -739,12 +739,6 @@ Hatchet positions as simpler Temporal with AI-first design. Native result stream
 
 ## Honest Gaps
 
-Weft addresses the majority of Temporal's AI workload pain points through architectural choices (checkpoint vs. replay) and built-in agent primitives. Three gaps remain. Each is tracked as an acceptance criterion in [the roadmap](../architecture.md).
-
-**Serverless suspension during LLM inference waits.** When a Weft activity calls an LLM API, the worker process sits idle waiting for the response—often for seconds to minutes. Inngest's `step.ai.infer()` and Restate's journal-based suspension offload inference and suspend the function entirely, meaning the function doesn't run (or charge) while waiting. Weft workers must remain running and consuming resources during all LLM wait times. A future yield-and-resume pattern for remote workers could address this, but it isn't implemented. _Tracked in [the roadmap](../architecture.md): "Serverless suspension primitive" and "Agent-loop suspension integration."_
-
-**AI observability dashboard.** The _data_ is comprehensive: `AgentTurnStartedEvent`, `AgentTurnCompletedEvent`, `AgentToolCalledEvent`, `AgentBudgetWarningEvent`, per-turn cost waterfall, conversation history queries, OTel spans with agent attributes. What's missing is a dedicated AI dashboard view for prompt/response inspection, token usage visualization over time, cost analytics, and model performance comparison. The built-in dashboard shows workflow-level state; it doesn't yet surface the agent-specific observability data in a purpose-built UI. _Tracked in [the roadmap](../architecture.md): "AI dashboard detail view."_
-
-**Multi-tenant workflow behavior customization.** Weft provides namespace-scoped budget enforcement (`BudgetPolicyEnforcer` with daily/monthly limits), search attributes for tenant filtering, and task queue names for routing. But per-tenant tool sets, custom validation logic, or conditional workflow steps require application-level parameterization—there's no built-in mechanism for multi-tenant workflow behavior branching beyond what you'd build yourself with configuration objects. _Tracked in [the roadmap](../architecture.md): "Multi-tenant context" and "Per-tenant agent customization."_
+The AI-native gaps originally tracked here have now been closed in [the roadmap](../architecture.md): inline agent turns can park on provider resume hints, the dashboard has a dedicated agent detail view, and tenant-aware agent customization is built in. The remaining unchecked roadmap items are operational performance-verification tasks rather than missing AI primitives.
 
 ---
