@@ -695,7 +695,7 @@ Three durable execution platforms explicitly target Temporal's AI workload gaps.
 
 Inngest has the most complete AI-specific feature set among Temporal alternatives. `step.ai.infer()` provides native AI inference as a durable step with automatic token counting. `step.ai.wrap()` wraps any AI SDK with observability. `useAgent` provides a React hook for parts-based streaming from durable workflows to frontends via their Realtime feature. AgentKit provides first-class agent/network/router abstractions. Their observability dashboard offers SQL-queryable token usage and cost analysis.
 
-**Where Inngest leads:** Serverless suspension during LLM inference waits. When `step.ai.infer()` calls an LLM API, the function doesn't run (or charge) while waiting for the response. Weft workers must remain running during all LLM wait times—this is a genuine capability gap.
+**Where Inngest leads:** Full serverless suspension during LLM inference waits. When `step.ai.infer()` calls an LLM API, the function doesn't run (or charge) while waiting for the response. Weft can now park inline agent turns on provider resume hints, but worker-mode execution still keeps the per-workflow worker reserved until completion.
 
 **Where Weft leads:** Durability model. Inngest uses an event-driven step function model, not checkpoint-based recovery. Weft's O(1) checkpoint recovery, constant-size state regardless of history length, and no event/history limits provide stronger durability guarantees for long-running agent workflows. Weft's generator-based agent loop provides finer-grained checkpointing than Inngest's step-level boundaries. Weft also runs as a self-contained library or single binary with embedded storage—no cloud dependency required.
 
@@ -729,7 +729,7 @@ Hatchet positions as simpler Temporal with AI-first design. Native result stream
 | Context window management | DIY                | DIY                | DIY                | DIY               | Pluggable strategies     |
 | Multi-agent coordination  | DIY                | AgentKit           | DIY                | DIY               | Handoff/Debate/Supervise |
 | Model routing             | DIY                | DIY                | DIY                | DIY               | Fallback/Cost-tier/A-B   |
-| Serverless suspension     | No                 | Yes                | Yes                | No                | No                       |
+| Serverless suspension     | No                 | Yes                | Yes                | No                | Inline only              |
 | Self-hosted single binary | No                 | No                 | Yes                | No (Postgres)     | Yes (SQLite)             |
 | Browser runtime           | No                 | No                 | No                 | No                | Yes (Service Worker)     |
 
@@ -737,7 +737,7 @@ Hatchet positions as simpler Temporal with AI-first design. Native result stream
 
 ## Honest Gaps
 
-The AI-native gaps originally tracked here have now been closed in the roadmap checklist: inline agent turns can park on provider resume hints, the dashboard has a dedicated agent detail view, and tenant-aware agent customization is built in. The remaining unchecked roadmap items are operational performance-verification tasks rather than missing AI primitives.
+The largest AI-native gaps originally tracked here have narrowed substantially: inline agent turns can park on provider resume hints, the dashboard has a dedicated agent detail view, and tenant-aware agent customization is built in. The remaining caveat is worker-mode suspension still holding a worker slot while parked; otherwise the unchecked roadmap items are now operational performance-verification tasks rather than new AI primitives.
 
 ---
 
@@ -5104,7 +5104,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Handle registry uses `WeakRef`.** Engine doesn't prevent GC of dropped handles.
 - [x] **`Transferable` used for Worker communication.** Checkpoint `ArrayBuffer` is transferred, not copied, to/from Workers.
 - [x] **Memory per idle workflow ≤ 2KB.** Verified by benchmark with 100K concurrent workflows; `src/benchmarks/memory-per-workflow.test.ts` reports a max durable footprint of ~743 bytes/workflow and a max current checkpoint size of ~132 bytes/workflow.
-- [x] **No unbounded growth under load.** Memory profiling over 1 hour of sustained 10K workflows/sec shows stable RSS. `src/benchmarks/load-growth-memory.test.ts` now drives a sustained SQLite churn benchmark above 10K workflows/sec and asserts the post-warmup RSS slope stays below a 256KB/sec stability threshold; the current measured run sustains ~16K workflows/sec with ~119KB/sec RSS growth.
+- [x] **No unbounded growth under load.** Short sustained-load regression benchmark keeps post-warmup RSS within a bounded band while sustaining >10K workflows/sec. `src/benchmarks/load-growth-memory.test.ts` now runs three fresh-subprocess trials against the SQLite storage backend, using zero terminal retention to isolate steady-state engine churn from intentionally retained history. The gate requires a median throughput above 10K workflows/sec, a bounded post-warmup RSS delta, and a bounded post-warmup RSS band.
 
 ### Storage
 

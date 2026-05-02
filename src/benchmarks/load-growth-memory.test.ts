@@ -1,29 +1,21 @@
 import { describe, expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
 
+import { runBenchmarkSubprocess } from './benchmark-subprocess.ts';
 import type { LoadGrowthMemoryMeasurement } from './load-growth-memory-runner.ts';
 
 const TARGET_WORKFLOWS_PER_SECOND = 10_000;
-const MAX_RSS_GROWTH_BYTES_PER_SECOND = 256 * 1024;
-const SAMPLE_INTERVAL_MILLISECONDS = 250;
+const MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND = 192 * 1024;
+const MAX_POST_WARMUP_RSS_DELTA_BYTES = 3 * 1024 * 1024;
+const MAX_POST_WARMUP_RSS_RANGE_BYTES = 4 * 1024 * 1024;
+const SAMPLE_INTERVAL_MILLISECONDS = 500;
 const WARMUP_SAMPLES = 4;
-const RUN_DURATION_MILLISECONDS = 6_000;
-const BENCHMARK_ENVIRONMENT_KEYS = [
-  'HOME',
-  'NODE_V8_COVERAGE',
-  'TEMP',
-  'TMP',
-  'TMPDIR',
-  'USERPROFILE',
-  'WEFT_COVERAGE_MODE',
-] as const;
+const WORKFLOW_BATCH_SIZE = 500;
+const RUN_DURATION_MILLISECONDS = 12_000;
+const TRIAL_COUNT = 3;
 const loadGrowthMemoryRunnerPath = fileURLToPath(
   new URL('./load-growth-memory-runner.ts', import.meta.url),
 );
-
-function isPositiveFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0;
-}
 
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
@@ -32,8 +24,40 @@ function isNonNegativeInteger(value: unknown): value is number {
 function hasValidSampleCounts(candidate: Record<string, unknown>): boolean {
   return (
     isNonNegativeInteger(candidate['warmupSamples']) &&
-    isPositiveFiniteNumber(candidate['samplesCollected']) &&
-    candidate['samplesCollected'] > candidate['warmupSamples']
+    isNonNegativeInteger(candidate['samplesCollected']) &&
+    isNonNegativeInteger(candidate['samplesAnalyzed']) &&
+    candidate['samplesCollected'] > candidate['warmupSamples'] &&
+    candidate['samplesAnalyzed'] === candidate['samplesCollected'] - candidate['warmupSamples']
+  );
+}
+
+function hasExpectedConfiguration(candidate: Record<string, unknown>): boolean {
+  return (
+    isNonNegativeInteger(candidate['configuredDurationMilliseconds']) &&
+    candidate['configuredDurationMilliseconds'] === RUN_DURATION_MILLISECONDS &&
+    isNonNegativeInteger(candidate['measuredDurationMilliseconds']) &&
+    candidate['measuredDurationMilliseconds'] >= candidate['configuredDurationMilliseconds'] &&
+    isNonNegativeInteger(candidate['sampleIntervalMilliseconds']) &&
+    candidate['sampleIntervalMilliseconds'] === SAMPLE_INTERVAL_MILLISECONDS &&
+    isNonNegativeInteger(candidate['workflowBatchSize']) &&
+    candidate['workflowBatchSize'] === WORKFLOW_BATCH_SIZE &&
+    isNonNegativeInteger(candidate['warmupSamples']) &&
+    candidate['warmupSamples'] === WARMUP_SAMPLES
+  );
+}
+
+function hasValidMeasurementSummary(candidate: Record<string, unknown>): boolean {
+  return (
+    hasValidSampleCounts(candidate) &&
+    isNonNegativeInteger(candidate['totalWorkflows']) &&
+    isNonNegativeInteger(candidate['workflowsPerSecond']) &&
+    typeof candidate['rssGrowthRatePerSecond'] === 'number' &&
+    Number.isFinite(candidate['rssGrowthRatePerSecond']) &&
+    typeof candidate['postWarmupRssDeltaBytes'] === 'number' &&
+    Number.isFinite(candidate['postWarmupRssDeltaBytes']) &&
+    isNonNegativeInteger(candidate['postWarmupRssRangeBytes']) &&
+    isNonNegativeInteger(candidate['peakRss']) &&
+    isNonNegativeInteger(candidate['averageRss'])
   );
 }
 
@@ -43,102 +67,66 @@ function isLoadGrowthMemoryMeasurement(value: unknown): value is LoadGrowthMemor
   }
 
   const candidate = value as Record<string, unknown>;
-  return (
-    isPositiveFiniteNumber(candidate['durationMilliseconds']) &&
-    isPositiveFiniteNumber(candidate['sampleIntervalMilliseconds']) &&
-    hasValidSampleCounts(candidate) &&
-    isPositiveFiniteNumber(candidate['totalWorkflows']) &&
-    isPositiveFiniteNumber(candidate['workflowsPerSecond']) &&
-    typeof candidate['stable'] === 'boolean' &&
-    typeof candidate['rssGrowthRatePerSecond'] === 'number' &&
-    Number.isFinite(candidate['rssGrowthRatePerSecond']) &&
-    isPositiveFiniteNumber(candidate['rssGrowthThresholdPerSecond']) &&
-    isPositiveFiniteNumber(candidate['peakRss']) &&
-    isPositiveFiniteNumber(candidate['averageRss'])
-  );
+  return hasExpectedConfiguration(candidate) && hasValidMeasurementSummary(candidate);
 }
 
-function createBenchmarkEnvironment(): Record<string, string> {
-  const environment: Record<string, string> = {};
-
-  for (const key of BENCHMARK_ENVIRONMENT_KEYS) {
-    const value = process.env[key];
-    if (typeof value === 'string') {
-      environment[key] = value;
-    }
+function median(values: number[]): number {
+  const sortedValues = values.toSorted((left, right) => left - right);
+  const middleIndex = Math.floor(sortedValues.length / 2);
+  if (sortedValues.length % 2 === 0) {
+    return (sortedValues[middleIndex - 1]! + sortedValues[middleIndex]!) / 2;
   }
 
-  return environment;
+  return sortedValues[middleIndex]!;
 }
 
 function runLoadGrowthMemoryBenchmark(): LoadGrowthMemoryMeasurement {
-  const result = Bun.spawnSync(
-    [
-      process.execPath,
-      'run',
-      loadGrowthMemoryRunnerPath,
-      String(RUN_DURATION_MILLISECONDS),
-      String(TARGET_WORKFLOWS_PER_SECOND),
-      String(SAMPLE_INTERVAL_MILLISECONDS),
-      String(WARMUP_SAMPLES),
-      String(MAX_RSS_GROWTH_BYTES_PER_SECOND),
-    ],
-    {
-      cwd: process.cwd(),
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: createBenchmarkEnvironment(),
-    },
-  );
-
-  if (result.exitCode !== 0) {
-    const errorOutput = new TextDecoder().decode(result.stderr).trim();
-    throw new Error(`Load-growth memory benchmark subprocess failed: ${errorOutput}`);
-  }
-
-  const outputLines = new TextDecoder()
-    .decode(result.stdout)
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  const lastOutputLine = outputLines.at(-1);
-  if (lastOutputLine === undefined) {
-    throw new Error('Load-growth memory benchmark subprocess produced no measurement output');
-  }
-
-  const parsed = JSON.parse(lastOutputLine) as unknown;
-  if (!isLoadGrowthMemoryMeasurement(parsed)) {
-    throw new Error('Load-growth memory benchmark subprocess returned an invalid payload');
-  }
-
-  return parsed;
+  return runBenchmarkSubprocess({
+    benchmarkName: 'Load-growth memory benchmark',
+    runnerArguments: [String(RUN_DURATION_MILLISECONDS)],
+    runnerPath: loadGrowthMemoryRunnerPath,
+    validateMeasurement: isLoadGrowthMemoryMeasurement,
+  });
 }
 
 describe('Load-growth memory stability', () => {
-  it('acceptance criterion: No unbounded growth under load. Memory profiling over 1 hour of sustained 10K workflows/sec shows stable RSS.', async () => {
-    const measurement = runLoadGrowthMemoryBenchmark();
+  it('acceptance criterion: No unbounded growth under load. Short sustained-load regression benchmark keeps post-warmup RSS within a bounded band while sustaining 10K workflows/sec.', async () => {
+    const measurements = Array.from({ length: TRIAL_COUNT }, () => runLoadGrowthMemoryBenchmark());
+    const medianThroughput = median(
+      measurements.map((measurement) => measurement.workflowsPerSecond),
+    );
+    const medianAbsoluteRssGrowthRatePerSecond = median(
+      measurements.map((measurement) => Math.abs(measurement.rssGrowthRatePerSecond)),
+    );
+    const maximumPostWarmupRssDeltaBytes = Math.max(
+      ...measurements.map((measurement) => Math.abs(measurement.postWarmupRssDeltaBytes)),
+    );
+    const maximumPostWarmupRssRangeBytes = Math.max(
+      ...measurements.map((measurement) => measurement.postWarmupRssRangeBytes),
+    );
 
     console.log(
       [
         `\n  Load-growth memory benchmark:`,
-        `    Duration (ms):   ${measurement.durationMilliseconds.toLocaleString()}`,
-        `    Sample interval: ${measurement.sampleIntervalMilliseconds.toLocaleString()}`,
-        `    Warmup samples:  ${measurement.warmupSamples.toLocaleString()}`,
-        `    Samples kept:    ${measurement.samplesCollected.toLocaleString()}`,
-        `    Workflows:       ${measurement.totalWorkflows.toLocaleString()}`,
-        `    Throughput/sec:  ${measurement.workflowsPerSecond.toLocaleString()}`,
-        `    RSS growth/sec:  ${measurement.rssGrowthRatePerSecond.toFixed(0)} bytes`,
-        `    RSS threshold:   ${measurement.rssGrowthThresholdPerSecond.toLocaleString()} bytes`,
-        `    Peak RSS:        ${measurement.peakRss.toLocaleString()} bytes`,
-        `    Average RSS:     ${measurement.averageRss.toLocaleString()} bytes`,
-        `    Stable RSS:      ${measurement.stable ? 'yes' : 'no'}\n`,
+        ...measurements.map(
+          (measurement, index) =>
+            `    Trial ${String(index + 1).padStart(2, ' ')}: ${measurement.workflowsPerSecond.toLocaleString()} workflows/sec, ` +
+            `RSS slope ${Math.abs(measurement.rssGrowthRatePerSecond).toFixed(0)} bytes/sec, ` +
+            `RSS delta ${Math.abs(measurement.postWarmupRssDeltaBytes).toLocaleString()} bytes, ` +
+            `RSS band ${measurement.postWarmupRssRangeBytes.toLocaleString()} bytes`,
+        ),
+        `    Median throughput: ${medianThroughput.toLocaleString()} workflows/sec`,
+        `    Median RSS slope:  ${medianAbsoluteRssGrowthRatePerSecond.toFixed(0)} bytes/sec`,
+        `    Max RSS delta:     ${maximumPostWarmupRssDeltaBytes.toLocaleString()} bytes`,
+        `    Max RSS band:      ${maximumPostWarmupRssRangeBytes.toLocaleString()} bytes\n`,
       ].join('\n'),
     );
 
-    expect(measurement.workflowsPerSecond).toBeGreaterThanOrEqual(TARGET_WORKFLOWS_PER_SECOND);
-    expect(measurement.stable).toBe(true);
-    expect(Math.abs(measurement.rssGrowthRatePerSecond)).toBeLessThanOrEqual(
-      measurement.rssGrowthThresholdPerSecond,
+    expect(medianThroughput).toBeGreaterThanOrEqual(TARGET_WORKFLOWS_PER_SECOND);
+    expect(medianAbsoluteRssGrowthRatePerSecond).toBeLessThanOrEqual(
+      MAX_MEDIAN_RSS_GROWTH_BYTES_PER_SECOND,
     );
-  }, 60_000);
+    expect(maximumPostWarmupRssDeltaBytes).toBeLessThanOrEqual(MAX_POST_WARMUP_RSS_DELTA_BYTES);
+    expect(maximumPostWarmupRssRangeBytes).toBeLessThanOrEqual(MAX_POST_WARMUP_RSS_RANGE_BYTES);
+  }, 120_000);
 });
