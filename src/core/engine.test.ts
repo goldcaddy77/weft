@@ -161,6 +161,34 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('delivers a signal sent immediately after start before the first inline turn launches', async () => {
+    const engine = new Engine();
+
+    engine.register('wait-for-go', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('wait-for-go', null);
+    await handle.signal('go', 'ready');
+
+    await expect(handle.result()).resolves.toBe('ready');
+    engine[Symbol.dispose]();
+  });
+
+  it('cancels a workflow immediately after start before the first inline turn launches', async () => {
+    const engine = new Engine();
+
+    engine.register('wait-forever', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).waitForSignal('never');
+    });
+
+    const handle = await engine.start('wait-forever', null);
+    await handle.cancel();
+
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+    engine[Symbol.dispose]();
+  });
+
   it('WorkflowCompletedEvent fires with result and duration', async () => {
     const engine = new Engine();
     engine.register('fast', async function* () {

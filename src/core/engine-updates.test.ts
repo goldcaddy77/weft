@@ -865,6 +865,8 @@ for (const backend of storageBackends) {
           engine.update(handle.id, 'review', 'my-data', { timeout: 25 }),
         ).rejects.toBeInstanceOf(UpdateTimeoutError);
         await expect(handle.result()).resolves.toBe('processed without respond: my-data');
+        await flush();
+        expect(await collectKeys(result.storage, KEYS.updatePrefix(handle.id))).toEqual([]);
       });
 
       it('calling respond() multiple times is idempotent', async () => {
