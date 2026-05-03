@@ -230,6 +230,50 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('get() reports running once an inline workflow has started its first turn', async () => {
+    const workflowId = 'queued-running-status';
+    const storage = new MemoryStorage();
+    const originalScan = storage.scan.bind(storage);
+    const signalPrefix = `sig:${encodeStorageKeyComponent(workflowId)}:go:`;
+    const bufferedSignalScanStarted = Promise.withResolvers<void>();
+    const bufferedSignalScanReleased = Promise.withResolvers<void>();
+    let holdNextBufferedSignalScan = true;
+    let started = false;
+
+    storage.scan = async function* (
+      prefix: string,
+      options?: ScanOptions,
+    ): AsyncIterable<[string, Uint8Array]> {
+      if (holdNextBufferedSignalScan && prefix === signalPrefix) {
+        holdNextBufferedSignalScan = false;
+        bufferedSignalScanStarted.resolve();
+        await bufferedSignalScanReleased.promise;
+      }
+
+      yield* originalScan(prefix, options);
+    };
+
+    const engine = new Engine({ storage });
+    engine.register('queued-running-status', async function* (ctx: WorkflowContext) {
+      started = true;
+      yield* (ctx as Context).waitForSignal('go');
+      return 'done';
+    });
+
+    const handle = await engine.start('queued-running-status', null, { id: workflowId });
+
+    await bufferedSignalScanStarted.promise;
+    expect(started).toBe(true);
+    expect(await engine.get(workflowId)).toMatchObject({ status: 'running' });
+
+    bufferedSignalScanReleased.resolve();
+    await flush();
+
+    await handle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    engine[Symbol.dispose]();
+  });
+
   it('resume() returns the existing handle for a parked inline workflow', async () => {
     const engine = new Engine();
     let runCount = 0;

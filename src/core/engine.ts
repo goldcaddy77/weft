@@ -2210,6 +2210,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #workflowVersionTuples: Map<string, WorkflowVersionTuple> = new Map();
   #pendingTimelineEntries: Map<string, PendingTimelineEntry>;
   #queuedInlineWorkflowStarts: QueuedInlineWorkflowExecutionStart[] = [];
+  #queuedInlineWorkflowStartIds = new Set<string>();
   #queuedOrLaunchingInlineWorkflowStartIds = new Set<string>();
   #queuedInlineWorkflowStartFlushScheduled = false;
   #queuedInlineWorkflowStartChannel: MessageChannel | null = null;
@@ -3092,6 +3093,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   #queueInlineWorkflowExecutionStart(start: QueuedInlineWorkflowExecutionStart): void {
+    this.#queuedInlineWorkflowStartIds.add(start.workflowId);
     this.#queuedOrLaunchingInlineWorkflowStartIds.add(start.workflowId);
     this.#queuedInlineWorkflowStarts.push(start);
     if (this.#queuedInlineWorkflowStartFlushScheduled) {
@@ -3137,6 +3139,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         return;
       }
 
+      this.#queuedInlineWorkflowStartIds.delete(start.workflowId);
       this.dispatchEvent(
         new WorkflowStartedEvent(start.workflowId, start.workflowType, start.input),
       );
@@ -3157,6 +3160,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
       await this.#processPendingUpdatesAfterReplay(start.workflowId);
     } finally {
+      this.#queuedInlineWorkflowStartIds.delete(start.workflowId);
       this.#queuedOrLaunchingInlineWorkflowStartIds.delete(start.workflowId);
     }
   }
@@ -3171,17 +3175,22 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       (start) => start.workflowId !== workflowId,
     );
     if (this.#queuedInlineWorkflowStarts.length !== initialLength) {
+      this.#queuedInlineWorkflowStartIds.delete(workflowId);
       this.#queuedOrLaunchingInlineWorkflowStartIds.delete(workflowId);
     }
     return this.#queuedInlineWorkflowStarts.length !== initialLength;
   }
 
   #hasQueuedInlineWorkflowStart(workflowId: string): boolean {
+    return this.#queuedInlineWorkflowStartIds.has(workflowId);
+  }
+
+  #hasQueuedOrLaunchingInlineWorkflowStart(workflowId: string): boolean {
     return this.#queuedOrLaunchingInlineWorkflowStartIds.has(workflowId);
   }
 
   #isInlineWorkflowLocallyOwned(workflowId: string): boolean {
-    if (this.#hasQueuedInlineWorkflowStart(workflowId)) {
+    if (this.#hasQueuedOrLaunchingInlineWorkflowStart(workflowId)) {
       return true;
     }
 
@@ -6282,6 +6291,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#abortController.abort();
     this.#queuedInlineWorkflowStartFlushScheduled = false;
     this.#queuedInlineWorkflowStarts = [];
+    this.#queuedInlineWorkflowStartIds.clear();
     this.#queuedOrLaunchingInlineWorkflowStartIds.clear();
     this.#queuedInlineWorkflowStartChannel?.port1.close();
     this.#queuedInlineWorkflowStartChannel?.port2.close();
