@@ -2210,6 +2210,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #workflowVersionTuples: Map<string, WorkflowVersionTuple> = new Map();
   #pendingTimelineEntries: Map<string, PendingTimelineEntry>;
   #queuedInlineWorkflowStarts: QueuedInlineWorkflowExecutionStart[] = [];
+  #queuedOrLaunchingInlineWorkflowStartIds = new Set<string>();
   #queuedInlineWorkflowStartFlushScheduled = false;
   #queuedInlineWorkflowStartChannel: MessageChannel | null = null;
 
@@ -3091,6 +3092,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   #queueInlineWorkflowExecutionStart(start: QueuedInlineWorkflowExecutionStart): void {
+    this.#queuedOrLaunchingInlineWorkflowStartIds.add(start.workflowId);
     this.#queuedInlineWorkflowStarts.push(start);
     if (this.#queuedInlineWorkflowStartFlushScheduled) {
       return;
@@ -3129,28 +3131,34 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async #startQueuedInlineWorkflowExecution(
     start: QueuedInlineWorkflowExecutionStart,
   ): Promise<void> {
-    const state = await this.#loadWorkflowState(start.workflowId);
-    if (!state || state.status !== 'running') {
-      return;
+    try {
+      const state = await this.#loadWorkflowState(start.workflowId);
+      if (!state || state.status !== 'running') {
+        return;
+      }
+
+      this.dispatchEvent(
+        new WorkflowStartedEvent(start.workflowId, start.workflowType, start.input),
+      );
+      this.#startWorkflowExecution(
+        start.workflowId,
+        start.workflowType,
+        start.input,
+        start.checkpoint,
+        start.nestingDepth,
+        start.executionDeadline,
+        start.tenant,
+      );
+
+      const pendingTurn = this.#inlineStrategy?.waitForWorkflowTurn(start.workflowId);
+      if (pendingTurn) {
+        await pendingTurn;
+      }
+
+      await this.#processPendingUpdatesAfterReplay(start.workflowId);
+    } finally {
+      this.#queuedOrLaunchingInlineWorkflowStartIds.delete(start.workflowId);
     }
-
-    this.dispatchEvent(new WorkflowStartedEvent(start.workflowId, start.workflowType, start.input));
-    this.#startWorkflowExecution(
-      start.workflowId,
-      start.workflowType,
-      start.input,
-      start.checkpoint,
-      start.nestingDepth,
-      start.executionDeadline,
-      start.tenant,
-    );
-
-    const pendingTurn = this.#inlineStrategy?.waitForWorkflowTurn(start.workflowId);
-    if (pendingTurn) {
-      await pendingTurn;
-    }
-
-    await this.#processPendingUpdatesAfterReplay(start.workflowId);
   }
 
   #dropQueuedInlineWorkflowStart(workflowId: string): boolean {
@@ -3162,11 +3170,39 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#queuedInlineWorkflowStarts = this.#queuedInlineWorkflowStarts.filter(
       (start) => start.workflowId !== workflowId,
     );
+    if (this.#queuedInlineWorkflowStarts.length !== initialLength) {
+      this.#queuedOrLaunchingInlineWorkflowStartIds.delete(workflowId);
+    }
     return this.#queuedInlineWorkflowStarts.length !== initialLength;
   }
 
   #hasQueuedInlineWorkflowStart(workflowId: string): boolean {
-    return this.#queuedInlineWorkflowStarts.some((start) => start.workflowId === workflowId);
+    return this.#queuedOrLaunchingInlineWorkflowStartIds.has(workflowId);
+  }
+
+  #isInlineWorkflowLocallyOwned(workflowId: string): boolean {
+    if (this.#hasQueuedInlineWorkflowStart(workflowId)) {
+      return true;
+    }
+
+    if (this.#inlineStrategy === null) {
+      return false;
+    }
+
+    return (
+      this.#inlineStrategy.getContext(workflowId) !== undefined ||
+      this.#inlineStrategy.waitForWorkflowTurn(workflowId) !== undefined ||
+      this.#parkedInlineWorkflows.has(workflowId)
+    );
+  }
+
+  async #hasLocalCheckpointOwnership(workflowId: string): Promise<boolean> {
+    if (!this.#checkpoints.has(workflowId)) {
+      return false;
+    }
+
+    const state = await this.#loadWorkflowState(workflowId);
+    return state?.status === 'running' || state?.status === 'pending';
   }
 
   // -------------------------------------------------------------------------
@@ -5336,7 +5372,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async resume(workflowId: string): Promise<WorkflowHandle> {
-    if (this.#hasQueuedInlineWorkflowStart(workflowId)) {
+    if (this.#isInlineWorkflowLocallyOwned(workflowId)) {
+      return this.getHandle(workflowId);
+    }
+
+    if (await this.#hasLocalCheckpointOwnership(workflowId)) {
       return this.getHandle(workflowId);
     }
 
@@ -5498,7 +5538,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (key.includes(':ckpt') || key.includes(':offload') || key.includes(':archive')) continue;
 
       const state = decodeWorkflowState(value);
-      if (state.status === 'pending' || this.#hasQueuedInlineWorkflowStart(state.id)) {
+      const hasLocalCheckpointOwnership =
+        this.#checkpoints.has(state.id) &&
+        (state.status === 'running' || state.status === 'pending');
+      if (
+        state.status === 'pending' ||
+        this.#isInlineWorkflowLocallyOwned(state.id) ||
+        hasLocalCheckpointOwnership
+      ) {
         handles.push(this.getHandle(state.id));
         continue;
       }
@@ -6235,6 +6282,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#abortController.abort();
     this.#queuedInlineWorkflowStartFlushScheduled = false;
     this.#queuedInlineWorkflowStarts = [];
+    this.#queuedOrLaunchingInlineWorkflowStartIds.clear();
     this.#queuedInlineWorkflowStartChannel?.port1.close();
     this.#queuedInlineWorkflowStartChannel?.port2.close();
     this.#queuedInlineWorkflowStartChannel = null;

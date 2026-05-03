@@ -230,6 +230,50 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('resume() returns the existing handle for a parked inline workflow', async () => {
+    const engine = new Engine();
+    let runCount = 0;
+
+    engine.register('active-resume', async function* (ctx: WorkflowContext) {
+      runCount += 1;
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('active-resume', null);
+    await flush();
+
+    const resumedHandle = await engine.resume(handle.id);
+    expect(resumedHandle.id).toBe(handle.id);
+    expect(runCount).toBe(1);
+
+    await resumedHandle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    expect(runCount).toBe(2);
+    engine[Symbol.dispose]();
+  });
+
+  it('recoverAll() returns the existing handle for a parked inline workflow', async () => {
+    const engine = new Engine();
+    let runCount = 0;
+
+    engine.register('active-recover', async function* (ctx: WorkflowContext) {
+      runCount += 1;
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('active-recover', null);
+    await flush();
+
+    const recoveredHandles = await engine.recoverAll();
+    expect(recoveredHandles.some((recoveredHandle) => recoveredHandle.id === handle.id)).toBe(true);
+    expect(runCount).toBe(1);
+
+    await handle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    expect(runCount).toBe(2);
+    engine[Symbol.dispose]();
+  });
+
   it('WorkflowCompletedEvent fires with result and duration', async () => {
     const engine = new Engine();
     engine.register('fast', async function* () {
