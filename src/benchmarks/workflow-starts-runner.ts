@@ -2,22 +2,22 @@ import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
 
-export type WorkflowStartMeasurement = {
+export type WorkflowStartAdmissionMeasurement = {
   batchSize: number;
   warmupStarts: number;
   measuredStarts: number;
-  startsPerSecond: number;
+  admissionsPerSecond: number;
 };
 
 const DEFAULT_WARMUP_STARTS = 50;
 const DEFAULT_TOTAL_STARTS = 10_000;
 const DEFAULT_BATCH_SIZE = 100;
 
-async function measureWorkflowStarts(
+async function measureWorkflowStartAdmissions(
   totalStarts: number,
   batchSize: number,
   warmupStarts: number,
-): Promise<WorkflowStartMeasurement> {
+): Promise<WorkflowStartAdmissionMeasurement> {
   const storage = new BunSQLiteStorage(':memory:');
   const engine = new Engine({ storage });
 
@@ -53,7 +53,7 @@ async function measureWorkflowStarts(
       batchSize,
       warmupStarts,
       measuredStarts: totalStarts,
-      startsPerSecond: Math.round((totalStarts / elapsed) * 1000),
+      admissionsPerSecond: Math.round((totalStarts / elapsed) * 1000),
     };
   } finally {
     engine[Symbol.dispose]();
@@ -78,6 +78,6 @@ if (import.meta.main) {
     process.exit(1);
   }
 
-  const measurement = await measureWorkflowStarts(totalStarts, batchSize, warmupStarts);
+  const measurement = await measureWorkflowStartAdmissions(totalStarts, batchSize, warmupStarts);
   console.log(JSON.stringify(measurement));
 }

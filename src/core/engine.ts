@@ -2212,7 +2212,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   #queuedInlineWorkflowStarts: QueuedInlineWorkflowExecutionStart[] = [];
   #queuedInlineWorkflowStartFlushScheduled = false;
   #queuedInlineWorkflowStartChannel: MessageChannel | null = null;
-  #suppressedQueuedInlineWorkflowStarts = new Set<string>();
 
   constructor(options?: EngineConstructorOptions) {
     super();
@@ -2276,7 +2275,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (this.#queuedInlineWorkflowStartChannel !== null) {
       this.#queuedInlineWorkflowStartChannel.port1.onmessage = () => {
         this.#queuedInlineWorkflowStartFlushScheduled = false;
-        this.#flushQueuedInlineWorkflowStarts();
+        void this.#swallowPromiseRejection(this.#flushQueuedInlineWorkflowStarts());
       };
     }
 
@@ -2401,6 +2400,16 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     } catch (error: unknown) {
       this.#handleCleanupError('processPendingUpdates', error, workflowId);
     }
+  }
+
+  #schedulePendingInlineUpdateDrain(workflowId: string): void {
+    if (this.#inlineStrategy === null) {
+      return;
+    }
+
+    setTimeout(() => {
+      void this.#swallowPromiseRejection(this.#processPendingUpdatesAfterReplay(workflowId));
+    }, 0);
   }
 
   async #persistCoordinatedUpdateResponse(
@@ -3043,7 +3052,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const nestingDepth = this.#pendingNestingDepth ?? 0;
     this.#pendingNestingDepth = undefined;
 
-    this.dispatchEvent(new WorkflowStartedEvent(workflowId, workflowType, input));
     if (this.#inlineStrategy !== null) {
       this.#queueInlineWorkflowExecutionStart({
         workflowId,
@@ -3057,6 +3065,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return;
     }
 
+    this.dispatchEvent(new WorkflowStartedEvent(workflowId, workflowType, input));
     this.#startWorkflowExecution(
       workflowId,
       workflowType,
@@ -3095,11 +3104,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     setTimeout(() => {
       this.#queuedInlineWorkflowStartFlushScheduled = false;
-      this.#flushQueuedInlineWorkflowStarts();
+      void this.#swallowPromiseRejection(this.#flushQueuedInlineWorkflowStarts());
     }, 0);
   }
 
-  #flushQueuedInlineWorkflowStarts(): void {
+  async #flushQueuedInlineWorkflowStarts(): Promise<void> {
     if (this.#abortController.signal.aborted) {
       this.#queuedInlineWorkflowStarts = [];
       return;
@@ -3113,15 +3122,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#queuedInlineWorkflowStarts = [];
 
     for (const start of pendingStarts) {
-      this.#startQueuedInlineWorkflowExecution(start);
+      await this.#startQueuedInlineWorkflowExecution(start);
     }
   }
 
-  #startQueuedInlineWorkflowExecution(start: QueuedInlineWorkflowExecutionStart): void {
-    if (this.#suppressedQueuedInlineWorkflowStarts.delete(start.workflowId)) {
+  async #startQueuedInlineWorkflowExecution(
+    start: QueuedInlineWorkflowExecutionStart,
+  ): Promise<void> {
+    const state = await this.#loadWorkflowState(start.workflowId);
+    if (!state || state.status !== 'running') {
       return;
     }
 
+    this.dispatchEvent(new WorkflowStartedEvent(start.workflowId, start.workflowType, start.input));
     this.#startWorkflowExecution(
       start.workflowId,
       start.workflowType,
@@ -3131,6 +3144,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       start.executionDeadline,
       start.tenant,
     );
+
+    const pendingTurn = this.#inlineStrategy?.waitForWorkflowTurn(start.workflowId);
+    if (pendingTurn) {
+      await pendingTurn;
+    }
+
+    await this.#processPendingUpdatesAfterReplay(start.workflowId);
   }
 
   #dropQueuedInlineWorkflowStart(workflowId: string): boolean {
@@ -4975,6 +4995,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // If no active handler, use the UpdateCoordinator with polling
     const updateId = await this.#updateCoordinator.createRequest(workflowId, name, payload);
+    this.#schedulePendingInlineUpdateDrain(workflowId);
     await this.#guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
     this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
 
@@ -5315,6 +5336,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async resume(workflowId: string): Promise<WorkflowHandle> {
+    if (this.#hasQueuedInlineWorkflowStart(workflowId)) {
+      return this.getHandle(workflowId);
+    }
+
     return this.#resumeWorkflowFromStorage(workflowId, true);
   }
 
@@ -5473,7 +5498,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (key.includes(':ckpt') || key.includes(':offload') || key.includes(':archive')) continue;
 
       const state = decodeWorkflowState(value);
-      if (state.status === 'pending') {
+      if (state.status === 'pending' || this.#hasQueuedInlineWorkflowStart(state.id)) {
         handles.push(this.getHandle(state.id));
         continue;
       }
@@ -5513,9 +5538,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#terminalizingWorkflows.add(workflowId);
-    if (this.#dropQueuedInlineWorkflowStart(workflowId)) {
-      this.#suppressedQueuedInlineWorkflowStarts.add(workflowId);
-    }
+    this.#dropQueuedInlineWorkflowStart(workflowId);
     this.#strategy.cancelWorkflow(workflowId);
 
     try {
@@ -6172,6 +6195,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       payload,
       requestOptions,
     );
+    this.#schedulePendingInlineUpdateDrain(workflowId);
     await this.#guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
 
     await this.#deliverCoordinatedUpdateToWaiterIfAvailable(
@@ -6214,7 +6238,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#queuedInlineWorkflowStartChannel?.port1.close();
     this.#queuedInlineWorkflowStartChannel?.port2.close();
     this.#queuedInlineWorkflowStartChannel = null;
-    this.#suppressedQueuedInlineWorkflowStarts.clear();
     this.#scheduler[Symbol.dispose]();
     this.#strategy[Symbol.dispose]();
     this.#activityWorkerDispatcher?.[Symbol.dispose]();
@@ -8535,7 +8558,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return state;
     }
 
-    this.#flushQueuedInlineWorkflowStarts();
+    await this.#flushQueuedInlineWorkflowStarts();
 
     // Inline execution can complete or checkpoint during the same scheduler
     // turn that started the run. Wait for that first turn to finish handling
@@ -9386,7 +9409,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
 
   async #completeWorkflow(workflowId: string, result: unknown): Promise<void> {
-    this.#suppressedQueuedInlineWorkflowStarts.delete(workflowId);
     const completionMetadata = await this.#runSerializedWorkflowStateWrite(workflowId, async () => {
       const state = await this.#loadWorkflowState(workflowId);
       if (!state || state.status !== 'running') {
@@ -9504,7 +9526,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     error: Error,
     failureCategory: FailureCategory = 'system',
   ): Promise<void> {
-    this.#suppressedQueuedInlineWorkflowStarts.delete(workflowId);
     const attributeBytes = await this.#storage.get(KEYS.attribute(workflowId));
     const attributes = attributeBytes
       ? (decode(attributeBytes) as Record<string, SearchAttributeValue>)

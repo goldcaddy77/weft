@@ -818,6 +818,24 @@ for (const backend of storageBackends) {
         expect(events).toContain('received');
         expect(events).toContain('completed');
       });
+
+      it('delivers an update sent immediately after start before the first inline turn launches', async () => {
+        const result = backend.factory();
+        cleanup = result.cleanup;
+        engine = new Engine({ storage: result.storage });
+
+        engine.register('immediate-update', async function* (ctx: WorkflowContext) {
+          (ctx as Context).onUpdate('test', (payload) => `echo: ${String(payload)}`);
+          return yield* (ctx as Context).waitForSignal('finish');
+        });
+
+        const handle = await engine.start('immediate-update', undefined);
+
+        await expect(handle.update('test', 'hello')).resolves.toBe('echo: hello');
+
+        await handle.signal('finish', 'done');
+        await expect(handle.result()).resolves.toBe('done');
+      });
     });
 
     // ---------------------------------------------------------------------
@@ -861,12 +879,19 @@ for (const backend of storageBackends) {
         const handle = await engine.start('missing-respond', undefined);
         await waitForWorkflowStatus(engine, handle.id, 'running');
 
-        await expect(
-          engine.update(handle.id, 'review', 'my-data', { timeout: 25 }),
-        ).rejects.toBeInstanceOf(UpdateTimeoutError);
+        let timeoutError: UpdateTimeoutError | null = null;
+        try {
+          await engine.update(handle.id, 'review', 'my-data', { timeout: 25 });
+        } catch (error) {
+          expect(error).toBeInstanceOf(UpdateTimeoutError);
+          timeoutError = error as UpdateTimeoutError;
+        }
+
+        expect(timeoutError).not.toBeNull();
         await expect(handle.result()).resolves.toBe('processed without respond: my-data');
         await flush();
         expect(await collectKeys(result.storage, KEYS.updatePrefix(handle.id))).toEqual([]);
+        expect(await engine.getUpdateResult(timeoutError!.updateId)).toBeNull();
       });
 
       it('calling respond() multiple times is idempotent', async () => {

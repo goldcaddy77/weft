@@ -189,6 +189,47 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('resume() returns the queued handle without starting an inline workflow twice', async () => {
+    const engine = new Engine();
+    let runCount = 0;
+
+    engine.register('queued-resume', async function* (ctx: WorkflowContext) {
+      runCount += 1;
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('queued-resume', null);
+    const resumedHandle = await engine.resume(handle.id);
+
+    expect(resumedHandle.id).toBe(handle.id);
+
+    await resumedHandle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    expect(runCount).toBe(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('recoverAll() keeps queued inline starts from running twice', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    let runCount = 0;
+
+    engine.register('queued-recover', async function* (ctx: WorkflowContext) {
+      runCount += 1;
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('queued-recover', null);
+    const recoveredHandles = await engine.recoverAll();
+
+    expect(recoveredHandles.some((recoveredHandle) => recoveredHandle.id === handle.id)).toBe(true);
+
+    await handle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    expect(runCount).toBe(1);
+    engine[Symbol.dispose]();
+  });
+
   it('WorkflowCompletedEvent fires with result and duration', async () => {
     const engine = new Engine();
     engine.register('fast', async function* () {
@@ -2316,6 +2357,25 @@ describe('Engine', () => {
 
     await engine.signal(handle.id, 'finish', 'complete');
     await handle.result();
+    engine[Symbol.dispose]();
+  });
+
+  it('handle.update() works immediately after start before the first inline turn launches', async () => {
+    const engine = new Engine();
+
+    engine.register('handle-immediate-update', async function* (ctx: WorkflowContext) {
+      (ctx as Context).onUpdate('increment', (payload) => {
+        return (payload as number) + 1;
+      });
+      return yield* (ctx as Context).waitForSignal('finish');
+    });
+
+    const handle = await engine.start('handle-immediate-update', null);
+
+    await expect(handle.update('increment', 41)).resolves.toBe(42);
+
+    await handle.signal('finish', 'complete');
+    await expect(handle.result()).resolves.toBe('complete');
     engine[Symbol.dispose]();
   });
 
