@@ -123,17 +123,6 @@ export function releaseSignalWaiter(
   untrackWaiterKey(internals.signalWaitersByWorkflow, workflowId, waiterKey);
 }
 
-export async function bufferSignalPayload(
-  internals: EngineInternals,
-  workflowId: string,
-  signalName: string,
-  payload: unknown,
-  options: BufferedSignalOptions,
-  callbacks: SignalCallbacks,
-): Promise<void> {
-  return bufferSignalPayloads(internals, workflowId, [{ signalName, payload, options }], callbacks);
-}
-
 export async function bufferSignalPayloads(
   internals: EngineInternals,
   workflowId: string,

@@ -277,13 +277,6 @@ function createSuspendingProviderCoordinator(
     clear: (turnIndex) => clearPendingChatResumeState(internals, workflowId, stepIndex, turnIndex),
     consumeSignal: (resumeToken) =>
       callbacks.consumeSignal(workflowId, toInternalSignalName(resumeToken)),
-    waitForSignal: async (resumeToken) => {
-      const result = await callbacks.waitForSignalPayload(
-        workflowId,
-        toInternalSignalName(resumeToken),
-      );
-      return result.kind === 'resumed' ? result.payload : undefined;
-    },
     canSuspend: true,
   };
 }

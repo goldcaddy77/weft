@@ -6,6 +6,7 @@ import {
   type BudgetOptions,
   type BudgetState,
   type ModelPricing,
+  type SerializedBudgetState,
 } from './budget.ts';
 
 const TEST_MODELS: Record<string, ModelPricing> = {
@@ -325,6 +326,37 @@ describe('BudgetTracker', () => {
       restored.recordUsage('gpt-4', 10, 10);
 
       expect(warnings).toHaveLength(1); // still just 1
+    });
+
+    it('restoreFromJSON replaces an existing tracker state in place', () => {
+      const options = createOptions({ maxTokens: 1_000, maxCost: 1 });
+      const tracker = new BudgetTracker(options);
+      tracker.recordUsage('gpt-4', 200, 100);
+
+      const restoredState = {
+        tokensUsed: 3_000,
+        costUsed: 0.12,
+        breakdown: [
+          {
+            model: 'gpt-4',
+            inputTokens: 2_000,
+            outputTokens: 1_000,
+            cost: 0.12,
+          },
+        ],
+        warningFired: true,
+      } satisfies SerializedBudgetState;
+
+      tracker.restoreFromJSON(restoredState);
+
+      expect(tracker.toJSON()).toEqual(restoredState);
+      expect(tracker.budgetRemaining()).toEqual({
+        tokensUsed: 3_000,
+        costUsed: 0.12,
+        tokensRemaining: -2_000,
+        costRemaining: 0.88,
+        breakdown: restoredState.breakdown,
+      });
     });
   });
 

@@ -1438,6 +1438,30 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('delivers signals directly when no signal interceptor is registered', async () => {
+    const engine = new Engine();
+
+    engine.register('signal-direct-test', async function* (ctx: WorkflowContext) {
+      const first = yield* (ctx as Context).waitForSignal<string>('go');
+      const second = yield* (ctx as Context).waitForSignal<{ approved: boolean }>('follow-up');
+      return { first, second };
+    });
+
+    const handle = await engine.start('signal-direct-test', null);
+    await flush();
+
+    await engine.signal(handle.id, 'go', 'delivered');
+    await flush();
+    await engine.signal(handle.id, 'follow-up', { approved: true });
+
+    await expect(handle.result()).resolves.toEqual({
+      first: 'delivered',
+      second: { approved: true },
+    });
+
+    engine[Symbol.dispose]();
+  });
+
   it('list with status array filter', async () => {
     const engine = new Engine();
     engine.register('multi-status', async function* () {
