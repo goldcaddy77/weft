@@ -23,6 +23,7 @@ import type { AccessPolicy } from './authorization.ts';
 import {
   validateOperationName,
   type OperationDefinition,
+  type OperationKind,
   type TransportAvailability,
   type UnknownKeyPolicy,
 } from './operation-catalog.ts';
@@ -46,10 +47,12 @@ export { isValidOperationName, validateOperationName } from './operation-catalog
  */
 export type OperationDefinitionInput<Input, Output> = {
   readonly name: string;
+  readonly kind?: OperationKind;
   readonly summary: string;
   readonly tags?: ReadonlyArray<string>;
   readonly inputSchema: z.ZodType<Input>;
   readonly outputSchema: z.ZodType<Output>;
+  readonly eventSchema?: z.ZodType;
   readonly access: AccessPolicy;
   readonly transports: TransportAvailability;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
@@ -82,10 +85,12 @@ export function defineOperation<Input, Output>(
   validateOperationName(input.name);
   return {
     name: input.name,
+    ...(input.kind === undefined ? {} : { kind: input.kind }),
     summary: input.summary,
     tags: [...(input.tags ?? [])],
     inputSchema: input.inputSchema,
     outputSchema: input.outputSchema,
+    ...(input.eventSchema === undefined ? {} : { eventSchema: input.eventSchema }),
     // Deep-copy `access` so `scoped` and `optionalAuth` variants don't
     // leak aliasing through their nested `ScopeRequirement` object and
     // `scopes` array. Without this, a caller mutating the nested scope

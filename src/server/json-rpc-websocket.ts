@@ -15,6 +15,7 @@
  *     (or socket disconnect at the transport layer).
  */
 
+import { faultToJsonRpcError } from './fault-to-json-rpc.ts';
 import { dispatchJsonRpc } from './json-rpc-dispatch.ts';
 import { JSON_RPC_ERROR_CODES, JSON_RPC_VERSION, type JsonRpcId } from './json-rpc-protocol.ts';
 import {
@@ -22,14 +23,14 @@ import {
   validateSessionPrimitiveFrame,
   validateSubscribeParams,
 } from './json-rpc-websocket-validation.ts';
-import type { OperationRegistry } from './operation-catalog.ts';
+import {
+  executeSubscription,
+  type ErasedOperation,
+  type OperationRegistry,
+} from './operation-catalog.ts';
+import { workflowEventsSubscriptionOperation } from './operations/workflow-events-subscription.ts';
 import type { Principal } from './principal.ts';
-import type {
-  Cursor,
-  EventEnvelope,
-  EventSelector,
-  WorkflowEventFeed,
-} from './workflow-event-feed.ts';
+import type { EventEnvelope, WorkflowEventFeed } from './workflow-event-feed.ts';
 
 /** Emitter interface: any `send(string)`-shaped object. */
 export type JsonRpcWebSocketEmitter = {
@@ -69,7 +70,6 @@ export type JsonRpcWebSocketSessionOptions = {
 
 const DEFAULT_MAX_SUBSCRIPTIONS = 100;
 const DEFAULT_MAX_FRAME_BYTES = 1 * 1024 * 1024;
-const INITIAL_SUBSCRIPTION_CURSOR: Cursor = '-1';
 
 export type JsonRpcWebSocketSession = {
   /** Process one incoming WS frame (UTF-8 text). */
@@ -103,10 +103,28 @@ const SESSION_METHODS = {
   TERMINATED: 'weft.events.terminated',
 } as const;
 
+const WORKFLOW_EVENTS_OPERATION_NAME = 'weft.workflows.events';
+const WORKFLOW_EVENTS_SUBSCRIPTION_OPERATION =
+  workflowEventsSubscriptionOperation as ErasedOperation;
+
+function withWorkflowEventsSubscriptionOperation(registry: OperationRegistry): OperationRegistry {
+  if (registry.get(WORKFLOW_EVENTS_OPERATION_NAME) !== undefined) return registry;
+  return {
+    get(name) {
+      if (name === WORKFLOW_EVENTS_OPERATION_NAME) return WORKFLOW_EVENTS_SUBSCRIPTION_OPERATION;
+      return registry.get(name);
+    },
+    list() {
+      return [...registry.list(), WORKFLOW_EVENTS_SUBSCRIPTION_OPERATION];
+    },
+  };
+}
+
 export function createJsonRpcWebSocketSession(
   options: JsonRpcWebSocketSessionOptions,
 ): JsonRpcWebSocketSession {
   const { registry, engine, principal, emitter, feed } = options;
+  const subscriptionRegistry = withWorkflowEventsSubscriptionOperation(registry);
   const maxSubscriptions = options.maxSubscriptions ?? DEFAULT_MAX_SUBSCRIPTIONS;
   const maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const transport = options.transport ?? 'jsonRpcWebSocket';
@@ -119,16 +137,6 @@ export function createJsonRpcWebSocketSession(
   // feed listeners indefinitely, spinning `deliver` → no-op `emit`.
   let emitterBroken = false;
   let disposed = false;
-
-  // Session-scoped monotonic counter. Scoping to the session (rather
-  // than a module-level global) keeps IDs unique within a connection,
-  // eliminates cross-session ID collision possibilities, and avoids
-  // test pollution — each session starts fresh.
-  let subscriptionSequence = 0;
-  function generateSubscriptionId(): string {
-    subscriptionSequence += 1;
-    return `sub_${Date.now().toString(36)}_${subscriptionSequence.toString(36)}`;
-  }
 
   /**
    * Send a frame on the wire. Guards against emitter failures: a
@@ -193,28 +201,50 @@ export function createJsonRpcWebSocketSession(
       return;
     }
 
-    const subscriptionId = generateSubscriptionId();
     const controller = new AbortController();
+    const result = await executeSubscription<
+      EventEnvelope,
+      { subscriptionId: string; cursor: string }
+    >(
+      'weft.workflows.events',
+      {
+        workflowId: validation.workflowId,
+        selector: validation.selector,
+        ...(validation.fromCursor === undefined ? {} : { fromCursor: validation.fromCursor }),
+      },
+      {
+        principal,
+        engine: { feed },
+        // Subscribe is a WebSocket lifecycle primitive even when the stdio
+        // adapter reuses this session implementation.
+        transport: 'jsonRpcWebSocket',
+        registry: subscriptionRegistry,
+      },
+    );
+    if (!result.ok) {
+      const error = faultToJsonRpcError(result.fault);
+      emitResponse(request, {
+        jsonrpc: JSON_RPC_VERSION,
+        error: { code: error.code, message: error.message, data: error.data },
+        id: request.id ?? null,
+      });
+      return;
+    }
 
-    // The `cursor` field is the "resume here" value a client may pass
-    // back as `fromCursor` on reconnect. A fresh subscription starts
-    // before sequence 0, not at sequence 0: replay uses strict
-    // greater-than semantics, so returning `'0'` would skip the first
-    // event if a client reconnects before receiving any deliveries.
-    const startingCursor: Cursor = validation.fromCursor ?? INITIAL_SUBSCRIPTION_CURSOR;
+    const { envelope, iterable, close: closeSubscription } = result.value;
+    const { subscriptionId, cursor } = envelope;
 
     emitResponse(request, {
       jsonrpc: JSON_RPC_VERSION,
-      result: { subscriptionId, cursor: startingCursor },
+      result: { subscriptionId, cursor },
       id: request.id ?? null,
     });
 
-    const pump = pumpSubscription(
+    const pump = pumpSubscriptionIterable(
       subscriptionId,
-      validation.workflowId,
-      validation.selector,
-      validation.fromCursor,
+      iterable,
       controller.signal,
+      closeSubscription,
     );
     subscriptions.set(subscriptionId, {
       id: subscriptionId,
@@ -224,22 +254,32 @@ export function createJsonRpcWebSocketSession(
     });
   }
 
-  async function pumpSubscription(
+  async function pumpSubscriptionIterable(
     subscriptionId: string,
-    workflowId: string,
-    selector: EventSelector,
-    fromCursor: Cursor | undefined,
+    iterable: AsyncIterable<EventEnvelope>,
     signal: AbortSignal,
+    closeSubscription: () => Promise<void>,
   ): Promise<void> {
+    let closeStarted = false;
+    async function closeOnce(): Promise<void> {
+      if (closeStarted) return;
+      closeStarted = true;
+      await closeSubscription();
+    }
+
+    const abortSubscription = (): void => {
+      void closeOnce().catch(() => {});
+    };
+    signal.addEventListener('abort', abortSubscription, { once: true });
+    let skippedEnvelopeAfterAbort = false;
     try {
-      const iterable = feed.subscribe({
-        workflowId,
-        selector,
-        ...(fromCursor === undefined ? {} : { fromCursor }),
-        signal,
-      });
       for await (const envelope of iterable) {
-        if (signal.aborted) break;
+        if (signal.aborted) {
+          await closeOnce().catch(() => {});
+          if (skippedEnvelopeAfterAbort) break;
+          skippedEnvelopeAfterAbort = true;
+          continue;
+        }
         deliver(subscriptionId, envelope);
       }
       // Natural termination path. The feed closes the iterable for
@@ -277,6 +317,8 @@ export function createJsonRpcWebSocketSession(
         });
       }
     } finally {
+      signal.removeEventListener('abort', abortSubscription);
+      await closeOnce().catch(() => {});
       subscriptions.delete(subscriptionId);
     }
   }

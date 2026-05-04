@@ -14,6 +14,11 @@ export { classifyEngineError } from './pipeline-helpers.ts';
 export { executeOperation } from './pipeline.ts';
 export { createOperationRegistry } from './registry.ts';
 export {
+  SubscriptionElementValidationError,
+  executeStream,
+  executeSubscription,
+} from './stream-pipeline.ts';
+export {
   OPERATION_NAME_PATTERN,
   isValidOperationName,
   validateOperationName,
@@ -23,10 +28,14 @@ export {
   type ErasedOperation,
   type OperationContext,
   type OperationDefinition,
+  type OperationInvocationResult,
+  type OperationKind,
   type OperationRegistry,
   type PipelineTrace,
   type PipelineTraceMarker,
   type RegistrableOperation,
+  type StreamOperationInvocation,
+  type SubscriptionOperationInvocation,
   type TransportAvailability,
   type UnknownKeyDisposition,
   type UnknownKeyPolicy,

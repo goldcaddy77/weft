@@ -47,6 +47,28 @@ export type UnknownKeyPolicy = {
 };
 
 /**
+ * Runtime shape of an operation. Unary operations return one validated
+ * `outputSchema` value. Stream and subscription operations return long-lived
+ * iterables whose elements are validated against `eventSchema`.
+ */
+export type OperationKind = 'unary' | 'stream' | 'subscription';
+
+/** Invocation result for `kind: 'stream'` operations. */
+export type StreamOperationInvocation<Element> = AsyncIterable<Element>;
+
+/** Invocation result for `kind: 'subscription'` operations. */
+export type SubscriptionOperationInvocation<Element, Envelope> = {
+  readonly envelope: Envelope;
+  readonly iterable: AsyncIterable<Element>;
+  readonly close: () => Promise<void>;
+};
+
+export type OperationInvocationResult<Output> =
+  | Output
+  | StreamOperationInvocation<unknown>
+  | SubscriptionOperationInvocation<unknown, Output>;
+
+/**
  * Result of the parameter-aware `authorize` hook.
  *
  * **`reason` is wire-visible.** Hook authors must not embed secrets or
@@ -85,15 +107,22 @@ export type OperationContext<Input> = {
 
 export type OperationDefinition<Input, Output> = {
   readonly name: string;
+  readonly kind?: OperationKind;
   readonly summary: string;
   readonly tags: ReadonlyArray<string>;
   readonly inputSchema: z.ZodType<Input>;
+  /**
+   * For unary operations, validates the returned value. For subscriptions,
+   * validates the subscribe envelope. For streams, describes the start/SSE
+   * metadata while each yielded element is validated by `eventSchema`.
+   */
   readonly outputSchema: z.ZodType<Output>;
+  readonly eventSchema?: z.ZodType;
   readonly access: AccessPolicy;
   readonly transports: TransportAvailability;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: (context: OperationContext<Input>) => Promise<AuthorizationDecision>;
-  readonly invoke: (context: OperationContext<Input>) => Promise<Output>;
+  readonly invoke: (context: OperationContext<Input>) => Promise<OperationInvocationResult<Output>>;
 };
 
 /**
@@ -113,15 +142,19 @@ export type OperationRegistry = {
  */
 export type RegistrableOperation = {
   readonly name: string;
+  readonly kind?: OperationKind;
   readonly summary: string;
   readonly tags: ReadonlyArray<string>;
   readonly inputSchema: z.ZodType;
   readonly outputSchema: z.ZodType;
+  readonly eventSchema?: z.ZodType;
   readonly access: AccessPolicy;
   readonly transports: TransportAvailability;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: (context: OperationContext<never>) => Promise<AuthorizationDecision>;
-  readonly invoke: (context: OperationContext<never>) => Promise<unknown>;
+  readonly invoke: (
+    context: OperationContext<never>,
+  ) => Promise<OperationInvocationResult<unknown>>;
 };
 
 export type DispatchContext = {

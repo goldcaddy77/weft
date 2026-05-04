@@ -28,10 +28,12 @@ export const streamWorkflowSseOperation = defineOperation<
   StreamWorkflowSseOutput
 >({
   name: 'weft.workflows.streams.sse',
+  kind: 'stream',
   summary: 'Stream workflow tokens as Server-Sent Events',
   tags: ['Streams'],
   inputSchema: streamWorkflowSseInput,
   outputSchema: z.object({ chunks: z.array(z.unknown()) }) as z.ZodType<StreamWorkflowSseOutput>,
+  eventSchema: z.object({ sequence: z.number(), value: z.unknown() }),
   access: { kind: 'public' },
   // SSE is a REST-shaped delivery format; JSON-RPC clients receive the
   // canonical `{ chunks }` envelope from the same operation. Keeping all
@@ -137,6 +139,7 @@ export const streamWorkflowSseRestBinding: UnknownRestBinding = {
   path: '/v1/workflows/:id/sse',
   pathParamNames: ['id'],
   operationName: 'weft.workflows.streams.sse',
+  transportKind: 'sse',
   inputSources: {
     workflowId: { kind: 'path', pathParam: 'id' },
     after: { kind: 'header', headerName: 'Last-Event-ID' },

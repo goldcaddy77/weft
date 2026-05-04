@@ -69,6 +69,11 @@ export type RestBinding<Input, Output> = {
   /** Operation-catalog name this binding dispatches to. */
   readonly operationName: string;
   /**
+   * Long-lived transport specialization for structural catalog checks.
+   * Omitted bindings are ordinary unary REST request/response operations.
+   */
+  readonly transportKind?: 'unary' | 'sse' | 'websocket-subscription';
+  /**
    * Declarative map from top-level `Input` field names to their REST
    * source. Fields omitted from this map are not extracted from the
    * request by the OpenAPI generator's schema emission — `extractInput`
