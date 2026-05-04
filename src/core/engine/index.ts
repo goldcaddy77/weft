@@ -235,7 +235,10 @@ function resolveEngineStorage(
 }
 
 function resolveEngineInterceptors(options?: EngineConstructorOptions): Interceptor[] {
-  return options?.interceptors ?? [];
+  // Defensive copy: callers must not mutate the engine's interceptor list
+  // after construction. Mutating the source array directly would bypass
+  // the composed-interceptor cache invalidation in `addInterceptor`.
+  return options?.interceptors ? [...options.interceptors] : [];
 }
 
 // oxlint-disable-next-line complexity -- ID:core-engine-resolve-engine-options-complexity

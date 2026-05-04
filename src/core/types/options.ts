@@ -174,8 +174,10 @@ export interface EngineOptions {
    * Unified interceptors registered at construction. This is equivalent to
    * calling `addInterceptor` for each entry; each interceptor participates in
    * the workflow and/or activity pipeline based on which hooks it implements.
+   * The engine takes a defensive copy at construction — mutating this array
+   * after passing it has no effect.
    */
-  interceptors?: Interceptor[];
+  interceptors?: readonly Interceptor[];
 
   /**
    * Optional {@link TenantResolver} that populates `ctx.tenant` for every new
