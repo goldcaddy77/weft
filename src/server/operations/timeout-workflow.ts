@@ -19,6 +19,7 @@ export const timeoutWorkflowOperation = defineOperation<TimeoutWorkflowInput, nu
   inputSchema: timeoutWorkflowInput,
   outputSchema: z.null(),
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<null> => {

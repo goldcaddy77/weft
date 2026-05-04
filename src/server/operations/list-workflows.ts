@@ -51,6 +51,7 @@ export const listWorkflowsOperation = defineOperation<ListWorkflowsInput, ListWo
   inputSchema: listWorkflowsInput,
   outputSchema: listWorkflowsOutput as z.ZodType<ListWorkflowsOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['Unprocessable'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<ListWorkflowsOutput> => {

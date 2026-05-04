@@ -35,6 +35,7 @@ export const streamWorkflowSseOperation = defineOperation<
   outputSchema: z.object({ chunks: z.array(z.unknown()) }) as z.ZodType<StreamWorkflowSseOutput>,
   eventSchema: z.object({ sequence: z.number(), value: z.unknown() }),
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   // SSE is a REST-shaped delivery format; JSON-RPC clients receive the
   // canonical `{ chunks }` envelope from the same operation. Keeping all
   // four transports lets WebSocket/stdio callers consume token replays

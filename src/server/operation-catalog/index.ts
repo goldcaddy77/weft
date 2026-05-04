@@ -9,9 +9,11 @@
  * @module server/operation-catalog
  */
 
+export type { FaultCode } from '../operation-fault.ts';
 export { DISPATCH_ALLOWLIST } from './dispatch-allowlist.ts';
 export { classifyEngineError } from './pipeline-helpers.ts';
 export { executeOperation } from './pipeline.ts';
+export { UNIVERSAL_FAULT_DEFAULTS, raiseFault } from './raise-fault.ts';
 export { createOperationRegistry } from './registry.ts';
 export {
   SubscriptionElementValidationError,

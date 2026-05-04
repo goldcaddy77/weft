@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { AccessPolicy } from '../authorization.ts';
-import type { OperationFault, TransportKind } from '../operation-fault.ts';
+import type { FaultCode, OperationFault, TransportKind } from '../operation-fault.ts';
 import type { Principal } from '../principal.ts';
 
 /**
@@ -119,6 +119,10 @@ export type OperationDefinition<Input, Output> = {
   readonly outputSchema: z.ZodType<Output>;
   readonly eventSchema?: z.ZodType;
   readonly access: AccessPolicy;
+  /** Fault codes this operation can raise in addition to universal pipeline defaults. */
+  readonly producibleFaults?: ReadonlyArray<FaultCode>;
+  /** Whether non-public operations should appear in generated discovery documents. */
+  readonly discoverable?: boolean;
   readonly transports: TransportAvailability;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: (context: OperationContext<Input>) => Promise<AuthorizationDecision>;
@@ -149,6 +153,10 @@ export type RegistrableOperation = {
   readonly outputSchema: z.ZodType;
   readonly eventSchema?: z.ZodType;
   readonly access: AccessPolicy;
+  /** Fault codes this operation can raise in addition to universal pipeline defaults. */
+  readonly producibleFaults?: ReadonlyArray<FaultCode>;
+  /** Whether non-public operations should appear in generated discovery documents. */
+  readonly discoverable?: boolean;
   readonly transports: TransportAvailability;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: (context: OperationContext<never>) => Promise<AuthorizationDecision>;

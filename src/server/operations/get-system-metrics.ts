@@ -46,6 +46,7 @@ export function createGetSystemMetricsOperation(options?: { metricsCollector?: M
       kind: 'scoped',
       scopes: { kind: 'anyOf', scopes: ['system:read'] },
     },
+    discoverable: true,
     transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
     unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
     invoke: async (): Promise<GetSystemMetricsOutput> => {

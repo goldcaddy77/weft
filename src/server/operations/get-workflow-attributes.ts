@@ -24,6 +24,7 @@ export const getWorkflowAttributesOperation = defineOperation<
   inputSchema: getWorkflowAttributesInput,
   outputSchema: getWorkflowAttributesOutput as z.ZodType<GetWorkflowAttributesOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<GetWorkflowAttributesOutput> => {

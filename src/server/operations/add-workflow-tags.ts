@@ -30,6 +30,7 @@ export const addWorkflowTagsOperation = defineOperation<
   inputSchema: addWorkflowTagsInput,
   outputSchema: addWorkflowTagsOutput as z.ZodType<AddWorkflowTagsOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['Unprocessable', 'NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<AddWorkflowTagsOutput> => {

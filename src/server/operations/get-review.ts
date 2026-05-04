@@ -22,6 +22,7 @@ export const getReviewOperation = defineOperation<GetReviewInput, GetReviewOutpu
   inputSchema: getReviewInput,
   outputSchema: getReviewOutput as z.ZodType<GetReviewOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<GetReviewOutput> => {

@@ -8,6 +8,9 @@
  * @module server/openapi
  */
 
+import { isDiscoverable } from './discovery-filter.ts';
+import { buildErrorResponses, ERROR_SCHEMA } from './openapi-error-responses.ts';
+import { extractComponentsSchemas, type OpenApiSchemaHelper } from './openapi-schemas.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
 import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
@@ -62,6 +65,13 @@ function buildPathParameters(paramNames: readonly string[]): Array<Record<string
   }));
 }
 
+const DEFAULT_SCHEMA_HELPER: OpenApiSchemaHelper = {
+  components: {},
+  refFor() {
+    return undefined;
+  },
+};
+
 /**
  * Emit REST bindings into the OpenAPI paths map. Exported for tests;
  * `generateOpenApiDocument` is the production entry point.
@@ -74,6 +84,7 @@ export function emitBindings(
   tagSet: Set<string>,
   bindings: ReadonlyArray<UnknownRestBinding> = createLiveRestBindings(),
   registry: OperationRegistry = createLiveOperationRegistry(),
+  schemaHelper: OpenApiSchemaHelper = DEFAULT_SCHEMA_HELPER,
 ): Set<string> {
   const boundMethodPaths = new Set<string>();
   for (const binding of bindings) {
@@ -81,6 +92,7 @@ export function emitBindings(
     if (operation === undefined) continue;
     const openApiPath = toOpenApiPath(binding.path);
     boundMethodPaths.add(`${binding.method} ${openApiPath}`);
+    if (!isDiscoverable(operation)) continue;
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
     const parameters = buildPathParameters(binding.pathParamNames);
@@ -88,7 +100,17 @@ export function emitBindings(
       summary: operation.summary,
       operationId: operation.name,
       tags: operation.tags,
-      responses: { '200': { description: 'Successful response' } },
+      responses: {
+        '200': {
+          description: 'Successful response',
+          content: {
+            'application/json': {
+              schema: schemaHelper.refFor(operation.name, 'Output') ?? { type: 'object' },
+            },
+          },
+        },
+        ...buildErrorResponses(operation),
+      },
     };
     if (parameters.length > 0) entry['parameters'] = parameters;
 
@@ -97,7 +119,11 @@ export function emitBindings(
     // PATCH operation keeps its `requestBody` entry in the document.
     if (binding.method === 'POST' || binding.method === 'PUT' || binding.method === 'PATCH') {
       entry['requestBody'] = {
-        content: { 'application/json': { schema: { type: 'object' } } },
+        content: {
+          'application/json': {
+            schema: schemaHelper.refFor(operation.name, 'Input') ?? { type: 'object' },
+          },
+        },
       };
     }
 
@@ -145,10 +171,11 @@ export function generateOpenApiDocument(options?: OpenApiOptions): Record<string
 
   const paths: Record<string, Record<string, unknown>> = {};
   const tagSet = new Set<string>();
+  const schemaHelper = extractComponentsSchemas(registry);
 
   // REST_BINDINGS win against any stale ROUTES entry covering the same
   // (method, path) — a migrated operation owns its OpenAPI description.
-  const boundMethodPaths = emitBindings(paths, tagSet, restBindings, registry);
+  const boundMethodPaths = emitBindings(paths, tagSet, restBindings, registry, schemaHelper);
   emitRoutes(paths, tagSet, boundMethodPaths);
 
   const tags = [...tagSet].toSorted().map((name) => ({ name }));
@@ -178,6 +205,10 @@ export function generateOpenApiDocument(options?: OpenApiOptions): Record<string
     tags,
     security,
     components: {
+      schemas: {
+        ...schemaHelper.components,
+        Error: ERROR_SCHEMA,
+      },
       securitySchemes: emittedSecuritySchemes,
     },
   };

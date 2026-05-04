@@ -24,6 +24,7 @@
 
 import { z } from 'zod';
 
+import { isDiscoverable } from './discovery-filter.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
 
 /** Transports that MAY be listed in `OpenRpcOptions.transports`. */
@@ -71,6 +72,7 @@ export function generateOpenRpcDocument(options: OpenRpcOptions): Record<string,
 
   for (const operation of options.registry.list()) {
     if (!isOperationLiveOnJsonRpc(operation, options.transports)) continue;
+    if (!isDiscoverable(operation)) continue;
     if (operation.name === DISCOVER_METHOD_NAME) {
       // Consumers may register their own `rpc.discover` operation —
       // use theirs verbatim and skip the synthetic one so we never

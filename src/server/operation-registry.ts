@@ -27,6 +27,7 @@ import {
   type TransportAvailability,
   type UnknownKeyPolicy,
 } from './operation-catalog.ts';
+import type { FaultCode } from './operation-fault.ts';
 
 // Re-exported so callers that import the typed builder also get the name
 // validators from the same module surface. Both import paths are
@@ -54,6 +55,8 @@ export type OperationDefinitionInput<Input, Output> = {
   readonly outputSchema: z.ZodType<Output>;
   readonly eventSchema?: z.ZodType;
   readonly access: AccessPolicy;
+  readonly producibleFaults?: ReadonlyArray<FaultCode>;
+  readonly discoverable?: boolean;
   readonly transports: TransportAvailability;
   readonly unknownKeyPolicy: UnknownKeyPolicy;
   readonly authorize?: OperationDefinition<Input, Output>['authorize'];
@@ -91,6 +94,10 @@ export function defineOperation<Input, Output>(
     inputSchema: input.inputSchema,
     outputSchema: input.outputSchema,
     ...(input.eventSchema === undefined ? {} : { eventSchema: input.eventSchema }),
+    ...(input.producibleFaults === undefined
+      ? {}
+      : { producibleFaults: [...input.producibleFaults] }),
+    ...(input.discoverable === undefined ? {} : { discoverable: input.discoverable }),
     // Deep-copy `access` so `scoped` and `optionalAuth` variants don't
     // leak aliasing through their nested `ScopeRequirement` object and
     // `scopes` array. Without this, a caller mutating the nested scope

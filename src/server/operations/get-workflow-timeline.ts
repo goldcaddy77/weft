@@ -25,6 +25,7 @@ export const getWorkflowTimelineOperation = defineOperation<
   inputSchema: getWorkflowTimelineInput,
   outputSchema: getWorkflowTimelineOutput as z.ZodType<GetWorkflowTimelineOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // Operation contract is transport-neutral: returns the array of

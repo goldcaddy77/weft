@@ -17,7 +17,9 @@ import {
 // JSON-RPC); we keep the min-length guard.
 const updateScheduleInput = z.object({
   scheduleId: z.string().min(1),
-  cronExpression: z.unknown(),
+  cronExpression: z
+    .unknown()
+    .describe('Cron expression. Runtime validation requires a non-empty string.'),
 });
 
 export type UpdateScheduleInput = z.infer<typeof updateScheduleInput>;
@@ -29,6 +31,7 @@ export const updateScheduleOperation = defineOperation<UpdateScheduleInput, null
   inputSchema: updateScheduleInput,
   outputSchema: z.null(),
   access: { kind: 'public' },
+  producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }): Promise<null> => {

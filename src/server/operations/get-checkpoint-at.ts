@@ -26,6 +26,7 @@ export const getCheckpointAtOperation = defineOperation<
   inputSchema: getCheckpointAtInput,
   outputSchema: getCheckpointAtOutput as z.ZodType<GetCheckpointAtOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // Operation contract is transport-neutral: returns the

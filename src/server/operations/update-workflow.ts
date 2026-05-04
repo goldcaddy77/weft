@@ -37,6 +37,7 @@ export const updateWorkflowOperation = defineOperation<UpdateWorkflowInput, Upda
   inputSchema: updateWorkflowInput,
   outputSchema: updateWorkflowOutput,
   access: { kind: 'public' },
+  producibleFaults: ['Unprocessable', 'Timeout'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<UpdateWorkflowOutput> => {

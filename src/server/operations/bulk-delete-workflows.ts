@@ -34,6 +34,7 @@ export const bulkDeleteWorkflowsOperation = defineOperation<
   inputSchema: bulkListFilterInputSchema,
   outputSchema: bulkDeleteWorkflowsOutput as z.ZodType<BulkDeleteWorkflowsOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['Unprocessable'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<BulkDeleteWorkflowsOutput> => {

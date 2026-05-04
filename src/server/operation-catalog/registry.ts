@@ -59,6 +59,9 @@ function freezeOperation(operation: RegistrableOperation): ErasedOperation {
   return Object.freeze({
     ...operation,
     tags: Object.freeze([...operation.tags]),
+    ...(operation.producibleFaults === undefined
+      ? {}
+      : { producibleFaults: Object.freeze([...operation.producibleFaults]) }),
     access: freezeAccessPolicy(operation.access),
     transports: Object.freeze({ ...operation.transports }),
     unknownKeyPolicy: Object.freeze({ ...operation.unknownKeyPolicy }),

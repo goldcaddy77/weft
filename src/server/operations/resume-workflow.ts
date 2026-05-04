@@ -24,6 +24,7 @@ export const resumeWorkflowOperation = defineOperation<ResumeWorkflowInput, Resu
   inputSchema: resumeWorkflowInput,
   outputSchema: resumeWorkflowOutput,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<ResumeWorkflowOutput> => {

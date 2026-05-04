@@ -53,6 +53,7 @@ export const listSchedulesOperation = defineOperation<ListSchedulesInput, ListSc
   inputSchema: listSchedulesInput,
   outputSchema: listSchedulesOutput as z.ZodType<ListSchedulesOutput>,
   access: { kind: 'authenticated' },
+  discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line eslint(complexity) -- ID:server-operations-list-schedules-validation-complexity -- preserves the legacy query-validation order at one transport-neutral invoke boundary.

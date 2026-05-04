@@ -21,6 +21,7 @@ export const queryWorkflowOperation = defineOperation<QueryWorkflowInput, QueryW
   inputSchema: queryWorkflowInput,
   outputSchema: queryWorkflowOutput as z.ZodType<QueryWorkflowOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotImplemented'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<QueryWorkflowOutput> => {

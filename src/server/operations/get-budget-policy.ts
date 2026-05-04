@@ -24,6 +24,7 @@ export const getBudgetPolicyOperation = defineOperation<
   inputSchema: getBudgetPolicyInput,
   outputSchema: getBudgetPolicyOutput as z.ZodType<GetBudgetPolicyOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<GetBudgetPolicyOutput> => {

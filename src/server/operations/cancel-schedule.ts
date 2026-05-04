@@ -20,6 +20,7 @@ export const cancelScheduleOperation = defineOperation<CancelScheduleInput, Canc
   inputSchema: cancelScheduleInput,
   outputSchema: cancelScheduleOutput as z.ZodType<CancelScheduleOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<CancelScheduleOutput> => {

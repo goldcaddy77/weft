@@ -20,6 +20,7 @@ export const cancelWorkflowOperation = defineOperation<CancelWorkflowInput, Canc
   inputSchema: cancelWorkflowInput,
   outputSchema: cancelWorkflowOutput as z.ZodType<CancelWorkflowOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<CancelWorkflowOutput> => {

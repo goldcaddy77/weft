@@ -21,7 +21,7 @@ import { invalidParamsFault, shapeRestFault } from './operation-helpers.ts';
 // `invoke()` rather than being rejected by Zod with a different error path.
 // All field validation lives in `invoke()` to keep one cross-transport contract.
 const startWorkflowInput = z.object({
-  type: z.unknown(),
+  type: z.unknown().describe('Workflow type name. Runtime validation requires a non-empty string.'),
   input: z.unknown().optional(),
   id: z.unknown().optional(),
   executionTimeout: z.unknown().optional(),
@@ -44,6 +44,7 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
   inputSchema: startWorkflowInput,
   outputSchema: startWorkflowOutput,
   access: { kind: 'public' },
+  producibleFaults: ['RateLimited', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line complexity -- ID:server-operations-start-workflow-invoke-complexity

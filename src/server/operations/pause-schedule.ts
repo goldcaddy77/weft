@@ -20,6 +20,7 @@ export const pauseScheduleOperation = defineOperation<PauseScheduleInput, PauseS
   inputSchema: pauseScheduleInput,
   outputSchema: pauseScheduleOutput as z.ZodType<PauseScheduleOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound', 'Conflict'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<PauseScheduleOutput> => {

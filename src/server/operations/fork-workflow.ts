@@ -28,6 +28,7 @@ export const forkWorkflowOperation = defineOperation<ForkWorkflowInput, ForkWork
   inputSchema: forkWorkflowInput,
   outputSchema: forkWorkflowOutput,
   access: { kind: 'public' },
+  producibleFaults: ['NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   // oxlint-disable-next-line complexity -- ID:server-operations-fork-workflow-invoke-complexity

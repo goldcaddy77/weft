@@ -36,6 +36,7 @@ export const getTenantQuotaOperation = defineOperation<GetTenantQuotaInput, GetT
     kind: 'scoped',
     scopes: { kind: 'anyOf', scopes: ['quota:read'] },
   },
+  discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine, principal }): Promise<GetTenantQuotaOutput> => {

@@ -30,6 +30,7 @@ export const removeWorkflowTagsOperation = defineOperation<
   inputSchema: removeWorkflowTagsInput,
   outputSchema: removeWorkflowTagsOutput as z.ZodType<RemoveWorkflowTagsOutput>,
   access: { kind: 'public' },
+  producibleFaults: ['Unprocessable', 'NotFound'],
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
   invoke: async ({ input, engine }): Promise<RemoveWorkflowTagsOutput> => {
