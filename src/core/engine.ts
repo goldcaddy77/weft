@@ -4684,15 +4684,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
-  async #bufferSignalPayload(
-    workflowId: string,
-    signalName: string,
-    payload: unknown,
-    options: BufferedSignalOptions = {},
-  ): Promise<void> {
-    return this.#bufferSignalPayloads(workflowId, [{ signalName, payload, options }]);
-  }
-
   async #bufferSignalPayloads(
     workflowId: string,
     deliveries: BufferedSignalDelivery[],
@@ -9024,8 +9015,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       clear: this.#clearPendingChatResumeState.bind(this, workflowId, stepIndex),
       consumeSignal: (resumeToken: string) =>
         this.#consumeSignal(workflowId, toInternalSignalName(resumeToken)),
-      waitForSignal: (resumeToken: string) =>
-        this.#waitForSignalPayload(workflowId, toInternalSignalName(resumeToken)),
       // Force the provider wrapper to yield control back to the engine before
       // waiting so the full agent loop state can be persisted first.
       canSuspend: true,
@@ -9043,9 +9032,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     const prefix = `sig:${encodeStorageKeyComponent(workflowId)}:${sourceSignalName}:`;
     for await (const [_key, value] of this.#storage.scan(prefix, { limit: 1 })) {
-      await this.#bufferSignalPayload(workflowId, targetSignalName, decode(value), {
-        emitPublicEvent: false,
-      });
+      await this.#bufferSignalPayloads(workflowId, [
+        {
+          signalName: targetSignalName,
+          payload: decode(value),
+          options: { emitPublicEvent: false },
+        },
+      ]);
       return;
     }
   }

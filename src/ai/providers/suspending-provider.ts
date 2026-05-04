@@ -210,7 +210,11 @@ function wrapStreamWithResumeCleanup(
     async cancel(reason) {
       canceled = true;
       wakePull();
-      await reader.cancel(reason);
+      try {
+        await reader.cancel(reason);
+      } finally {
+        await coordinator.clear(turnIndex);
+      }
     },
   });
 }
