@@ -223,10 +223,8 @@ export type { StepWorkflowContext, StepWorkflowFunction } from './core/types';
 
 // Interceptors
 export {
-  WORKFLOW_INTERCEPTOR_HOOKS,
   composeActivityInterceptors,
   composeWorkflowInterceptors,
-  splitInterceptors,
 } from './core/interceptor';
 export type {
   ActivityExecutionInterception,

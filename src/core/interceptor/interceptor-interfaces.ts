@@ -80,7 +80,18 @@ export interface WorkflowInterceptor {
   ): void;
 }
 
-export const WORKFLOW_INTERCEPTOR_HOOKS = [
+/**
+ * Internal: the canonical list of workflow-side hook names. Used by
+ * {@link splitInterceptors} to route a unified `Interceptor` instance into
+ * the workflow-side pipeline. Frozen so consumers (and we) cannot mutate
+ * the array at runtime — the type system already marks it readonly, but
+ * the runtime array would otherwise be mutable.
+ *
+ * Not exported from the package root: this is an implementation detail.
+ * The `interceptor-types.test.ts` exhaustiveness assertions guarantee
+ * this stays in sync with `WorkflowInterceptor`.
+ */
+export const WORKFLOW_INTERCEPTOR_HOOKS = Object.freeze([
   'activity',
   'sleep',
   'waitForSignal',
@@ -89,7 +100,7 @@ export const WORKFLOW_INTERCEPTOR_HOOKS = [
   'agent',
   'query',
   'signalReceived',
-] as const;
+] as const);
 
 /**
  * Middleware interface for activity-execution interception. Runs on the

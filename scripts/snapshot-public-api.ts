@@ -260,7 +260,45 @@ function interfaceLine(
   exportedName: string,
 ): string {
   const members = sortedMemberSignatures(declaration.members, checker);
+  // When the interface only extends others (no own members), walk the
+  // heritage clauses so the snapshot reflects the actual public shape.
+  if (members.length === 0 && declaration.heritageClauses && declaration.heritageClauses.length > 0) {
+    const inherited = inheritedMemberSignatures(declaration, checker);
+    if (inherited.length > 0) {
+      return `interface ${exportedName} { ${inherited.join('; ')} }`;
+    }
+  }
   return `interface ${exportedName} { ${members.join('; ')} }`;
+}
+
+function inheritedMemberSignatures(
+  declaration: ts.InterfaceDeclaration,
+  checker: ts.TypeChecker,
+): string[] {
+  const symbol = checker.getSymbolAtLocation(declaration.name);
+  if (!symbol) return [];
+  const type = checker.getDeclaredTypeOfSymbol(symbol);
+  const properties = checker.getPropertiesOfType(type);
+  const lines: string[] = [];
+  for (const property of properties) {
+    const propertyDeclaration = property.declarations?.[0];
+    if (
+      propertyDeclaration &&
+      (ts.isPropertySignature(propertyDeclaration) ||
+        ts.isMethodSignature(propertyDeclaration) ||
+        ts.isPropertyDeclaration(propertyDeclaration) ||
+        ts.isMethodDeclaration(propertyDeclaration))
+    ) {
+      const line = memberSignature(propertyDeclaration, checker);
+      if (line !== null) lines.push(line);
+    }
+  }
+  return lines.toSorted((left, right) => {
+    const leftName = memberSortName(left);
+    const rightName = memberSortName(right);
+    if (leftName !== rightName) return leftName < rightName ? -1 : 1;
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
 }
 
 function classLine(
