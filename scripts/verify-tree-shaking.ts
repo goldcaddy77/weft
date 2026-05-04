@@ -135,6 +135,119 @@ if (!tursoBundle.includes('@libsql/client')) {
   pass('weft/storage/turso externalizes @libsql/client correctly');
 }
 
+// ---------------------------------------------------------------------------
+// Test 5: root entrypoint must not export testing primitives
+// ---------------------------------------------------------------------------
+{
+  const tempDir = mkdtempSync(join(tmpdir(), 'weft-root-testing-export-'));
+  const entryFile = join(tempDir, 'entry.ts');
+  const fixtureFile = join(import.meta.dir, 'fixtures/root-import-testing.ts');
+  const rootEntrypoint = join(distPath, 'index.js');
+
+  try {
+    const fixtureSource = await Bun.file(fixtureFile).text();
+    await Bun.write(entryFile, fixtureSource.replace("'weft'", JSON.stringify(rootEntrypoint)));
+
+    try {
+      const result = await Bun.build({
+        entrypoints: [entryFile],
+        outdir: join(tempDir, 'out'),
+        target: 'bun',
+        format: 'esm',
+        minify: true,
+        packages: 'bundle',
+        throw: false,
+      });
+      const messages = result.logs.map((log) => log.message).join('\n');
+
+      if (result.success) {
+        fail('weft root entrypoint still exports TestEngine');
+      } else if (!/TestEngine|no matching export/i.test(messages)) {
+        fail(`weft root TestEngine import failed with an unexpected message:\n${messages}`);
+      } else {
+        pass('weft root entrypoint rejects TestEngine imports');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/TestEngine|no matching export/i.test(message)) {
+        fail(`weft root TestEngine import threw an unexpected error:\n${message}`);
+      } else {
+        pass('weft root entrypoint rejects TestEngine imports');
+      }
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test 6: root bundle must not contain testing source files or identifiers
+// ---------------------------------------------------------------------------
+const rootBundle = await buildEntry('index.js', 'Engine', ['lmdb', '@libsql/client', 'bun:sqlite']);
+
+const testingSourceTokens = [
+  'src/testing/test-engine',
+  'src/testing/time-control',
+  'src/testing/mocks',
+  'src/testing/chaos',
+];
+const testingIdentifierTokens = [
+  'TestEngine',
+  'TimeControl',
+  'ActivityMockRegistry',
+  'ChaosTransientError',
+  'ChaosTimeoutError',
+  'ChaosNonRetryableError',
+  'withChaos',
+];
+const foundTestingBundleTokens = [...testingSourceTokens, ...testingIdentifierTokens].filter(
+  (token) => rootBundle.includes(token),
+);
+
+if (foundTestingBundleTokens.length > 0) {
+  fail(`weft root bundle contains testing code: ${foundTestingBundleTokens.join(', ')}`);
+} else {
+  pass('weft root bundle excludes testing source files and identifiers');
+}
+
+// ---------------------------------------------------------------------------
+// Test 7: testing subpath exports testing primitives
+// ---------------------------------------------------------------------------
+{
+  const tempDir = mkdtempSync(join(tmpdir(), 'weft-testing-subpath-'));
+  const entryFile = join(tempDir, 'entry.ts');
+  const testingEntrypoint = join(distPath, 'testing/index.js');
+
+  try {
+    await Bun.write(
+      entryFile,
+      [
+        `import { ActivityMockRegistry, TestEngine, TimeControl, withChaos } from ${JSON.stringify(testingEntrypoint)};`,
+        'export { ActivityMockRegistry, TestEngine, TimeControl, withChaos };',
+      ].join('\n'),
+    );
+
+    const result = await Bun.build({
+      entrypoints: [entryFile],
+      outdir: join(tempDir, 'out'),
+      target: 'bun',
+      format: 'esm',
+      minify: true,
+      packages: 'bundle',
+      external: ['lmdb', '@libsql/client', 'bun:sqlite'],
+    });
+
+    if (!result.success) {
+      const messages = result.logs.map((log) => log.message).join('\n');
+      fail(`weft/testing failed to export testing primitives:\n${messages}`);
+    } else {
+      pass('weft/testing exports testing primitives');
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 if (failed) {
   process.exit(1);
 }

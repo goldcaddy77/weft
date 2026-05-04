@@ -18,11 +18,22 @@
  *
  * @module weft/storage
  */
-export { KEYS, storageConditionalBatch, storageValuesEqual } from './interface';
+import { KEYS, storageConditionalBatch, storageValuesEqual } from './interface';
+import { MemoryStorage } from './memory';
+import { ScopedStorage, scopedStorage } from './scoped-storage';
+import { jsonCodec, msgpackCodec, withCodec } from './typed-storage';
+
+const exportedJsonCodec = jsonCodec;
+const exportedKeys = KEYS;
+const exportedMemoryStorage = MemoryStorage;
+const exportedMsgpackCodec = msgpackCodec;
+const exportedScopedStorage = ScopedStorage;
+const exportedScopedStorageFactory = scopedStorage;
+const exportedStorageConditionalBatch = storageConditionalBatch;
+const exportedStorageValuesEqual = storageValuesEqual;
+const exportedWithCodec = withCodec;
+
 export type { BatchOperation, ConditionalBatchCondition, ScanOptions, Storage } from './interface';
-export { MemoryStorage } from './memory';
-export { ScopedStorage, scopedStorage } from './scoped-storage';
-export { jsonCodec, msgpackCodec, withCodec } from './typed-storage';
 export type {
   JsonValue,
   MessagePackValue,
@@ -31,3 +42,14 @@ export type {
   TypedBatchOperation,
   TypedStorage,
 } from './typed-storage';
+export {
+  exportedJsonCodec as jsonCodec,
+  exportedKeys as KEYS,
+  exportedMemoryStorage as MemoryStorage,
+  exportedMsgpackCodec as msgpackCodec,
+  exportedScopedStorage as ScopedStorage,
+  exportedScopedStorageFactory as scopedStorage,
+  exportedStorageConditionalBatch as storageConditionalBatch,
+  exportedStorageValuesEqual as storageValuesEqual,
+  exportedWithCodec as withCodec,
+};
