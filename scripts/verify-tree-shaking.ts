@@ -146,7 +146,13 @@ if (!tursoBundle.includes('@libsql/client')) {
 
   try {
     const fixtureSource = await Bun.file(fixtureFile).text();
-    await Bun.write(entryFile, fixtureSource.replace("'weft'", JSON.stringify(rootEntrypoint)));
+    const patchedSource = fixtureSource.replace("'weft'", JSON.stringify(rootEntrypoint));
+    if (patchedSource === fixtureSource) {
+      throw new Error(
+        `Test 5: fixture replacement produced no change. ${fixtureFile} no longer contains the literal "'weft'" — update the fixture or the replacement target.`,
+      );
+    }
+    await Bun.write(entryFile, patchedSource);
 
     try {
       const result = await Bun.build({
@@ -241,10 +247,60 @@ if (foundTestingBundleTokens.length > 0) {
       const messages = result.logs.map((log) => log.message).join('\n');
       fail(`weft/testing failed to export testing primitives:\n${messages}`);
     } else {
-      pass('weft/testing exports testing primitives');
+      const outputs = await Promise.all(result.outputs.map((output) => output.text()));
+      const bundleText = outputs.join('\n');
+      const requiredIdentifiers = [
+        'ActivityMockRegistry',
+        'TestEngine',
+        'TimeControl',
+        'withChaos',
+      ];
+      const missing = requiredIdentifiers.filter((token) => !bundleText.includes(token));
+      if (missing.length > 0) {
+        fail(`weft/testing bundle is missing expected exports: ${missing.join(', ')}`);
+      } else {
+        pass('weft/testing exports testing primitives');
+      }
     }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test 8: weft/storage barrel loads cleanly and exposes its value exports
+//
+// The Bun 1.3.13 minifier emits broken JavaScript for pure re-export barrels,
+// where Node's loader rejects the dist file with `Export 'B' is not defined
+// in module`. The aliased-const-export workaround in src/storage/index.ts
+// fixes that. This test guards against regression: load the dist barrel
+// in-process and confirm every documented value export resolves.
+// ---------------------------------------------------------------------------
+{
+  const storageEntrypoint = join(distPath, 'storage/index.js');
+  const expectedExports = [
+    'KEYS',
+    'MemoryStorage',
+    'ScopedStorage',
+    'jsonCodec',
+    'msgpackCodec',
+    'scopedStorage',
+    'storageConditionalBatch',
+    'storageValuesEqual',
+    'withCodec',
+  ];
+
+  try {
+    const module = (await import(storageEntrypoint)) as Record<string, unknown>;
+    const missing = expectedExports.filter((name) => module[name] === undefined);
+    if (missing.length > 0) {
+      fail(`weft/storage barrel is missing exports: ${missing.join(', ')}`);
+    } else {
+      pass('weft/storage barrel loads cleanly with all value exports');
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    fail(`weft/storage barrel failed to load: ${message}`);
   }
 }
 
