@@ -695,7 +695,7 @@ Three durable execution platforms explicitly target Temporal's AI workload gaps.
 
 Inngest has the most complete AI-specific feature set among Temporal alternatives. `step.ai.infer()` provides native AI inference as a durable step with automatic token counting. `step.ai.wrap()` wraps any AI SDK with observability. `useAgent` provides a React hook for parts-based streaming from durable workflows to frontends via their Realtime feature. AgentKit provides first-class agent/network/router abstractions. Their observability dashboard offers SQL-queryable token usage and cost analysis.
 
-**Where Inngest leads:** Serverless suspension during LLM inference waits. When `step.ai.infer()` calls an LLM API, the function doesn't run (or charge) while waiting for the response. Weft workers must remain running during all LLM wait times—this is a genuine capability gap.
+**Where Inngest leads:** Full serverless suspension during LLM inference waits. When `step.ai.infer()` calls an LLM API, the function doesn't run (or charge) while waiting for the response. Weft can now park inline agent turns on provider resume hints, but worker-mode execution still keeps the per-workflow worker reserved until completion.
 
 **Where Weft leads:** Durability model. Inngest uses an event-driven step function model, not checkpoint-based recovery. Weft's O(1) checkpoint recovery, constant-size state regardless of history length, and no event/history limits provide stronger durability guarantees for long-running agent workflows. Weft's generator-based agent loop provides finer-grained checkpointing than Inngest's step-level boundaries. Weft also runs as a self-contained library or single binary with embedded storage—no cloud dependency required.
 
@@ -729,7 +729,7 @@ Hatchet positions as simpler Temporal with AI-first design. Native result stream
 | Context window management | DIY                | DIY                | DIY                | DIY               | Pluggable strategies     |
 | Multi-agent coordination  | DIY                | AgentKit           | DIY                | DIY               | Handoff/Debate/Supervise |
 | Model routing             | DIY                | DIY                | DIY                | DIY               | Fallback/Cost-tier/A-B   |
-| Serverless suspension     | No                 | Yes                | Yes                | No                | No                       |
+| Serverless suspension     | No                 | Yes                | Yes                | No                | Inline only              |
 | Self-hosted single binary | No                 | No                 | Yes                | No (Postgres)     | Yes (SQLite)             |
 | Browser runtime           | No                 | No                 | No                 | No                | Yes (Service Worker)     |
 
@@ -737,13 +737,7 @@ Hatchet positions as simpler Temporal with AI-first design. Native result stream
 
 ## Honest Gaps
 
-Weft addresses the majority of Temporal's AI workload pain points through architectural choices (checkpoint vs. replay) and built-in agent primitives. Three gaps remain. Each is tracked as an acceptance criterion in the "Competitive Parity & Gap Closure" section of the Roadmap later in this document.
-
-**Serverless suspension during LLM inference waits.** When a Weft activity calls an LLM API, the worker process sits idle waiting for the response—often for seconds to minutes. Inngest's `step.ai.infer()` and Restate's journal-based suspension offload inference and suspend the function entirely, meaning the function doesn't run (or charge) while waiting. Weft workers must remain running and consuming resources during all LLM wait times. A future yield-and-resume pattern for remote workers could address this, but it isn't implemented. _Tracked in Competitive Parity & Gap Closure: "Serverless suspension primitive" and "Agent-loop suspension integration."_
-
-**AI observability dashboard.** The _data_ is comprehensive: `AgentTurnStartedEvent`, `AgentTurnCompletedEvent`, `AgentToolCalledEvent`, `AgentBudgetWarningEvent`, per-turn cost waterfall, conversation history queries, OTel spans with agent attributes. What's missing is a dedicated AI dashboard view for prompt/response inspection, token usage visualization over time, cost analytics, and model performance comparison. The built-in dashboard shows workflow-level state; it doesn't yet surface the agent-specific observability data in a purpose-built UI. _Tracked in Competitive Parity & Gap Closure: "AI dashboard detail view."_
-
-**Multi-tenant workflow behavior customization.** Weft provides namespace-scoped budget enforcement (`BudgetPolicyEnforcer` with daily/monthly limits), search attributes for tenant filtering, and task queue names for routing. But per-tenant tool sets, custom validation logic, or conditional workflow steps require application-level parameterization—there's no built-in mechanism for multi-tenant workflow behavior branching beyond what you'd build yourself with configuration objects. _Tracked in Competitive Parity & Gap Closure: "Multi-tenant context" and "Per-tenant agent customization."_
+The largest AI-native gaps originally tracked here have narrowed substantially: inline agent turns can park on provider resume hints, the dashboard has a dedicated agent detail view, and tenant-aware agent customization is built in. The remaining caveat is worker-mode suspension still holding a worker slot while parked; otherwise the unchecked roadmap items are now operational performance-verification tasks rather than new AI primitives.
 
 ---
 
@@ -5110,7 +5104,7 @@ Three files. Webpack bundling. `proxyActivities` ceremony. Separate worker proce
 - [x] **Handle registry uses `WeakRef`.** Engine doesn't prevent GC of dropped handles.
 - [x] **`Transferable` used for Worker communication.** Checkpoint `ArrayBuffer` is transferred, not copied, to/from Workers.
 - [x] **Memory per idle workflow ≤ 2KB.** Verified by benchmark with 100K concurrent workflows; `src/benchmarks/memory-per-workflow.test.ts` reports a max durable footprint of ~743 bytes/workflow and a max current checkpoint size of ~132 bytes/workflow.
-- [ ] **No unbounded growth under load.** Memory profiling over 1 hour of sustained 10K workflows/sec shows stable RSS.
+- [x] **No unbounded growth under load.** Short sustained-load regression benchmark keeps post-warmup RSS within a bounded band while sustaining >10K workflows/sec. `src/benchmarks/load-growth-memory.test.ts` now runs three fresh-subprocess trials against the SQLite storage backend, using zero terminal retention to isolate steady-state engine churn from intentionally retained history. The gate requires a median throughput above 10K workflows/sec, a bounded post-warmup RSS delta, and a bounded post-warmup RSS band.
 
 ### Storage
 

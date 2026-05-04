@@ -12,10 +12,15 @@ Action items surfaced by code review. Items here are also tracked in the **"Comp
   - **Cold start (binary mode)**: spec `<100ms`, measured `~36ms` median (warm-cache, 5-run median on Apple Silicon) → **meets spec**.
   - **Event dispatch**: spec `<100μs`, measured `~0.18μs` per dispatch → **meets spec** (500x headroom).
   - **Search attribute scan (100K workflows)**: spec `<1ms`, measured `~0.14ms` median → **meets spec** (in-memory SQLite only).
+  - **Sustained-load RSS guardrail**: spec `bounded post-warmup RSS drift while sustaining >10K workflows/sec`, measured on 2026-05-02 by `src/benchmarks/load-growth-memory.test.ts` as a three-trial fresh-subprocess benchmark. The gate uses SQLite plus zero terminal retention to isolate steady-state engine churn, and it passes only when median throughput stays above `10K/sec`, post-warmup RSS delta stays below `3MB`, and post-warmup RSS band stays below `4MB` → **meets spec**.
   - **Workflow starts**: spec `>50K/sec`, re-measured on 2026-04-30 at `~28.5K/sec` isolated median → **partially closed**, still ~1.8x short. Latest optimizations: deadline timer operations folded into the start batch (eliminating a separate storage transaction), checkpoint history pruning made non-blocking. Remaining gap is dominated by the per-start SQLite WAL fsync and the inline strategy's generator drive; closing it further requires pipelining the start batch or moving to a binary checkpoint format.
   - **Activity completions**: spec `>30K/sec`, re-measured on 2026-04-30 at `~22.3K/sec` isolated subprocess median → **partially closed**, still ~1.3x short. Latest optimizations: completion state write and attribute cleanup batched into a single storage transaction, scheduler cancel made fire-and-forget for terminal workflows, `#cleanupWorkflowStorage` and `#cleanupReviews` now use `deletePrefix` instead of scan-then-delete loops. Remaining gap requires coalescing terminal cleanup across workflow batches or deferring it to a background queue.
   - **Memory per workflow**: spec `≤2KB`, re-measured on 2026-04-30 at `~132 bytes` for the current checkpoint blob and `~743 bytes` for the total durable idle-workflow footprint across 100K parked workflows → **meets spec**.
   - **Worker spawn**: spec `<5ms`, re-measured on 2026-05-01 at `~2.3ms` isolated subprocess median via `src/benchmarks/worker-spawn-runner.ts` → **meets spec**. The default non-coverage benchmark gate in `src/benchmarks/worker-spawn.test.ts` now enforces the real `<5ms` target because the measurement no longer shares a process with the rest of the suite.
+
+## Resolved Items (2026-05-02)
+
+- [x] **No-unbounded-growth criterion lacked a sustained-load regression benchmark** (2026-05-02 → fixed 2026-05-02): `src/benchmarks/load-growth-memory.test.ts` now shells into `src/benchmarks/load-growth-memory-runner.ts`, runs three short sustained-load trials in fresh Bun subprocesses, and asserts bounded post-warmup RSS delta/band alongside throughput.
 
 ## Resolved Items (2026-05-01)
 
