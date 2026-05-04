@@ -31,3 +31,5 @@ export {
   type UnknownKeyDisposition,
   type UnknownKeyPolicy,
 } from './types.ts';
+export { catalogWorkflow } from './workflow-adapter.ts';
+export type { CatalogWorkflowOptions } from './workflow-adapter.ts';
