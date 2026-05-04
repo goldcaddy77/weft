@@ -268,39 +268,62 @@ if (foundTestingBundleTokens.length > 0) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 8: weft/storage barrel loads cleanly and exposes its value exports
+// Test 8: weft/storage and weft/testing barrels load cleanly and expose
+// their value exports.
 //
 // The Bun 1.3.13 minifier emits broken JavaScript for pure re-export barrels,
 // where Node's loader rejects the dist file with `Export 'B' is not defined
 // in module`. The aliased-const-export workaround in src/storage/index.ts
-// fixes that. This test guards against regression: load the dist barrel
-// in-process and confirm every documented value export resolves.
+// and src/testing/index.ts fixes that. This test guards against regression:
+// load each dist barrel in-process and confirm every documented value
+// export resolves. Without these, a future refactor that flattens either
+// barrel back to direct re-exports would silently break the package.
 // ---------------------------------------------------------------------------
 {
-  const storageEntrypoint = join(distPath, 'storage/index.js');
-  const expectedExports = [
-    'KEYS',
-    'MemoryStorage',
-    'ScopedStorage',
-    'jsonCodec',
-    'msgpackCodec',
-    'scopedStorage',
-    'storageConditionalBatch',
-    'storageValuesEqual',
-    'withCodec',
+  const cases: Array<{ entrypoint: string; label: string; expectedExports: string[] }> = [
+    {
+      entrypoint: join(distPath, 'storage/index.js'),
+      label: 'weft/storage',
+      expectedExports: [
+        'KEYS',
+        'MemoryStorage',
+        'ScopedStorage',
+        'jsonCodec',
+        'msgpackCodec',
+        'scopedStorage',
+        'storageConditionalBatch',
+        'storageValuesEqual',
+        'withCodec',
+      ],
+    },
+    {
+      entrypoint: join(distPath, 'testing/index.js'),
+      label: 'weft/testing',
+      expectedExports: [
+        'ActivityMockRegistry',
+        'ChaosNonRetryableError',
+        'ChaosTimeoutError',
+        'ChaosTransientError',
+        'TestEngine',
+        'TimeControl',
+        'withChaos',
+      ],
+    },
   ];
 
-  try {
-    const module = (await import(storageEntrypoint)) as Record<string, unknown>;
-    const missing = expectedExports.filter((name) => module[name] === undefined);
-    if (missing.length > 0) {
-      fail(`weft/storage barrel is missing exports: ${missing.join(', ')}`);
-    } else {
-      pass('weft/storage barrel loads cleanly with all value exports');
+  for (const { entrypoint, label, expectedExports } of cases) {
+    try {
+      const module = (await import(entrypoint)) as Record<string, unknown>;
+      const missing = expectedExports.filter((name) => module[name] === undefined);
+      if (missing.length > 0) {
+        fail(`${label} barrel is missing exports: ${missing.join(', ')}`);
+      } else {
+        pass(`${label} barrel loads cleanly with all value exports`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      fail(`${label} barrel failed to load: ${message}`);
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    fail(`weft/storage barrel failed to load: ${message}`);
   }
 }
 
