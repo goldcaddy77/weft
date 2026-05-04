@@ -3142,6 +3142,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
+  async #flushQueuedInlineWorkflowStartsDirectly(): Promise<void> {
+    // Direct scheduler-driven flushes can run while an older MessageChannel
+    // delivery is still pending. Clear the scheduled flag first so any nested
+    // workflow starts queued during this drain can post their own follow-up
+    // delivery instead of inheriting stale scheduled state.
+    this.#queuedInlineWorkflowStartFlushScheduled = false;
+    await this.#flushQueuedInlineWorkflowStarts();
+  }
+
   async #startQueuedInlineWorkflowExecution(
     start: QueuedInlineWorkflowExecutionStart,
   ): Promise<void> {
@@ -8627,7 +8636,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return state;
     }
 
-    await this.#flushQueuedInlineWorkflowStarts();
+    await this.#flushQueuedInlineWorkflowStartsDirectly();
 
     // Inline execution can complete or checkpoint during the same scheduler
     // turn that started the run. Wait for that first turn to finish handling
