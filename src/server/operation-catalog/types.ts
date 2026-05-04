@@ -55,6 +55,25 @@ export type UnknownKeyPolicy = {
 export type AuthorizationDecision = { allowed: true } | { allowed: false; reason: string };
 
 /**
+ * Stable audit markers emitted after each successful operation pipeline stage.
+ */
+export type PipelineTraceMarker =
+  | 'looked-up'
+  | 'transport-checked'
+  | 'access-checked'
+  | 'parsed'
+  | 'unknown-key-policy-applied'
+  | 'authorized'
+  | 'invoked'
+  | 'output-validated';
+
+/**
+ * Optional observer hook used by audit tests to prove a transport used the
+ * full `executeOperation` pipeline.
+ */
+export type PipelineTrace = (marker: PipelineTraceMarker) => void;
+
+/**
  * Context passed to both the `authorize` hook and `invoke`.
  */
 export type OperationContext<Input> = {
@@ -110,6 +129,7 @@ export type DispatchContext = {
   readonly engine: unknown;
   readonly transport: TransportKind;
   readonly registry: OperationRegistry;
+  readonly pipelineTrace?: PipelineTrace;
 };
 
 export type DispatchResult<Output> =

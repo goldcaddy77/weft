@@ -9,6 +9,7 @@
  * @module server/operation-catalog
  */
 
+export { DISPATCH_ALLOWLIST } from './dispatch-allowlist.ts';
 export { classifyEngineError } from './pipeline-helpers.ts';
 export { executeOperation } from './pipeline.ts';
 export { createOperationRegistry } from './registry.ts';
@@ -23,6 +24,8 @@ export {
   type OperationContext,
   type OperationDefinition,
   type OperationRegistry,
+  type PipelineTrace,
+  type PipelineTraceMarker,
   type RegistrableOperation,
   type TransportAvailability,
   type UnknownKeyDisposition,

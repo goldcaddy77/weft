@@ -157,6 +157,11 @@ export function createJsonRpcWebSocketSession(
     if (request.expectsResponse) emit(message);
   }
 
+  // AUDIT-EXEMPT: stateful WebSocket session lifecycle primitive. Listed in
+  // `src/server/operation-catalog/dispatch-allowlist.ts`. The cataloged
+  // `weft.workflows.events` subscription operation (introduced in PR 3) will
+  // route through `executeSubscription`; this handler remains the lifecycle
+  // wrapper.
   async function handleSubscribe(
     request: SessionRequest,
     params: Record<string, unknown> | undefined,
@@ -284,6 +289,11 @@ export function createJsonRpcWebSocketSession(
     });
   }
 
+  // AUDIT-EXEMPT: stateful WebSocket session lifecycle primitive. Listed in
+  // `src/server/operation-catalog/dispatch-allowlist.ts`. The cataloged
+  // `weft.workflows.events` subscription operation (introduced in PR 3) will
+  // route through `executeSubscription`; this handler remains the lifecycle
+  // wrapper.
   function handleUnsubscribe(
     request: SessionRequest,
     params: Record<string, unknown> | undefined,

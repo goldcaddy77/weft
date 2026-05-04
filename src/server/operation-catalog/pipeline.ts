@@ -17,6 +17,8 @@ import {
   type DispatchContext,
   type DispatchResult,
   type ErasedOperation,
+  type PipelineTrace,
+  type PipelineTraceMarker,
   type UnknownKeyDisposition,
   type UnknownKeyPolicy,
 } from './types.ts';
@@ -40,6 +42,7 @@ export async function executeOperation<Output>(
   rawInput: unknown,
   context: DispatchContext,
 ): Promise<DispatchResult<Output>> {
+  const pipelineTrace = context.pipelineTrace;
   const operation = context.registry.get(operationName);
   if (operation === undefined) {
     return failure({
@@ -48,22 +51,27 @@ export async function executeOperation<Output>(
       data: { method: operationName },
     });
   }
+  tracePipeline(pipelineTrace, 'looked-up');
 
   const transportFailure = checkTransport(operation, context);
   if (transportFailure !== null) return transportFailure;
+  tracePipeline(pipelineTrace, 'transport-checked');
 
   const accessFailure = checkAccess(operation, context);
   if (accessFailure !== null) return accessFailure;
+  tracePipeline(pipelineTrace, 'access-checked');
 
   const parseOutcome = parseAndApplyUnknownKeyPolicy(
     operation,
     rawInput,
     transportToPolicyKey(context.transport),
+    pipelineTrace,
   );
   if (parseOutcome.kind === 'failure') return failure(parseOutcome.fault);
 
   const authorizationFailure = await checkAuthorization(operation, parseOutcome.input, context);
   if (authorizationFailure !== null) return authorizationFailure;
+  tracePipeline(pipelineTrace, 'authorized');
 
   let output: unknown;
   try {
@@ -76,7 +84,10 @@ export async function executeOperation<Output>(
   } catch (error) {
     return failure(classifyEngineError(error));
   }
-  return validateAndReturnOutput<Output>(operation.outputSchema, output);
+  tracePipeline(pipelineTrace, 'invoked');
+  const outputResult = validateAndReturnOutput<Output>(operation.outputSchema, output);
+  if (outputResult.ok) tracePipeline(pipelineTrace, 'output-validated');
+  return outputResult;
 }
 
 function checkTransport(
@@ -156,6 +167,7 @@ function parseAndApplyUnknownKeyPolicy(
   operation: ErasedOperation,
   rawInput: unknown,
   policyKey: keyof UnknownKeyPolicy,
+  pipelineTrace?: PipelineTrace,
 ): ParseOutcome {
   const policy = operation.unknownKeyPolicy[policyKey];
   const knownKeys = readKnownTopLevelKeys(operation);
@@ -166,11 +178,25 @@ function parseAndApplyUnknownKeyPolicy(
 
   const parseResult = safeParseInput(operation.inputSchema, preParse.input);
   if (parseResult.kind === 'failure') return parseResult;
+  tracePipeline(pipelineTrace, 'parsed');
 
   const parsed = parseResult.input as Record<string, unknown>;
-  if (policy !== 'passthrough') return { kind: 'ok', input: parsed };
+  if (policy !== 'passthrough') {
+    tracePipeline(pipelineTrace, 'unknown-key-policy-applied');
+    return { kind: 'ok', input: parsed };
+  }
 
-  return { kind: 'ok', input: buildPassthroughOutput(parsed, preParse.passthroughExtras) };
+  const passthroughOutput = buildPassthroughOutput(parsed, preParse.passthroughExtras);
+  tracePipeline(pipelineTrace, 'unknown-key-policy-applied');
+  return { kind: 'ok', input: passthroughOutput };
+}
+
+function tracePipeline(
+  pipelineTrace: PipelineTrace | undefined,
+  marker: PipelineTraceMarker,
+): void {
+  if (pipelineTrace === undefined) return;
+  pipelineTrace(marker);
 }
 
 function readKnownTopLevelKeys(
