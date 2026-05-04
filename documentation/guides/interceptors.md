@@ -1,6 +1,6 @@
 # Interceptors
 
-You want to log every activity call, propagate auth tokens from workflows to activity workers, and validate inputs before they hit your business logic. You could sprinkle that code into every workflow and activity function, but you'd be duplicating it everywhere and coupling cross-cutting concerns to your domain code. Interceptors solve this cleanly.
+You want to log every activity call, propagate scoped metadata from workflows to activity workers, and validate inputs before they hit your business logic. You could sprinkle that code into every workflow and activity function, but you'd be duplicating it everywhere and coupling cross-cutting concerns to your domain code. Interceptors solve this cleanly.
 
 ## The mental model
 
@@ -117,13 +117,15 @@ The `input` field is mutable by design---interceptors can validate, transform, o
 
 The `headers` field is how metadata crosses thread and network boundaries. A workflow interceptor sets headers on `ActivityInterception` before calling `next()`. The engine serializes those headers into the `postMessage` (local workers) or WebSocket message (remote workers). The activity interceptor reads them from `ActivityExecutionInterception`.
 
-This is the mechanism for trace context propagation, auth tokens, tenant IDs, encryption keys---anything you need to pass from the workflow side to the activity side. See the [observability guide](./observability.md) for the canonical example.
+This is the mechanism for trace context, tenant IDs, short-lived authorization claims, and opaque credential references---metadata you need to pass from the workflow side to the activity side. Do not propagate raw bearer tokens, encryption keys, or other long-lived secrets through interceptor headers. Resolve those from a worker-side secret store after validating the tenant and claim. See the [observability guide](./observability.md) for the canonical example.
 
 ## Writing an interceptor
 
 Here's a logging interceptor that times every activity:
 
 ```typescript
+import type { WorkflowInterceptor } from 'weft';
+
 const loggingInterceptor: WorkflowInterceptor = {
   *activity(interception, next) {
     const start = Date.now();
@@ -157,13 +159,15 @@ function validationInterceptor(schemas: Record<string, ZodSchema>): WorkflowInte
 }
 ```
 
-An auth propagation interceptor that passes a token from the workflow to activity workers:
+An auth propagation interceptor should pass a short-lived claim or opaque credential reference, not the underlying secret:
 
 ```typescript
-function authInterceptor(getToken: () => string): WorkflowInterceptor {
+import type { WorkflowInterceptor } from 'weft';
+
+function authInterceptor(getCredentialReference: () => string): WorkflowInterceptor {
   return {
     *activity(interception, next) {
-      interception.headers.set('authorization', `Bearer ${getToken()}`);
+      interception.headers.set('x-weft-credential-reference', getCredentialReference());
       return yield* next(interception);
     },
   };
@@ -172,14 +176,17 @@ function authInterceptor(getToken: () => string): WorkflowInterceptor {
 
 And the receiving side on the activity worker:
 
-```typescript
+```typescript partial
 const authActivityInterceptor: ActivityInterceptor = {
   async execute(interception, next) {
-    const token = interception.headers.get('authorization');
-    if (!token) {
-      throw new Error('Missing authorization header');
+    const credentialReference = interception.headers.get('x-weft-credential-reference');
+    if (!credentialReference) {
+      throw new Error('Missing credential reference');
     }
-    // Token is now available to the activity function
+
+    await secrets.assertCredential(credentialReference);
+    interception.headers.delete('x-weft-credential-reference');
+
     return next(interception);
   },
 };
@@ -193,7 +200,7 @@ const authActivityInterceptor: ActivityInterceptor = {
 import { composeWorkflowInterceptors, composeActivityInterceptors } from 'weft';
 
 const composed = composeWorkflowInterceptors([
-  authInterceptor(getToken),
+  authInterceptor(getCredentialReference),
   validationInterceptor(schemas),
   loggingInterceptor,
 ]);

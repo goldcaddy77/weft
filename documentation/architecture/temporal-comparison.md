@@ -4,17 +4,17 @@ Temporal's replay-based architecture creates a cascade of constraints---determin
 
 Here's the mental model comparison for someone writing their first workflow.
 
-| Concept                | Temporal                          | Weft                                 |
-| ---------------------- | --------------------------------- | ------------------------------------ |
-| Core mental model      | Replay determinism                | Generators pause and resume          |
-| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(fn, args)`           |
-| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`         |
-| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`     |
-| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional) |
-| Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size) |
-| Agent declaration      | N/A (build from primitives)       | `weft.agent()` or `ctx.agent()`      |
-| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                       |
-| Bundling               | Webpack for workflow sandbox      | None                                 |
+| Concept                | Temporal                          | Weft                                   |
+| ---------------------- | --------------------------------- | -------------------------------------- |
+| Core mental model      | Replay determinism                | Generators pause and resume            |
+| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(namedActivity, input)` |
+| Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`           |
+| Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`       |
+| Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)   |
+| Long-running workflows | `continueAsNew()`                 | Nothing (checkpoints are fixed-size)   |
+| Agent declaration      | N/A (build from primitives)       | `weft.agent()` or `ctx.agent()`        |
+| Dev environment        | Docker Compose + Temporal server  | `bun add weft`                         |
+| Bundling               | Webpack for workflow sandbox      | None                                   |
 
 Now let's walk through each of the ten design failures in detail.
 

@@ -8,9 +8,9 @@ A **workflow** is a multi-step durable process defined as a generator function. 
 
 ```typescript partial
 engine.register('checkout', async function* (ctx, order) {
-  const charge = yield* ctx.run(chargeCard, order.payment);
-  yield* ctx.run(reserveInventory, order.items);
-  yield* ctx.run(sendConfirmation, order.email, charge.receiptId);
+  const charge = yield* ctx.run(chargeCard, { payment: order.payment });
+  yield* ctx.run(reserveInventory, { items: order.items });
+  yield* ctx.run(sendConfirmation, { email: order.email, receiptId: charge.receiptId });
   return { status: 'completed' };
 });
 ```
@@ -19,18 +19,23 @@ Every `yield*` in a workflow is a checkpoint boundary. The engine saves the work
 
 ## Activity
 
-An **activity** is a single unit of work dispatched by a workflow. This is where side effects happen---API calls, database writes, sending emails. An activity is just a regular async function. Nothing special about it.
+An **activity** is a named unit of work dispatched by a workflow. This is where side effects happen---API calls, database writes, sending emails. Locally, an activity can look like a regular async function. Durably, the engine dispatches it by name.
 
 ```typescript
-async function sendConfirmation(email: string, receiptId: string) {
-  await fetch('https://api.email.com/send', {
-    method: 'POST',
-    body: JSON.stringify({ to: email, receiptId }),
-  });
-}
+import { activity } from 'weft';
+
+const sendConfirmation = activity({
+  name: 'sendConfirmation',
+  execute: async (input: { email: string; receiptId: string }) => {
+    await fetch('https://api.email.com/send', {
+      method: 'POST',
+      body: JSON.stringify({ to: input.email, receiptId: input.receiptId }),
+    });
+  },
+});
 ```
 
-You run activities with `yield* ctx.run(fn, ...args)`. If an activity throws, the engine retries it according to the retry policy. Activities are the boundary between your deterministic workflow logic and the messy outside world.
+Register activities with `engine.registerActivity(name, activity)` before workflows need them, then run them with `yield* ctx.run(activity, input)`. The function reference keeps local development pleasant, but remote workers receive the activity name and serialized input. If an activity throws, the engine retries it according to the retry policy. Activities are the boundary between your durable workflow logic and the messy outside world.
 
 ## Checkpoint
 

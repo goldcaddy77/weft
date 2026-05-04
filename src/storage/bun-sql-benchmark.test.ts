@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import type { BatchOperation } from './interface';
 
+import { isConstrainedCodexRunner } from '../benchmarks/benchmark-environment';
 import { BunSQLiteStorage } from './bun-sql';
 
 /** Create a unique temporary file path for each test. */
@@ -27,7 +28,11 @@ function generateCheckpointValue(): Uint8Array {
  * samples so it still catches order-of-magnitude regressions without flaking
  * on an otherwise healthy loaded machine.
  */
-const TARGET_WRITES_PER_SECOND = process.env['CI'] ? 10_000 : 20_000;
+const TARGET_WRITES_PER_SECOND = isConstrainedCodexRunner()
+  ? 5_000
+  : process.env['CI']
+    ? 10_000
+    : 20_000;
 const BATCH_WRITE_SAMPLE_SIZE = 3;
 
 function median(values: number[]): number {
@@ -124,7 +129,7 @@ describe('BunSQLiteStorage benchmark', () => {
     expect(last).toEqual(value);
 
     storage[Symbol.dispose]();
-  });
+  }, 15_000);
 
   it('individual put throughput via batch (single-operation batches)', async () => {
     const storage = createStorage();

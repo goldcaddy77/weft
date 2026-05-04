@@ -3826,7 +3826,6 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       input: null,
       visibilityTimeout: 100,
     });
-    await waitForRealTimersForTesting(50);
 
     // Verify original record exists
     const inflightKey = KEYS.operationInflight('cleanup-expiry-op');
@@ -3836,7 +3835,10 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(recordBefore.attempt).toBe(1);
 
     // Wait for expiry and reassignment
-    await waitForRealTimersForTesting(300);
+    await waitFor(async () => (await storage.get(inflightKey)) === null, {
+      timeoutMs: 2000,
+      label: 'expired task completion cleanup',
+    });
 
     // After the scanner re-dispatches with attempt=2, the worker completes it
     // and the in-flight record is removed from storage.
@@ -3942,14 +3944,14 @@ describe('visibility timeout expiry triggers task reassignment', () => {
       operationId: 'heartbeat-stale-heap-op',
       activityName: 'charge',
       input: null,
-      visibilityTimeout: 120,
+      visibilityTimeout: 2000,
     });
 
     const initialRecord = decode(
       (await storage.get(KEYS.operationInflight('heartbeat-stale-heap-op')))!,
     ) as { deadline: number };
 
-    await waitForRealTimersForTesting(40);
+    await waitForRealTimersForTesting(1000);
     ws.send(JSON.stringify({ type: 'heartbeat', workerId: 'w-heartbeat-stale-heap' }));
 
     let extendedDeadline = initialRecord.deadline;
@@ -3965,8 +3967,10 @@ describe('visibility timeout expiry triggers task reassignment', () => {
     expect(extendedDeadline).toBeGreaterThan(initialRecord.deadline);
 
     const beforeScanTaskCount = received.filter((message) => message.type === 'task').length;
-    const staleDeadlineDelay = Math.max(0, initialRecord.deadline - Date.now()) + 40;
+    const staleDeadlineDelay = Math.max(0, initialRecord.deadline - Date.now()) + 100;
+    expect(Date.now() + staleDeadlineDelay).toBeLessThan(extendedDeadline);
     await waitForRealTimersForTesting(staleDeadlineDelay);
+    expect(Date.now()).toBeGreaterThanOrEqual(initialRecord.deadline);
     const afterScanTaskCount = received.filter((message) => message.type === 'task').length;
 
     expect(afterScanTaskCount).toBe(beforeScanTaskCount);

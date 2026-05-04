@@ -34,27 +34,42 @@ Weft is a ground-up rethink: what would durable execution look like if you desig
 ## Hello, World
 
 ```typescript
-import { Engine } from 'weft';
+import { Engine, WorkflowAlreadyExistsError, activity, type WorkflowHandle } from 'weft';
 import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
 
 const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
 
-async function greet(name: string) {
-  return `Hello, ${name}!`;
-}
+const formatGreeting = activity({
+  name: 'formatGreeting',
+  execute: async (input: { name: string }) => `Hello, ${input.name}!`,
+});
+
+engine.registerActivity(formatGreeting.name, formatGreeting);
 
 engine.register('welcome', async function* (ctx, user: { name: string }) {
-  const greeting = yield* ctx.run(greet, user.name);
-  yield* ctx.sleep('1 hour');
+  const greeting = yield* ctx.run(formatGreeting, { name: user.name });
+  yield* ctx.sleep('1s');
   return { greeting, onboarded: true };
 });
 
-const handle = await engine.start('welcome', { name: 'Steve' });
+await engine.recoverAll();
+
+const workflowId = 'welcome:steve';
+const workflowInput = { name: 'Steve' };
+let handle: WorkflowHandle;
+
+try {
+  handle = await engine.start('welcome', workflowInput, { id: workflowId });
+} catch (error) {
+  if (!(error instanceof WorkflowAlreadyExistsError)) throw error;
+  handle = await engine.resume(workflowId).catch(() => engine.getHandle(workflowId));
+}
+
 const result = await handle.result();
 // result is { greeting: "Hello, Steve!", onboarded: true }
 ```
 
-That's a complete durable workflow. Checkpoints are written to `./weft.db` at every `yield*` boundary, so if the process crashes after `greet` finishes but before the sleep expires, restarting the engine resumes from exactly that point.
+That's a complete durable workflow with a real recovery path. Checkpoints are written to `./weft.db` at every `yield*` boundary. `engine.recoverAll()` resumes workflows that were already running when this process started, and the stable `workflowId` prevents a rerun from silently creating a second workflow. If you call `engine.start()` without `options.id`, Weft generates a fresh `crypto.randomUUID()` and starts a new execution.
 
 > [!NOTE]
 > `MemoryStorage` (also exported from `weft`) is fine for tests and ephemeral scripts, but it lives in process memory---a crash takes the checkpoints with it. Use a persistent backend like `BunSQLiteStorage` whenever durability actually matters.
@@ -78,7 +93,7 @@ A few consequences fall out of this:
 | Concept              | What it is                                                                                                                    |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | **Workflow**         | A generator function the engine drives to completion. Every `yield*` is a checkpoint.                                         |
-| **Activity**         | A regular async function dispatched by a workflow with `ctx.run(fn, ...args)`. Activities are where side effects live.        |
+| **Activity**         | A named unit of side-effecting work registered with the engine and dispatched by a workflow with `ctx.run(activity, input)`.  |
 | **Checkpoint**       | A serialized snapshot of a workflow's position and local variables, written at every yield.                                   |
 | **Signal**           | A fire-and-forget message sent _into_ a running workflow. Workflows pause at `ctx.waitForSignal()` until one arrives.         |
 | **Update**           | A request-response message sent into a running workflow. The caller blocks until the workflow returns a result.               |
@@ -97,12 +112,12 @@ Generator functions with automatic checkpointing at every `yield*` boundary. Act
 
 ```typescript
 engine.register('checkout', async function* (ctx, order) {
-  const charge = yield* ctx.run(chargeCard, order.payment);
-  yield* ctx.run(reserveInventory, order.items);
+  const charge = yield* ctx.run(chargeCard, { payment: order.payment });
+  yield* ctx.run(reserveInventory, { items: order.items });
 
   const [confirmation, shipment] = yield* ctx.all([
-    ctx.run(sendConfirmation, order.email, charge.receiptId),
-    ctx.run(scheduleShipping, order.address),
+    ctx.run(sendConfirmation, { email: order.email, receiptId: charge.receiptId }),
+    ctx.run(scheduleShipping, { address: order.address }),
   ]);
 
   return { status: 'completed', charge, confirmation, shipment };
@@ -231,7 +246,7 @@ await worker.start();
 
 ### Browser Support
 
-The core engine runs inside a Web Worker, with a Service Worker acting as the durable persistence layer over `IndexedDB`. Browser-compatible workflow logic ships across server and browser without modification---useful for offline-first apps that need durable client-side workflows. Activities, storage adapters, and other environment-bound pieces still need browser-safe implementations: use `IndexedDBStorage` instead of `BunSQLiteStorage`, swap server-only activities for `fetch`-based equivalents, and so on.
+The core engine runs inside a Web Worker, with a Service Worker acting as the durable persistence layer over `IndexedDB`. Browser-compatible workflow logic ships across server and browser without modification---useful for offline-first apps that need durable client-side workflows. Activities, storage adapters, and other environment-bound pieces still need browser-safe implementations: use `IndexedDBStorage` instead of `BunSQLiteStorage`, swap server-only activities for `fetch`-based equivalents, and so on. See the [Service Worker guide](documentation/guides/service-worker.md) for the browser runtime wiring.
 
 ### Multi-Tenancy
 
@@ -242,12 +257,15 @@ import { Engine, tenantFromInputField } from 'weft';
 
 const engine = new Engine({
   tenantResolver: tenantFromInputField('customerId'),
-  tenantQuotas: {
-    maxRunningWorkflows: 100,
-    workflowCreationRateLimit: { perMinute: 60 },
+  quotas: {
+    maxConcurrentWorkflows: 100,
+    maxWorkflowCreationRate: { count: 60, window: '1m' },
+    maxStorageBytes: 50_000_000,
   },
 });
 ```
+
+The [Multi-Tenancy guide](documentation/guides/multi-tenancy.md) covers tenant resolution, quota enforcement, storage isolation, remote workers, and security boundaries.
 
 ### Observability
 
@@ -320,9 +338,8 @@ The `bun` runtime version `1.3.0` or later is required.
 If generator syntax is unfamiliar, the same workflow can be written with `ctx.step()` calls and plain `async`/`await`:
 
 ```typescript
-engine.register('welcome', async (ctx, input) => {
-  const { name } = input as { name: string };
-  const greeting = await ctx.step('greet', () => greet(name));
+engine.register('welcome', async (ctx, input: { name: string }) => {
+  const greeting = await ctx.step('greet', () => greet(input.name));
   await ctx.step('notify', () => notify(greeting));
   return { greeting, notified: true };
 });
@@ -335,7 +352,7 @@ Each `ctx.step()` is a checkpoint boundary. The engine compiles step-style workf
 | Concept                | Temporal                          | Weft                                                                       |
 | ---------------------- | --------------------------------- | -------------------------------------------------------------------------- |
 | Core mental model      | Replay determinism                | Generators pause and resume                                                |
-| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(fn, ...args)`                                              |
+| Activity invocation    | `proxyActivities()` + type import | `yield* ctx.run(namedActivity, input)`                                     |
 | Timer                  | Deterministic `workflow.sleep()`  | `yield* ctx.sleep("1 hour")`                                               |
 | Signal                 | `setHandler` + `condition`        | `yield* ctx.waitForSignal(name)`                                           |
 | Versioning             | `patched()` / `deprecatePatch()`  | Deploy new code (migration optional)                                       |
@@ -357,9 +374,9 @@ Guides:
 - [Workflows](documentation/guides/workflows.md), [Activities](documentation/guides/activities.md), [Storage](documentation/guides/storage.md), [Server](documentation/guides/server.md)
 - [Signals and Queries](documentation/guides/signals-and-queries.md), [Synchronous Updates](documentation/guides/synchronous-updates.md)
 - [Durable Timers](documentation/guides/durable-timers.md), [Timeouts](documentation/guides/timeouts.md), [Parallel Execution](documentation/guides/parallel-execution.md)
-- [Search Attributes](documentation/guides/search-attributes.md), [Shared State](documentation/guides/shared-state.md), [Session State](documentation/guides/session-state.md), [Events](documentation/guides/events.md)
+- [Search Attributes](documentation/guides/search-attributes.md), [Multi-Tenancy](documentation/guides/multi-tenancy.md), [Shared State](documentation/guides/shared-state.md), [Session State](documentation/guides/session-state.md), [Events](documentation/guides/events.md)
 - [Interceptors](documentation/guides/interceptors.md), [Observability](documentation/guides/observability.md), [Testing](documentation/guides/testing.md)
-- [Workflow Versioning](documentation/guides/workflow-versioning.md), [Remote Workers](documentation/guides/remote-workers.md), [Resource Management](documentation/guides/resource-management.md)
+- [Workflow Versioning](documentation/guides/workflow-versioning.md), [Remote Workers](documentation/guides/remote-workers.md), [Service Worker](documentation/guides/service-worker.md), [Resource Management](documentation/guides/resource-management.md)
 
 Agents:
 

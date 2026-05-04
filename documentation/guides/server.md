@@ -203,32 +203,30 @@ All response-producing endpoints support content negotiation. If the `Accept` he
 
 The same `handleRequest()` function that powers the Bun server also powers the Service Worker runtime. In the browser, a Service Worker intercepts `fetch` events and routes them through the engine---your client code calls `fetch("/weft/v1/workflows", ...)` and the Service Worker responds, no network required.
 
-The `weft/service-worker` module provides bootstrap functions that wire everything together.
+The `weft/service-worker` module provides bootstrap functions for lifecycle and fetch wiring. Timer wakeup uses the engine scheduler directly from the Service Worker event.
 
 ```typescript partial
 /// <reference lib="webworker" />
 import { Engine } from 'weft';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
-import {
-  createFetchHandler,
-  createLifecycleHandlers,
-  createPeriodicSyncHandler,
-  ServiceWorkerScheduler,
-} from 'weft/service-worker';
+import { createFetchHandler, createLifecycleHandlers } from 'weft/service-worker';
 
 const storage = new IndexedDBStorage('weft');
 const engine = new Engine({ storage });
-const scheduler = new ServiceWorkerScheduler({
-  storage,
-  onTimerFired: (entry) => engine.processTimer(entry),
-});
+
+await engine.recoverAll();
 
 const { install, activate } = createLifecycleHandlers();
 self.addEventListener('install', install);
 self.addEventListener('activate', activate);
 self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/' }));
-self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag !== 'weft-timers') return;
+  event.waitUntil(engine.scheduler.tick());
+});
 ```
+
+See the [Service Worker guide](./service-worker.md) for registration, Periodic Background Sync setup, fallback polling, and debugging details.
 
 ### `createFetchHandler()`
 
@@ -243,18 +241,9 @@ function createFetchHandler(options: ServiceWorkerOptions): (event: FetchEvent) 
 | `engine`     | `Engine` | (required) | The engine instance to handle requests            |
 | `pathPrefix` | `string` | `'/weft/'` | URL path prefix that identifies Weft API requests |
 
-### `createPeriodicSyncHandler()`
+### Periodic timer wakeup
 
-Creates a `periodicsync` event listener that fires expired timers. Workflows that use `ctx.sleep()` or `ctx.timer()` depend on periodic wakeup to advance. The Periodic Background Sync API serves this role in the browser.
-
-```typescript partial
-function createPeriodicSyncHandler(
-  scheduler: ServiceWorkerScheduler,
-  tag?: string,
-): (event: PeriodicSyncEvent) => void;
-```
-
-The `tag` parameter defaults to `'weft-timers'` and must match the tag used when registering the periodic sync with the browser.
+Workflows that use `ctx.sleep()` depend on periodic wakeup to advance. In the browser, listen for `periodicsync` and call `engine.scheduler.tick()`. The tag must match the tag registered from page code with `registration.periodicSync.register(...)`.
 
 ### `createLifecycleHandlers()`
 
@@ -271,4 +260,4 @@ function createLifecycleHandlers(): {
 
 Service Workers have constrained execution time. Browsers terminate a Service Worker shortly after it finishes handling an event, so long-running synchronous work is not viable. For workflows that need hours or days of execution, use a server deployment.
 
-Periodic Background Sync support varies by browser. Chrome supports it; Firefox and Safari do not at the time of writing. The `ServiceWorkerScheduler` falls back to `setTimeout`-based polling when periodic sync is unavailable, but this only works while a tab is open.
+Periodic Background Sync support varies by browser. As of May 4, 2026, MDN marks it experimental and limited; Chromium-based browsers support it, while Firefox and Safari do not. Without Periodic Background Sync, fallback polling only runs while a controlled tab is open.

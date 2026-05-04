@@ -268,12 +268,7 @@ All errors return JSON with an `error` field:
 The `weft/service-worker` module provides bootstrap functions for running the Weft engine inside a Service Worker. These functions wire `handleRequest()` into the Service Worker event model.
 
 ```ts partial
-import {
-  createFetchHandler,
-  createPeriodicSyncHandler,
-  createLifecycleHandlers,
-  ServiceWorkerScheduler,
-} from 'weft/service-worker';
+import { createFetchHandler, createLifecycleHandlers } from 'weft/service-worker';
 ```
 
 ---
@@ -308,28 +303,6 @@ self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/'
 
 ---
 
-### `createPeriodicSyncHandler()`
-
-```ts partial
-function createPeriodicSyncHandler(
-  scheduler: ServiceWorkerScheduler,
-  tag?: string,
-): (event: PeriodicSyncEvent) => void;
-```
-
-Returns a `periodicsync` event listener. When the event tag matches (default `'weft-timers'`), the listener calls `event.waitUntil()` with the scheduler's timer processing.
-
-| Parameter   | Type                     | Default         | Description                                      |
-| ----------- | ------------------------ | --------------- | ------------------------------------------------ |
-| `scheduler` | `ServiceWorkerScheduler` | (required)      | The scheduler instance that manages timer wakeup |
-| `tag`       | `string`                 | `'weft-timers'` | Periodic sync tag to match against               |
-
-```ts partial
-self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
-```
-
----
-
 ### `createLifecycleHandlers()`
 
 ```ts partial
@@ -352,45 +325,15 @@ self.addEventListener('activate', activate);
 
 ---
 
-### `ServiceWorkerScheduler`
+### Timer wakeup
+
+Use the engine's public scheduler from the Service Worker event handler:
 
 ```ts partial
-class ServiceWorkerScheduler
-```
-
-Manages timer wakeup in the Service Worker environment. Checks storage for expired timers and fires them via the provided callback.
-
-#### Constructor
-
-```ts partial
-new ServiceWorkerScheduler(options: ServiceWorkerSchedulerOptions)
-```
-
-```ts partial
-interface ServiceWorkerSchedulerOptions {
-  storage: Storage;
-  onTimerFired: (entry: TimerEntry) => void | Promise<void>;
-  registration?: ServiceWorkerRegistration;
-  periodicSyncTag?: string;
-  fallbackIntervalMilliseconds?: number;
-  getNow?: () => number;
-}
-```
-
-| Option                         | Type                                           | Default         | Description                                          |
-| ------------------------------ | ---------------------------------------------- | --------------- | ---------------------------------------------------- |
-| `storage`                      | `Storage`                                      | (required)      | Storage instance for reading timer entries           |
-| `onTimerFired`                 | `(entry: TimerEntry) => void \| Promise<void>` | (required)      | Callback invoked when a timer expires                |
-| `registration`                 | `ServiceWorkerRegistration`                    | `undefined`     | Service Worker registration for periodic sync        |
-| `periodicSyncTag`              | `string`                                       | `'weft-timers'` | Tag used when registering periodic background sync   |
-| `fallbackIntervalMilliseconds` | `number`                                       | `1000`          | Polling interval when periodic sync is not available |
-| `getNow`                       | `() => number`                                 | `Date.now`      | Clock function for testing                           |
-
-When Periodic Background Sync is available, the browser wakes the Service Worker at the registered interval. When it is not available (Firefox, Safari), the scheduler falls back to `setTimeout`-based polling, which only works while a tab is open.
-
-```ts partial
-const scheduler = new ServiceWorkerScheduler({
-  storage,
-  onTimerFired: (entry) => engine.processTimer(entry),
+self.addEventListener('periodicsync', (event) => {
+  if (event.tag !== 'weft-timers') return;
+  event.waitUntil(engine.scheduler.tick());
 });
 ```
+
+Register the matching tag from page code with `registration.periodicSync.register(...)`. See the [Service Worker guide](../guides/service-worker.md) for the full browser setup.

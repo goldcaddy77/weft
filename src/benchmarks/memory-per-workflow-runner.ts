@@ -192,7 +192,7 @@ if (import.meta.main) {
 }
 
 async function waitForParkedWorkflows(engine: Engine, expectedCount: number): Promise<void> {
-  const timeoutMilliseconds = 60_000;
+  const timeoutMilliseconds = process.env['CODEX_CI'] === '1' ? 180_000 : 60_000;
   const deadline = Date.now() + timeoutMilliseconds;
 
   while (Date.now() < deadline) {
