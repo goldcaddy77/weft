@@ -15,6 +15,7 @@
  * Intentional REST-only direct handlers that remain:
  *   - `GET /v1/health`    — anonymous liveness probe (no catalog op)
  *   - `GET /v1/metrics`   — Prometheus text exposition (text/plain, no catalog op)
+ *   - `GET /asyncapi.json` — transport-meta endpoint (self-describing, no catalog op)
  *   - `GET /openapi.json` — transport-meta endpoint (self-describing, no catalog op)
  *   - `GET /openrpc.json` — transport-meta endpoint (self-describing, no catalog op)
  *
@@ -90,6 +91,14 @@ export const ROUTES = [
     handler: 'openRpcDocument',
     paramNames: [],
     summary: 'OpenRPC 1.3.2 specification',
+    tags: ['System'],
+  },
+  {
+    method: 'GET',
+    path: '/asyncapi.json',
+    handler: 'asyncApiDocument',
+    paramNames: [],
+    summary: 'AsyncAPI 3.0 specification',
     tags: ['System'],
   },
 ] as const satisfies readonly RouteDefinition[];

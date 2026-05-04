@@ -4,6 +4,7 @@ import {
   type MetricsCollector,
   type PrometheusExporter,
 } from '../../observability/metrics.ts';
+import { generateAsyncApiDocument } from '../asyncapi.ts';
 import type { AuthContext } from '../authentication.ts';
 import { faultToHttpResponse } from '../fault-to-http.ts';
 import { generateOpenApiDocument, type OpenApiSecuritySchemeName } from '../openapi.ts';
@@ -140,6 +141,12 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
       generateOpenRpcDocument({
         registry: options?.operationRegistry ?? defaultOperationRegistry(),
         transports: ['http', 'websocket'],
+      }),
+    ),
+  asyncApiDocument: async ({ options }) =>
+    jsonResponse(
+      generateAsyncApiDocument({
+        registry: options?.operationRegistry ?? defaultOperationRegistry(),
       }),
     ),
 };
