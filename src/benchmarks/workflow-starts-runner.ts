@@ -13,6 +13,14 @@ const DEFAULT_WARMUP_STARTS = 50;
 const DEFAULT_TOTAL_STARTS = 10_000;
 const DEFAULT_BATCH_SIZE = 100;
 
+export function buildWarmupWorkflowArgument(index: number): string {
+  return `warmup-${index}`;
+}
+
+export function buildMeasuredWorkflowArgument(index: number): string {
+  return `measured-${index}`;
+}
+
 async function measureWorkflowStartAdmissions(
   totalStarts: number,
   batchSize: number,
@@ -29,7 +37,7 @@ async function measureWorkflowStartAdmissions(
     });
 
     for (let index = 0; index < warmupStarts; index += 1) {
-      const handle = await engine.start('noop', index);
+      const handle = await engine.start('noop', buildWarmupWorkflowArgument(index));
       await handle.result();
     }
 
@@ -40,7 +48,7 @@ async function measureWorkflowStartAdmissions(
       const starters: Array<Promise<{ result: () => Promise<unknown> }>> = [];
 
       for (let offset = 0; offset < batchSize && index + offset < totalStarts; offset += 1) {
-        starters.push(engine.start('noop', index + offset));
+        starters.push(engine.start('noop', buildMeasuredWorkflowArgument(index + offset)));
       }
 
       handles.push(...(await Promise.all(starters)));

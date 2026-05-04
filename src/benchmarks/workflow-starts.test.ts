@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { fileURLToPath } from 'node:url';
-import type { WorkflowStartAdmissionMeasurement } from './workflow-starts-runner.ts';
+import {
+  buildMeasuredWorkflowArgument,
+  buildWarmupWorkflowArgument,
+  type WorkflowStartAdmissionMeasurement,
+} from './workflow-starts-runner.ts';
 
 /**
  * K2a: Workflow start admission throughput benchmark.
@@ -107,6 +111,20 @@ function runWorkflowStartAdmissionBenchmark(): WorkflowStartAdmissionMeasurement
 }
 
 describe('Workflow start admission throughput', () => {
+  it('uses distinct workflow arguments for warmup and measured starts', () => {
+    const warmupArguments = Array.from({ length: WARMUP_STARTS }, (_, index) =>
+      buildWarmupWorkflowArgument(index),
+    );
+    const measuredArguments = Array.from({ length: START_BATCH_SIZE }, (_, index) =>
+      buildMeasuredWorkflowArgument(index),
+    );
+    const warmupArgumentSet = new Set(warmupArguments);
+
+    for (const measuredArgument of measuredArguments) {
+      expect(warmupArgumentSet.has(measuredArgument)).toBeFalse();
+    }
+  });
+
   it(`admissions exceed ${TARGET_ADMISSIONS_PER_SECOND.toLocaleString()} workflows/sec`, async () => {
     const measurement = runWorkflowStartAdmissionBenchmark();
 
