@@ -199,8 +199,7 @@ declare global {
  *
  * @example
  * ```ts
- * import { type AgentRegistrationOptions } from 'weft';
- * import type { LLMProvider } from 'weft/ai';
+ * import { type AgentRegistrationOptions, type LLMProvider } from 'weft';
  * declare const provider: LLMProvider;
  * const options: AgentRegistrationOptions = { provider };
  * void options;
