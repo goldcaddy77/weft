@@ -35,7 +35,10 @@ export const TERMINAL_STATUSES: ReadonlySet<WorkflowStatus> = new Set<WorkflowSt
 ]);
 
 export type GuardCallbacks = {
-  deleteCoordinatedUpdateRequest: (workflowId: string, updateId: string) => Promise<void>;
+  deleteRequestIfUnconsumed: (
+    workflowId: string,
+    updateId: string,
+  ) => Promise<UpdateResponse | null>;
   getUpdateResponse: (updateId: string) => Promise<UpdateResponse | null>;
 };
 
@@ -94,8 +97,7 @@ export async function guardTerminalWorkflowAfterCoordinatedRequest(
         return;
       }
 
-      await callbacks.deleteCoordinatedUpdateRequest(workflowId, updateId);
-      const lateResponse = await callbacks.getUpdateResponse(updateId);
+      const lateResponse = await callbacks.deleteRequestIfUnconsumed(workflowId, updateId);
       if (lateResponse !== null) {
         return;
       }

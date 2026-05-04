@@ -32,7 +32,7 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - run: bun test --bail
+      - run: bun test --bail --path-ignore-patterns '**/benchmarks/**'
   build:
     runs-on: ubuntu-latest
     steps:

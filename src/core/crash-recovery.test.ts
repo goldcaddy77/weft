@@ -159,6 +159,46 @@ function wrapStorageWithAgentExecutionStateWriteHook(
   return copyOptionalStorageMethods(wrapped, storage);
 }
 
+function wrapStorageWithPublicSignalBeforeAgentExecutionStateBatch(
+  storage: Storage,
+  workflowId: string,
+  signalName: string,
+  payload: unknown,
+): Storage {
+  let signalWasWritten = false;
+
+  const writeSignalOnce = async () => {
+    if (signalWasWritten) {
+      return;
+    }
+
+    signalWasWritten = true;
+    await storage.put(
+      STORAGE_KEYS.signal(workflowId, signalName, 'batch-window-signal'),
+      encode(payload),
+    );
+  };
+
+  const wrapped: Storage = {
+    get: storage.get.bind(storage),
+    put: storage.put.bind(storage),
+    delete: storage.delete.bind(storage),
+    scan: storage.scan.bind(storage),
+    async batch(operations) {
+      if (operations.some(writesAgentExecutionState)) {
+        await writeSignalOnce();
+      }
+
+      await storage.batch(operations);
+    },
+    [Symbol.dispose]() {
+      storage[Symbol.dispose]();
+    },
+  };
+
+  return copyOptionalStorageMethods(wrapped, storage);
+}
+
 function wrapStorageWithCrashAfterAgentExecutionStateWrite(storage: Storage): {
   storage: Storage;
   crashed: () => boolean;
@@ -614,6 +654,54 @@ describe('crash recovery', () => {
     ]);
 
     engine2[Symbol.dispose]();
+  });
+
+  it('repairs missing agent resume signal mirror from the pending-state batch window', async () => {
+    const workflowId = 'wf-agent-mirror-repair';
+    const baseStorage = new MemoryStorage();
+    const storage = wrapStorageWithPublicSignalBeforeAgentExecutionStateBatch(
+      baseStorage,
+      workflowId,
+      'llm-ready-token',
+      { approved: true },
+    );
+    const chatCalls: ResumeAwareChatCall[] = [];
+    const provider = createResumeAwareProvider(chatCalls);
+
+    const engine = new Engine({ storage, suspendOnLlmWait: true });
+    engine.register('agent-mirror-repair', async function* (ctx: WorkflowContext) {
+      const context = ctx as Context;
+      context.onUpdate('touch', () => 'ok');
+      const agentResult = yield* context.agent({
+        model: 'test-model',
+        prompt: 'Wait for the provider resume signal',
+        provider,
+      });
+      const signalPayload = yield* context.waitForSignal<{ approved: boolean }>('llm-ready-token');
+      return { agentResult, signalPayload };
+    });
+
+    const handle = await engine.start('agent-mirror-repair', null, { id: workflowId });
+
+    await expect(handle.result()).resolves.toEqual({
+      agentResult: 'Agent resumed successfully',
+      signalPayload: { approved: true },
+    });
+    expect(chatCalls).toEqual([
+      {
+        resumePayload: { approved: true },
+        resumeToken: 'llm-ready-token',
+        turnIndex: 0,
+      },
+    ]);
+    expect(
+      await collectStorageKeys(
+        baseStorage,
+        internalAgentResumeSignalPrefix(workflowId, 'llm-ready-token'),
+      ),
+    ).toEqual([]);
+
+    engine[Symbol.dispose]();
   });
 
   it('abort-during-suspension does not mark resume satisfied', async () => {

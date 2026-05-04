@@ -21,6 +21,7 @@ import {
   createAgentResumeSignalName,
   loadPendingAgentExecutionState,
   markPendingAgentResumeStateResumed,
+  repairMissingSignalMirrorIfNeeded,
   storePendingAgentExecutionState,
   type SignalPayloadWaitResult,
   type StoredPendingAgentExecutionState,
@@ -300,6 +301,8 @@ async function waitForAgentResumeSignal(
   resumeToken: string,
   callbacks: AgentOperationCallbacks,
 ): Promise<StoredPendingAgentExecutionState | undefined> {
+  await repairMissingSignalMirrorIfNeeded(internals, workflowId, stepIndex, resumeToken);
+
   const payload = await callbacks.waitForSignalPayload(
     workflowId,
     createAgentResumeSignalName(stepIndex, resumeToken),

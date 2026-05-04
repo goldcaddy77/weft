@@ -12,6 +12,8 @@ import type { WorkflowState } from '../types.ts';
 import type { EngineInternals } from './internals.ts';
 import { releaseSignalWaiter, trackWaiterKey, type ConsumedSignalResult } from './signals.ts';
 
+export { repairMissingSignalMirrorIfNeeded } from './operations-agent-signal-repair.ts';
+
 export type StoredPendingAgentExecutionState = {
   loopState: PersistedAgentLoopState;
   pendingResume: PendingProviderResumeState;

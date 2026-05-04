@@ -16,11 +16,6 @@ const SNAPSHOT_PATH = resolve(REPO_ROOT, 'documentation/public-api.snapshot.txt'
 const HEADER = '# Public API surface snapshot — see scripts/snapshot-public-api.ts';
 const TYPE_FORMAT_FLAGS =
   ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
-const IMPLEMENTATION_SPECIFIC_EXPORTS = new Set([
-  './storage/bun-sqlite',
-  './storage/sqlite/bun',
-  './storage/sqlite/node',
-]);
 
 type ProgramBuild = { program: ts.Program; checker: ts.TypeChecker; sourceFile: ts.SourceFile };
 type CommandMode = 'check' | 'update';
@@ -34,14 +29,33 @@ function readPackageExports(): PackageEntrypoint[] {
   }
 
   return Object.entries(parsedPackageJson.exports)
-    .flatMap(([subpath, exportValue]) => {
-      if (!isRecord(exportValue)) return [];
-      if (IMPLEMENTATION_SPECIFIC_EXPORTS.has(subpath)) return [];
+    .flatMap(([subpath, exportValue]) => packageEntrypointsFor(subpath, exportValue))
+    .toSorted((left, right) =>
+      left.subpath < right.subpath ? -1 : left.subpath > right.subpath ? 1 : 0,
+    );
+}
 
-      const typesPath = exportValue.types;
-      if (typeof typesPath !== 'string') return [];
+function packageEntrypointsFor(subpath: string, exportValue: unknown): PackageEntrypoint[] {
+  if (!isRecord(exportValue)) return [];
 
-      return [{ subpath, dtsPath: resolve(REPO_ROOT, typesPath) }];
+  const typesPath = exportValue.types;
+  if (typeof typesPath === 'string') {
+    return [{ subpath, dtsPath: resolve(REPO_ROOT, typesPath) }];
+  }
+
+  return Object.entries(exportValue)
+    .flatMap(([conditionLabel, conditionValue]) => {
+      if (!isRecord(conditionValue)) return [];
+
+      const conditionalTypesPath = conditionValue.types;
+      if (typeof conditionalTypesPath !== 'string') return [];
+
+      return [
+        {
+          subpath: `${subpath} (${conditionLabel})`,
+          dtsPath: resolve(REPO_ROOT, conditionalTypesPath),
+        },
+      ];
     })
     .toSorted((left, right) =>
       left.subpath < right.subpath ? -1 : left.subpath > right.subpath ? 1 : 0,
@@ -531,9 +545,15 @@ function main(): void {
   }
 
   const mode = parseMode(process.argv.slice(2));
+  const extractedLinesByPath = new Map<string, string[]>();
   const sections = entrypoints.map(({ subpath, dtsPath }) => {
+    const cachedLines = extractedLinesByPath.get(dtsPath);
+    if (cachedLines) return buildEntrypointSection(subpath, cachedLines);
+
     const { program, checker, sourceFile } = buildProgram(dtsPath);
-    return buildEntrypointSection(subpath, extractExportLines(program, checker, sourceFile));
+    const lines = extractExportLines(program, checker, sourceFile);
+    extractedLinesByPath.set(dtsPath, lines);
+    return buildEntrypointSection(subpath, lines);
   });
   const snapshot = buildMultiEntrypointSnapshot(sections);
 

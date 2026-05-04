@@ -225,8 +225,8 @@ export function createBroadcastCallbacks(engine: Engine): BroadcastCallbacks {
 }
 export function createGuardCallbacks(engine: Engine): GuardCallbacks {
   return {
-    deleteCoordinatedUpdateRequest: (workflowId, updateId) =>
-      getInternals(engine).updateCoordinator.deleteRequest(workflowId, updateId),
+    deleteRequestIfUnconsumed: (workflowId, updateId) =>
+      getInternals(engine).updateCoordinator.deleteRequestIfUnconsumed(workflowId, updateId),
     getUpdateResponse: (updateId) => getInternals(engine).updateCoordinator.getResponse(updateId),
   };
 }
