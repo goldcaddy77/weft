@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { sleepForTesting } from '../testing/fake-timers.ts';
+import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 
 import { encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
@@ -313,7 +313,11 @@ describe('task state invariant (server integration)', () => {
     });
 
     await server.dispatchTask({ operationId: 'ws-resolve-1', activityName: 'charge', input: null });
-    await sleepForTesting(150);
+
+    await waitForCondition(
+      async () => (await getExclusiveTaskState(storage, 'ws-resolve-1')) === 'resolved',
+      { timeoutMs: 5000, intervalMs: 25, label: 'ws-resolve-1 to reach resolved' },
+    );
 
     const state = await getExclusiveTaskState(storage, 'ws-resolve-1');
     expect(state).toBe('resolved');
