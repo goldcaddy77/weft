@@ -130,10 +130,10 @@ function createMockOtelApi(tracer: OtelTracer): OtelApi {
 // ---------------------------------------------------------------------------
 
 describe('createObservabilityInterceptors', () => {
-  it('returns workflow and activity interceptors', () => {
+  it('returns a unified interceptor', () => {
     const interceptors = createObservabilityInterceptors();
-    expect(interceptors.workflow).toBeDefined();
-    expect(interceptors.activity).toBeDefined();
+    expect(interceptors.interceptor.workflowStart).toBeDefined();
+    expect(interceptors.interceptor.execute).toBeDefined();
   });
 
   it('returns a metrics collector even when not explicitly provided', () => {
@@ -146,12 +146,12 @@ describe('createObservabilityInterceptors', () => {
   describe('workflow interceptor', () => {
     it('injects traceparent header on workflowStart', () => {
       const { tracer } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
       const headers = new Map<string, string>();
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-1',
           workflowType: 'TestWorkflow',
@@ -168,11 +168,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('creates a span for workflowStart with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-1',
           workflowType: 'TestWorkflow',
@@ -190,7 +190,7 @@ describe('createObservabilityInterceptors', () => {
 
     it('ends and replaces an existing workflow span on re-execution', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
@@ -201,8 +201,8 @@ describe('createObservabilityInterceptors', () => {
         headers: new Map<string, string>(),
       };
 
-      workflow.workflowStart!(interception, () => {});
-      workflow.workflowStart!(interception, () => {});
+      interceptor.workflowStart!(interception, () => {});
+      interceptor.workflowStart!(interception, () => {});
 
       expect(spans).toHaveLength(2);
       expect(spans[0]!.status).toEqual({ code: 1 });
@@ -217,11 +217,11 @@ describe('createObservabilityInterceptors', () => {
 
       try {
         const { tracer, spans } = createRecordingTracer();
-        const { workflow } = createObservabilityInterceptors({
+        const { interceptor } = createObservabilityInterceptors({
           otelApi: createMockOtelApi(tracer),
         });
 
-        workflow.workflowStart!(
+        interceptor.workflowStart!(
           {
             workflowId: 'wf-expired',
             workflowType: 'TestWorkflow',
@@ -233,7 +233,7 @@ describe('createObservabilityInterceptors', () => {
 
         mockTime = 60 * 60 * 1000 + 1;
 
-        workflow.workflowStart!(
+        interceptor.workflowStart!(
           {
             workflowId: 'wf-fresh',
             workflowType: 'TestWorkflow',
@@ -252,12 +252,12 @@ describe('createObservabilityInterceptors', () => {
 
     it('evicts the oldest workflow spans when the span cache exceeds the hard cap', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
       for (let index = 0; index <= 10_001; index++) {
-        workflow.workflowStart!(
+        interceptor.workflowStart!(
           {
             workflowId: `wf-${index}`,
             workflowType: 'TestWorkflow',
@@ -276,12 +276,12 @@ describe('createObservabilityInterceptors', () => {
     it('ends workflow spans from terminal events and ignores unrelated events', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget,
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-terminal-events',
           workflowType: 'TestWorkflow',
@@ -301,7 +301,7 @@ describe('createObservabilityInterceptors', () => {
       expect(spans[0]!.status).toEqual({ code: 2, message: 'workflow failed' });
       expect(spans[0]!.ended).toBe(true);
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-terminal-completed',
           workflowType: 'TestWorkflow',
@@ -314,7 +314,7 @@ describe('createObservabilityInterceptors', () => {
       expect(spans[1]!.status).toEqual({ code: 1 });
       expect(spans[1]!.ended).toBe(true);
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-terminal-cancelled',
           workflowType: 'TestWorkflow',
@@ -327,7 +327,7 @@ describe('createObservabilityInterceptors', () => {
       expect(spans[2]!.status).toEqual({ code: 2, message: 'Workflow cancelled' });
       expect(spans[2]!.ended).toBe(true);
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-terminal-timeout',
           workflowType: 'TestWorkflow',
@@ -346,11 +346,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('injects traceparent header on activity', () => {
       const { tracer } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-1',
           workflowType: 'TestWorkflow',
@@ -375,7 +375,7 @@ describe('createObservabilityInterceptors', () => {
         return mockResult;
       };
 
-      const generator = workflow.activity!(interception, next);
+      const generator = interceptor.activity!(interception, next);
       let step = generator.next();
       while (!step.done) {
         step = generator.next(step.value);
@@ -387,11 +387,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('creates a span for activity with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-1',
           workflowType: 'TestWorkflow',
@@ -405,7 +405,7 @@ describe('createObservabilityInterceptors', () => {
         return 'result';
       };
 
-      const generator = workflow.activity!(
+      const generator = interceptor.activity!(
         {
           workflowId: 'wf-1',
           activityName: 'doSomething',
@@ -432,11 +432,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('records error span when activity generator throws', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-err',
           workflowType: 'TestWorkflow',
@@ -451,7 +451,7 @@ describe('createObservabilityInterceptors', () => {
         throw theError;
       };
 
-      const generator = workflow.activity!(
+      const generator = interceptor.activity!(
         {
           workflowId: 'wf-err',
           activityName: 'failingActivity',
@@ -484,11 +484,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('records span for sleep with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-1',
           workflowType: 'TestWorkflow',
@@ -500,7 +500,7 @@ describe('createObservabilityInterceptors', () => {
 
       const next = function* (_ctx: SleepInterception) {};
 
-      const generator = workflow.sleep!(
+      const generator = interceptor.sleep!(
         { workflowId: 'wf-1', duration: 5000, headers: new Map() },
         next,
       );
@@ -518,11 +518,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('records error span when sleep throws', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-sleep-error',
           workflowType: 'TestWorkflow',
@@ -536,7 +536,7 @@ describe('createObservabilityInterceptors', () => {
         throw new Error('sleep failed');
       };
 
-      const generator = workflow.sleep!(
+      const generator = interceptor.sleep!(
         { workflowId: 'wf-sleep-error', duration: 100, headers: new Map() },
         next,
       );
@@ -557,11 +557,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('records span for waitForSignal with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-1',
           workflowType: 'TestWorkflow',
@@ -575,7 +575,7 @@ describe('createObservabilityInterceptors', () => {
         return 'signal-result';
       };
 
-      const generator = workflow.waitForSignal!(
+      const generator = interceptor.waitForSignal!(
         {
           workflowId: 'wf-1',
           signalName: 'approval',
@@ -598,11 +598,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('records error span when waitForSignal throws', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-sig-err',
           workflowType: 'TestWorkflow',
@@ -617,7 +617,7 @@ describe('createObservabilityInterceptors', () => {
         throw theError;
       };
 
-      const generator = workflow.waitForSignal!(
+      const generator = interceptor.waitForSignal!(
         {
           workflowId: 'wf-sig-err',
           signalName: 'test-signal',
@@ -648,11 +648,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('records span for agent with correct attributes', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-1',
           workflowType: 'TestWorkflow',
@@ -666,7 +666,7 @@ describe('createObservabilityInterceptors', () => {
         return 'agent-result';
       };
 
-      const generator = workflow.agent!(
+      const generator = interceptor.agent!(
         { workflowId: 'wf-1', model: 'gpt-4', prompt: 'hello', headers: new Map() },
         next,
       );
@@ -684,11 +684,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('records error span when agent throws', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-agent-err',
           workflowType: 'TestWorkflow',
@@ -703,7 +703,7 @@ describe('createObservabilityInterceptors', () => {
         throw theError;
       };
 
-      const generator = workflow.agent!(
+      const generator = interceptor.agent!(
         { workflowId: 'wf-agent-err', model: 'gpt-4', prompt: 'hello', headers: new Map() },
         next,
       );
@@ -728,11 +728,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('creates standalone span for signalReceived', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.signalReceived!(
+      interceptor.signalReceived!(
         {
           workflowId: 'wf-1',
           signalName: 'approval',
@@ -752,13 +752,13 @@ describe('createObservabilityInterceptors', () => {
 
     it('records error span when signalReceived throws', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
       const theError = new Error('signal handler failed');
       expect(() => {
-        workflow.signalReceived!(
+        interceptor.signalReceived!(
           {
             workflowId: 'wf-1',
             signalName: 'approval',
@@ -779,11 +779,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('ends workflow spans explicitly with success and error states', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
+      const { interceptor, endWorkflowSpan } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-end-ok',
           workflowType: 'TestWorkflow',
@@ -794,7 +794,7 @@ describe('createObservabilityInterceptors', () => {
       );
       endWorkflowSpan('wf-end-ok', 'ok');
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-end-error',
           workflowType: 'TestWorkflow',
@@ -816,7 +816,7 @@ describe('createObservabilityInterceptors', () => {
   describe('activity interceptor', () => {
     it('extracts trace context from headers and creates child span', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { activity } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
@@ -824,7 +824,7 @@ describe('createObservabilityInterceptors', () => {
         ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
       ]);
 
-      const result = await activity.execute!(
+      const result = await interceptor.execute!(
         { activityName: 'doSomething', input: 'hello', attempt: 1, headers },
         async () => 'result',
       );
@@ -846,12 +846,12 @@ describe('createObservabilityInterceptors', () => {
         return _context;
       };
 
-      const { activity } = createObservabilityInterceptors({ otelApi });
+      const { interceptor } = createObservabilityInterceptors({ otelApi });
       const headers = new Map<string, string>([
         ['traceparent', '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'],
       ]);
 
-      await activity.execute!(
+      await interceptor.execute!(
         { activityName: 'doSomething', input: 'hello', attempt: 1, headers },
         async () => 'result',
       );
@@ -861,7 +861,7 @@ describe('createObservabilityInterceptors', () => {
 
     it('handles errors in activity execution', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { activity } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
@@ -870,7 +870,7 @@ describe('createObservabilityInterceptors', () => {
       ]);
 
       try {
-        await activity.execute!(
+        await interceptor.execute!(
           { activityName: 'failingActivity', input: undefined, attempt: 1, headers },
           async () => {
             throw new Error('something went wrong');
@@ -889,7 +889,7 @@ describe('createObservabilityInterceptors', () => {
 
     it('handles non-Error thrown values', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { activity } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
@@ -898,7 +898,7 @@ describe('createObservabilityInterceptors', () => {
       ]);
 
       try {
-        await activity.execute!(
+        await interceptor.execute!(
           { activityName: 'stringThrower', input: undefined, attempt: 1, headers },
           async () => {
             throw 'string error value';
@@ -916,11 +916,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('generates a new trace when no traceparent header exists', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { activity } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      await activity.execute!(
+      await interceptor.execute!(
         { activityName: 'noTrace', input: undefined, attempt: 1, headers: new Map() },
         async () => 'ok',
       );
@@ -934,12 +934,12 @@ describe('createObservabilityInterceptors', () => {
   describe('recordPayloads option', () => {
     it('includes input as attribute when enabled', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { activity } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         recordPayloads: true,
         otelApi: createMockOtelApi(tracer),
       });
 
-      await activity.execute!(
+      await interceptor.execute!(
         {
           activityName: 'doSomething',
           input: 'hello-world',
@@ -955,12 +955,12 @@ describe('createObservabilityInterceptors', () => {
 
     it('does not include input when disabled', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { activity } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         recordPayloads: false,
         otelApi: createMockOtelApi(tracer),
       });
 
-      await activity.execute!(
+      await interceptor.execute!(
         {
           activityName: 'doSomething',
           input: 'hello-world',
@@ -976,13 +976,13 @@ describe('createObservabilityInterceptors', () => {
 
     it('truncates payloads exceeding maxPayloadSize', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { activity } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         recordPayloads: true,
         maxPayloadSize: 10,
         otelApi: createMockOtelApi(tracer),
       });
 
-      await activity.execute!(
+      await interceptor.execute!(
         {
           activityName: 'doSomething',
           input: 'this is a very long input string that exceeds the max',
@@ -999,12 +999,12 @@ describe('createObservabilityInterceptors', () => {
 
     it('records workflow start input when recordPayloads is enabled', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         recordPayloads: true,
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-payload',
           workflowType: 'TestWorkflow',
@@ -1021,12 +1021,12 @@ describe('createObservabilityInterceptors', () => {
 
     it('records activity input when recordPayloads is enabled (workflow interceptor)', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         recordPayloads: true,
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-act-payload',
           workflowType: 'TestWorkflow',
@@ -1040,7 +1040,7 @@ describe('createObservabilityInterceptors', () => {
         return 'result';
       };
 
-      const generator = workflow.activity!(
+      const generator = interceptor.activity!(
         {
           workflowId: 'wf-act-payload',
           activityName: 'doSomething',
@@ -1062,7 +1062,7 @@ describe('createObservabilityInterceptors', () => {
 
     it('handles non-serializable payloads', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { activity } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         recordPayloads: true,
         otelApi: createMockOtelApi(tracer),
       });
@@ -1071,7 +1071,7 @@ describe('createObservabilityInterceptors', () => {
       const circular: any = {};
       circular.self = circular;
 
-      await activity.execute!(
+      await interceptor.execute!(
         {
           activityName: 'circularInput',
           input: circular,
@@ -1087,12 +1087,12 @@ describe('createObservabilityInterceptors', () => {
 
     it('records agent prompt when recordPayloads is enabled', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         recordPayloads: true,
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-agent-payload',
           workflowType: 'TestWorkflow',
@@ -1106,7 +1106,7 @@ describe('createObservabilityInterceptors', () => {
         return 'agent-result';
       };
 
-      const generator = workflow.agent!(
+      const generator = interceptor.agent!(
         {
           workflowId: 'wf-agent-payload',
           model: 'gpt-4',
@@ -1129,12 +1129,12 @@ describe('createObservabilityInterceptors', () => {
   describe('attributeExtractor', () => {
     it('merges custom attributes into workflowStart span', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         attributeExtractor: () => ({ 'custom.region': 'us-east', 'custom.priority': 1 }),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-attr',
           workflowType: 'TestWorkflow',
@@ -1152,12 +1152,12 @@ describe('createObservabilityInterceptors', () => {
 
     it('merges custom attributes into activity span', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         attributeExtractor: () => ({ 'custom.region': 'us-east' }),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-attr-act',
           workflowType: 'TestWorkflow',
@@ -1171,7 +1171,7 @@ describe('createObservabilityInterceptors', () => {
         return 'result';
       };
 
-      const generator = workflow.activity!(
+      const generator = interceptor.activity!(
         {
           workflowId: 'wf-attr-act',
           activityName: 'doSomething',
@@ -1193,12 +1193,12 @@ describe('createObservabilityInterceptors', () => {
 
     it('merges custom attributes into sleep span', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         attributeExtractor: () => ({ 'custom.region': 'eu-west' }),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-attr-sleep',
           workflowType: 'TestWorkflow',
@@ -1210,7 +1210,7 @@ describe('createObservabilityInterceptors', () => {
 
       const next = function* (_ctx: SleepInterception) {};
 
-      const generator = workflow.sleep!(
+      const generator = interceptor.sleep!(
         { workflowId: 'wf-attr-sleep', duration: 5000, headers: new Map() },
         next,
       );
@@ -1226,12 +1226,12 @@ describe('createObservabilityInterceptors', () => {
 
     it('merges custom attributes into agent span', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         attributeExtractor: () => ({ 'custom.env': 'production' }),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-attr-agent',
           workflowType: 'TestWorkflow',
@@ -1245,7 +1245,7 @@ describe('createObservabilityInterceptors', () => {
         return 'agent-result';
       };
 
-      const generator = workflow.agent!(
+      const generator = interceptor.agent!(
         { workflowId: 'wf-attr-agent', model: 'gpt-4', prompt: 'hello', headers: new Map() },
         next,
       );
@@ -1262,7 +1262,7 @@ describe('createObservabilityInterceptors', () => {
     it('receives actual interception context', () => {
       const extractorCalls: unknown[] = [];
       const { tracer } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         attributeExtractor: (ctx) => {
           extractorCalls.push(ctx);
@@ -1277,7 +1277,7 @@ describe('createObservabilityInterceptors', () => {
         headers: new Map<string, string>(),
       };
 
-      workflow.workflowStart!(interception, () => {});
+      interceptor.workflowStart!(interception, () => {});
 
       expect(extractorCalls.length).toBeGreaterThanOrEqual(1);
       // The extractor receives the actual interception object
@@ -1288,9 +1288,9 @@ describe('createObservabilityInterceptors', () => {
   describe('MetricsCollector integration', () => {
     it('records weft.workflow.started on workflowStart', () => {
       const metricsCollector = new MetricsCollector();
-      const { workflow } = createObservabilityInterceptors({ metrics: metricsCollector });
+      const { interceptor } = createObservabilityInterceptors({ metrics: metricsCollector });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-m1',
           workflowType: 'TestWorkflow',
@@ -1310,9 +1310,9 @@ describe('createObservabilityInterceptors', () => {
 
     it('records weft.activity.duration on activity completion', () => {
       const metricsCollector = new MetricsCollector();
-      const { workflow } = createObservabilityInterceptors({ metrics: metricsCollector });
+      const { interceptor } = createObservabilityInterceptors({ metrics: metricsCollector });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-m2',
           workflowType: 'TestWorkflow',
@@ -1326,7 +1326,7 @@ describe('createObservabilityInterceptors', () => {
         return 'result';
       };
 
-      const generator = workflow.activity!(
+      const generator = interceptor.activity!(
         {
           workflowId: 'wf-m2',
           activityName: 'myActivity',
@@ -1354,12 +1354,12 @@ describe('createObservabilityInterceptors', () => {
     it('counts timed-out workflows as DPMO defects', () => {
       const metricsCollector = new MetricsCollector();
       const eventTarget = new EventTarget();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         metrics: metricsCollector,
         eventTarget,
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-timeout-dpmo',
           workflowType: 'TestWorkflow',
@@ -1384,11 +1384,11 @@ describe('createObservabilityInterceptors', () => {
 
   describe('without OTel API (default no-op)', () => {
     it('works without any options — uses no-op OTel API', () => {
-      const { workflow } = createObservabilityInterceptors();
+      const { interceptor } = createObservabilityInterceptors();
 
       const headers = new Map<string, string>();
       expect(() => {
-        workflow.workflowStart!(
+        interceptor.workflowStart!(
           {
             workflowId: 'wf-noop',
             workflowType: 'TestWorkflow',
@@ -1404,9 +1404,9 @@ describe('createObservabilityInterceptors', () => {
     });
 
     it('activity interceptor works without OTel', async () => {
-      const { activity } = createObservabilityInterceptors();
+      const { interceptor } = createObservabilityInterceptors();
 
-      const result = await activity.execute!(
+      const result = await interceptor.execute!(
         { activityName: 'noOtel', input: undefined, attempt: 1, headers: new Map() },
         async () => 'ok',
       );
@@ -1418,11 +1418,11 @@ describe('createObservabilityInterceptors', () => {
   describe('non-Error thrown values', () => {
     it('records non-Error thrown value in activity generator', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-err-2',
           workflowType: 'TestWorkflow',
@@ -1436,7 +1436,7 @@ describe('createObservabilityInterceptors', () => {
         throw 'non-error value';
       };
 
-      const generator = workflow.activity!(
+      const generator = interceptor.activity!(
         {
           workflowId: 'wf-err-2',
           activityName: 'stringThrower',
@@ -1464,11 +1464,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('records non-Error thrown value in waitForSignal', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-sig-err-2',
           workflowType: 'TestWorkflow',
@@ -1482,7 +1482,7 @@ describe('createObservabilityInterceptors', () => {
         throw 42;
       };
 
-      const generator = workflow.waitForSignal!(
+      const generator = interceptor.waitForSignal!(
         {
           workflowId: 'wf-sig-err-2',
           signalName: 'test-signal',
@@ -1511,7 +1511,7 @@ describe('createObservabilityInterceptors', () => {
   describe('workflow activity interceptor without prior workflowStart', () => {
     it('still creates a span when no workflowStart was called', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
@@ -1527,7 +1527,7 @@ describe('createObservabilityInterceptors', () => {
         return 'result';
       };
 
-      const generator = workflow.activity!(interception, next);
+      const generator = interceptor.activity!(interception, next);
       let step = generator.next();
       while (!step.done) {
         step = generator.next(step.value);
@@ -1551,12 +1551,12 @@ describe('createObservabilityInterceptors', () => {
       const { tracer, spans } = createRecordingTracer();
       const otelApi = createMockOtelApi(tracer);
 
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         eventTarget,
         otelApi,
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-agent-spans',
           workflowType: 'TestWorkflow',
@@ -1566,14 +1566,14 @@ describe('createObservabilityInterceptors', () => {
         () => {},
       );
 
-      return { workflow, spans };
+      return { interceptor, spans };
     }
 
     it('creates agent:turn child spans from turn events', () => {
       const eventTarget = new EventTarget();
-      const { workflow, spans } = setupWorkflow(eventTarget);
+      const { interceptor, spans } = setupWorkflow(eventTarget);
 
-      const gen = workflow.agent!(
+      const gen = interceptor.agent!(
         { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
@@ -1616,9 +1616,9 @@ describe('createObservabilityInterceptors', () => {
 
     it('creates agent:tool child spans from tool events', () => {
       const eventTarget = new EventTarget();
-      const { workflow, spans } = setupWorkflow(eventTarget);
+      const { interceptor, spans } = setupWorkflow(eventTarget);
 
-      const gen = workflow.agent!(
+      const gen = interceptor.agent!(
         { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
@@ -1680,9 +1680,9 @@ describe('createObservabilityInterceptors', () => {
 
     it('creates spans for multiple turns with tools', () => {
       const eventTarget = new EventTarget();
-      const { workflow, spans } = setupWorkflow(eventTarget);
+      const { interceptor, spans } = setupWorkflow(eventTarget);
 
-      const gen = workflow.agent!(
+      const gen = interceptor.agent!(
         { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
@@ -1771,9 +1771,9 @@ describe('createObservabilityInterceptors', () => {
 
     it('handles multiple tool calls within a single turn', () => {
       const eventTarget = new EventTarget();
-      const { workflow, spans } = setupWorkflow(eventTarget);
+      const { interceptor, spans } = setupWorkflow(eventTarget);
 
-      const gen = workflow.agent!(
+      const gen = interceptor.agent!(
         { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
@@ -1848,16 +1848,16 @@ describe('createObservabilityInterceptors', () => {
 
     it('does not create child spans when eventTarget is not provided', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         { workflowId: 'wf-no-et', workflowType: 'Test', input: undefined, headers: new Map() },
         () => {},
       );
 
-      const gen = workflow.agent!(
+      const gen = interceptor.agent!(
         { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           return 'done';
@@ -1873,10 +1873,10 @@ describe('createObservabilityInterceptors', () => {
 
     it('cleans up orphaned turn and tool spans on agent error', () => {
       const eventTarget = new EventTarget();
-      const { workflow, spans } = setupWorkflow(eventTarget);
+      const { interceptor, spans } = setupWorkflow(eventTarget);
       const theError = new Error('agent exploded');
 
-      const gen = workflow.agent!(
+      const gen = interceptor.agent!(
         { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           eventTarget.dispatchEvent(
@@ -1917,9 +1917,9 @@ describe('createObservabilityInterceptors', () => {
 
     it('removes event listeners after agent completes', () => {
       const eventTarget = new EventTarget();
-      const { workflow, spans } = setupWorkflow(eventTarget);
+      const { interceptor, spans } = setupWorkflow(eventTarget);
 
-      const gen = workflow.agent!(
+      const gen = interceptor.agent!(
         { workflowId: 'wf-agent-spans', model: 'claude', prompt: 'test', headers: new Map() },
         function* () {
           return 'done';
@@ -1939,12 +1939,12 @@ describe('createObservabilityInterceptors', () => {
   describe('child workflow interceptor', () => {
     it('creates a span with link to parent, not parent-child relationship', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
       // Start parent workflow to populate the root span
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'parent-wf',
           workflowType: 'ParentWorkflow',
@@ -1968,7 +1968,7 @@ describe('createObservabilityInterceptors', () => {
         parentHeaders,
       };
 
-      const result = await workflow.childWorkflow!(interception, async () => 'child-result');
+      const result = await interceptor.childWorkflow!(interception, async () => 'child-result');
 
       expect(result).toBe('child-result');
 
@@ -1993,11 +1993,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('injects traceparent header into child workflow headers', async () => {
       const { tracer } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'parent-wf',
           workflowType: 'ParentWorkflow',
@@ -2019,7 +2019,7 @@ describe('createObservabilityInterceptors', () => {
         ]),
       };
 
-      await workflow.childWorkflow!(interception, async () => 'ok');
+      await interceptor.childWorkflow!(interception, async () => 'ok');
 
       expect(childHeaders.has('traceparent')).toBe(true);
       const traceparent = childHeaders.get('traceparent')!;
@@ -2029,11 +2029,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('records error span when child workflow fails', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'parent-wf',
           workflowType: 'ParentWorkflow',
@@ -2057,7 +2057,7 @@ describe('createObservabilityInterceptors', () => {
 
       let caught = false;
       try {
-        await workflow.childWorkflow!(interception, async () => {
+        await interceptor.childWorkflow!(interception, async () => {
           throw theError;
         });
       } catch (error) {
@@ -2076,11 +2076,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('creates span with empty links when no parent traceparent exists', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'parent-wf',
           workflowType: 'ParentWorkflow',
@@ -2099,7 +2099,7 @@ describe('createObservabilityInterceptors', () => {
         parentHeaders: new Map<string, string>(), // No traceparent
       };
 
-      await workflow.childWorkflow!(interception, async () => 'ok');
+      await interceptor.childWorkflow!(interception, async () => 'ok');
 
       const childSpan = spans.find((s) => s.name === 'childWorkflow:OrphanChild');
       expect(childSpan).toBeDefined();
@@ -2110,12 +2110,12 @@ describe('createObservabilityInterceptors', () => {
 
     it('records input when recordPayloads is enabled', async () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         recordPayloads: true,
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'parent-wf',
           workflowType: 'ParentWorkflow',
@@ -2134,7 +2134,7 @@ describe('createObservabilityInterceptors', () => {
         parentHeaders: new Map<string, string>(),
       };
 
-      await workflow.childWorkflow!(interception, async () => 'ok');
+      await interceptor.childWorkflow!(interception, async () => 'ok');
 
       const childSpan = spans.find((s) => s.name === 'childWorkflow:PayloadChild');
       expect(childSpan).toBeDefined();
@@ -2143,9 +2143,9 @@ describe('createObservabilityInterceptors', () => {
 
     it('records child workflow started metric', async () => {
       const metricsCollector = new MetricsCollector();
-      const { workflow } = createObservabilityInterceptors({ metrics: metricsCollector });
+      const { interceptor } = createObservabilityInterceptors({ metrics: metricsCollector });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'parent-wf',
           workflowType: 'ParentWorkflow',
@@ -2164,7 +2164,7 @@ describe('createObservabilityInterceptors', () => {
         parentHeaders: new Map<string, string>(),
       };
 
-      await workflow.childWorkflow!(interception, async () => 'ok');
+      await interceptor.childWorkflow!(interception, async () => 'ok');
 
       const snapshot = metricsCollector.snapshot();
       expect(snapshot['weft.child_workflow.started']).toBeDefined();
@@ -2178,11 +2178,11 @@ describe('createObservabilityInterceptors', () => {
   describe('workflow lifecycle span ending', () => {
     /** Helper: start a workflow span for the given workflow ID. */
     function startWorkflow(
-      workflow: ReturnType<typeof createObservabilityInterceptors>['workflow'],
+      interceptor: ReturnType<typeof createObservabilityInterceptors>['interceptor'],
       workflowId: string,
       workflowType = 'TestWorkflow',
     ): void {
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId,
           workflowType,
@@ -2196,12 +2196,12 @@ describe('createObservabilityInterceptors', () => {
     it('ends the root span with OK on WorkflowCompletedEvent', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget,
       });
 
-      startWorkflow(workflow, 'wf-complete');
+      startWorkflow(interceptor, 'wf-complete');
 
       const rootSpan = spans.find((s) => s.name === 'workflow:TestWorkflow');
       expect(rootSpan).toBeDefined();
@@ -2216,12 +2216,12 @@ describe('createObservabilityInterceptors', () => {
     it('ends the root span with ERROR on WorkflowFailedEvent', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget,
       });
 
-      startWorkflow(workflow, 'wf-fail');
+      startWorkflow(interceptor, 'wf-fail');
 
       const rootSpan = spans.find((s) => s.name === 'workflow:TestWorkflow');
       expect(rootSpan).toBeDefined();
@@ -2236,12 +2236,12 @@ describe('createObservabilityInterceptors', () => {
     it('ends the root span with ERROR on WorkflowCancelledEvent', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget,
       });
 
-      startWorkflow(workflow, 'wf-cancel');
+      startWorkflow(interceptor, 'wf-cancel');
 
       const rootSpan = spans.find((s) => s.name === 'workflow:TestWorkflow');
       expect(rootSpan).toBeDefined();
@@ -2256,12 +2256,12 @@ describe('createObservabilityInterceptors', () => {
     it('ends the root span with ERROR on WorkflowTimedOutEvent', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget,
       });
 
-      startWorkflow(workflow, 'wf-timeout');
+      startWorkflow(interceptor, 'wf-timeout');
 
       const rootSpan = spans.find((s) => s.name === 'workflow:TestWorkflow');
       expect(rootSpan).toBeDefined();
@@ -2277,12 +2277,12 @@ describe('createObservabilityInterceptors', () => {
     it('removes the workflow from the internal map after terminal event (no leak)', () => {
       const { tracer } = createRecordingTracer();
       const eventTarget = new EventTarget();
-      const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
+      const { interceptor, endWorkflowSpan } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget,
       });
 
-      startWorkflow(workflow, 'wf-leak');
+      startWorkflow(interceptor, 'wf-leak');
       eventTarget.dispatchEvent(new WorkflowCompletedEvent('wf-leak', null, 0));
 
       // Calling endWorkflowSpan again should be a no-op because the entry was
@@ -2290,7 +2290,7 @@ describe('createObservabilityInterceptors', () => {
       endWorkflowSpan('wf-leak', 'error', 'should not re-end');
 
       // Re-entering the workflow should create a fresh span (previous entry gone)
-      startWorkflow(workflow, 'wf-leak');
+      startWorkflow(interceptor, 'wf-leak');
       // A new entry should exist now; end it to verify the lifecycle cleanly repeats.
       eventTarget.dispatchEvent(new WorkflowCompletedEvent('wf-leak', null, 0));
     });
@@ -2298,13 +2298,13 @@ describe('createObservabilityInterceptors', () => {
     it('ignores terminal events for unrelated workflows', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
-      const { workflow } = createObservabilityInterceptors({
+      const { interceptor } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget,
       });
 
-      startWorkflow(workflow, 'wf-a');
-      startWorkflow(workflow, 'wf-b');
+      startWorkflow(interceptor, 'wf-a');
+      startWorkflow(interceptor, 'wf-b');
 
       eventTarget.dispatchEvent(new WorkflowCompletedEvent('wf-a', null, 0));
 
@@ -2322,12 +2322,12 @@ describe('createObservabilityInterceptors', () => {
     it('dispose() removes listeners and ends any dangling spans', () => {
       const { tracer, spans } = createRecordingTracer();
       const eventTarget = new EventTarget();
-      const { workflow, dispose } = createObservabilityInterceptors({
+      const { interceptor, dispose } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget,
       });
 
-      startWorkflow(workflow, 'wf-dangling');
+      startWorkflow(interceptor, 'wf-dangling');
 
       dispose();
 
@@ -2344,11 +2344,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('does nothing when no eventTarget is provided (backwards compatible)', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow, dispose } = createObservabilityInterceptors({
+      const { interceptor, dispose } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      startWorkflow(workflow, 'wf-no-target');
+      startWorkflow(interceptor, 'wf-no-target');
 
       // No event target wired, so dispose should still work and end the span.
       dispose();
@@ -2364,12 +2364,11 @@ describe('createObservabilityInterceptors', () => {
       const storage = new MemoryStorage();
       const engine = new Engine({ storage });
 
-      const { workflow, activity, dispose } = createObservabilityInterceptors({
+      const { interceptor, dispose } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget: engine,
       });
-      engine.addInterceptor(workflow);
-      engine.addActivityInterceptor(activity);
+      engine.addInterceptor(interceptor);
 
       engine.register('greeter', async function* (_ctx: WorkflowContext) {
         return 'hello';
@@ -2393,12 +2392,11 @@ describe('createObservabilityInterceptors', () => {
       const storage = new MemoryStorage();
       const engine = new Engine({ storage });
 
-      const { workflow, activity, dispose } = createObservabilityInterceptors({
+      const { interceptor, dispose } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget: engine,
       });
-      engine.addInterceptor(workflow);
-      engine.addActivityInterceptor(activity);
+      engine.addInterceptor(interceptor);
 
       engine.register('flaky', async function* (_ctx: WorkflowContext) {
         throw new Error('workflow exploded');
@@ -2422,12 +2420,11 @@ describe('createObservabilityInterceptors', () => {
       const storage = new MemoryStorage();
       const engine = new Engine({ storage });
 
-      const { workflow, activity, dispose } = createObservabilityInterceptors({
+      const { interceptor, dispose } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
         eventTarget: engine,
       });
-      engine.addInterceptor(workflow);
-      engine.addActivityInterceptor(activity);
+      engine.addInterceptor(interceptor);
 
       // A workflow that waits on a signal forever — giving us time to cancel.
       engine.register('waiter', async function* (ctx: WorkflowContext) {
@@ -2453,11 +2450,11 @@ describe('createObservabilityInterceptors', () => {
   describe('endWorkflowSpan', () => {
     it('ends the span with OK status', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
+      const { interceptor, endWorkflowSpan } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-end-ok',
           workflowType: 'TestWorkflow',
@@ -2476,11 +2473,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('ends the span with ERROR status and message', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow, endWorkflowSpan } = createObservabilityInterceptors({
+      const { interceptor, endWorkflowSpan } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-end-err',
           workflowType: 'TestWorkflow',
@@ -2508,11 +2505,11 @@ describe('createObservabilityInterceptors', () => {
   describe('evictStaleSpans', () => {
     it('evicts spans older than maxAgeMs and returns the count', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow, evictStaleSpans } = createObservabilityInterceptors({
+      const { interceptor, evictStaleSpans } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-stale',
           workflowType: 'StaleWorkflow',
@@ -2534,11 +2531,11 @@ describe('createObservabilityInterceptors', () => {
 
     it('does not evict spans younger than maxAgeMs', () => {
       const { tracer } = createRecordingTracer();
-      const { workflow, evictStaleSpans } = createObservabilityInterceptors({
+      const { interceptor, evictStaleSpans } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         {
           workflowId: 'wf-fresh',
           workflowType: 'FreshWorkflow',
@@ -2562,15 +2559,15 @@ describe('createObservabilityInterceptors', () => {
   describe('dispose', () => {
     it('ends all tracked spans and clears the map', () => {
       const { tracer, spans } = createRecordingTracer();
-      const { workflow, dispose, evictStaleSpans } = createObservabilityInterceptors({
+      const { interceptor, dispose, evictStaleSpans } = createObservabilityInterceptors({
         otelApi: createMockOtelApi(tracer),
       });
 
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         { workflowId: 'wf-dispose-1', workflowType: 'T1', input: undefined, headers: new Map() },
         () => {},
       );
-      workflow.workflowStart!(
+      interceptor.workflowStart!(
         { workflowId: 'wf-dispose-2', workflowType: 'T2', input: undefined, headers: new Map() },
         () => {},
       );

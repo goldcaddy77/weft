@@ -2450,10 +2450,10 @@ describe('Engine', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // engine.addActivityInterceptor()
+  // activity-side interceptor through engine.addInterceptor()
   // ---------------------------------------------------------------------------
 
-  it('engine.addActivityInterceptor() registers interceptor that wraps activity execution', async () => {
+  it('engine.addInterceptor() registers interceptor that wraps activity execution', async () => {
     const engine = new Engine();
     const executionOrder: string[] = [];
 
@@ -2466,7 +2466,7 @@ describe('Engine', () => {
       },
     };
 
-    engine.addActivityInterceptor(interceptor);
+    engine.addInterceptor(interceptor);
 
     const compute = async (...args: unknown[]) => (args[0] as number) + 1;
 

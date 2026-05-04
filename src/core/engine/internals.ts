@@ -27,10 +27,9 @@ import type { EventHeadRecord } from '../event-log.ts';
 import type { ExecutionStrategy } from '../execution-strategy.ts';
 import type { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
 import type {
-  ActivityInterceptor,
   ComposedActivityInterceptor,
   ComposedWorkflowInterceptor,
-  WorkflowInterceptor,
+  Interceptor,
 } from '../interceptor.ts';
 import type { Scheduler } from '../scheduler.ts';
 import type { TenantQuotaManager } from '../tenant-quotas.ts';
@@ -76,8 +75,7 @@ export interface EngineInternals {
   updateWaitersByWorkflow: Map<string, TrackedWaiterKeys>;
   sleepResolvers: Map<string, () => void>;
   sleepResolversByWorkflow: Map<string, Set<string>>;
-  interceptors: WorkflowInterceptor[];
-  activityInterceptors: ActivityInterceptor[];
+  interceptors: Interceptor[];
   composedWorkflowInterceptor: ComposedWorkflowInterceptor | null;
   composedActivityInterceptor: ComposedActivityInterceptor | null;
   updateCoordinator: UpdateCoordinator;

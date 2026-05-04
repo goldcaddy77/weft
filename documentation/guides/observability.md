@@ -1,25 +1,24 @@
 # Observability
 
-Your workflows are running in production. Something is slow, but you can't tell whether it's the payment activity, the shipping call, or the sleep between them. You need traces, spans, and metrics---without instrumenting every workflow by hand. Weft's observability module is a pre-built [interceptor](./interceptors.md) pair that gives you all of this out of the box.
+Your workflows are running in production. Something is slow, but you can't tell whether it's the payment activity, the shipping call, or the sleep between them. You need traces, spans, and metrics---without instrumenting every workflow by hand. Weft's observability module is a pre-built [interceptor](./interceptors.md) that gives you all of this out of the box.
 
 ## Quick setup
 
-Import the factory, pass the engine as the `eventTarget`, and register the interceptors.
+Import the factory, pass the engine as the `eventTarget`, and register the interceptor.
 
 ```typescript partial
 import { createObservabilityInterceptors } from 'weft';
 
-const { workflow, activity, dispose } = createObservabilityInterceptors({
+const { interceptor, dispose } = createObservabilityInterceptors({
   eventTarget: engine,
 });
 
-engine.addInterceptor(workflow);
-engine.addActivityInterceptor(activity);
+engine.addInterceptor(interceptor);
 ```
 
 That's it. Every workflow start, activity call, sleep, and signal wait now produces spans with trace context propagation. Wiring the engine as the `eventTarget` lets the factory subscribe to workflow lifecycle events (`workflow:completed`, `workflow:failed`, `workflow:cancelled`, `workflow:timed-out`) and automatically end the root workflow span with the right status. Without it, root spans would stay "in progress" forever and the internal span map would grow unbounded.
 
-When tearing down the engine, call `dispose()` to unsubscribe those listeners and end any spans that are still open. If you're using [remote workers](./remote-workers.md), pass the activity interceptor to them too.
+When tearing down the engine, call `dispose()` to unsubscribe those listeners and end any spans that are still open. If you're using [remote workers](./remote-workers.md), pass the same interceptor to them too.
 
 ## Configuration
 
@@ -43,12 +42,13 @@ interface ObservabilityOptions {
 Use `recordPayloads` and `maxPayloadSize` to control payload attributes, `attributeExtractor` to add domain-specific span attributes, and `eventTarget` to let the interceptor factory close root spans from engine lifecycle events.
 
 ```typescript partial
-const { workflow, activity } = createObservabilityInterceptors({
+const { interceptor } = createObservabilityInterceptors({
   eventTarget: engine,
   recordPayloads: true,
   maxPayloadSize: 2048,
   attributeExtractor: () => ({ 'service.name': 'checkout' }),
 });
+engine.addInterceptor(interceptor);
 ```
 
 ## Span hierarchy
@@ -66,7 +66,7 @@ Attributes include `workflow.id`, `workflow.type`, `activity.name`, `activity.at
 
 ## W3C Trace Context propagation
 
-The observability interceptors use the [interceptor headers mechanism](./interceptors.md) to propagate W3C Trace Context across thread and network boundaries. The workflow interceptor injects a `traceparent` header before each activity call. The activity interceptor extracts it and creates a child span.
+The observability interceptor uses the [interceptor headers mechanism](./interceptors.md) to propagate W3C Trace Context across thread and network boundaries. Its workflow-side hooks inject a `traceparent` header before each activity call. Its activity-side `execute` hook extracts it and creates a child span.
 
 ```
 Workflow Worker                         Activity Worker
@@ -117,22 +117,22 @@ Each metric has a `name`, `description`, `unit`, and `type` (counter, gauge, or 
 
 ## Composing with other interceptors
 
-Observability interceptors are just regular interceptors. Compose them with your own by controlling registration order. The first registered interceptor is the outermost wrapper.
+Observability is just a regular interceptor. Compose it with your own by controlling registration order. The first registered interceptor is the outermost wrapper.
 
 ```typescript partial
 engine.addInterceptor(authInterceptor); // 1. Check auth
 engine.addInterceptor(validationInterceptor); // 2. Validate inputs
-engine.addInterceptor(observabilityWorkflow); // 3. Trace the validated, authorized call
+engine.addInterceptor(observabilityInterceptor); // 3. Trace the validated, authorized call
 engine.addInterceptor(encryptionInterceptor); // 4. Encrypt before sending to worker
 ```
 
 In this arrangement, the observability span captures the call _after_ auth and validation have passed but _before_ encryption. The span timings reflect the actual activity execution, not the overhead of validation and encryption. Adjust the order to match what you want to measure.
 
-The activity interceptor follows the same pattern:
+Activity-side hooks follow the same pattern through `addInterceptor()`:
 
 ```typescript partial
-engine.addActivityInterceptor(observabilityActivity);
-engine.addActivityInterceptor(decryptionInterceptor);
+engine.addInterceptor(observabilityInterceptor);
+engine.addInterceptor(decryptionInterceptor);
 ```
 
 If you're building a custom interceptor that also needs trace context, let the observability interceptor handle extraction. It reads the propagated `traceparent` header internally and parses it with `parseTraceParent()`.

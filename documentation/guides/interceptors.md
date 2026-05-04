@@ -6,7 +6,7 @@ You want to log every activity call, propagate auth tokens from workflows to act
 
 Interceptors wrap workflow context operations---`ctx.run()`, `ctx.sleep()`, `ctx.waitForSignal()`---without modifying the workflow code itself. They compose like Koa middleware: each interceptor receives an interception context and a `next` function that delegates to the next interceptor in the chain (or the final operation). The first registered interceptor is the outermost wrapper.
 
-There are two categories. **Workflow interceptors** wrap operations inside the workflow generator. **Activity interceptors** wrap activity execution on the worker side. Together, they let you instrument the full lifecycle of a durable operation.
+There are two hook categories on one registration surface. **Workflow interceptor hooks** wrap operations inside the workflow generator. **Activity interceptor hooks** wrap activity execution on the worker side. Together, they let you instrument the full lifecycle of a durable operation.
 
 ## Workflow interceptors
 
@@ -72,6 +72,10 @@ interface ActivityInterceptor {
 ```
 
 This one is async (not a generator) because activity execution is a normal async function, not a durable generator.
+
+## Unified registration
+
+Register interceptors with a single `interceptors` constructor option or the `engine.addInterceptor()` method. An interceptor that implements hooks from both the workflow and activity sides participates in both pipelines.
 
 ## Interception context types
 
@@ -201,10 +205,10 @@ const composed = composeWorkflowInterceptors([
 
 ```typescript partial
 engine.addInterceptor(composed);
-engine.addActivityInterceptor(composeActivityInterceptors([authActivityInterceptor]));
+engine.addInterceptor(composeActivityInterceptors([authActivityInterceptor]));
 ```
 
-Register interceptors on the engine with `engine.addInterceptor()` (workflow-side) and `engine.addActivityInterceptor()` (activity-side). The engine composes interceptors registered in sequence, so you can also call `addInterceptor` once per interceptor without manual composition.
+Register interceptors on the engine with `engine.addInterceptor()` or the constructor's `interceptors` option. The engine composes interceptors registered in sequence, so you can also call `addInterceptor` once per interceptor without manual composition.
 
 Registration order matters. The first interceptor is the outermost wrapper. In the example above, auth runs first, then validation, then logging wraps the actual call. Think of it as nesting: `auth(validation(logging(execute)))`.
 

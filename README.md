@@ -263,8 +263,7 @@ const interceptors = createObservabilityInterceptors({ metrics });
 
 const engine = new Engine({
   storage,
-  workflowInterceptors: [interceptors.workflow],
-  activityInterceptors: [interceptors.activity],
+  interceptors: [interceptors.interceptor],
 });
 ```
 

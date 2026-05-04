@@ -17,12 +17,13 @@ import type { OtelApi, OtelSpan, OtelTracer } from './no-op-telemetry';
  * ```ts
  * import { createObservabilityInterceptors, type InterceptionContext } from 'weft';
  *
- * const { workflow, activity } = createObservabilityInterceptors({
+ * const { interceptor } = createObservabilityInterceptors({
  *   attributeExtractor: (ctx: InterceptionContext) => {
  *     if ('workflowId' in ctx) return { workflowId: ctx.workflowId };
  *     return {};
  *   },
  * });
+ * void interceptor;
  * ```
  */
 export type InterceptionContext =
@@ -36,7 +37,7 @@ export type InterceptionContext =
 
 /**
  * Configuration for {@link createObservabilityInterceptors}, which produces
- * workflow and activity interceptors that propagate W3C trace context and emit
+ * a unified interceptor that propagates W3C trace context and emits
  * OpenTelemetry spans.
  *
  * All fields are optional. Omit `otelApi` in production — it is auto-detected
@@ -56,9 +57,8 @@ export type InterceptionContext =
  *   recordPayloads: false,
  *   eventTarget: engine,
  * };
- * const { workflow, activity } = createObservabilityInterceptors(options);
- * void workflow;
- * void activity;
+ * const { interceptor } = createObservabilityInterceptors(options);
+ * void interceptor;
  * ```
  */
 export type ObservabilityOptions = {

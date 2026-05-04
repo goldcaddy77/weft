@@ -2,6 +2,7 @@ import type { ModelRouter } from '../../ai/model-router.ts';
 import type { AlertingOptions } from '../../alerting/types.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { CompressionAlgorithm, CompressionOptions } from '../compression.ts';
+import type { Interceptor } from '../interceptor.ts';
 import type { TenantResolver } from '../tenant.ts';
 import type { WorkflowStatus } from './identity.ts';
 import type { Duration, RetentionPolicy } from './retry-retention.ts';
@@ -168,6 +169,13 @@ export interface EngineOptions {
 
   /** Built-in alerting configuration. */
   alerts?: AlertingOptions;
+
+  /**
+   * Unified interceptors registered at construction. This is equivalent to
+   * calling `addInterceptor` for each entry; each interceptor participates in
+   * the workflow and/or activity pipeline based on which hooks it implements.
+   */
+  interceptors?: Interceptor[];
 
   /**
    * Optional {@link TenantResolver} that populates `ctx.tenant` for every new

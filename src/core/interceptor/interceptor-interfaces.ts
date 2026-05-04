@@ -80,6 +80,17 @@ export interface WorkflowInterceptor {
   ): void;
 }
 
+export const WORKFLOW_INTERCEPTOR_HOOKS = [
+  'activity',
+  'sleep',
+  'waitForSignal',
+  'workflowStart',
+  'childWorkflow',
+  'agent',
+  'query',
+  'signalReceived',
+] as const;
+
 /**
  * Middleware interface for activity-execution interception. Runs on the
  * side that actually executes the activity function (main thread or worker).
@@ -105,6 +116,13 @@ export interface ActivityInterceptor {
     next: (interception: ActivityExecutionInterception) => Promise<unknown>,
   ): Promise<unknown>;
 }
+
+/**
+ * Unified interceptor surface accepted by the engine. Implement hooks from
+ * either the workflow side, the activity side, or both; each interceptor
+ * participates in whichever pipeline has matching hooks.
+ */
+export interface Interceptor extends WorkflowInterceptor, ActivityInterceptor {}
 
 // ---------------------------------------------------------------------------
 // Composed interceptor interfaces

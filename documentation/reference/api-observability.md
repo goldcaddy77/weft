@@ -1,6 +1,6 @@
 # Observability API Reference
 
-The observability module provides interceptors for W3C Trace Context propagation, span-like lifecycle events, and a metric catalogue following OpenTelemetry semantic conventions. Wire it up to the engine with `addInterceptor()` and `addActivityInterceptor()`.
+The observability module provides an interceptor for W3C Trace Context propagation, span-like lifecycle events, and a metric catalogue following OpenTelemetry semantic conventions. Wire it up to the engine with `addInterceptor()`.
 
 For a guided walkthrough, see the [Observability guide](../guides/observability.md).
 
@@ -8,12 +8,11 @@ For a guided walkthrough, see the [Observability guide](../guides/observability.
 
 ## `createObservabilityInterceptors(options?)`
 
-Factory that creates a matched pair of workflow and activity interceptors. The workflow interceptor propagates trace context and emits spans for workflow start, activity calls, sleeps, and signal waits. The activity interceptor extracts trace context from headers and wraps activity execution in a span.
+Factory that creates a unified interceptor. Its workflow-side hooks propagate trace context and emit spans for workflow start, activity calls, sleeps, and signal waits. Its activity-side `execute` hook extracts trace context from headers and wraps activity execution in a span.
 
 ```ts partial
 function createObservabilityInterceptors(options?: ObservabilityOptions): {
-  workflow: WorkflowInterceptor;
-  activity: ActivityInterceptor;
+  interceptor: Interceptor;
   metrics: MetricsCollector;
   /**
    * End the workflow root span. Usually wired automatically via `eventTarget`,
@@ -66,13 +65,12 @@ import { createObservabilityInterceptors, Engine } from 'weft';
 
 const engine = new Engine();
 
-const { workflow, activity, dispose } = createObservabilityInterceptors({
+const { interceptor, dispose } = createObservabilityInterceptors({
   recordPayloads: true,
   eventTarget: engine, // enables automatic root-span cleanup on terminal events
 });
 
-engine.addInterceptor(workflow);
-engine.addActivityInterceptor(activity);
+engine.addInterceptor(interceptor);
 
 // When tearing down:
 // dispose();
