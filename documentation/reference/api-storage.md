@@ -1,6 +1,6 @@
 # Storage API
 
-Weft's storage layer is a key-value interface with ordered range scans and atomic batch writes. Two implementations ship out of the box: `BunSQLiteStorage` for production persistence and `MemoryStorage` for tests and ephemeral workloads. All storage adapters implement the `Storage` interface.
+Weft's storage layer is a key-value interface with ordered range scans and atomic batch writes. `SQLiteStorage` is the default durable backend, and `MemoryStorage` is the test and ephemeral backend. All storage adapters implement the `Storage` interface.
 
 ## `Storage` Interface
 
@@ -142,18 +142,18 @@ const signalKey = KEYS.signal('wf-123', 'approval', 'sig-456');
 
 ---
 
-## `BunSQLiteStorage`
+## `SQLiteStorage`
 
 ```ts partial
-class BunSQLiteStorage implements Storage
+class SQLiteStorage implements Storage
 ```
 
-SQLite-backed storage using Bun's native `bun:sqlite` module. Suitable for production single-node deployments. Uses WAL journal mode and aggressive cache settings for performance.
+SQLite-backed storage. The `weft/storage/sqlite` subpath resolves to `BunSQLiteStorage` under Bun and `NodeSQLiteStorage` under Node.js. Use `weft/storage/sqlite/bun` or `weft/storage/sqlite/node` when you need an explicit runtime override.
 
 ### Constructor
 
 ```ts partial
-new BunSQLiteStorage(path?: string)
+new SQLiteStorage(path?: string)
 ```
 
 | Parameter | Type     | Default      | Description                                                                    |
@@ -167,9 +167,9 @@ The constructor automatically creates the `kv` table if it does not exist and co
 - `cache_size = -64000` (64 MB)
 
 ```ts
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
-const storage = new BunSQLiteStorage('./data/weft.db');
+const storage = new SQLiteStorage('./data/weft.db');
 ```
 
 ### Methods
@@ -182,9 +182,12 @@ All methods from the `Storage` interface, plus:
 async query<T>(sql: string, parameters?: SQLQueryBindings[]): Promise<T[]>
 ```
 
-Execute raw SQL against the underlying database. Returns all matching rows.
+Execute raw SQL against the underlying database. Returns all matching rows. This method is available on `BunSQLiteStorage` from `weft/storage/sqlite/bun`. The runtime-neutral `weft/storage/sqlite` type intentionally sticks to the common SQLite surface because it may resolve to `NodeSQLiteStorage`.
 
 ```ts partial
+import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
+
+const storage = new BunSQLiteStorage('./data/weft.db');
 const rows = await storage.query<{ key: string }>('SELECT key FROM kv WHERE key LIKE ?', ['wf:%']);
 ```
 
@@ -272,7 +275,7 @@ IndexedDB-backed storage for browser environments. Uses a single `kv` object sto
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
 ```
 
-Browser consumers must use the subpath import `weft/storage/indexeddb`. The main `weft` entry point pulls in `bun:sqlite`, which is not available in browser environments.
+Browser consumers should use browser-safe subpath imports such as `weft/storage/indexeddb` or `weft/storage/web-extension` and avoid server-only storage adapters.
 
 ### Constructor
 

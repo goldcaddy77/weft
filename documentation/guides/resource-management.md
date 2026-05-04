@@ -7,10 +7,10 @@ A workflow engine is a long-running process. It holds database connections, work
 When you declare a variable with `using`, its `[Symbol.dispose]()` method is called when the enclosing block exits. `await using` does the same but calls `[Symbol.asyncDispose]()` for async cleanup. No try/finally. No manual `.close()` calls.
 
 ```typescript partial
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
 {
-  using engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
+  using engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
   engine.register('order', orderWorkflow);
   const handle = await engine.start('order', { orderId: 'abc' });

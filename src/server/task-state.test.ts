@@ -417,11 +417,14 @@ describe('task state invariant (server integration)', () => {
 
     // Disconnect the worker — task should be requeued
     ws.close();
-    await sleepForTesting(150);
-
-    // Task should no longer be inflight (requeued or dispatched to another worker)
-    const inflight = await storage.get(KEYS.operationInflight('dc-op-1'));
-    expect(inflight).toBeNull();
+    await waitForCondition(
+      async () => (await storage.get(KEYS.operationInflight('dc-op-1'))) === null,
+      {
+        label: 'worker disconnect to clear the inflight task record',
+        timeoutMs: 1_000,
+        intervalMs: 5,
+      },
+    );
   });
 
   it('no task is lost: dispatched task is always findable in at least one state', async () => {

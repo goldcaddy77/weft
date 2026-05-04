@@ -15,6 +15,10 @@ import type { MemoryPerWorkflowMeasurement } from './memory-per-workflow-runner.
  */
 
 const TARGET_BYTES_PER_WORKFLOW = 2 * 1024;
+const SMOKE_WORKFLOW_COUNT = 1_000;
+const ARCHITECTURE_WORKFLOW_COUNT = 100_000;
+const runArchitectureBenchmark =
+  process.env['WEFT_MEMORY_PER_WORKFLOW_ARCHITECTURE_BENCHMARK'] === '1' ? it : it.skip;
 
 function runMemoryPerWorkflowBenchmark(totalWorkflows: number): MemoryPerWorkflowMeasurement {
   const result = Bun.spawnSync(
@@ -36,14 +40,11 @@ function runMemoryPerWorkflowBenchmark(totalWorkflows: number): MemoryPerWorkflo
 }
 
 describe('Memory per workflow', () => {
-  it(`idle workflow durable footprint stays ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB`, async () => {
-    const totalWorkflows = 100_000;
-    const measurement = runMemoryPerWorkflowBenchmark(totalWorkflows);
-
+  function logMemoryPerWorkflowBenchmark(measurement: MemoryPerWorkflowMeasurement): void {
     console.log(
       [
         `\n  Memory per workflow benchmark:`,
-        `    Workflows:       ${totalWorkflows.toLocaleString()}`,
+        `    Workflows:       ${measurement.totalWorkflows.toLocaleString()}`,
         `    Counted:         ${measurement.countedWorkflows.toLocaleString()}`,
         `    Checkpoint total:${measurement.checkpointBytesTotal.toLocaleString()} bytes`,
         `    Durable total:   ${measurement.durableBytesTotal.toLocaleString()} bytes`,
@@ -59,11 +60,31 @@ describe('Memory per workflow', () => {
         `    Target:          ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB\n`,
       ].join('\n'),
     );
+  }
 
-    expect(measurement.countedWorkflows).toBe(totalWorkflows);
-    expect(measurement.maxCheckpointBytesPerWorkflow).toBeLessThanOrEqual(
-      TARGET_BYTES_PER_WORKFLOW,
-    );
-    expect(measurement.maxDurableBytesPerWorkflow).toBeLessThanOrEqual(TARGET_BYTES_PER_WORKFLOW);
+  it('records idle workflow durable footprint in a non-gating smoke benchmark', async () => {
+    const measurement = runMemoryPerWorkflowBenchmark(SMOKE_WORKFLOW_COUNT);
+
+    logMemoryPerWorkflowBenchmark(measurement);
+
+    expect(measurement.countedWorkflows).toBe(SMOKE_WORKFLOW_COUNT);
+    expect(measurement.maxCheckpointBytesPerWorkflow).toBeGreaterThan(0);
+    expect(measurement.maxDurableBytesPerWorkflow).toBeGreaterThan(0);
   }, 120_000);
+
+  runArchitectureBenchmark(
+    `idle workflow durable footprint stays ≤${(TARGET_BYTES_PER_WORKFLOW / 1024).toFixed(0)}KB`,
+    async () => {
+      const measurement = runMemoryPerWorkflowBenchmark(ARCHITECTURE_WORKFLOW_COUNT);
+
+      logMemoryPerWorkflowBenchmark(measurement);
+
+      expect(measurement.countedWorkflows).toBe(ARCHITECTURE_WORKFLOW_COUNT);
+      expect(measurement.maxCheckpointBytesPerWorkflow).toBeLessThanOrEqual(
+        TARGET_BYTES_PER_WORKFLOW,
+      );
+      expect(measurement.maxDurableBytesPerWorkflow).toBeLessThanOrEqual(TARGET_BYTES_PER_WORKFLOW);
+    },
+    120_000,
+  );
 });

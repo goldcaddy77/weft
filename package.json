@@ -60,26 +60,21 @@
       "default": "./dist/storage/compressed-storage.js"
     },
     "./storage/sqlite": {
-      "bun": {
-        "types": "./dist/storage/bun-sql.d.ts",
-        "default": "./dist/storage/bun-sql.js"
-      },
-      "node": {
-        "types": "./dist/storage/node-sqlite.d.ts",
-        "default": "./dist/storage/node-sqlite.js"
-      }
+      "types": "./dist/storage/sqlite.d.ts",
+      "bun": "./dist/storage/bun-sql.js",
+      "node": "./dist/storage/node-sqlite.js"
     },
     "./storage/sqlite/bun": {
       "types": "./dist/storage/bun-sql.d.ts",
-      "bun": "./dist/storage/bun-sql.js"
+      "bun": "./dist/storage/bun-sql.js",
+      "import": "./dist/storage/bun-sql.js",
+      "default": "./dist/storage/bun-sql.js"
     },
     "./storage/sqlite/node": {
       "types": "./dist/storage/node-sqlite.d.ts",
-      "node": "./dist/storage/node-sqlite.js"
-    },
-    "./storage/bun-sqlite": {
-      "types": "./dist/storage/bun-sql.d.ts",
-      "bun": "./dist/storage/bun-sql.js"
+      "node": "./dist/storage/node-sqlite.js",
+      "import": "./dist/storage/node-sqlite.js",
+      "default": "./dist/storage/node-sqlite.js"
     },
     "./storage/lmdb": {
       "types": "./dist/storage/lmdb.d.ts",
@@ -97,6 +92,21 @@
       "types": "./dist/storage/indexeddb.d.ts",
       "import": "./dist/storage/indexeddb.js",
       "default": "./dist/storage/indexeddb.js"
+    },
+    "./storage/web-extension": {
+      "types": "./dist/storage/web-extension.d.ts",
+      "import": "./dist/storage/web-extension.js",
+      "default": "./dist/storage/web-extension.js"
+    },
+    "./storage/http": {
+      "types": "./dist/storage/http.d.ts",
+      "import": "./dist/storage/http.js",
+      "default": "./dist/storage/http.js"
+    },
+    "./storage/resolve": {
+      "types": "./dist/storage/resolve.d.ts",
+      "import": "./dist/storage/resolve.js",
+      "default": "./dist/storage/resolve.js"
     },
     "./server": {
       "types": "./dist/server/index.d.ts",
@@ -146,10 +156,10 @@
     "prepare": "husky",
     "prepublishOnly": "bun run validate",
     "start": "bun run src/index.ts",
-    "test": "bun test --timeout 15000",
+    "test": "bun test --timeout 15000 --path-ignore-patterns='src/benchmarks/**' && bun test src/benchmarks --timeout 15000 --parallel=1",
     "test:coverage": "WEFT_COVERAGE_MODE=1 bun test --timeout 15000 --coverage",
     "typecheck": "tsc --noEmit",
-    "validate": "bun run lint && bun run typecheck && bun run verify:no-test-sleeps && bun run test",
+    "validate": "bun run build && bun run verify:exports && bun run verify:portability && bun run verify:jsdoc:full && bun run lint && bun run typecheck && bun run verify:no-test-sleeps && bun run test",
     "verify:exports": "bun run scripts/verify-tree-shaking.ts",
     "verify:jsdoc": "bun run scripts/audit-jsdoc-manifest.ts",
     "verify:jsdoc:declarations": "bun run scripts/check-declaration-jsdoc.ts --all",

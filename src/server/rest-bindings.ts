@@ -136,6 +136,20 @@ import {
 } from './operations/signal-workflow.ts';
 import { startWorkflowOperation, startWorkflowRestBinding } from './operations/start-workflow.ts';
 import {
+  storageBatchOperation,
+  storageBatchRestBinding,
+  storageConditionalBatchOperation,
+  storageConditionalBatchRestBinding,
+  storageDeleteOperation,
+  storageDeleteRestBinding,
+  storageGetOperation,
+  storageGetRestBinding,
+  storagePutOperation,
+  storagePutRestBinding,
+  storageScanOperation,
+  storageScanRestBinding,
+} from './operations/storage.ts';
+import {
   streamWorkflowSseOperation,
   streamWorkflowSseRestBinding,
 } from './operations/stream-workflow-sse.ts';
@@ -224,6 +238,12 @@ export const REST_BINDINGS: ReadonlyArray<UnknownRestBinding> = [
   getScheduleRestBinding,
   getTenantQuotaRestBinding,
   replayWorkflowRestBinding,
+  storageGetRestBinding,
+  storagePutRestBinding,
+  storageDeleteRestBinding,
+  storageScanRestBinding,
+  storageBatchRestBinding,
+  storageConditionalBatchRestBinding,
 ];
 
 /**
@@ -296,6 +316,12 @@ export function createLiveOperationRegistry(options?: {
     getScheduleOperation,
     getTenantQuotaOperation,
     replayWorkflowOperation,
+    storageGetOperation,
+    storagePutOperation,
+    storageDeleteOperation,
+    storageScanOperation,
+    storageBatchOperation,
+    storageConditionalBatchOperation,
     options?.metricsCollector === undefined
       ? getSystemMetricsOperation
       : createGetSystemMetricsOperation({ metricsCollector: options.metricsCollector }),

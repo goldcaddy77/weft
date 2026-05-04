@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { yieldToPortableEventLoop } from '../testing/event-loop.ts';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { TokenEvent } from '@/core/events.ts';
@@ -409,7 +410,7 @@ describe('H1: executeStreamingAgent returns ReadableStream', () => {
       'Wait for stream resume',
     );
 
-    await Bun.sleep(0);
+    await yieldToPortableEventLoop();
     expect(streamStarted).toBe(false);
 
     coordinator.resume('stream-ready-token', { ready: true });

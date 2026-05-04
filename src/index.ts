@@ -141,8 +141,8 @@ export type { CompressionAlgorithm, CompressionOptions, Compressor } from './cor
 export { CompressedStorage } from './storage/compressed-storage';
 
 // Storage — interface, KEYS, and zero-native-dep backends only.
-// Heavy backends (BunSQLiteStorage, LMDBStorage, TursoStorage) are subpath-only:
-//   weft/storage/bun-sqlite | weft/storage/lmdb | weft/storage/turso
+// Heavy or runtime-bound backends are subpath-only:
+//   weft/storage/sqlite | weft/storage/lmdb | weft/storage/turso
 export { KEYS, storageConditionalBatch, storageValuesEqual } from './storage/interface';
 export type {
   BatchOperation,

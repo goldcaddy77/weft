@@ -28,10 +28,10 @@ For production, swap in SQLite-backed storage so your checkpoints survive proces
 
 ```typescript
 import { Engine } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({
-  storage: new BunSQLiteStorage('./weft.db'),
+  storage: new SQLiteStorage('./weft.db'),
 });
 ```
 

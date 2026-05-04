@@ -30,7 +30,7 @@ interface EngineOptions {
 
 | Field                            | Type                       | Default               | Description                                                                                                                |
 | -------------------------------- | -------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `storage`                        | `Storage`                  | `new MemoryStorage()` | Storage backend. Use `BunSQLiteStorage` for persistence or `MemoryStorage` for ephemeral/testing use.                      |
+| `storage`                        | `Storage`                  | `new MemoryStorage()` | Storage backend. Use `SQLiteStorage` for persistence or `MemoryStorage` for ephemeral/testing use.                         |
 | `development`                    | `boolean`                  | `false`               | Enable development mode. Validates checkpoint round-trips and emits `DevelopmentWarningEvent` for non-serializable fields. |
 | `serializer`                     | `Serializer`               | Built-in codec        | Pluggable serialization. The default uses structured clone via the built-in `encode`/`decode` codec.                       |
 | `checkpointHistory`              | `number`                   | `10`                  | Number of historical checkpoints to retain per workflow.                                                                   |
@@ -50,10 +50,10 @@ interface EngineOptions {
 
 ```ts
 import { Engine } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({
-  storage: new BunSQLiteStorage('data/weft.db'),
+  storage: new SQLiteStorage('data/weft.db'),
   development: true,
   checkpointHistory: 20,
   maxNestingDepth: 5,

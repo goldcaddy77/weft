@@ -6,12 +6,15 @@
     "weft/storage/interface": "src/storage/interface.ts",
     "weft/storage/memory": "src/storage/memory.ts",
     "weft/storage/compressed": "src/storage/compressed-storage.ts",
+    "weft/storage/sqlite": "src/storage/sqlite.ts",
     "weft/storage/sqlite/bun": "src/storage/bun-sql.ts",
     "weft/storage/sqlite/node": "src/storage/node-sqlite.ts",
-    "weft/storage/bun-sqlite": "src/storage/bun-sql.ts",
     "weft/storage/lmdb": "src/storage/lmdb.ts",
     "weft/storage/turso": "src/storage/turso.ts",
     "weft/storage/indexeddb": "src/storage/indexeddb.ts",
+    "weft/storage/web-extension": "src/storage/web-extension.ts",
+    "weft/storage/http": "src/storage/http.ts",
+    "weft/storage/resolve": "src/storage/resolve.ts",
     "weft/server": "src/server/index.ts",
     "weft/server/handler": "src/server/handler.ts",
     "weft/mcp/stdio": "src/ai/mcp/transport-stdio.ts",
@@ -6552,16 +6555,6 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft/storage/bun-sqlite",
-          "exportName": "BunSQLiteStorage",
-          "kind": "value"
-        },
-        {
-          "importPath": "weft/storage/bun-sqlite",
-          "exportName": "SQLiteStorage",
-          "kind": "value"
-        },
-        {
           "importPath": "weft/storage/sqlite/bun",
           "exportName": "BunSQLiteStorage",
           "kind": "value"
@@ -6603,6 +6596,34 @@
           "importPath": "weft/storage/compressed",
           "exportName": "CompressedStorage",
           "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/http.ts",
+      "sourceName": "HTTPStorage",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/http",
+          "exportName": "HTTPStorage",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/http.ts",
+      "sourceName": "HTTPStorageOptions",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/http",
+          "exportName": "HTTPStorageOptions",
+          "kind": "type"
         }
       ],
       "classification": "example-required"
@@ -6973,6 +6994,170 @@
       "classification": "example-required"
     },
     {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "AutoStorageConfiguration",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "AutoStorageConfiguration",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "HTTPStorageConfiguration",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "HTTPStorageConfiguration",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "IndexedDBStorageConfiguration",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "IndexedDBStorageConfiguration",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "LMDBStorageConfiguration",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "LMDBStorageConfiguration",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "MemoryStorageConfiguration",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "MemoryStorageConfiguration",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "ResolvedStorage",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "ResolvedStorage",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "SQLiteStorageConfiguration",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "SQLiteStorageConfiguration",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "StorageConfiguration",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage",
+          "exportName": "StorageConfiguration",
+          "kind": "type"
+        },
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "StorageConfiguration",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "TursoStorageConfiguration",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "TursoStorageConfiguration",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "WebExtensionStorageConfiguration",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "WebExtensionStorageConfiguration",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/resolve.ts",
+      "sourceName": "resolveStorage",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage",
+          "exportName": "resolveStorage",
+          "kind": "value"
+        },
+        {
+          "importPath": "weft/storage/resolve",
+          "exportName": "resolveStorage",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
       "sourceFile": "src/storage/scoped-storage.ts",
       "sourceName": "ScopedStorage",
       "kind": "value",
@@ -7006,6 +7191,34 @@
           "importPath": "weft/storage",
           "exportName": "scopedStorage",
           "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/sqlite.ts",
+      "sourceName": "SQLiteStorage",
+      "kind": "value",
+      "subKind": "const",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/sqlite",
+          "exportName": "SQLiteStorage",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/sqlite.ts",
+      "sourceName": "SQLiteStorageInstance",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/sqlite",
+          "exportName": "SQLiteStorageInstance",
+          "kind": "type"
         }
       ],
       "classification": "example-required"
@@ -7221,6 +7434,48 @@
           "importPath": "weft/storage",
           "exportName": "withCodec",
           "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/web-extension.ts",
+      "sourceName": "WebExtensionStorage",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/web-extension",
+          "exportName": "WebExtensionStorage",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/web-extension.ts",
+      "sourceName": "WebExtensionStorageArea",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/web-extension",
+          "exportName": "WebExtensionStorageArea",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/storage/web-extension.ts",
+      "sourceName": "WebExtensionStorageOptions",
+      "kind": "type",
+      "subKind": "type-alias",
+      "publicFaces": [
+        {
+          "importPath": "weft/storage/web-extension",
+          "exportName": "WebExtensionStorageOptions",
+          "kind": "type"
         }
       ],
       "classification": "example-required"

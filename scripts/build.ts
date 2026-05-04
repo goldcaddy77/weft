@@ -10,14 +10,15 @@ await Bun.build({
   entrypoints: [
     './src/index.ts',
     // Storage submodule entry points (one per subpath export)
-    './src/storage/index.ts',
     './src/storage/interface.ts',
     './src/storage/memory.ts',
     './src/storage/compressed-storage.ts',
-    './src/storage/bun-sql.ts',
+    './src/storage/scoped-storage.ts',
+    './src/storage/typed-storage.ts',
+    './src/storage/resolve.ts',
+    './src/storage/http.ts',
     './src/storage/lmdb.ts',
     './src/storage/turso.ts',
-    './src/storage/node-sqlite.ts',
     // Bun-only server subpath (weft/server)
     './src/server/index.ts',
   ],
@@ -29,6 +30,32 @@ await Bun.build({
   sourcemap: 'external',
   minify: true,
   external: ['lmdb', '@libsql/client', '@opentelemetry/api', 'bun:sqlite', 'better-sqlite3'],
+});
+
+// Keep the storage barrel as direct re-exports. Bun 1.3.13 can incorrectly
+// strip imported bindings that are only used by a bundled barrel export list.
+await Bun.write(
+  './dist/storage/index.js',
+  `export { KEYS, storageConditionalBatch, storageValuesEqual } from './interface.js';
+export { MemoryStorage } from './memory.js';
+export { resolveStorage } from './resolve.js';
+export { ScopedStorage, scopedStorage } from './scoped-storage.js';
+export { jsonCodec, msgpackCodec, withCodec } from './typed-storage.js';
+`,
+);
+await $`rm -f dist/storage/index.js.map`;
+
+// Preserve runtime constructor names for package export-condition smoke tests.
+await Bun.build({
+  entrypoints: ['./src/storage/bun-sql.ts', './src/storage/node-sqlite.ts'],
+  outdir: './dist',
+  target: 'bun',
+  format: 'esm',
+  root: './src',
+  naming: '[dir]/[name].js',
+  sourcemap: 'external',
+  minify: false,
+  external: ['bun:sqlite', 'better-sqlite3'],
 });
 
 // Runtime-specific subpath entrypoints (separate build to preserve dist layout)
@@ -48,6 +75,8 @@ await Bun.build({
   entrypoints: [
     './src/service-worker/index.ts',
     './src/storage/indexeddb.ts',
+    './src/storage/web-extension.ts',
+    './src/storage/http.ts',
     './src/server/handler.ts',
   ],
   outdir: './dist',

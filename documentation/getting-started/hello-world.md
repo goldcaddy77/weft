@@ -151,14 +151,14 @@ Both activities run concurrently and the workflow resumes when all of them compl
 
 ## Using SQLite for Persistence
 
-`MemoryStorage` is great for development, but everything vanishes when the process stops. For real durability, use `BunSQLiteStorage`:
+`MemoryStorage` is great for development, but everything vanishes when the process stops. For real durability, use `SQLiteStorage`:
 
 ```typescript
 import { Engine } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({
-  storage: new BunSQLiteStorage('./weft.db'),
+  storage: new SQLiteStorage('./weft.db'),
 });
 ```
 

@@ -52,7 +52,7 @@ export type ResponseShape =
   | { readonly kind: 'empty'; readonly status: number }
   | {
       readonly kind: 'streaming';
-      readonly mediaType: 'text/event-stream' | 'application/octet-stream';
+      readonly mediaType: 'text/event-stream' | 'application/octet-stream' | 'application/x-ndjson';
     };
 
 /**
