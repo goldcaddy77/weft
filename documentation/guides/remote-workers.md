@@ -31,7 +31,9 @@ Use `wss://` for deployed workers. Plain `ws://` is only appropriate for localho
 
 The `RemoteWorkerOptions` interface:
 
-```typescript partial
+```typescript
+import type { ActivityInterceptor } from 'weft';
+
 interface RemoteWorkerOptions {
   serverUrl: string;
   workerId?: string; // default: crypto.randomUUID()
