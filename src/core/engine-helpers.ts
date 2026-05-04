@@ -73,6 +73,39 @@ export async function cleanupPartialStreamChunks(
   });
 }
 
+/**
+ * Settled outcome for a single `ctx.runAll` branch. Returned by
+ * `executeRunAllBranchesSettled` so callers can record partial-failure
+ * state in the parent operation's cache entry before propagating the
+ * first rejection.
+ */
+export type RunAllBranchOutcome =
+  | { status: 'fulfilled'; name: string; value: unknown }
+  | { status: 'rejected'; name: string; reason: unknown };
+
+/**
+ * Execute every `ctx.runAll()` branch and return per-branch settled
+ * outcomes. Never rejects — callers inspect `outcomes` and decide how to
+ * surface failure. Used by the top-level run-all dispatch path so
+ * fulfilled branches can be persisted before any rejection propagates.
+ */
+export async function executeRunAllBranchesSettled(
+  branches: Record<string, [fn: Function, ...args: unknown[]]>,
+  callActivity: (fn: Function, args: unknown[]) => unknown,
+): Promise<RunAllBranchOutcome[]> {
+  const entries = Object.entries(branches);
+  return Promise.all(
+    entries.map(async ([name, [fn, ...args]]): Promise<RunAllBranchOutcome> => {
+      try {
+        const value = await callActivity(fn, args);
+        return { status: 'fulfilled', name, value };
+      } catch (error) {
+        return { status: 'rejected', name, reason: error };
+      }
+    }),
+  );
+}
+
 /** Execute the `ctx.runAll()` branches and return a name-keyed result record. */
 export async function executeRunAllBranches(
   branches: Record<string, [fn: Function, ...args: unknown[]]>,

@@ -416,7 +416,12 @@ describe('Context', () => {
             0,
             {
               __weftParallelOperationCache: true,
-              result: ['cached-a', 'cached-b'],
+              formatVersion: 2,
+              variant: 'all',
+              branches: [
+                { status: 'fulfilled', value: 'cached-a', operationId: 'parallel:0:0' },
+                { status: 'fulfilled', value: 'cached-b', operationId: 'parallel:0:1' },
+              ],
               subOperationCount: 2,
             },
           ],
@@ -472,7 +477,9 @@ describe('Context', () => {
             0,
             {
               __weftParallelOperationCache: true,
-              result: 'winner',
+              formatVersion: 2,
+              variant: 'race',
+              branches: [{ status: 'fulfilled', value: 'winner', operationId: 'race:0:winner' }],
               subOperationCount: 2,
             },
           ],
@@ -813,7 +820,9 @@ describe('Context', () => {
       const request = expectRequest(generator.next(), 'run-all');
 
       expect(request.branches).toBe(branches);
-      expect(request.operationId).toMatch(UUID_PATTERN);
+      // Operation IDs are deterministic (`run-all:<step>`) for stable
+      // observability across retries.
+      expect(request.operationId).toBe('run-all:0');
     });
 
     it('on recovery returns cached result without yielding', () => {
