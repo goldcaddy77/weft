@@ -156,6 +156,39 @@ describe('InlineExecutionStrategy', () => {
       }
     });
 
+    it('tracks the first generator advance immediately after startWorkflow is called', async () => {
+      setup();
+
+      let resolveFirstTurn: (() => void) | undefined;
+      registrations.set('delayed-first-turn', {
+        handler: async function* () {
+          await new Promise<void>((resolve) => {
+            resolveFirstTurn = resolve;
+          });
+          return 'done';
+        },
+        version: '1',
+      });
+
+      strategy.startWorkflow({
+        workflowId: 'wf-1',
+        workflowType: 'delayed-first-turn',
+        input: null,
+        checkpoint: new ArrayBuffer(0),
+      });
+
+      const pendingAdvance = strategy.waitForWorkflowAdvance('wf-1');
+      expect(pendingAdvance).toBeDefined();
+      expect(resolveFirstTurn).toBeDefined();
+
+      resolveFirstTurn?.();
+      await pendingAdvance;
+
+      const message = firstMessage();
+      expect(message.type).toBe('completed');
+      expect(strategy.waitForWorkflowAdvance('wf-1')).toBeUndefined();
+    });
+
     it('clears tracked workflow turns after an async message handler settles', async () => {
       setup();
 

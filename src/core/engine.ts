@@ -2404,6 +2404,18 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
   }
 
+  async #processPendingUpdatesAfterInlineAdvance(workflowId: string): Promise<void> {
+    const inlineContext = this.#inlineStrategy?.getContext(workflowId);
+    if (!inlineContext || inlineContext.updateHandlers.size === 0) {
+      const pendingAdvance = this.#inlineStrategy?.waitForWorkflowAdvance(workflowId);
+      if (pendingAdvance) {
+        await pendingAdvance;
+      }
+    }
+
+    await this.#processPendingUpdatesAfterReplay(workflowId);
+  }
+
   #schedulePendingInlineUpdateDrain(workflowId: string): void {
     if (this.#inlineStrategy === null) {
       return;
@@ -3153,12 +3165,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         start.tenant,
       );
 
-      const pendingTurn = this.#inlineStrategy?.waitForWorkflowTurn(start.workflowId);
-      if (pendingTurn) {
-        await pendingTurn;
-      }
-
-      await this.#processPendingUpdatesAfterReplay(start.workflowId);
+      await this.#processPendingUpdatesAfterInlineAdvance(start.workflowId);
     } finally {
       this.#queuedInlineWorkflowStartIds.delete(start.workflowId);
       this.#queuedOrLaunchingInlineWorkflowStartIds.delete(start.workflowId);
@@ -5273,7 +5280,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const generator = registration.handler(context, state.input);
       this.#inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
       this.#inlineStrategy.continueWorkflow(workflowId, undefined);
-      queueMicrotask(this.#processPendingUpdatesAfterReplay.bind(this, workflowId));
+      void this.#swallowPromiseRejection(this.#processPendingUpdatesAfterInlineAdvance(workflowId));
     } else {
       const serialized = serializeCheckpoint(checkpoint);
       this.#strategy.startWorkflow({
@@ -5539,10 +5546,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
     }
     if (this.#inlineStrategy) {
-      // After replay, process any pending coordinated updates that match
-      // registered inline handlers. Schedule on next microtask so the
-      // generator has a chance to register its onUpdate handlers first.
-      queueMicrotask(this.#processPendingUpdatesAfterReplay.bind(this, workflowId));
+      void this.#swallowPromiseRejection(this.#processPendingUpdatesAfterInlineAdvance(workflowId));
     }
 
     return handle;
