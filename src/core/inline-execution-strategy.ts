@@ -81,6 +81,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
   readonly #generators: Map<string, AsyncGenerator>;
   readonly #abortControllers: Map<string, AbortController>;
   readonly #contexts: Map<string, Context>;
+  readonly #workflowAdvances: Map<string, Promise<void>>;
   readonly #workflowTurns: Map<string, Promise<void>>;
   #messageHandler: ((message: WorkerOutboundMessage) => void | Promise<void>) | null;
 
@@ -89,6 +90,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     this.#generators = new Map();
     this.#abortControllers = new Map();
     this.#contexts = new Map();
+    this.#workflowAdvances = new Map();
     this.#workflowTurns = new Map();
     this.#messageHandler = null;
   }
@@ -113,11 +115,12 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
   }): void {
     const registration = this.#dependencies.getRegistration(parameters.workflowType);
     if (!registration) {
-      this.#emit({
+      const pendingMessage = this.#emit({
         type: 'failed',
         workflowId: parameters.workflowId,
         error: `No workflow registered with name "${parameters.workflowType}"`,
       });
+      void pendingMessage?.catch(() => {});
       return;
     }
 
@@ -160,11 +163,12 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
   }): void {
     const generator = this.#generators.get(parameters.workflowId);
     if (!generator) {
-      this.#emit({
+      const pendingMessage = this.#emit({
         type: 'failed',
         workflowId: parameters.workflowId,
         error: `No active generator for workflow: ${parameters.workflowId}`,
       });
+      void pendingMessage?.catch(() => {});
       return;
     }
 
@@ -210,6 +214,10 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
 
   waitForWorkflowTurn(workflowId: string): Promise<void> | undefined {
     return this.#workflowTurns.get(workflowId);
+  }
+
+  waitForWorkflowAdvance(workflowId: string): Promise<void> | undefined {
+    return this.#workflowAdvances.get(workflowId);
   }
 
   hasGenerator(workflowId: string): boolean {
@@ -259,6 +267,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     this.#generators.clear();
     this.#abortControllers.clear();
     this.#contexts.clear();
+    this.#workflowAdvances.clear();
     this.#workflowTurns.clear();
     this.#messageHandler = null;
   }
@@ -271,118 +280,170 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
   // Private: generator driving
   // -------------------------------------------------------------------------
 
-  async #driveGenerator(
+  #driveGenerator(
     workflowId: string,
     generator: AsyncGenerator,
     lastResult: unknown,
   ): Promise<void> {
-    try {
-      const abortController = this.#abortControllers.get(workflowId);
-      if (abortController?.signal.aborted) return;
+    return this.#trackWorkflowAdvance(
+      workflowId,
+      (async () => {
+        try {
+          const abortController = this.#abortControllers.get(workflowId);
+          if (abortController?.signal.aborted) {
+            return;
+          }
 
-      const iterationResult = await generator.next(lastResult);
+          const iterationResult = await generator.next(lastResult);
 
-      if (iterationResult.done) {
-        this.#cleanup(workflowId);
-        this.#emit({
-          type: 'completed',
-          workflowId,
-          result: iterationResult.value,
-        });
-        return;
-      }
+          if (iterationResult.done) {
+            this.#cleanup(workflowId, {
+              preserveTrackedAdvance: true,
+              preserveTrackedTurn: true,
+            });
+            this.#emitTrackedMessage({
+              type: 'completed',
+              workflowId,
+              result: iterationResult.value,
+            });
+            return;
+          }
 
-      // The yielded value is a ContextOperationRequest. Emit it as a
-      // checkpoint message so the engine can process the operation.
-      const operation = iterationResult.value as ContextOperationRequest;
-      this.#emit({
-        type: 'checkpoint',
-        workflowId,
-        checkpoint: new ArrayBuffer(0),
-        operationRequest: operation as never,
-      });
-    } catch (error) {
-      this.#cleanup(workflowId);
-      const failedMessage: WorkerOutboundMessage = {
-        type: 'failed',
-        workflowId,
-        error: error instanceof Error ? error.message : String(error),
-        failureCategory: classifyErrorAsFailureCategory(error),
-      };
-      if (error instanceof Error && error.stack !== undefined) {
-        failedMessage.errorStack = error.stack;
-      }
-      this.#emit(failedMessage);
-    }
+          // The yielded value is a ContextOperationRequest. Emit it as a
+          // checkpoint message so the engine can process the operation.
+          const operation = iterationResult.value as ContextOperationRequest;
+          this.#emitTrackedMessage({
+            type: 'checkpoint',
+            workflowId,
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: operation as never,
+          });
+        } catch (error) {
+          this.#cleanup(workflowId, {
+            preserveTrackedAdvance: true,
+            preserveTrackedTurn: true,
+          });
+          const failedMessage: WorkerOutboundMessage = {
+            type: 'failed',
+            workflowId,
+            error: error instanceof Error ? error.message : String(error),
+            failureCategory: classifyErrorAsFailureCategory(error),
+          };
+          if (error instanceof Error && error.stack !== undefined) {
+            failedMessage.errorStack = error.stack;
+          }
+          this.#emitTrackedMessage(failedMessage);
+        }
+      })(),
+    );
   }
 
-  async #throwIntoGenerator(
-    workflowId: string,
-    generator: AsyncGenerator,
-    error: Error,
-  ): Promise<void> {
-    try {
-      const iterationResult = await generator.throw(error);
+  #throwIntoGenerator(workflowId: string, generator: AsyncGenerator, error: Error): Promise<void> {
+    return this.#trackWorkflowAdvance(
+      workflowId,
+      (async () => {
+        try {
+          const abortController = this.#abortControllers.get(workflowId);
+          if (abortController?.signal.aborted) {
+            return;
+          }
 
-      if (iterationResult.done) {
-        this.#cleanup(workflowId);
-        this.#emit({
-          type: 'completed',
-          workflowId,
-          result: iterationResult.value,
-        });
-        return;
-      }
+          const iterationResult = await generator.throw(error);
 
-      const operation = iterationResult.value as ContextOperationRequest;
-      this.#emit({
-        type: 'checkpoint',
-        workflowId,
-        checkpoint: new ArrayBuffer(0),
-        operationRequest: operation as never,
-      });
-    } catch (innerError) {
-      this.#cleanup(workflowId);
-      const failedMessage: WorkerOutboundMessage = {
-        type: 'failed',
-        workflowId,
-        error: innerError instanceof Error ? innerError.message : String(innerError),
-        failureCategory: classifyErrorAsFailureCategory(innerError),
-      };
-      if (innerError instanceof Error && innerError.stack !== undefined) {
-        failedMessage.errorStack = innerError.stack;
-      }
-      this.#emit(failedMessage);
-    }
+          if (iterationResult.done) {
+            this.#cleanup(workflowId, {
+              preserveTrackedAdvance: true,
+              preserveTrackedTurn: true,
+            });
+            this.#emitTrackedMessage({
+              type: 'completed',
+              workflowId,
+              result: iterationResult.value,
+            });
+            return;
+          }
+
+          const operation = iterationResult.value as ContextOperationRequest;
+          this.#emitTrackedMessage({
+            type: 'checkpoint',
+            workflowId,
+            checkpoint: new ArrayBuffer(0),
+            operationRequest: operation as never,
+          });
+        } catch (innerError) {
+          this.#cleanup(workflowId, {
+            preserveTrackedAdvance: true,
+            preserveTrackedTurn: true,
+          });
+          const failedMessage: WorkerOutboundMessage = {
+            type: 'failed',
+            workflowId,
+            error: innerError instanceof Error ? innerError.message : String(innerError),
+            failureCategory: classifyErrorAsFailureCategory(innerError),
+          };
+          if (innerError instanceof Error && innerError.stack !== undefined) {
+            failedMessage.errorStack = innerError.stack;
+          }
+          this.#emitTrackedMessage(failedMessage);
+        }
+      })(),
+    );
   }
 
   // -------------------------------------------------------------------------
   // Private: helpers
   // -------------------------------------------------------------------------
 
-  #emit(message: WorkerOutboundMessage): void {
+  #trackWorkflowAdvance(workflowId: string, pendingAdvance: Promise<void>): Promise<void> {
+    const trackedAdvance = pendingAdvance.finally(() => {
+      if (this.#workflowAdvances.get(workflowId) === trackedAdvance) {
+        this.#workflowAdvances.delete(workflowId);
+      }
+    });
+    void trackedAdvance.catch(() => {});
+    this.#workflowAdvances.set(workflowId, trackedAdvance);
+    return trackedAdvance;
+  }
+
+  #trackWorkflowTurn(workflowId: string, pendingTurn: Promise<void>): Promise<void> {
+    const trackedTurn = pendingTurn.finally(() => {
+      if (this.#workflowTurns.get(workflowId) === trackedTurn) {
+        this.#workflowTurns.delete(workflowId);
+      }
+    });
+    // Some callers observe these turns directly, but most paths do not.
+    // Mark the promise as observed so handler failures stay contained.
+    void trackedTurn.catch(() => {});
+    this.#workflowTurns.set(workflowId, trackedTurn);
+    return trackedTurn;
+  }
+
+  #emitTrackedMessage(message: WorkerOutboundMessage): void {
     const result = this.#messageHandler?.(message);
     if (result instanceof Promise) {
-      const handledTurn = result.finally(() => {
-        if (this.#workflowTurns.get(message.workflowId) === handledTurn) {
-          this.#workflowTurns.delete(message.workflowId);
-        }
-      });
-      // The engine only awaits these turns for specific recovery paths.
-      // Mark the tracked promise as observed so rejected handler turns do not
-      // surface as unhandled rejections when no caller awaits them.
-      void handledTurn.catch(() => {});
-      this.#workflowTurns.set(message.workflowId, handledTurn);
+      void this.#trackWorkflowTurn(message.workflowId, result);
       return;
     }
 
     this.#workflowTurns.delete(message.workflowId);
   }
 
-  #cleanup(workflowId: string): void {
+  #emit(message: WorkerOutboundMessage): Promise<void> {
+    return Promise.resolve(this.#messageHandler?.(message));
+  }
+
+  #cleanup(
+    workflowId: string,
+    options?: { preserveTrackedAdvance?: boolean; preserveTrackedTurn?: boolean },
+  ): void {
     this.#generators.delete(workflowId);
     this.#abortControllers.delete(workflowId);
     this.#contexts.delete(workflowId);
-    this.#workflowTurns.delete(workflowId);
+    if (!options?.preserveTrackedAdvance) {
+      this.#workflowAdvances.delete(workflowId);
+    }
+    if (!options?.preserveTrackedTurn) {
+      this.#workflowTurns.delete(workflowId);
+    }
   }
 }

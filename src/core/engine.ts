@@ -1699,6 +1699,16 @@ type RefreshedScheduleState = {
   state: ScheduleState;
   currentWorkflowState: WorkflowState | null;
 };
+
+type QueuedInlineWorkflowExecutionStart = {
+  workflowId: string;
+  workflowType: string;
+  input: unknown;
+  checkpoint: Checkpoint;
+  nestingDepth: number;
+  executionDeadline: number | undefined;
+  tenant: import('./tenant.ts').TenantContext | undefined;
+};
 // ---------------------------------------------------------------------------
 // WorkflowHandle
 // ---------------------------------------------------------------------------
@@ -2199,6 +2209,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
    */
   #workflowVersionTuples: Map<string, WorkflowVersionTuple> = new Map();
   #pendingTimelineEntries: Map<string, PendingTimelineEntry>;
+  #queuedInlineWorkflowStarts: QueuedInlineWorkflowExecutionStart[] = [];
+  #queuedInlineWorkflowStartIds = new Set<string>();
+  #queuedOrLaunchingInlineWorkflowStartIds = new Set<string>();
+  #queuedInlineWorkflowStartFlushScheduled = false;
+  #queuedInlineWorkflowStartChannel: MessageChannel | null = null;
 
   constructor(options?: EngineConstructorOptions) {
     super();
@@ -2257,6 +2272,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     });
     this.#strategy = strategyBundle.strategy;
     this.#inlineStrategy = strategyBundle.inlineStrategy;
+    this.#queuedInlineWorkflowStartChannel =
+      this.#inlineStrategy !== null ? new MessageChannel() : null;
+    if (this.#queuedInlineWorkflowStartChannel !== null) {
+      this.#queuedInlineWorkflowStartChannel.port1.onmessage = () => {
+        this.#queuedInlineWorkflowStartFlushScheduled = false;
+        void this.#swallowPromiseRejection(this.#flushQueuedInlineWorkflowStarts());
+      };
+    }
 
     this.#budgetPolicyEnforcer = null;
     this.#tenantQuotaManager = new TenantQuotaManager(storage, getNow, options?.quotas);
@@ -2379,6 +2402,28 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     } catch (error: unknown) {
       this.#handleCleanupError('processPendingUpdates', error, workflowId);
     }
+  }
+
+  async #processPendingUpdatesAfterInlineAdvance(workflowId: string): Promise<void> {
+    const inlineContext = this.#inlineStrategy?.getContext(workflowId);
+    if (!inlineContext || inlineContext.updateHandlers.size === 0) {
+      const pendingAdvance = this.#inlineStrategy?.waitForWorkflowAdvance(workflowId);
+      if (pendingAdvance) {
+        await pendingAdvance;
+      }
+    }
+
+    await this.#processPendingUpdatesAfterReplay(workflowId);
+  }
+
+  #schedulePendingInlineUpdateDrain(workflowId: string): void {
+    if (this.#inlineStrategy === null) {
+      return;
+    }
+
+    setTimeout(() => {
+      void this.#swallowPromiseRejection(this.#processPendingUpdatesAfterReplay(workflowId));
+    }, 0);
   }
 
   async #persistCoordinatedUpdateResponse(
@@ -3018,6 +3063,21 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     registration: RegistrationEntry,
   ): void {
     this.#warmupWorkflowRegistration(registration);
+    const nestingDepth = this.#pendingNestingDepth ?? 0;
+    this.#pendingNestingDepth = undefined;
+
+    if (this.#inlineStrategy !== null) {
+      this.#queueInlineWorkflowExecutionStart({
+        workflowId,
+        workflowType,
+        input,
+        checkpoint,
+        nestingDepth,
+        executionDeadline,
+        tenant,
+      });
+      return;
+    }
 
     this.dispatchEvent(new WorkflowStartedEvent(workflowId, workflowType, input));
     this.#startWorkflowExecution(
@@ -3025,6 +3085,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       workflowType,
       input,
       checkpoint,
+      nestingDepth,
       executionDeadline,
       tenant,
     );
@@ -3041,6 +3102,138 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     } catch {
       // Warmup is best-effort; ignore synchronous failures.
     }
+  }
+
+  #queueInlineWorkflowExecutionStart(start: QueuedInlineWorkflowExecutionStart): void {
+    this.#queuedInlineWorkflowStartIds.add(start.workflowId);
+    this.#queuedOrLaunchingInlineWorkflowStartIds.add(start.workflowId);
+    this.#queuedInlineWorkflowStarts.push(start);
+    if (this.#queuedInlineWorkflowStartFlushScheduled) {
+      return;
+    }
+
+    this.#queuedInlineWorkflowStartFlushScheduled = true;
+    if (this.#queuedInlineWorkflowStartChannel !== null) {
+      this.#queuedInlineWorkflowStartChannel.port2.postMessage(undefined);
+      return;
+    }
+
+    setTimeout(() => {
+      this.#queuedInlineWorkflowStartFlushScheduled = false;
+      void this.#swallowPromiseRejection(this.#flushQueuedInlineWorkflowStarts());
+    }, 0);
+  }
+
+  async #flushQueuedInlineWorkflowStarts(): Promise<void> {
+    if (this.#abortController.signal.aborted) {
+      this.#queuedInlineWorkflowStarts = [];
+      return;
+    }
+
+    if (this.#queuedInlineWorkflowStarts.length === 0) {
+      return;
+    }
+
+    const pendingStarts = this.#queuedInlineWorkflowStarts;
+    this.#queuedInlineWorkflowStarts = [];
+
+    for (const start of pendingStarts) {
+      await this.#startQueuedInlineWorkflowExecution(start);
+    }
+  }
+
+  async #flushQueuedInlineWorkflowStartsDirectly(): Promise<void> {
+    // Direct scheduler-driven flushes can run while an older MessageChannel
+    // delivery is still pending. Clear the scheduled flag first so any nested
+    // workflow starts queued during this drain can post their own follow-up
+    // delivery instead of inheriting stale scheduled state.
+    this.#queuedInlineWorkflowStartFlushScheduled = false;
+    await this.#flushQueuedInlineWorkflowStarts();
+  }
+
+  async #startQueuedInlineWorkflowExecution(
+    start: QueuedInlineWorkflowExecutionStart,
+  ): Promise<void> {
+    try {
+      const state = await this.#loadWorkflowState(start.workflowId);
+      if (!state || state.status !== 'running') {
+        return;
+      }
+
+      this.#queuedInlineWorkflowStartIds.delete(start.workflowId);
+      this.dispatchEvent(
+        new WorkflowStartedEvent(start.workflowId, start.workflowType, start.input),
+      );
+      this.#startWorkflowExecution(
+        start.workflowId,
+        start.workflowType,
+        start.input,
+        start.checkpoint,
+        start.nestingDepth,
+        start.executionDeadline,
+        start.tenant,
+      );
+
+      await this.#processPendingUpdatesAfterInlineAdvance(start.workflowId);
+    } finally {
+      this.#queuedInlineWorkflowStartIds.delete(start.workflowId);
+      this.#queuedOrLaunchingInlineWorkflowStartIds.delete(start.workflowId);
+    }
+  }
+
+  #dropQueuedInlineWorkflowStart(workflowId: string): boolean {
+    if (this.#queuedInlineWorkflowStarts.length === 0) {
+      return false;
+    }
+
+    const initialLength = this.#queuedInlineWorkflowStarts.length;
+    this.#queuedInlineWorkflowStarts = this.#queuedInlineWorkflowStarts.filter(
+      (start) => start.workflowId !== workflowId,
+    );
+    if (this.#queuedInlineWorkflowStarts.length !== initialLength) {
+      this.#queuedInlineWorkflowStartIds.delete(workflowId);
+      this.#queuedOrLaunchingInlineWorkflowStartIds.delete(workflowId);
+    }
+    return this.#queuedInlineWorkflowStarts.length !== initialLength;
+  }
+
+  #hasQueuedInlineWorkflowStart(workflowId: string): boolean {
+    return this.#queuedInlineWorkflowStartIds.has(workflowId);
+  }
+
+  #hasQueuedOrLaunchingInlineWorkflowStart(workflowId: string): boolean {
+    return this.#queuedOrLaunchingInlineWorkflowStartIds.has(workflowId);
+  }
+
+  #workflowStatusCanRetainLocalOwnership(workflowStatus: WorkflowStatus): boolean {
+    return workflowStatus === 'running' || workflowStatus === 'pending';
+  }
+
+  #isInlineWorkflowLocallyOwned(workflowId: string, workflowStatus: WorkflowStatus): boolean {
+    if (!this.#workflowStatusCanRetainLocalOwnership(workflowStatus)) {
+      return false;
+    }
+
+    if (this.#hasQueuedOrLaunchingInlineWorkflowStart(workflowId)) {
+      return true;
+    }
+
+    if (this.#inlineStrategy === null) {
+      return false;
+    }
+
+    return (
+      this.#inlineStrategy.getContext(workflowId) !== undefined ||
+      this.#inlineStrategy.waitForWorkflowTurn(workflowId) !== undefined ||
+      this.#parkedInlineWorkflows.has(workflowId)
+    );
+  }
+
+  #hasLocalCheckpointOwnership(workflowId: string, workflowStatus: WorkflowStatus): boolean {
+    return (
+      this.#checkpoints.has(workflowId) &&
+      this.#workflowStatusCanRetainLocalOwnership(workflowStatus)
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -4448,11 +4641,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     workflowType: string,
     input: unknown,
     checkpoint: Checkpoint,
+    nestingDepth: number,
     executionDeadline: number | undefined,
     tenant: import('./tenant.ts').TenantContext | undefined,
   ): void {
-    const nestingDepth = this.#pendingNestingDepth ?? 0;
-    this.#pendingNestingDepth = undefined;
     // Skip the map entry for the common non-nested case — readers fall back
     // to 0. Saves per-workflow V8 Map overhead (~80 bytes) on the hot path.
     if (nestingDepth !== 0) {
@@ -4861,6 +5053,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
     // If no active handler, use the UpdateCoordinator with polling
     const updateId = await this.#updateCoordinator.createRequest(workflowId, name, payload);
+    this.#schedulePendingInlineUpdateDrain(workflowId);
     await this.#guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
     this.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
 
@@ -4892,11 +5085,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         'Workflow queries are not supported when using the worker execution strategy.',
       );
     }
-    const context = this.#inlineStrategy.getContext(workflowId);
-    if (!context) {
-      return undefined;
-    }
-    const accessor = context.exposedAccessors.get(name);
+    const accessor = this.#inlineStrategy.getContext(workflowId)?.exposedAccessors.get(name);
     if (!accessor) return undefined;
     return accessor();
   }
@@ -5091,7 +5280,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       const generator = registration.handler(context, state.input);
       this.#inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
       this.#inlineStrategy.continueWorkflow(workflowId, undefined);
-      queueMicrotask(this.#processPendingUpdatesAfterReplay.bind(this, workflowId));
+      void this.#swallowPromiseRejection(this.#processPendingUpdatesAfterInlineAdvance(workflowId));
     } else {
       const serialized = serializeCheckpoint(checkpoint);
       this.#strategy.startWorkflow({
@@ -5205,6 +5394,17 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async resume(workflowId: string): Promise<WorkflowHandle> {
+    const workflowState = await this.#loadWorkflowState(workflowId);
+    if (workflowState !== null) {
+      if (this.#isInlineWorkflowLocallyOwned(workflowId, workflowState.status)) {
+        return this.getHandle(workflowId);
+      }
+
+      if (this.#hasLocalCheckpointOwnership(workflowId, workflowState.status)) {
+        return this.getHandle(workflowId);
+      }
+    }
+
     return this.#resumeWorkflowFromStorage(workflowId, true);
   }
 
@@ -5346,10 +5546,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       this.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
     }
     if (this.#inlineStrategy) {
-      // After replay, process any pending coordinated updates that match
-      // registered inline handlers. Schedule on next microtask so the
-      // generator has a chance to register its onUpdate handlers first.
-      queueMicrotask(this.#processPendingUpdatesAfterReplay.bind(this, workflowId));
+      void this.#swallowPromiseRejection(this.#processPendingUpdatesAfterInlineAdvance(workflowId));
     }
 
     return handle;
@@ -5363,7 +5560,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (key.includes(':ckpt') || key.includes(':offload') || key.includes(':archive')) continue;
 
       const state = decodeWorkflowState(value);
-      if (state.status === 'pending') {
+      const hasLocalCheckpointOwnership = this.#hasLocalCheckpointOwnership(state.id, state.status);
+      if (
+        state.status === 'pending' ||
+        this.#isInlineWorkflowLocallyOwned(state.id, state.status) ||
+        hasLocalCheckpointOwnership
+      ) {
         handles.push(this.getHandle(state.id));
         continue;
       }
@@ -5403,6 +5605,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   async #terminateWorkflow(workflowId: string, status: 'cancelled' | 'timed-out'): Promise<void> {
     this.#terminalizingWorkflows.add(workflowId);
+    this.#dropQueuedInlineWorkflowStart(workflowId);
     this.#strategy.cancelWorkflow(workflowId);
 
     try {
@@ -5480,7 +5683,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
 
   /** Retrieve the current state of a workflow by ID. */
   async get(workflowId: string): Promise<WorkflowState | null> {
-    return this.#loadWorkflowState(workflowId);
+    const state = await this.#loadWorkflowState(workflowId);
+    if (state?.status === 'running' && this.#hasQueuedInlineWorkflowStart(workflowId)) {
+      return { ...state, status: 'pending' };
+    }
+    return state;
   }
 
   async #loadScheduleState(scheduleId: string): Promise<ScheduleState | null> {
@@ -6055,6 +6262,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       payload,
       requestOptions,
     );
+    this.#schedulePendingInlineUpdateDrain(workflowId);
     await this.#guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
 
     await this.#deliverCoordinatedUpdateToWaiterIfAvailable(
@@ -6092,6 +6300,13 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     this.#alertManager?.[Symbol.dispose]();
     this.#alertManager = null;
     this.#abortController.abort();
+    this.#queuedInlineWorkflowStartFlushScheduled = false;
+    this.#queuedInlineWorkflowStarts = [];
+    this.#queuedInlineWorkflowStartIds.clear();
+    this.#queuedOrLaunchingInlineWorkflowStartIds.clear();
+    this.#queuedInlineWorkflowStartChannel?.port1.close();
+    this.#queuedInlineWorkflowStartChannel?.port2.close();
+    this.#queuedInlineWorkflowStartChannel = null;
     this.#scheduler[Symbol.dispose]();
     this.#strategy[Symbol.dispose]();
     this.#activityWorkerDispatcher?.[Symbol.dispose]();
@@ -7084,6 +7299,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     const matchingUpdate = await this.#findPendingUpdateByName(workflowId, operation.updateName);
 
     if (matchingUpdate) {
+      await this.#updateCoordinator.deleteRequest(workflowId, matchingUpdate.updateId);
       this.#dispatchPendingUpdateReceived(workflowId, operation.updateName, matchingUpdate);
       this.#completeOperation(workflowId, {
         payload: matchingUpdate.payload,
@@ -7110,6 +7326,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         this.#untrackWaiterKey(this.#updateWaitersByWorkflow, workflowId, waiterKey);
       }
 
+      await this.#updateCoordinator.deleteRequest(
+        workflowId,
+        pendingUpdateAfterRegistration.updateId,
+      );
       this.#dispatchPendingUpdateReceived(
         workflowId,
         operation.updateName,
@@ -7176,6 +7396,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       return false;
     }
 
+    await this.#updateCoordinator.deleteRequest(workflowId, update.updateId);
     this.#updateWaiters.delete(waiterKey);
     this.#untrackWaiterKey(this.#updateWaitersByWorkflow, workflowId, waiterKey);
     if (dispatchReceivedEvent) {
@@ -8405,6 +8626,8 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     if (!state.currentWorkflowId) {
       return state;
     }
+
+    await this.#flushQueuedInlineWorkflowStartsDirectly();
 
     // Inline execution can complete or checkpoint during the same scheduler
     // turn that started the run. Wait for that first turn to finish handling

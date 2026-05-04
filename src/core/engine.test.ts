@@ -161,6 +161,229 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('delivers a signal sent immediately after start before the first inline turn launches', async () => {
+    const engine = new Engine();
+
+    engine.register('wait-for-go', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('wait-for-go', null);
+    await handle.signal('go', 'ready');
+
+    await expect(handle.result()).resolves.toBe('ready');
+    engine[Symbol.dispose]();
+  });
+
+  it('cancels a workflow immediately after start before the first inline turn launches', async () => {
+    const engine = new Engine();
+
+    engine.register('wait-forever', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).waitForSignal('never');
+    });
+
+    const handle = await engine.start('wait-forever', null);
+    await handle.cancel();
+
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+    engine[Symbol.dispose]();
+  });
+
+  it('resume() returns the queued handle without starting an inline workflow twice', async () => {
+    const engine = new Engine();
+    let runCount = 0;
+
+    engine.register('queued-resume', async function* (ctx: WorkflowContext) {
+      runCount += 1;
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('queued-resume', null);
+    const resumedHandle = await engine.resume(handle.id);
+
+    expect(resumedHandle.id).toBe(handle.id);
+
+    await resumedHandle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    expect(runCount).toBe(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('recoverAll() keeps queued inline starts from running twice', async () => {
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    let runCount = 0;
+
+    engine.register('queued-recover', async function* (ctx: WorkflowContext) {
+      runCount += 1;
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('queued-recover', null);
+    const recoveredHandles = await engine.recoverAll();
+
+    expect(recoveredHandles.some((recoveredHandle) => recoveredHandle.id === handle.id)).toBe(true);
+
+    await handle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    expect(runCount).toBe(1);
+    engine[Symbol.dispose]();
+  });
+
+  it('get() reports running once an inline workflow has started its first turn', async () => {
+    const workflowId = 'queued-running-status';
+    const storage = new MemoryStorage();
+    const originalScan = storage.scan.bind(storage);
+    const signalPrefix = `sig:${encodeStorageKeyComponent(workflowId)}:go:`;
+    const bufferedSignalScanStarted = Promise.withResolvers<void>();
+    const bufferedSignalScanReleased = Promise.withResolvers<void>();
+    let holdNextBufferedSignalScan = true;
+    let started = false;
+
+    storage.scan = async function* (
+      prefix: string,
+      options?: ScanOptions,
+    ): AsyncIterable<[string, Uint8Array]> {
+      if (holdNextBufferedSignalScan && prefix === signalPrefix) {
+        holdNextBufferedSignalScan = false;
+        bufferedSignalScanStarted.resolve();
+        await bufferedSignalScanReleased.promise;
+      }
+
+      yield* originalScan(prefix, options);
+    };
+
+    const engine = new Engine({ storage });
+    engine.register('queued-running-status', async function* (ctx: WorkflowContext) {
+      started = true;
+      yield* (ctx as Context).waitForSignal('go');
+      return 'done';
+    });
+
+    const handle = await engine.start('queued-running-status', null, { id: workflowId });
+
+    await bufferedSignalScanStarted.promise;
+    expect(started).toBe(true);
+    expect(await engine.get(workflowId)).toMatchObject({ status: 'running' });
+
+    bufferedSignalScanReleased.resolve();
+    await flush();
+
+    await handle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    engine[Symbol.dispose]();
+  });
+
+  it('resume() returns the existing handle for a parked inline workflow', async () => {
+    const engine = new Engine();
+    let runCount = 0;
+
+    engine.register('active-resume', async function* (ctx: WorkflowContext) {
+      runCount += 1;
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('active-resume', null);
+    await flush();
+
+    const resumedHandle = await engine.resume(handle.id);
+    expect(resumedHandle.id).toBe(handle.id);
+    expect(runCount).toBe(1);
+
+    await resumedHandle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    expect(runCount).toBe(2);
+    engine[Symbol.dispose]();
+  });
+
+  it('recoverAll() returns the existing handle for a parked inline workflow', async () => {
+    const engine = new Engine();
+    let runCount = 0;
+
+    engine.register('active-recover', async function* (ctx: WorkflowContext) {
+      runCount += 1;
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('active-recover', null);
+    await flush();
+
+    const recoveredHandles = await engine.recoverAll();
+    expect(recoveredHandles.some((recoveredHandle) => recoveredHandle.id === handle.id)).toBe(true);
+    expect(runCount).toBe(1);
+
+    await handle.signal('go', 'done');
+    await expect(handle.result()).resolves.toBe('done');
+    expect(runCount).toBe(2);
+    engine[Symbol.dispose]();
+  });
+
+  it('resume() and recoverAll() ignore parked inline ownership after cancellation reaches storage', async () => {
+    const workflowId = 'cancelled-parked-inline-workflow';
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const cancelledStatePersisted = Promise.withResolvers<void>();
+    const releaseCancelledStateWrite = Promise.withResolvers<void>();
+    const originalBatch = storage.batch.bind(storage);
+    let holdCancelledStateWrite = false;
+
+    storage.batch = async (operations) => {
+      await originalBatch(operations);
+
+      if (!holdCancelledStateWrite) {
+        return;
+      }
+
+      const cancelledWorkflowUpdate = operations.find(
+        (operation) =>
+          operation.type === 'put' &&
+          operation.key === KEYS.workflow(workflowId) &&
+          (decode(operation.value) as WorkflowState).status === 'cancelled',
+      );
+      if (!cancelledWorkflowUpdate) {
+        return;
+      }
+
+      cancelledStatePersisted.resolve();
+      await releaseCancelledStateWrite.promise;
+    };
+
+    engine.register('cancelled-parked-inline-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('cancelled-parked-inline-workflow', null, { id: workflowId });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+
+    holdCancelledStateWrite = true;
+    const cancelPromise = engine.cancel(workflowId);
+    await cancelledStatePersisted.promise;
+
+    await expect(engine.resume(workflowId)).rejects.toThrow(
+      `Cannot resume workflow "${workflowId}": status is "cancelled", expected "running"`,
+    );
+
+    const recoveredHandles = await engine.recoverAll();
+    expect(recoveredHandles.some((recoveredHandle) => recoveredHandle.id === workflowId)).toBe(
+      false,
+    );
+
+    releaseCancelledStateWrite.resolve();
+    await cancelPromise;
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    engine[Symbol.dispose]();
+  });
+
   it('WorkflowCompletedEvent fires with result and duration', async () => {
     const engine = new Engine();
     engine.register('fast', async function* () {
@@ -2312,6 +2535,25 @@ describe('Engine', () => {
 
     await engine.signal(handle.id, 'finish', 'complete');
     await handle.result();
+    engine[Symbol.dispose]();
+  });
+
+  it('handle.update() works immediately after start before the first inline turn launches', async () => {
+    const engine = new Engine();
+
+    engine.register('handle-immediate-update', async function* (ctx: WorkflowContext) {
+      (ctx as Context).onUpdate('increment', (payload) => {
+        return (payload as number) + 1;
+      });
+      return yield* (ctx as Context).waitForSignal('finish');
+    });
+
+    const handle = await engine.start('handle-immediate-update', null);
+
+    await expect(handle.update('increment', 41)).resolves.toBe(42);
+
+    await handle.signal('finish', 'complete');
+    await expect(handle.result()).resolves.toBe('complete');
     engine[Symbol.dispose]();
   });
 
