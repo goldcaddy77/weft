@@ -34,6 +34,13 @@ import {
 import { createWorkflowHandleWithResultPromise } from './handle-result.ts';
 import type { Engine } from './index.ts';
 import {
+  flushQueuedInlineWorkflowStartsDirectly,
+  hasLocalCheckpointOwnership,
+  isInlineWorkflowLocallyOwned,
+  queueInlineWorkflowExecutionStart,
+  type InlineLaunchQueueCallbacks,
+} from './inline-launch-queue.ts';
+import {
   getParkedWorkflowResumeDisposition,
   parkInlineWorkflowAfterCheckpoint,
   resumeParkedInlineWorkflow,
@@ -89,7 +96,11 @@ import {
 } from './operations-router.ts';
 import { processStreamOperation, type StreamOperationCallbacks } from './operations-stream.ts';
 import { processSleepOperation, type TimeOperationCallbacks } from './operations-time.ts';
-import { processPendingUpdatesForHandlers } from './pending-updates.ts';
+import {
+  processPendingUpdatesAfterInlineAdvance,
+  processPendingUpdatesForHandlers,
+  schedulePendingInlineUpdateDrain,
+} from './pending-updates.ts';
 import { resolveWorkflowTypeTarget, type RegistrationCallbacks } from './registration.ts';
 import {
   ensureRetentionSweepInterval,
@@ -144,6 +155,44 @@ import {
   type UpdateCallbacks,
 } from './updates.ts';
 
+function createPendingUpdateCallbacks(engine: Engine): {
+  dispatchEvent: (event: Event) => boolean;
+  broadcast: (message: { type: 'update:completed'; workflowId: string; updateId: string }) => void;
+} {
+  return {
+    dispatchEvent: (event) => engine.dispatchEvent(event),
+    broadcast: (message) =>
+      broadcastFromInternals(getInternals(engine), message, createBroadcastCallbacks(engine)),
+  };
+}
+
+function createInlineLaunchQueueCallbacks(engine: Engine): InlineLaunchQueueCallbacks {
+  return {
+    processPendingUpdatesAfterInlineAdvance: (workflowId) =>
+      processPendingUpdatesAfterInlineAdvanceForEngine(engine, workflowId),
+    swallowPromiseRejection: (promise) => swallowPromiseRejection(promise),
+  };
+}
+
+async function processPendingUpdatesAfterInlineAdvanceForEngine(
+  engine: Engine,
+  workflowId: string,
+): Promise<void> {
+  try {
+    await processPendingUpdatesAfterInlineAdvance(
+      getInternals(engine),
+      workflowId,
+      createPendingUpdateCallbacks(engine),
+    );
+  } catch (error: unknown) {
+    createTerminationCallbacks(engine).handleCleanupError(
+      'processPendingUpdates',
+      error,
+      workflowId,
+    );
+  }
+}
+
 export function createLifecycleCallbacks(engine: Engine): LifecycleCallbacks {
   return {
     dispatchEvent: (event) => {
@@ -160,25 +209,33 @@ export function createLifecycleCallbacks(engine: Engine): LifecycleCallbacks {
     processPendingUpdatesAfterReplay: (workflowId) => {
       void processPendingUpdatesAfterReplay(getInternals(engine), workflowId, {
         processPendingUpdatesForHandlers: (id) =>
-          processPendingUpdatesForHandlers(getInternals(engine), id, {
-            dispatchEvent: (event) => engine.dispatchEvent(event),
-            broadcast: (message) =>
-              broadcastFromInternals(
-                getInternals(engine),
-                message,
-                createBroadcastCallbacks(engine),
-              ),
-          }),
+          processPendingUpdatesForHandlers(
+            getInternals(engine),
+            id,
+            createPendingUpdateCallbacks(engine),
+          ),
         handleCleanupError: (source, error, id) =>
           createTerminationCallbacks(engine).handleCleanupError(source, error, id),
       });
     },
+    processPendingUpdatesAfterInlineAdvance: (workflowId) =>
+      processPendingUpdatesAfterInlineAdvanceForEngine(engine, workflowId),
     processPendingUpdatesForHandlers: (workflowId) =>
-      processPendingUpdatesForHandlers(getInternals(engine), workflowId, {
-        dispatchEvent: (event) => engine.dispatchEvent(event),
-        broadcast: (message) =>
-          broadcastFromInternals(getInternals(engine), message, createBroadcastCallbacks(engine)),
-      }),
+      processPendingUpdatesForHandlers(
+        getInternals(engine),
+        workflowId,
+        createPendingUpdateCallbacks(engine),
+      ),
+    queueInlineWorkflowExecutionStart: (start) =>
+      queueInlineWorkflowExecutionStart(
+        getInternals(engine),
+        start,
+        createInlineLaunchQueueCallbacks(engine),
+      ),
+    isInlineWorkflowLocallyOwned: (workflowId, workflowStatus) =>
+      isInlineWorkflowLocallyOwned(getInternals(engine), workflowId, workflowStatus),
+    hasLocalCheckpointOwnership: (workflowId, workflowStatus) =>
+      hasLocalCheckpointOwnership(getInternals(engine), workflowId, workflowStatus),
     handleCleanupError: (source, error, workflowId) =>
       createTerminationCallbacks(engine).handleCleanupError(source, error, workflowId),
     swallowPromiseRejection: (promise) => swallowPromiseRejection(promise),
@@ -340,6 +397,12 @@ export function createUpdateCallbacks(engine: Engine): UpdateCallbacks {
           ),
       }),
     findPendingUpdateByName: (id, name) => findPendingUpdateByName(getInternals(engine), id, name),
+    schedulePendingInlineUpdateDrain: (workflowId) =>
+      schedulePendingInlineUpdateDrain(
+        getInternals(engine),
+        workflowId,
+        createPendingUpdateCallbacks(engine),
+      ),
   };
 }
 
@@ -367,6 +430,11 @@ export function createScheduleCallbacks(engine: Engine): ScheduleCallbacks {
     startScheduledRun: (state) => startScheduledRunForEngine(engine, state),
     applyScheduleOccurrence: (state) => applyScheduleOccurrenceForEngine(engine, state),
     settleBackfillScheduleState: (state) => settleBackfillScheduleStateForEngine(engine, state),
+    flushQueuedInlineWorkflowStartsDirectly: () =>
+      flushQueuedInlineWorkflowStartsDirectly(
+        getInternals(engine),
+        createInlineLaunchQueueCallbacks(engine),
+      ),
   };
 }
 

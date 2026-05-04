@@ -58,6 +58,7 @@ export type ScheduleCallbacks = {
   startScheduledRun: (state: ScheduleState) => Promise<string>;
   applyScheduleOccurrence: (state: ScheduleState) => Promise<ScheduleState>;
   settleBackfillScheduleState: (state: ScheduleState) => Promise<ScheduleState>;
+  flushQueuedInlineWorkflowStartsDirectly: () => Promise<void>;
 };
 
 // oxlint-disable-next-line complexity -- ID:core-engine-schedule-complexity
@@ -357,11 +358,17 @@ export async function applyScheduleOccurrence(
 export async function settleBackfillScheduleState(
   internals: EngineInternals,
   state: ScheduleState,
-  callbacks: Pick<ScheduleCallbacks, 'refreshScheduledWorkflowState'>,
+  callbacks: Pick<
+    ScheduleCallbacks,
+    'flushQueuedInlineWorkflowStartsDirectly' | 'refreshScheduledWorkflowState'
+  >,
 ): Promise<ScheduleState> {
   if (!state.currentWorkflowId) {
     return state;
   }
+
+  await callbacks.flushQueuedInlineWorkflowStartsDirectly();
+
   const pendingTurn = internals.inlineStrategy?.waitForWorkflowTurn(state.currentWorkflowId);
   if (pendingTurn) {
     await pendingTurn;

@@ -29,6 +29,7 @@ import {
 } from './attributes-tags.ts';
 import { TERMINAL_CLEANUP_DELAY_MS, releaseChargedAgentOperations } from './bulk-operations.ts';
 import { getWorkflowExecutionStartedAt } from './handles.ts';
+import { dropQueuedInlineWorkflowStart } from './inline-launch-queue.ts';
 import type { EngineInternals } from './internals.ts';
 import { EMPTY_STORAGE_VALUE } from './lifecycle.ts';
 import {
@@ -88,6 +89,7 @@ export async function terminateWorkflow(
   callbacks: TerminationCallbacks,
 ): Promise<void> {
   internals.terminalizingWorkflows.add(workflowId);
+  dropQueuedInlineWorkflowStart(internals, workflowId);
   internals.strategy.cancelWorkflow(workflowId);
 
   try {

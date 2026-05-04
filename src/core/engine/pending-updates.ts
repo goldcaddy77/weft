@@ -16,6 +16,40 @@ export async function invokeUpdateHandler(
   return invokeUpdateHandlerFromInternals(internals, name, handler, payload);
 }
 
+/**
+ * After an inline workflow advances, wait for its current generator turn to
+ * expose update handlers before draining pending coordinated updates.
+ */
+export async function processPendingUpdatesAfterInlineAdvance(
+  internals: EngineInternals,
+  workflowId: string,
+  callbacks: PendingUpdateCallbacks,
+): Promise<void> {
+  const inlineContext = internals.inlineStrategy?.getContext(workflowId);
+  if (!inlineContext || inlineContext.updateHandlers.size === 0) {
+    const pendingAdvance = internals.inlineStrategy?.waitForWorkflowAdvance(workflowId);
+    if (pendingAdvance) {
+      await pendingAdvance;
+    }
+  }
+
+  await processPendingUpdatesForHandlers(internals, workflowId, callbacks);
+}
+
+export function schedulePendingInlineUpdateDrain(
+  internals: EngineInternals,
+  workflowId: string,
+  callbacks: PendingUpdateCallbacks,
+): void {
+  if (internals.inlineStrategy === null) {
+    return;
+  }
+
+  setTimeout(() => {
+    void processPendingUpdatesForHandlers(internals, workflowId, callbacks).catch(() => {});
+  }, 0);
+}
+
 export async function processPendingUpdatesForHandlers(
   internals: EngineInternals,
   workflowId: string,

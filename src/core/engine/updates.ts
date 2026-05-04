@@ -38,6 +38,7 @@ export type UpdateCallbacks = {
     updateRequest: UpdateRequest,
   ) => (value: unknown) => void;
   findPendingUpdateByName: (workflowId: string, name: string) => Promise<UpdateRequest | undefined>;
+  schedulePendingInlineUpdateDrain: (workflowId: string) => void;
 };
 
 // oxlint-disable-next-line complexity -- ID:core-engine-update-complexity
@@ -127,6 +128,7 @@ export async function update(
 
   // If no active handler, use the UpdateCoordinator with polling
   const updateId = await internals.updateCoordinator.createRequest(workflowId, name, payload);
+  callbacks.schedulePendingInlineUpdateDrain(workflowId);
   await callbacks.guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
   callbacks.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
 
@@ -193,6 +195,7 @@ export async function submitCoordinatedUpdate(
     payload,
     requestOptions,
   );
+  callbacks.schedulePendingInlineUpdateDrain(workflowId);
   await callbacks.guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
 
   await callbacks.deliverCoordinatedUpdateToWaiterIfAvailable(
@@ -232,6 +235,7 @@ export async function processWaitUpdateOperation(
   const matchingUpdate = await callbacks.findPendingUpdateByName(workflowId, operation.updateName);
 
   if (matchingUpdate) {
+    await internals.updateCoordinator.deleteRequest(workflowId, matchingUpdate.updateId);
     callbacks.dispatchPendingUpdateReceived(workflowId, operation.updateName, matchingUpdate);
     callbacks.completeOperation(workflowId, {
       payload: matchingUpdate.payload,
@@ -258,6 +262,10 @@ export async function processWaitUpdateOperation(
       untrackWaiterKey(internals.updateWaitersByWorkflow, workflowId, waiterKey);
     }
 
+    await internals.updateCoordinator.deleteRequest(
+      workflowId,
+      pendingUpdateAfterRegistration.updateId,
+    );
     callbacks.dispatchPendingUpdateReceived(
       workflowId,
       operation.updateName,
@@ -333,6 +341,7 @@ export async function deliverCoordinatedUpdateToWaiterIfAvailable(
     return false;
   }
 
+  await internals.updateCoordinator.deleteRequest(workflowId, updateRequest.updateId);
   internals.updateWaiters.delete(waiterKey);
   untrackWaiterKey(internals.updateWaitersByWorkflow, workflowId, waiterKey);
   if (dispatchReceivedEvent) {

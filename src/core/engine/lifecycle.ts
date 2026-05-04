@@ -42,6 +42,7 @@ import {
   type WorkflowVersionTuple,
 } from '../workflow-version-tuple.ts';
 import { validateAttributeValueSizes } from './attributes-tags.ts';
+import type { QueuedInlineWorkflowExecutionStart } from './engine-internal-types.ts';
 import { WorkflowAlreadyExistsError } from './errors.ts';
 import { getWorkflowExecutionStartedAt, type WorkflowHandle } from './handles.ts';
 import type { EngineInternals } from './internals.ts';
@@ -72,7 +73,11 @@ export type LifecycleCallbacks = {
   getComposedWorkflowInterceptor: () => ComposedWorkflowInterceptor | null;
   resolveWorkflowTypeTarget: (target: string | Function) => string;
   processPendingUpdatesAfterReplay: (workflowId: string) => void;
+  processPendingUpdatesAfterInlineAdvance: (workflowId: string) => Promise<void>;
   processPendingUpdatesForHandlers: (workflowId: string) => Promise<void>;
+  queueInlineWorkflowExecutionStart: (start: QueuedInlineWorkflowExecutionStart) => void;
+  isInlineWorkflowLocallyOwned: (workflowId: string, workflowStatus: string) => boolean;
+  hasLocalCheckpointOwnership: (workflowId: string, workflowStatus: string) => boolean;
   handleCleanupError: (source: string, error: unknown, workflowId?: string) => void;
   swallowPromiseRejection: (promise: Promise<unknown> | undefined) => Promise<void>;
 };
@@ -98,7 +103,15 @@ export async function recoverAll(
     if (key.includes(':ckpt') || key.includes(':offload') || key.includes(':archive')) continue;
 
     const state = decodeWorkflowState(value);
-    if (state.status === 'pending') {
+    const hasLocalCheckpointOwnershipResult = callbacks.hasLocalCheckpointOwnership(
+      state.id,
+      state.status,
+    );
+    if (
+      state.status === 'pending' ||
+      callbacks.isInlineWorkflowLocallyOwned(state.id, state.status) ||
+      hasLocalCheckpointOwnershipResult
+    ) {
       handles.push(callbacks.getHandle(state.id));
       continue;
     }
@@ -119,6 +132,17 @@ export async function resume(
   workflowId: string,
   callbacks: LifecycleCallbacks,
 ): Promise<WorkflowHandle> {
+  const workflowState = await loadWorkflowState(internals, workflowId);
+  if (workflowState !== null) {
+    if (callbacks.isInlineWorkflowLocallyOwned(workflowId, workflowState.status)) {
+      return callbacks.getHandle(workflowId);
+    }
+
+    if (callbacks.hasLocalCheckpointOwnership(workflowId, workflowState.status)) {
+      return callbacks.getHandle(workflowId);
+    }
+  }
+
   return resumeWorkflowFromStorage(internals, workflowId, true, callbacks);
 }
 
@@ -447,6 +471,21 @@ export function beginWorkflowExecution(
   callbacks: LifecycleCallbacks,
 ): void {
   warmupWorkflowRegistration(internals, registration, callbacks);
+  const nestingDepth = internals.pendingNestingDepth ?? 0;
+  internals.pendingNestingDepth = undefined;
+
+  if (internals.inlineStrategy !== null) {
+    callbacks.queueInlineWorkflowExecutionStart({
+      workflowId,
+      workflowType,
+      input,
+      checkpoint,
+      nestingDepth,
+      executionDeadline,
+      tenant,
+    });
+    return;
+  }
 
   callbacks.dispatchEvent(new WorkflowStartedEvent(workflowId, workflowType, input));
   startWorkflowExecution(
@@ -455,6 +494,7 @@ export function beginWorkflowExecution(
     workflowType,
     input,
     checkpoint,
+    nestingDepth,
     executionDeadline,
     tenant,
     callbacks,
@@ -981,12 +1021,11 @@ export function startWorkflowExecution(
   workflowType: string,
   input: unknown,
   checkpoint: Checkpoint,
+  nestingDepth: number,
   executionDeadline: number | undefined,
   tenant: TenantContext | undefined,
-  _callbacks: LifecycleCallbacks,
+  _callbacks?: LifecycleCallbacks,
 ): void {
-  const nestingDepth = internals.pendingNestingDepth ?? 0;
-  internals.pendingNestingDepth = undefined;
   // Skip the map entry for the common non-nested case — readers fall back
   // to 0. Saves per-workflow V8 Map overhead (~80 bytes) on the hot path.
   if (nestingDepth !== 0) {
@@ -998,6 +1037,8 @@ export function startWorkflowExecution(
     input,
     checkpoint: serializeCheckpoint(checkpoint),
     nestingDepth,
+    startedAt: checkpoint.createdAt,
+    sleepReferenceTime: checkpoint.createdAt,
     ...(executionDeadline !== undefined && { deadline: executionDeadline }),
     ...(internals.workflowHeaders.has(workflowId) && {
       headers: [...internals.workflowHeaders.get(workflowId)!],
@@ -1156,7 +1197,9 @@ export function launchWorkflowFromCheckpoint(
     const generator = registration.handler(context, state.input);
     internals.inlineStrategy.adoptWorkflow(workflowId, generator, context, workflowAbort);
     internals.inlineStrategy.continueWorkflow(workflowId, undefined);
-    queueMicrotask(() => callbacks.processPendingUpdatesAfterReplay(workflowId));
+    void callbacks.swallowPromiseRejection(
+      callbacks.processPendingUpdatesAfterInlineAdvance(workflowId),
+    );
   } else {
     const serialized = serializeCheckpoint(checkpoint);
     internals.strategy.startWorkflow({
@@ -1318,10 +1361,9 @@ export async function resumeWorkflowFromStorage(
     callbacks.dispatchEvent(new WorkflowResumedEvent(workflowId, resumeCheckpoint.step));
   }
   if (internals.inlineStrategy) {
-    // After replay, process any pending coordinated updates that match
-    // registered inline handlers. Schedule on next microtask so the
-    // generator has a chance to register its onUpdate handlers first.
-    queueMicrotask(() => callbacks.processPendingUpdatesAfterReplay(workflowId));
+    void callbacks.swallowPromiseRejection(
+      callbacks.processPendingUpdatesAfterInlineAdvance(workflowId),
+    );
   }
 
   return handle;

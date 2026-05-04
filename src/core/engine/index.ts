@@ -89,6 +89,11 @@ import {
 } from './handle-result.ts';
 import { HANDLE_RESULT_PROMISE, ScheduleHandle, WorkflowHandle } from './handles.ts';
 import {
+  disposeQueuedInlineWorkflowStarts,
+  flushQueuedInlineWorkflowStarts,
+  hasQueuedInlineWorkflowStart,
+} from './inline-launch-queue.ts';
+import {
   handleStrategyMessage as handleStrategyMessageFromInternals,
   resumeParkedInlineWorkflow as resumeParkedInlineWorkflowFromInternals,
   type InlineParkingCallbacks,
@@ -417,6 +422,25 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     });
     getInternals(this).strategy = strategyBundle.strategy;
     getInternals(this).inlineStrategy = strategyBundle.inlineStrategy;
+    getInternals(this).queuedInlineWorkflowStarts = [];
+    getInternals(this).queuedInlineWorkflowStartIds = new Set();
+    getInternals(this).queuedOrLaunchingInlineWorkflowStartIds = new Set();
+    getInternals(this).queuedInlineWorkflowStartFlushScheduled = false;
+    const queuedInlineWorkflowStartChannel =
+      strategyBundle.inlineStrategy !== null ? new MessageChannel() : null;
+    getInternals(this).queuedInlineWorkflowStartChannel = queuedInlineWorkflowStartChannel;
+    if (queuedInlineWorkflowStartChannel !== null) {
+      queuedInlineWorkflowStartChannel.port1.onmessage = () => {
+        getInternals(this).queuedInlineWorkflowStartFlushScheduled = false;
+        void swallowPromiseRejection(
+          flushQueuedInlineWorkflowStarts(getInternals(this), {
+            processPendingUpdatesAfterInlineAdvance: (workflowId) =>
+              this.#createLifecycleCallbacks().processPendingUpdatesAfterInlineAdvance(workflowId),
+            swallowPromiseRejection: (promise) => swallowPromiseRejection(promise),
+          }),
+        );
+      };
+    }
     getInternals(this).budgetPolicyEnforcer = null;
     getInternals(this).tenantQuotaManager = new TenantQuotaManager(
       storage,
@@ -770,7 +794,14 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return getInternals(this).agentWorkflowIds;
   }
   async get(workflowId: string): Promise<WorkflowState | null> {
-    return loadWorkflowState(getInternals(this), workflowId);
+    const state = await loadWorkflowState(getInternals(this), workflowId);
+    if (
+      state?.status === 'running' &&
+      hasQueuedInlineWorkflowStart(getInternals(this), workflowId)
+    ) {
+      return { ...state, status: 'pending' };
+    }
+    return state;
   }
   async getAttributes(workflowId: string): Promise<Record<string, SearchAttributeValue> | null> {
     return getWorkflowAttributes(getInternals(this), workflowId);
@@ -856,6 +887,7 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     internals.alertManager?.[Symbol.dispose]();
     internals.alertManager = null;
     internals.abortController.abort();
+    disposeQueuedInlineWorkflowStarts(internals);
     internals.scheduler[Symbol.dispose]();
     internals.strategy[Symbol.dispose]();
     internals.activityWorkerDispatcher?.[Symbol.dispose]();

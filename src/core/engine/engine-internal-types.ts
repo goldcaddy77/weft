@@ -3,7 +3,9 @@ import type { Storage as WeftStorage } from '../../storage/interface.ts';
 import type { ConstraintDefinition } from '../constraint.ts';
 import type { ExecutionStrategy } from '../execution-strategy.ts';
 import type { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
+import type { TenantContext } from '../tenant.ts';
 import type {
+  Checkpoint,
   EngineOptions,
   NormalizedRetentionPolicy,
   SearchAttributeSchema,
@@ -59,4 +61,14 @@ export type TrackedWaiterKeys = string | Set<string>;
 export type PendingTimelineEntry = {
   startedAt: number;
   entry: WorkflowTimelineEntry;
+};
+
+export type QueuedInlineWorkflowExecutionStart = {
+  workflowId: string;
+  workflowType: string;
+  input: unknown;
+  checkpoint: Checkpoint;
+  nestingDepth: number;
+  executionDeadline: number | undefined;
+  tenant: TenantContext | undefined;
 };

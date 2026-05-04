@@ -40,6 +40,7 @@ import type { WorkflowVersionTuple } from '../workflow-version-tuple.ts';
 
 import type {
   PendingTimelineEntry,
+  QueuedInlineWorkflowExecutionStart,
   RegistrationEntry,
   ResolvedOptions,
   TrackedWaiterKeys,
@@ -61,6 +62,11 @@ export interface EngineInternals {
   options: ResolvedOptions;
   strategy: ExecutionStrategy;
   inlineStrategy: InlineExecutionStrategy | null;
+  queuedInlineWorkflowStarts: QueuedInlineWorkflowExecutionStart[];
+  queuedInlineWorkflowStartIds: Set<string>;
+  queuedOrLaunchingInlineWorkflowStartIds: Set<string>;
+  queuedInlineWorkflowStartFlushScheduled: boolean;
+  queuedInlineWorkflowStartChannel: MessageChannel | null;
   handleCache: Map<string, { ref: WeakRef<WorkflowHandle>; unregisterToken: object }>;
   finalizationRegistry: FinalizationRegistry<string>;
   resultResolvers: Map<string, WorkflowResultWaiter>;

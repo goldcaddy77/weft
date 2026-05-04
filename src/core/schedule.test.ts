@@ -1,5 +1,5 @@
 import { describe, expect, it, spyOn } from 'bun:test';
-import { yieldToEventLoop } from '../testing/fake-timers.ts';
+import { flushMicrotasks, waitForCondition, yieldToEventLoop } from '../testing/fake-timers.ts';
 
 import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -777,6 +777,114 @@ describe('recurring schedules', () => {
     expect(updatedSchedule?.nextFireAt).toBe(Date.UTC(2026, 0, 1, 0, 2, 0));
 
     engine[Symbol.dispose]();
+  });
+
+  it('Backfill schedules keep draining missed occurrences when runs immediately start child workflows.', async () => {
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock);
+    const childInputs: number[] = [];
+    const parentRuns: number[] = [];
+
+    registerWorkflow(
+      engine,
+      'backfill-child-workflow',
+      async function* (_ctx: WorkflowContext, input: number) {
+        childInputs.push(input);
+        return input;
+      },
+    );
+
+    registerWorkflow(
+      engine,
+      'backfill-parent-workflow',
+      async function* (ctx: WorkflowContext, input: number) {
+        parentRuns.push(input);
+        return yield* (ctx as Context).startChild<number>('backfill-child-workflow', input);
+      },
+    );
+
+    await engine.schedule('backfill-parent-workflow', 7, '* * * * * *', {
+      backfill: true,
+    });
+
+    await tickEngine(engine, clock, Date.UTC(2026, 0, 1, 0, 0, 3));
+
+    expect(parentRuns).toEqual([7, 7, 7]);
+    expect(childInputs).toEqual([7, 7, 7]);
+    expect(await listRunningWorkflowIds(engine)).toEqual([]);
+
+    engine[Symbol.dispose]();
+  });
+
+  it('Backfill direct flushes clear queued-start scheduling before nested child starts queue more work.', async () => {
+    const originalMessageChannel = globalThis.MessageChannel;
+    const pendingDeliveries: Array<() => void> = [];
+    let postMessageCount = 0;
+
+    class ControlledMessageChannel {
+      port1 = {
+        onmessage: null as ((event: MessageEvent<undefined>) => void) | null,
+        close(): void {},
+      };
+
+      port2 = {
+        postMessage: (_value: undefined): void => {
+          postMessageCount += 1;
+          pendingDeliveries.push(() => {
+            this.port1.onmessage?.(new MessageEvent('message'));
+          });
+        },
+        close(): void {},
+      };
+    }
+
+    globalThis.MessageChannel = ControlledMessageChannel as unknown as typeof MessageChannel;
+
+    const clock = { now: Date.UTC(2026, 0, 1, 0, 0, 0) };
+    const engine = createEngine(clock);
+
+    registerWorkflow(
+      engine,
+      'controlled-channel-child',
+      async function* (_ctx: WorkflowContext, input: number) {
+        return input;
+      },
+    );
+
+    registerWorkflow(
+      engine,
+      'controlled-channel-parent',
+      async function* (ctx: WorkflowContext, input: number) {
+        return yield* (ctx as Context).startChild<number>('controlled-channel-child', input);
+      },
+    );
+
+    try {
+      await engine.schedule('controlled-channel-parent', 11, '* * * * * *', {
+        backfill: true,
+      });
+
+      clock.now = Date.UTC(2026, 0, 1, 0, 0, 3);
+      const tickPromise = engine.scheduler.tick(clock.now);
+      void tickPromise.catch(() => {});
+      await waitForCondition(() => postMessageCount >= 1, {
+        timeoutMs: 100,
+        label: 'initial queued inline workflow start',
+      });
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      expect(postMessageCount).toBe(2);
+
+      while (pendingDeliveries.length > 0) {
+        const deliver = pendingDeliveries.shift();
+        deliver?.();
+        await flushMicrotasks();
+      }
+    } finally {
+      engine[Symbol.dispose]();
+      globalThis.MessageChannel = originalMessageChannel;
+    }
   });
 
   it('Schedule timers still advance when getNow() lags behind the fired timestamp.', async () => {
