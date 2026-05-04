@@ -65,6 +65,8 @@ export class WorkerExecutionStrategy implements ExecutionStrategy {
     input: unknown;
     checkpoint: ArrayBuffer;
     nestingDepth?: number;
+    startedAt?: number;
+    sleepReferenceTime?: number;
     deadline?: number;
     headers?: [string, string][];
     /**

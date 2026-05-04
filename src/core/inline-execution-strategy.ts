@@ -109,18 +109,19 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     input: unknown;
     checkpoint: ArrayBuffer | Uint8Array;
     nestingDepth?: number;
+    startedAt?: number;
+    sleepReferenceTime?: number;
     deadline?: number;
     headers?: [string, string][];
     tenant?: TenantContext;
   }): void {
     const registration = this.#dependencies.getRegistration(parameters.workflowType);
     if (!registration) {
-      const pendingMessage = this.#emit({
+      this.#emit({
         type: 'failed',
         workflowId: parameters.workflowId,
         error: `No workflow registered with name "${parameters.workflowType}"`,
       });
-      void pendingMessage?.catch(() => {});
       return;
     }
 
@@ -130,10 +131,13 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     const context = new Context({
       workflowId: parameters.workflowId,
       workflowType: parameters.workflowType,
-      startedAt: this.#dependencies.getNow(),
+      startedAt: parameters.startedAt ?? this.#dependencies.getNow(),
       abortController: workflowAbort,
       getNow: this.#dependencies.getNow,
       nestingDepth: parameters.nestingDepth ?? 0,
+      ...(parameters.sleepReferenceTime !== undefined && {
+        sleepReferenceTime: parameters.sleepReferenceTime,
+      }),
       ...(this.#dependencies.resolveWorkflowType !== undefined && {
         resolveWorkflowType: this.#dependencies.resolveWorkflowType,
       }),
@@ -163,12 +167,11 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
   }): void {
     const generator = this.#generators.get(parameters.workflowId);
     if (!generator) {
-      const pendingMessage = this.#emit({
+      this.#emit({
         type: 'failed',
         workflowId: parameters.workflowId,
         error: `No active generator for workflow: ${parameters.workflowId}`,
       });
-      void pendingMessage?.catch(() => {});
       return;
     }
 
@@ -290,9 +293,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       (async () => {
         try {
           const abortController = this.#abortControllers.get(workflowId);
-          if (abortController?.signal.aborted) {
-            return;
-          }
+          if (abortController?.signal.aborted) return;
 
           const iterationResult = await generator.next(lastResult);
 
@@ -301,7 +302,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
               preserveTrackedAdvance: true,
               preserveTrackedTurn: true,
             });
-            this.#emitTrackedMessage({
+            this.#emit({
               type: 'completed',
               workflowId,
               result: iterationResult.value,
@@ -312,7 +313,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
           // The yielded value is a ContextOperationRequest. Emit it as a
           // checkpoint message so the engine can process the operation.
           const operation = iterationResult.value as ContextOperationRequest;
-          this.#emitTrackedMessage({
+          this.#emit({
             type: 'checkpoint',
             workflowId,
             checkpoint: new ArrayBuffer(0),
@@ -332,7 +333,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
           if (error instanceof Error && error.stack !== undefined) {
             failedMessage.errorStack = error.stack;
           }
-          this.#emitTrackedMessage(failedMessage);
+          this.#emit(failedMessage);
         }
       })(),
     );
@@ -344,9 +345,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
       (async () => {
         try {
           const abortController = this.#abortControllers.get(workflowId);
-          if (abortController?.signal.aborted) {
-            return;
-          }
+          if (abortController?.signal.aborted) return;
 
           const iterationResult = await generator.throw(error);
 
@@ -355,7 +354,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
               preserveTrackedAdvance: true,
               preserveTrackedTurn: true,
             });
-            this.#emitTrackedMessage({
+            this.#emit({
               type: 'completed',
               workflowId,
               result: iterationResult.value,
@@ -364,7 +363,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
           }
 
           const operation = iterationResult.value as ContextOperationRequest;
-          this.#emitTrackedMessage({
+          this.#emit({
             type: 'checkpoint',
             workflowId,
             checkpoint: new ArrayBuffer(0),
@@ -384,7 +383,7 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
           if (innerError instanceof Error && innerError.stack !== undefined) {
             failedMessage.errorStack = innerError.stack;
           }
-          this.#emitTrackedMessage(failedMessage);
+          this.#emit(failedMessage);
         }
       })(),
     );
@@ -411,14 +410,14 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
         this.#workflowTurns.delete(workflowId);
       }
     });
-    // Some callers observe these turns directly, but most paths do not.
-    // Mark the promise as observed so handler failures stay contained.
+    // Most callers do not observe these turns directly. Mark the promise as
+    // observed so handler failures stay contained.
     void trackedTurn.catch(() => {});
     this.#workflowTurns.set(workflowId, trackedTurn);
     return trackedTurn;
   }
 
-  #emitTrackedMessage(message: WorkerOutboundMessage): void {
+  #emit(message: WorkerOutboundMessage): void {
     const result = this.#messageHandler?.(message);
     if (result instanceof Promise) {
       void this.#trackWorkflowTurn(message.workflowId, result);
@@ -426,10 +425,6 @@ export class InlineExecutionStrategy implements ExecutionStrategy {
     }
 
     this.#workflowTurns.delete(message.workflowId);
-  }
-
-  #emit(message: WorkerOutboundMessage): Promise<void> {
-    return Promise.resolve(this.#messageHandler?.(message));
   }
 
   #cleanup(

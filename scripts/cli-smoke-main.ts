@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { helloWorldWorkflow } from '../examples/hello-world.ts';
-import { createStorage } from '../src/cli.ts';
+import { createStorage } from '../src/cli/index.ts';
 import { Engine } from '../src/core/engine.ts';
 import type { WorkflowFunction } from '../src/core/types.ts';
 import { serve } from '../src/server/index.ts';

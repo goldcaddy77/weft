@@ -100,6 +100,21 @@ export interface TenantResolver {
  *   tenantResolver: tenantFromInputField('tenantId'),
  * });
  * ```
+ *
+ * @example Multi-tenant engine — read tenant id from workflow input
+ * ```ts
+ * import { Engine, VERSION, tenantFromInputField, type Context, type WorkflowContext } from 'weft';
+ *
+ * void VERSION;
+ * const engine = new Engine({
+ *   tenantResolver: tenantFromInputField('customerId'),
+ * });
+ *
+ * engine.register('per-tenant', async function* (ctx: WorkflowContext) {
+ *   // ctx.tenant is { id: "acme" } when input = { customerId: "acme", ... }
+ *   return (ctx as Context).tenant?.id ?? 'anonymous';
+ * });
+ * ```
  */
 export function tenantFromInputField(field: string): TenantResolver {
   return {

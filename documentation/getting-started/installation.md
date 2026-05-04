@@ -70,9 +70,9 @@ Weft produces standalone binaries for these targets:
 Cross-compilation works from any OS. A single CI pipeline can produce all five binaries:
 
 ```bash
-bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile dist/weft-darwin-arm64
-bun build --compile --target=bun-linux-x64    src/cli.ts --outfile dist/weft-linux-x64
-bun build --compile --target=bun-windows-x64  src/cli.ts --outfile dist/weft-windows-x64.exe
+bun build --compile --target=bun-darwin-arm64 src/cli-main.ts --outfile dist/weft-darwin-arm64
+bun build --compile --target=bun-linux-x64    src/cli-main.ts --outfile dist/weft-linux-x64
+bun build --compile --target=bun-windows-x64  src/cli-main.ts --outfile dist/weft-windows-x64.exe
 ```
 
 ## What Ships Inside the Binary

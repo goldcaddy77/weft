@@ -55,7 +55,6 @@ export type FeedEventKind =
   // the union open — without it, TypeScript widens `FeedEventKind`
   // to `string` in most contexts and the literals disappear from
   // completion lists.
-  // oxlint-disable-next-line typescript/no-restricted-types
   | (string & {});
 
 // ---------------------------------------------------------------------------
@@ -377,6 +376,7 @@ async function* replayUpTo(
  *     window between buffer-empty check and waker assignment would
  *     otherwise hang the consumer forever.
  */
+// oxlint-disable-next-line complexity -- ID:server-workflow-event-feed-drain-live-complexity
 async function* drainLive(
   buffer: EventEnvelope[],
   snapshot: number,

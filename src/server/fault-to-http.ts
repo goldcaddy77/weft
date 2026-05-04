@@ -42,6 +42,7 @@ type ErrorBody = {
   data?: unknown;
 };
 
+// oxlint-disable-next-line complexity -- ID:server-fault-to-http-shape-error-body-complexity
 function shapeErrorBody(fault: OperationFault): ErrorBody {
   const base: ErrorBody = { code: fault.code, message: fault.message };
   // EngineFailure and NotImplemented carry `data: {}` for type uniformity

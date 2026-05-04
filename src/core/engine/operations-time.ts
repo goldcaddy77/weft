@@ -1,0 +1,303 @@
+import type { BatchOperation } from '../../storage/interface.ts';
+import { KEYS } from '../../storage/interface.ts';
+import { deserializeCheckpoint } from '../checkpoint.ts';
+import { encode } from '../codec.ts';
+import type { ContextOperationRequest } from '../context.ts';
+import { buildTimerBatchOperations, normalizeStorageTimestamp } from '../scheduler.ts';
+import type { Checkpoint, Duration, StartOptions, TimerEntry, WorkflowState } from '../types.ts';
+import type { WorkflowVersionTuple } from '../workflow-version-tuple.ts';
+import type { EngineInternals } from './internals.ts';
+
+type RegistrationEntry =
+  EngineInternals['registrations'] extends Map<string, infer Entry> ? Entry : never;
+
+type SleepOperation = Extract<ContextOperationRequest, { type: 'sleep' }>;
+
+export type TimeOperationCallbacks = {
+  completeOperation: (workflowId: string, value: unknown) => void;
+  loadWorkflowState: (workflowId: string) => Promise<WorkflowState | null>;
+  failWorkflow: (workflowId: string, error: Error) => Promise<void>;
+  runSerializedWorkflowStateWrite: <Result>(
+    workflowId: string,
+    writeOperation: () => Promise<Result>,
+  ) => Promise<Result>;
+  beginWorkflowExecution: (
+    workflowId: string,
+    workflowType: string,
+    input: unknown,
+    checkpoint: Checkpoint,
+    executionDeadline: number | undefined,
+    tenant: WorkflowState['tenant'],
+    registration: RegistrationEntry,
+  ) => void;
+  workflowVersionTupleFromState: (state: WorkflowState) => WorkflowVersionTuple;
+  setWorkflowStartHeaders: (workflowId: string, headers: Map<string, string> | undefined) => void;
+  loadWorkflowStartHeaders: (workflowId: string) => Promise<Map<string, string> | undefined>;
+  parseStartOptionDuration: (
+    value: Duration,
+    fieldName: 'options.executionTimeout' | 'options.startAfter',
+  ) => number;
+  runDeferredTerminalCleanup: (workflowId: string, timerId: string) => Promise<void>;
+  handleScheduleTimer: (entry: TimerEntry) => Promise<void>;
+  timeout: (workflowId: string) => Promise<void>;
+};
+
+export function createDelayedStartTimerEntry(
+  _internals: EngineInternals,
+  workflowId: string,
+  scheduledStartAt: number,
+  options: StartOptions | undefined,
+  callbacks: Pick<TimeOperationCallbacks, 'parseStartOptionDuration'>,
+): TimerEntry {
+  return {
+    id: `delayed-start:${workflowId}`,
+    workflowId,
+    fireAt: scheduledStartAt,
+    kind: 'delayed-start',
+    ...(options?.executionTimeout !== undefined && {
+      executionTimeoutMs: callbacks.parseStartOptionDuration(
+        options.executionTimeout,
+        'options.executionTimeout',
+      ),
+    }),
+  };
+}
+
+export async function processSleepOperation(
+  internals: EngineInternals,
+  workflowId: string,
+  operation: SleepOperation,
+  callbacks: Pick<TimeOperationCallbacks, 'completeOperation' | 'loadWorkflowState'>,
+): Promise<void> {
+  if (operation.scheduledFireAt <= internals.options.getNow()) {
+    callbacks.completeOperation(workflowId, undefined);
+    return;
+  }
+
+  const { promise, resolve } = Promise.withResolvers<void>();
+  await internals.scheduler.schedule({
+    id: `sleep:${operation.operationId}`,
+    workflowId,
+    fireAt: operation.scheduledFireAt,
+    kind: 'sleep',
+  });
+  registerSleepResolver(internals, workflowId, operation.operationId, resolve);
+  await promise;
+
+  const postSleepState = await callbacks.loadWorkflowState(workflowId);
+  if (postSleepState?.status === 'running') {
+    callbacks.completeOperation(workflowId, undefined);
+  }
+}
+
+export function registerSleepResolver(
+  internals: EngineInternals,
+  workflowId: string,
+  operationId: string,
+  resolve: () => void,
+): void {
+  internals.sleepResolvers.set(`${workflowId}:${operationId}`, resolve);
+
+  let workflowOperations = internals.sleepResolversByWorkflow.get(workflowId);
+  if (!workflowOperations) {
+    workflowOperations = new Set();
+    internals.sleepResolversByWorkflow.set(workflowId, workflowOperations);
+  }
+  workflowOperations.add(operationId);
+}
+
+// oxlint-disable-next-line complexity -- ID:core-engine-start-delayed-workflow-complexity
+export async function startDelayedWorkflow(
+  internals: EngineInternals,
+  entry: TimerEntry,
+  callbacks: Pick<
+    TimeOperationCallbacks,
+    | 'beginWorkflowExecution'
+    | 'failWorkflow'
+    | 'loadWorkflowStartHeaders'
+    | 'loadWorkflowState'
+    | 'runSerializedWorkflowStateWrite'
+    | 'setWorkflowStartHeaders'
+    | 'workflowVersionTupleFromState'
+  >,
+): Promise<void> {
+  const state = await callbacks.loadWorkflowState(entry.workflowId);
+  if (!state || state.status !== 'pending') {
+    return;
+  }
+
+  const checkpointBytes = await internals.storage.get(KEYS.checkpoint(entry.workflowId));
+  if (!checkpointBytes) {
+    await callbacks.failWorkflow(
+      entry.workflowId,
+      new Error(`Checkpoint not found for delayed workflow "${entry.workflowId}"`),
+    );
+    return;
+  }
+  const checkpoint = deserializeCheckpoint(checkpointBytes);
+
+  const registration = internals.registrations.get(state.type);
+  if (!registration) {
+    await callbacks.failWorkflow(
+      entry.workflowId,
+      new Error(`No workflow registered with name "${state.type}"`),
+    );
+    return;
+  }
+
+  const now = internals.options.getNow();
+  let executionDeadline: number | undefined;
+  if (entry.executionTimeoutMs !== undefined) {
+    if (!Number.isFinite(entry.executionTimeoutMs) || entry.executionTimeoutMs < 0) {
+      await callbacks.failWorkflow(
+        entry.workflowId,
+        new Error(`Invalid delayed execution timeout for workflow "${entry.workflowId}"`),
+      );
+      return;
+    }
+
+    try {
+      executionDeadline = normalizeStorageTimestamp(
+        now + entry.executionTimeoutMs,
+        `Delayed execution timeout for workflow "${entry.workflowId}"`,
+      );
+    } catch {
+      await callbacks.failWorkflow(
+        entry.workflowId,
+        new Error(`Invalid delayed execution timeout for workflow "${entry.workflowId}"`),
+      );
+      return;
+    }
+  }
+  const runningState = await callbacks.runSerializedWorkflowStateWrite(
+    entry.workflowId,
+    async () => {
+      const latestState = await callbacks.loadWorkflowState(entry.workflowId);
+      if (!latestState || latestState.status !== 'pending') {
+        return null;
+      }
+
+      const nextRunningState: WorkflowState = {
+        ...latestState,
+        status: 'running',
+        startedAt: now,
+        updatedAt: now,
+        ...(executionDeadline !== undefined && { executionDeadline }),
+      };
+
+      const operations: BatchOperation[] = [
+        {
+          type: 'put',
+          key: KEYS.workflow(entry.workflowId),
+          value: encode(nextRunningState),
+        },
+      ];
+      if (executionDeadline !== undefined) {
+        operations.push(
+          ...buildTimerBatchOperations({
+            id: `deadline:${entry.workflowId}`,
+            workflowId: entry.workflowId,
+            fireAt: executionDeadline,
+            kind: 'execution-deadline',
+          }),
+        );
+      }
+
+      await internals.storage.batch(operations);
+      return nextRunningState;
+    },
+  );
+  if (!runningState) {
+    return;
+  }
+
+  internals.checkpoints.set(entry.workflowId, checkpoint);
+  internals.workflowVersionTuples.set(
+    entry.workflowId,
+    callbacks.workflowVersionTupleFromState(runningState),
+  );
+  callbacks.setWorkflowStartHeaders(
+    entry.workflowId,
+    await callbacks.loadWorkflowStartHeaders(entry.workflowId),
+  );
+  if (registration.isAgent) {
+    internals.agentWorkflowIds.add(entry.workflowId);
+  }
+
+  callbacks.beginWorkflowExecution(
+    entry.workflowId,
+    runningState.type,
+    runningState.input,
+    checkpoint,
+    executionDeadline,
+    runningState.tenant,
+    registration,
+  );
+}
+
+// oxlint-disable-next-line complexity -- ID:core-engine-handle-timer-fired-complexity
+export async function handleTimerFired(
+  internals: EngineInternals,
+  entry: TimerEntry,
+  callbacks: Pick<
+    TimeOperationCallbacks,
+    | 'failWorkflow'
+    | 'loadWorkflowStartHeaders'
+    | 'loadWorkflowState'
+    | 'runDeferredTerminalCleanup'
+    | 'runSerializedWorkflowStateWrite'
+    | 'handleScheduleTimer'
+    | 'setWorkflowStartHeaders'
+    | 'timeout'
+    | 'beginWorkflowExecution'
+    | 'workflowVersionTupleFromState'
+  >,
+): Promise<void> {
+  // Check if this timer is for a review escalation/timeout
+  if (entry.id.startsWith('review-escalation:') || entry.id.startsWith('review-timeout:')) {
+    // Extract reviewId from the timer ID
+    const parts = entry.id.split(':');
+    const reviewId = parts[1]!;
+    const handler = internals.reviewEscalationHandlers.get(reviewId);
+    if (handler) {
+      // Guard: skip if the workflow is no longer running (e.g. cancelled/failed concurrently)
+      const state = await callbacks.loadWorkflowState(entry.workflowId);
+      if (!state || state.status !== 'running') return;
+      await handler(entry);
+    }
+    return;
+  }
+
+  if (entry.kind === 'delayed-start') {
+    await startDelayedWorkflow(internals, entry, callbacks);
+    return;
+  }
+
+  if (entry.kind === 'terminal-cleanup') {
+    await callbacks.runDeferredTerminalCleanup(entry.workflowId, entry.id);
+    return;
+  }
+
+  if (entry.kind === 'schedule') {
+    await callbacks.handleScheduleTimer(entry);
+    return;
+  }
+
+  if (entry.kind === 'sleep') {
+    // Extract the operation ID from the timer ID (format: "sleep:<operationId>")
+    const operationId = entry.id.replace('sleep:', '');
+    const resolverKey = `${entry.workflowId}:${operationId}`;
+    const resolver = internals.sleepResolvers.get(resolverKey);
+    if (resolver) {
+      internals.sleepResolvers.delete(resolverKey);
+      const workflowOps = internals.sleepResolversByWorkflow.get(entry.workflowId);
+      if (workflowOps) {
+        workflowOps.delete(operationId);
+        if (workflowOps.size === 0) internals.sleepResolversByWorkflow.delete(entry.workflowId);
+      }
+      resolver();
+    }
+  } else if (entry.kind === 'execution-deadline') {
+    await callbacks.timeout(entry.workflowId);
+  }
+}

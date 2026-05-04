@@ -1,0 +1,1030 @@
+# oxlint Disable Inventory
+
+This file is the registry of every `// oxlint-disable*` directive in `src/`.
+Every directive in source carries an inline `-- ID:<name>` token; the ID must
+have a matching section in this file. The check is enforced by
+`bun run scripts/check-lint-disables.ts`, which runs as part of `bun run lint`.
+
+Sections are sorted alphabetically by ID to minimise merge conflicts when
+parallel PRs add or remove entries.
+
+## Done criteria
+
+The oxlint-strict initiative is complete when this file lists **at most 5
+permanent suppressions**, each with a one-paragraph rationale and a comment
+naming the alternative that was rejected.
+
+## `ai-agent-resolve-tool-execution-complexity`
+
+- **File**: `src/ai/agent/tool-execution.ts`
+- **Rule**: `complexity`
+- **Symbol**: `resolveToolExecution`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-agent-resolve-tool-execution-inner-complexity`
+
+- **File**: `src/ai/agent/tool-execution.ts`
+- **Rule**: `complexity`
+- **Symbol**: `resolveToolExecutionInner`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-budget-record-usage-complexity`
+
+- **File**: `src/ai/budget.ts`
+- **Rule**: `complexity`
+- **Symbol**: `recordUsage`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-coordination-supervise-complexity`
+
+- **File**: `src/ai/coordination/supervise.ts`
+- **Rule**: `complexity`
+- **Symbol**: `supervise`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/ai/events.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `ai-mcp-client-discover-tools-complexity`
+
+- **File**: `src/ai/mcp/client.ts`
+- **Rule**: `complexity`
+- **Symbol**: `discoverTools`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-mcp-schema-validator-validate-value-complexity`
+
+- **File**: `src/ai/mcp/schema-validator.ts`
+- **Rule**: `complexity`
+- **Symbol**: `validateValue`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-mcp-transport-http-send-complexity`
+
+- **File**: `src/ai/mcp/transport-http.ts`
+- **Rule**: `complexity`
+- **Symbol**: `send`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-mcp-transport-http-sse-send-complexity`
+
+- **File**: `src/ai/mcp/transport-http-sse.ts`
+- **Rule**: `complexity`
+- **Symbol**: `send`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-mcp-transport-stdio-start-read-loop-complexity`
+
+- **File**: `src/ai/mcp/transport-stdio.ts`
+- **Rule**: `complexity`
+- **Symbol**: `startReadLoop`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-prompt-cache-evict-oldest-complexity`
+
+- **File**: `src/ai/prompt-cache/cache.ts`
+- **Rule**: `complexity`
+- **Symbol**: `evictOldest`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/ai/prompt-cache.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `ai-provider-health-constructor-complexity`
+
+- **File**: `src/ai/provider-health.ts`
+- **Rule**: `complexity`
+- **Symbol**: `constructor`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-providers-anthropic-start-complexity`
+
+- **File**: `src/ai/providers/anthropic.ts`
+- **Rule**: `complexity`
+- **Symbol**: `start`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-providers-openai-start-complexity`
+
+- **File**: `src/ai/providers/openai.ts`
+- **Rule**: `complexity`
+- **Symbol**: `start`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-streaming-agent-build-recovery-conversation-complexity`
+
+- **File**: `src/ai/streaming-agent/checkpoint.ts`
+- **Rule**: `complexity`
+- **Symbol**: `buildRecoveryConversation`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-streaming-agent-build-stream-checkpoint-complexity`
+
+- **File**: `src/ai/streaming-agent/checkpoint.ts`
+- **Rule**: `complexity`
+- **Symbol**: `buildStreamCheckpoint`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/ai/streaming-agent.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `ai-streaming-agent-handle-streaming-chunk-complexity`
+
+- **File**: `src/ai/streaming-agent/chunk-handler.ts`
+- **Rule**: `complexity`
+- **Symbol**: `handleStreamingChunk`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `ai-streaming-pump-complexity`
+
+- **File**: `src/ai/streaming.ts`
+- **Rule**: `complexity`
+- **Symbol**: `pump`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `benchmarks-memory-per-workflow-runner-measure-memory-per-workflow-complexity`
+
+- **File**: `src/benchmarks/memory-per-workflow-runner.ts`
+- **Rule**: `complexity`
+- **Symbol**: `measureMemoryPerWorkflow`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/cli.ts`
+- **Rule**: `complexity`
+- **Symbol**: `buildScheduleCreateCommand`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/cli.ts`
+- **Rule**: `complexity`
+- **Symbol**: `executeValidate`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/cli.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+- **File**: `src/cli.ts`
+- **Rule**: `complexity`
+- **Symbol**: `parseCliArguments`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/cli.ts`
+- **Rule**: `complexity`
+- **Symbol**: `parseTimelineArguments`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/client/index.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+- **File**: `src/client/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `request`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/client/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `start`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-activity-registry-constructor-complexity`
+
+- **File**: `src/core/activity-registry.ts`
+- **Rule**: `complexity`
+- **Symbol**: `constructor`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-activity-registry-extract-definition-metadata-complexity`
+
+- **File**: `src/core/activity-registry.ts`
+- **Rule**: `complexity`
+- **Symbol**: `extractDefinitionMetadata`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-checkpoint-compare-values-complexity`
+
+- **File**: `src/core/checkpoint/comparison.ts`
+- **Rule**: `complexity`
+- **Symbol**: `compareValues`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/core/checkpoint.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `core-checkpoint-validate-checkpoint-shape-complexity`
+
+- **File**: `src/core/checkpoint/serialization.ts`
+- **Rule**: `complexity`
+- **Symbol**: `validateCheckpointShape`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/core/codec.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `core-codec-is-class-instance-with-methods-complexity`
+
+- **File**: `src/core/codec/validation.ts`
+- **Rule**: `complexity`
+- **Symbol**: `isClassInstanceWithMethods`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-codec-replace-undefined-complexity`
+
+- **File**: `src/core/codec/extension-codec.ts`
+- **Rule**: `complexity`
+- **Symbol**: `replaceUndefined`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-context-create-speculative-child-complexity`
+
+- **File**: `src/core/context/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `createSpeculativeChild`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/core/context.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `core-context-fn-complexity`
+
+- **File**: `src/core/context/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `fn`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-debug-output-sanitize-object-complexity`
+
+- **File**: `src/core/debug-output.ts`
+- **Rule**: `complexity`
+- **Symbol**: `sanitizeObject`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-apply-schedule-occurrence-complexity`
+
+- **File**: `src/core/engine/schedules.ts`
+- **Rule**: `complexity`
+- **Symbol**: `applyScheduleOccurrence`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-bootstrap-workflow-result-resolver-complexity`
+
+- **File**: `src/core/engine/handle-result.ts`
+- **Rule**: `complexity`
+- **Symbol**: `bootstrapWorkflowResultResolver`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-cleanup-waiters-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `cleanupWaiters`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-complete-workflow-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `completeWorkflow`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-create-initial-workflow-state-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `createInitialWorkflowState`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-decode-schedule-runtime-fields-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `decodeScheduleRuntimeFields`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-derive-prepared-execution-state-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `derivePreparedExecutionState`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-callback-creators-file-length`
+
+- **File**: `src/core/engine/callback-creators.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Callback-bundle factory hub created in PR 32b. Splitting further has diminishing returns; keeping all factories in one place keeps the Engine class shim definitions easy to follow.
+
+## `core-engine-index-file-length`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Engine class is the public coordinator: ~170 lines of imports from 30+ sibling modules + the Engine class with public-method shims that delegate via getInternals(this) and callback bundles. Splitting the Engine class itself would fragment the public API entrypoint. The file is structurally minimal already — every method body is a one- or two-line shim.
+
+## `core-engine-evaluate-constraints-complexity`
+
+- **File**: `src/core/engine/constraints.ts`
+- **Rule**: `complexity`
+- **Symbol**: `evaluateConstraints`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-execute-activity-complexity`
+
+- **File**: `src/core/engine/operations-activity.ts`
+- **Rule**: `complexity`
+- **Symbol**: `executeActivity`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-execute-child-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `executeChild`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-execute-sub-operation-complexity`
+
+- **File**: `src/core/engine/sub-operation.ts`
+- **Rule**: `complexity`
+- **Symbol**: `executeSubOperation`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-lifecycle-file-length`
+
+- **File**: `src/core/engine/lifecycle.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Lifecycle extraction is temporarily oversized while engine split PRs continue.
+
+## `core-engine-termination-file-length`
+
+- **File**: `src/core/engine/termination.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Termination extraction is temporarily oversized while engine split PRs continue.
+
+## `core-engine-validation-file-length`
+
+- **File**: `src/core/engine/validation.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `core-engine-get-timeline-basic-input-summary-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `getTimelineBasicInputSummary`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-get-timeline-operation-label-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `getTimelineOperationLabel`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-handle-schedule-timer-complexity`
+
+- **File**: `src/core/engine/schedules.ts`
+- **Rule**: `complexity`
+- **Symbol**: `handleScheduleTimer`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-handle-timer-fired-complexity`
+
+- **File**: `src/core/engine/operations-time.ts`
+- **Rule**: `complexity`
+- **Symbol**: `handleTimerFired`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-is-workflow-timeline-entry-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `isWorkflowTimelineEntry`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-line-3045-complexity`
+
+- **File**: `src/core/engine/listing.ts`
+- **Rule**: `complexity`
+- **Symbol**: `line-3045`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-line-5082-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `line-5082`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-list-complexity`
+
+- **File**: `src/core/engine/listing.ts`
+- **Rule**: `complexity`
+- **Symbol**: `list`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-matches-schedule-filter-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `matchesScheduleFilter`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-mutate-workflow-tags-complexity`
+
+- **File**: `src/core/engine/attributes-tags.ts`
+- **Rule**: `complexity`
+- **Symbol**: `mutateWorkflowTags`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-normalize-schedule-filter-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `normalizeScheduleFilter`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-persist-checkpoint-complexity`
+
+- **File**: `src/core/engine/checkpoint-io.ts`
+- **Rule**: `complexity`
+- **Symbol**: `persistCheckpoint`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-process-operation-complexity`
+
+- **File**: `src/core/engine/operations-router.ts`
+- **Rule**: `complexity`
+- **Symbol**: `processOperation`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-process-review-operation-complexity`
+
+- **File**: `src/core/engine/reviews.ts`
+- **Rule**: `complexity`
+- **Symbol**: `processReviewOperation`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-purge-workflow-complexity`
+
+- **File**: `src/core/engine/bulk-operations.ts`
+- **Rule**: `complexity`
+- **Symbol**: `purgeWorkflow`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-query-attribute-index-complexity`
+
+- **File**: `src/core/engine/attributes-tags.ts`
+- **Rule**: `complexity`
+- **Symbol**: `queryAttributeIndex`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-register-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `register`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-remove-tags-complexity`
+
+- **File**: `src/core/engine/handles.ts`
+- **Rule**: `complexity`
+- **Symbol**: `removeTags`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-resolve-constrained-ids-complexity`
+
+- **File**: `src/core/engine/attributes-tags.ts`
+- **Rule**: `complexity`
+- **Symbol**: `resolveConstrainedIds`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-resolve-engine-options-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `resolveEngineOptions`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-resolve-purge-window-complexity`
+
+- **File**: `src/core/engine/bulk-operations.ts`
+- **Rule**: `complexity`
+- **Symbol**: `resolvePurgeWindow`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-schedule-complexity`
+
+- **File**: `src/core/engine/schedules.ts`
+- **Rule**: `complexity`
+- **Symbol**: `schedule`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-start-delayed-workflow-complexity`
+
+- **File**: `src/core/engine/operations-time.ts`
+- **Rule**: `complexity`
+- **Symbol**: `startDelayedWorkflow`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-start-workflow-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `startWorkflow`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-submit-review-complexity`
+
+- **File**: `src/core/engine/reviews.ts`
+- **Rule**: `complexity`
+- **Symbol**: `submitReview`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-translate-operation-request-complexity`
+
+- **File**: `src/core/engine/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `translateOperationRequest`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-engine-update-complexity`
+
+- **File**: `src/core/engine/updates.ts`
+- **Rule**: `complexity`
+- **Symbol**: `update`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/core/events.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+- **File**: `src/core/interceptor.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+- **File**: `src/core/schedule.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `core-schedule-get-next-cron-occurrence-complexity`
+
+- **File**: `src/core/schedule/cron-occurrence.ts`
+- **Rule**: `complexity`
+- **Symbol**: `getNextCronOccurrence`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-schedule-parse-cron-field-complexity`
+
+- **File**: `src/core/schedule/cron-parser.ts`
+- **Rule**: `complexity`
+- **Symbol**: `parseCronField`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/core/scheduler.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `core-scheduler-is-timer-entry-complexity`
+
+- **File**: `src/core/scheduler/timer-batch.ts`
+- **Rule**: `complexity`
+- **Symbol**: `isTimerEntry`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-scheduler-process-expired-timers-complexity`
+
+- **File**: `src/core/scheduler/scheduler-class.ts`
+- **Rule**: `complexity`
+- **Symbol**: `processExpiredTimers`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-search-attributes-build-index-operations-complexity`
+
+- **File**: `src/core/search-attributes.ts`
+- **Rule**: `complexity`
+- **Symbol**: `buildIndexOperations`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-search-attributes-validate-attribute-type-complexity`
+
+- **File**: `src/core/search-attributes.ts`
+- **Rule**: `complexity`
+- **Symbol**: `validateAttributeType`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-tenant-quotas-commit-start-admission-complexity`
+
+- **File**: `src/core/tenant-quotas/quota-manager.ts`
+- **Rule**: `complexity`
+- **Symbol**: `commitStartAdmission`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-tenant-quotas-commit-terminal-transition-complexity`
+
+- **File**: `src/core/tenant-quotas/quota-manager.ts`
+- **Rule**: `complexity`
+- **Symbol**: `commitTerminalTransition`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/core/tenant-quotas.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `core-tenant-quotas-get-usage-complexity`
+
+- **File**: `src/core/tenant-quotas/quota-manager.ts`
+- **Rule**: `complexity`
+- **Symbol**: `getUsage`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-versioning-constructor-complexity`
+
+- **File**: `src/core/versioning.ts`
+- **Rule**: `complexity`
+- **Symbol**: `constructor`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `core-workflow-version-tuple-diff-workflow-version-tuples-complexity`
+
+- **File**: `src/core/workflow-version-tuple.ts`
+- **Rule**: `complexity`
+- **Symbol**: `diffWorkflowVersionTuples`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `dashboard-api-client-list-workflows-complexity`
+
+- **File**: `src/dashboard/api-client.ts`
+- **Rule**: `complexity`
+- **Symbol**: `listWorkflows`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `dashboard-fragments-workflow-execution-timeline-collect-value-diffs-complexity`
+
+- **File**: `src/dashboard/fragments/workflow-execution-timeline.ts`
+- **Rule**: `complexity`
+- **Symbol**: `collectValueDiffs`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `dashboard-fragments-workflow-execution-timeline-format-timeline-diff-value-complexity`
+
+- **File**: `src/dashboard/fragments/workflow-execution-timeline.ts`
+- **Rule**: `complexity`
+- **Symbol**: `formatTimelineDiffValue`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `dashboard-utilities-format-duration-format-duration-complexity`
+
+- **File**: `src/dashboard/utilities/format-duration.ts`
+- **Rule**: `complexity`
+- **Symbol**: `formatDuration`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `dashboard-utilities-workflow-detail-timeline-synchronize-workflow-timeline-inspection-state-complexity`
+
+- **File**: `src/dashboard/utilities/workflow-detail-timeline.ts`
+- **Rule**: `complexity`
+- **Symbol**: `synchronizeWorkflowTimelineInspectionState`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `diagnostics-doctor-collect-database-health-complexity`
+
+- **File**: `src/diagnostics/doctor.ts`
+- **Rule**: `complexity`
+- **Symbol**: `collectDatabaseHealth`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `diagnostics-doctor-collect-workflow-statistics-complexity`
+
+- **File**: `src/diagnostics/doctor.ts`
+- **Rule**: `complexity`
+- **Symbol**: `collectWorkflowStatistics`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `diagnostics-format-format-diagnostic-report-complexity`
+
+- **File**: `src/diagnostics/format.ts`
+- **Rule**: `complexity`
+- **Symbol**: `formatDiagnosticReport`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `diagnostics-recommendations-generate-recommendations-complexity`
+
+- **File**: `src/diagnostics/recommendations.ts`
+- **Rule**: `complexity`
+- **Symbol**: `generateRecommendations`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `diagnostics-validate-load-registrations-from-module-complexity`
+
+- **File**: `src/diagnostics/validate.ts`
+- **Rule**: `complexity`
+- **Symbol**: `loadRegistrationsFromModule`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `diagnostics-version-check-run-version-check-complexity`
+
+- **File**: `src/diagnostics/version-check.ts`
+- **Rule**: `complexity`
+- **Symbol**: `runVersionCheck`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/observability/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `createObservabilityInterceptors`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/observability/index.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+- **File**: `src/observability/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `handleEvent`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `observability-metrics-serialize-metrics-snapshot-for-prometheus-complexity`
+
+- **File**: `src/observability/metrics.ts`
+- **Rule**: `complexity`
+- **Symbol**: `serializeMetricsSnapshotForPrometheus`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `runtime-portable-detect-runtime-complexity`
+
+- **File**: `src/runtime/portable.ts`
+- **Rule**: `complexity`
+- **Symbol**: `detectRuntime`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/server/authentication.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+- **File**: `src/server/authentication.ts`
+- **Rule**: `complexity`
+- **Symbol**: `validateAuthConfig`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/server/authentication.ts`
+- **Rule**: `complexity`
+- **Symbol**: `validateAuthConfig`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/server/authentication.ts`
+- **Rule**: `complexity`
+- **Symbol**: `verifyJWT`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-fault-to-http-shape-error-body-complexity`
+
+- **File**: `src/server/fault-to-http.ts`
+- **Rule**: `complexity`
+- **Symbol**: `shapeErrorBody`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-fault-to-json-rpc-extract-fault-data-payload-complexity`
+
+- **File**: `src/server/fault-to-json-rpc.ts`
+- **Rule**: `complexity`
+- **Symbol**: `extractFaultDataPayload`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-handler-route-binding-dispatch-complexity`
+
+- **File**: `src/server/handler/index.ts`
+- **Rule**: `complexity` (via `eslint(complexity)`)
+- **Symbol**: `(request handler)`
+- **Reason**: Pre-existing complexity violation; the request boundary owns binding-first dispatch, legacy fallback, and compatibility shims in one place.
+
+- **File**: `src/server/handler.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+- **File**: `src/server/handler.ts`
+- **Rule**: `complexity`
+- **Symbol**: `isOperationFaultLike`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-index-classify-connection-complexity`
+
+- **File**: `src/server/runtime/websocket-upgrade.ts`
+- **Rule**: `complexity`
+- **Symbol**: `classifyConnection`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-index-dispatch-task-impl-complexity`
+
+- **File**: `src/server/runtime/task-dispatch.ts`
+- **Rule**: `complexity`
+- **Symbol**: `dispatchTaskImpl`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/server/index.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+## `server-index-handle-task-result-request-complexity`
+
+- **File**: `src/server/runtime/task-polling.ts`
+- **Rule**: `complexity`
+- **Symbol**: `handleTaskResultRequest`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-index-handle-worker-web-socket-message-complexity`
+
+- **File**: `src/server/runtime/websocket-worker.ts`
+- **Rule**: `complexity`
+- **Symbol**: `handleWorkerWebSocketMessage`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-index-serve-complexity`
+
+- **File**: `src/server/index.ts`
+- **Rule**: `complexity`
+- **Symbol**: `serve`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-json-rpc-http-handle-json-rpc-http-request-complexity`
+
+- **File**: `src/server/json-rpc-http.ts`
+- **Rule**: `complexity`
+- **Symbol**: `handleJsonRpcHttpRequest`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-json-rpc-parse-parse-single-object-complexity`
+
+- **File**: `src/server/json-rpc-parse.ts`
+- **Rule**: `complexity`
+- **Symbol**: `parseSingleObject`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/server/json-rpc-websocket.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+- **File**: `src/server/json-rpc-websocket.ts`
+- **Rule**: `complexity`
+- **Symbol**: `handleMessage`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/server/json-rpc-websocket.ts`
+- **Rule**: `complexity`
+- **Symbol**: `handleSubscribe`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-openapi-emit-bindings-complexity`
+
+- **File**: `src/server/openapi.ts`
+- **Rule**: `complexity`
+- **Symbol**: `emitBindings`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-openapi-generate-open-api-document-complexity`
+
+- **File**: `src/server/openapi.ts`
+- **Rule**: `complexity`
+- **Symbol**: `generateOpenApiDocument`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/server/operation-catalog.ts`
+- **Rule**: `complexity`
+- **Symbol**: `executeOperation`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+- **File**: `src/server/operation-catalog.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Pre-existing oversized file; tracked by oxlint-strict initiative for split.
+
+- **File**: `src/server/operation-catalog.ts`
+- **Rule**: `complexity`
+- **Symbol**: `parseAndApplyUnknownKeyPolicy`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-operations-bulk-filter-helpers-parse-bulk-list-filter-from-body-complexity`
+
+- **File**: `src/server/operations/bulk-filter-helpers.ts`
+- **Rule**: `complexity`
+- **Symbol**: `parseBulkListFilterFromBody`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-operations-create-schedule-invoke-complexity`
+
+- **File**: `src/server/operations/create-schedule.ts`
+- **Rule**: `complexity`
+- **Symbol**: `invoke`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-operations-fork-workflow-invoke-complexity`
+
+- **File**: `src/server/operations/fork-workflow.ts`
+- **Rule**: `complexity`
+- **Symbol**: `invoke`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-operations-list-workflows-extract-list-workflows-input-complexity`
+
+- **File**: `src/server/operations/list-workflows.ts`
+- **Rule**: `complexity`
+- **Symbol**: `extractListWorkflowsInput`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-operations-list-schedules-validation-complexity`
+
+- **File**: `src/server/operations/list-schedules.ts`
+- **Rule**: `complexity` (via `eslint(complexity)`)
+- **Symbol**: `(list-schedules invoke boundary)`
+- **Reason**: Pre-existing complexity violation; preserves the legacy query-validation order at one transport-neutral invoke boundary.
+
+## `server-operations-start-workflow-invoke-complexity`
+
+- **File**: `src/server/operations/start-workflow.ts`
+- **Rule**: `complexity`
+- **Symbol**: `invoke`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-operations-submit-review-decision-invoke-complexity`
+
+- **File**: `src/server/operations/submit-review-decision.ts`
+- **Rule**: `complexity`
+- **Symbol**: `invoke`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `server-workflow-event-feed-drain-live-complexity`
+
+- **File**: `src/server/workflow-event-feed.ts`
+- **Rule**: `complexity`
+- **Symbol**: `drainLive`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `storage-indexeddb-delete-prefix-complexity`
+
+- **File**: `src/storage/indexeddb.ts`
+- **Rule**: `complexity`
+- **Symbol**: `deletePrefix`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `storage-lmdb-delete-prefix-complexity`
+
+- **File**: `src/storage/lmdb.ts`
+- **Rule**: `complexity`
+- **Symbol**: `deletePrefix`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `storage-node-sqlite-delete-complexity`
+
+- **File**: `src/storage/node-sqlite.ts`
+- **Rule**: `complexity`
+- **Symbol**: `delete`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `testing-test-engine-run-n-complexity`
+
+- **File**: `src/testing/test-engine.ts`
+- **Rule**: `complexity`
+- **Symbol**: `runN`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `worker-registry-find-worker-complexity`
+
+- **File**: `src/worker/registry.ts`
+- **Rule**: `complexity`
+- **Symbol**: `findWorker`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+
+## `worker-registry-pick-fair-share-complexity`
+
+- **File**: `src/worker/registry.ts`
+- **Rule**: `complexity`
+- **Symbol**: `pickFairShare`
+- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.

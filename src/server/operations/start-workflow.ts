@@ -46,6 +46,7 @@ export const startWorkflowOperation = defineOperation<StartWorkflowInput, StartW
   access: { kind: 'public' },
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+  // oxlint-disable-next-line complexity -- ID:server-operations-start-workflow-invoke-complexity
   invoke: async ({ input, engine }): Promise<StartWorkflowOutput> => {
     const typedEngine = engine as Engine;
 

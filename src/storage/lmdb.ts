@@ -90,6 +90,7 @@ export class LMDBStorage implements Storage {
     return keys.length;
   }
 
+  // oxlint-disable-next-line complexity -- ID:storage-lmdb-delete-prefix-complexity
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     this.#assertOpen();
     const { limit, reverse, gt, lt, gte, lte } = options;

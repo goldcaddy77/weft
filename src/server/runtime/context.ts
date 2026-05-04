@@ -1,0 +1,50 @@
+import type { ServerWebSocket } from 'bun';
+
+import type { WorkerRegistry } from '../../worker/registry.ts';
+import type { Authenticator } from '../authentication.ts';
+import type { DeadlineTracker } from '../deadline-tracker.ts';
+import type { createEngineEventFeedBackend } from '../engine-event-feed-backend.ts';
+import type { WebSocketData } from '../json-rpc-websocket-runtime.ts';
+import type { JsonRpcWebSocketSession } from '../json-rpc-websocket.ts';
+import type { OpenApiSecuritySchemeName } from '../openapi.ts';
+import type { createLiveOperationRegistry, createLiveRestBindings } from '../rest-bindings.ts';
+import type { TaskQueue } from '../task-queue.ts';
+import type { WorkflowEventFeed } from '../workflow-event-feed.ts';
+
+/**
+ * Internal closure state for a single `serve()` invocation.
+ *
+ * Extracted runtime helpers receive this record explicitly so they do not
+ * rely on closure capture from `serve()`.
+ */
+export interface ServerContext {
+  readonly registry: WorkerRegistry;
+  readonly taskQueue: TaskQueue;
+  readonly workerSockets: Map<string, ServerWebSocket<WebSocketData>>;
+  readonly streamSockets: Map<string, Set<ServerWebSocket<WebSocketData>>>;
+  /** Tracks per-workflow worker affinity for sticky routing. Maps workflowId to workerId. */
+  readonly workerAffinity: Map<string, string>;
+  /** Reverse index: workflowId to set of operationIds currently in-flight for that workflow. */
+  readonly workflowOperations: Map<string, Set<string>>;
+  /** Reverse lookup: operationId to workflowId for O(1) cleanup on task completion. */
+  readonly operationToWorkflow: Map<string, string>;
+  /** Tracks pending backoff-delay timers so they can be cleared on shutdown. */
+  readonly pendingTimers: Set<ReturnType<typeof setTimeout>>;
+  /** In-memory min-heap for inflight task deadlines, avoiding full storage scans on each visibility tick. */
+  readonly deadlineTracker: DeadlineTracker;
+  readonly liveOperationRegistry: ReturnType<typeof createLiveOperationRegistry>;
+  readonly liveRestBindings: ReturnType<typeof createLiveRestBindings>;
+  readonly supportedAuthenticationSchemes: ReadonlySet<OpenApiSecuritySchemeName>;
+  readonly eventFeedBackend: ReturnType<typeof createEngineEventFeedBackend>;
+  readonly workflowEventFeed: WorkflowEventFeed;
+  readonly activeJsonRpcSessions: Set<JsonRpcWebSocketSession>;
+  readonly authenticatorPromise: Promise<Authenticator> | null;
+  /** Visibility poll interval in milliseconds. */
+  readonly visibilityPollMs: number;
+  /** Mutex: prevents concurrent visibility scans from running simultaneously. */
+  scanRunning: boolean;
+  /** Fine-grained mutex for in-flight operation IDs being processed by expiry paths. */
+  readonly processingOperations: Set<string>;
+  /** Mutex: prevents concurrent reconciliation scans from running simultaneously. */
+  reconciliationRunning: boolean;
+}

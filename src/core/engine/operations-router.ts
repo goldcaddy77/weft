@@ -1,0 +1,261 @@
+import type { ContextOperationRequest } from '../context.ts';
+import type { OperationOutcome } from '../types.ts';
+import type { EngineInternals } from './internals.ts';
+
+export type OperationWithCallerStack = {
+  callerStack?: string;
+};
+
+export type OperationRouterCallbacks = {
+  processActivityOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'activity' }>,
+  ) => Promise<void>;
+  processSleepOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'sleep' }>,
+  ) => Promise<void>;
+  processWaitSignalOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'wait-signal' }>,
+  ) => Promise<void>;
+  processWaitUpdateOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'wait-update' }>,
+  ) => Promise<void>;
+  processParallelOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'parallel' }>,
+  ) => Promise<void>;
+  processRaceOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'race' }>,
+  ) => Promise<void>;
+  processMemoOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'memo' }>,
+  ) => Promise<void>;
+  processChildWorkflowOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'child-workflow' }>,
+  ) => Promise<void>;
+  processOffloadOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'offload' }>,
+  ) => Promise<void>;
+  processLoadOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'load' }>,
+  ) => Promise<void>;
+  processArchiveOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'archive' }>,
+  ) => Promise<void>;
+  processRunAllOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'run-all' }>,
+  ) => Promise<void>;
+  processAgentContextOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'agent' }>,
+  ) => Promise<void>;
+  processSpeculateOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'speculate' }>,
+  ) => Promise<void>;
+  processStreamOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'stream' }>,
+  ) => Promise<void>;
+  processWaitReviewOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'wait-review' }>,
+  ) => Promise<void>;
+  processHandoffOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'handoff' }>,
+  ) => Promise<void>;
+  processDebateOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'debate' }>,
+  ) => Promise<void>;
+  processSuperviseOperation: (
+    workflowId: string,
+    operation: Extract<ContextOperationRequest, { type: 'supervise' }>,
+  ) => Promise<void>;
+  finalizePendingTimelineEntry: (
+    workflowId: string,
+    status: 'completed' | 'failed',
+    value: unknown,
+  ) => void;
+  feedOperationResult: (workflowId: string, result: OperationOutcome, error?: Error) => void;
+};
+
+/**
+ * Translate an operation request from a strategy into a {@link ContextOperationRequest}.
+ *
+ * The inline strategy already produces `ContextOperationRequest` (with `type`).
+ * The worker protocol produces `OperationRequest` (with `kind`). This function
+ * normalizes both shapes so `processOperation` can switch on `type`.
+ */
+// oxlint-disable-next-line complexity -- ID:core-engine-translate-operation-request-complexity
+export function translateOperationRequest(
+  _internals: EngineInternals,
+  operationRequest: unknown,
+): ContextOperationRequest {
+  const operation = operationRequest as Record<string, unknown>;
+
+  if (operation == null || typeof operation !== 'object') {
+    throw new Error('Invalid operation request received from execution strategy');
+  }
+
+  // Already in ContextOperationRequest shape (inline strategy)
+  if ('type' in operation && typeof operation['type'] === 'string') {
+    // Inline execution strategy yields ContextOperationRequest directly
+    return operation as ContextOperationRequest;
+  }
+
+  // Worker OperationRequest uses `kind` — translate to `type`
+  if ('kind' in operation && typeof operation['kind'] === 'string') {
+    const kind = operation['kind'];
+
+    // Map OperationRequest.kind values to ContextOperationRequest.type values
+    const kindToType: Record<string, string> = {
+      activity: 'activity',
+      timer: 'sleep',
+      'signal-wait': 'wait-signal',
+      'child-workflow': 'child-workflow',
+    };
+
+    const type = kindToType[kind] ?? kind;
+
+    // Worker protocol omits `fn` — it is resolved from the activity registry later
+    return {
+      ...operation,
+      type,
+      operationId: (operation['id'] as string) ?? crypto.randomUUID(),
+      activityName: (operation['activityName'] as string) ?? '',
+      args: operation['input'] !== undefined ? [operation['input']] : [],
+    } as ContextOperationRequest;
+  }
+
+  throw new Error('Unsupported operation request shape received from execution strategy');
+}
+
+// oxlint-disable-next-line complexity -- ID:core-engine-process-operation-complexity
+export async function processOperation(
+  internals: EngineInternals,
+  workflowId: string,
+  operation: ContextOperationRequest,
+  callbacks: OperationRouterCallbacks,
+): Promise<void> {
+  switch (operation.type) {
+    case 'activity':
+      return callbacks.processActivityOperation(workflowId, operation);
+    case 'sleep':
+      return callbacks.processSleepOperation(workflowId, operation);
+    case 'wait-signal':
+      return callbacks.processWaitSignalOperation(workflowId, operation);
+    case 'wait-update':
+      return callbacks.processWaitUpdateOperation(workflowId, operation);
+    case 'parallel':
+      return callbacks.processParallelOperation(workflowId, operation);
+    case 'race':
+      return callbacks.processRaceOperation(workflowId, operation);
+    case 'memo':
+      return callbacks.processMemoOperation(workflowId, operation);
+    case 'child-workflow':
+      return callbacks.processChildWorkflowOperation(workflowId, operation);
+    case 'offload':
+      return callbacks.processOffloadOperation(workflowId, operation);
+    case 'load':
+      return callbacks.processLoadOperation(workflowId, operation);
+    case 'archive':
+      return callbacks.processArchiveOperation(workflowId, operation);
+    case 'run-all':
+      return callbacks.processRunAllOperation(workflowId, operation);
+    case 'agent':
+      return callbacks.processAgentContextOperation(workflowId, operation);
+    case 'speculate':
+      return callbacks.processSpeculateOperation(workflowId, operation);
+    case 'stream':
+      return callbacks.processStreamOperation(workflowId, operation);
+    case 'wait-review':
+      return callbacks.processWaitReviewOperation(workflowId, operation);
+    case 'handoff':
+      return callbacks.processHandoffOperation(workflowId, operation);
+    case 'debate':
+      return callbacks.processDebateOperation(workflowId, operation);
+    case 'supervise':
+      return callbacks.processSuperviseOperation(workflowId, operation);
+    default:
+      const unsupportedType = String((operation as Record<string, unknown>)['type']);
+      failOperation(
+        internals,
+        workflowId,
+        operation,
+        new Error(`Unsupported operation type: ${unsupportedType}`),
+        callbacks,
+      );
+      return;
+  }
+}
+
+export function completeOperation(
+  _internals: EngineInternals,
+  workflowId: string,
+  value: unknown,
+  callbacks: Pick<OperationRouterCallbacks, 'finalizePendingTimelineEntry' | 'feedOperationResult'>,
+): void {
+  callbacks.finalizePendingTimelineEntry(workflowId, 'completed', value);
+  callbacks.feedOperationResult(workflowId, { status: 'completed', value });
+}
+
+export function failOperation(
+  _internals: EngineInternals,
+  workflowId: string,
+  operation: OperationWithCallerStack,
+  error: unknown,
+  callbacks: Pick<OperationRouterCallbacks, 'finalizePendingTimelineEntry' | 'feedOperationResult'>,
+): void {
+  if (error instanceof Error && operation.callerStack) {
+    error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
+  }
+
+  const enrichedError = error instanceof Error ? error : new Error(String(error));
+  callbacks.finalizePendingTimelineEntry(workflowId, 'failed', enrichedError.message);
+  callbacks.feedOperationResult(
+    workflowId,
+    { status: 'failed', error: enrichedError.message },
+    enrichedError,
+  );
+}
+
+export async function runOperationWithResult(
+  internals: EngineInternals,
+  workflowId: string,
+  operation: OperationWithCallerStack,
+  execute: () => Promise<unknown>,
+  callbacks: OperationRouterCallbacks,
+): Promise<void> {
+  try {
+    const value = await execute();
+    completeOperation(internals, workflowId, value, callbacks);
+  } catch (error) {
+    failOperation(internals, workflowId, operation, error, callbacks);
+  }
+}
+
+export async function runOperationWithoutResult(
+  internals: EngineInternals,
+  workflowId: string,
+  operation: OperationWithCallerStack,
+  execute: () => Promise<void>,
+  callbacks: OperationRouterCallbacks,
+): Promise<void> {
+  try {
+    await execute();
+  } catch (error) {
+    failOperation(internals, workflowId, operation, error, callbacks);
+  }
+}

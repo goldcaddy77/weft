@@ -59,6 +59,7 @@ function getProcess(): typeof globalThis.process | undefined {
  * console.log(runtime); // e.g. 'bun' when running under Bun
  * ```
  */
+// oxlint-disable-next-line complexity -- ID:runtime-portable-detect-runtime-complexity
 export function detectRuntime(): RuntimeKind {
   if (isBunRuntime()) return 'bun';
   const process = getProcess();

@@ -22,7 +22,7 @@ import {
   executeVersionCheck,
   parseCliArguments,
   splitGlobPattern,
-} from './cli.ts';
+} from './cli/index.ts';
 import { encode } from './core/codec.ts';
 import type { WorkflowContext } from './core/types.ts';
 import { KEYS } from './storage/interface.ts';

@@ -22,6 +22,8 @@ export interface ExecutionStrategy extends Disposable, AsyncDisposable {
     input: unknown;
     checkpoint: ArrayBuffer | Uint8Array;
     nestingDepth?: number;
+    startedAt?: number;
+    sleepReferenceTime?: number;
     deadline?: number;
     headers?: [string, string][];
     /**

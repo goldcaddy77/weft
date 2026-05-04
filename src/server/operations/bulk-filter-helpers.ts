@@ -174,6 +174,7 @@ function parseOptionalFilterNumber(
   return Math.floor(value);
 }
 
+// oxlint-disable-next-line complexity -- ID:server-operations-bulk-filter-helpers-parse-bulk-list-filter-from-body-complexity
 export function parseBulkListFilterFromBody(body: unknown): ListFilter {
   if (body === undefined) {
     return {};

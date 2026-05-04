@@ -1,0 +1,946 @@
+/* oxlint-disable max-lines -- ID:core-engine-index-file-length */
+import type { BudgetPolicyOptions } from '../../ai/budget-policy.ts';
+import type { AgentDefinition } from '../../ai/declaration.ts';
+import { ReviewCoordinator, type ReviewRequest } from '../../ai/human-review.ts';
+import type { LLMProvider } from '../../ai/providers/interface.ts';
+import { AlertManager } from '../../alerting/alert-manager.ts';
+import { CompressedStorage } from '../../storage/compressed-storage.ts';
+import type { Storage as WeftStorage } from '../../storage/interface.ts';
+import { MemoryStorage } from '../../storage/memory.ts';
+import { ActivityWorkerDispatcher } from '../../workers/activity-worker-dispatcher.ts';
+import { WorkerPool } from '../../workers/pool.ts';
+import { ActivityRegistry, type ActivityRegistrationOptions } from '../activity-registry.ts';
+import type { StoredStreamChunk } from '../context.ts';
+import { createExpiredResponseCleanupTick, createHandleCacheFinalizer } from '../engine-helpers.ts';
+import { InlineExecutionStrategy } from '../inline-execution-strategy.ts';
+import type { ActivityInterceptor, WorkflowInterceptor } from '../interceptor.ts';
+import { Scheduler } from '../scheduler.ts';
+import { TenantQuotaManager } from '../tenant-quotas.ts';
+import {
+  DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
+  DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
+  type BulkCancelResult,
+  type BulkDeleteResult,
+  type BulkSignalResult,
+  type BulkTagResult,
+  type CheckpointState,
+  type CheckpointSummary,
+  type CoordinatedUpdateResult,
+  type EngineOptions,
+  type ForkOptions,
+  type ListFilter,
+  type PaginatedResult,
+  type PurgeResult,
+  type RetentionOverview,
+  type ScheduleAccessOptions,
+  type ScheduleFilter,
+  type ScheduleOptions,
+  type ScheduleSummary,
+  type SearchAttributeValue,
+  type StartOptions,
+  type StepWorkflowFunction,
+  type SubmitReviewOptions,
+  type TenantQuotaUsage,
+  type WorkerOutboundMessage,
+  type WorkflowEvent,
+  type WorkflowFunction,
+  type WorkflowRegistration,
+  type WorkflowReplay,
+  type WorkflowState,
+  type WorkflowSummary,
+  type WorkflowTimelineEntry,
+} from '../types.ts';
+import { UpdateCoordinator } from '../updates.ts';
+import { WorkerExecutionStrategy } from '../worker-execution-strategy.ts';
+import { broadcast as broadcastFromInternals, type BroadcastCallbacks } from './broadcast.ts';
+import {
+  cancelAll as cancelAllWorkflows,
+  deleteAll as deleteAllWorkflows,
+  purge as purgeWorkflows,
+  signalAll as signalAllWorkflows,
+  tagAll as tagAllWorkflows,
+  untagAll as untagAllWorkflows,
+} from './bulk-operations.ts';
+import {
+  createBroadcastCallbacks as createBroadcastCallbacksForEngine,
+  createInlineParkingCallbacks as createInlineParkingCallbacksForEngine,
+  createLifecycleCallbacks as createLifecycleCallbacksForEngine,
+  createRegistrationCallbacks as createRegistrationCallbacksForEngine,
+  createTerminationCallbacks as createTerminationCallbacksForEngine,
+  createTimeOperationCallbacks as createTimeOperationCallbacksForEngine,
+  createUpdateCallbacks as createUpdateCallbacksForEngine,
+} from './callback-creators.ts';
+import {
+  getCheckpointAt as getCheckpointStateAt,
+  getEvents as getWorkflowEvents,
+  getTimeline as getWorkflowTimeline,
+  listCheckpoints as listCheckpointHistory,
+  replayTo as replayWorkflowToCheckpoint,
+} from './checkpoint-io.ts';
+import type {
+  EngineConstructorOptions,
+  ExecutionStrategyBundle,
+  RegistrationEntry,
+  ResolvedOptions,
+} from './engine-internal-types.ts';
+import {
+  createWorkflowHandleWithResultPromise as createWorkflowHandleWithResultPromiseFromInternals,
+  getWorkflowResultPromise as getWorkflowResultPromiseFromInternals,
+} from './handle-result.ts';
+import { HANDLE_RESULT_PROMISE, ScheduleHandle, WorkflowHandle } from './handles.ts';
+import {
+  disposeQueuedInlineWorkflowStarts,
+  flushQueuedInlineWorkflowStarts,
+  hasQueuedInlineWorkflowStart,
+} from './inline-launch-queue.ts';
+import {
+  handleStrategyMessage as handleStrategyMessageFromInternals,
+  resumeParkedInlineWorkflow as resumeParkedInlineWorkflowFromInternals,
+  type InlineParkingCallbacks,
+} from './inline-parking.ts';
+import { getInternals, initializeInternals } from './internals.ts';
+import {
+  fork as forkFromLifecycle,
+  recoverAll as recoverAllFromLifecycle,
+  resume as resumeFromLifecycle,
+  startWorkflow as startWorkflowFromLifecycle,
+  type LifecycleCallbacks,
+} from './lifecycle.ts';
+import {
+  addTags as addWorkflowTags,
+  getAttributes as getWorkflowAttributes,
+  list as listWorkflows,
+  removeTags as removeWorkflowTags,
+  setAttributes as setWorkflowAttributes,
+} from './listing.ts';
+import { getStreamChunksFromInternals } from './operations-stream.ts';
+import {
+  handleTimerFired as handleTimerFiredFromInternals,
+  type TimeOperationCallbacks,
+} from './operations-time.ts';
+import { query as queryWorkflow } from './queries.ts';
+import {
+  register as registerWorkflow,
+  resolveWorkflowTypeTarget as resolveWorkflowTypeTargetFromRegistration,
+  type RegistrationCallbacks,
+} from './registration.ts';
+import {
+  ensureRetentionSweepInterval,
+  getRetentionOverview as getRetentionOverviewSnapshot,
+  hasConfiguredRetention,
+  resolveWorkflowTypeRetention,
+  runRetentionSweep,
+  setNextRetentionSweepAt,
+} from './retention.ts';
+import {
+  getReview as getReviewFromInternals,
+  listReviews as listReviewsFromInternals,
+  submitReview as submitReviewFromInternals,
+} from './reviews.ts';
+import {
+  cancelSchedule as cancelScheduleFromInternals,
+  listSchedules as listSchedulesFromInternals,
+  pauseSchedule as pauseScheduleFromInternals,
+  resumeSchedule as resumeScheduleFromInternals,
+  schedule as scheduleFromInternals,
+  toScheduleSummary,
+  updateSchedule as updateScheduleFromInternals,
+} from './schedules.ts';
+import { signal as signalWorkflow } from './signals.ts';
+import { canAccessSchedule } from './state-utilities.ts';
+import { loadScheduleState, loadWorkflowState } from './storage-io.ts';
+import { getComposedWorkflowInterceptor, swallowPromiseRejection } from './strategy-helpers.ts';
+import {
+  cancelWorkflow as cancelWorkflowFromTermination,
+  cleanupWaiters as cleanupWaitersFromTermination,
+  timeoutWorkflow as timeoutWorkflowFromTermination,
+  type TerminationCallbacks,
+} from './termination.ts';
+import {
+  getUpdateResult as getUpdateResultFromInternals,
+  submitCoordinatedUpdate as submitCoordinatedUpdateFromInternals,
+  update as updateFromInternals,
+  type UpdateCallbacks,
+} from './updates.ts';
+import {
+  coerceScheduleId,
+  normalizeRetentionDuration,
+  normalizeRetentionPolicy,
+  normalizeScheduleAccessOptions,
+} from './validation.ts';
+import {
+  replayWorkflowFeed,
+  snapshotWorkflowFeedTail,
+  subscribeWorkflowFeedCommits,
+  type WorkflowFeedListener,
+  type WorkflowFeedRecord,
+  type WorkflowFeedSelector,
+} from './workflow-feed.ts';
+
+export type {
+  PendingTimelineEntry,
+  RegistrationEntry,
+  ResolvedOptions,
+  TrackedWaiterKeys,
+  WorkflowResultWaiter,
+} from './engine-internal-types.ts';
+export { BulkDeleteRequiresTerminalWorkflowsError, WorkflowAlreadyExistsError } from './errors.ts';
+export { HANDLE_RESULT_PROMISE, ScheduleHandle, WorkflowHandle } from './handles.ts';
+export { withPendingChatResumeTurnIndex } from './operations-agent.ts';
+export type {
+  WorkflowFeedListener,
+  WorkflowFeedRecord,
+  WorkflowFeedSelector,
+} from './workflow-feed.ts';
+
+declare global {
+  interface SymbolConstructor {
+    readonly observable: unique symbol;
+  }
+}
+/**
+ * Options accepted by `Engine.register` when registering an agent definition.
+ * Configures the LLM provider for the agent's runtime calls.
+ *
+ * @example
+ * ```ts
+ * import { type AgentRegistrationOptions, type LLMProvider } from 'weft';
+ * declare const provider: LLMProvider;
+ * const options: AgentRegistrationOptions = { provider };
+ * void options;
+ * ```
+ */
+export interface AgentRegistrationOptions {
+  provider: LLMProvider;
+}
+
+function resolveEngineStorage(
+  options?: EngineConstructorOptions,
+  getAgentWorkflowIds?: () => ReadonlySet<string>,
+): WeftStorage {
+  const baseStorage = options?.storage ?? new MemoryStorage();
+  if (!options?.compression) return baseStorage;
+  return new CompressedStorage(baseStorage, {
+    ...options.compression,
+    ...(getAgentWorkflowIds
+      ? {
+          agentWorkflowIds: getAgentWorkflowIds,
+          agentAlgorithm: options.compression.agentAlgorithm ?? 'brotli',
+          ...(options.compression.agentThreshold !== undefined
+            ? { agentThreshold: options.compression.agentThreshold }
+            : {}),
+        }
+      : {}),
+  });
+}
+
+// oxlint-disable-next-line complexity -- ID:core-engine-resolve-engine-options-complexity
+function resolveEngineOptions(
+  storage: WeftStorage,
+  options: EngineConstructorOptions | undefined,
+  getNow: () => number,
+): ResolvedOptions {
+  return {
+    storage,
+    development: options?.development ?? false,
+    checkpointHistory: options?.checkpointHistory ?? 10,
+    checkpointSizeWarningThreshold: options?.checkpointSizeWarningThreshold ?? 65_536,
+    maxNestingDepth: options?.maxNestingDepth ?? 10,
+    broadcastEvents: options?.broadcastEvents ?? false,
+    suspendOnLlmWait: options?.suspendOnLlmWait ?? false,
+    retention: normalizeRetentionPolicy(options?.retention, 'options.retention'),
+    retentionSweepIntervalMs:
+      normalizeRetentionDuration(
+        options?.retentionSweepInterval,
+        'options.retentionSweepInterval',
+      ) ?? DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
+    retentionSweepBatchSize:
+      options?.retentionSweepBatchSize !== undefined
+        ? Math.max(1, Math.floor(options.retentionSweepBatchSize))
+        : DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
+    getNow,
+    tenantResolver: options?.tenantResolver,
+  };
+}
+
+function createExecutionStrategyBundle(parameters: {
+  options: EngineConstructorOptions | undefined;
+  getNow: () => number;
+  maxNestingDepth: number;
+  development: boolean;
+  broadcastEvents: boolean;
+  getRegistration: (workflowType: string) => RegistrationEntry | undefined;
+  resolveWorkflowType: (target: string | Function) => string;
+}): ExecutionStrategyBundle {
+  const {
+    options,
+    getNow,
+    maxNestingDepth,
+    development,
+    broadcastEvents,
+    getRegistration,
+    resolveWorkflowType,
+  } = parameters;
+  if (options?.workerExecution) {
+    const pool = new WorkerPool({
+      workerUrl: options.workerExecution.workerUrl,
+      concurrency: options.workerExecution.concurrency ?? 4,
+      smol: options.workerExecution.smol ?? false,
+    });
+    return {
+      strategy: new WorkerExecutionStrategy(pool, { broadcastEvents }),
+      inlineStrategy: null,
+    };
+  }
+  const inlineStrategy = new InlineExecutionStrategy({
+    getRegistration,
+    getNow,
+    maxNestingDepth,
+    development,
+    resolveWorkflowType,
+  });
+  return { strategy: inlineStrategy, inlineStrategy };
+}
+
+function createActivityWorkerDispatcher(
+  activityExecution: EngineConstructorOptions['activityExecution'],
+): ActivityWorkerDispatcher | null {
+  if (!activityExecution) return null;
+  return new ActivityWorkerDispatcher(
+    new WorkerPool({
+      workerUrl: activityExecution.workerUrl,
+      concurrency: activityExecution.poolSize ?? 4,
+      smol: activityExecution.smol ?? false,
+    }),
+  );
+}
+
+function createAlertManagerForEngine(
+  engine: Engine,
+  alerts: EngineOptions['alerts'] | undefined,
+  getNow: () => number,
+): AlertManager | null {
+  return alerts ? new AlertManager(engine, alerts, getNow) : null;
+}
+
+export const ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING = Symbol(
+  'engineParkedWorkflowCountForTesting',
+);
+export const ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING = Symbol('engineSignalWaiterCountForTesting');
+
+/**
+ * Durable execution engine.
+ *
+ * Register workflow functions with {@link Engine.register}, start them with
+ * {@link Engine.start}, and observe or cancel them via the returned
+ * {@link WorkflowHandle}. Each workflow is a generator that yields to a
+ * {@link Context}; the engine persists a checkpoint at every yield so the
+ * workflow survives crashes, restarts, and worker reassignment without
+ * losing progress.
+ *
+ * @example Run a workflow with an activity
+ * ```ts
+ * import { activity, Engine, type Context, type WorkflowContext } from 'weft';
+ * const fetchUser = activity({
+ *   name: 'fetchUser',
+ *   execute: async (input: unknown) => ({ name: 'Alice' }),
+ * });
+ * const engine = new Engine();
+ * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
+ *   const user = yield* (ctx as Context).run(fetchUser, input);
+ *   return `Hello, ${user.name}`;
+ * });
+ * const handle = await engine.start('greet', 'user-1');
+ * void handle;
+ * ```
+ *
+ * @example With a SQLite backend
+ * ```ts
+ * import { Engine } from 'weft';
+ * import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
+ * await using storage = new BunSQLiteStorage('./weft.db');
+ * await using engine = new Engine({ storage });
+ * void engine;
+ * ```
+ */
+export class Engine extends EventTarget implements Disposable, AsyncDisposable {
+  constructor(options?: EngineConstructorOptions) {
+    super();
+    initializeInternals(this);
+    getInternals(this).registrations = new Map();
+    getInternals(this).workflowTypesByHandler = new WeakMap();
+    const storage = resolveEngineStorage(options, this.#getAgentWorkflowIds.bind(this));
+    const getNow = options?.getNow ?? Date.now;
+    const resolvedOptions = resolveEngineOptions(storage, options, getNow);
+    const strategyBundle = createExecutionStrategyBundle({
+      options,
+      getNow,
+      maxNestingDepth: resolvedOptions.maxNestingDepth,
+      development: resolvedOptions.development,
+      broadcastEvents: resolvedOptions.broadcastEvents,
+      getRegistration: getInternals(this).registrations.get.bind(getInternals(this).registrations),
+      resolveWorkflowType: this.#resolveWorkflowTypeTarget.bind(this),
+    });
+    getInternals(this).storage = storage;
+    getInternals(this).abortController = new AbortController();
+    getInternals(this).handleCache = new Map();
+    getInternals(this).resultResolvers = new Map();
+    getInternals(this).signalWaiters = new Map();
+    getInternals(this).signalWaitersByWorkflow = new Map();
+    getInternals(this).updateWaiters = new Map();
+    getInternals(this).updateWaitersByWorkflow = new Map();
+    getInternals(this).sleepResolvers = new Map();
+    getInternals(this).sleepResolversByWorkflow = new Map();
+    getInternals(this).interceptors = [];
+    getInternals(this).activityInterceptors = [];
+    getInternals(this).composedWorkflowInterceptor = null;
+    getInternals(this).composedActivityInterceptor = null;
+    getInternals(this).updateCoordinator = new UpdateCoordinator(storage);
+    getInternals(this).activityRegistry = new ActivityRegistry();
+    getInternals(this).activityWorkerDispatcher = null;
+    getInternals(this).checkpoints = new Map();
+    getInternals(this).broadcastChannel = null;
+    getInternals(this).pendingNestingDepth = undefined;
+    getInternals(this).pendingParentHeaders = undefined;
+    getInternals(this).workflowNestingDepths = new Map();
+    getInternals(this).workflowHeaders = new Map();
+    getInternals(this).workflowStateWriteChains = new Map();
+    getInternals(this).finalizationRegistry = new FinalizationRegistry<string>(
+      createHandleCacheFinalizer(getInternals(this).handleCache),
+    );
+    getInternals(this).options = resolvedOptions;
+    getInternals(this).defaultModelRouter = options?.defaultModelRouter;
+    getInternals(this).scheduler = new Scheduler({
+      storage,
+      onTimerFired: (entry) =>
+        handleTimerFiredFromInternals(
+          getInternals(this),
+          entry,
+          this.#createTimeOperationCallbacks(),
+        ),
+      getNow,
+    });
+    getInternals(this).strategy = strategyBundle.strategy;
+    getInternals(this).inlineStrategy = strategyBundle.inlineStrategy;
+    getInternals(this).queuedInlineWorkflowStarts = [];
+    getInternals(this).queuedInlineWorkflowStartIds = new Set();
+    getInternals(this).queuedOrLaunchingInlineWorkflowStartIds = new Set();
+    getInternals(this).queuedInlineWorkflowStartFlushScheduled = false;
+    const queuedInlineWorkflowStartChannel =
+      strategyBundle.inlineStrategy !== null ? new MessageChannel() : null;
+    getInternals(this).queuedInlineWorkflowStartChannel = queuedInlineWorkflowStartChannel;
+    if (queuedInlineWorkflowStartChannel !== null) {
+      queuedInlineWorkflowStartChannel.port1.onmessage = () => {
+        getInternals(this).queuedInlineWorkflowStartFlushScheduled = false;
+        void swallowPromiseRejection(
+          flushQueuedInlineWorkflowStarts(getInternals(this), {
+            processPendingUpdatesAfterInlineAdvance: (workflowId) =>
+              this.#createLifecycleCallbacks().processPendingUpdatesAfterInlineAdvance(workflowId),
+            swallowPromiseRejection: (promise) => swallowPromiseRejection(promise),
+          }),
+        );
+      };
+    }
+    getInternals(this).budgetPolicyEnforcer = null;
+    getInternals(this).tenantQuotaManager = new TenantQuotaManager(
+      storage,
+      getNow,
+      options?.quotas,
+    );
+    getInternals(this).heartbeatDetails = new Map();
+    getInternals(this).pendingStarts = new Set();
+    getInternals(this).pendingScheduleCreations = new Set();
+    getInternals(this).chargedAgentOperations = new Set();
+    getInternals(this).chargedAgentOperationsByWorkflow = new Map();
+    getInternals(this).workflowsNeedingTerminalCleanup = new Set();
+    getInternals(this).reviewCoordinator = new ReviewCoordinator(storage, getNow);
+    getInternals(this).reviewWaiters = new Map();
+    getInternals(this).reviewWaitersByWorkflow = new Map();
+    getInternals(this).reviewEscalationHandlers = new Map();
+    getInternals(this).workflowReviewIds = new Map();
+    getInternals(this).parkedInlineWorkflows = new Set();
+    getInternals(this).terminalizingWorkflows = new Set();
+    getInternals(this).reviewTimerIds = new Map();
+    getInternals(this).pendingWebhooks = new Set();
+    getInternals(this).pendingTimelineEntries = new Map();
+    getInternals(this).cleanupInterval = setInterval(
+      createExpiredResponseCleanupTick(getInternals(this).updateCoordinator, (source, error) =>
+        this.#createTerminationCallbacks().handleCleanupError(source, error),
+      ),
+      60_000,
+    );
+    getInternals(this).retentionSweepInterval = null;
+    getInternals(this).retentionSweepInFlight = null;
+    getInternals(this).nextRetentionSweepAt = null;
+    getInternals(this).agentWorkflowIds = new Set<string>();
+    getInternals(this).eventLogHeads = new Map();
+    getInternals(this).workflowFeedListeners = new Map();
+    getInternals(this).workflowVersionTuples = new Map();
+    getInternals(this).activityWorkerDispatcher = createActivityWorkerDispatcher(
+      options?.activityExecution,
+    );
+    getInternals(this).strategy.onMessage(this.#handleStrategyMessage.bind(this));
+    getInternals(this).alertManager = createAlertManagerForEngine(this, options?.alerts, getNow);
+    this.#ensureRetentionSweepInterval();
+  }
+
+  #hasConfiguredRetention(): boolean {
+    return hasConfiguredRetention(getInternals(this));
+  }
+  #setNextRetentionSweepAt(): void {
+    setNextRetentionSweepAt(getInternals(this));
+  }
+  #ensureRetentionSweepInterval(): void {
+    ensureRetentionSweepInterval(getInternals(this), {
+      hasConfiguredRetention: () => this.#hasConfiguredRetention(),
+      runRetentionSweep: () => this.#runRetentionSweep(),
+      setNextRetentionSweepAt: () => this.#setNextRetentionSweepAt(),
+    });
+  }
+  async #runRetentionSweep(): Promise<void> {
+    return runRetentionSweep(
+      getInternals(this),
+      (source, error) => this.#createTerminationCallbacks().handleCleanupError(source, error),
+      (workflowId) =>
+        cleanupWaitersFromTermination(
+          getInternals(this),
+          workflowId,
+          this.#createTerminationCallbacks(),
+        ),
+    );
+  }
+  #getAgentWorkflowIds(): ReadonlySet<string> {
+    return getInternals(this).agentWorkflowIds;
+  }
+  #createLifecycleCallbacks(): LifecycleCallbacks {
+    return createLifecycleCallbacksForEngine(this);
+  }
+  #createTerminationCallbacks(): TerminationCallbacks {
+    return createTerminationCallbacksForEngine(this);
+  }
+  #createRegistrationCallbacks(): RegistrationCallbacks {
+    return createRegistrationCallbacksForEngine(this);
+  }
+  #createBroadcastCallbacks(): BroadcastCallbacks {
+    return createBroadcastCallbacksForEngine(this);
+  }
+  #createInlineParkingCallbacks(): InlineParkingCallbacks {
+    return createInlineParkingCallbacksForEngine(this);
+  }
+  #createUpdateCallbacks(): UpdateCallbacks {
+    return createUpdateCallbacksForEngine(this);
+  }
+  #createTimeOperationCallbacks(): TimeOperationCallbacks {
+    return createTimeOperationCallbacksForEngine(this);
+  }
+  #resolveWorkflowTypeTarget(target: string | Function): string {
+    return resolveWorkflowTypeTargetFromRegistration(
+      getInternals(this),
+      target,
+      this.#createRegistrationCallbacks(),
+    );
+  }
+  async #handleStrategyMessage(message: WorkerOutboundMessage): Promise<void> {
+    return handleStrategyMessageFromInternals(
+      getInternals(this),
+      message,
+      this.#createInlineParkingCallbacks(),
+    );
+  }
+  #broadcast(message: Record<string, unknown>): void {
+    return broadcastFromInternals(getInternals(this), message, this.#createBroadcastCallbacks());
+  }
+
+  register(name: string, handler: WorkflowFunction | StepWorkflowFunction): void;
+  register(name: string, registration: WorkflowRegistration): void;
+  register(agentDef: AgentDefinition, options: AgentRegistrationOptions): void;
+  register(
+    nameOrAgent: string | AgentDefinition,
+    handlerOrRegistrationOrOptions?:
+      | WorkflowFunction
+      | StepWorkflowFunction
+      | WorkflowRegistration
+      | AgentRegistrationOptions,
+  ): void {
+    return registerWorkflow(
+      getInternals(this),
+      nameOrAgent,
+      handlerOrRegistrationOrOptions,
+      this.#createRegistrationCallbacks(),
+    );
+  }
+  addInterceptor(interceptor: WorkflowInterceptor): void {
+    getInternals(this).interceptors.push(interceptor);
+    getInternals(this).composedWorkflowInterceptor = null;
+  }
+  addActivityInterceptor(interceptor: ActivityInterceptor): void {
+    getInternals(this).activityInterceptors.push(interceptor);
+    getInternals(this).composedActivityInterceptor = null;
+  }
+  registerActivity(
+    name: string,
+    fn: (...arguments_: unknown[]) => unknown,
+    options?: ActivityRegistrationOptions,
+  ): void {
+    getInternals(this).activityRegistry.register(name, fn, options);
+  }
+  async start(type: string, input: unknown, options?: StartOptions): Promise<WorkflowHandle> {
+    return startWorkflowFromLifecycle(
+      getInternals(this),
+      type,
+      input,
+      options,
+      undefined,
+      undefined,
+      this.#createLifecycleCallbacks(),
+    );
+  }
+  getHandle(workflowId: string): WorkflowHandle {
+    const entry = getInternals(this).handleCache.get(workflowId);
+    if (entry) {
+      const existing = entry.ref.deref();
+      if (existing) return existing;
+    }
+    return createWorkflowHandleWithResultPromiseFromInternals(getInternals(this), workflowId);
+  }
+  async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
+    return listWorkflows(getInternals(this), filter);
+  }
+  getRetentionOverview(): RetentionOverview {
+    return getRetentionOverviewSnapshot(getInternals(this), (type) =>
+      resolveWorkflowTypeRetention(getInternals(this), type),
+    );
+  }
+  async purge(filter?: ListFilter): Promise<PurgeResult> {
+    return purgeWorkflows(getInternals(this), filter, (workflowId) =>
+      cleanupWaitersFromTermination(
+        getInternals(this),
+        workflowId,
+        this.#createTerminationCallbacks(),
+      ),
+    );
+  }
+  async cancelAll(filter: ListFilter): Promise<BulkCancelResult> {
+    return cancelAllWorkflows(getInternals(this), filter);
+  }
+  async signalAll(filter: ListFilter, name: string, payload?: unknown): Promise<BulkSignalResult> {
+    return signalAllWorkflows(getInternals(this), filter, name, payload);
+  }
+  async deleteAll(filter: ListFilter): Promise<BulkDeleteResult> {
+    return deleteAllWorkflows(getInternals(this), filter, (workflowId) =>
+      cleanupWaitersFromTermination(
+        getInternals(this),
+        workflowId,
+        this.#createTerminationCallbacks(),
+      ),
+    );
+  }
+  async tagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
+    return tagAllWorkflows(getInternals(this), filter, tags);
+  }
+  async untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
+    return untagAllWorkflows(getInternals(this), filter, tags);
+  }
+  async schedule(
+    type: string,
+    input: unknown,
+    cronExpression: string,
+    options?: ScheduleOptions,
+    accessOptions?: ScheduleAccessOptions,
+  ): Promise<ScheduleHandle> {
+    return scheduleFromInternals(
+      getInternals(this),
+      type,
+      input,
+      cronExpression,
+      options,
+      accessOptions,
+    );
+  }
+  async getSchedule(
+    scheduleId: string,
+    accessOptions?: ScheduleAccessOptions,
+  ): Promise<ScheduleSummary | null> {
+    const normalizedScheduleId = coerceScheduleId(scheduleId, 'scheduleId');
+    const normalizedAccessOptions = normalizeScheduleAccessOptions(accessOptions);
+    const state = await loadScheduleState(getInternals(this), normalizedScheduleId);
+    return state && canAccessSchedule(state, normalizedAccessOptions)
+      ? toScheduleSummary(state)
+      : null;
+  }
+  async listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>> {
+    return listSchedulesFromInternals(getInternals(this), filter);
+  }
+  async pauseSchedule(scheduleId: string, accessOptions?: ScheduleAccessOptions): Promise<void> {
+    return pauseScheduleFromInternals(getInternals(this), scheduleId, accessOptions);
+  }
+  async resumeSchedule(scheduleId: string, accessOptions?: ScheduleAccessOptions): Promise<void> {
+    return resumeScheduleFromInternals(getInternals(this), scheduleId, accessOptions);
+  }
+  async cancelSchedule(scheduleId: string, accessOptions?: ScheduleAccessOptions): Promise<void> {
+    return cancelScheduleFromInternals(getInternals(this), scheduleId, accessOptions);
+  }
+  async updateSchedule(
+    scheduleId: string,
+    newCronExpression: string,
+    accessOptions?: ScheduleAccessOptions,
+  ): Promise<void> {
+    return updateScheduleFromInternals(
+      getInternals(this),
+      scheduleId,
+      newCronExpression,
+      accessOptions,
+    );
+  }
+  [HANDLE_RESULT_PROMISE](workflowId: string): Promise<unknown> {
+    return getWorkflowResultPromiseFromInternals(getInternals(this), workflowId);
+  }
+  [ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING](): number {
+    return getInternals(this).parkedInlineWorkflows.size;
+  }
+  [ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING](): number {
+    return getInternals(this).signalWaiters.size;
+  }
+  async signal(workflowId: string, name: string, payload?: unknown): Promise<void> {
+    return signalWorkflow(getInternals(this), workflowId, name, payload, {
+      loadWorkflowState: (id) => loadWorkflowState(getInternals(this), id),
+      dispatchEvent: (event) => this.dispatchEvent(event),
+      broadcast: (message) => this.#broadcast(message),
+      getComposedInterceptor: () => getComposedWorkflowInterceptor(getInternals(this)),
+      resumeParkedInlineWorkflow: (id) =>
+        swallowPromiseRejection(
+          resumeParkedInlineWorkflowFromInternals(
+            getInternals(this),
+            id,
+            this.#createInlineParkingCallbacks(),
+          ),
+        ),
+    });
+  }
+  async update(
+    workflowId: string,
+    name: string,
+    payload?: unknown,
+    options?: { timeout?: number },
+  ): Promise<unknown> {
+    return updateFromInternals(
+      getInternals(this),
+      workflowId,
+      name,
+      payload,
+      options,
+      this.#createUpdateCallbacks(),
+    );
+  }
+  async query(workflowId: string, name: string): Promise<unknown> {
+    return queryWorkflow(getInternals(this), workflowId, name);
+  }
+  async setBudgetPolicy(options: BudgetPolicyOptions): Promise<void> {
+    const internals = getInternals(this);
+    if (!internals.budgetPolicyEnforcer) {
+      const { BudgetPolicyEnforcer } = await import('../../ai/budget-policy.ts');
+      internals.budgetPolicyEnforcer = new BudgetPolicyEnforcer(
+        internals.storage,
+        internals.options.getNow,
+      );
+    }
+    internals.budgetPolicyEnforcer.setPolicy(options);
+  }
+  async getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null> {
+    return getInternals(this).budgetPolicyEnforcer?.policies.get(namespace) ?? null;
+  }
+  async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
+    return getInternals(this).tenantQuotaManager.getUsage(tenantId);
+  }
+  async getStreamChunks(
+    workflowId: string,
+    key: string,
+    options?: { after?: number },
+  ): Promise<StoredStreamChunk[]> {
+    return getStreamChunksFromInternals(getInternals(this), workflowId, key, options);
+  }
+  async fork(sourceWorkflowId: string, options?: ForkOptions): Promise<WorkflowHandle> {
+    return forkFromLifecycle(
+      getInternals(this),
+      sourceWorkflowId,
+      options,
+      this.#createLifecycleCallbacks(),
+    );
+  }
+  async resume(workflowId: string): Promise<WorkflowHandle> {
+    return resumeFromLifecycle(getInternals(this), workflowId, this.#createLifecycleCallbacks());
+  }
+  async recoverAll(): Promise<WorkflowHandle[]> {
+    return recoverAllFromLifecycle(getInternals(this), this.#createLifecycleCallbacks());
+  }
+  async cancel(workflowId: string): Promise<void> {
+    await cancelWorkflowFromTermination(
+      getInternals(this),
+      workflowId,
+      this.#createTerminationCallbacks(),
+    );
+  }
+  async timeout(workflowId: string): Promise<void> {
+    await timeoutWorkflowFromTermination(
+      getInternals(this),
+      workflowId,
+      this.#createTerminationCallbacks(),
+    );
+  }
+  isAgentWorkflow(workflowId: string): boolean {
+    return getInternals(this).agentWorkflowIds.has(workflowId);
+  }
+  get agentWorkflowIds(): ReadonlySet<string> {
+    return getInternals(this).agentWorkflowIds;
+  }
+  async get(workflowId: string): Promise<WorkflowState | null> {
+    const state = await loadWorkflowState(getInternals(this), workflowId);
+    if (
+      state?.status === 'running' &&
+      hasQueuedInlineWorkflowStart(getInternals(this), workflowId)
+    ) {
+      return { ...state, status: 'pending' };
+    }
+    return state;
+  }
+  async getAttributes(workflowId: string): Promise<Record<string, SearchAttributeValue> | null> {
+    return getWorkflowAttributes(getInternals(this), workflowId);
+  }
+  async setAttributes(
+    workflowId: string,
+    attributes: Record<string, SearchAttributeValue>,
+  ): Promise<void> {
+    return setWorkflowAttributes(getInternals(this), workflowId, attributes);
+  }
+  async addTags(workflowId: string, ...tags: string[]): Promise<void> {
+    return addWorkflowTags(getInternals(this), workflowId, ...tags);
+  }
+  async removeTags(workflowId: string, ...tags: string[]): Promise<void> {
+    return removeWorkflowTags(getInternals(this), workflowId, ...tags);
+  }
+  async getEvents(workflowId: string): Promise<WorkflowEvent[]> {
+    return getWorkflowEvents(getInternals(this), workflowId);
+  }
+  async *replayWorkflowFeed(
+    workflowId: string,
+    selector: WorkflowFeedSelector,
+    afterSequence: number,
+  ): AsyncIterable<WorkflowFeedRecord> {
+    yield* replayWorkflowFeed(getInternals(this), workflowId, selector, afterSequence);
+  }
+  async snapshotWorkflowFeedTail(
+    workflowId: string,
+    selector: WorkflowFeedSelector,
+  ): Promise<number> {
+    return snapshotWorkflowFeedTail(getInternals(this), workflowId, selector);
+  }
+  subscribeWorkflowFeedCommits(
+    workflowId: string,
+    selector: WorkflowFeedSelector,
+    listener: WorkflowFeedListener,
+  ): () => void {
+    return subscribeWorkflowFeedCommits(getInternals(this), workflowId, selector, listener);
+  }
+  async listCheckpoints(workflowId: string): Promise<CheckpointSummary[]> {
+    return listCheckpointHistory(getInternals(this), workflowId);
+  }
+  async getCheckpointAt(workflowId: string, step: number): Promise<CheckpointState | null> {
+    return getCheckpointStateAt(getInternals(this), workflowId, step);
+  }
+  async getTimeline(workflowId: string): Promise<WorkflowTimelineEntry[]> {
+    return getWorkflowTimeline(getInternals(this), workflowId);
+  }
+  async replayTo(workflowId: string, step: number): Promise<WorkflowReplay | null> {
+    return replayWorkflowToCheckpoint(getInternals(this), workflowId, step);
+  }
+  async listReviews(): Promise<Array<Record<string, unknown>>> {
+    return listReviewsFromInternals(getInternals(this));
+  }
+  async getReview(workflowId: string, reviewId: string): Promise<ReviewRequest | null> {
+    return getReviewFromInternals(getInternals(this), workflowId, reviewId);
+  }
+  async submitReview(reviewId: string, options: SubmitReviewOptions): Promise<void> {
+    return submitReviewFromInternals(getInternals(this), reviewId, options, {
+      dispatchEvent: this.dispatchEvent.bind(this),
+    });
+  }
+  async getUpdateResult(updateId: string): Promise<import('../updates.ts').UpdateResponse | null> {
+    return getUpdateResultFromInternals(getInternals(this), updateId);
+  }
+  async submitCoordinatedUpdate(
+    workflowId: string,
+    name: string,
+    payload?: unknown,
+    options?: { timeout?: number; idempotencyKey?: string },
+  ): Promise<CoordinatedUpdateResult> {
+    return submitCoordinatedUpdateFromInternals(
+      getInternals(this),
+      workflowId,
+      name,
+      payload,
+      options,
+      this.#createUpdateCallbacks(),
+    );
+  }
+  [Symbol.dispose](): void {
+    const internals = getInternals(this);
+    internals.alertManager?.[Symbol.dispose]();
+    internals.alertManager = null;
+    internals.abortController.abort();
+    disposeQueuedInlineWorkflowStarts(internals);
+    internals.scheduler[Symbol.dispose]();
+    internals.strategy[Symbol.dispose]();
+    internals.activityWorkerDispatcher?.[Symbol.dispose]();
+    internals.activityWorkerDispatcher = null;
+    internals.inlineStrategy = null;
+    if (internals.cleanupInterval !== null) {
+      clearInterval(internals.cleanupInterval ?? undefined);
+      internals.cleanupInterval = null;
+    }
+    if (internals.retentionSweepInterval !== null) {
+      clearInterval(internals.retentionSweepInterval ?? undefined);
+      internals.retentionSweepInterval = null;
+    }
+    internals.nextRetentionSweepAt = null;
+    internals.handleCache.clear();
+    internals.resultResolvers.clear();
+    internals.signalWaiters.clear();
+    internals.signalWaitersByWorkflow.clear();
+    internals.updateWaiters.clear();
+    internals.updateWaitersByWorkflow.clear();
+    internals.reviewWaiters.clear();
+    internals.reviewWaitersByWorkflow.clear();
+    internals.reviewEscalationHandlers.clear();
+    internals.workflowReviewIds.clear();
+    internals.parkedInlineWorkflows.clear();
+    internals.terminalizingWorkflows.clear();
+    internals.reviewTimerIds.clear();
+    for (const controller of internals.pendingWebhooks) controller.abort();
+    internals.pendingWebhooks.clear();
+    internals.sleepResolvers.clear();
+    internals.sleepResolversByWorkflow.clear();
+    internals.checkpoints.clear();
+    internals.workflowNestingDepths.clear();
+    internals.workflowHeaders.clear();
+    internals.pendingStarts.clear();
+    internals.pendingScheduleCreations.clear();
+    internals.chargedAgentOperations.clear();
+    internals.chargedAgentOperationsByWorkflow.clear();
+    internals.agentWorkflowIds.clear();
+    internals.eventLogHeads.clear();
+    internals.pendingTimelineEntries.clear();
+    internals.workflowVersionTuples.clear();
+    internals.workflowFeedListeners.clear();
+    internals.broadcastChannel?.close();
+    internals.broadcastChannel = null;
+  }
+  async [Symbol.asyncDispose](): Promise<void> {
+    this[Symbol.dispose]();
+  }
+  get storage(): WeftStorage {
+    return getInternals(this).storage;
+  }
+  get scheduler(): Scheduler {
+    return getInternals(this).scheduler;
+  }
+}

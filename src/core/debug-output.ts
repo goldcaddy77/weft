@@ -65,6 +65,7 @@ function isPlainObject(value: object): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+// oxlint-disable-next-line complexity -- ID:core-debug-output-sanitize-object-complexity
 function sanitizeObject(value: object, seen: WeakSet<object>): unknown {
   if (seen.has(value)) {
     return CIRCULAR_REFERENCE_VALUE;

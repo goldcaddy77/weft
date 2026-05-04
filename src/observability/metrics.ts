@@ -292,6 +292,7 @@ export interface PrometheusExporter {
  * snapshot still emit their `# HELP` / `# TYPE` lines with zero values so
  * Prometheus scrapers see a stable schema.
  */
+// oxlint-disable-next-line complexity -- ID:observability-metrics-serialize-metrics-snapshot-for-prometheus-complexity
 export function serializeMetricsSnapshotForPrometheus(snapshot: MetricsSnapshot): string {
   const lines: string[] = [];
 

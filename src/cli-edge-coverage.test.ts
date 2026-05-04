@@ -4,7 +4,7 @@ import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { executeSchedule, executeTimeline, parseCliArguments } from './cli.ts';
+import { executeSchedule, executeTimeline, parseCliArguments } from './cli/index.ts';
 import { encode } from './core/codec.ts';
 import { Context } from './core/context.ts';
 import { Engine } from './core/engine.ts';

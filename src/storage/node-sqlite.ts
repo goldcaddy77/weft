@@ -175,6 +175,7 @@ export class NodeSQLiteStorage implements Storage {
     this.#deleteStatement.run(key);
   }
 
+  // oxlint-disable-next-line complexity -- ID:storage-node-sqlite-delete-complexity
   async *scan(prefix: string, options: ScanOptions = {}): AsyncIterable<[string, Uint8Array]> {
     const { limit, reverse, gt, lt, gte, lte } = options;
 

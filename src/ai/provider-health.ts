@@ -92,6 +92,7 @@ export class ProviderHealthTracker {
   /** Optional EventTarget for dispatching circuit open events. */
   eventTarget?: EventTarget | undefined;
 
+  // oxlint-disable-next-line complexity -- ID:ai-provider-health-constructor-complexity
   constructor(options?: ProviderHealthOptions) {
     this.#providers = new Map();
     this.#options = {

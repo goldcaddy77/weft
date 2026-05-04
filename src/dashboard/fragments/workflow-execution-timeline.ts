@@ -136,6 +136,7 @@ function addLeafDiff(
   });
 }
 
+// oxlint-disable-next-line complexity -- ID:dashboard-fragments-workflow-execution-timeline-collect-value-diffs-complexity
 function collectValueDiffs(
   section: WorkflowTimelineDiffSection,
   label: string,
@@ -300,6 +301,7 @@ export function buildWorkflowTimelineDiff(
   ];
 }
 
+// oxlint-disable-next-line complexity -- ID:dashboard-fragments-workflow-execution-timeline-format-timeline-diff-value-complexity
 export function formatTimelineDiffValue(value: unknown): string {
   if (value === undefined) {
     return '-';

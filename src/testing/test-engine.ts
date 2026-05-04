@@ -140,6 +140,20 @@ export class TestEngine extends Engine {
     // Advance time control (fires TimeControl timers)
     await this.#timeControl.advance(duration);
 
+    // Inline starts can be intentionally queued onto the next event-loop turn.
+    // Let them schedule durable timers at the advanced virtual time before
+    // the scheduler scans for due timers.
+    await yieldToEventLoop();
+
+    // The queued inline start async chain (MessageChannel delivery →
+    // loadWorkflowState → persistCheckpoint → evaluateConstraints →
+    // parkInlineWorkflowAfterCheckpoint → processSleepOperation →
+    // scheduler.schedule) is ~5 microtask hops deep. Drain enough turns
+    // so the timer is in storage before scheduler.tick scans for due timers.
+    for (let i = 0; i < 4; i++) {
+      await Promise.resolve();
+    }
+
     // Tick the scheduler at the new time to fire durable timers
     await this.scheduler.tick(target);
 
@@ -234,6 +248,7 @@ export class TestEngine extends Engine {
    * @param options `{ runs, chaos? }` — number of runs and optional scenario.
    * @returns       `{ passRate, consistency, categories }` aggregate metrics.
    */
+  // oxlint-disable-next-line complexity -- ID:testing-test-engine-run-n-complexity
   async runN(type: string, input: unknown, options: RunNOptions): Promise<RunNResult> {
     const { runs, chaos } = options;
 

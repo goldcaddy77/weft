@@ -103,6 +103,7 @@ export function formatDuration(milliseconds: number): string {
  * console.log(formatDiagnosticReport(report));
  * ```
  */
+// oxlint-disable-next-line complexity -- ID:diagnostics-format-format-diagnostic-report-complexity
 export function formatDiagnosticReport(report: DiagnosticReport): string {
   const lines: string[] = [];
 

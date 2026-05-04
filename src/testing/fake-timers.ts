@@ -179,44 +179,77 @@ export async function waitForCondition(
     throw new RangeError(`intervalMs must be a finite, positive number, got: ${intervalMs}`);
   }
 
-  let lastError: unknown;
-
   if (jest.isFakeTimers()) {
-    let elapsed = 0;
-
-    while (elapsed <= timeoutMs) {
-      try {
-        if (await predicate()) return;
-      } catch (error) {
-        lastError = error;
-      }
-
-      await advanceTimersByTime(intervalMs);
-      elapsed += intervalMs;
-    }
-
-    const message = `Timed out after ${timeoutMs}ms waiting for ${label}`;
-    throw lastError instanceof Error
-      ? new Error(`${message}: ${lastError.message}`)
-      : new Error(message);
+    return waitForConditionWithFakeTimers(predicate, timeoutMs, intervalMs, label);
   }
 
+  return waitForConditionWithRealTimers(predicate, timeoutMs, intervalMs, label);
+}
+
+async function waitForConditionWithFakeTimers(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  intervalMs: number,
+  label: string,
+): Promise<void> {
+  let lastError: unknown;
+  let elapsed = 0;
+
+  while (elapsed <= timeoutMs) {
+    const result = await checkWaitCondition(predicate);
+    if (result.satisfied) {
+      return;
+    }
+    lastError = result.error;
+
+    await advanceTimersByTime(intervalMs);
+    elapsed += intervalMs;
+  }
+
+  throw createWaitConditionTimeoutError(timeoutMs, label, lastError);
+}
+
+async function waitForConditionWithRealTimers(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  intervalMs: number,
+  label: string,
+): Promise<void> {
+  let lastError: unknown;
   const start = performance.now();
 
   while (performance.now() - start <= timeoutMs) {
-    try {
-      if (await predicate()) return;
-    } catch (error) {
-      lastError = error;
+    const result = await checkWaitCondition(predicate);
+    if (result.satisfied) {
+      return;
     }
+    lastError = result.error;
 
     await new Promise<void>((resolve) => {
       setTimeout(resolve, intervalMs);
     });
   }
 
+  throw createWaitConditionTimeoutError(timeoutMs, label, lastError);
+}
+
+async function checkWaitCondition(
+  predicate: () => boolean | Promise<boolean>,
+): Promise<{ satisfied: true } | { satisfied: false; error?: unknown }> {
+  try {
+    return (await predicate()) ? { satisfied: true } : { satisfied: false };
+  } catch (error) {
+    return { satisfied: false, error };
+  }
+}
+
+function createWaitConditionTimeoutError(
+  timeoutMs: number,
+  label: string,
+  lastError: unknown,
+): Error {
   const message = `Timed out after ${timeoutMs}ms waiting for ${label}`;
-  throw lastError instanceof Error
+  return lastError instanceof Error
     ? new Error(`${message}: ${lastError.message}`)
     : new Error(message);
 }

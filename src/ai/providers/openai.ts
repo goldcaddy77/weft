@@ -108,6 +108,7 @@ export class OpenAIProvider implements LLMProvider {
     const reader = rawBody.getReader();
 
     return new ReadableStream<StreamChunk>({
+      // oxlint-disable-next-line complexity -- ID:ai-providers-openai-start-complexity
       async start(controller) {
         const decoder = new TextDecoder();
         let buffer = '';

@@ -38,6 +38,7 @@ export function clearWorkflowTimelineInspectionState(): WorkflowTimelineInspecti
   };
 }
 
+// oxlint-disable-next-line complexity -- ID:dashboard-utilities-workflow-detail-timeline-synchronize-workflow-timeline-inspection-state-complexity
 export function synchronizeWorkflowTimelineInspectionState(
   timeline: readonly WorkflowTimelineEntry[],
   current: WorkflowTimelineInspectionState,

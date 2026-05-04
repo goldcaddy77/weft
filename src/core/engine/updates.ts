@@ -1,0 +1,390 @@
+import type { ContextOperationRequest } from '../context.ts';
+import { UpdateCompletedEvent, UpdateReceivedEvent } from '../events.ts';
+import { isGeneratorResult } from '../step-context.ts';
+import type { CoordinatedUpdateResult } from '../types.ts';
+import { UpdateTimeoutError, type UpdateRequest, type UpdateResponse } from '../updates.ts';
+import type { EngineInternals } from './internals.ts';
+import { trackWaiterKey, untrackWaiterKey } from './signals.ts';
+
+export type UpdateCallbacks = {
+  dispatchEvent: (event: Event) => boolean;
+  broadcast: (message: { type: 'update:completed'; workflowId: string; updateId: string }) => void;
+  completeOperation: (workflowId: string, value: unknown) => void;
+  guardTerminalWorkflow: (workflowId: string) => Promise<void>;
+  guardTerminalWorkflowAfterCoordinatedRequest: (
+    workflowId: string,
+    updateId: string,
+  ) => Promise<void>;
+  persistCoordinatedUpdateResponse: (
+    workflowId: string,
+    updateName: string,
+    updateId: string,
+    idempotencyKey: string | undefined,
+    value: unknown,
+  ) => Promise<void>;
+  deliverCoordinatedUpdateToWaiterIfAvailable: (
+    workflowId: string,
+    updateRequest: UpdateRequest,
+    dispatchReceivedEvent?: boolean,
+  ) => Promise<boolean>;
+  dispatchPendingUpdateReceived: (
+    workflowId: string,
+    updateName: string,
+    updateRequest: UpdateRequest,
+  ) => void;
+  createCoordinatedUpdateResponder: (
+    workflowId: string,
+    updateName: string,
+    updateRequest: UpdateRequest,
+  ) => (value: unknown) => void;
+  findPendingUpdateByName: (workflowId: string, name: string) => Promise<UpdateRequest | undefined>;
+  schedulePendingInlineUpdateDrain: (workflowId: string) => void;
+};
+
+// oxlint-disable-next-line complexity -- ID:core-engine-update-complexity
+export async function update(
+  internals: EngineInternals,
+  workflowId: string,
+  name: string,
+  payload: unknown,
+  options: { timeout?: number } | undefined,
+  callbacks: UpdateCallbacks,
+): Promise<unknown> {
+  const timeout = options?.timeout ?? 30_000;
+
+  // Reject updates to workflows in terminal states
+  await callbacks.guardTerminalWorkflow(workflowId);
+
+  // Check if the workflow has an active context with an update handler.
+  // Note: in worker mode, #inlineStrategy is null so synchronous update
+  // handlers registered via ctx.onUpdate() are not available. Updates in
+  // worker mode go through the #updateWaiters or UpdateCoordinator paths.
+  const context = internals.inlineStrategy?.getContext(workflowId);
+  if (context) {
+    const handler = context.updateHandlers.get(name);
+    if (handler) {
+      const updateId = crypto.randomUUID();
+      callbacks.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
+
+      try {
+        const result = await invokeUpdateHandler(internals, name, handler, payload);
+        callbacks.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
+        callbacks.broadcast({ type: 'update:completed', workflowId, updateId });
+        return result;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        callbacks.dispatchEvent(
+          new UpdateCompletedEvent(updateId, workflowId, name, undefined, errorMessage),
+        );
+        callbacks.broadcast({ type: 'update:completed', workflowId, updateId });
+        throw error;
+      }
+    }
+  }
+
+  // Check if workflow is waiting for this update via waitForUpdate
+  const waiterKey = `${workflowId}:${name}`;
+  const updateWaiter = internals.updateWaiters.get(waiterKey);
+  const existingPendingUpdate = updateWaiter
+    ? await callbacks.findPendingUpdateByName(workflowId, name)
+    : undefined;
+  const currentWaiter = updateWaiter ? internals.updateWaiters.get(waiterKey) : undefined;
+  if (updateWaiter && currentWaiter === updateWaiter && !existingPendingUpdate) {
+    internals.updateWaiters.delete(waiterKey);
+    untrackWaiterKey(internals.updateWaitersByWorkflow, workflowId, waiterKey);
+    const updateId = crypto.randomUUID();
+    callbacks.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
+
+    const { promise: respondPromise, resolve: resolveRespond } = Promise.withResolvers<unknown>();
+    let responded = false;
+    const respond = (value: unknown) => {
+      if (responded) return;
+      responded = true;
+      resolveRespond(value);
+    };
+
+    updateWaiter({ payload, respond });
+
+    // Race the respond promise against the timeout, clearing the timer on either outcome
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        respondPromise,
+        new Promise<never>((_resolve, reject) => {
+          timeoutId = setTimeout(() => reject(new UpdateTimeoutError(updateId, timeout)), timeout);
+        }),
+      ]);
+
+      clearTimeout(timeoutId);
+
+      callbacks.dispatchEvent(new UpdateCompletedEvent(updateId, workflowId, name, result));
+      callbacks.broadcast({ type: 'update:completed', workflowId, updateId });
+      return result;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
+  }
+
+  // If no active handler, use the UpdateCoordinator with polling
+  const updateId = await internals.updateCoordinator.createRequest(workflowId, name, payload);
+  callbacks.schedulePendingInlineUpdateDrain(workflowId);
+  await callbacks.guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
+  callbacks.dispatchEvent(new UpdateReceivedEvent(updateId, workflowId, name, payload));
+
+  await callbacks.deliverCoordinatedUpdateToWaiterIfAvailable(workflowId, {
+    updateId,
+    workflowId,
+    name,
+    payload,
+    createdAt: Date.now(),
+  });
+
+  const response = await internals.updateCoordinator.waitForResponse(updateId, timeout);
+
+  if (response.error) {
+    throw new Error(response.error);
+  }
+
+  return response.result;
+}
+
+/** Retrieve the result of a coordinated update by its ID. */
+export async function getUpdateResult(
+  internals: EngineInternals,
+  updateId: string,
+): Promise<UpdateResponse | null> {
+  return internals.updateCoordinator.getResponse(updateId);
+}
+
+/**
+ * Submit a coordinated update request. Handles idempotency checking,
+ * creates the request, and waits for a response within the timeout.
+ */
+export async function submitCoordinatedUpdate(
+  internals: EngineInternals,
+  workflowId: string,
+  name: string,
+  payload: unknown,
+  options: { timeout?: number; idempotencyKey?: string } | undefined,
+  callbacks: UpdateCallbacks,
+): Promise<CoordinatedUpdateResult> {
+  const timeout = options?.timeout ?? 30_000;
+  const idempotencyKey = options?.idempotencyKey;
+
+  // Check idempotency first — a retry for an already-processed key should
+  // return the cached result even if the workflow has since completed.
+  if (idempotencyKey !== undefined) {
+    const existing = await internals.updateCoordinator.checkIdempotency(workflowId, idempotencyKey);
+    if (existing !== null) {
+      return { updateId: existing.updateId, result: existing.result };
+    }
+  }
+
+  // Reject updates to workflows in terminal states
+  await callbacks.guardTerminalWorkflow(workflowId);
+
+  const requestOptions: { timeout: number; idempotencyKey?: string } = { timeout };
+  if (idempotencyKey !== undefined) {
+    requestOptions.idempotencyKey = idempotencyKey;
+  }
+
+  const updateId = await internals.updateCoordinator.createRequest(
+    workflowId,
+    name,
+    payload,
+    requestOptions,
+  );
+  callbacks.schedulePendingInlineUpdateDrain(workflowId);
+  await callbacks.guardTerminalWorkflowAfterCoordinatedRequest(workflowId, updateId);
+
+  await callbacks.deliverCoordinatedUpdateToWaiterIfAvailable(
+    workflowId,
+    {
+      updateId,
+      workflowId,
+      name,
+      payload,
+      createdAt: Date.now(),
+      idempotencyKey,
+    },
+    true,
+  );
+
+  const response = await internals.updateCoordinator.waitForResponse(updateId, timeout);
+
+  const result: CoordinatedUpdateResult = {
+    updateId: response.updateId,
+    result: response.result,
+  };
+
+  if (response.error !== undefined) {
+    result.error = response.error;
+  }
+
+  return result;
+}
+
+export async function processWaitUpdateOperation(
+  internals: EngineInternals,
+  workflowId: string,
+  operation: Extract<ContextOperationRequest, { type: 'wait-update' }>,
+  callbacks: UpdateCallbacks,
+): Promise<void> {
+  const waiterKey = `${workflowId}:${operation.updateName}`;
+  const matchingUpdate = await callbacks.findPendingUpdateByName(workflowId, operation.updateName);
+
+  if (matchingUpdate) {
+    await internals.updateCoordinator.deleteRequest(workflowId, matchingUpdate.updateId);
+    callbacks.dispatchPendingUpdateReceived(workflowId, operation.updateName, matchingUpdate);
+    callbacks.completeOperation(workflowId, {
+      payload: matchingUpdate.payload,
+      respond: callbacks.createCoordinatedUpdateResponder(
+        workflowId,
+        operation.updateName,
+        matchingUpdate,
+      ),
+    });
+    return;
+  }
+
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  internals.updateWaiters.set(waiterKey, resolve);
+  trackWaiterKey(internals.updateWaitersByWorkflow, workflowId, waiterKey);
+
+  const pendingUpdateAfterRegistration = await callbacks.findPendingUpdateByName(
+    workflowId,
+    operation.updateName,
+  );
+  if (pendingUpdateAfterRegistration) {
+    if (internals.updateWaiters.get(waiterKey) === resolve) {
+      internals.updateWaiters.delete(waiterKey);
+      untrackWaiterKey(internals.updateWaitersByWorkflow, workflowId, waiterKey);
+    }
+
+    await internals.updateCoordinator.deleteRequest(
+      workflowId,
+      pendingUpdateAfterRegistration.updateId,
+    );
+    callbacks.dispatchPendingUpdateReceived(
+      workflowId,
+      operation.updateName,
+      pendingUpdateAfterRegistration,
+    );
+    callbacks.completeOperation(workflowId, {
+      payload: pendingUpdateAfterRegistration.payload,
+      respond: callbacks.createCoordinatedUpdateResponder(
+        workflowId,
+        operation.updateName,
+        pendingUpdateAfterRegistration,
+      ),
+    });
+    return;
+  }
+
+  callbacks.completeOperation(workflowId, await promise);
+}
+
+export function dispatchPendingUpdateReceived(
+  _internals: EngineInternals,
+  workflowId: string,
+  updateName: string,
+  updateRequest: UpdateRequest,
+  callbacks: Pick<UpdateCallbacks, 'dispatchEvent'>,
+): void {
+  callbacks.dispatchEvent(
+    new UpdateReceivedEvent(updateRequest.updateId, workflowId, updateName, updateRequest.payload),
+  );
+}
+
+export function createCoordinatedUpdateResponder(
+  _internals: EngineInternals,
+  workflowId: string,
+  updateName: string,
+  updateRequest: UpdateRequest,
+  callbacks: Pick<UpdateCallbacks, 'persistCoordinatedUpdateResponse'>,
+): (value: unknown) => void {
+  let coordinatedResponded = false;
+
+  return (value: unknown) => {
+    if (coordinatedResponded) return;
+    coordinatedResponded = true;
+
+    void callbacks.persistCoordinatedUpdateResponse(
+      workflowId,
+      updateName,
+      updateRequest.updateId,
+      updateRequest.idempotencyKey,
+      value,
+    );
+  };
+}
+
+export async function deliverCoordinatedUpdateToWaiterIfAvailable(
+  internals: EngineInternals,
+  workflowId: string,
+  updateRequest: UpdateRequest,
+  dispatchReceivedEvent = false,
+  callbacks: UpdateCallbacks,
+): Promise<boolean> {
+  const waiterKey = `${workflowId}:${updateRequest.name}`;
+  const waiter = internals.updateWaiters.get(waiterKey);
+  if (!waiter) {
+    return false;
+  }
+
+  const oldestPendingUpdate = await callbacks.findPendingUpdateByName(
+    workflowId,
+    updateRequest.name,
+  );
+  if (!oldestPendingUpdate || oldestPendingUpdate.updateId !== updateRequest.updateId) {
+    return false;
+  }
+
+  await internals.updateCoordinator.deleteRequest(workflowId, updateRequest.updateId);
+  internals.updateWaiters.delete(waiterKey);
+  untrackWaiterKey(internals.updateWaitersByWorkflow, workflowId, waiterKey);
+  if (dispatchReceivedEvent) {
+    callbacks.dispatchPendingUpdateReceived(workflowId, updateRequest.name, updateRequest);
+  }
+
+  waiter({
+    payload: updateRequest.payload,
+    respond: callbacks.createCoordinatedUpdateResponder(
+      workflowId,
+      updateRequest.name,
+      updateRequest,
+    ),
+  });
+  return true;
+}
+
+export async function findPendingUpdateByName(
+  internals: EngineInternals,
+  workflowId: string,
+  name: string,
+): Promise<UpdateRequest | undefined> {
+  const pendingUpdates = await internals.updateCoordinator.getPendingUpdates(workflowId);
+  return pendingUpdates.find((updateRequest) => updateRequest.name === name);
+}
+
+/**
+ * Invoke an update handler, checking that it does not return a generator.
+ * Centralises the runtime generator guard for both the inline-handler path
+ * in `update()` and the pending-drain path on resume.
+ */
+export async function invokeUpdateHandler(
+  _internals: EngineInternals,
+  name: string,
+  handler: (payload: unknown) => unknown,
+  payload: unknown,
+): Promise<unknown> {
+  const result = handler(payload);
+  if (isGeneratorResult(result)) {
+    throw new TypeError(
+      `Update handler "${name}" returned a generator. ` +
+        'Update handlers must return a plain value or a Promise, not a generator.',
+    );
+  }
+  return await result;
+}

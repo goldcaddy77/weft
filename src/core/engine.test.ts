@@ -4219,7 +4219,6 @@ describe('Engine', () => {
 
       engine.register('progress-workflow', async function* (ctx: WorkflowContext) {
         const context = ctx as Context;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const result = yield* context.run(longRunningActivity as any, 'input');
         return result;
       });

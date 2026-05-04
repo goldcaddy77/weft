@@ -6,49 +6,23 @@
  * {@link Context}; the engine persists a checkpoint at every yield and
  * resumes from the last checkpoint on recovery.
  *
- * @example Hello world
- * ```ts
- * import { activity, Engine, VERSION, type Context, type WorkflowContext } from 'weft';
- *
- * void VERSION;
- * const sendEmail = activity({
- *   name: 'sendEmail',
- *   execute: async (input: unknown) => {
- *     const { to } = input as { to: string };
- *     await Bun.sleep(100);
- *     return { messageId: crypto.randomUUID(), to };
- *   },
- * });
- *
- * const engine = new Engine();
- * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
- *   const { email } = input as { email: string };
- *   const result = yield* (ctx as Context).run(sendEmail, { to: email });
- *   return result.messageId;
- * });
- *
- * const handle = await engine.start('greet', { email: 'you@example.com' });
- * const messageId = await handle.result();
- * ```
- *
- * @example Multi-tenant engine
- * ```ts
- * import { Engine, VERSION, tenantFromInputField, type Context, type WorkflowContext } from 'weft';
- *
- * void VERSION;
- * const engine = new Engine({
- *   tenantResolver: tenantFromInputField('customerId'),
- * });
- *
- * engine.register('per-tenant', async function* (ctx: WorkflowContext) {
- *   // ctx.tenant is { id: "acme" } when input = { customerId: "acme", ... }
- *   return (ctx as Context).tenant?.id ?? 'anonymous';
- * });
- * ```
+ * For end-to-end usage examples see the {@link Engine} class and the
+ * {@link tenantFromInputField} helper.
  *
  * @module weft
  */
 
+/**
+ * Current Weft package version. Useful for diagnostics, telemetry, and
+ * verifying which build is running.
+ *
+ * @example
+ * ```ts
+ * import { VERSION } from 'weft';
+ *
+ * console.log(`Running Weft ${VERSION}`);
+ * ```
+ */
 export const VERSION = '0.0.1';
 
 // Core
@@ -330,13 +304,16 @@ export type { RunNOptions, RunNResult } from './testing/test-engine';
 export { TimeControl } from './testing/time-control';
 
 // AI / Agent
-export { executeAgentLoop } from './ai/agent';
+export { AgentLoopSuspendedError, executeAgentLoop } from './ai/agent';
 export type {
   AgentOptions,
   AgentResult,
   AgentTool,
   MCPToolSource,
+  PendingProviderResumeState,
+  PersistedAgentLoopState,
   TurnCostEntry,
+  VerificationRecorder,
 } from './ai/agent';
 export { BudgetExceededError, BudgetTracker } from './ai/budget';
 export type { BudgetOptions, BudgetState, ModelPricing } from './ai/budget';

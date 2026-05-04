@@ -1,0 +1,68 @@
+import type { ListFilter } from '../core/types.ts';
+
+function appendStatusFilters(params: URLSearchParams, status: ListFilter['status']): void {
+  if (status === undefined) {
+    return;
+  }
+
+  const statuses = (Array.isArray(status) ? status : [status]).filter(Boolean);
+  for (const value of statuses) {
+    params.append('status', value);
+  }
+}
+
+function appendTagFilters(params: URLSearchParams, tags: ListFilter['tags']): void {
+  if (tags === undefined) {
+    return;
+  }
+
+  for (const tag of tags) {
+    params.append('tag', tag);
+  }
+}
+
+function appendAttributeFilters(
+  params: URLSearchParams,
+  attributes: ListFilter['attributes'],
+): void {
+  if (attributes === undefined) {
+    return;
+  }
+
+  for (const attribute of attributes) {
+    if (attribute.value !== undefined) {
+      params.set(`attr.${attribute.key}`, String(attribute.value));
+    }
+    if (attribute.gt !== undefined) {
+      params.set(`attr.${attribute.key}.gt`, String(attribute.gt));
+    }
+    if (attribute.lt !== undefined) {
+      params.set(`attr.${attribute.key}.lt`, String(attribute.lt));
+    }
+    if (attribute.gte !== undefined) {
+      params.set(`attr.${attribute.key}.gte`, String(attribute.gte));
+    }
+    if (attribute.lte !== undefined) {
+      params.set(`attr.${attribute.key}.lte`, String(attribute.lte));
+    }
+  }
+}
+
+export function buildWorkflowListSearchParams(filter?: ListFilter): URLSearchParams {
+  const params = new URLSearchParams();
+
+  appendStatusFilters(params, filter?.status);
+  if (filter?.type !== undefined) {
+    params.set('type', filter.type);
+  }
+  appendTagFilters(params, filter?.tags);
+  if (filter?.limit !== undefined) {
+    params.set('limit', String(filter.limit));
+  }
+  if (filter?.offset !== undefined) {
+    params.set('offset', String(filter.offset));
+  }
+  appendAttributeFilters(params, filter?.attributes);
+
+  return params;
+}

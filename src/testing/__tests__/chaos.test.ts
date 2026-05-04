@@ -233,7 +233,6 @@ describe('TestEngine.runN', () => {
     engine.register('reliable', async function* (ctx: WorkflowContext, input: unknown) {
       const mockedActivity = engine.mocks.get(reliableActivity);
       const fn = mockedActivity ? mockedActivity.implementation : reliableActivity;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return yield* (ctx as any).run(fn, input);
     });
 
@@ -256,7 +255,6 @@ describe('TestEngine.runN', () => {
     engine.register('flakey', async function* (ctx: WorkflowContext, input: unknown) {
       const mockedActivity = engine.mocks.get(flakeyActivity);
       const fn = mockedActivity ? mockedActivity.implementation : flakeyActivity;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return yield* (ctx as any).run(fn, input);
     });
 
@@ -288,7 +286,6 @@ describe('TestEngine.runN', () => {
     engine.register('shape-test', async function* (ctx: WorkflowContext) {
       const mockedActivity = engine.mocks.get(activity);
       const fn = mockedActivity ? mockedActivity.implementation : activity;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return yield* (ctx as any).run(fn, undefined);
     });
 
@@ -311,7 +308,6 @@ describe('TestEngine.runN', () => {
     engine.register('deterministic', async function* (ctx: WorkflowContext, input: unknown) {
       const mockedActivity = engine.mocks.get(deterministicActivity);
       const fn = mockedActivity ? mockedActivity.implementation : deterministicActivity;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return yield* (ctx as any).run(fn, input);
     });
 
@@ -336,7 +332,6 @@ describe('TestEngine.runN', () => {
     engine.register('seed-variety', async function* (ctx: WorkflowContext) {
       const mockedActivity = engine.mocks.get(activity);
       const fn = mockedActivity ? mockedActivity.implementation : activity;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return yield* (ctx as any).run(fn, undefined);
     });
 
@@ -376,7 +371,6 @@ describe('TestEngine.runN', () => {
     engine.register('counting', async function* (ctx: WorkflowContext) {
       const mockedActivity = engine.mocks.get(activity);
       const fn = mockedActivity ? mockedActivity.implementation : activity;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return yield* (ctx as any).run(fn, undefined);
     });
 

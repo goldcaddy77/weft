@@ -170,7 +170,6 @@ import type { RestBinding } from './rest-binding.ts';
  * because `shapeSuccess: (Output) => Response` cannot be safely widened
  * to `(unknown) => Response` (function parameters are contravariant).
  */
-// oxlint-disable-next-line typescript/no-explicit-any -- heterogeneous registry requires `any` at the storage boundary; individual bindings stay strictly typed at their definition site.
 export type UnknownRestBinding = RestBinding<any, any>;
 
 /**

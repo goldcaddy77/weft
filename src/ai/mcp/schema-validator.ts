@@ -41,6 +41,7 @@ function getTypeName(value: unknown): string {
   return typeof value;
 }
 
+// oxlint-disable-next-line complexity -- ID:ai-mcp-schema-validator-validate-value-complexity
 function validateValue(
   value: unknown,
   schema: Record<string, unknown>,

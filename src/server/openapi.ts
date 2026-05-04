@@ -68,6 +68,7 @@ function buildPathParameters(paramNames: readonly string[]): Array<Record<string
  *
  * @internal
  */
+// oxlint-disable-next-line complexity -- ID:server-openapi-emit-bindings-complexity
 export function emitBindings(
   paths: Record<string, Record<string, unknown>>,
   tagSet: Set<string>,
@@ -135,6 +136,7 @@ function emitRoutes(
   }
 }
 
+// oxlint-disable-next-line complexity -- ID:server-openapi-generate-open-api-document-complexity
 export function generateOpenApiDocument(options?: OpenApiOptions): Record<string, unknown> {
   const title = options?.title ?? 'Weft Workflow Engine';
   const version = options?.version ?? '0.0.1';

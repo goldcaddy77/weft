@@ -100,6 +100,7 @@ export class HttpTransport implements MCPTransport {
     this.#timeout = options.timeout ?? DEFAULT_TIMEOUT;
   }
 
+  // oxlint-disable-next-line complexity -- ID:ai-mcp-transport-http-send-complexity
   async send(request: MCPRequest, signal?: AbortSignal): Promise<MCPResponse> {
     const { path, init } = this.#buildRequest(request);
     const headers =

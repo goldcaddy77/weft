@@ -93,6 +93,7 @@ export class HttpSseTransport implements MCPTransport {
     this.#timeout = options.timeout ?? DEFAULT_TIMEOUT;
   }
 
+  // oxlint-disable-next-line complexity -- ID:ai-mcp-transport-http-sse-send-complexity
   async send(request: MCPRequest, signal?: AbortSignal): Promise<MCPResponse> {
     if (this.#disposed) {
       throw new MCPTransportError('Transport has been disposed');

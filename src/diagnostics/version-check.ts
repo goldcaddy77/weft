@@ -42,6 +42,7 @@ interface WorkflowTypeGroup {
  * console.log(report.overallVerdict); // 'safe'
  * ```
  */
+// oxlint-disable-next-line complexity -- ID:diagnostics-version-check-run-version-check-complexity
 export async function runVersionCheck(
   storage: Storage,
   registrations: Record<string, WorkflowRegistration>,

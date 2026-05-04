@@ -238,6 +238,25 @@ export class UpdateCoordinator {
     await this.#storage.delete(KEYS.update(workflowId, updateId));
   }
 
+  /**
+   * Atomically check whether a response exists and conditionally delete the
+   * request. Returns the response if the workflow already consumed this update,
+   * or null if the request was deleted before a consumer won the race.
+   */
+  async deleteRequestIfUnconsumed(
+    workflowId: string,
+    updateId: string,
+  ): Promise<UpdateResponse | null> {
+    const existing = await this.getResponse(updateId);
+    if (existing !== null) {
+      return existing;
+    }
+
+    await this.deleteRequest(workflowId, updateId);
+
+    return this.getResponse(updateId);
+  }
+
   /** Retrieve a stored response by update ID. */
   async getResponse(updateId: string): Promise<UpdateResponse | null> {
     const key = KEYS.updateResponse(updateId);

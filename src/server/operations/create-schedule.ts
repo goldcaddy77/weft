@@ -48,6 +48,7 @@ export const createScheduleOperation = defineOperation<CreateScheduleInput, Crea
   access: { kind: 'public' },
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+  // oxlint-disable-next-line complexity -- ID:server-operations-create-schedule-invoke-complexity
   invoke: async ({ input, engine, principal }): Promise<CreateScheduleOutput> => {
     const typedEngine = engine as Engine;
 

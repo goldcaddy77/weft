@@ -35,6 +35,7 @@ import { THRESHOLDS } from './types.ts';
  * console.log(recs.length); // 0 for a healthy instance
  * ```
  */
+// oxlint-disable-next-line complexity -- ID:diagnostics-recommendations-generate-recommendations-complexity
 export function generateRecommendations(
   report: {
     database: DatabaseHealth;
