@@ -318,6 +318,72 @@ describe('Engine', () => {
     engine[Symbol.dispose]();
   });
 
+  it('resume() and recoverAll() ignore parked inline ownership after cancellation reaches storage', async () => {
+    const workflowId = 'cancelled-parked-inline-workflow';
+    const storage = new MemoryStorage();
+    const engine = new Engine({ storage });
+    const cancelledStatePersisted = Promise.withResolvers<void>();
+    const releaseCancelledStateWrite = Promise.withResolvers<void>();
+    const originalBatch = storage.batch.bind(storage);
+    let holdCancelledStateWrite = false;
+
+    storage.batch = async (operations) => {
+      await originalBatch(operations);
+
+      if (!holdCancelledStateWrite) {
+        return;
+      }
+
+      const cancelledWorkflowUpdate = operations.find(
+        (operation) =>
+          operation.type === 'put' &&
+          operation.key === KEYS.workflow(workflowId) &&
+          (decode(operation.value) as WorkflowState).status === 'cancelled',
+      );
+      if (!cancelledWorkflowUpdate) {
+        return;
+      }
+
+      cancelledStatePersisted.resolve();
+      await releaseCancelledStateWrite.promise;
+    };
+
+    engine.register('cancelled-parked-inline-workflow', async function* (ctx: WorkflowContext) {
+      return yield* (ctx as Context).waitForSignal('go');
+    });
+
+    const handle = await engine.start('cancelled-parked-inline-workflow', null, { id: workflowId });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]() === 1) {
+        break;
+      }
+
+      await flush();
+    }
+
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(1);
+
+    holdCancelledStateWrite = true;
+    const cancelPromise = engine.cancel(workflowId);
+    await cancelledStatePersisted.promise;
+
+    await expect(engine.resume(workflowId)).rejects.toThrow(
+      `Cannot resume workflow "${workflowId}": status is "cancelled", expected "running"`,
+    );
+
+    const recoveredHandles = await engine.recoverAll();
+    expect(recoveredHandles.some((recoveredHandle) => recoveredHandle.id === workflowId)).toBe(
+      false,
+    );
+
+    releaseCancelledStateWrite.resolve();
+    await cancelPromise;
+    await expect(handle.result()).rejects.toThrow('Workflow cancelled');
+    expect(engine[ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING]()).toBe(0);
+    engine[Symbol.dispose]();
+  });
+
   it('WorkflowCompletedEvent fires with result and duration', async () => {
     const engine = new Engine();
     engine.register('fast', async function* () {

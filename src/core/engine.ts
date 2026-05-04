@@ -3189,7 +3189,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     return this.#queuedOrLaunchingInlineWorkflowStartIds.has(workflowId);
   }
 
-  #isInlineWorkflowLocallyOwned(workflowId: string): boolean {
+  #workflowStatusCanRetainLocalOwnership(workflowStatus: WorkflowStatus): boolean {
+    return workflowStatus === 'running' || workflowStatus === 'pending';
+  }
+
+  #isInlineWorkflowLocallyOwned(workflowId: string, workflowStatus: WorkflowStatus): boolean {
+    if (!this.#workflowStatusCanRetainLocalOwnership(workflowStatus)) {
+      return false;
+    }
+
     if (this.#hasQueuedOrLaunchingInlineWorkflowStart(workflowId)) {
       return true;
     }
@@ -3205,13 +3213,11 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     );
   }
 
-  async #hasLocalCheckpointOwnership(workflowId: string): Promise<boolean> {
-    if (!this.#checkpoints.has(workflowId)) {
-      return false;
-    }
-
-    const state = await this.#loadWorkflowState(workflowId);
-    return state?.status === 'running' || state?.status === 'pending';
+  #hasLocalCheckpointOwnership(workflowId: string, workflowStatus: WorkflowStatus): boolean {
+    return (
+      this.#checkpoints.has(workflowId) &&
+      this.#workflowStatusCanRetainLocalOwnership(workflowStatus)
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -5381,12 +5387,15 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   // -------------------------------------------------------------------------
 
   async resume(workflowId: string): Promise<WorkflowHandle> {
-    if (this.#isInlineWorkflowLocallyOwned(workflowId)) {
-      return this.getHandle(workflowId);
-    }
+    const workflowState = await this.#loadWorkflowState(workflowId);
+    if (workflowState !== null) {
+      if (this.#isInlineWorkflowLocallyOwned(workflowId, workflowState.status)) {
+        return this.getHandle(workflowId);
+      }
 
-    if (await this.#hasLocalCheckpointOwnership(workflowId)) {
-      return this.getHandle(workflowId);
+      if (this.#hasLocalCheckpointOwnership(workflowId, workflowState.status)) {
+        return this.getHandle(workflowId);
+      }
     }
 
     return this.#resumeWorkflowFromStorage(workflowId, true);
@@ -5547,12 +5556,10 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       if (key.includes(':ckpt') || key.includes(':offload') || key.includes(':archive')) continue;
 
       const state = decodeWorkflowState(value);
-      const hasLocalCheckpointOwnership =
-        this.#checkpoints.has(state.id) &&
-        (state.status === 'running' || state.status === 'pending');
+      const hasLocalCheckpointOwnership = this.#hasLocalCheckpointOwnership(state.id, state.status);
       if (
         state.status === 'pending' ||
-        this.#isInlineWorkflowLocallyOwned(state.id) ||
+        this.#isInlineWorkflowLocallyOwned(state.id, state.status) ||
         hasLocalCheckpointOwnership
       ) {
         handles.push(this.getHandle(state.id));
