@@ -10,6 +10,7 @@ import {
   type StreamReference,
   type StreamSink,
 } from './context.ts';
+import { BranchTopologyChangedError } from './context/parallel-operations.ts';
 import {
   MAX_SESSION_STATE_SERIALIZED_BYTES,
   SessionStateValidationError,
@@ -439,6 +440,27 @@ describe('Context', () => {
       expect(nextStep.done).toBe(true);
       expect(nextStep.value).toBe('next-cached-result');
     });
+
+    it('throws when a cached all entry has a malformed branch table', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'all',
+              branches: [{ status: 'fulfilled', value: 'cached-a', operationId: 'parallel:0:0' }],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.all([context.run(taskA), context.run(taskB)]);
+
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
+    });
   });
 
   describe('ctx.race', () => {
@@ -496,6 +518,27 @@ describe('Context', () => {
       const nextStep = context.run(task).next();
       expect(nextStep.done).toBe(true);
       expect(nextStep.value).toBe('next-cached-result');
+    });
+
+    it('throws when cached race branch count changes on replay', () => {
+      const context = createContext({
+        accumulatedResults: new Map<number, unknown>([
+          [
+            0,
+            {
+              __weftParallelOperationCache: true,
+              formatVersion: 2,
+              variant: 'race',
+              branches: [{ status: 'fulfilled', value: 'winner', operationId: 'race:0:winner' }],
+              subOperationCount: 2,
+            },
+          ],
+        ]),
+      });
+
+      const generator = context.race([context.run(taskA), context.run(taskB), context.run(task)]);
+
+      expect(() => generator.next()).toThrow(BranchTopologyChangedError);
     });
   });
 

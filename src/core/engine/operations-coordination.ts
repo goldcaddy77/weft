@@ -119,9 +119,15 @@ export async function processParallelOperation(
     );
 
     const entry = buildEntryFromSlots('all', slots);
-    writePartialEntry(internals, workflowId, operation.step, entry);
+    const partialEntryWritten = writePartialEntry(internals, workflowId, operation.step, entry);
 
     if (hasFirstError) {
+      assertPartialFailurePersistenceSupported(
+        partialEntryWritten,
+        slots,
+        'ctx.all',
+        'worker execution mode',
+      );
       // Rethrow the original reason as-is (could be a string, number,
       // undefined, or any non-Error value) to mirror Promise.all.
       throw firstError;
@@ -149,10 +155,27 @@ function writePartialEntry(
   workflowId: string,
   step: number,
   entry: ParallelOperationCacheEntry,
-): void {
+): boolean {
   const context = internals.inlineStrategy?.getContext(workflowId);
-  if (context === undefined) return;
+  if (context === undefined) return false;
   context.accumulatedResults.set(step, entry);
+  return true;
+}
+
+function assertPartialFailurePersistenceSupported(
+  partialEntryWritten: boolean,
+  slots: ParallelBranchSlot[],
+  operationName: 'ctx.all' | 'ctx.runAll',
+  executionMode: string,
+): void {
+  if (partialEntryWritten || !slots.some((slot) => slot.status === 'fulfilled')) {
+    return;
+  }
+  throw new Error(
+    `${operationName} partial-failure preservation is not supported in ${executionMode}: ` +
+      `the engine cannot persist fulfilled branch slots after a sibling branch fails. ` +
+      `Run the workflow inline or make branch side effects idempotent.`,
+  );
 }
 
 export async function processRaceOperation(
@@ -201,9 +224,10 @@ export async function processRunAllOperation(
 
     const branchesToRun = filterBranchesToRun(operation.branches, branchNames, resumedSlotsByName);
 
-    // Dispatch through the existing run-all path so callers (speculative
-    // execution, activity callbacks) keep their semantics. The settled
-    // variant returns per-branch outcomes without throwing.
+    // Dispatch through the existing run-all helper shape so callers that
+    // reuse it keep matching semantics. The settled variant returns
+    // per-branch outcomes without throwing, which lets us write the partial
+    // cache entry before surfacing the first rejection.
     const outcomes = await executeRunAllBranchesSettled(branchesToRun, (fn, args) =>
       callActivityFunction(fn, args),
     );
@@ -211,10 +235,18 @@ export async function processRunAllOperation(
     const slots = mergeRunAllSlots(branchNames, operationIds, resumedSlotsByName, outcomes);
 
     const entry = buildEntryFromSlots('run-all', slots, branchNames);
-    writePartialEntry(internals, workflowId, operation.step, entry);
+    const partialEntryWritten = writePartialEntry(internals, workflowId, operation.step, entry);
 
-    const firstRejection = outcomes.find((o) => o.status === 'rejected');
-    if (firstRejection !== undefined && firstRejection.status === 'rejected') {
+    const firstRejection = outcomes.find((outcome) => outcome.status === 'rejected');
+    if (firstRejection !== undefined) {
+      assertPartialFailurePersistenceSupported(
+        partialEntryWritten,
+        slots,
+        'ctx.runAll',
+        'worker execution mode',
+      );
+      // Rethrow the original reason as-is to mirror Promise.all semantics
+      // for non-Error throws.
       throw firstRejection.reason;
     }
 
@@ -251,7 +283,7 @@ function mergeRunAllSlots(
     if (resumed?.status === 'fulfilled') {
       return resumed;
     }
-    const outcome = outcomes.find((o) => o.name === name);
+    const outcome = outcomes.find((candidate) => candidate.name === name);
     if (outcome === undefined) {
       return { status: 'pending', operationId };
     }

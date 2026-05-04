@@ -59,7 +59,6 @@ describe('dispatchBranchesAllSettled', () => {
 
   it('preserves an undefined rejection reason and signals via hasFirstError', async () => {
     const result = await dispatchBranchesAllSettled(['op-0'], undefined, async () => {
-      // eslint-disable-next-line @typescript-eslint/no-throw-literal
       throw undefined;
     });
 

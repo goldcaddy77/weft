@@ -88,7 +88,11 @@ export type OperationRouterCallbacks = {
     status: 'completed' | 'failed',
     value: unknown,
   ) => void;
-  feedOperationResult: (workflowId: string, result: OperationOutcome, error?: Error) => void;
+  feedOperationResult: (
+    workflowId: string,
+    result: OperationOutcome,
+    originalReason?: { value: unknown },
+  ) => void;
 };
 
 /**
@@ -222,12 +226,17 @@ export function failOperation(
     error.stack = `${error.stack}\n    --- workflow call site ---\n${operation.callerStack}`;
   }
 
-  const enrichedError = error instanceof Error ? error : new Error(String(error));
-  callbacks.finalizePendingTimelineEntry(workflowId, 'failed', enrichedError.message);
+  // The string-form is only for timeline/storage metadata. The original
+  // `error` value (which may be a non-Error like a string or undefined)
+  // is forwarded through a wrapper so the workflow throw boundary
+  // rethrows it as-is, matching Promise.all's rethrow contract even
+  // when the original reason is `undefined`.
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  callbacks.finalizePendingTimelineEntry(workflowId, 'failed', errorMessage);
   callbacks.feedOperationResult(
     workflowId,
-    { status: 'failed', error: enrichedError.message },
-    enrichedError,
+    { status: 'failed', error: errorMessage },
+    { value: error },
   );
 }
 

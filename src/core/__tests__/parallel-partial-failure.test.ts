@@ -207,34 +207,35 @@ describe('ctx.all partial-failure preservation', () => {
     engine[Symbol.dispose]();
   });
 
-  it('preserves the original (non-Error) rejection reason', async () => {
+  it('preserves the original (non-Error) rejection reason at the workflow boundary', async () => {
     // Promise.all rethrows whatever the branch threw — including
     // strings, numbers, or undefined. The engine must not coerce a
-    // non-Error rejection to `new Error(String(...))` on the way out;
-    // only the persisted slot metadata is normalized.
+    // non-Error rejection on the workflow throw path; only the
+    // persisted slot metadata and the timeline status string are
+    // normalized.
+    //
+    // We verify this by catching the rejection inside the workflow
+    // (where the throw boundary is) and asserting its identity.
     const engine = new Engine();
     const throwsString = async () => {
       throw 'plain-string-reason';
     };
 
+    let capturedInWorkflow: unknown;
     engine.register('non-error-throw', async function* (ctx: WorkflowContext) {
       const c = ctx as Context;
-      yield* c.all([c.run(throwsString)]);
+      try {
+        yield* c.all([c.run(throwsString)]);
+      } catch (error) {
+        capturedInWorkflow = error;
+      }
     });
 
     const handle = await engine.start('non-error-throw', null);
-    let captured: unknown;
-    try {
-      await handle.result();
-    } catch (error) {
-      captured = error;
-    }
-    // The engine wraps thrown non-Errors at a higher layer for the
-    // workflow status, but the helper-level contract is "rethrow the
-    // original reason unchanged." We assert the message contains the
-    // original string.
-    const message = captured instanceof Error ? captured.message : String(captured);
-    expect(message).toContain('plain-string-reason');
+    await handle.result();
+    // Inside the workflow, the rethrown value is the original string —
+    // not a wrapped Error.
+    expect(capturedInWorkflow).toBe('plain-string-reason');
     engine[Symbol.dispose]();
   });
 

@@ -82,6 +82,32 @@ function isValidSubOperationCount(value: unknown): boolean {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+function hasParallelOperationCacheMarker(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    (value as Record<string, unknown>)['__weftParallelOperationCache'] === true
+  );
+}
+
+function hasValidBranchTopology(
+  variant: 'all' | 'race' | 'run-all',
+  branches: unknown[],
+  subOperationCount: number,
+  branchNames: unknown,
+): boolean {
+  if (variant === 'race') {
+    return branches.length <= subOperationCount;
+  }
+  if (branches.length !== subOperationCount) {
+    return false;
+  }
+  if (variant === 'run-all') {
+    return Array.isArray(branchNames) && branchNames.length === subOperationCount;
+  }
+  return branchNames === undefined;
+}
+
 /** Type guard for the v2 parallel-operation cache entry shape. */
 export function isParallelOperationCacheEntry(
   value: unknown,
@@ -94,7 +120,28 @@ export function isParallelOperationCacheEntry(
   if (!Array.isArray(record['branches'])) return false;
   if (!isValidSubOperationCount(record['subOperationCount'])) return false;
   if (!isValidBranchNames(record['branchNames'])) return false;
+  const subOperationCount = record['subOperationCount'] as number;
+  if (
+    !hasValidBranchTopology(
+      record['variant'],
+      record['branches'],
+      subOperationCount,
+      record['branchNames'],
+    )
+  ) {
+    return false;
+  }
   return record['branches'].every(isValidBranchSlot);
+}
+
+function assertValidParallelOperationCacheEntry(
+  value: unknown,
+): asserts value is ParallelOperationCacheEntry {
+  if (hasParallelOperationCacheMarker(value) && !isParallelOperationCacheEntry(value)) {
+    throw new BranchTopologyChangedError(
+      'Parallel operation cache entry is malformed or incompatible with this engine version.',
+    );
+  }
 }
 
 /** Build a fresh v2 cache entry with the given branch slots. */
@@ -169,6 +216,7 @@ export function* all(
 
   if (internals.accumulatedResults?.has(step)) {
     const cached = internals.accumulatedResults.get(step);
+    assertValidParallelOperationCacheEntry(cached);
     if (isParallelOperationCacheEntry(cached)) {
       // Variant guard: a workflow that swapped ctx.all <-> ctx.race at the
       // same step would otherwise reconstruct the wrong shape. Treat as a
@@ -244,10 +292,20 @@ export function* race(
 
   if (internals.accumulatedResults?.has(step)) {
     const cached = internals.accumulatedResults.get(step);
+    assertValidParallelOperationCacheEntry(cached);
     if (isParallelOperationCacheEntry(cached)) {
       if (cached.variant !== 'race') {
         throw new BranchTopologyChangedError(
           `ctx.race step ${step} found a cached entry of variant '${cached.variant}'. The same step must use the same parallel primitive across retries.`,
+        );
+      }
+      // Branch count must be deterministic across retries. A workflow
+      // that changed `operations.length` between attempts would
+      // otherwise skip the wrong number of sub-operations on stepIndex
+      // advancement.
+      if (operations.length !== cached.subOperationCount) {
+        throw new BranchTopologyChangedError(
+          `ctx.race branch count changed across retry: expected ${cached.subOperationCount}, got ${operations.length}. Branch count must be deterministic.`,
         );
       }
       // Race only ever caches a fulfilled winner; partial entries are not
@@ -384,6 +442,7 @@ export function* runAll<T extends Record<string, [Function, ...unknown[]]>>(
 
   if (internals.accumulatedResults?.has(step)) {
     const cached = internals.accumulatedResults.get(step);
+    assertValidParallelOperationCacheEntry(cached);
     if (isParallelOperationCacheEntry(cached)) {
       validateRunAllTopology(cached, branchNames, step);
       if (isEntryFullyFulfilled(cached)) {

@@ -85,7 +85,7 @@ export type RunAllBranchOutcome =
 
 /**
  * Execute every `ctx.runAll()` branch and return per-branch settled
- * outcomes. Never rejects — callers inspect `outcomes` and decide how to
+ * outcomes. Never rejects: callers inspect `outcomes` and decide how to
  * surface failure. Used by the top-level run-all dispatch path so
  * fulfilled branches can be persisted before any rejection propagates.
  */
