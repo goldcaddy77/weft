@@ -84,26 +84,51 @@ export type RunAllBranchOutcome =
   | { status: 'rejected'; name: string; reason: unknown };
 
 /**
+ * Result of `executeRunAllBranchesSettled`. `firstError` carries the
+ * original rejection reason captured by settlement timing (matching
+ * native `Promise.all` behavior — whichever branch rejects first at
+ * runtime, not whichever appears first in branch insertion order).
+ * `hasFirstError` distinguishes "no rejection" from "rejected with
+ * `undefined`" (a workflow that threw `undefined` explicitly).
+ */
+export type RunAllSettledResult = {
+  outcomes: RunAllBranchOutcome[];
+  hasFirstError: boolean;
+  firstError: unknown;
+};
+
+/**
  * Execute every `ctx.runAll()` branch and return per-branch settled
- * outcomes. Never rejects: callers inspect `outcomes` and decide how to
- * surface failure. Used by the top-level run-all dispatch path so
- * fulfilled branches can be persisted before any rejection propagates.
+ * outcomes plus the first rejection captured by settlement timing.
+ * Never rejects: callers inspect the result and decide how to surface
+ * failure. Used by the top-level run-all dispatch path so fulfilled
+ * branches can be persisted before any rejection propagates.
  */
 export async function executeRunAllBranchesSettled(
   branches: Record<string, [fn: Function, ...args: unknown[]]>,
   callActivity: (fn: Function, args: unknown[]) => unknown,
-): Promise<RunAllBranchOutcome[]> {
+): Promise<RunAllSettledResult> {
   const entries = Object.entries(branches);
-  return Promise.all(
+  let hasFirstError = false;
+  let firstError: unknown = undefined;
+  const outcomes = await Promise.all(
     entries.map(async ([name, [fn, ...args]]): Promise<RunAllBranchOutcome> => {
       try {
         const value = await callActivity(fn, args);
         return { status: 'fulfilled', name, value };
       } catch (error) {
+        // Capture the FIRST rejection by settlement timing — the
+        // first branch to actually reject wins, not the first branch
+        // in insertion order.
+        if (!hasFirstError) {
+          hasFirstError = true;
+          firstError = error;
+        }
         return { status: 'rejected', name, reason: error };
       }
     }),
   );
+  return { outcomes, hasFirstError, firstError };
 }
 
 /** Execute the `ctx.runAll()` branches and return a name-keyed result record. */

@@ -226,10 +226,11 @@ export async function processRunAllOperation(
 
     // Dispatch through the existing run-all helper shape so callers that
     // reuse it keep matching semantics. The settled variant returns
-    // per-branch outcomes without throwing, which lets us write the partial
-    // cache entry before surfacing the first rejection.
-    const outcomes = await executeRunAllBranchesSettled(branchesToRun, (fn, args) =>
-      callActivityFunction(fn, args),
+    // per-branch outcomes plus the first rejection by settlement timing,
+    // matching `Promise.all`'s rethrow-as-is contract.
+    const { outcomes, hasFirstError, firstError } = await executeRunAllBranchesSettled(
+      branchesToRun,
+      (fn, args) => callActivityFunction(fn, args),
     );
 
     const slots = mergeRunAllSlots(branchNames, operationIds, resumedSlotsByName, outcomes);
@@ -237,8 +238,7 @@ export async function processRunAllOperation(
     const entry = buildEntryFromSlots('run-all', slots, branchNames);
     const partialEntryWritten = writePartialEntry(internals, workflowId, operation.step, entry);
 
-    const firstRejection = outcomes.find((outcome) => outcome.status === 'rejected');
-    if (firstRejection !== undefined) {
+    if (hasFirstError) {
       assertPartialFailurePersistenceSupported(
         partialEntryWritten,
         slots,
@@ -247,7 +247,7 @@ export async function processRunAllOperation(
       );
       // Rethrow the original reason as-is to mirror Promise.all semantics
       // for non-Error throws.
-      throw firstRejection.reason;
+      throw firstError;
     }
 
     return reconstructRunAllRecord(branchNames, slots);
