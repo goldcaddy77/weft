@@ -2793,8 +2793,14 @@
       "sourceName": "TimerEntry",
       "kind": "type",
       "subKind": "interface",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "TimerEntry",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/core/types/checkpoint.ts",
@@ -5348,6 +5354,140 @@
         {
           "importPath": "weft/service-worker",
           "exportName": "createPeriodicSyncHandler",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/setup.ts",
+      "sourceName": "SetupServiceWorkerOptions",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "SetupServiceWorkerOptions",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/setup.ts",
+      "sourceName": "SetupServiceWorkerResult",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "SetupServiceWorkerResult",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/setup.ts",
+      "sourceName": "resetSetupServiceWorkerRegistry",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [],
+      "classification": "not-public"
+    },
+    {
+      "sourceFile": "src/service-worker/setup.ts",
+      "sourceName": "setupServiceWorker",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "setupServiceWorker",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "DEFAULT_PERIODIC_SYNC_TAG",
+      "kind": "value",
+      "subKind": "const",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "DEFAULT_PERIODIC_SYNC_TAG",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "MinimalExtendableEvent",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "MinimalExtendableEvent",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "MinimalFetchEvent",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "MinimalFetchEvent",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "MinimalPeriodicSyncEvent",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "MinimalPeriodicSyncEvent",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "buildDelegatedRequest",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "buildDelegatedRequest",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "normalizePathPrefix",
+      "kind": "value",
+      "subKind": "function",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "normalizePathPrefix",
           "kind": "value"
         }
       ],

@@ -44,16 +44,45 @@ The Weft HTTP handler is a pure `Request` to `Response` function. On the server,
 // weft-sw.ts — installed as a Service Worker
 /// <reference lib="webworker" />
 
-import { Engine } from 'weft';
-import { IndexedDBStorage } from 'weft/storage/indexeddb';
+import { setupServiceWorker } from 'weft/service-worker';
+
+const { engine } = await setupServiceWorker({
+  pathPrefix: '/weft/',
+  register(engine) {
+    engine.register('checkout', async function* () {
+      yield;
+      return 'done';
+    });
+  },
+});
+
+void engine;
+```
+
+`setupServiceWorker()` builds an IndexedDB-backed engine, wires a Service Worker scheduler against it, and attaches all four event listeners (`install`, `activate`, `fetch`, `periodicsync`) synchronously before any `await`. Listeners attach in lockstep — fetch handlers gate their work on the registration promise so a request that arrives mid-init is held until your `register` callback completes.
+
+The client library doesn't know or care whether its `fetch` calls hit a remote server or a local Service Worker. The API contract is identical.
+
+When the tab calls `fetch("/weft/v1/workflows", { method: "POST", ... })`, the Service Worker strips the `pathPrefix` before routing, so the underlying handler sees `/v1/workflows`.
+
+If you've already registered workflows synchronously (e.g. on a separate boot path) and want explicit listener attachment, use the lower-level factories instead:
+
+```typescript partial
 import {
   createFetchHandler,
   createLifecycleHandlers,
   createPeriodicSyncHandler,
+  ServiceWorkerScheduler,
 } from 'weft/service-worker';
+import { Engine } from 'weft';
+import { IndexedDBStorage } from 'weft/storage/indexeddb';
 
 const storage = new IndexedDBStorage('weft');
 const engine = new Engine({ storage });
+const scheduler = new ServiceWorkerScheduler({
+  storage,
+  onTimerFired: (entry) => engine.fireTimer(entry),
+});
 
 await engine.recoverAll();
 
@@ -61,14 +90,10 @@ const { install, activate } = createLifecycleHandlers();
 self.addEventListener('install', install);
 self.addEventListener('activate', activate);
 self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/' }));
-self.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler));
+self.addEventListener('periodicsync', createPeriodicSyncHandler(scheduler));
 ```
 
-The client library doesn't know or care whether its `fetch` calls hit a remote server or a local Service Worker. The API contract is identical.
-
-`createFetchHandler()` takes an `engine` and an optional `pathPrefix` (default `'/weft/'`). It returns a `fetch` event listener that intercepts matching requests and delegates to `handleRequest()`. Non-matching requests pass through to the network. `createLifecycleHandlers()` returns `install` and `activate` handlers that call `skipWaiting()` and `clients.claim()` respectively, ensuring the Service Worker takes control immediately. `createPeriodicSyncHandler()` returns a `periodicsync` listener for timer wakeups and calls `engine.scheduler.tick()` inside `event.waitUntil(...)`.
-
-When the tab calls `fetch("/weft/v1/workflows", { method: "POST", ... })`, the Service Worker's `createFetchHandler()` strips the `pathPrefix` before routing, so the underlying handler sees `/v1/workflows`.
+`createFetchHandler()` takes an `engine` and an optional `pathPrefix` (default `'/weft/'`). It returns a `fetch` event listener that intercepts matching requests and delegates to `handleRequest()`. Non-matching requests pass through to the network. `createLifecycleHandlers()` returns `install` and `activate` handlers that call `skipWaiting()` and `clients.claim()` respectively, ensuring the Service Worker takes control immediately. `createPeriodicSyncHandler()` returns a `periodicsync` listener for timer wakeups and calls `scheduler.tick()` inside `event.waitUntil(...)`.
 
 ## Durable timers with Periodic Background Sync
 
