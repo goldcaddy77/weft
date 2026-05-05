@@ -112,12 +112,15 @@ export interface ActivityCallOptions {
  * ```ts
  * import { activity, type ActivityDefinition } from 'weft';
  *
- * const sendEmail: ActivityDefinition<{ to: string; body: string }, void> = activity({
+ * const sendEmail: ActivityDefinition<{ to: string; body: string }, void> = activity<
+ *   { to: string; body: string },
+ *   void
+ * >({
  *   name: 'sendEmail',
  *   timeout: '30s',
  *   retry: { maxAttempts: 3, initialBackoff: '1s', backoffMultiplier: 2, maxBackoff: '10s' },
- *   execute: async (input: unknown) => {
- *     const { to, body } = input as { to: string; body: string };
+ *   execute: async (input) => {
+ *     const { to, body } = input;
  *     console.log(`Sending to ${to}: ${body}`);
  *   },
  * });
