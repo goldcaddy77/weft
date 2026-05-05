@@ -6609,132 +6609,6 @@
       "classification": "example-required"
     },
     {
-      "sourceFile": "src/storage/index.ts",
-      "sourceName": "exportedJsonCodec",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/storage",
-          "exportName": "jsonCodec",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/storage/index.ts",
-      "sourceName": "exportedKeys",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/storage",
-          "exportName": "KEYS",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/storage/index.ts",
-      "sourceName": "exportedMemoryStorage",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/storage",
-          "exportName": "MemoryStorage",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/storage/index.ts",
-      "sourceName": "exportedMsgpackCodec",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/storage",
-          "exportName": "msgpackCodec",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/storage/index.ts",
-      "sourceName": "exportedScopedStorage",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/storage",
-          "exportName": "ScopedStorage",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/storage/index.ts",
-      "sourceName": "exportedScopedStorageFactory",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/storage",
-          "exportName": "scopedStorage",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/storage/index.ts",
-      "sourceName": "exportedStorageConditionalBatch",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/storage",
-          "exportName": "storageConditionalBatch",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/storage/index.ts",
-      "sourceName": "exportedStorageValuesEqual",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/storage",
-          "exportName": "storageValuesEqual",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/storage/index.ts",
-      "sourceName": "exportedWithCodec",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/storage",
-          "exportName": "withCodec",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
       "sourceFile": "src/storage/indexeddb.ts",
       "sourceName": "IndexedDBStorage",
       "kind": "value",
@@ -6804,6 +6678,11 @@
       "publicFaces": [
         {
           "importPath": "weft",
+          "exportName": "KEYS",
+          "kind": "value"
+        },
+        {
+          "importPath": "weft/storage",
           "exportName": "KEYS",
           "kind": "value"
         },
@@ -6931,6 +6810,11 @@
           "kind": "value"
         },
         {
+          "importPath": "weft/storage",
+          "exportName": "storageConditionalBatch",
+          "kind": "value"
+        },
+        {
           "importPath": "weft/storage/interface",
           "exportName": "storageConditionalBatch",
           "kind": "value"
@@ -7006,6 +6890,11 @@
           "kind": "value"
         },
         {
+          "importPath": "weft/storage",
+          "exportName": "storageValuesEqual",
+          "kind": "value"
+        },
+        {
           "importPath": "weft/storage/interface",
           "exportName": "storageValuesEqual",
           "kind": "value"
@@ -7053,6 +6942,11 @@
           "kind": "value"
         },
         {
+          "importPath": "weft/storage",
+          "exportName": "MemoryStorage",
+          "kind": "value"
+        },
+        {
           "importPath": "weft/storage/memory",
           "exportName": "MemoryStorage",
           "kind": "value"
@@ -7089,6 +6983,11 @@
           "importPath": "weft",
           "exportName": "ScopedStorage",
           "kind": "value"
+        },
+        {
+          "importPath": "weft/storage",
+          "exportName": "ScopedStorage",
+          "kind": "value"
         }
       ],
       "classification": "example-required"
@@ -7101,6 +7000,11 @@
       "publicFaces": [
         {
           "importPath": "weft",
+          "exportName": "scopedStorage",
+          "kind": "value"
+        },
+        {
+          "importPath": "weft/storage",
           "exportName": "scopedStorage",
           "kind": "value"
         }
@@ -7275,6 +7179,11 @@
           "importPath": "weft",
           "exportName": "jsonCodec",
           "kind": "value"
+        },
+        {
+          "importPath": "weft/storage",
+          "exportName": "jsonCodec",
+          "kind": "value"
         }
       ],
       "classification": "example-required"
@@ -7287,6 +7196,11 @@
       "publicFaces": [
         {
           "importPath": "weft",
+          "exportName": "msgpackCodec",
+          "kind": "value"
+        },
+        {
+          "importPath": "weft/storage",
           "exportName": "msgpackCodec",
           "kind": "value"
         }
@@ -7303,6 +7217,11 @@
           "importPath": "weft",
           "exportName": "withCodec",
           "kind": "value"
+        },
+        {
+          "importPath": "weft/storage",
+          "exportName": "withCodec",
+          "kind": "value"
         }
       ],
       "classification": "example-required"
@@ -7312,8 +7231,14 @@
       "sourceName": "ChaosNonRetryableError",
       "kind": "value",
       "subKind": "class",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft/testing",
+          "exportName": "ChaosNonRetryableError",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -7334,16 +7259,28 @@
       "sourceName": "ChaosTimeoutError",
       "kind": "value",
       "subKind": "class",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft/testing",
+          "exportName": "ChaosTimeoutError",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
       "sourceName": "ChaosTransientError",
       "kind": "value",
       "subKind": "class",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft/testing",
+          "exportName": "ChaosTransientError",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/chaos.ts",
@@ -7364,98 +7301,6 @@
       "sourceName": "withChaos",
       "kind": "value",
       "subKind": "function",
-      "publicFaces": [],
-      "classification": "not-public"
-    },
-    {
-      "sourceFile": "src/testing/index.ts",
-      "sourceName": "exportedActivityMockRegistry",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/testing",
-          "exportName": "ActivityMockRegistry",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/testing/index.ts",
-      "sourceName": "exportedChaosNonRetryableError",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/testing",
-          "exportName": "ChaosNonRetryableError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/testing/index.ts",
-      "sourceName": "exportedChaosTimeoutError",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/testing",
-          "exportName": "ChaosTimeoutError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/testing/index.ts",
-      "sourceName": "exportedChaosTransientError",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/testing",
-          "exportName": "ChaosTransientError",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/testing/index.ts",
-      "sourceName": "exportedTestEngine",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/testing",
-          "exportName": "TestEngine",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/testing/index.ts",
-      "sourceName": "exportedTimeControl",
-      "kind": "value",
-      "subKind": "const",
-      "publicFaces": [
-        {
-          "importPath": "weft/testing",
-          "exportName": "TimeControl",
-          "kind": "value"
-        }
-      ],
-      "classification": "example-required"
-    },
-    {
-      "sourceFile": "src/testing/index.ts",
-      "sourceName": "exportedWithChaos",
-      "kind": "value",
-      "subKind": "const",
       "publicFaces": [
         {
           "importPath": "weft/testing",
@@ -7470,8 +7315,14 @@
       "sourceName": "ActivityMockRegistry",
       "kind": "value",
       "subKind": "class",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft/testing",
+          "exportName": "ActivityMockRegistry",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/testing/mocks.ts",
@@ -7548,8 +7399,28 @@
       "sourceName": "TestEngine",
       "kind": "value",
       "subKind": "class",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft/testing",
+          "exportName": "TestEngine",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/testing/time-control.ts",
+      "sourceName": "TimeControl",
+      "kind": "value",
+      "subKind": "class",
+      "publicFaces": [
+        {
+          "importPath": "weft/testing",
+          "exportName": "TimeControl",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/worker/heartbeat.ts",
