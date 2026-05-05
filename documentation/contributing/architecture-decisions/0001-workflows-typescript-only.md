@@ -1,0 +1,57 @@
+# 0001 — Workflows Are TypeScript-Only by Design
+
+**Status**: Accepted
+
+## Context
+
+Weft is a durable execution engine. Its defining design choice is **checkpoint-not-replay**: workflows are `AsyncGenerator` functions, each `yield*` creates a serialized snapshot of the generator's local state, and recovery deserializes the last snapshot and resumes execution from that exact point. This is fundamentally different from the Temporal model, where the workflow is replayed from history on every recovery and determinism is a hard runtime constraint.
+
+The checkpoint model has one strict prerequisite: the in-flight execution state of a workflow must be capturable as a serializable artifact. For JavaScript `AsyncGenerator` functions running under Bun and modern V8, that artifact is the generator's frame: local variables, the suspended position in the source, and the captured closure environment. Bun and the engine cooperate to snapshot and restore that frame.
+
+No other language runtime exposes async generator state as a serializable artifact in a stable, public, cross-process way. Python's `async def` coroutines, Go's goroutines, Java's continuations, .NET's async state machines — each has its own internal representation, and none of those representations are designed to be persisted to disk and revived in a different process. The closest commercial analog is Temporal's replay model, which sidesteps the problem entirely by re-running history rather than capturing live state.
+
+## The constraint
+
+If we want polyglot workflows, we have three theoretical paths:
+
+**Path A — TypeScript-only workflows, polyglot activities.** Workflows run on the engine in TypeScript. Activities (the side-effecting work) can run in any language, communicating with the engine via the [`RemoteWorker` wire protocol](../../reference/remote-worker-protocol.md).
+
+**Path B — Replay-determinism for non-TS workflows.** Abandon checkpoint-not-replay for workflows in other languages, falling back to Temporal's model. Each non-TS SDK would need to enforce determinism in that language, with all the restrictions that implies (no system time, no random IDs, no parallel goroutines without explicit deterministic scheduling, etc.).
+
+**Path C — A separate state store for non-TS workflows.** Treat the workflow as a state machine driven by external messages and persist the state explicitly. The engine becomes a coordinator rather than an execution host.
+
+## Decision
+
+**We choose Path A.** Workflows are TypeScript-only by design. Activities can run in any language via the `RemoteWorker` protocol. The split is intentional and load-bearing — the checkpoint model requires single-process generator state, so workflow code is TypeScript-only.
+
+## Why not B or C
+
+**Path B was rejected** because it abandons the defining design choice. Temporal already does Path B and does it well; Weft's reason to exist is to do something different. Layering replay-determinism back into a system whose core design assumes the absence of replay would create two execution models in one engine, with all the testing, debugging, and onboarding cost of supporting both. If a team needs polyglot workflow code, Temporal is the right answer.
+
+**Path C was rejected** because it collapses back to Path B in practice. A "state machine driven by external messages" with persistent state and re-driven from messages on recovery is replay with extra steps. It also abandons the ergonomic win of writing workflows as ordinary control flow with `await` and loops — the thing that makes the TypeScript SDK pleasant to use.
+
+## Consequences
+
+- **Workflow definitions** must be authored in TypeScript and run on Bun, Node, or browser JavaScript runtimes.
+- **Activities** can be authored in any language. The `RemoteWorker` protocol is the contract; any language with a WebSocket and JSON library can implement it.
+- **Tooling assumes TypeScript.** Lint rules, type-aware checks, schema generation, codegen targets, and the public API snapshot all assume TS workflow code. Cross-language polyglot work expresses itself as activities behind `RemoteWorker`.
+- **Documentation positions Weft as a TypeScript engine.** The README says so. The `docs/architecture/` pages cross-link to this ADR. The "is Weft right for me?" decision becomes: do you want workflows in TypeScript, or do you need workflows in multiple languages? If the latter, Temporal is the right answer.
+- **The protocol contract for activities is durable.** The `RemoteWorker` protocol is documented separately ([reference](../../reference/remote-worker-protocol.md)) so SDK authors in other languages can implement compatible workers without reverse-engineering source.
+
+## Forces
+
+- The checkpoint model's read latency, write throughput, and recovery time make Weft attractive for high-throughput durable execution. We don't want to give those up to satisfy a "but does it run Python?" checkbox.
+- The team's primary language is TypeScript. Polyglot workflow runtimes multiply the surface area for non-determinism bugs across languages we don't routinely write — that's a real cost, not a hypothetical one.
+- Activities cover the cross-language need in practice. Most "we have a Python ML model" stories are activity-shaped: stateless, called with input, returning output. The rare workflow-shaped problem in another language is better served by Temporal.
+
+## What stays open
+
+- **Conformance test suite for `RemoteWorker`.** Cross-language SDKs need a programmatic way to verify they implement the protocol correctly. Tracked in roadmap §9.
+- **Drift-prevention test for the protocol document.** Mirrors the discovery-parity test for `/openapi.json` and `/openrpc.json`. Tracked in roadmap §9.
+- **`protocolVersion` field.** Currently no version handshake exists; SDKs must target a specific `weft` version. Adding versioning is a breaking change to the protocol envelope. Tracked in roadmap §9.
+
+## See also
+
+- [Checkpoint versus Replay](../../architecture/checkpoint-versus-replay.md) — the foundational design choice this constraint flows from.
+- [RemoteWorker wire protocol](../../reference/remote-worker-protocol.md) — the contract polyglot SDKs implement against.
+- [Architecture Decisions overview](../architecture-decisions.md) — the inline-summary index.

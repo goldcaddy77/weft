@@ -380,6 +380,8 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
 - [ ] **Formally specify the `RemoteWorker` wire protocol so SDKs in other languages can implement it.**
 
+  > **Partial progress:** spec doc shipped at `documentation/reference/remote-worker-protocol.md` (note: filed under `reference/` rather than `specifications/` to match existing docs conventions). Conformance test suite, drift-prevention test, and `protocolVersion` field still pending.
+
   **Where:** new `documentation/specifications/remote-worker-protocol.md`. Driven from existing `src/worker/index.ts` (registration, dispatch, heartbeat) and `src/server/json-rpc-websocket.ts` (server side).
 
   Document:
@@ -394,7 +396,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Stable on-the-wire field names (TS-side renames don't affect wire format). Forward-compatible — additions only, never renames or repurposings. Pick `snake_case` _or_ `camelCase` consistently (audit current).
 
-- [ ] **Document "workflows are TypeScript-only by design" via an ADR + README + architecture pages.**
+- [x] **Document "workflows are TypeScript-only by design" via an ADR + README + architecture pages.**
 
   **Where:**
   - `documentation/contributing/architecture-decisions/0001-workflows-typescript-only.md` — full ADR recording Status, Context (checkpoint-not-replay model), the constraint (generators not serializable across processes), the implication (engine drives the generator end-to-end in one process), why this makes workflows TS-only (Python `async def` and JS `async function*` have different state machines; cross-language serialization of in-flight execution state cannot be done because no language runtime exposes execution state as a serializable artifact), the three theoretical paths considered (Path B replay-determinism rejected — abandons the defining design choice; Path C separate state-store rejected — collapses back to Path B; Path A chosen — workflows in engine, polyglot activities), Decision, Consequences, Forces, What Stays Open.
@@ -494,7 +496,9 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Cross-link to `agent-declaration.md`, `api-context.md`, `api-engine.md`, `configuration.md`, `remote-workers.md`, `interceptors.md`. Add a `[Multi-Tenancy](documentation/guides/multi-tenancy.md)` link to the README's Documentation/Guides bullet list and a one-line pointer at the end of the README's Multi-Tenancy section. Ship the guide and the README link in the same PR.
 
-- [ ] **Write `documentation/guides/service-worker.md`.**
+- [x] **Write `documentation/guides/service-worker.md`.**
+
+  > File pre-existed; rewrite added the `setupServiceWorker()` quickstart, decision tree, browser support matrix, debugging, and pitfalls coverage the roadmap called for.
 
   **Where:** new file. Cross-link from `documentation/architecture/browser-runtime.md` (currently the only walkthrough), `documentation/guides/server.md` (mentions in passing at line 206), README.
 

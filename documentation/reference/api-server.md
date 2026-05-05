@@ -222,10 +222,179 @@ PATCH body: `{ "attributes": { "key": "value" } }`.
 
 ### Discovery
 
+The operation catalog is the unified, transport-neutral registry of every operation Weft exposes. The discovery routes serve machine-readable schemas derived from the same registry that powers REST, JSON-RPC, and WebSocket dispatch.
+
 | Method | Path            | Description                                    |
 | ------ | --------------- | ---------------------------------------------- |
 | `GET`  | `/openapi.json` | OpenAPI 3.1 contract for the operation catalog |
 | `GET`  | `/openrpc.json` | OpenRPC 1.3.2 contract                         |
+
+**`GET /openapi.json`** — OpenAPI 3.1 document describing every REST-bound operation. Useful for client codegen, request validation, and Swagger-style UIs. Schemas are generated from the same Zod definitions the server uses at runtime, so the document never drifts from the implementation.
+
+**`GET /openrpc.json`** — OpenRPC 1.3.2 document describing every JSON-RPC method. Pair this with `/jsonrpc` (WebSocket) or JSON-RPC-over-HTTP for typed RPC clients.
+
+Both documents enumerate operations from the unified catalog. To see which transports an operation is bound to, look at the `tags` and binding metadata in the document. To see the input/output schemas for an operation, follow the `$ref` links into `components.schemas`.
+
+### Storage Operations
+
+> [!NOTE]
+> These routes are HTTP-only — they're not exposed over JSON-RPC, WebSocket, or stdio. The corresponding operation names (`weft.storage.get`, `weft.storage.put`, etc.) appear in `/openapi.json` but not in `/openrpc.json`.
+
+Raw key-value access to the engine's storage layer, used by `HTTPStorage` and any client that wants to treat a Weft server as a remote storage backend. Every key is namespaced under `tenant:{tenantId}` for tenant-scoped principals; `storage:admin` callers see the unscoped keyspace.
+
+| Method   | Path                              | Description                            |
+| -------- | --------------------------------- | -------------------------------------- |
+| `GET`    | `/v1/storage/:key`                | Read a single value                    |
+| `PUT`    | `/v1/storage/:key`                | Write a single value                   |
+| `DELETE` | `/v1/storage/:key`                | Delete a single value                  |
+| `GET`    | `/v1/storage`                     | Scan keys by prefix (NDJSON stream)    |
+| `POST`   | `/v1/storage/-/batch`             | Apply a batch of put/delete operations |
+| `POST`   | `/v1/storage/-/conditional-batch` | Apply a compare-and-swap batch         |
+
+#### Authorization
+
+Every storage route requires authentication. Required scopes:
+
+| Routes                                                                        | Required scopes                                                            |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `GET /v1/storage/:key`, `GET /v1/storage`                                     | `storage:read` or `storage:admin`                                          |
+| `PUT /v1/storage/:key`, `DELETE /v1/storage/:key`, `POST /v1/storage/-/batch` | `storage:write` or `storage:admin`                                         |
+| `POST /v1/storage/-/conditional-batch`                                        | `storage:admin` alone, or both `storage:read` and `storage:write` together |
+
+The conditional-batch route requires read access too because conditions compare against current values—a write-only caller would otherwise be able to probe key state through condition outcomes.
+
+#### Tenant scoping
+
+When the authenticated principal has a non-empty `tenantId`, every key is transparently prefixed with `tenant:{encodeStorageKeyComponent(tenantId)}` before hitting the underlying storage. Clients see and write the unprefixed key; the server handles the namespacing.
+
+A principal without a `tenantId` must hold `storage:admin` to access raw storage. Without it, the server returns 403 with a `Forbidden` fault.
+
+#### `GET /v1/storage/:key`
+
+Read a value by key.
+
+- **Path parameter `:key`** — URL-encoded storage key. The server decodes it before lookup, so application keys can contain any characters except those forbidden in URL paths.
+- **Required scopes** — `storage:read` or `storage:admin`.
+- **Success response** — `200 OK`, `Content-Type: application/octet-stream`, body is the raw value bytes.
+- **Missing key** — `404 Not Found`, empty body.
+
+```http
+GET /v1/storage/wf%3Acheckout-123 HTTP/1.1
+Authorization: Bearer <token>
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/octet-stream
+
+<raw bytes>
+```
+
+#### `PUT /v1/storage/:key`
+
+Write a value by key. Overwrites any existing value.
+
+- **Path parameter `:key`** — URL-encoded storage key.
+- **Required headers** — `Authorization`, `Content-Type: application/octet-stream`.
+- **Request body** — raw value bytes.
+- **Required scopes** — `storage:write` or `storage:admin`.
+- **Success response** — `204 No Content`.
+
+```http
+PUT /v1/storage/wf%3Acheckout-123 HTTP/1.1
+Authorization: Bearer <token>
+Content-Type: application/octet-stream
+
+<raw bytes>
+```
+
+```http
+HTTP/1.1 204 No Content
+```
+
+#### `DELETE /v1/storage/:key`
+
+Delete a value by key. No-op if the key does not exist.
+
+- **Path parameter `:key`** — URL-encoded storage key.
+- **Required scopes** — `storage:write` or `storage:admin`.
+- **Success response** — `204 No Content`.
+
+#### `GET /v1/storage`
+
+Stream key-value pairs whose keys start with a prefix.
+
+- **Query parameters** (verified against `extractStorageScanInput`):
+  - `prefix` (required) — prefix to scan. Empty string scans everything visible to the principal.
+  - `limit` (optional) — positive integer; maximum number of entries returned.
+  - `reverse` (optional) — `"true"` or `"false"` (string-typed in the query). Reverses lexicographic order.
+  - `gt`, `gte`, `lt`, `lte` (optional) — string bounds on the key.
+- **Required scopes** — `storage:read` or `storage:admin`.
+- **Success response** — `200 OK`, `Content-Type: application/x-ndjson`. Each line is `{"key": "...", "value": "<base64>"}\n`. The stream is lazy: the underlying storage scan only advances as the response body is consumed.
+
+The `HTTPStorage` client enforces a 64 MB total response cap on its side; if your scan would exceed that, narrow the prefix or paginate with `limit` and `gt`.
+
+```http
+GET /v1/storage?prefix=wf%3A&limit=100 HTTP/1.1
+Authorization: Bearer <token>
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/x-ndjson
+
+{"key":"wf:checkout-123","value":"AAEC..."}
+{"key":"wf:checkout-456","value":"AwQF..."}
+```
+
+#### `POST /v1/storage/-/batch`
+
+Apply multiple put/delete operations as a single batch.
+
+- **Required headers** — `Authorization`, `Content-Type: application/json`.
+- **Request body**:
+
+  ```json
+  {
+    "operations": [
+      { "type": "put", "key": "string", "value": "<base64>" },
+      { "type": "delete", "key": "string" }
+    ]
+  }
+  ```
+
+  Values are base64-encoded byte strings.
+
+- **Required scopes** — `storage:write` or `storage:admin`.
+- **Success response** — `204 No Content`.
+
+The interface-level guarantee: the operations are submitted to the underlying storage's `batch` primitive in a single call. Atomicity guarantees come from the backend—`SQLiteStorage`, `IndexedDBStorage`, `LMDBStorage`, and `TursoStorage` apply batches inside a transaction; see [the storage backend matrix](../guides/storage.md#backend-selection-matrix) for per-backend behavior.
+
+#### `POST /v1/storage/-/conditional-batch`
+
+Apply a compare-and-swap batch: validate every condition before applying any operation. If any condition fails, no operation runs.
+
+- **Required headers** — `Authorization`, `Content-Type: application/json`.
+- **Request body**:
+
+  ```json
+  {
+    "conditions": [{ "key": "string", "expectedValue": "<base64-or-null>" }],
+    "operations": [
+      { "type": "put", "key": "string", "value": "<base64>" },
+      { "type": "delete", "key": "string" }
+    ]
+  }
+  ```
+
+  `expectedValue: null` asserts the key is currently missing; a base64 string asserts the key currently holds those exact bytes.
+
+- **Required scopes** — `storage:admin` alone, or both `storage:read` and `storage:write` together.
+- **Success response** — `200 OK`, `Content-Type: application/json`, body `{ "applied": true }` or `{ "applied": false }`.
+
+The `applied` boolean tells the caller whether the conditions all passed and the operations ran. The HTTP status is `200` either way—a `false` result is not an error, it's an expected CAS failure.
+
+The interface-level guarantee: all conditions are checked before any operation is applied. If any condition fails, no operation runs. The application of the operations themselves is delegated to the storage backend's batch primitive; backend-specific transaction guarantees vary—see [the storage backend matrix](../guides/storage.md#backend-selection-matrix).
 
 ### Metrics
 
