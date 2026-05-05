@@ -57,17 +57,11 @@ describe('operation kind and transport binding parity', () => {
     }
   });
 
-  it('keeps the WebSocket subscription handler attached to the subscription operation', () => {
+  it('keeps WebSocket subscription bindings attached only to subscription operations', () => {
     const registry = createLiveOperationRegistry();
-    const operation = registry.get('weft.workflows.events');
 
-    expect(operation?.kind).toBe('subscription');
-    expect(
-      longLivedBindings().some(
-        (binding) =>
-          binding.operationName === 'weft.workflows.events' &&
-          binding.transportKind === 'websocket-subscription',
-      ),
-    ).toBe(true);
+    for (const binding of WEBSOCKET_SUBSCRIPTION_BINDINGS) {
+      expect(registry.get(binding.operationName)?.kind).toBe('subscription');
+    }
   });
 });

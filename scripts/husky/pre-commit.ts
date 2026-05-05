@@ -85,8 +85,15 @@ try {
   const glob = new Bun.Glob('{src,tests}/**/*.test.ts');
   const testFiles = [];
   for await (const file of glob.scan('.')) {
-    if (file.includes('/benchmarks/')) continue;
-    if (LOAD_SENSITIVE_TEST_PATHS.includes(file as (typeof LOAD_SENSITIVE_TEST_PATHS)[number]))
+    // Normalize the path before any allow-list comparison: strip `./` prefix
+    // and collapse runs of slashes. Without this, a run-on-load-sensitive
+    // test could slip through if the glob ever returns `./src/...` or
+    // produces a path with redundant separators.
+    const normalized = file.replace(/^\.\//, '').replace(/\/+/g, '/');
+    if (normalized.includes('/benchmarks/')) continue;
+    if (
+      LOAD_SENSITIVE_TEST_PATHS.includes(normalized as (typeof LOAD_SENSITIVE_TEST_PATHS)[number])
+    )
       continue;
     testFiles.push(file);
   }

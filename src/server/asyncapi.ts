@@ -17,9 +17,13 @@ import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
 import { canonicalJson } from './openapi-canonical-json.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
+import { createLiveRestBindings, type UnknownRestBinding } from './rest-bindings.ts';
+import { toOpenApiPath } from './route-model.ts';
 
 export type AsyncApiOptions = {
   registry: OperationRegistry;
+  /** REST bindings used to resolve SSE channel addresses. Defaults to `createLiveRestBindings()`. */
+  restBindings?: ReadonlyArray<UnknownRestBinding>;
   title?: string;
   version?: string;
   discoveryInfo?: DiscoveryInfo;
@@ -56,13 +60,21 @@ export function generateAsyncApiDocument(options: AsyncApiOptions): Record<strin
     .filter(isAsyncApiOperation)
     .toSorted((left, right) => compareStrings(left.name, right.name));
 
+  const restBindings = options.restBindings ?? createLiveRestBindings();
+  const sseAddressByOperationName = new Map<string, string>();
+  for (const binding of restBindings) {
+    if (binding.transportKind === 'sse') {
+      sseAddressByOperationName.set(binding.operationName, toOpenApiPath(binding.path));
+    }
+  }
+
   for (const operation of asyncOperations) {
     const channelName = channelNameForOperation(operation);
     const operationName = operationNameForOperation(operation);
     const channel =
       operation.kind === 'subscription'
         ? buildWebSocketChannel(operation)
-        : buildSseChannel(operation);
+        : buildSseChannel(operation, sseAddressByOperationName.get(operation.name));
     const operationMessages =
       operation.kind === 'subscription'
         ? buildWebSocketMessages(operation, zodToJsonSchema)

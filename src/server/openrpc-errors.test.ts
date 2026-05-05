@@ -25,57 +25,61 @@ import {
 } from './operation-fault.ts';
 
 type OperationFaultWithCode<Code extends FaultCode> = Extract<OperationFault, { code: Code }>;
-type AssertExtends<Expected, Actual extends Expected> = [Actual] extends [Expected] ? true : never;
+// Bidirectional assertion: each fault's data type and the corresponding Zod
+// schema's inferred type must be mutually assignable. Catches drift in BOTH
+// directions — a schema narrower than the fault (would reject valid data) AND
+// a schema wider than the fault (would accept data the fault never produces).
+type AssertMutuallyExtends<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 
-type _CheckUnauthorized = AssertExtends<
+type _CheckUnauthorized = AssertMutuallyExtends<
   OperationFaultWithCode<'Unauthorized'>['data'],
   z.infer<typeof UnauthorizedDataSchema>
 >;
-type _CheckForbidden = AssertExtends<
+type _CheckForbidden = AssertMutuallyExtends<
   OperationFaultWithCode<'Forbidden'>['data'],
   z.infer<typeof ForbiddenDataSchema>
 >;
-type _CheckNotFound = AssertExtends<
+type _CheckNotFound = AssertMutuallyExtends<
   OperationFaultWithCode<'NotFound'>['data'],
   z.infer<typeof NotFoundDataSchema>
 >;
-type _CheckConflict = AssertExtends<
+type _CheckConflict = AssertMutuallyExtends<
   OperationFaultWithCode<'Conflict'>['data'],
   z.infer<typeof ConflictDataSchema>
 >;
-type _CheckUnprocessable = AssertExtends<
+type _CheckUnprocessable = AssertMutuallyExtends<
   OperationFaultWithCode<'Unprocessable'>['data'],
   z.infer<typeof UnprocessableDataSchema>
 >;
-type _CheckTimeout = AssertExtends<
+type _CheckTimeout = AssertMutuallyExtends<
   OperationFaultWithCode<'Timeout'>['data'],
   z.infer<typeof TimeoutDataSchema>
 >;
-type _CheckRateLimited = AssertExtends<
+type _CheckRateLimited = AssertMutuallyExtends<
   OperationFaultWithCode<'RateLimited'>['data'],
   z.infer<typeof RateLimitedDataSchema>
 >;
-type _CheckNotImplemented = AssertExtends<
+type _CheckNotImplemented = AssertMutuallyExtends<
   OperationFaultWithCode<'NotImplemented'>['data'],
   z.infer<typeof NotImplementedDataSchema>
 >;
-type _CheckUnsupportedTransport = AssertExtends<
+type _CheckUnsupportedTransport = AssertMutuallyExtends<
   OperationFaultWithCode<'UnsupportedTransport'>['data'],
   z.infer<typeof UnsupportedTransportDataSchema>
 >;
-type _CheckSubscriptionOverflow = AssertExtends<
+type _CheckSubscriptionOverflow = AssertMutuallyExtends<
   OperationFaultWithCode<'SubscriptionOverflow'>['data'],
   z.infer<typeof SubscriptionOverflowDataSchema>
 >;
-type _CheckInvalidParams = AssertExtends<
+type _CheckInvalidParams = AssertMutuallyExtends<
   OperationFaultWithCode<'InvalidParams'>['data'],
   z.infer<typeof InvalidParamsDataSchema>
 >;
-type _CheckMethodNotFound = AssertExtends<
+type _CheckMethodNotFound = AssertMutuallyExtends<
   OperationFaultWithCode<'MethodNotFound'>['data'],
   z.infer<typeof MethodNotFoundDataSchema>
 >;
-type _CheckEngineFailure = AssertExtends<
+type _CheckEngineFailure = AssertMutuallyExtends<
   OperationFaultWithCode<'EngineFailure'>['data'],
   z.infer<typeof EngineFailureDataSchema>
 >;

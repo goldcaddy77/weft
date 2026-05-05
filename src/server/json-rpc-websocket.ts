@@ -25,6 +25,7 @@ import {
 } from './json-rpc-websocket-validation.ts';
 import {
   executeSubscription,
+  SubscriptionElementValidationError,
   type ErasedOperation,
   type OperationRegistry,
 } from './operation-catalog.ts';
@@ -299,22 +300,36 @@ export function createJsonRpcWebSocketSession(
           params: { subscriptionId, reason: 'server-closed' },
         });
       }
-    } catch {
-      // Unexpected error in the subscription pump — surface a
-      // server-closed terminated notification with a generic public
-      // message, then fall through. Error detail is the logger's
-      // domain; the wire must not carry potentially-sensitive data
-      // from a thrown value of unknown origin.
+    } catch (error) {
+      // Per-element schema-contract failures throw SubscriptionElementValidationError
+      // (see stream-pipeline.ts validateElements). Surface them with the
+      // distinct `validation-failed` reason so clients can distinguish a
+      // contract violation from a transient server-side closure. All other
+      // thrown values fall through to the generic `server-closed` path with
+      // a sanitized fault — the wire must not carry potentially-sensitive
+      // data from a thrown value of unknown origin.
       if (!shouldSuppressOutput()) {
-        emit({
-          jsonrpc: JSON_RPC_VERSION,
-          method: SESSION_METHODS.TERMINATED,
-          params: {
-            subscriptionId,
-            reason: 'server-closed',
-            fault: { code: 'EngineFailure', message: 'internal error', data: {} },
-          },
-        });
+        if (error instanceof SubscriptionElementValidationError) {
+          emit({
+            jsonrpc: JSON_RPC_VERSION,
+            method: SESSION_METHODS.TERMINATED,
+            params: {
+              subscriptionId,
+              reason: 'validation-failed',
+              fault: error.fault,
+            },
+          });
+        } else {
+          emit({
+            jsonrpc: JSON_RPC_VERSION,
+            method: SESSION_METHODS.TERMINATED,
+            params: {
+              subscriptionId,
+              reason: 'server-closed',
+              fault: { code: 'EngineFailure', message: 'internal error', data: {} },
+            },
+          });
+        }
       }
     } finally {
       signal.removeEventListener('abort', abortSubscription);

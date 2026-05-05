@@ -7,8 +7,11 @@ const EVENT_DELIVER_METHOD = 'weft.events.deliver';
 const EVENTS_TERMINATED_METHOD = 'weft.events.terminated';
 const UNSUBSCRIBE_METHOD = 'weft.workflows.unsubscribe';
 
+// Accepts string | number for normal request/response correlation, plus
+// `null` because the WebSocket handler emits `id: request.id ?? null` for
+// JSON-RPC error responses to malformed frames where no caller id is known.
 const JSON_RPC_ID_SCHEMA: Record<string, unknown> = {
-  oneOf: [{ type: 'string' }, { type: 'number' }],
+  oneOf: [{ type: 'string' }, { type: 'number' }, { type: 'null' }],
 };
 
 const SUBSCRIPTION_TERMINATION_REASON_SCHEMA: Record<string, unknown> = {
@@ -53,11 +56,22 @@ export function buildWebSocketChannel(operation: ErasedOperation): Record<string
 
 /**
  * Build the AsyncAPI channel object for an SSE stream operation.
+ *
+ * `restBindingPath` MUST be the operation's REST binding path translated to
+ * OpenAPI path-parameter syntax (e.g. `/v1/workflows/{id}/sse`). Without it
+ * the channel address falls back to a synthetic dotted-name-to-path
+ * conversion that does not match any wire endpoint — kept only as a
+ * non-failing default so a misconfigured registry produces a recognizable
+ * synthetic address rather than throwing during document generation.
  */
-export function buildSseChannel(operation: ErasedOperation): Record<string, unknown> {
+export function buildSseChannel(
+  operation: ErasedOperation,
+  restBindingPath: string | undefined,
+): Record<string, unknown> {
   const messageNames = sseMessageNames(operation);
+  const address = restBindingPath ?? `/x-weft-unbound/${operation.name.replaceAll('.', '/')}`;
   return {
-    address: operation.name.replaceAll('.', '/'),
+    address,
     bindings: {
       ws: undefined,
     },

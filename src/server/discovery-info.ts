@@ -6,9 +6,26 @@
 
 /** Operator-supplied metadata applied uniformly to all three discovery documents. */
 export type DiscoveryInfo = {
+  /** Long-form description rendered in each document's `info.description`. */
   description?: string;
+  /** Contact details rendered in each document's `info.contact`. */
   contact?: { name?: string; url?: string; email?: string };
+  /** License rendered in each document's `info.license`. */
   license?: { name: string; url?: string };
+  /**
+   * External documentation reference. **Placement is asymmetric across the
+   * three discovery documents:**
+   *
+   * - OpenAPI 3.1: rendered inside `info.externalDocs` (or at the document
+   *   root depending on the OpenAPI generator's chosen location, but
+   *   semantically attached to the document's metadata block).
+   * - OpenRPC 1.3.2: rendered inside `info.externalDocs`.
+   * - AsyncAPI 3.0.0: rendered at the **document top-level**, NOT inside
+   *   `info`. The AsyncAPI 3.0 spec moved `externalDocs` out of `info`.
+   *
+   * `applyDiscoveryInfo` does NOT place this field; each generator's call
+   * site is responsible for picking the spec-correct location.
+   */
   externalDocs?: { description?: string; url: string };
 };
 

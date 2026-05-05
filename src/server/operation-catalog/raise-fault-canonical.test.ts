@@ -55,6 +55,12 @@ const RAISE_FAULT_ALLOWLIST = new Set([
   'sse-stream.ts',
 ]);
 
+// Shrink-ratchet upper bound. The allow-list represents legacy direct-throw
+// patterns; this number must DECREASE as files migrate to raiseFault. Never
+// raise it. If an honest migration shrinks the set below this number, lower
+// the constant in the same commit.
+const RAISE_FAULT_ALLOWLIST_MAX_SIZE = 47;
+
 describe('raiseFault canonical path', () => {
   it('all operations using direct throw patterns are tracked in the allow-list', () => {
     const files = readdirSync(OPERATIONS_DIR).filter(
@@ -64,12 +70,18 @@ describe('raiseFault canonical path', () => {
 
     for (const file of files) {
       const content = readFileSync(join(OPERATIONS_DIR, file), 'utf-8');
-      const hasDirectThrow = /throw\s*\{[^}]*code:\s*['"]/.test(content);
+      // Match `throw { ... code: '...' }` even when the literal spans
+      // multiple lines (a property on a line below `throw {` on its own).
+      const hasDirectThrow = /throw\s*\{[\s\S]{0,400}?code:\s*['"]/.test(content);
       if (hasDirectThrow && !RAISE_FAULT_ALLOWLIST.has(file)) {
         violations.push(file);
       }
     }
 
     expect(violations).toEqual([]);
+  });
+
+  it('allow-list size cannot grow beyond the declared shrink-ratchet bound', () => {
+    expect(RAISE_FAULT_ALLOWLIST.size).toBeLessThanOrEqual(RAISE_FAULT_ALLOWLIST_MAX_SIZE);
   });
 });
