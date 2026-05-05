@@ -1,9 +1,11 @@
 import {
+  storageConditionalBatch,
   storageCount,
   storageDeletePrefix,
   storageHas,
   storageKeys,
   type BatchOperation,
+  type ConditionalBatchCondition,
   type ScanOptions,
   type Storage,
 } from './interface.ts';
@@ -133,6 +135,33 @@ export class ScopedStorage implements Storage {
 
   async batch(operations: BatchOperation[]): Promise<void> {
     await this.#storage.batch(
+      operations.map((operation) => {
+        if (operation.type === 'put') {
+          return {
+            type: 'put' as const,
+            key: this.#toInnerKey(operation.key),
+            value: operation.value,
+          };
+        }
+
+        return {
+          type: 'delete' as const,
+          key: this.#toInnerKey(operation.key),
+        };
+      }),
+    );
+  }
+
+  async conditionalBatch(
+    conditions: ConditionalBatchCondition[],
+    operations: BatchOperation[],
+  ): Promise<boolean> {
+    return storageConditionalBatch(
+      this.#storage,
+      conditions.map((condition) => ({
+        key: this.#toInnerKey(condition.key),
+        expectedValue: condition.expectedValue,
+      })),
       operations.map((operation) => {
         if (operation.type === 'put') {
           return {

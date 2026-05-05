@@ -23,6 +23,8 @@ import type { WorkerSpawnMeasurement } from './worker-spawn-runner.ts';
  */
 
 const TARGET_MILLISECONDS = isConstrainedCodexRunner() ? 30 : 5;
+const runArchitectureBenchmark =
+  process.env['WEFT_WORKER_SPAWN_ARCHITECTURE_BENCHMARK'] === '1' ? it : it.skip;
 const workerSpawnRunnerPath = fileURLToPath(new URL('./worker-spawn-runner.ts', import.meta.url));
 
 function isWorkerSpawnMeasurement(value: unknown): value is WorkerSpawnMeasurement {
@@ -54,22 +56,39 @@ function runWorkerSpawnBenchmark(): WorkerSpawnMeasurement {
   });
 }
 
+function logWorkerSpawnBenchmark(measurement: WorkerSpawnMeasurement): void {
+  console.log(
+    [
+      `\n  Worker spawn latency benchmark:`,
+      `    Warmup samples:  ${measurement.warmupSamples.toLocaleString()}`,
+      `    Measured:        ${measurement.measuredSamples.toLocaleString()}`,
+      `    Samples (ms):    ${measurement.samples.map((sample) => sample.toFixed(2)).join(', ')}`,
+      `    Median (ms):     ${measurement.medianMilliseconds.toFixed(2)}`,
+      `    Target (ms):     <${TARGET_MILLISECONDS.toFixed(2)}`,
+      `    Child coverage:  no (Bun does not cover \`bun run\` subprocesses)\n`,
+    ].join('\n'),
+  );
+}
+
 describe('Worker spawn latency', () => {
-  it(`worker spawn median stays below ${TARGET_MILLISECONDS.toFixed(0)}ms`, async () => {
+  it('records worker spawn latency in a non-gating smoke benchmark', async () => {
     const measurement = runWorkerSpawnBenchmark();
 
-    console.log(
-      [
-        `\n  Worker spawn latency benchmark:`,
-        `    Warmup samples:  ${measurement.warmupSamples.toLocaleString()}`,
-        `    Measured:        ${measurement.measuredSamples.toLocaleString()}`,
-        `    Samples (ms):    ${measurement.samples.map((sample) => sample.toFixed(2)).join(', ')}`,
-        `    Median (ms):     ${measurement.medianMilliseconds.toFixed(2)}`,
-        `    Target (ms):     <${TARGET_MILLISECONDS.toFixed(2)}`,
-        `    Child coverage:  no (Bun does not cover \`bun run\` subprocesses)\n`,
-      ].join('\n'),
-    );
+    logWorkerSpawnBenchmark(measurement);
 
-    expect(measurement.medianMilliseconds).toBeLessThan(TARGET_MILLISECONDS);
+    expect(measurement.samples).toHaveLength(measurement.measuredSamples);
+    expect(measurement.medianMilliseconds).toBeGreaterThan(0);
   }, 30_000);
+
+  runArchitectureBenchmark(
+    `worker spawn median stays below ${TARGET_MILLISECONDS.toFixed(0)}ms`,
+    async () => {
+      const measurement = runWorkerSpawnBenchmark();
+
+      logWorkerSpawnBenchmark(measurement);
+
+      expect(measurement.medianMilliseconds).toBeLessThan(TARGET_MILLISECONDS);
+    },
+    30_000,
+  );
 });

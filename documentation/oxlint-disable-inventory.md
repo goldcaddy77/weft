@@ -799,7 +799,7 @@ naming the alternative that was rejected.
 - **File**: `src/server/openapi.ts`
 - **Rule**: `complexity`
 - **Symbol**: `emitBindings`
-- **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
+- **Reason**: OpenAPI binding emission bridges discovery filtering, REST binding metadata, request bodies, response schemas, and tag collection until the generator is split further.
 
 ## `server-openapi-generate-open-api-document-complexity`
 

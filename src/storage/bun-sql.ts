@@ -31,7 +31,7 @@ export { BunSQLiteStorage as SQLiteStorage };
  *
  * @example
  * ```ts
- * import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+ * import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
  * import { Engine, type WorkflowContext } from 'weft';
  *
  * // Durable on-disk storage

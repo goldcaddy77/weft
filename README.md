@@ -42,9 +42,9 @@ import {
   type WorkflowContext,
   type WorkflowHandle,
 } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
-const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
+const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
 const formatGreeting = activity({
   name: 'formatGreeting',
@@ -80,7 +80,7 @@ const result = await handle.result();
 That's a complete durable workflow with a real recovery path. Checkpoints are written to `./weft.db` at every `yield*` boundary. `engine.recoverAll()` resumes workflows that were already running when this process started, and the stable `workflowId` prevents a rerun from silently creating a second workflow. If you call `engine.start()` without `options.id`, Weft generates a fresh `crypto.randomUUID()` and starts a new execution.
 
 > [!NOTE]
-> `MemoryStorage` (also exported from `weft`) is fine for tests and ephemeral scripts, but it lives in process memory---a crash takes the checkpoints with it. Use a persistent backend like `BunSQLiteStorage` whenever durability actually matters.
+> `MemoryStorage` (also exported from `weft`) is fine for tests and ephemeral scripts, but it lives in process memory---a crash takes the checkpoints with it. Use a persistent backend like `SQLiteStorage` whenever durability actually matters.
 
 ## How It Works
 
@@ -181,7 +181,7 @@ Weft adds durability to your agent loop. Bring your provider; bring your tools. 
 
 ```typescript
 import { Engine, defineAgent, type AgentTool, type LLMProvider } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
 import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic();
@@ -237,11 +237,14 @@ Crash after 7 of 30 tool calls and the agent picks up at tool call 8---no replay
 A small `Storage` interface over string keys and `Uint8Array` values: five required methods (`get`, `put`, `delete`, `scan`, `batch`) plus optional capabilities (`conditionalBatch`, `has`, `deletePrefix`) that adapters can implement when their backend supports them. Built-in adapters:
 
 - **`MemoryStorage`** for development and tests
-- **`BunSQLiteStorage`** (subpath `weft/storage/bun-sqlite`) for production via `Bun.SQL`
-- **`NodeSQLiteStorage`** (subpath `weft/storage/sqlite/node`) for Node.js runtimes via `better-sqlite3`
+- **`SQLiteStorage`** (subpath `weft/storage/sqlite`) for SQLite persistence; Bun resolves to `BunSQLiteStorage`, Node resolves to `NodeSQLiteStorage`
+- **`BunSQLiteStorage`** (subpath `weft/storage/sqlite/bun`) for an explicit Bun SQLite override
+- **`NodeSQLiteStorage`** (subpath `weft/storage/sqlite/node`) for an explicit Node.js SQLite override via `better-sqlite3`
 - **`LMDBStorage`** (subpath `weft/storage/lmdb`) for embedded high-throughput workloads
 - **`TursoStorage`** (subpath `weft/storage/turso`) for distributed libSQL deployments
 - **`IndexedDBStorage`** (subpath `weft/storage/indexeddb`) for browser environments
+- **`WebExtensionStorage`** (subpath `weft/storage/web-extension`) for extension contexts using `browser.storage` or `chrome.storage`
+- **`HTTPStorage`** (subpath `weft/storage/http`) for remote storage over Weft's HTTP storage routes
 - **`CompressedStorage`** wrapper for transparent `gzip` or `brotli` compression
 
 Bring your own backend by implementing the interface---five methods is enough.
@@ -253,9 +256,9 @@ Bring your own backend by implementing the interface---five methods is enough.
 ```typescript
 import { Engine } from 'weft';
 import { serve } from 'weft/server';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
-const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
+const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 engine.register('checkout', checkoutWorkflow);
 
 await using server = serve({ engine, port: 7233 });
@@ -281,7 +284,7 @@ await worker.start();
 
 ### Browser Support
 
-The core engine runs inside a Web Worker, with a Service Worker acting as the durable persistence layer over `IndexedDB`. Browser-compatible workflow logic ships across server and browser without modification---useful for offline-first apps that need durable client-side workflows. Activities, storage adapters, and other environment-bound pieces still need browser-safe implementations: use `IndexedDBStorage` instead of `BunSQLiteStorage`, swap server-only activities for `fetch`-based equivalents, and so on. See the [Service Worker guide](documentation/guides/service-worker.md) for the browser runtime wiring.
+The core engine runs inside a Web Worker, with a Service Worker acting as the durable persistence layer over `IndexedDB`. Browser-compatible workflow logic ships across server and browser without modification---useful for offline-first apps that need durable client-side workflows. Activities, storage adapters, and other environment-bound pieces still need browser-safe implementations: use `IndexedDBStorage` or `WebExtensionStorage` instead of SQLite storage, swap server-only activities for `fetch`-based equivalents, and so on. See the [Service Worker guide](documentation/guides/service-worker.md) for the browser runtime wiring.
 
 ### Multi-Tenancy
 
@@ -356,13 +359,15 @@ For chaos testing, `withChaos()` wraps activities with configurable transient fa
 bun add weft
 ```
 
-Storage backends with native dependencies are exported under subpaths so they only load when imported:
+Storage backends and adapters are exported under subpaths so they only load when imported:
 
 ```typescript
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 import { LMDBStorage } from 'weft/storage/lmdb';
 import { TursoStorage } from 'weft/storage/turso';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
+import { WebExtensionStorage } from 'weft/storage/web-extension';
+import { HTTPStorage } from 'weft/storage/http';
 ```
 
 The `bun` runtime version `1.3.0` or later is required.

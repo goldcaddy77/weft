@@ -208,6 +208,29 @@ describe('evaluateAccess', () => {
     expect(evaluateAccess(policy, withReadWrite)).toEqual({ allowed: true });
   });
 
+  it('scopedAlternatives: allows any complete scope requirement and rejects partial matches', () => {
+    const policy: AccessPolicy = {
+      kind: 'scopedAlternatives',
+      alternatives: [
+        { kind: 'anyOf', scopes: ['workflows:admin'] },
+        { kind: 'allOf', scopes: ['workflows:read', 'workflows:write'] },
+      ],
+    };
+    const withAdmin = principalFromApiKey({ subject: 'k4', scopes: ['workflows:admin'] });
+
+    expect(evaluateAccess(policy, unauth)).toMatchObject({
+      allowed: false,
+      classification: 'unauthorized',
+    });
+    expect(evaluateAccess(policy, withAdmin)).toEqual({ allowed: true });
+    expect(evaluateAccess(policy, withReadWrite)).toEqual({ allowed: true });
+    const denied = evaluateAccess(policy, withReadOnly);
+    expect(denied).toMatchObject({ allowed: false, classification: 'forbidden' });
+    if (denied.allowed) throw new Error('expected denial');
+    expect(denied.reason).toContain('workflows:admin');
+    expect(denied.reason).toContain('workflows:write');
+  });
+
   it('optionalAuth anyOf: unauthenticated proceeds; authenticated must satisfy scopes', () => {
     const policy: AccessPolicy = {
       kind: 'optionalAuth',
@@ -304,6 +327,15 @@ describe('evaluateAccess defensive default', () => {
     const authenticated = principalFromApiKey({ subject: 'k', scopes: ['workflows:read'] });
     const result = evaluateAccess(policy, authenticated);
     expect(result).toMatchObject({ allowed: false, classification: 'forbidden' });
+  });
+
+  it('throws on runtime-empty scopedAlternatives alternatives', () => {
+    const exploit = {
+      kind: 'scopedAlternatives',
+      alternatives: [],
+    } as unknown as AccessPolicy;
+    const authenticated = principalFromApiKey({ subject: 'k', scopes: ['workflows:read'] });
+    expect(() => evaluateAccess(exploit, authenticated)).toThrow(/empty alternatives array/);
   });
 
   it('throws when anyOf scopes is a poisoned non-array object (closes prototype-trick exploit)', () => {

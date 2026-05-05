@@ -10,10 +10,10 @@ The common case is a workflow input field that carries the tenant id.
 
 ```typescript partial
 import { Engine, tenantFromInputField } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({
-  storage: new BunSQLiteStorage('./weft.db'),
+  storage: new SQLiteStorage('./weft.db'),
   tenantResolver: tenantFromInputField('customerId'),
 });
 

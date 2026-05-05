@@ -1028,6 +1028,31 @@ describe('executeOperation — additional coverage', () => {
     expect(Object.isFrozen(stored.access.authenticatedScopes.scopes)).toBe(true);
   });
 
+  it('registry deep-freezes scopedAlternatives requirements', () => {
+    const op = makeOp({
+      name: 'weft.test.alternativesfreeze',
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      invoke: async () => ({}),
+      access: {
+        kind: 'scopedAlternatives',
+        alternatives: [
+          { kind: 'allOf', scopes: ['workflows:read', 'workflows:write'] },
+          { kind: 'anyOf', scopes: ['workflows:admin'] },
+        ],
+      },
+    });
+    const registry = createOperationRegistry([op]);
+    const stored = registry.get('weft.test.alternativesfreeze');
+    if (!stored) throw new Error('expected stored op');
+    if (stored.access.kind !== 'scopedAlternatives') {
+      throw new Error('expected scopedAlternatives access');
+    }
+    expect(Object.isFrozen(stored.access.alternatives)).toBe(true);
+    expect(Object.isFrozen(stored.access.alternatives[0])).toBe(true);
+    expect(Object.isFrozen(stored.access.alternatives[0].scopes)).toBe(true);
+  });
+
   it('returns EngineFailure when defensive schema guards trip', async () => {
     const baseOperation = makeOp({
       name: 'weft.test.defensive',

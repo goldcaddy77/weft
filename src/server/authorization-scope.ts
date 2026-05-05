@@ -36,6 +36,9 @@ export const AUTHORIZATION_SCOPES = [
   'budget:read',
   'budget:write',
   'quota:read',
+  'storage:read',
+  'storage:write',
+  'storage:admin',
   'system:read',
   'system:admin',
 ] as const;

@@ -63,22 +63,27 @@ This listing covers the primary keys. The full canonical list---including `wf:{i
 
 All timestamps are zero-padded to 16 digits for correct lexicographic ordering. This means `scan("op:default:")` returns all operations on the "default" queue in scheduled order---the core hot path is a single range scan, whether the backend is SQLite or something else entirely.
 
-## BunSQLiteStorage
+## SQLiteStorage
 
-This is the default for production. It uses Bun's built-in SQLite via `bun:sqlite`, which means zero external dependencies and seamless single-binary compilation with `bun build --compile`.
+This is the default for production persistence. Import `SQLiteStorage` from `weft/storage/sqlite`; export conditions resolve it to `BunSQLiteStorage` under Bun and `NodeSQLiteStorage` under Node.js.
 
 ```typescript partial
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
-using storage = new BunSQLiteStorage('./weft.db');
+using storage = new SQLiteStorage('./weft.db');
 const engine = new Engine({ storage });
 ```
 
+Use `weft/storage/sqlite/bun` or `weft/storage/sqlite/node` only when you need to force one implementation.
+
 Under the hood, it creates a single `kv` table (`key TEXT PRIMARY KEY, value BLOB NOT NULL`) using `WITHOUT ROWID` for optimal key-value performance. It enables WAL mode, sets `synchronous = NORMAL`, and bumps the cache size---sensible defaults for a write-heavy workload.
 
-The SQLite adapter also exposes an optional `query()` method for ad-hoc SQL queries, which is invaluable for debugging and building dashboards.
+`BunSQLiteStorage` also exposes an optional `query()` method for ad-hoc SQL queries, which is invaluable for debugging and building dashboards. `NodeSQLiteStorage` intentionally sticks to the portable `Storage` interface and does not expose SQL passthrough. Import the Bun override when you need SQL passthrough.
 
 ```typescript partial
+import { BunSQLiteStorage } from 'weft/storage/sqlite/bun';
+
+using storage = new BunSQLiteStorage('./weft.db');
 const rows = await storage.query<{ key: string }>('SELECT key FROM kv WHERE key LIKE ?', ['wf:%']);
 ```
 
@@ -139,7 +144,7 @@ using storage = new IndexedDBStorage('weft');
 const engine = new Engine({ storage });
 ```
 
-The constructor takes an optional database name (defaults to `'weft'`). Under the hood, it creates a single `kv` object store with string keys and `Uint8Array` values---the same logical structure as `BunSQLiteStorage`'s `kv` table.
+The constructor takes an optional database name (defaults to `'weft'`). Under the hood, it creates a single `kv` object store with string keys and `Uint8Array` values---the same logical structure as the SQLite `kv` table.
 
 `IndexedDBStorage` implements the full `Storage` interface except for `query()`. IndexedDB has no SQL engine, so raw queries are not available. All other methods---`get`, `put`, `delete`, `scan`, and `batch`---work identically to the other adapters.
 
@@ -147,7 +152,50 @@ The `batch()` method is atomic. All operations in a batch run inside a single In
 
 The `using` pattern works for cleanup: `[Symbol.dispose]()` closes the underlying IndexedDB database connection.
 
-Browser consumers must use the subpath import `weft/storage/indexeddb` rather than importing from `'weft'` directly. The main `weft` entry point pulls in `bun:sqlite`, which is not available in browser environments.
+Browser consumers should use browser-safe subpath imports such as `weft/storage/indexeddb` or `weft/storage/web-extension` and avoid server-only storage adapters.
+
+## WebExtensionStorage
+
+`WebExtensionStorage` persists bytes through `browser.storage` or `chrome.storage` in extension contexts. Values are JSON envelopes with base64-encoded `Uint8Array` payloads.
+
+```typescript
+import { Engine } from 'weft';
+import { WebExtensionStorage } from 'weft/storage/web-extension';
+
+using storage = new WebExtensionStorage({ area: 'local' });
+const engine = new Engine({ storage });
+void engine;
+```
+
+The `area` option accepts `local`, `sync`, `session`, or `managed`. The `managed` area is read-only, and `sync` writes are checked against the storage area's quota before committing.
+
+## HTTPStorage
+
+`HTTPStorage` talks to Weft's storage REST routes for remote storage access.
+
+```typescript
+import { HTTPStorage } from 'weft/storage/http';
+
+const token = 'example-token';
+using storage = new HTTPStorage({
+  baseUrl: 'https://weft.example.com',
+  headers: { authorization: `Bearer ${token}` },
+});
+void storage;
+```
+
+Single-value operations use `application/octet-stream`; scans stream NDJSON with base64-encoded values. Conditional batches map to the server-side CAS route.
+
+## resolveStorage()
+
+For runtime-driven backend selection, import `resolveStorage` from `weft/storage` or `weft/storage/resolve`.
+
+```typescript
+import { resolveStorage } from 'weft/storage';
+
+const storage = await resolveStorage({ type: 'sqlite', path: './weft.db' });
+void storage;
+```
 
 ## When to consider alternatives
 

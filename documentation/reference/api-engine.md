@@ -35,10 +35,10 @@ Creates a new engine instance. All options are optional -- sensible defaults are
 
 ```ts
 import { Engine } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({
-  storage: new BunSQLiteStorage('./data/weft.db'),
+  storage: new SQLiteStorage('./data/weft.db'),
   development: true,
 });
 ```

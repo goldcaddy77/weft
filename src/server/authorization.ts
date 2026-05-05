@@ -23,6 +23,7 @@ export type AccessPolicy =
   | { kind: 'public' }
   | { kind: 'authenticated' }
   | { kind: 'scoped'; scopes: ScopeRequirement }
+  | { kind: 'scopedAlternatives'; alternatives: [ScopeRequirement, ...ScopeRequirement[]] }
   | { kind: 'optionalAuth'; authenticatedScopes: ScopeRequirement };
 
 /**
@@ -62,6 +63,16 @@ export function evaluateAccess(policy: AccessPolicy, principal: Principal): Acce
         };
       }
       return checkScopeRequirement(policy.scopes, principal.scopes);
+
+    case 'scopedAlternatives':
+      if (!isAuthenticated(principal)) {
+        return {
+          allowed: false,
+          classification: 'unauthorized',
+          reason: 'authentication required',
+        };
+      }
+      return checkScopeAlternatives(policy.alternatives, principal.scopes);
 
     case 'optionalAuth':
       if (!isAuthenticated(principal)) return { allowed: true };
@@ -138,4 +149,31 @@ function checkScopeRequirement(
       // into an unintended grant. Throw deterministically instead.
       return assertExhaustive(requirement);
   }
+}
+
+function checkScopeAlternatives(
+  alternatives: readonly ScopeRequirement[],
+  held: ReadonlySet<AuthorizationScope>,
+): AccessCheckResult {
+  if (!Array.isArray(alternatives)) {
+    throw new Error('authorization: scopedAlternatives.alternatives is not an array at runtime');
+  }
+  if (alternatives.length === 0) {
+    throw new Error(
+      'authorization: scopedAlternatives has an empty alternatives array (the non-empty tuple invariant was violated at runtime)',
+    );
+  }
+
+  const deniedReasons: string[] = [];
+  for (const alternative of alternatives) {
+    const result = checkScopeRequirement(alternative, held);
+    if (result.allowed) return { allowed: true };
+    deniedReasons.push(result.reason);
+  }
+
+  return {
+    allowed: false,
+    classification: 'forbidden',
+    reason: `requires one of: ${deniedReasons.join('; ')}`,
+  };
 }

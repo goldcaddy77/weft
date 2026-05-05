@@ -10,9 +10,11 @@
 
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
+import { asPlainObject, compareStrings, zodToJsonSchema } from './json-schema-utilities.ts';
 import { buildErrorResponses, ERROR_SCHEMA } from './openapi-error-responses.ts';
 import { extractComponentsSchemas, type OpenApiSchemaHelper } from './openapi-schemas.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
+import type { ParamSource } from './rest-binding.ts';
 import type { UnknownRestBinding } from './rest-bindings.ts';
 import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
 import { ROUTES, toOpenApiPath } from './route-model.ts';
@@ -53,6 +55,17 @@ export type OpenApiOptions = {
 // Generator
 // ---------------------------------------------------------------------------
 
+type OpenApiSchema = Record<string, unknown>;
+
+const DEFAULT_SCHEMA_HELPER: OpenApiSchemaHelper = {
+  components: {},
+  refFor() {
+    return undefined;
+  },
+};
+const JSON_MEDIA_TYPE = 'application/json';
+const OCTET_STREAM_MEDIA_TYPE = 'application/octet-stream';
+
 /**
  * Generate an OpenAPI 3.1 JSON document from the shared route definitions.
  *
@@ -68,21 +81,142 @@ function buildPathParameters(paramNames: readonly string[]): Array<Record<string
   }));
 }
 
-const DEFAULT_SCHEMA_HELPER: OpenApiSchemaHelper = {
-  components: {},
-  refFor() {
+function inputSourceEntries(binding: UnknownRestBinding): Array<[string, ParamSource]> {
+  return Object.entries(binding.inputSources)
+    .filter((entry): entry is [string, ParamSource] => entry[1] !== undefined)
+    .toSorted(([left], [right]) => compareStrings(left, right));
+}
+
+function inputJsonSchema(operation: ErasedOperation): OpenApiSchema {
+  return zodToJsonSchema(operation.inputSchema);
+}
+
+function fieldSchema(operation: ErasedOperation, field: string): OpenApiSchema {
+  const properties = asPlainObject(inputJsonSchema(operation)['properties']);
+  return asPlainObject(properties[field]);
+}
+
+function requiredInputFields(operation: ErasedOperation): Set<string> {
+  const required = inputJsonSchema(operation)['required'];
+  if (!Array.isArray(required)) return new Set();
+  return new Set(required.filter((entry): entry is string => typeof entry === 'string'));
+}
+
+function binaryBodySchema(): OpenApiSchema {
+  return { type: 'string', format: 'binary' };
+}
+
+function streamingResponseSchema(mediaType: string): OpenApiSchema {
+  if (mediaType === OCTET_STREAM_MEDIA_TYPE) return binaryBodySchema();
+  return { type: 'string' };
+}
+
+function outputCanBeNull(operation: ErasedOperation): boolean {
+  try {
+    return operation.outputSchema.safeParse(null).success;
+  } catch {
+    return false;
+  }
+}
+
+function buildBindingParameters(
+  binding: UnknownRestBinding,
+  operation: ErasedOperation,
+): Array<Record<string, unknown>> {
+  const parameters = buildPathParameters(binding.pathParamNames);
+  const seen = new Set(
+    parameters.map((parameter) => `${String(parameter['in'])}:${String(parameter['name'])}`),
+  );
+
+  for (const [field, source] of inputSourceEntries(binding)) {
+    if (source.kind !== 'query' && source.kind !== 'header') continue;
+    const parameter = {
+      name: source.kind === 'query' ? source.queryParam : source.headerName,
+      in: source.kind,
+      required: false,
+      schema: fieldSchema(operation, field),
+    };
+    const key = `${parameter.in}:${parameter.name}`;
+    if (seen.has(key)) continue;
+    parameters.push(parameter);
+    seen.add(key);
+  }
+
+  return parameters;
+}
+
+function buildRequestBodyFromInputSources(
+  binding: UnknownRestBinding,
+  operation: ErasedOperation,
+): Record<string, unknown> | undefined {
+  const entries = inputSourceEntries(binding);
+  const bodyEntry = entries.find((entry) => entry[1].kind === 'body');
+  if (bodyEntry !== undefined) {
+    const [field, source] = bodyEntry;
+    if (source.kind !== 'body') return undefined;
+    const mediaType = source.mediaType ?? JSON_MEDIA_TYPE;
+    const schema =
+      mediaType === OCTET_STREAM_MEDIA_TYPE ? binaryBodySchema() : fieldSchema(operation, field);
+    return {
+      required: true,
+      content: { [mediaType]: { schema } },
+    };
+  }
+
+  const bodyFieldEntries = entries.filter(
+    (entry): entry is [string, Extract<ParamSource, { kind: 'body-field' }>] =>
+      entry[1].kind === 'body-field',
+  );
+  if (bodyFieldEntries.length === 0) return undefined;
+
+  const requiredFields = requiredInputFields(operation);
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const [field, source] of bodyFieldEntries) {
+    properties[source.bodyField] = fieldSchema(operation, field);
+    if (requiredFields.has(field)) required.push(source.bodyField);
+  }
+
+  const schema: OpenApiSchema = {
+    type: 'object',
+    properties,
+    additionalProperties: operation.unknownKeyPolicy.http !== 'reject',
+  };
+  if (required.length > 0) schema['required'] = required.toSorted(compareStrings);
+
+  return {
+    required: true,
+    content: { [JSON_MEDIA_TYPE]: { schema } },
+  };
+}
+
+function buildRequestBody(
+  binding: UnknownRestBinding,
+  operation: ErasedOperation,
+  schemaHelper: OpenApiSchemaHelper,
+): Record<string, unknown> | undefined {
+  const requestBody = buildRequestBodyFromInputSources(binding, operation);
+  if (requestBody !== undefined) return requestBody;
+  if (inputSourceEntries(binding).length > 0) return undefined;
+  if (binding.method !== 'POST' && binding.method !== 'PUT' && binding.method !== 'PATCH') {
     return undefined;
-  },
-};
+  }
+
+  return {
+    content: {
+      [JSON_MEDIA_TYPE]: {
+        schema: schemaHelper.refFor(operation.name, 'Input') ?? { type: 'object' },
+      },
+    },
+  };
+}
 
 /**
  * Build the success-response object for a binding, branching on its
  * declared `success.kind`. JSON bindings emit `application/json` with
  * the operation's output schema. Streaming bindings emit the binding's
- * declared `mediaType` (e.g. `text/event-stream`) and document the
- * payload as a string — the per-frame envelope's actual contents are
- * documented separately in `/asyncapi.json`. Empty (204) bindings emit
- * a no-content response.
+ * declared `mediaType` and document the payload as either binary or a
+ * string. Empty (204) bindings emit a no-content response.
  */
 function buildSuccessResponse(
   binding: UnknownRestBinding,
@@ -98,22 +232,26 @@ function buildSuccessResponse(
     };
   }
   if (success.kind === 'streaming') {
-    return {
+    const responses: Record<string, unknown> = {
       '200': {
         description: 'Streaming response',
         content: {
           [success.mediaType]: {
-            schema: { type: 'string' },
+            schema: streamingResponseSchema(success.mediaType),
           },
         },
       },
     };
+    if (success.mediaType === OCTET_STREAM_MEDIA_TYPE && outputCanBeNull(operation)) {
+      responses['404'] = { description: 'Storage key not found' };
+    }
+    return responses;
   }
   return {
     [String(success.status)]: {
       description: 'Successful response',
       content: {
-        'application/json': {
+        [JSON_MEDIA_TYPE]: {
           schema: schemaHelper.refFor(operation.name, 'Output') ?? { type: 'object' },
         },
       },
@@ -151,7 +289,7 @@ export function emitBindings(
     boundMethodPaths.add(`${binding.method} ${openApiPath}`);
     if (!paths[openApiPath]) paths[openApiPath] = {};
 
-    const parameters = buildPathParameters(binding.pathParamNames);
+    const parameters = buildBindingParameters(binding, operation);
     const successResponse = buildSuccessResponse(binding, operation, schemaHelper);
     const entry: Record<string, unknown> = {
       summary: operation.summary,
@@ -164,18 +302,8 @@ export function emitBindings(
     };
     if (parameters.length > 0) entry['parameters'] = parameters;
 
-    // Body-accepting methods documented with a JSON request body — same
-    // behavior as the legacy `emitRoutes` path so a migrated POST/PUT/
-    // PATCH operation keeps its `requestBody` entry in the document.
-    if (binding.method === 'POST' || binding.method === 'PUT' || binding.method === 'PATCH') {
-      entry['requestBody'] = {
-        content: {
-          'application/json': {
-            schema: schemaHelper.refFor(operation.name, 'Input') ?? { type: 'object' },
-          },
-        },
-      };
-    }
+    const requestBody = buildRequestBody(binding, operation, schemaHelper);
+    if (requestBody !== undefined) entry['requestBody'] = requestBody;
 
     paths[openApiPath][binding.method.toLowerCase()] = entry;
     for (const tag of operation.tags) tagSet.add(tag);

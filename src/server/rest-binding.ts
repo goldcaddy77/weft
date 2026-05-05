@@ -37,7 +37,10 @@ export type ParamSource =
   | { readonly kind: 'path'; readonly pathParam: string }
   | { readonly kind: 'query'; readonly queryParam: string; readonly repeating?: boolean }
   | { readonly kind: 'header'; readonly headerName: string }
-  | { readonly kind: 'body' }
+  | {
+      readonly kind: 'body';
+      readonly mediaType?: 'application/json' | 'application/octet-stream';
+    }
   | { readonly kind: 'body-field'; readonly bodyField: string };
 
 /**
@@ -52,7 +55,7 @@ export type ResponseShape =
   | { readonly kind: 'empty'; readonly status: number }
   | {
       readonly kind: 'streaming';
-      readonly mediaType: 'text/event-stream' | 'application/octet-stream';
+      readonly mediaType: 'text/event-stream' | 'application/octet-stream' | 'application/x-ndjson';
     };
 
 /**

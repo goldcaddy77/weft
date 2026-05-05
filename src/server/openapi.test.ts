@@ -115,13 +115,13 @@ describe('OpenAPI document generation', () => {
     expect(operation).toHaveProperty('requestBody');
   });
 
-  it('adds requestBody for legacy non-GET/DELETE routes emitted from the route table', () => {
+  it('does not add requestBody for POST bindings whose inputs come from the path only', () => {
     const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
     const pausePath = paths['/v1/schedules/{id}/pause'];
     expect(pausePath).toBeDefined();
 
     const operation = pausePath!['post']!;
-    expect(operation).toHaveProperty('requestBody');
+    expect(operation).not.toHaveProperty('requestBody');
   });
 
   it('does not add requestBody for GET routes', () => {
@@ -130,6 +130,59 @@ describe('OpenAPI document generation', () => {
     expect(healthPath).toBeDefined();
     const operation = healthPath!['get']!;
     expect(operation).not.toHaveProperty('requestBody');
+  });
+
+  it('documents storage REST bindings with their non-JSON wire formats', () => {
+    const paths = document['paths'] as Record<string, Record<string, Record<string, unknown>>>;
+    const storageItemPath = paths['/v1/storage/{key}'];
+    const storageScanPath = paths['/v1/storage'];
+    const storageBatchPath = paths['/v1/storage/-/batch'];
+    const storageConditionalBatchPath = paths['/v1/storage/-/conditional-batch'];
+
+    const getOperation = storageItemPath!['get']!;
+    const getResponses = getOperation['responses'] as Record<string, Record<string, unknown>>;
+    const getOkContent = getResponses['200']!['content'] as Record<string, unknown>;
+    expect(getOkContent).toHaveProperty('application/octet-stream');
+    expect(getResponses).toHaveProperty('404');
+
+    const putOperation = storageItemPath!['put']!;
+    const putRequestBody = putOperation['requestBody'] as Record<string, Record<string, unknown>>;
+    const putContent = putRequestBody['content'] as Record<string, unknown>;
+    expect(putContent).toHaveProperty('application/octet-stream');
+    const putResponses = putOperation['responses'] as Record<string, unknown>;
+    expect(putResponses).toHaveProperty('204');
+
+    const scanOperation = storageScanPath!['get']!;
+    const queryParameters = scanOperation['parameters'] as Array<{ in: string; name: string }>;
+    expect(
+      queryParameters
+        .filter((parameter) => parameter.in === 'query')
+        .map((parameter) => parameter.name),
+    ).toEqual(['gt', 'gte', 'limit', 'lt', 'lte', 'prefix', 'reverse']);
+    const scanResponses = scanOperation['responses'] as Record<string, Record<string, unknown>>;
+    const scanOkContent = scanResponses['200']!['content'] as Record<string, unknown>;
+    expect(scanOkContent).toHaveProperty('application/x-ndjson');
+
+    const batchOperation = storageBatchPath!['post']!;
+    const batchRequestBody = batchOperation['requestBody'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const batchContent = batchRequestBody['content'] as Record<string, unknown>;
+    expect(batchContent).toHaveProperty('application/json');
+    const batchResponses = batchOperation['responses'] as Record<string, unknown>;
+    expect(batchResponses).toHaveProperty('204');
+
+    const conditionalBatchOperation = storageConditionalBatchPath!['post']!;
+    const conditionalBatchResponses = conditionalBatchOperation['responses'] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const conditionalBatchOkContent = conditionalBatchResponses['200']!['content'] as Record<
+      string,
+      unknown
+    >;
+    expect(conditionalBatchOkContent).toHaveProperty('application/json');
   });
 });
 

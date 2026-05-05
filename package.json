@@ -66,14 +66,11 @@
       "default": "./dist/storage/compressed-storage.js"
     },
     "./storage/sqlite": {
-      "bun": {
-        "types": "./dist/storage/bun-sql.d.ts",
-        "default": "./dist/storage/bun-sql.js"
-      },
-      "node": {
-        "types": "./dist/storage/node-sqlite.d.ts",
-        "default": "./dist/storage/node-sqlite.js"
-      }
+      "types": "./dist/storage/sqlite.d.ts",
+      "bun": "./dist/storage/bun-sql.js",
+      "node": "./dist/storage/node-sqlite.js",
+      "import": "./dist/storage/node-sqlite.js",
+      "default": "./dist/storage/node-sqlite.js"
     },
     "./storage/sqlite/bun": {
       "types": "./dist/storage/bun-sql.d.ts",
@@ -82,10 +79,6 @@
     "./storage/sqlite/node": {
       "types": "./dist/storage/node-sqlite.d.ts",
       "node": "./dist/storage/node-sqlite.js"
-    },
-    "./storage/bun-sqlite": {
-      "types": "./dist/storage/bun-sql.d.ts",
-      "bun": "./dist/storage/bun-sql.js"
     },
     "./storage/lmdb": {
       "types": "./dist/storage/lmdb.d.ts",
@@ -103,6 +96,21 @@
       "types": "./dist/storage/indexeddb.d.ts",
       "import": "./dist/storage/indexeddb.js",
       "default": "./dist/storage/indexeddb.js"
+    },
+    "./storage/web-extension": {
+      "types": "./dist/storage/web-extension.d.ts",
+      "import": "./dist/storage/web-extension.js",
+      "default": "./dist/storage/web-extension.js"
+    },
+    "./storage/http": {
+      "types": "./dist/storage/http.d.ts",
+      "import": "./dist/storage/http.js",
+      "default": "./dist/storage/http.js"
+    },
+    "./storage/resolve": {
+      "types": "./dist/storage/resolve.d.ts",
+      "import": "./dist/storage/resolve.js",
+      "default": "./dist/storage/resolve.js"
     },
     "./storage/auto": {
       "types": "./dist/storage/auto.d.ts",
@@ -154,7 +162,7 @@
     "prepare": "husky",
     "prepublishOnly": "bun run validate",
     "start": "bun run src/index.ts",
-    "test": "bun test --timeout 15000",
+    "test": "bun test --timeout 15000 --path-ignore-patterns='src/benchmarks/**' && bun test src/benchmarks --timeout 15000 --parallel=1",
     "test:coverage": "WEFT_COVERAGE_MODE=1 bun test --timeout 15000 --coverage",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc --noEmit -p tsconfig.test-d.json",

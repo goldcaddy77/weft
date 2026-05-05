@@ -335,7 +335,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
 ## 8. Storage
 
-- [ ] **Consolidate SQLite imports under `weft/storage/sqlite`; delete the legacy `weft/storage/bun-sqlite` alias.**
+- [x] **Consolidate SQLite imports under `weft/storage/sqlite`; delete the legacy `weft/storage/bun-sqlite` alias.**
 
   Auto-detect path already exists (`./storage/sqlite` resolves to Bun or Node module via export conditions); the legacy `./storage/bun-sqlite` parallel name is what every doc currently imports. Cleanup:
   1. Delete `./storage/bun-sqlite` from `package.json` `exports`.
@@ -344,13 +344,13 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
   4. Document `weft/storage/sqlite/bun` and `weft/storage/sqlite/node` as the explicit-override escape hatches.
   5. Verify Bun and Node conditions actually work end-to-end via a build-output integration test (build a tiny consumer, run under each, assert the right constructor name).
 
-- [ ] **Add `WebExtensionStorage` (re-exported as `ChromeStorage`) for Chrome / WebExtension contexts.**
+- [x] **Add `WebExtensionStorage` for WebExtension contexts.**
 
   **Where:** new `src/storage/web-extension.ts`; new `weft/storage/web-extension` subpath in `package.json` `exports`.
 
-  Implement the `Storage` interface against `chrome.storage.local` / `browser.storage.local`. Detect both namespaces (`globalThis.browser ?? globalThis.chrome`). Map five required methods (`get`, `put`, `delete`, `scan`, `batch`). Storage values are `Uint8Array`; base64-encode for `chrome.storage` (which only accepts JSON-serializable values), or use the chunking pattern for large blobs. Constructor option: `area: 'local' | 'sync' | 'session' | 'managed'` (default `local`, `managed` is read-only). Honor `chrome.storage.sync` quotas (100KB total, per-item limits) — fail fast with a clear error rather than silent chunking. `chrome.storage.onChanged` integration for invalidating in-memory caches and emitting Weft engine events. Lazy-load `chrome.storage` access; throw clearly if absent. Re-export as `ChromeStorage` for users who think colloquially. Test harness: Playwright + a tiny test extension. Manifest example: `"permissions": ["storage"]`.
+  Implement the `Storage` interface against `chrome.storage.local` / `browser.storage.local`. Detect both namespaces (`globalThis.browser ?? globalThis.chrome`). Map five required methods (`get`, `put`, `delete`, `scan`, `batch`). Storage values are `Uint8Array`; base64-encode for WebExtension storage (which only accepts JSON-serializable values), or use the chunking pattern for large blobs. Constructor option: `area: 'local' | 'sync' | 'session' | 'managed'` (default `local`, `managed` is read-only). Honor `chrome.storage.sync` quotas (100KB total, per-item limits) — fail fast with a clear error rather than silent chunking. Lazy-load WebExtension storage access; throw clearly if absent. Test harness: Playwright + a tiny test extension. Manifest example: `"permissions": ["storage"]`.
 
-- [ ] **Add `HTTPStorage` adapter for remote storage over HTTP.**
+- [x] **Add `HTTPStorage` adapter for remote storage over HTTP.**
 
   **Where:** new `src/storage/http.ts`; new `weft/storage/http` subpath in `package.json` `exports`. Server-side route handler in `src/server/operations/storage-*.ts`.
 
@@ -358,7 +358,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   **Out of scope:** pub/sub for `'change'` notifications across remote clients (separate, larger concern paired with `SharedState` observable interface).
 
-- [ ] **Add `resolveStorage(config)` helper for runtime-driven backend selection.**
+- [x] **Add `resolveStorage(config)` helper for runtime-driven backend selection.**
 
   ```ts
   type StorageConfiguration =
@@ -367,7 +367,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
     | { type: 'lmdb'; path: string }
     | { type: 'turso'; url: string; authToken?: string }
     | { type: 'indexeddb'; databaseName?: string }
-    | { type: 'webextension'; area?: 'local' | 'sync' | 'session' | 'managed' }
+    | { type: 'web-extension'; area?: 'local' | 'sync' | 'session' | 'managed' }
     | { type: 'http'; baseUrl: string; headers?: Record<string, string> }
     | { type: 'auto' };
   ```

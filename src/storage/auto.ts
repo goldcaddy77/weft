@@ -71,6 +71,17 @@ function describeGlobal(name: 'Bun' | 'process'): string {
   return typeof process;
 }
 
+function storageModuleSpecifier(sourceSpecifier: string, buildSpecifier: string): string {
+  return import.meta.url.endsWith('.ts') ? sourceSpecifier : buildSpecifier;
+}
+
+async function importStorageModule<Module>(specifier: string): Promise<Module> {
+  return (await import(specifier)) as Module;
+}
+
+const BUN_SQLITE_STORAGE_MODULE = storageModuleSpecifier('./bun-sql.ts', './bun-sql.js');
+const NODE_SQLITE_STORAGE_MODULE = storageModuleSpecifier('./node-sqlite.ts', './node-sqlite.js');
+
 /**
  * Resolve a runtime-appropriate persistent storage adapter for Bun or
  * Node. Throws in browser/Service Worker contexts (and any environment
@@ -90,12 +101,15 @@ export async function resolveDefaultStorage(): Promise<WeftStorage> {
   const detected = detectGlobals();
 
   if (detected.hasBun) {
-    const { BunSQLiteStorage } = await import('./bun-sql.ts');
+    const { BunSQLiteStorage } =
+      await importStorageModule<typeof import('./bun-sql.ts')>(BUN_SQLITE_STORAGE_MODULE);
     return new BunSQLiteStorage(defaultSqlitePath());
   }
 
   if (detected.hasNode) {
-    const { NodeSQLiteStorage } = await import('./node-sqlite.ts');
+    const { NodeSQLiteStorage } = await importStorageModule<typeof import('./node-sqlite.ts')>(
+      NODE_SQLITE_STORAGE_MODULE,
+    );
     return new NodeSQLiteStorage(defaultSqlitePath());
   }
 

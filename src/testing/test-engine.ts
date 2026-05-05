@@ -14,7 +14,7 @@ import type { Duration } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import type { ChaosScenario, FailureCategory } from './chaos.ts';
 import { withChaos } from './chaos.ts';
-import { yieldToEventLoop } from './fake-timers.ts';
+import { yieldToPortableEventLoop } from './event-loop.ts';
 import type { MockHandle } from './mocks.ts';
 import { ActivityMockRegistry } from './mocks.ts';
 import { TimeControl } from './time-control.ts';
@@ -144,7 +144,7 @@ export class TestEngine extends Engine {
     // Inline starts can be intentionally queued onto the next event-loop turn.
     // Let them schedule durable timers at the advanced virtual time before
     // the scheduler scans for due timers.
-    await yieldToEventLoop();
+    await yieldToPortableEventLoop();
 
     // The queued inline start async chain (MessageChannel delivery →
     // loadWorkflowState → persistCheckpoint → evaluateConstraints →
@@ -164,9 +164,11 @@ export class TestEngine extends Engine {
     }
 
     // Some workflow continuations are queued onto the next event-loop turn.
-    // Yield once without using Bun.sleep so virtual-time tests still avoid
-    // wall-clock sleeps while letting those continuations run.
-    await yieldToEventLoop();
+    // Yield a few turns without using Bun.sleep so virtual-time tests still
+    // avoid wall-clock sleeps while letting those continuations run.
+    for (let i = 0; i < 3; i++) {
+      await yieldToPortableEventLoop();
+    }
   }
 
   /** Current virtual time in milliseconds since epoch. */

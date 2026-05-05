@@ -30,13 +30,33 @@ async function waitForWorkflowStatus(
   engine: Engine,
   workflowId: string,
   status: WorkflowState['status'],
+  timeoutMs = 10_000,
 ): Promise<void> {
   await waitForCondition(
     async () => {
       const state = await engine.get(workflowId);
       return state?.status === status;
     },
-    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs: 10_000, intervalMs: 5 },
+    { label: `workflow "${workflowId}" to reach ${status}`, timeoutMs, intervalMs: 5 },
+  );
+}
+
+async function waitForWorkflowStatusCount(
+  engine: Engine,
+  status: WorkflowState['status'],
+  expectedCount: number,
+  timeoutMs = 500,
+): Promise<void> {
+  await waitForCondition(
+    async () => {
+      const result = await engine.list({ status });
+      return result.total === expectedCount;
+    },
+    {
+      label: `${String(expectedCount)} workflows to reach ${status}`,
+      timeoutMs,
+      intervalMs: 5,
+    },
   );
 }
 
@@ -654,9 +674,7 @@ describe('bulk workflow operations', () => {
         );
       }
 
-      await Promise.all(
-        handles.map((handle) => waitForWorkflowStatus(engine, handle.id, 'running')),
-      );
+      await waitForWorkflowStatusCount(engine, 'running', handles.length, 10_000);
 
       const result = await engine.signalAll({ status: 'running' }, 'continue', 'released');
 

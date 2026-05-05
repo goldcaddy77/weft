@@ -26,7 +26,10 @@ const PORTABLE_ENTRIES: PortableEntry[] = [
   { name: 'weft (root)', entrypoint: './src/index.ts' },
   { name: 'weft/client', entrypoint: './src/client/index.ts' },
   { name: 'weft/service-worker', entrypoint: './src/service-worker/index.ts' },
+  { name: 'weft/storage/http', entrypoint: './src/storage/http.ts' },
   { name: 'weft/storage/indexeddb', entrypoint: './src/storage/indexeddb.ts' },
+  { name: 'weft/storage/resolve', entrypoint: './src/storage/resolve.ts' },
+  { name: 'weft/storage/web-extension', entrypoint: './src/storage/web-extension.ts' },
   { name: 'weft/server/handler', entrypoint: './src/server/handler.ts' },
 ];
 

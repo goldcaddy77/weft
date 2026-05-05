@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import {
-  sleepForTesting,
-  waitForCondition,
-  waitForRealTimersForTesting,
-} from '../testing/fake-timers.ts';
+import { sleepForTesting, waitForCondition } from '../testing/fake-timers.ts';
 
 import { encode } from '../core/codec.ts';
 import { Engine } from '../core/engine.ts';
@@ -82,14 +78,11 @@ async function connectAndRegisterWorker(
       concurrency: options.concurrency ?? 10,
     }),
   );
-  // The register message is fire-and-forget over WS; the server's
-  // worker registry processes it on the next tick after the frame
-  // arrives. `sleepForTesting` only yields one scheduler turn (the
-  // fake-timer shim), so on a slow CI runner the registry may not
-  // have observed the worker by the time the test's first
-  // `dispatchTask` runs. Wait wall-clock time so real socket I/O can
-  // complete before the test depends on a registered worker.
-  await waitForRealTimersForTesting(50);
+  await waitForCondition(() => wsServer.registry.getWorker(options.workerId) !== undefined, {
+    timeoutMs: 5000,
+    intervalMs: 25,
+    label: `worker "${options.workerId}" to register`,
+  });
   return ws;
 }
 
@@ -428,11 +421,14 @@ describe('task state invariant (server integration)', () => {
 
     // Disconnect the worker — task should be requeued
     ws.close();
-    await sleepForTesting(150);
-
-    // Task should no longer be inflight (requeued or dispatched to another worker)
-    const inflight = await storage.get(KEYS.operationInflight('dc-op-1'));
-    expect(inflight).toBeNull();
+    await waitForCondition(
+      async () => (await storage.get(KEYS.operationInflight('dc-op-1'))) === null,
+      {
+        label: 'worker disconnect to clear the inflight task record',
+        timeoutMs: 1_000,
+        intervalMs: 5,
+      },
+    );
   });
 
   it('no task is lost: dispatched task is always findable in at least one state', async () => {

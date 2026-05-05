@@ -25,9 +25,9 @@ import {
   type WorkflowHandle,
   type WorkflowContext,
 } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
-const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
+const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
 const formatGreeting = activity({
   name: 'formatGreeting',
@@ -82,9 +82,9 @@ If generators are unfamiliar, you can write the same workflow with plain `async`
 
 ```typescript partial
 import { Engine } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
-const engine = new Engine({ storage: new BunSQLiteStorage('./weft.db') });
+const engine = new Engine({ storage: new SQLiteStorage('./weft.db') });
 
 async function greet(name: string) {
   return `Hello, ${name}!`;
@@ -191,14 +191,14 @@ Both activities run concurrently and the workflow resumes when all of them compl
 
 ## Using SQLite for Persistence
 
-`MemoryStorage` is great for development, but everything vanishes when the process stops. For real durability, use `BunSQLiteStorage`:
+`MemoryStorage` is great for development, but everything vanishes when the process stops. For real durability, use `SQLiteStorage`:
 
 ```typescript
 import { Engine } from 'weft';
-import { BunSQLiteStorage } from 'weft/storage/bun-sqlite';
+import { SQLiteStorage } from 'weft/storage/sqlite';
 
 const engine = new Engine({
-  storage: new BunSQLiteStorage('./weft.db'),
+  storage: new SQLiteStorage('./weft.db'),
 });
 ```
 

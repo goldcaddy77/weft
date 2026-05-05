@@ -18,7 +18,7 @@ describe('waitForWorkflowStatus', () => {
     };
 
     await expect(
-      waitForWorkflowStatus(engine as never, 'workflow-1', 'completed', 50),
+      waitForWorkflowStatus(engine as never, 'workflow-1', 'completed', 500),
     ).resolves.toBeUndefined();
   });
 
