@@ -203,13 +203,17 @@ All response-producing endpoints support content negotiation. If the `Accept` he
 
 The same `handleRequest()` function that powers the Bun server also powers the Service Worker runtime. In the browser, a Service Worker intercepts `fetch` events and routes them through the engine---your client code calls `fetch("/weft/v1/workflows", ...)` and the Service Worker responds, no network required.
 
-The `weft/service-worker` module provides bootstrap functions for lifecycle and fetch wiring. Timer wakeup uses the engine scheduler directly from the Service Worker event.
+The `weft/service-worker` module provides bootstrap functions for lifecycle, fetch, and periodic-sync wiring. Timer wakeup uses the engine scheduler from the Service Worker event.
 
 ```typescript partial
 /// <reference lib="webworker" />
 import { Engine } from 'weft';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
-import { createFetchHandler, createLifecycleHandlers } from 'weft/service-worker';
+import {
+  createFetchHandler,
+  createLifecycleHandlers,
+  createPeriodicSyncHandler,
+} from 'weft/service-worker';
 
 const storage = new IndexedDBStorage('weft');
 const engine = new Engine({ storage });
@@ -220,10 +224,7 @@ const { install, activate } = createLifecycleHandlers();
 self.addEventListener('install', install);
 self.addEventListener('activate', activate);
 self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/' }));
-self.addEventListener('periodicsync', (event) => {
-  if (event.tag !== 'weft-timers') return;
-  event.waitUntil(engine.scheduler.tick());
-});
+self.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler));
 ```
 
 See the [Service Worker guide](./service-worker.md) for registration, Periodic Background Sync setup, fallback polling, and debugging details.

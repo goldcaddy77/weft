@@ -2,6 +2,7 @@ import type { Context } from '../core/context.ts';
 import { Engine, ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
+import { isConstrainedCodexRunner } from './benchmark-environment.ts';
 
 const WORKFLOW_ID_PREFIX = 'memory-benchmark-';
 const WORKFLOW_ID_PATTERN = /memory-benchmark-\d+/;
@@ -192,7 +193,7 @@ if (import.meta.main) {
 }
 
 async function waitForParkedWorkflows(engine: Engine, expectedCount: number): Promise<void> {
-  const timeoutMilliseconds = process.env['CODEX_CI'] === '1' ? 180_000 : 60_000;
+  const timeoutMilliseconds = isConstrainedCodexRunner() ? 180_000 : 60_000;
   const deadline = Date.now() + timeoutMilliseconds;
 
   while (Date.now() < deadline) {

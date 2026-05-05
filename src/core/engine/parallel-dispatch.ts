@@ -73,10 +73,7 @@ export function createFirstRejectionCapture(): FirstRejectionCapture {
 }
 
 /** Record a rejection, keeping only the first one observed by settlement timing. */
-export function captureFirstRejection(
-  capture: FirstRejectionCapture,
-  reason: unknown,
-): void {
+export function captureFirstRejection(capture: FirstRejectionCapture, reason: unknown): void {
   if (!capture.hasFirstError) {
     capture.hasFirstError = true;
     capture.firstError = reason;

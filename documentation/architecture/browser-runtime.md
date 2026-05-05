@@ -46,7 +46,11 @@ The Weft HTTP handler is a pure `Request` to `Response` function. On the server,
 
 import { Engine } from 'weft';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
-import { createFetchHandler, createLifecycleHandlers } from 'weft/service-worker';
+import {
+  createFetchHandler,
+  createLifecycleHandlers,
+  createPeriodicSyncHandler,
+} from 'weft/service-worker';
 
 const storage = new IndexedDBStorage('weft');
 const engine = new Engine({ storage });
@@ -57,15 +61,12 @@ const { install, activate } = createLifecycleHandlers();
 self.addEventListener('install', install);
 self.addEventListener('activate', activate);
 self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/' }));
-self.addEventListener('periodicsync', (event) => {
-  if (event.tag !== 'weft-timers') return;
-  event.waitUntil(engine.scheduler.tick());
-});
+self.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler));
 ```
 
 The client library doesn't know or care whether its `fetch` calls hit a remote server or a local Service Worker. The API contract is identical.
 
-`createFetchHandler()` takes an `engine` and an optional `pathPrefix` (default `'/weft/'`). It returns a `fetch` event listener that intercepts matching requests and delegates to `handleRequest()`. Non-matching requests pass through to the network. `createLifecycleHandlers()` returns `install` and `activate` handlers that call `skipWaiting()` and `clients.claim()` respectively, ensuring the Service Worker takes control immediately.
+`createFetchHandler()` takes an `engine` and an optional `pathPrefix` (default `'/weft/'`). It returns a `fetch` event listener that intercepts matching requests and delegates to `handleRequest()`. Non-matching requests pass through to the network. `createLifecycleHandlers()` returns `install` and `activate` handlers that call `skipWaiting()` and `clients.claim()` respectively, ensuring the Service Worker takes control immediately. `createPeriodicSyncHandler()` returns a `periodicsync` listener for timer wakeups and calls `engine.scheduler.tick()` inside `event.waitUntil(...)`.
 
 When the tab calls `fetch("/weft/v1/workflows", { method: "POST", ... })`, the Service Worker's `createFetchHandler()` strips the `pathPrefix` before routing, so the underlying handler sees `/v1/workflows`.
 

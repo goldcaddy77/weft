@@ -268,7 +268,11 @@ All errors return JSON with an `error` field:
 The `weft/service-worker` module provides bootstrap functions for running the Weft engine inside a Service Worker. These functions wire `handleRequest()` into the Service Worker event model.
 
 ```ts partial
-import { createFetchHandler, createLifecycleHandlers } from 'weft/service-worker';
+import {
+  createFetchHandler,
+  createLifecycleHandlers,
+  createPeriodicSyncHandler,
+} from 'weft/service-worker';
 ```
 
 ---
@@ -303,6 +307,29 @@ self.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/'
 
 ---
 
+### `createPeriodicSyncHandler()`
+
+```ts partial
+function createPeriodicSyncHandler(
+  scheduler: { tick(): Promise<void> },
+  tag?: string,
+): (event: { tag: string; waitUntil(promise: Promise<unknown>): void }) => void;
+```
+
+Returns a `periodicsync` event listener. The default tag is `'weft-timers'`. Matching events call `scheduler.tick()` inside `event.waitUntil(...)`; non-matching events are ignored.
+
+```ts partial
+self.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler));
+```
+
+Pass a custom tag when the page registers a non-default Periodic Background Sync tag:
+
+```ts partial
+self.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler, 'custom-timers'));
+```
+
+---
+
 ### `createLifecycleHandlers()`
 
 ```ts partial
@@ -327,7 +354,13 @@ self.addEventListener('activate', activate);
 
 ### Timer wakeup
 
-Use the engine's public scheduler from the Service Worker event handler:
+Use `createPeriodicSyncHandler()` or the engine's public scheduler from the Service Worker event handler:
+
+```ts partial
+self.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler));
+```
+
+The manual equivalent is:
 
 ```ts partial
 self.addEventListener('periodicsync', (event) => {

@@ -2,7 +2,7 @@
 
 Weft can run a browser-local engine behind a Service Worker. The page talks to the engine through the same HTTP shape it would use for a remote Weft server, but requests under a path like `/weft/` are intercepted locally and backed by `IndexedDB`.
 
-This guide documents the current public surface: `Engine`, `IndexedDBStorage`, `createFetchHandler()`, `createLifecycleHandlers()`, browser Service Worker registration, manual Periodic Background Sync registration, and `engine.scheduler.tick()` for timer wakeup.
+This guide documents the current public surface: `Engine`, `IndexedDBStorage`, `createFetchHandler()`, `createLifecycleHandlers()`, `createPeriodicSyncHandler()`, browser Service Worker registration, manual Periodic Background Sync registration, and `engine.scheduler.tick()` for timer wakeup.
 
 ## Mental model
 
@@ -28,7 +28,11 @@ Create a Service Worker module that constructs the engine, registers browser-saf
 
 import { Engine, activity } from 'weft';
 import { IndexedDBStorage } from 'weft/storage/indexeddb';
-import { createFetchHandler, createLifecycleHandlers } from 'weft/service-worker';
+import {
+  createFetchHandler,
+  createLifecycleHandlers,
+  createPeriodicSyncHandler,
+} from 'weft/service-worker';
 
 const serviceWorker = self as unknown as ServiceWorkerGlobalScope;
 
@@ -55,10 +59,7 @@ serviceWorker.addEventListener('install', install);
 serviceWorker.addEventListener('activate', activate);
 serviceWorker.addEventListener('fetch', createFetchHandler({ engine, pathPrefix: '/weft/' }));
 
-serviceWorker.addEventListener('periodicsync', (event) => {
-  if (event.tag !== 'weft-timers') return;
-  event.waitUntil(engine.scheduler.tick());
-});
+serviceWorker.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler));
 
 serviceWorker.addEventListener('message', (event) => {
   if (event.data?.type !== 'weft:tick') return;
@@ -70,6 +71,7 @@ The important pieces are:
 
 - **`IndexedDBStorage`:** Durable browser storage for checkpoints, workflow state, signals, and timers.
 - **`createFetchHandler()`:** Intercepts `/weft/` requests and strips the prefix before routing to Weft's `/v1/*` handler.
+- **`createPeriodicSyncHandler()`:** Returns a `periodicsync` listener for the `weft-timers` tag and calls `engine.scheduler.tick()` inside `event.waitUntil(...)`.
 - **`engine.recoverAll()`:** Lets a newly started Service Worker resume workflows already stored as running. Await it before serving steady-state fetch traffic so recovery failures are visible instead of silently leaving workflows parked.
 - **`engine.scheduler.tick()`:** Scans durable timer keys and advances expired sleeps.
 
@@ -153,7 +155,13 @@ if (!periodicSyncRegistered) {
 }
 ```
 
-The helper checks support, checks permission when the browser exposes that status, and catches registration failures. The Service Worker listens for the matching tag:
+The helper checks support, checks permission when the browser exposes that status, and catches registration failures. The Service Worker listens for the matching tag. The exported `createPeriodicSyncHandler()` helper is the shortest way to wire that listener:
+
+```typescript partial
+serviceWorker.addEventListener('periodicsync', createPeriodicSyncHandler(engine.scheduler));
+```
+
+The manual listener is equivalent and shows the underlying wakeup path:
 
 ```typescript partial
 serviceWorker.addEventListener('periodicsync', (event) => {
