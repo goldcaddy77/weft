@@ -142,10 +142,13 @@ describe('RemoteWorker', () => {
 
     expect(worker.connected).toBe(true);
 
-    // Give time for the register message to arrive
-    await sleepForTesting(50);
-
-    const registerMessage = messages.find((m) => m.type === 'register');
+    // Give time for the register message to arrive. The previous fixed
+    // 50ms sleep flaked on slow CI runners; poll up to 2s instead.
+    let registerMessage: any;
+    for (let attempt = 0; attempt < 40 && registerMessage === undefined; attempt++) {
+      await sleepForTesting(50);
+      registerMessage = messages.find((m) => m.type === 'register');
+    }
     expect(registerMessage).toBeDefined();
     expect(registerMessage.workerId).toBe('test-worker-1');
     expect(registerMessage.activities).toEqual(['processOrder']);
