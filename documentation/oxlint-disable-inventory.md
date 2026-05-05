@@ -21,6 +21,13 @@ naming the alternative that was rejected.
 - **Symbol**: `resolveToolExecution`
 - **Reason**: Pre-existing complexity violation; tracked by oxlint-strict initiative for refactor.
 
+## `ai-agent-types-file-length`
+
+- **File**: `src/ai/agent/types.ts`
+- **Rule**: `max-lines`
+- **Symbol**: `(whole file)`
+- **Reason**: Canonical home for the structural agent types Weft owns post-shrinkage (LLMProvider, Message, ToolCall, ToolResult, ToolDefinition, ChatOptions, ChatResponse, ChatResumeHint, ChatResumeContext, TokenUsage, AgentOptions, AgentResult, AgentTool, TurnUsageEntry, PersistedAgentLoopState, AgentLoopSuspendedError, plus internal runtime shapes). JSDoc + `@example` blocks on each public type are required by the JSDoc audit and account for most of the line count. Splitting would fragment the structural-types contract that downstream consumers (Agent Bureau, armorer) target.
+
 ## `ai-coordination-supervise-complexity`
 
 - **File**: `src/ai/coordination/supervise.ts`
@@ -927,10 +934,3 @@ naming the alternative that was rejected.
 - **Rule**: `complexity`
 - **Symbol**: `isPersistedAgentLoopStateValue`
 - **Reason**: Runtime type guard for PersistedAgentLoopState v2 — checks seven required fields plus schema version. Splitting into sub-validators adds indirection without clarity gain; the linear field checks are the complexity.
-
-## `ai-agent-types-file-length`
-
-- **File**: `src/ai/agent/types.ts`
-- **Rule**: `max-lines`
-- **Symbol**: `(whole file)`
-- **Reason**: Canonical home for the structural agent types Weft owns post-shrinkage (LLMProvider, Message, ToolCall, ToolResult, ToolDefinition, ChatOptions, ChatResponse, ChatResumeHint, ChatResumeContext, TokenUsage, AgentOptions, AgentResult, AgentTool, MCPToolSource carve-out, TurnUsageEntry, PersistedAgentLoopState, AgentLoopSuspendedError, plus internal runtime shapes). JSDoc + `@example` blocks on each public type are required by the JSDoc audit and account for most of the line count. Splitting would fragment the structural-types contract that downstream consumers (Agent Bureau, armorer) target.

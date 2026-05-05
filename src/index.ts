@@ -352,6 +352,7 @@ export type { EffectRecord } from './ai/tool-effect-log';
 // AI Events (durability-shaped only)
 export {
   AgentCheckpointResumedEvent,
+  AgentCheckpointSizeWarningEvent,
   AgentToolCalledEvent,
   AgentToolReturnedEvent,
   AgentTurnCompletedEvent,

@@ -29,4 +29,32 @@ describe('persisted agent loop state version validation', () => {
 
     expect(isPersistedAgentLoopStateValue(value)).toBe(true);
   });
+
+  it('rejects v1 state where previousModels is the only forbidden field', () => {
+    const value = { schemaVersion: 1, previousModels: [] };
+
+    expect(() => isPersistedAgentLoopStateValue(value)).toThrow(VersionMismatchError);
+
+    try {
+      isPersistedAgentLoopStateValue(value);
+    } catch (error) {
+      expect(error).toBeInstanceOf(VersionMismatchError);
+      expect((error as VersionMismatchError).offendingField).toBe('previousModels');
+      expect((error as Error).message).toContain('previousModels');
+    }
+  });
+
+  it('rejects v1 state where budgetState is the only forbidden field', () => {
+    const value = { schemaVersion: 1, budgetState: null };
+
+    expect(() => isPersistedAgentLoopStateValue(value)).toThrow(VersionMismatchError);
+
+    try {
+      isPersistedAgentLoopStateValue(value);
+    } catch (error) {
+      expect(error).toBeInstanceOf(VersionMismatchError);
+      expect((error as VersionMismatchError).offendingField).toBe('budgetState');
+      expect((error as Error).message).toContain('budgetState');
+    }
+  });
 });

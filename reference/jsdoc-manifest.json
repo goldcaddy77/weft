@@ -322,7 +322,7 @@
       "sourceFile": "src/ai/agent/types.ts",
       "sourceName": "TurnUsageEntry",
       "kind": "type",
-      "subKind": "interface",
+      "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
@@ -499,8 +499,14 @@
       "sourceName": "AgentCheckpointSizeWarningEvent",
       "kind": "value",
       "subKind": "class",
-      "publicFaces": [],
-      "classification": "not-public"
+      "publicFaces": [
+        {
+          "importPath": "weft",
+          "exportName": "AgentCheckpointSizeWarningEvent",
+          "kind": "value"
+        }
+      ],
+      "classification": "example-required"
     },
     {
       "sourceFile": "src/ai/events/review-events.ts",

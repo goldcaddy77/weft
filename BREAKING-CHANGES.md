@@ -91,7 +91,7 @@ Now requires only `chat()`. `stream()` and `countTokens()` are removed. `createC
 
 ### `PersistedAgentLoopState`
 
-Adds `schemaVersion: 2` (required). Drops `toolCacheEntries`, `previousModels`, `budgetState`, `totalCost`, `turnCosts`, `budgetWarningFired`. Old (v1-shape) blobs hard-fail with `VersionMismatchError` naming the offending field — **on-disk state from prior versions is unrecoverable and workflows in flight will not resume.** Pre-1.0 storage is not supported across this cut.
+Adds `schemaVersion: 2` (required). Drops `toolCacheEntries`, `previousModels`, `budgetState`, `totalCost`, `turnCosts`, `budgetWarningFired`. Old (v1-shape) blobs hard-fail with `VersionMismatchError` naming the offending field — **you cannot recover on-disk state from prior versions, and workflows in flight will not resume.** Pre-1.0 storage is not supported across this cut.
 
 ### `AgentRegistrationOptions`
 

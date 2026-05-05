@@ -305,31 +305,39 @@ export interface VerificationRecorder {
 
 /**
  * Per-turn token usage entry in {@link AgentResult.turnUsage}. Exactly one
- * entry per completed turn. `source: 'provider'` when the provider
- * returned a usage block; `source: 'unavailable'` when usage was not
- * reported and `inputTokens` / `outputTokens` are `null`.
+ * entry per completed turn. The discriminator narrows the token fields:
+ * `source: 'provider'` carries numeric token counts; `source:
+ * 'unavailable'` carries `null` token counts (the provider did not
+ * report usage).
  *
- * @example
+ * @example Sum input tokens across the run, ignoring unavailable turns
  * ```ts
  * import type { TurnUsageEntry } from 'weft';
  *
- * const entry: TurnUsageEntry = {
- *   turnNumber: 0,
- *   inputTokens: 120,
- *   outputTokens: 45,
- *   source: 'provider',
- * };
+ * function totalInputTokens(usage: TurnUsageEntry[]): number {
+ *   let total = 0;
+ *   for (const entry of usage) {
+ *     if (entry.source === 'provider') total += entry.inputTokens;
+ *   }
+ *   return total;
+ * }
  * ```
  */
-export interface TurnUsageEntry {
-  /** Zero-based, monotonic across the loop including resumed turns. */
-  turnNumber: number;
-  /** null when source is 'unavailable'. */
-  inputTokens: number | null;
-  /** null when source is 'unavailable'. */
-  outputTokens: number | null;
-  source: 'provider' | 'unavailable';
-}
+export type TurnUsageEntry =
+  | {
+      /** Zero-based, monotonic across the loop including resumed turns. */
+      turnNumber: number;
+      source: 'provider';
+      inputTokens: number;
+      outputTokens: number;
+    }
+  | {
+      /** Zero-based, monotonic across the loop including resumed turns. */
+      turnNumber: number;
+      source: 'unavailable';
+      inputTokens: null;
+      outputTokens: null;
+    };
 
 /**
  * Configuration object passed to executeAgentLoop.

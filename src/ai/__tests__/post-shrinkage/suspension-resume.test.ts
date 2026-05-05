@@ -47,13 +47,15 @@ describe('provider suspension and resume', () => {
         { model: 'test', provider: initialProvider, workflowId: 'wf-1', agentId: 'agent-1' },
         'start',
       );
+      throw new Error('expected AgentLoopSuspendedError, but executeAgentLoop returned normally');
     } catch (error) {
       expect(error).toBeInstanceOf(AgentLoopSuspendedError);
       suspendedError = error as AgentLoopSuspendedError;
     }
 
-    expect(suspendedError?.loopState.schemaVersion).toBe(2);
-    expect(suspendedError?.pendingResume.hint).toEqual(hint);
+    expect(suspendedError).toBeInstanceOf(AgentLoopSuspendedError);
+    expect(suspendedError.loopState.schemaVersion).toBe(2);
+    expect(suspendedError.pendingResume.hint).toEqual(hint);
 
     const resumedState: PendingChatResumeState = {
       hint,
@@ -72,7 +74,7 @@ describe('provider suspension and resume', () => {
     const result = await executeAgentLoopWithState(
       { model: 'test', provider: resumedProvider, workflowId: 'wf-1', agentId: 'agent-1' },
       'start',
-      suspendedError?.loopState,
+      suspendedError.loopState,
     );
 
     expect(result.content).toBe('resumed result');
