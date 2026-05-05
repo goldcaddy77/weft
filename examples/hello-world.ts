@@ -1,9 +1,9 @@
-import { activity, type Context, type WorkflowRegistration } from '../src/index.ts';
+import { activity, type WorkflowRegistration } from '../src/index.ts';
 
 export const formatGreetingActivity = activity({
   name: 'formatGreeting',
   idempotent: true,
-  execute: async (input: unknown) => {
+  execute: async (input: string | undefined) => {
     const subject = typeof input === 'string' ? input.trim() || 'world' : 'world';
     return {
       greeting: `hello ${subject}`,
@@ -13,7 +13,7 @@ export const formatGreetingActivity = activity({
 
 export const helloWorldWorkflow: WorkflowRegistration<string | undefined, { greeting: string }> = {
   handler: async function* (context, input) {
-    return yield* (context as Context).run(formatGreetingActivity, input);
+    return yield* context.run(formatGreetingActivity, input);
   },
 };
 

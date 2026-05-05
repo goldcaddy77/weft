@@ -1,20 +1,31 @@
-import { activity, type Context, type WorkflowRegistration } from '../src/index.ts';
+import { activity, type WorkflowRegistration } from '../src/index.ts';
+
+interface CustomerProfileInput {
+  customerId: string;
+}
+
+interface CustomerProfileOutput {
+  customerId: string;
+  loyaltyTier: string;
+}
 
 export const loadCustomerProfileActivity = activity({
   name: 'loadCustomerProfile',
   idempotent: true,
-  execute: async (input: unknown) => {
-    const customerId = String(input);
+  execute: async (input: CustomerProfileInput): Promise<CustomerProfileOutput> => {
     return {
-      customerId,
+      customerId: input.customerId,
       loyaltyTier: 'gold',
     };
   },
 });
 
-export const customerProfileWorkflow: WorkflowRegistration = {
-  handler: async function* (context, input: unknown) {
-    return yield* (context as Context).run(loadCustomerProfileActivity, input);
+export const customerProfileWorkflow: WorkflowRegistration<
+  CustomerProfileInput,
+  CustomerProfileOutput
+> = {
+  handler: async function* (context, input) {
+    return yield* context.run(loadCustomerProfileActivity, input);
   },
 };
 

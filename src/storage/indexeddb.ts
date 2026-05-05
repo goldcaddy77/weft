@@ -109,8 +109,8 @@ function createCursorRequestAwaiter<TCursor extends IDBCursor | IDBCursorWithVal
  * await using storage = new IndexedDBStorage();
  * await using engine = new Engine({ storage });
  *
- * engine.register('greet', async function* (ctx: WorkflowContext, input: unknown) {
- *   return `Hello, ${(input as { name: string }).name}!`;
+ * engine.register('greet', async function* (ctx: WorkflowContext, input: { name: string }) {
+ *   return `Hello, ${input.name}!`;
  * });
  *
  * const handle = await engine.start('greet', { name: 'World' });

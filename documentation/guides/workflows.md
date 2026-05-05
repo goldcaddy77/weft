@@ -156,22 +156,20 @@ While Weft's checkpoints stay constant-size by default, the data _inside_ your c
 When a workflow produces a large value that it needs later --- a batch of 10,000 processed records, a large API response --- keeping it in a local variable bloats the checkpoint. Use `ctx.offload()` to store the data separately, leaving only a lightweight reference in the checkpoint:
 
 ```typescript partial
-engine.register('process-batch', async function* (ctx, input) {
-  const { batchId } = input as { batchId: string };
-
+engine.register('process-batch', async function* (ctx, input: { batchId: string }) {
   // Offload the large result out of the checkpoint
   const reference = yield* ctx.offload('batch-results', async () => {
-    return await fetchAndProcessBatch(batchId);
+    return await fetchAndProcessBatch(input.batchId);
   });
 
   // reference.sizeBytes tells you how big the stored data is
-  yield* ctx.run(logMetrics, { batchId, bytes: reference.sizeBytes });
+  yield* ctx.run(logMetrics, { batchId: input.batchId, bytes: reference.sizeBytes });
 
   // Load it back when needed
   const results = yield* ctx.load(reference);
   yield* ctx.run(publishResults, results);
 
-  return { batchId, recordCount: results.length };
+  return { batchId: input.batchId, recordCount: results.length };
 });
 ```
 
@@ -182,9 +180,7 @@ The offloaded data survives engine recovery --- it is persisted to the same stor
 Use `ctx.archive()` when you want to preserve data for auditing or debugging but do not need it again in the workflow. Archived data is stored at `archive:{workflowId}:{key}` and can be queried externally, but the workflow does not load it back:
 
 ```typescript partial
-engine.register('order-pipeline', async function* (ctx, input) {
-  const order = input as Order;
-
+engine.register('order-pipeline', async function* (ctx, order: Order) {
   const validated = yield* ctx.run(validateOrder, order);
 
   // Archive the validation snapshot for auditing
@@ -208,21 +204,17 @@ engine.register('order-pipeline', async function* (ctx, input) {
 
 Sometimes a workflow needs to kick off a sub-process that should be independently checkpointed---with its own workflow ID, its own state in storage, and its own lifecycle. That is what child workflows are for.
 
-Use `yield* context.startChild()` to start a child workflow from within a parent. The parent suspends at the `yield*` boundary until the child completes or fails.
+Use `yield* ctx.startChild()` to start a child workflow from within a parent. The parent suspends at the `yield*` boundary until the child completes or fails.
 
 ```typescript partial
-engine.register('process-payment', async function* (ctx, input) {
-  const { amount } = input as { amount: number };
+engine.register('process-payment', async function* (ctx, input: { amount: number }) {
   // ... payment logic ...
-  return { receiptId: 'rcpt-123', amount };
+  return { receiptId: 'rcpt-123', amount: input.amount };
 });
 
-engine.register('order', async function* (ctx, input) {
-  const context = ctx as Context;
-  const { total, email } = input as { total: number; email: string };
-
-  const receipt = yield* context.startChild('process-payment', { amount: total });
-  yield* context.run(sendConfirmation, email, receipt);
+engine.register('order', async function* (ctx, input: { total: number; email: string }) {
+  const receipt = yield* ctx.startChild('process-payment', { amount: input.total });
+  yield* ctx.run(sendConfirmation, input.email, receipt);
   return { receipt, confirmed: true };
 });
 ```
@@ -233,12 +225,11 @@ If a child workflow throws, the error propagates into the parent. You can catch 
 
 ```typescript partial
 engine.register('parent', async function* (ctx, input) {
-  const context = ctx as Context;
   try {
-    yield* context.startChild('risky-child', input);
+    yield* ctx.startChild('risky-child', input);
   } catch (error) {
     // Handle or compensate for the child failure
-    yield* context.run(handleFailure, error);
+    yield* ctx.run(handleFailure, error);
   }
 });
 ```

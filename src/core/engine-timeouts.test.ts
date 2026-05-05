@@ -4,7 +4,6 @@ import { sleepForTesting, waitForever } from '../testing/fake-timers.ts';
 import { KEYS } from '../storage/interface.ts';
 import { TestEngine } from '../testing/test-engine.ts';
 import { decode } from './codec.ts';
-import type { Context } from './context.ts';
 import { WorkflowTimedOutEvent } from './events.ts';
 import { WorkflowTimeoutError } from './timeouts.ts';
 import type { WorkflowContext, WorkflowState } from './types.ts';
@@ -36,7 +35,7 @@ describe('Execution Timeouts', () => {
     const engine = new TestEngine();
 
     engine.register('slow', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).run(slowActivity);
+      yield* ctx.run(slowActivity);
       return 'never';
     });
 
@@ -67,7 +66,7 @@ describe('Execution Timeouts', () => {
     }) as EventListener);
 
     engine.register('slow', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).run(slowActivity);
+      yield* ctx.run(slowActivity);
       return 'never';
     });
 
@@ -91,7 +90,7 @@ describe('Execution Timeouts', () => {
     const engine = new TestEngine();
 
     engine.register('slow', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).run(slowActivity);
+      yield* ctx.run(slowActivity);
       return 'never';
     });
 
@@ -124,7 +123,7 @@ describe('Execution Timeouts', () => {
     });
 
     engine.register('slow', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).run(slowActivity);
+      yield* ctx.run(slowActivity);
       return 'never';
     });
 
@@ -151,8 +150,8 @@ describe('Execution Timeouts', () => {
     };
 
     engine.register('check-time', async function* (ctx: WorkflowContext) {
-      const remaining = (ctx as Context).executionTimeRemaining;
-      yield* (ctx as Context).run(captureRemaining, remaining);
+      const remaining = ctx.executionTimeRemaining;
+      yield* ctx.run(captureRemaining, remaining);
       return remaining;
     });
 
@@ -180,8 +179,8 @@ describe('Execution Timeouts', () => {
     };
 
     engine.register('no-timeout', async function* (ctx: WorkflowContext) {
-      const remaining = (ctx as Context).executionTimeRemaining;
-      yield* (ctx as Context).run(captureRemaining, remaining);
+      const remaining = ctx.executionTimeRemaining;
+      yield* ctx.run(captureRemaining, remaining);
       return remaining;
     });
 
@@ -204,7 +203,7 @@ describe('Execution Timeouts', () => {
     const fastActivity = async () => 'fast';
 
     engine.register('fast', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(fastActivity);
+      const result = yield* ctx.run(fastActivity);
       return result;
     });
 
@@ -237,7 +236,7 @@ describe('Execution Timeouts', () => {
     });
 
     engine.register('cancellable', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).run(slowActivity);
+      yield* ctx.run(slowActivity);
       return 'never';
     });
 
@@ -274,7 +273,7 @@ describe('Execution Timeouts', () => {
 
     engine.register('failing', async function* (ctx: WorkflowContext) {
       // Yield through an activity so the deadline timer is committed to storage
-      yield* (ctx as Context).run(failingActivity);
+      yield* ctx.run(failingActivity);
       return 'never';
     });
 
@@ -311,7 +310,7 @@ describe('Execution Timeouts', () => {
     const fastActivity = async () => 'fast';
 
     engine.register('completes-first', async function* (ctx: WorkflowContext) {
-      const result = yield* (ctx as Context).run(fastActivity);
+      const result = yield* ctx.run(fastActivity);
       return result;
     });
 
@@ -342,7 +341,7 @@ describe('Execution Timeouts', () => {
     const handleEvents: WorkflowTimedOutEvent[] = [];
 
     engine.register('slow', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).run(slowActivity);
+      yield* ctx.run(slowActivity);
       return 'never';
     });
 

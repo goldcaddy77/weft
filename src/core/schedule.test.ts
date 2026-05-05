@@ -5,7 +5,6 @@ import type { BatchOperation } from '../storage/interface.ts';
 import { KEYS } from '../storage/interface.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { decode, encode } from './codec.ts';
-import { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import {
   CleanupWarningEvent,
@@ -143,7 +142,7 @@ async function createQueuedScheduleStartFailureFixture(): Promise<{
   const engine = createEngine(clock, storage);
 
   registerWorkflow(engine, 'queue-start-failure', async function* (ctx: WorkflowContext) {
-    const outcome = yield* (ctx as Context).waitForSignal('release');
+    const outcome = yield* ctx.waitForSignal('release');
     if (outcome === 'fail') {
       throw new Error('scheduled failure');
     }
@@ -447,7 +446,7 @@ describe('recurring schedules', () => {
     const engine = createEngine(clock);
 
     registerWorkflow(engine, 'overlap-skip', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('release');
+      yield* ctx.waitForSignal('release');
       return 'released';
     });
 
@@ -475,7 +474,7 @@ describe('recurring schedules', () => {
       engine,
       'overlap-skip-single-snapshot',
       async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('release');
+        yield* ctx.waitForSignal('release');
         return 'released';
       },
     );
@@ -510,7 +509,7 @@ describe('recurring schedules', () => {
     const engine = createEngine(clock);
 
     registerWorkflow(engine, 'overlap-allow', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('release');
+      yield* ctx.waitForSignal('release');
       return 'released';
     });
 
@@ -536,7 +535,7 @@ describe('recurring schedules', () => {
     const engine = createEngine(clock);
 
     registerWorkflow(engine, 'overlap-cancel-running', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('release');
+      yield* ctx.waitForSignal('release');
       return 'released';
     });
 
@@ -569,7 +568,7 @@ describe('recurring schedules', () => {
     const engine = createEngine(clock);
 
     registerWorkflow(engine, 'overlap-queue', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('release');
+      yield* ctx.waitForSignal('release');
       return 'released';
     });
 
@@ -799,7 +798,7 @@ describe('recurring schedules', () => {
       'backfill-parent-workflow',
       async function* (ctx: WorkflowContext, input: number) {
         parentRuns.push(input);
-        return yield* (ctx as Context).startChild<number>('backfill-child-workflow', input);
+        return yield* ctx.startChild<number>('backfill-child-workflow', input);
       },
     );
 
@@ -855,7 +854,7 @@ describe('recurring schedules', () => {
       engine,
       'controlled-channel-parent',
       async function* (ctx: WorkflowContext, input: number) {
-        return yield* (ctx as Context).startChild<number>('controlled-channel-child', input);
+        return yield* ctx.startChild<number>('controlled-channel-child', input);
       },
     );
 
@@ -1013,7 +1012,7 @@ describe('recurring schedules', () => {
       engine,
       'batched-schedule-run-workflow',
       async function* (ctx: WorkflowContext) {
-        yield* (ctx as Context).waitForSignal('release');
+        yield* ctx.waitForSignal('release');
         return 'released';
       },
     );

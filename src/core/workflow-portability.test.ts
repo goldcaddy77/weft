@@ -18,7 +18,6 @@ import type { WeftClient } from '../client/interface.ts';
 import { LocalClient } from '../client/local.ts';
 import { handleRequest } from '../server/handler.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
 import type { WorkflowContext } from './types.ts';
 
@@ -34,7 +33,7 @@ const double = async (...args: unknown[]) => (args[0] as number) * 2;
  * This exact function reference is registered in every mode's engine.
  */
 async function* multiStepWorkflow(ctx: WorkflowContext, input: unknown) {
-  const c = ctx as Context;
+  const c = ctx;
   const { name, value } = input as { name: string; value: number };
   const greeting = yield* c.run(greet, name);
   const doubled = yield* c.run(double, value);
@@ -54,7 +53,7 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
  * works identically regardless of the deployment wrapper.
  */
 async function* signalWorkflow(ctx: WorkflowContext, _input: unknown) {
-  const c = ctx as Context;
+  const c = ctx;
   const approval = yield* c.waitForSignal<{ approved: boolean }>('approve');
   return { approved: approval.approved };
 }

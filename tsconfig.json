@@ -61,5 +61,5 @@
     "types": ["bun"]
   },
   "include": ["src", "scripts/cli-smoke-main.ts", "scripts/smoke-test-binary.ts"],
-  "exclude": ["node_modules", "coverage", "**/dist/**", "**/build/**"]
+  "exclude": ["node_modules", "coverage", "**/dist/**", "**/build/**", "**/*.test-d.ts"]
 }

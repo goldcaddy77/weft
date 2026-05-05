@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 
 import { decode, encode } from '../core/codec.ts';
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { KEYS } from '../storage/interface.ts';
@@ -287,7 +286,7 @@ describe('G1: ctx.humanReview() pauses workflow with durable storage', () => {
     engine = new TestEngine();
 
     engine.register('review-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'draft report',
         reviewers: ['alice'],
@@ -307,7 +306,7 @@ describe('G1: ctx.humanReview() pauses workflow with durable storage', () => {
     engine = new TestEngine();
 
     engine.register('review-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'draft report',
         reviewers: ['alice'],
@@ -336,7 +335,7 @@ describe('G1: ctx.humanReview() pauses workflow with durable storage', () => {
     engine = new TestEngine();
 
     engine.register('review-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'draft report',
         reviewers: ['alice'],
@@ -350,7 +349,7 @@ describe('G1: ctx.humanReview() pauses workflow with durable storage', () => {
     // Crash and recover
     const recovered = engine.recover();
     recovered.register('review-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'draft report',
         reviewers: ['alice'],
@@ -387,7 +386,7 @@ describe('G2: Review submission resumes workflow', () => {
     engine = new TestEngine();
 
     engine.register('review-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'draft report',
         reviewers: ['alice'],
@@ -424,7 +423,7 @@ describe('G2: Review submission resumes workflow', () => {
     const processAfterReview = mock(() => 'processed');
 
     engine.register('multi-step-review', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
 
       // Step 1: human review
       const decision = yield* c.humanReview({
@@ -475,7 +474,7 @@ describe('G4: Escalation with timeout chains', () => {
     engine = new TestEngine({ startTime: 1000 });
 
     engine.register('auto-approve-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'urgent report',
         reviewers: ['alice'],
@@ -523,7 +522,7 @@ describe('G5: Partial approval', () => {
     engine = new TestEngine();
 
     engine.register('partial-review-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: { sections: ['intro', 'methods', 'conclusion'] },
         reviewers: ['alice'],
@@ -602,7 +601,7 @@ describe('G6: Webhook notification', () => {
     globalThis.fetch = mockFetch as any;
 
     engine.register('webhook-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'draft report',
         reviewers: ['alice'],
@@ -647,7 +646,7 @@ describe('G6: Webhook notification', () => {
     globalThis.fetch = mockFetch as unknown as typeof fetch;
 
     engine.register('webhook-abort-workflow', async function* (ctx: WorkflowContext) {
-      const context = ctx as Context;
+      const context = ctx;
       yield* context.humanReview({
         artifact: 'draft report',
         reviewers: ['alice'],
@@ -684,7 +683,7 @@ describe('G7: Events', () => {
     }) as EventListener);
 
     engine.register('event-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'draft',
         reviewType: 'code-review',
@@ -724,7 +723,7 @@ describe('G7: Events', () => {
     }) as EventListener);
 
     engine.register('event-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'draft',
         reviewers: ['alice'],
@@ -772,7 +771,7 @@ describe('G8: Review cleanup + timeout error', () => {
     engine = new TestEngine();
 
     engine.register('cleanup-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'draft',
         reviewers: ['alice'],
@@ -816,7 +815,7 @@ describe('G8: Review cleanup + timeout error', () => {
     engine = new TestEngine({ startTime: 1000 });
 
     engine.register('timeout-workflow', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const decision = yield* c.humanReview({
         artifact: 'urgent report',
         reviewers: ['alice'],

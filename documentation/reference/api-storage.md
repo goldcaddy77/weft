@@ -318,3 +318,320 @@ Closes the IndexedDB database connection. Supports the `using` pattern for autom
   // storage is open...
 } // database connection closed here
 ```
+
+---
+
+## `LMDBStorage`
+
+```ts partial
+class LMDBStorage implements Storage
+```
+
+Memory-mapped key-value storage backed by [LMDB](https://www.symas.com/lmdb). Optional dependency: `lmdb`. Suitable for high-throughput workloads where SQLite is no longer fast enough on the read path.
+
+```ts
+import { LMDBStorage } from 'weft/storage/lmdb';
+```
+
+### Constructor
+
+```ts partial
+new LMDBStorage(path: string)
+```
+
+| Parameter | Type     | Default | Description                                                                    |
+| --------- | -------- | ------- | ------------------------------------------------------------------------------ |
+| `path`    | `string` | —       | Directory path for the LMDB database. The parent directory must already exist. |
+
+If the `lmdb` package is not installed, the module import fails with the upstream package's missing-module error.
+
+```ts partial
+import { LMDBStorage } from 'weft/storage/lmdb';
+
+await using storage = new LMDBStorage('./weft-data');
+```
+
+### Methods
+
+All methods from the `Storage` interface, plus `conditionalBatch`. The `query()` method is not available—LMDB has no SQL engine.
+
+#### `[Symbol.asyncDispose]()`
+
+Closes the LMDB environment. Supports the `await using` pattern.
+
+---
+
+## `TursoStorage`
+
+```ts partial
+class TursoStorage implements Storage
+```
+
+libSQL/Turso storage for edge or serverless deployments. Optional dependency: `@libsql/client`.
+
+```ts
+import { TursoStorage } from 'weft/storage/turso';
+```
+
+### Constructor
+
+```ts partial
+new TursoStorage(options: TursoStorageOptions)
+```
+
+```ts partial
+type TursoStorageOptions = {
+  url: string;
+  authToken?: string;
+};
+```
+
+| Field       | Type     | Default | Description                                                                                        |
+| ----------- | -------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `url`       | `string` | —       | Database URL. Accepts `libsql://your-db.turso.io`, `file:local.db`, or `file::memory:`.            |
+| `authToken` | `string` | —       | Auth token for remote Turso databases. Required for `libsql://` URLs; ignored for local file URLs. |
+
+If the `@libsql/client` package is not installed, the module import fails with the upstream package's missing-module error.
+
+```ts partial
+import { TursoStorage } from 'weft/storage/turso';
+
+await using storage = new TursoStorage({
+  url: 'libsql://your-db.turso.io',
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
+```
+
+### Methods
+
+All methods from the `Storage` interface, plus `conditionalBatch`. Like SQLite, batch operations run inside a transaction.
+
+---
+
+## `WebExtensionStorage`
+
+```ts partial
+class WebExtensionStorage implements Storage
+```
+
+WebExtension-context storage backed by `chrome.storage` or `browser.storage`. Values are stored as JSON envelopes with base64-encoded `Uint8Array` payloads.
+
+```ts
+import { WebExtensionStorage } from 'weft/storage/web-extension';
+```
+
+### Constructor
+
+```ts partial
+new WebExtensionStorage(options?: WebExtensionStorageOptions)
+```
+
+```ts partial
+type WebExtensionStorageOptions = {
+  area?: 'local' | 'sync' | 'session' | 'managed';
+};
+```
+
+| Field  | Type                                          | Default   | Description                                                                                       |
+| ------ | --------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------- |
+| `area` | `'local' \| 'sync' \| 'session' \| 'managed'` | `'local'` | Which storage area to use. `managed` is read-only; `sync` writes are checked against quota first. |
+
+The constructor resolves either `globalThis.browser` or `globalThis.chrome` and accesses the matching `storage` namespace. If neither is present, the constructor throws immediately with: `WebExtensionStorage requires globalThis.browser.storage or globalThis.chrome.storage.`
+
+```ts
+import { WebExtensionStorage } from 'weft/storage/web-extension';
+
+using storage = new WebExtensionStorage({ area: 'local' });
+```
+
+The extension manifest must include the `storage` permission:
+
+```json
+{ "permissions": ["storage"] }
+```
+
+### Methods
+
+All required `Storage` methods. `query()` is not available—`chrome.storage` has no SQL engine.
+
+---
+
+## `HTTPStorage`
+
+```ts partial
+class HTTPStorage implements Storage
+```
+
+Remote storage over HTTP. Talks to Weft's storage REST routes (see [the server API reference](./api-server.md#storage-operations)). Suitable for distributed deployments where a single Weft server owns the storage and other clients connect over the network.
+
+```ts
+import { HTTPStorage } from 'weft/storage/http';
+```
+
+### Constructor
+
+```ts partial
+new HTTPStorage(options: HTTPStorageOptions)
+```
+
+```ts partial
+type HTTPStorageOptions = {
+  baseUrl: string | URL;
+  headers?: Record<string, string>;
+};
+```
+
+| Field     | Type                     | Default | Description                                                                                   |
+| --------- | ------------------------ | ------- | --------------------------------------------------------------------------------------------- |
+| `baseUrl` | `string \| URL`          | —       | Base URL of the Weft server. Routes are appended (`/v1/storage/...`).                         |
+| `headers` | `Record<string, string>` | `{}`    | Headers sent with every request. Use this for `authorization` and any tenant-context headers. |
+
+```ts partial
+import { HTTPStorage } from 'weft/storage/http';
+
+using storage = new HTTPStorage({
+  baseUrl: 'https://weft.example.com',
+  headers: { authorization: `Bearer ${process.env.WEFT_TOKEN}` },
+});
+```
+
+### Methods
+
+All required `Storage` methods, plus `conditionalBatch`. Single-value operations use `application/octet-stream`. Scans stream NDJSON with base64-encoded values; if the response would exceed 64MB the client throws explicitly. `query()` is not available.
+
+---
+
+## `CompressedStorage`
+
+```ts partial
+class CompressedStorage implements Storage
+```
+
+A wrapper that compresses values before delegating to another `Storage`. Useful for large payloads where storage size matters more than CPU.
+
+```ts
+import { CompressedStorage } from 'weft/storage/compressed';
+```
+
+### Constructor
+
+```ts partial
+new CompressedStorage(inner: Storage)
+```
+
+| Parameter | Type      | Default | Description                                         |
+| --------- | --------- | ------- | --------------------------------------------------- |
+| `inner`   | `Storage` | —       | The wrapped storage that receives compressed bytes. |
+
+Disposing the `CompressedStorage` disposes the inner adapter.
+
+---
+
+## `resolveStorage()`
+
+```ts partial
+function resolveStorage<Configuration extends StorageConfiguration>(
+  configuration: Configuration,
+): Promise<ResolvedStorage<Configuration>>;
+```
+
+Resolves a storage backend from runtime configuration. Lazy-loads adapter modules so optional dependencies (like `lmdb` or `@libsql/client`) are only required when their configuration type is selected.
+
+```ts
+import { resolveStorage } from 'weft/storage';
+
+const storage = await resolveStorage({ type: 'sqlite', path: './weft.db' });
+```
+
+Available from both `weft/storage` and `weft/storage/resolve`.
+
+### `StorageConfiguration`
+
+Discriminated union of supported runtime configurations.
+
+```ts partial
+type StorageConfiguration =
+  | { type: 'memory' }
+  | { type: 'sqlite'; path?: string }
+  | { type: 'lmdb'; path: string }
+  | { type: 'turso'; url: string; authToken?: string }
+  | { type: 'indexeddb'; databaseName?: string }
+  | { type: 'web-extension'; area?: 'local' | 'sync' | 'session' | 'managed' }
+  | { type: 'http'; baseUrl: string | URL; headers?: Record<string, string> }
+  | { type: 'auto' };
+```
+
+| Variant         | Required fields | Optional fields                   |
+| --------------- | --------------- | --------------------------------- |
+| `memory`        | —               | —                                 |
+| `sqlite`        | —               | `path` (defaults to `:memory:`)   |
+| `lmdb`          | `path`          | —                                 |
+| `turso`         | `url`           | `authToken`                       |
+| `indexeddb`     | —               | `databaseName` (default `'weft'`) |
+| `web-extension` | —               | `area` (default `'local'`)        |
+| `http`          | `baseUrl`       | `headers`                         |
+| `auto`          | —               | —                                 |
+
+### `ResolvedStorage<Configuration>`
+
+Return-type narrowing helper. Use when a configuration value is already narrowed and downstream code needs the adapter-specific instance type:
+
+```ts partial
+import type { HTTPStorageConfiguration, ResolvedStorage } from 'weft/storage/resolve';
+
+type RemoteStorage = ResolvedStorage<HTTPStorageConfiguration>;
+// RemoteStorage is HTTPStorage
+```
+
+The mapping:
+
+| Configuration variant              | Resolved type           |
+| ---------------------------------- | ----------------------- |
+| `MemoryStorageConfiguration`       | `MemoryStorage`         |
+| `SQLiteStorageConfiguration`       | `SQLiteStorageInstance` |
+| `LMDBStorageConfiguration`         | `LMDBStorage`           |
+| `TursoStorageConfiguration`        | `TursoStorage`          |
+| `IndexedDBStorageConfiguration`    | `IndexedDBStorage`      |
+| `WebExtensionStorageConfiguration` | `WebExtensionStorage`   |
+| `HTTPStorageConfiguration`         | `HTTPStorage`           |
+| `AutoStorageConfiguration`         | `Storage`               |
+
+### Auto-detection order
+
+`resolveStorage({ type: 'auto' })` checks runtimes in this order:
+
+1. If `globalThis.Bun` is defined, returns `BunSQLiteStorage` via `resolveDefaultStorage()`.
+2. Else if `process.versions.node` is a string, returns `NodeSQLiteStorage` via `resolveDefaultStorage()`.
+3. Else if `chrome.storage` or `browser.storage` is defined, returns `WebExtensionStorage` (default `area: 'local'`).
+4. Else if `globalThis.indexedDB` is defined, returns `IndexedDBStorage` (default `databaseName: 'weft'`).
+5. Else returns `MemoryStorage`.
+
+For a Bun-or-Node-only helper that throws in browsers (instead of falling through), use `resolveDefaultStorage()` from `weft/storage/auto`.
+
+---
+
+## `resolveDefaultStorage()`
+
+```ts partial
+function resolveDefaultStorage(): Promise<Storage>;
+```
+
+Picks a SQLite-backed storage adapter for the current runtime. Bun returns `BunSQLiteStorage`; Node returns `NodeSQLiteStorage`; everything else throws.
+
+```ts
+import { resolveDefaultStorage } from 'weft/storage/auto';
+
+await using storage = await resolveDefaultStorage();
+```
+
+The path is resolved as:
+
+1. `process.env.WEFT_DEFAULT_STORAGE_PATH` if set, else
+2. `${tmpdir()}/weft-default/<cwd-hash>.db` where `<cwd-hash>` is the first 16 hex characters of the SHA-256 of `process.cwd()`.
+
+The parent directory is created (recursive) before the path is returned.
+
+> [!WARNING]
+> `weft/storage/auto` statically imports `node:fs`, `node:os`, `node:path`, and `node:crypto`. Bundling it for a browser target will fail. Browser and Service Worker contexts should use `IndexedDBStorage` directly, or `setupServiceWorker()` from `weft/service-worker`.
+
+This helper is for development convenience. Production deployments should pick an explicit adapter and pass it to `new Engine({ storage })`.

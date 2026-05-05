@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { TokenEvent } from '../core/events.ts';
 import type { WorkflowContext } from '../core/types.ts';
@@ -56,7 +55,7 @@ function createEngine(): Engine {
   const engine = new Engine({ storage });
 
   engine.register('stream-target', async function* (ctx: WorkflowContext) {
-    yield* (ctx as Context).sleep('1h');
+    yield* ctx.sleep('1h');
     return 'done';
   });
 

@@ -117,7 +117,9 @@ async function* example(context: Context) {
 ### `waitForUpdate()`
 
 ```ts partial
-*waitForUpdate<T = unknown>(name: string): Generator<ContextOperationRequest, T, unknown>
+*waitForUpdate<T = unknown>(
+  name: string,
+): Generator<ContextOperationRequest, { payload: T; respond: (result: unknown) => void }, unknown>
 ```
 
 Suspend the workflow until a named update is received. Similar to `waitForSignal` but designed for request/response-style interactions.
@@ -126,7 +128,7 @@ Suspend the workflow until a named update is received. Similar to `waitForSignal
 | --------- | -------- | --------------------------- |
 | `name`    | `string` | The update name to wait for |
 
-**Returns:** The update payload, typed as `T`.
+**Returns:** The update envelope with the payload typed as `T` and a `respond(result)` callback.
 
 ### `all()`
 
@@ -341,20 +343,18 @@ If the child workflow throws, the error propagates into the parent and can be ca
 
 ```ts partial
 async function* parentWorkflow(ctx: WorkflowContext, order: Order) {
-  const context = ctx as Context;
-
   // Start a child workflow and wait for its result
-  const receipt = yield* context.startChild<Receipt>('process-payment', {
+  const receipt = yield* ctx.startChild<Receipt>('process-payment', {
     amount: order.total,
     cardToken: order.cardToken,
   });
 
   // Child failures propagate to the parent
   try {
-    yield* context.startChild('send-notification', { email: order.email, receipt });
+    yield* ctx.startChild('send-notification', { email: order.email, receipt });
   } catch (error) {
     // Handle child failure gracefully
-    yield* context.run(logFailure, error);
+    yield* ctx.run(logFailure, error);
   }
 
   return { receipt, status: 'completed' };
@@ -517,9 +517,8 @@ Execute a named step as a durable operation. Under the hood, each `step()` call 
 **Returns:** A promise that resolves with the step function's return value.
 
 ```ts partial
-engine.register('onboard', async (ctx, input) => {
-  const { name } = input as { name: string };
-  const user = await ctx.step('create-user', () => createUser(name));
+engine.register('onboard', async (ctx, input: { name: string }) => {
+  const user = await ctx.step('create-user', () => createUser(input.name));
   await ctx.step('send-email', () => sendWelcome(user));
   return user;
 });
@@ -554,7 +553,7 @@ A discriminated union describing the operation the workflow wants the engine to 
 
 ```ts partial
 type ContextOperationRequest =
-  | { type: 'activity'; operationId: string; activityName: string; fn: Function; args: unknown[]; ... }
+  | { type: 'activity'; operationId: string; activityName: string; fn?: (...args: unknown[]) => unknown; args: unknown[]; ... }
   | { type: 'sleep'; operationId: string; duration: number; scheduledFireAt: number }
   | { type: 'wait-signal'; operationId: string; signalName: string }
   | { type: 'wait-update'; operationId: string; updateName: string }

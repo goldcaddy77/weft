@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 import { sleepForTesting } from '../testing/fake-timers.ts';
 
-import type { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
@@ -23,7 +22,7 @@ function createSignalWorkflowEngine(): Engine {
   const storage = new MemoryStorage();
   const engine = new Engine({ storage });
   engine.register('hold', async function* (ctx: WorkflowContext, _input: unknown) {
-    const context = ctx as Context;
+    const context = ctx;
     const value = yield* context.waitForSignal<string>('release');
     yield* context.run(async () => `echoed:${value}`);
     yield* context.run(async () => 'done');

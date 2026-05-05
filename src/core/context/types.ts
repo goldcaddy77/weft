@@ -13,7 +13,6 @@ import type { ActivityDefinition, SearchAttributeSchema, SearchAttributeValue } 
  * @example
  * ```ts
  * import { activity, type SagaStep, type WorkflowContext } from 'weft';
- * import type { Context } from 'weft';
  *
  * const chargeCard = activity({
  *   name: 'chargeCard',
@@ -58,17 +57,16 @@ export interface ErasedSagaStep {
  *
  * @example
  * ```ts
- * import { activity, Engine, type OffloadReference } from 'weft';
- * import type { Context, WorkflowContext } from 'weft';
+ * import { activity, Engine, type OffloadReference, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('heavy', async function* (ctx: WorkflowContext, input: unknown) {
- *   const ref: OffloadReference = yield* (ctx as Context).offload(
+ *   const ref: OffloadReference = yield* ctx.offload(
  *     'large-payload',
  *     async () => ({ data: 'x'.repeat(100_000) }),
  *   );
  *   console.log(ref.sizeBytes);
- *   const payload = yield* (ctx as Context).load(ref);
+ *   const payload = yield* ctx.load(ref);
  *   return payload;
  * });
  * void engine;
@@ -86,12 +84,11 @@ export interface OffloadReference {
  *
  * @example
  * ```ts
- * import { Engine, type StreamReference } from 'weft';
- * import type { Context, WorkflowContext } from 'weft';
+ * import { Engine, type StreamReference, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('streamer', async function* (ctx: WorkflowContext) {
- *   const ref: StreamReference = yield* (ctx as Context).stream('tokens', async function* () {
+ *   const ref: StreamReference = yield* ctx.stream('tokens', async function* () {
  *     yield 'hello';
  *   });
  *   return ref.chunkCount;
@@ -121,12 +118,11 @@ export interface StoredStreamChunk<T = unknown> {
  *
  * @example
  * ```ts
- * import { Engine, type StreamSink } from 'weft';
- * import type { Context, WorkflowContext } from 'weft';
+ * import { Engine, type StreamSink, type WorkflowContext } from 'weft';
  *
  * const engine = new Engine();
  * engine.register('streamer', async function* (ctx: WorkflowContext) {
- *   yield* (ctx as Context).stream('tokens', async function* (sink: StreamSink) {
+ *   yield* ctx.stream('tokens', async function* (sink: StreamSink) {
  *     sink.heartbeat({ chunk: 0 });
  *     yield 'hello';
  *   });

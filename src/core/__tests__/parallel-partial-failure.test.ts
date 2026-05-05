@@ -45,7 +45,7 @@ describe('ctx.all partial-failure preservation', () => {
     };
 
     engine.register('partial-fail', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.all([c.run(ok), c.run(fail)]);
     });
 
@@ -93,7 +93,7 @@ describe('ctx.all partial-failure preservation', () => {
     // After the catch, the workflow blocks on a signal so it stays in
     // the running state long enough for storage to capture the entry.
     const partialFailWorkflow = async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       try {
         yield* c.all([c.run(ok), c.run(flaky)]);
         return 'first-attempt-succeeded';
@@ -164,7 +164,7 @@ describe('ctx.all partial-failure preservation', () => {
     };
 
     engine.register('multi-fail', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.all([c.run(failFirst), c.run(failSecond)]);
     });
 
@@ -192,7 +192,7 @@ describe('ctx.all partial-failure preservation', () => {
     };
 
     engine.register('rejected-not-reused', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.all([c.run(fail)]);
     });
 
@@ -223,7 +223,7 @@ describe('ctx.all partial-failure preservation', () => {
 
     let capturedInWorkflow: unknown;
     engine.register('non-error-throw', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       try {
         yield* c.all([c.run(throwsString)]);
       } catch (error) {
@@ -263,7 +263,7 @@ describe('ctx.all partial-failure preservation', () => {
     const followup = async () => 'followup';
 
     engine.register('partial-fail-catch', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       try {
         yield* c.all([c.run(ok), c.run(fail)]);
       } catch {
@@ -313,7 +313,7 @@ describe('ctx.all partial-failure preservation', () => {
     };
 
     engine.register('happy', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const first = yield* c.all([c.run(a), c.run(b)]);
       const second = yield* c.all([c.run(a), c.run(b)]);
       return [first, second];
@@ -350,7 +350,7 @@ describe('ctx.runAll partial-failure preservation', () => {
     };
 
     engine.register('runAll-partial', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       yield* c.runAll({ first: [ok], second: [fail] });
     });
 
@@ -450,7 +450,7 @@ describe('ctx.race asymmetry: loser results are not preserved', () => {
     };
 
     engine.register('race-cache', async function* (ctx: WorkflowContext) {
-      const c = ctx as Context;
+      const c = ctx;
       const a = yield* c.race([c.run(fast), c.run(slow)]);
       const b = yield* c.race([c.run(fast), c.run(slow)]);
       return [a, b];

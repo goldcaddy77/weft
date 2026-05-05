@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { Context } from '../core/context.ts';
 import { Engine } from '../core/engine.ts';
 import { WorkflowCompletedEvent, WorkflowFailedEvent } from '../core/events.ts';
 import { tenantFromInputField } from '../core/tenant.ts';
@@ -18,7 +17,7 @@ async function* echoWorkflow(_ctx: WorkflowContext, input: unknown) {
 }
 
 async function* waitingWorkflow(ctx: WorkflowContext, input: unknown) {
-  const signal = yield* (ctx as Context).waitForSignal<string>('continue');
+  const signal = yield* ctx.waitForSignal<string>('continue');
   return `${String(input)}:${signal}`;
 }
 
@@ -312,8 +311,8 @@ describe('LocalClient', () => {
       engine.register('timeline-local', {
         version: '9.0.0',
         handler: async function* (ctx: WorkflowContext) {
-          yield* (ctx as import('../core/context.ts').Context).run(firstStep);
-          return yield* (ctx as import('../core/context.ts').Context).run(secondStep);
+          yield* ctx.run(firstStep);
+          return yield* ctx.run(secondStep);
         },
       });
 

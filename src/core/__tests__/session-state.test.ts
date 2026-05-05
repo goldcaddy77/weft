@@ -5,7 +5,6 @@ import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { deserializeCheckpoint } from '../checkpoint.ts';
 import { encode } from '../codec.ts';
-import type { Context } from '../context.ts';
 import { Engine } from '../engine.ts';
 import { validateSessionStateLocals } from '../session-state.ts';
 import type { WorkflowContext } from '../types.ts';
@@ -20,13 +19,12 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
 
     function createWorkflow() {
       return async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
-        const session = context.state.session<number>('counter', { initial: 0 });
+        const session = ctx.state.session<number>('counter', { initial: 0 });
 
         session.update((current) => (current ?? 0) + 1);
         const beforeRecovery = session.get();
 
-        yield* context.waitForSignal('resume');
+        yield* ctx.waitForSignal('resume');
 
         const afterRecovery = session.update((current) => (current ?? 0) + 1);
         return { beforeRecovery, afterRecovery };
@@ -73,14 +71,13 @@ describe('Acceptance criterion: Virtual-Object-style session state', () => {
 
     function createWorkflow() {
       return async function* (ctx: WorkflowContext) {
-        const context = ctx as Context;
-        const session = context.state.session<number>('counter', { initial: 0 });
+        const session = ctx.state.session<number>('counter', { initial: 0 });
 
         session.set(1);
         session.delete();
         const afterClear = session.get();
 
-        yield* context.waitForSignal('resume');
+        yield* ctx.waitForSignal('resume');
 
         const afterRecovery = session.get();
         const afterWrite = session.update((current) => (current ?? 0) + 1);

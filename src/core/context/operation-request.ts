@@ -15,18 +15,19 @@ import type { AgentContextOptions, OffloadReference, StreamSink } from './types.
  *
  * @example
  * ```ts
- * import { activity, Engine, type ContextOperationRequest } from 'weft';
- * import type { Context, WorkflowContext } from 'weft';
+ * import { activity, Context, type ContextOperationRequest } from 'weft';
  *
  * const ping = activity({ name: 'ping', execute: async (input: unknown) => input });
- * const engine = new Engine();
- *
- * engine.register('demo', async function* (ctx: WorkflowContext) {
- *   const generator = (ctx as Context).run(ping, 'hello');
- *   const first = generator.next();
- *   const request: ContextOperationRequest | undefined = first.done ? undefined : first.value;
- *   void request;
+ * const ctx = new Context({
+ *   workflowId: 'wf-demo',
+ *   workflowType: 'demo',
+ *   startedAt: Date.now(),
+ *   abortController: new AbortController(),
  * });
+ * const generator = ctx.run(ping, 'hello');
+ * const first = generator.next();
+ * const request: ContextOperationRequest | undefined = first.done ? undefined : first.value;
+ * void request;
  * ```
  */
 export type ContextOperationRequest =
@@ -34,7 +35,7 @@ export type ContextOperationRequest =
       type: 'activity';
       operationId: string;
       activityName: string;
-      fn: (...args: unknown[]) => unknown;
+      fn?: (...args: unknown[]) => unknown;
       args: unknown[];
       callerStack?: string;
       options?: Record<string, unknown>;

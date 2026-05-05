@@ -133,3 +133,9 @@ A handful of design questions came up early and have been settled:
 - **Determinism is not required.** `Date.now()`, `Math.random()`, and network calls are permitted between checkpoint boundaries. An opt-in `deterministic` mode exists for testing.
 - **SQLite write throughput** is addressed by the LMDB adapter for high-throughput deployments. Turso covers distributed scenarios. The documented scaling path is SQLite first, LMDB when you need it.
 - **Naming:** Weft. Shipped.
+
+## See also
+
+Long-form numbered ADRs live under [`architecture-decisions/`](./architecture-decisions/):
+
+- [ADR 0001 — Workflows Are TypeScript-Only by Design](./architecture-decisions/0001-workflows-typescript-only.md)

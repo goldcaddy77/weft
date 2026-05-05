@@ -9,11 +9,10 @@ Session state is the narrowest scope in the [`ctx.state`](./state.md) ladder. It
 `ctx.state.session<T>(key, options?)` returns a `WorkflowSessionState<T>` handle. The core methods are `get`, `set`, `update`, `delete`, and `run`.
 
 ```ts partial
-import { type Context, type WorkflowContext } from 'weft';
+import { type WorkflowContext } from 'weft';
 
 engine.register('counter', async function* (ctx: WorkflowContext) {
-  const context = ctx as Context;
-  const counter = context.state.session<number>('count', { initial: 0 });
+  const counter = ctx.state.session<number>('count', { initial: 0 });
 
   counter.increment();
   return counter.get();
@@ -36,11 +35,10 @@ The slot's value is part of the workflow's checkpoint locals, so recovery preser
 
 ```ts partial
 engine.register('survives-crashes', async function* (ctx: WorkflowContext) {
-  const context = ctx as Context;
-  const counter = context.state.session<number>('count', { initial: 0 });
+  const counter = ctx.state.session<number>('count', { initial: 0 });
   counter.increment();
 
-  yield* context.waitForSignal('resume');
+  yield* ctx.waitForSignal('resume');
 
   return counter.get();
 });
@@ -80,7 +78,7 @@ If you hit either size limit, use a different durability mechanism. `ctx.run()` 
 `get()` and `set()` use `structuredClone` so caller mutation cannot leak into durable state.
 
 ```ts partial
-const draft = (ctx as Context).state.session<{ items: string[] }>('draft');
+const draft = ctx.state.session<{ items: string[] }>('draft');
 
 const stored = draft.set({ items: ['a'] });
 stored.items.push('b'); // does not affect the stored value

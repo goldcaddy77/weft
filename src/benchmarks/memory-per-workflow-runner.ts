@@ -1,4 +1,3 @@
-import type { Context } from '../core/context.ts';
 import { Engine, ENGINE_PARKED_WORKFLOW_COUNT_FOR_TESTING } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { BunSQLiteStorage } from '../storage/bun-sql.ts';
@@ -78,7 +77,7 @@ export async function measureMemoryPerWorkflow(
 
   try {
     engine.register('idle', async function* (ctx: WorkflowContext) {
-      yield* (ctx as Context).waitForSignal('wake');
+      yield* ctx.waitForSignal('wake');
       return 'done';
     });
 
