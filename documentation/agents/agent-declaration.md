@@ -7,12 +7,12 @@ Definitions are intentionally thin. They do not own provider setup, tool discove
 ## Basic usage
 
 ```typescript partial
-import { defineAgent, type AgentToolDefinition } from 'weft';
+import { agent, type AgentToolDefinition } from 'weft';
 
 declare const webSearch: AgentToolDefinition;
 declare const factCheck: AgentToolDefinition;
 
-const researcher = defineAgent({
+const researcher = agent({
   name: 'research',
   model: 'claude-sonnet-4-20250514',
   version: '1.0.0',
@@ -54,11 +54,11 @@ interface AgentDefinition {
 Register the definition with a provider. Weft only requires a structural `LLMProvider`: a `name` and a `chat()` method.
 
 ```typescript partial
-import { Engine, defineAgent, type LLMProvider } from 'weft';
+import { Engine, agent, type LLMProvider } from 'weft';
 
 declare const provider: LLMProvider;
 
-const assistant = defineAgent({
+const assistant = agent({
   name: 'assistant',
   model: 'claude-sonnet-4-20250514',
   systemPrompt: 'You help users solve workflow problems.',

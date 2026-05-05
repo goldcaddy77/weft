@@ -15,10 +15,11 @@ import type {
   StreamSink,
 } from '../context/types.ts';
 import type { TenantContext } from '../tenant.ts';
-import type { ActivityCallOptions } from './activity.ts';
+import type { ActivityCallable, ActivityCallOptions } from './activity.ts';
 import type { WorkflowId } from './identity.ts';
+import type { QueryDefinition, SignalDefinition, UpdateDefinition } from './message-handles.ts';
 import type { Duration } from './retry-retention.ts';
-import type { SearchAttributeValue } from './search-attributes.ts';
+import type { SearchAttributeHandle, SearchAttributeValue } from './search-attributes.ts';
 import type { WorkflowStateNamespace } from './state.ts';
 import type {
   ChildWorkflowOptions,
@@ -93,19 +94,34 @@ export interface WorkflowContext {
   ): WorkflowOperation<ActivityResult<ActivityTypes, TName>>;
   run<TName extends string>(
     name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
-    ...rest: unknown[]
+    input?: unknown,
+    options?: ActivityCallOptions,
   ): WorkflowOperation<unknown>;
-  run<TArguments extends unknown[], TResult>(
-    fn: (...arguments_: TArguments) => Promise<TResult> | TResult,
-    ...rest: TArguments
+  run<TResult>(
+    fn: ActivityCallable<void, TResult>,
+    options?: ActivityCallOptions,
   ): WorkflowOperation<TResult>;
-  run<TArguments extends unknown[], TResult>(
-    fn: (...arguments_: TArguments) => Promise<TResult> | TResult,
-    ...rest: [...TArguments, ActivityCallOptions]
+  run<TResult>(
+    fn: (() => Promise<TResult> | TResult) & { execute?: never },
+    options?: ActivityCallOptions,
+  ): WorkflowOperation<TResult>;
+  run<TInput, TResult>(
+    fn: ActivityCallable<TInput, TResult>,
+    input: TInput,
+    options?: ActivityCallOptions,
+  ): WorkflowOperation<TResult>;
+  run<TInput, TResult>(
+    fn: ((input: TInput) => Promise<TResult> | TResult) & { execute?: never },
+    input: TInput,
+    options?: ActivityCallOptions,
   ): WorkflowOperation<TResult>;
   sleep(duration: Duration): WorkflowOperation<void>;
   suspendUntil<T = unknown>(resumeToken: string): WorkflowOperation<T>;
+  waitForSignal<TInput>(definition: SignalDefinition<TInput>): WorkflowOperation<TInput>;
   waitForSignal<T = unknown>(name: string): WorkflowOperation<T>;
+  waitForUpdate<TInput, TOutput>(
+    definition: UpdateDefinition<TInput, TOutput>,
+  ): WorkflowOperation<{ payload: TInput; respond: (result: TOutput) => void }>;
   waitForUpdate<T = unknown>(
     name: string,
   ): WorkflowOperation<{ payload: T; respond: (result: unknown) => void }>;
@@ -120,7 +136,7 @@ export interface WorkflowContext {
   ): WorkflowOperation<StreamReference>;
   load<T>(reference: OffloadReference): WorkflowOperation<T>;
   archive(key: string, data: unknown): WorkflowOperation<void>;
-  runAll<T extends Record<string, [Function, ...unknown[]]>>(
+  runAll<T extends Record<string, [Function] | [Function, unknown]>>(
     branches: T,
   ): WorkflowOperation<Record<keyof T, unknown>>;
   saga<TFinalOutput = unknown>(steps: ErasedSagaStep[]): WorkflowOperation<TFinalOutput>;
@@ -182,11 +198,29 @@ export interface WorkflowContext {
   handoff(options: HandoffOptions): WorkflowOperation<HandoffResult>;
   debate(options: DebateOptions): WorkflowOperation<DebateResult>;
   supervise(options: SuperviseOptions): WorkflowOperation<SuperviseResult>;
+  setAttribute<TValue extends SearchAttributeValue>(
+    key: SearchAttributeHandle<TValue>,
+    value: TValue,
+  ): void;
   setAttribute(key: string, value: SearchAttributeValue): void;
   setAttributes(attributes: Record<string, SearchAttributeValue>): void;
+  getAttribute<T extends SearchAttributeValue>(key: SearchAttributeHandle<T>): T | undefined;
   getAttribute<T extends SearchAttributeValue = SearchAttributeValue>(key: string): T | undefined;
   getAttributes(): Readonly<Record<string, SearchAttributeValue>>;
-  onUpdate<TPayload = unknown>(name: string, handler: (payload: TPayload) => unknown): void;
+  onUpdate<TInput, TOutput>(
+    definition: UpdateDefinition<TInput, TOutput>,
+    handler: (payload: TInput) => TOutput | Promise<TOutput>,
+  ): void;
+  onUpdate(name: string, handler: (payload: unknown) => unknown): void;
+  onQuery<TInput, TOutput>(
+    definition: QueryDefinition<TInput, TOutput>,
+    handler: (input: TInput) => TOutput | Promise<TOutput>,
+  ): void;
+  onQuery<TOutput>(
+    definition: QueryDefinition<void, TOutput>,
+    handler: () => TOutput | Promise<TOutput>,
+  ): void;
+  onQuery(name: string, handler: (input: unknown) => unknown): void;
   expose(accessors: Record<string, () => unknown>): void;
   streamUrl(reference: StreamReference): string;
 }

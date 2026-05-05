@@ -202,7 +202,7 @@ describe('engine helpers', () => {
         alpha: [(value: string) => value.toUpperCase(), 'one'],
         beta: [(count: number) => count * 2, 21],
       },
-      async (fn, args) => fn(...args),
+      async (fn, input) => fn(input),
     );
 
     expect(results).toEqual({ alpha: 'ONE', beta: 42 });

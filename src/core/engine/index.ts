@@ -23,7 +23,10 @@ import { TenantQuotaManager } from '../tenant-quotas.ts';
 import {
   DEFAULT_RETENTION_SWEEP_BATCH_SIZE,
   DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
+  messageName,
+  type ActivityContext,
   type ActivityTypes,
+  type AttributeFilterKey,
   type BulkCancelResult,
   type BulkDeleteResult,
   type BulkSignalResult,
@@ -34,20 +37,27 @@ import {
   type EngineOptions,
   type ForkOptions,
   type ListFilter,
+  type MessageName,
   type PaginatedResult,
   type PurgeResult,
+  type QueryDefinition,
   type RegisteredActivityFunction,
+  type RegisteredWorkflowDefinition,
   type RetentionOverview,
   type ScheduleAccessOptions,
+  type ScheduleDefinition,
   type ScheduleFilter,
   type ScheduleOptions,
   type ScheduleSummary,
   type SearchAttributeValue,
+  type SignalDefinition,
   type StartOptions,
   type StepWorkflowFunction,
   type SubmitReviewOptions,
   type TenantQuotaUsage,
+  type TypedListFilter,
   type UnregisteredName,
+  type UpdateDefinition,
   type WorkerOutboundMessage,
   type WorkflowDefinition,
   type WorkflowEvent,
@@ -283,7 +293,10 @@ function resolveEngineInterceptors(options?: EngineConstructorOptions): Intercep
   return options?.interceptors ? [...options.interceptors] : [];
 }
 
-function copyWorkflowDefinition(type: string, registration: RegistrationEntry): WorkflowDefinition {
+function copyWorkflowDefinition(
+  type: string,
+  registration: RegistrationEntry,
+): RegisteredWorkflowDefinition {
   return {
     type,
     version: registration.version,
@@ -654,9 +667,12 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     name: UnregisteredName<TName, Extract<keyof WorkflowRegistry, string>>,
     registration: WorkflowRegistration<TInput, TOutput>,
   ): void;
+  register<TInput = unknown, TOutput = unknown>(
+    definition: WorkflowDefinition<TInput, TOutput>,
+  ): void;
   register(agentDef: AgentDefinition, options: AgentRegistrationOptions): void;
   register(
-    nameOrAgent: string | AgentDefinition,
+    nameOrAgent: string | AgentDefinition | WorkflowDefinition,
     handlerOrRegistrationOrOptions?:
       | WorkflowFunction
       | StepWorkflowFunction
@@ -679,25 +695,29 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).composedWorkflowInterceptor = undefined;
     getInternals(this).composedActivityInterceptor = undefined;
   }
-  registerActivity<TName extends string, TArguments extends unknown[], TResult>(
+  registerActivity<TName extends Extract<keyof ActivityTypes, string>>(
     name: TName,
-    fn: TName extends Extract<keyof ActivityTypes, string>
-      ? RegisteredActivityFunction<ActivityTypes, TName>
-      : (...arguments_: TArguments) => TResult,
+    fn: RegisteredActivityFunction<ActivityTypes, TName>,
     options?: ActivityRegistrationOptions,
   ): void;
-  registerActivity(
-    name: string,
-    fn: (...arguments_: unknown[]) => unknown,
+  registerActivity<TName extends string, TResult>(
+    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
+    fn: () => TResult | Promise<TResult>,
     options?: ActivityRegistrationOptions,
-  ): void {
+  ): void;
+  registerActivity<TName extends string, TInput, TResult>(
+    name: UnregisteredName<TName, Extract<keyof ActivityTypes, string>>,
+    fn: (input: TInput, context?: ActivityContext) => TResult | Promise<TResult>,
+    options?: ActivityRegistrationOptions,
+  ): void;
+  registerActivity(name: string, fn: Function, options?: ActivityRegistrationOptions): void {
     getInternals(this).activityRegistry.register(name, fn, options);
   }
-  getWorkflowDefinition(type: string): WorkflowDefinition | undefined {
+  getWorkflowDefinition(type: string): RegisteredWorkflowDefinition | undefined {
     const registration = getInternals(this).registrations.get(type);
     return registration === undefined ? undefined : copyWorkflowDefinition(type, registration);
   }
-  listWorkflowDefinitions(): WorkflowDefinition[] {
+  listWorkflowDefinitions(): RegisteredWorkflowDefinition[] {
     return [...getInternals(this).registrations.entries()].map(([type, registration]) =>
       copyWorkflowDefinition(type, registration),
     );
@@ -737,7 +757,9 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     }
     return createWorkflowHandleWithResultPromiseFromInternals(getInternals(this), workflowId);
   }
-  async list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>> {
+  async list<
+    const TAttributeKeys extends readonly AttributeFilterKey[] = readonly AttributeFilterKey[],
+  >(filter?: TypedListFilter<TAttributeKeys>): Promise<PaginatedResult<WorkflowSummary>> {
     return listWorkflows(getInternals(this), filter);
   }
   getRetentionOverview(): RetentionOverview {
@@ -775,17 +797,48 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async untagAll(filter: ListFilter, tags: string[]): Promise<BulkTagResult> {
     return untagAllWorkflows(getInternals(this), filter, tags);
   }
+  async schedule<TInput>(
+    definition: ScheduleDefinition<TInput>,
+    accessOptions?: ScheduleAccessOptions,
+  ): Promise<ScheduleHandle>;
   async schedule(
     type: string,
     input: unknown,
     cronExpression: string,
     options?: ScheduleOptions,
     accessOptions?: ScheduleAccessOptions,
+  ): Promise<ScheduleHandle>;
+  async schedule(
+    typeOrDefinition: string | ScheduleDefinition,
+    inputOrAccessOptions?: unknown,
+    cronExpression?: string,
+    options?: ScheduleOptions,
+    accessOptions?: ScheduleAccessOptions,
   ): Promise<ScheduleHandle> {
+    if (typeof typeOrDefinition === 'object') {
+      const definition = typeOrDefinition;
+      const workflowType =
+        typeof definition.workflow === 'string' ? definition.workflow : definition.workflow.name;
+      return scheduleFromInternals(
+        getInternals(this),
+        workflowType,
+        definition.input,
+        definition.cron,
+        {
+          ...(definition.id !== undefined && { id: definition.id }),
+          ...(definition.overlapPolicy !== undefined && { overlap: definition.overlapPolicy }),
+          ...(definition.backfill !== undefined && { backfill: definition.backfill }),
+        },
+        inputOrAccessOptions as ScheduleAccessOptions | undefined,
+      );
+    }
+    if (cronExpression === undefined) {
+      throw new Error('cronExpression must be provided when scheduling by workflow type.');
+    }
     return scheduleFromInternals(
       getInternals(this),
-      type,
-      input,
+      typeOrDefinition,
+      inputOrAccessOptions,
       cronExpression,
       options,
       accessOptions,
@@ -835,8 +888,19 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   [ENGINE_SIGNAL_WAITER_COUNT_FOR_TESTING](): number {
     return getInternals(this).signalWaiters.size;
   }
-  async signal(workflowId: string, name: string, payload?: unknown): Promise<void> {
-    return signalWorkflow(getInternals(this), workflowId, name, payload, {
+  async signal(workflowId: string, name: SignalDefinition): Promise<void>;
+  async signal<TInput>(
+    workflowId: string,
+    name: SignalDefinition<TInput>,
+    payload: TInput,
+  ): Promise<void>;
+  async signal(workflowId: string, name: string, payload?: unknown): Promise<void>;
+  async signal(
+    workflowId: string,
+    nameOrDefinition: MessageName,
+    payload?: unknown,
+  ): Promise<void> {
+    return signalWorkflow(getInternals(this), workflowId, messageName(nameOrDefinition), payload, {
       loadWorkflowState: (id) => loadWorkflowState(getInternals(this), id),
       dispatchEvent: (event) => this.dispatchEvent(event),
       broadcast: (message) => this.#broadcast(message),
@@ -853,21 +917,50 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   }
   async update(
     workflowId: string,
+    name: UpdateDefinition,
+    payload?: void,
+    options?: { timeout?: number },
+  ): Promise<unknown>;
+  async update<TInput, TOutput>(
+    workflowId: string,
+    name: UpdateDefinition<TInput, TOutput>,
+    payload: TInput,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
+  async update(
+    workflowId: string,
     name: string,
+    payload?: unknown,
+    options?: { timeout?: number },
+  ): Promise<unknown>;
+  async update(
+    workflowId: string,
+    name: MessageName,
     payload?: unknown,
     options?: { timeout?: number },
   ): Promise<unknown> {
     return updateFromInternals(
       getInternals(this),
       workflowId,
-      name,
+      messageName(name),
       payload,
       options,
       this.#createUpdateCallbacks(),
     );
   }
-  async query(workflowId: string, name: string): Promise<unknown> {
-    return queryWorkflow(getInternals(this), workflowId, name);
+  async query<TOutput>(workflowId: string, name: QueryDefinition<void, TOutput>): Promise<TOutput>;
+  async query<TInput, TOutput>(
+    workflowId: string,
+    name: QueryDefinition<TInput, TOutput>,
+    input: TInput,
+  ): Promise<TOutput>;
+  async query(workflowId: string, name: string, input?: unknown): Promise<unknown>;
+  async query(
+    workflowId: string,
+    nameOrDefinition: MessageName,
+    input?: unknown,
+  ): Promise<unknown> {
+    return queryWorkflow(getInternals(this), workflowId, messageName(nameOrDefinition), input);
   }
   async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
     return getInternals(this).tenantQuotaManager.getUsage(tenantId);

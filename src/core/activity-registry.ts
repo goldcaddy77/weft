@@ -96,6 +96,8 @@ export interface ActivityRegistrationOptions {
   idempotent?: boolean;
 }
 
+export type RegisteredActivityFunction = (input?: unknown, context?: unknown) => unknown;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -240,13 +242,8 @@ export class ActivityRegistry {
    * auto-extracted from its colocated properties. Explicit `options`
    * take precedence over auto-extracted values.
    */
-  // `any` to accept functions of any parameter type (contravariance prevents `unknown` here).
   // oxlint-disable-next-line complexity -- ID:core-activity-registry-constructor-complexity
-  register<T extends (...arguments_: any[]) => any>(
-    name: string,
-    fn: T,
-    options?: ActivityRegistrationOptions,
-  ): void {
+  register(name: string, fn: Function, options?: ActivityRegistrationOptions): void {
     // Keep function-reference metadata aligned when this name moves to a
     // different function. Aliased functions retarget to a remaining name;
     // unaliased functions leave the WeakMap.
@@ -306,14 +303,14 @@ export class ActivityRegistry {
   }
 
   /** Resolve a function by its registered name. Returns `undefined` if not found. */
-  resolve(name: string): ((...arguments_: unknown[]) => unknown) | undefined {
+  resolve(name: string): RegisteredActivityFunction | undefined {
     const fn = this.#nameIndex.get(name);
     if (!fn) return undefined;
-    return fn as (...arguments_: unknown[]) => unknown;
+    return fn as RegisteredActivityFunction;
   }
 
   /** Get metadata for a function reference. Returns `undefined` if the function was never registered. */
-  getMetadata<T extends (...arguments_: any[]) => any>(fn: T): ActivityMetadata | undefined {
+  getMetadata(fn: Function): ActivityMetadata | undefined {
     const metadata = this.#metadata.get(fn);
     return metadata === undefined ? undefined : copyActivityMetadata(metadata);
   }

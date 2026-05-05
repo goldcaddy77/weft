@@ -4,7 +4,7 @@ import { Engine } from '../core/engine.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { MemoryStorage } from '../storage/memory.ts';
 import { serve, type WeftServer } from './index.ts';
-import { createLiveOperationRegistry } from './rest-bindings.ts';
+import { createLiveOperationRegistry, createLiveRestBindings } from './rest-bindings.ts';
 
 type OpenApiDocument = {
   paths?: Record<string, Record<string, { operationId?: string }>>;
@@ -84,6 +84,7 @@ describe('Track 8 discovery parity', () => {
     const openApiDocument = (await openApiResponse.json()) as OpenApiDocument;
     const openRpcDocument = (await openRpcResponse.json()) as OpenRpcDocument;
     const registry = createLiveOperationRegistry();
+    const restBindings = createLiveRestBindings();
     const openRpcMethods = openRpcDocument.methods ?? [];
     const openRpcMethodNames = new Set(openRpcMethods.map((method) => method.name));
 
@@ -97,7 +98,9 @@ describe('Track 8 discovery parity', () => {
       );
 
       const bindings = listOperationBindings(openApiDocument, method.name);
-      const expectedBindingCount = operation?.transports.http ? 1 : 0;
+      const expectedBindingCount = operation?.transports.http
+        ? restBindings.filter((binding) => binding.operationName === method.name).length
+        : 0;
       expect(bindings).toHaveLength(expectedBindingCount);
     }
 

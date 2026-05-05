@@ -91,7 +91,7 @@ describe('InlineExecutionStrategy', () => {
             operationId: 'op-1',
             activityName: 'doWork',
             fn: () => 42,
-            args: [],
+            input: undefined,
           };
           return value;
         },
@@ -298,7 +298,7 @@ describe('InlineExecutionStrategy', () => {
             operationId: 'op-1',
             activityName: 'doWork',
             fn: () => {},
-            args: [],
+            input: undefined,
           };
           return `got:${String(value)}`;
         },
@@ -342,7 +342,7 @@ describe('InlineExecutionStrategy', () => {
             operationId: 'op-1',
             activityName: 'doWork',
             fn: () => {},
-            args: [],
+            input: undefined,
           };
           return value;
         },
@@ -381,7 +381,7 @@ describe('InlineExecutionStrategy', () => {
               operationId: 'op-1',
               activityName: 'mayFail',
               fn: () => {},
-              args: [],
+              input: undefined,
             };
           } catch {
             return 'recovered';
@@ -428,7 +428,7 @@ describe('InlineExecutionStrategy', () => {
             operationId: 'op-1',
             activityName: 'doWork',
             fn: () => {},
-            args: [],
+            input: undefined,
           };
         },
         version: '1',
@@ -493,7 +493,7 @@ describe('InlineExecutionStrategy', () => {
             operationId: 'op-1',
             activityName: 'doWork',
             fn: () => {},
-            args: [],
+            input: undefined,
           };
           return `result:${String(value)}`;
         },
@@ -535,7 +535,7 @@ describe('InlineExecutionStrategy', () => {
             operationId: 'op-1',
             activityName: 'doWork',
             fn: () => {},
-            args: [],
+            input: undefined,
           };
         },
         version: '1',
@@ -582,7 +582,7 @@ describe('InlineExecutionStrategy', () => {
             operationId: 'op-1',
             activityName: 'doWork',
             fn: () => {},
-            args: [],
+            input: undefined,
           };
         },
         version: '1',

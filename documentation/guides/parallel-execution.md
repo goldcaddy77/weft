@@ -11,7 +11,7 @@ async function* enrichOrder(ctx: Context, order: Order) {
   const [inventory, shipping, tax] = yield* ctx.all([
     ctx.run(checkInventory, order.items),
     ctx.run(calculateShipping, order.address),
-    ctx.run(computeTax, order.total, order.region),
+    ctx.run(computeTax, { total: order.total, region: order.region }),
   ]);
 
   return { inventory, shipping, tax };

@@ -41,8 +41,8 @@ export function workflowFeedListenerKey(workflowId: string, selector: 'events' |
  * to a callable signature.  We trust the Context layer to populate
  * `fn` with the correct reference—the Engine merely invokes it.
  */
-export function callActivityFunction(fn: Function, args: unknown[]): unknown {
-  return (fn as (...a: unknown[]) => unknown)(...args);
+export function callActivityFunction(fn: Function, input: unknown, context?: unknown): unknown {
+  return (fn as (value: unknown, context?: unknown) => unknown)(input, context);
 }
 
 export function callMemoFunction(fn: Function): unknown {
@@ -128,9 +128,7 @@ export function getTimelineBasicInputSummary(operation: ContextOperationRequest)
 export function getTimelineInputSummary(operation: ContextOperationRequest): string {
   switch (operation.type) {
     case 'activity':
-      return summarizeTimelineValue(
-        operation.args.length <= 1 ? operation.args[0] : operation.args,
-      );
+      return summarizeTimelineValue(operation.input);
     case 'child-workflow':
       return summarizeTimelineValue({
         workflowType: operation.workflowType,

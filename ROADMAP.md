@@ -2,7 +2,7 @@
 
 A running list of issues, gaps, and follow-ups discovered while reading through the docs. Each item should carry enough context that we can pick it up cold later without re-doing the investigation.
 
-## Type System & Definition Vocabulary 🚨
+## 1. Type System & Definition Vocabulary 🚨
 
 This section unifies the public type surface, ergonomics, and definition helpers. Everything here is pre-1.0 hard rename — no aliases, no codemod, no changelog warnings.
 
@@ -22,7 +22,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Verify TypeScript contextual typing flows when the user writes `async (ctx, input: { name: string }) => ...`; tighten overload signatures if it doesn't. Audit and rewrite every `as { ... }` cast in README, `documentation/getting-started/*`, `documentation/guides/*`, `documentation/agents/*`, JSDoc in `engine.ts` / `context.ts` / `types.ts`. Add a lint rule flagging `as <ObjectType>` directly inside `register` / `start` / `signal` / `update` / `query` callbacks.
 
-- [ ] **Unify `activity()` to handle both bare-function and metadata forms; add a peer `workflow()` helper; tighten the activity calling convention to single-input.**
+- [x] **Unify `activity()` to handle both bare-function and metadata forms; add a peer `workflow()` helper; tighten the activity calling convention to single-input.**
 
   **Where:** `src/core/types.ts:1943` (existing `activity()`), `types.ts:654` (`ActivityFunction<TInput, TOutput>`), `src/core/engine.ts:9180` (runtime args-spread), `engine.ts:2473-2483` (`register` overloads). New: `workflow()` helper.
 
@@ -35,7 +35,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   This is now a follow-up to the catalog foundation. Land it before registry, codegen, or MCP work consumes activity metadata.
 
-- [ ] **Add `signal()`, `update()`, `query()` typed handles for the message-shaped surfaces.**
+- [x] **Add `signal()`, `update()`, `query()` typed handles for the message-shaped surfaces.**
 
   **Where:** `src/core/types.ts` (new exports), `src/core/context.ts:1975` (`onUpdate` and the corresponding `onQuery`), `engine.ts` (`engine.signal` / `update` / `query` currently take `payload: unknown`).
 
@@ -53,7 +53,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Overload `engine.signal` / `engine.update` / `engine.query`, `ctx.waitForSignal`, `ctx.onUpdate`, `ctx.onQuery` to accept either a string (legacy / dynamic) or a typed handle. Schema attachment via optional Zod is deferred to the Standard Schema item below. Lint rule flags `engine.signal(id, '<string-literal>', ...)` calls.
 
-- [ ] **Complete the definition vocabulary: `searchAttribute()`, `interceptor()`, `constraint()`, `schedule()`, and rename `defineAgent` → `agent`.**
+- [x] **Complete the definition vocabulary: `searchAttribute()`, `interceptor()`, `constraint()`, `schedule()`, and rename `defineAgent` → `agent`.**
 
   Family pattern — every primary primitive defined via a function named after the primitive.
   - **`searchAttribute(name, type)`** — accepts three forms, all converging on JSON Schema internally:
@@ -102,7 +102,7 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   **Out of scope:** Proxy form, cross-process change notifications, automatic lifecycle binding, schema validation on writes (covered by Standard Schema item), Immer-style transactional draft.
 
-## Cross-Process Type Generation
+## 2. Cross-Process Type Generation
 
 - [x] **Add typed `ctx.run` and `engine.start` via a module-augmentation activity registry.**
 
@@ -143,11 +143,11 @@ This section unifies the public type surface, ergonomics, and definition helpers
 
   Gated by the JSON Schema registry endpoint above.
 
-## Catalog Follow-Ups
+## 3. Catalog Follow-Ups
 
 The transport-neutral operation catalog, dispatch audit, stream/subscription kinds, OpenAPI hydration, AsyncAPI, `/.well-known/api-catalog`, OpenRPC errors, discovery info, and the `mcpExposable` ratchet have landed. The remaining catalog work is about user-defined workflows and activities rather than the built-in server operations.
 
-- [ ] **Finish workflow and activity catalog citizenship for user definitions.**
+- [x] **Finish workflow and activity catalog citizenship for user definitions.**
 
   **Where:** `src/core/types/workflow-function.ts` (`WorkflowRegistration`), `src/core/activity-registry.ts` (`ActivityRegistrationOptions`), `src/server/operation-catalog/workflow-adapter.ts`, and any future activity adapter.
 
@@ -155,7 +155,7 @@ The transport-neutral operation catalog, dispatch audit, stream/subscription kin
 
   Schemas are opt-in in v1, then ratchet to "required for MCP-exposed workflows" once the MCP server lands. Use Standard Schema for the validator interface (cross-validator interop). This is the foundation for codegen, MCP tool input schemas, per-workflow AsyncAPI payloads, and the `/v1/registry` endpoint.
 
-## MCP Server Support
+## 4. MCP Server Support
 
 Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armorer` owns MCP-as-tool-source). Weft's _workflow_ surface is a separate concern: there's value in exposing Weft workflows as MCP tools/resources to external MCP clients (Claude Desktop, Cursor, Anthropic SDK).
 
@@ -198,7 +198,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Once the server exists, add an `x-weft-mcp` extension on the OpenRPC document plus a `/.well-known/mcp.json` route. Native MCP `tools/list` is the canonical answer for live introspection; the static catalog is for build-time consumers. Lean minimal — extension on OpenRPC + live `tools/list` is enough; separate static catalog is nice-to-have. Gated by the MCP server item.
 
-## Polyglot Activity Workers (Path A)
+## 5. Polyglot Activity Workers (Path A)
 
 **Architectural decision:** workflows are TypeScript-only by design (generators don't serialize across processes); activities are polyglot via the `RemoteWorker` wire protocol.
 
@@ -231,7 +231,7 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Without a documented ADR, a future contributor proposes a Python workflow runtime, no one remembers why we said no, and the codebase fragments. The ADR is the durable answer.
 
-## Agent Bureau Compatibility 🚨
+## 6. Agent Bureau Compatibility 🚨
 
 **Architectural commitment:** Agent Bureau (`/Users/stevekinney/Developer/agent-bureau`) consumes Weft, never the reverse. **Dependency arrow: Agent Bureau → Weft. Hard structural constraint.** Weft cannot import from `armorer`, `conversationalist`, or `interoperability` — `devDependencies` only, for type-compat tests. The two items below scope the Weft-side design that lets Agent Bureau extend Weft's narrow contracts as structural supersets.
 
@@ -286,19 +286,15 @@ Per the AI Surface Shrinkage decision, Weft does not ship an MCP _client_ (`armo
 
   Lands with or before the tool-types compat item. Both are pre-1.0; this locks in Weft's storage interface as the canonical shape for the agent ecosystem.
 
-## Documentation
+## 7. Documentation
 
-- [ ] **Fix the Hello World example in `README.md` to tell the truth about recovery.**
+- [ ] **Update the Service Worker guide to lead with `setupServiceWorker()`.**
 
-  **Where:** `README.md` lines 36-60, almost certainly duplicated at `documentation/getting-started/hello-world.md`.
+  **Where:** `documentation/guides/service-worker.md`, with cross-links from `documentation/architecture/browser-runtime.md`, `documentation/guides/server.md`, and README.
 
-  **The bug:** the example does `engine.start('welcome', { name: 'Steve' })` then `await handle.result()` in the same script and claims that "if the process crashes after `greet` finishes but before the sleep expires, restarting the engine resumes from exactly that point." That's misleading — re-running the script does _not_ resume the previous workflow. Each `start()` without explicit `options.id` mints a fresh `crypto.randomUUID()` (`src/core/engine.ts:2709-2713`), so a second run starts a brand-new workflow and the original is orphaned.
+  The guide exists and covers the lower-level Service Worker primitives, but `setupServiceWorker()` has since landed. Make the one-call helper the primary quickstart, then keep `createFetchHandler()`, `createLifecycleHandlers()`, `createPeriodicSyncHandler()`, and manual `engine.scheduler.tick()` wiring as the lower-level escape hatch.
 
-  **What's actually required:**
-  - A long-lived process owns the engine and calls `engine.recoverAll()` on boot (`engine.ts:5178`), or
-  - The caller passes a stable `options.id` / `idempotencyKey` so re-runs can `getHandle(id)` / `resume(id)`.
-
-  Rewrite Hello World as either a server-shaped example with `recoverAll()` on boot, or pass a stable `options.id` and demonstrate the re-attach-vs-start branch. Audit `documentation/getting-started/key-concepts.md`, the README's "Step API" section, and any dashboard quickstart for the same shortcut.
+  Keep the existing browser-runtime coverage: Service Worker persistence over IndexedDB, Periodic Background Sync support and fallbacks, lifecycle limitations, HTTPS requirements, path-prefix wiring, debugging, and common pitfalls.
 
 - [ ] **Hello World implies activities are closures; reality is they're named, registered units.**
 

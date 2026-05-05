@@ -1,3 +1,4 @@
+import { searchAttributeName } from './search-attributes.ts';
 import type { ListFilter } from './types.ts';
 import { normalizeWorkflowTags } from './workflow-tags.ts';
 
@@ -9,7 +10,8 @@ export function hasScopedBulkWorkflowFilter(filter: ListFilter): boolean {
   const hasScopedType = filter.type !== undefined && filter.type.trim().length > 0;
   const hasScopedTags = (normalizeWorkflowTags(filter.tags)?.length ?? 0) > 0;
   const hasScopedAttributes =
-    filter.attributes?.some((attribute) => attribute.key.trim().length > 0) ?? false;
+    filter.attributes?.some((attribute) => searchAttributeName(attribute.key).trim().length > 0) ??
+    false;
 
   return hasScopedStatus || hasScopedType || hasScopedTags || hasScopedAttributes;
 }

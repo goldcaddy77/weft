@@ -103,7 +103,7 @@ If authorization changes, update the workflow helper. The agent loop still gets 
 
 | Weft owns                                               | Upstream owns                        |
 | ------------------------------------------------------- | ------------------------------------ |
-| `executeAgentLoop`, `defineAgent`                       | Provider implementations             |
+| `executeAgentLoop`, `agent`                             | Provider implementations             |
 | Durable coordination (`handoff`, `debate`, `supervise`) | MCP clients                          |
 | `ToolEffectLog`, `computeSemanticHash`                  | Budget tracking                      |
 | `ReviewCoordinator`                                     | Model routing                        |

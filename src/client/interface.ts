@@ -9,6 +9,7 @@
 import type { StoredStreamChunk } from '../core/context.ts';
 import type { TypedEventTarget, WeftEventMap } from '../core/events.ts';
 import type {
+  AttributeFilterKey,
   BulkCancelResult,
   BulkDeleteResult,
   BulkSignalResult,
@@ -18,14 +19,18 @@ import type {
   ListFilter,
   PaginatedResult,
   PurgeResult,
+  QueryDefinition,
   RetentionOverview,
   ScheduleFilter,
   ScheduleOptions,
   ScheduleSummary,
   SearchAttributeValue,
+  SignalDefinition,
   StartOptions,
   SubmitReviewOptions,
   TenantQuotaUsage,
+  TypedListFilter,
+  UpdateDefinition,
   WorkflowEvent,
   WorkflowReplay,
   WorkflowState,
@@ -73,13 +78,27 @@ export interface ClientHandle extends TypedEventTarget<WeftEventMap>, Disposable
   cancel(): Promise<void>;
 
   /** Send a named signal with an optional payload. */
+  signal(name: SignalDefinition): Promise<void>;
+  signal<TInput>(name: SignalDefinition<TInput>, payload: TInput): Promise<void>;
   signal(name: string, payload?: unknown): Promise<void>;
 
   /** Submit a synchronous update and return the handler's result. */
+  update<TOutput>(
+    name: UpdateDefinition<void, TOutput>,
+    payload?: void,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
+  update<TInput, TOutput>(
+    name: UpdateDefinition<TInput, TOutput>,
+    payload: TInput,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
   update(name: string, payload?: unknown, options?: { timeout?: number }): Promise<unknown>;
 
   /** Query a named read-only accessor on the running workflow. */
-  query(name: string): Promise<unknown>;
+  query<TOutput>(name: QueryDefinition<void, TOutput>): Promise<TOutput>;
+  query<TInput, TOutput>(name: QueryDefinition<TInput, TOutput>, input: TInput): Promise<TOutput>;
+  query(name: string, input?: unknown): Promise<unknown>;
 
   /** Get search attributes for this workflow. */
   getAttributes(): Promise<Record<string, SearchAttributeValue> | null>;
@@ -183,7 +202,9 @@ export interface WeftClient {
   getSchedule(id: string): Promise<ScheduleSummary | null>;
 
   /** List workflows with optional filtering and pagination. */
-  list(filter?: ListFilter): Promise<PaginatedResult<WorkflowSummary>>;
+  list<const TAttributeKeys extends readonly AttributeFilterKey[] = readonly AttributeFilterKey[]>(
+    filter?: TypedListFilter<TAttributeKeys>,
+  ): Promise<PaginatedResult<WorkflowSummary>>;
 
   /** List recurring schedules with optional filtering and pagination. */
   listSchedules(filter?: ScheduleFilter): Promise<PaginatedResult<ScheduleSummary>>;
@@ -204,12 +225,32 @@ export interface WeftClient {
   updateSchedule(id: string, newCronExpression: string): Promise<void>;
 
   /** Send a named signal to a workflow. */
+  signal(id: string, name: SignalDefinition): Promise<void>;
+  signal<TInput>(id: string, name: SignalDefinition<TInput>, payload: TInput): Promise<void>;
   signal(id: string, name: string, payload?: unknown): Promise<void>;
 
   /** Query a named read-only accessor on a running workflow. */
-  query(id: string, name: string): Promise<unknown>;
+  query<TOutput>(id: string, name: QueryDefinition<void, TOutput>): Promise<TOutput>;
+  query<TInput, TOutput>(
+    id: string,
+    name: QueryDefinition<TInput, TOutput>,
+    input: TInput,
+  ): Promise<TOutput>;
+  query(id: string, name: string, input?: unknown): Promise<unknown>;
 
   /** Submit a synchronous update to a running workflow. */
+  update<TOutput>(
+    id: string,
+    name: UpdateDefinition<void, TOutput>,
+    payload?: void,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
+  update<TInput, TOutput>(
+    id: string,
+    name: UpdateDefinition<TInput, TOutput>,
+    payload: TInput,
+    options?: { timeout?: number },
+  ): Promise<TOutput>;
   update(
     id: string,
     name: string,

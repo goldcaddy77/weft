@@ -53,9 +53,13 @@ From the caller side, use `handle.update()` on a workflow handle. It returns a p
 
 ```typescript partial
 const handle = engine.getHandle('wf-cart-abc');
+const validateCoupon = update<
+  { code: string },
+  { valid: boolean; newTotal?: number; reason?: string }
+>('validate_coupon');
 
 const result = await handle.update(
-  'validate_coupon',
+  validateCoupon,
   { code: 'SAVE20' },
   {
     timeout: 5000, // 5 seconds max wait
@@ -104,7 +108,7 @@ For coordinated updates, an optional `idempotencyKey` prevents duplicate process
 
 ```typescript partial
 const result = await handle.update(
-  'validate_coupon',
+  validateCoupon,
   { code: 'SAVE20' },
   {
     timeout: 5000,
@@ -122,7 +126,7 @@ When an update times out, the `UpdateTimeoutError` includes the `updateId`. The 
 
 ```typescript partial
 try {
-  const result = await handle.update('validate_coupon', payload, { timeout: 2000 });
+  const result = await handle.update(validateCoupon, payload, { timeout: 2000 });
 } catch (error) {
   if (error instanceof UpdateTimeoutError) {
     // The update is still pending---check back later

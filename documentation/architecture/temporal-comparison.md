@@ -163,7 +163,7 @@ There is no `continueAsNew`, no history limit, no manual state serialization. A 
 
 **The Temporal problem.** In the TypeScript SDK, you cannot call activity functions directly. You must create proxy objects via `proxyActivities<T>()` which generate type stubs that know how to schedule activities. This exists because the sandbox cannot import activity code. It creates confusion about what is a real function call versus a scheduled remote operation. "Go to definition" navigates to the proxy type, not the actual implementation.
 
-**The Weft answer.** `yield* ctx.run(myFunction, args)`. You pass the actual function reference. The `yield*` makes the durable boundary explicit---no proxies, no type stubs, no magic. "Go to definition" takes you to the implementation.
+**The Weft answer.** `yield* ctx.run(myFunction, input)`. You pass the actual function reference and one serializable input value. The `yield*` makes the durable boundary explicit---no proxies, no type stubs, no magic. "Go to definition" takes you to the implementation.
 
 Activities can declare their own operational characteristics with a colocated configuration pattern.
 

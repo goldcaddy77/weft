@@ -9,6 +9,7 @@ import { decode, encode } from '../codec.ts';
 import {
   buildIndexOperations,
   encodeAttributeValue,
+  searchAttributeName,
   validateEncodedValueSize,
 } from '../search-attributes.ts';
 import { assertWorkflowTagCount, coerceStartWorkflowTags } from '../start-workflow-validation.ts';
@@ -113,12 +114,13 @@ export async function queryAttributeIndex(
   filter: AttributeFilter,
 ): Promise<Set<string>> {
   const ids = new Set<string>();
-  const prefix = `idx:${filter.key}:`;
+  const attributeName = searchAttributeName(filter.key);
+  const prefix = `idx:${attributeName}:`;
 
   if (filter.value !== undefined) {
     // Exact match: scan idx:{name}:{encodedValue}: prefix
     const encodedValue = encodeAttributeValue(filter.value);
-    const exactPrefix = `idx:${filter.key}:${encodedValue}:`;
+    const exactPrefix = `idx:${attributeName}:${encodedValue}:`;
     for await (const [key] of internals.storage.scan(exactPrefix)) {
       // Key format: idx:{name}:{encodedValue}:{workflowId}
       const workflowId = tryDecodeStorageKeyComponent(key.slice(exactPrefix.length));
@@ -130,19 +132,19 @@ export async function queryAttributeIndex(
     // Range scan with gte/lte/gt/lt boundaries
     const scanOptions: ScanOptions = {};
     if (filter.gte !== undefined) {
-      scanOptions.gte = `idx:${filter.key}:${encodeAttributeValue(filter.gte)}:`;
+      scanOptions.gte = `idx:${attributeName}:${encodeAttributeValue(filter.gte)}:`;
     }
     if (filter.gt !== undefined) {
-      scanOptions.gt = `idx:${filter.key}:${encodeAttributeValue(filter.gt)}:\xff`;
+      scanOptions.gt = `idx:${attributeName}:${encodeAttributeValue(filter.gt)}:\xff`;
     }
     if (filter.lte !== undefined) {
       // Use a boundary that includes all workflow IDs for the lte value
       const encodedLte = encodeAttributeValue(filter.lte);
       // Append a character after the last ':' to ensure we include all IDs under this value
-      scanOptions.lte = `idx:${filter.key}:${encodedLte}:\xff`;
+      scanOptions.lte = `idx:${attributeName}:${encodedLte}:\xff`;
     }
     if (filter.lt !== undefined) {
-      scanOptions.lt = `idx:${filter.key}:${encodeAttributeValue(filter.lt)}:`;
+      scanOptions.lt = `idx:${attributeName}:${encodeAttributeValue(filter.lt)}:`;
     }
 
     for await (const [key] of internals.storage.scan(prefix, scanOptions)) {

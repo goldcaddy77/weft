@@ -11,7 +11,7 @@ import { sleepForTesting } from '../../testing/fake-timers.ts';
 import { describe, expect, it } from 'bun:test';
 
 import type { ChatResponse, LLMProvider } from '../../ai/agent/index.ts';
-import { defineAgent } from '../../ai/declaration.ts';
+import { agent as createAgentDefinition } from '../../ai/declaration.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { MemoryStorage } from '../../storage/memory.ts';
 import { decode, encode } from '../codec.ts';
@@ -73,7 +73,7 @@ describe('workflow version resume checks', () => {
       version: '1.0.0',
     };
 
-    const agentV1 = defineAgent({
+    const agentV1 = createAgentDefinition({
       name: 'versioned-agent',
       model: 'test-model',
       version: '1.0.0',
@@ -103,7 +103,7 @@ describe('workflow version resume checks', () => {
       version: '2.0.0',
     };
 
-    const agentV2 = defineAgent({
+    const agentV2 = createAgentDefinition({
       name: 'versioned-agent',
       model: 'test-model',
       version: '2.0.0',
@@ -150,7 +150,7 @@ describe('workflow version resume checks', () => {
       version: '1.0.0',
     };
 
-    const agentV1 = defineAgent({
+    const agentV1 = createAgentDefinition({
       name: 'tool-drift-agent',
       model: 'test-model',
       version: '1.0.0',
@@ -176,7 +176,7 @@ describe('workflow version resume checks', () => {
       version: '2.0.0',
     };
 
-    const agentV2 = defineAgent({
+    const agentV2 = createAgentDefinition({
       name: 'tool-drift-agent',
       model: 'test-model',
       version: '1.0.0',
@@ -218,7 +218,7 @@ describe('workflow version resume checks', () => {
       version: '2.0.0',
     };
 
-    const agent = defineAgent({
+    const agent = createAgentDefinition({
       name: 'tenant-aware-agent',
       model: 'test-model',
       version: '1.0.0',
@@ -256,7 +256,7 @@ describe('workflow version resume checks', () => {
       version: '1.0.0',
     };
 
-    const agent = defineAgent({
+    const agent = createAgentDefinition({
       name: 'legacy-agent',
       model: 'test-model',
       tools: [legacyTool],
@@ -308,7 +308,7 @@ describe('workflow version resume checks', () => {
       version: '1.0.0',
     };
 
-    const agentV1 = defineAgent({
+    const agentV1 = createAgentDefinition({
       name: 'migration-agent',
       model: 'test-model',
       version: '1.0.0',

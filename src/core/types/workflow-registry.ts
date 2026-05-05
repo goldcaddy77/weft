@@ -5,15 +5,15 @@ import type { DefinitionSchema } from './definition-schema.ts';
  *
  * @example
  * ```ts
- * import { Engine, type WorkflowDefinition } from 'weft';
+ * import { Engine, type RegisteredWorkflowDefinition } from 'weft';
  *
  * const engine = new Engine();
- * const definition: WorkflowDefinition | undefined = engine.getWorkflowDefinition('greet');
+ * const definition: RegisteredWorkflowDefinition | undefined = engine.getWorkflowDefinition('greet');
  *
  * void definition;
  * ```
  */
-export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
+export interface RegisteredWorkflowDefinition<TInput = unknown, TOutput = unknown> {
   /** Registered workflow type name. */
   type: string;
   /** Current registration version. */

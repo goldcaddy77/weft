@@ -73,7 +73,7 @@ The agent call is durable like any other workflow operation, but its internal du
 
 ## What the subsystem provides
 
-**Agent declaration:** [`defineAgent()`](./agent-declaration.md) gives reusable names, prompts, tool lists, and turn limits. Definitions stay thin so workflow authors can make scoping decisions close to the workflow.
+**Agent declaration:** [`agent()`](./agent-declaration.md) gives reusable names, prompts, tool lists, and turn limits. Definitions stay thin so workflow authors can make scoping decisions close to the workflow.
 
 **Tools:** [`AgentTool`](./agent-tools.md), `AgentToolDefinition`, `ToolEffectLog`, and `computeSemanticHash` define the structural tool surface and the deduplication mechanism that protects side effects.
 

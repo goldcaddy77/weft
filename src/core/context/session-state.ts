@@ -142,13 +142,35 @@ export function clearSessionStateValue(internals: ContextInternals, key: string)
   commitSessionStateStore(internals, Object.keys(candidate).length === 0 ? undefined : candidate);
 }
 
-export function mergeSessionStateRunOptions(rest: unknown[]): unknown[] {
-  if (rest.length > 0 && isActivityCallOptions(rest[rest.length - 1])) {
-    const options = rest[rest.length - 1] as ActivityCallOptions;
-    return [...rest.slice(0, -1), { ...options, sticky: true }];
+export type SessionStateRunArguments =
+  | { readonly hasInput: false; readonly options: ActivityCallOptions }
+  | { readonly hasInput: true; readonly input: unknown; readonly options: ActivityCallOptions };
+
+export function mergeSessionStateRunOptions(rest: readonly unknown[]): SessionStateRunArguments {
+  if (rest.length > 2) {
+    throw new Error(
+      'sessionState.run() accepts one activity input value plus optional ActivityCallOptions.',
+    );
   }
 
-  return [...rest, { sticky: true }];
+  if (rest.length === 0) {
+    return { hasInput: false, options: { sticky: true } };
+  }
+
+  if (rest.length === 1 && isActivityCallOptions(rest[0])) {
+    return { hasInput: false, options: { ...rest[0], sticky: true } };
+  }
+
+  if (rest.length === 1) {
+    return { hasInput: true, input: rest[0], options: { sticky: true } };
+  }
+
+  const options = rest[1];
+  if (!isActivityCallOptions(options)) {
+    throw new Error('sessionState.run() options must be ActivityCallOptions.');
+  }
+
+  return { hasInput: true, input: rest[0], options: { ...options, sticky: true } };
 }
 
 export function executeSessionStateOperation<TResult>(
@@ -199,10 +221,20 @@ export function stateSession<T>(
     });
   };
   const run = <TResult>(
-    fn: (...args: unknown[]) => Promise<TResult> | TResult,
+    fn: (input?: unknown) => Promise<TResult> | TResult,
     ...rest: unknown[]
-  ): Generator<ContextOperationRequest, TResult, unknown> =>
-    context.run(fn, ...mergeSessionStateRunOptions(rest));
+  ): Generator<ContextOperationRequest, TResult, unknown> => {
+    const merged = mergeSessionStateRunOptions(rest);
+    if (!merged.hasInput) {
+      return context.run(fn as () => Promise<TResult> | TResult, merged.options);
+    }
+
+    return context.run(
+      fn as (input: unknown) => Promise<TResult> | TResult,
+      merged.input,
+      merged.options,
+    );
+  };
 
   return {
     get,

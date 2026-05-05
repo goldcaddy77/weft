@@ -80,9 +80,8 @@ export function buildActivityCompensation(
     return undefined;
   }
 
-  const input = operation.args.length <= 1 ? operation.args[0] : operation.args;
   return async () => {
-    await activity.compensate?.(input, result);
+    await activity.compensate?.(operation.input, result);
   };
 }
 
@@ -90,7 +89,7 @@ export async function invokeWorkerActivity(
   internals: EngineInternals,
   operationId: string,
   activityName: string,
-  args: unknown[],
+  input: unknown,
 ): Promise<unknown> {
   const dispatcher = internals.activityWorkerDispatcher;
   if (!dispatcher) {
@@ -100,7 +99,7 @@ export async function invokeWorkerActivity(
   const result = await dispatcher.execute({
     operationId,
     activityName,
-    input: args.length === 1 ? args[0] : args,
+    input,
     attempt: 1,
   });
   if (result.status === 'failed') {
@@ -115,24 +114,23 @@ export function invokeInlineActivity(
   operation: ActivityOperation,
   activityContext: ActivityContext,
   _activityName: string,
-  args: unknown[],
+  input: unknown,
 ): unknown {
   const activityFunction = resolveActivityFunction(internals, operation);
-  return callActivityFunction(activityFunction, [...args, activityContext]);
+  return callActivityFunction(activityFunction, input, activityContext);
 }
 
 /**
  * Execute an activity function, dispatching to a Web Worker pool when
  * `activityExecution` is configured, or running inline on the main thread.
  */
-// oxlint-disable-next-line complexity -- ID:core-engine-execute-activity-complexity
 export async function executeActivity(
   internals: EngineInternals,
   workflowId: string,
   operation: ActivityOperation,
   callbacks: ActivityOperationCallbacks,
 ): Promise<unknown> {
-  const activityArguments = operation.args ?? [];
+  const activityInput = operation.input;
 
   // Build an ActivityContext so the activity function can send heartbeats.
   const abortController = internals.inlineStrategy?.getAbortController(workflowId);
@@ -144,12 +142,12 @@ export async function executeActivity(
   };
 
   // Build the leaf executor: either dispatch to a worker or call inline.
-  const invokeActivity: (activityName: string, args: unknown[]) => unknown =
+  const invokeActivity: (activityName: string, input: unknown) => unknown =
     internals.activityWorkerDispatcher
-      ? (activityName, args) =>
-          invokeWorkerActivity(internals, operation.operationId, activityName, args)
-      : (activityName, args) =>
-          invokeInlineActivity(internals, operation, activityContext, activityName, args);
+      ? (activityName, input) =>
+          invokeWorkerActivity(internals, operation.operationId, activityName, input)
+      : (activityName, input) =>
+          invokeInlineActivity(internals, operation, activityContext, activityName, input);
 
   // If there are activity interceptors, use cached composition
   const composedActivity = callbacks.getComposedActivityInterceptor();
@@ -157,14 +155,13 @@ export async function executeActivity(
     const activityInterception = {
       workflowId,
       activityName: operation.activityName,
-      input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
+      input: activityInput,
       attempt: 1,
       headers: new Map<string, string>(),
     };
 
     const result = await composedActivity.execute(activityInterception, async (interception) => {
-      const args = Array.isArray(interception.input) ? interception.input : [interception.input];
-      return invokeActivity(operation.activityName, args);
+      return invokeActivity(operation.activityName, interception.input);
     });
 
     // Capture interceptor headers onto the operation for dispatch
@@ -183,13 +180,13 @@ export async function executeActivity(
     const interception = {
       workflowId,
       activityName: operation.activityName,
-      input: activityArguments.length === 1 ? activityArguments[0] : activityArguments,
+      input: activityInput,
       attempt: 1,
       headers: new Map<string, string>(),
     };
 
     function* execute(): Generator<unknown, unknown, unknown> {
-      const result = invokeActivity(operation.activityName, activityArguments);
+      const result = invokeActivity(operation.activityName, interception.input);
       yield result;
       return result;
     }
@@ -208,7 +205,7 @@ export async function executeActivity(
     return current.value;
   }
 
-  return invokeActivity(operation.activityName, activityArguments);
+  return invokeActivity(operation.activityName, activityInput);
 }
 
 export async function executeActivityOperationResult(

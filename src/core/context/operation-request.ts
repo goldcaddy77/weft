@@ -35,8 +35,8 @@ export type ContextOperationRequest =
       type: 'activity';
       operationId: string;
       activityName: string;
-      fn?: (...args: unknown[]) => unknown;
-      args: unknown[];
+      fn?: (input: unknown, context?: unknown) => unknown;
+      input: unknown;
       callerStack?: string;
       options?: Record<string, unknown>;
       /** Serialized interceptor headers (Map entries) for remote worker propagation. */
@@ -144,7 +144,7 @@ export type ContextOperationRequest =
   | {
       type: 'run-all';
       operationId: string;
-      branches: Record<string, [Function, ...unknown[]]>;
+      branches: Record<string, [Function] | [Function, unknown]>;
       /** Workflow step index — see note on `parallel.step`. */
       step: number;
       /**

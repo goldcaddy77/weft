@@ -57,7 +57,7 @@ The schema fields are introspection metadata. Core workflow registration validat
 
 ```ts partial
 engine.register('send-email', async function* (context, input) {
-  const result = yield* context.run(sendEmail, input.to, input.body);
+  const result = yield* context.run(sendEmail, { to: input.to, body: input.body });
   return result;
 });
 
@@ -75,7 +75,7 @@ engine.register('send-email', {
 ### `getWorkflowDefinition()`
 
 ```ts partial
-getWorkflowDefinition(type: string): WorkflowDefinition | undefined
+getWorkflowDefinition(type: string): RegisteredWorkflowDefinition | undefined
 ```
 
 Return read-only metadata for one registered workflow type. Simple `register(name, handler)` registrations return version `1`, empty tags, and no schemas.
@@ -83,7 +83,7 @@ Return read-only metadata for one registered workflow type. Simple `register(nam
 ### `listWorkflowDefinitions()`
 
 ```ts partial
-listWorkflowDefinitions(): WorkflowDefinition[]
+listWorkflowDefinitions(): RegisteredWorkflowDefinition[]
 ```
 
 Return read-only metadata for all registered workflow types.
@@ -134,13 +134,16 @@ const handle = await engine.start('send-email', {
 ### `signal()`
 
 ```ts partial
+async signal(workflowId: string, name: SignalDefinition): Promise<void>
+async signal<TInput>(workflowId: string, name: SignalDefinition<TInput>, payload: TInput): Promise<void>
 async signal(workflowId: string, name: string, payload?: unknown): Promise<void>
 ```
 
 Deliver a named signal to a running workflow. If the workflow is currently waiting for this signal via `context.waitForSignal()`, it resumes immediately. Otherwise the signal is persisted and consumed when the workflow next waits for it.
 
 ```ts partial
-await engine.signal(handle.id, 'approval', { approved: true });
+const approval = signal<{ approved: boolean }>('approval');
+await engine.signal(handle.id, approval, { approved: true });
 ```
 
 ### `update()`
@@ -148,7 +151,7 @@ await engine.signal(handle.id, 'approval', { approved: true });
 ```ts partial
 async update(
   workflowId: string,
-  name: string,
+  name: UpdateDefinition<TInput, TOutput> | string,
   payload?: unknown,
   options?: { timeout?: number },
 ): Promise<unknown>
@@ -157,7 +160,8 @@ async update(
 Send a synchronous update to a running workflow and wait for the handler's return value. If the workflow has registered an `onUpdate` handler for `name`, the handler runs immediately and its return value is sent back. Falls back to the `UpdateCoordinator` with polling if no active handler is found. Default timeout is 5000ms.
 
 ```ts partial
-const count = await engine.update(handle.id, 'getProgress');
+const getProgress = update<void, number>('getProgress');
+const count = await engine.update(handle.id, getProgress);
 ```
 
 ### `cancel()`

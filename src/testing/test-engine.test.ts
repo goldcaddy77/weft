@@ -119,9 +119,9 @@ describe('TestEngine', () => {
     const engine = new TestEngine({ startTime: 1000 });
 
     let activityCallCount = 0;
-    const expensiveComputation = async (...args: unknown[]) => {
+    const expensiveComputation = async (input: unknown) => {
       activityCallCount++;
-      return (args[0] as number) * 100;
+      return (input as number) * 100;
     };
 
     engine.register('recoverable', async function* (ctx: WorkflowContext, input: unknown) {

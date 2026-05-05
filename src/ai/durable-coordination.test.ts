@@ -14,7 +14,7 @@ import { describe, expect, it } from 'bun:test';
 import type { WorkflowContext } from '../core/types.ts';
 import { TestEngine } from '../testing/test-engine.ts';
 import type { ChatResponse, LLMProvider } from './agent/types.ts';
-import { defineAgent, type AgentDefinition } from './declaration.ts';
+import { agent, type AgentDefinition } from './declaration.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -46,7 +46,7 @@ function createChatResponse(content: string): ChatResponse {
 }
 
 function createAgentDefinition(overrides?: Partial<AgentDefinition>): AgentDefinition {
-  return defineAgent({
+  return agent({
     name: 'test-agent',
     model: 'test-model',
     ...overrides,

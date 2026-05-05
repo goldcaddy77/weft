@@ -52,7 +52,7 @@ export const webSearch: AgentTool = {
 
 ## `AgentToolDefinition`
 
-`AgentToolDefinition` is structurally the same shape used by `defineAgent()`:
+`AgentToolDefinition` is structurally the same shape used by `agent()`:
 
 ```typescript partial
 interface AgentToolDefinition {
@@ -109,9 +109,9 @@ That is the protection you need after a crash. The process may disappear after t
 Attach default tools to an agent definition:
 
 ```typescript partial
-import { defineAgent } from 'weft';
+import { agent } from 'weft';
 
-const researcher = defineAgent({
+const researcher = agent({
   name: 'research',
   model: 'claude-sonnet-4-20250514',
   tools: [webSearch, createTicket],

@@ -1,4 +1,4 @@
-import type { ListFilter } from '../core/types.ts';
+import { searchAttributeName, type ListFilter } from '../core/types.ts';
 
 function appendStatusFilters(params: URLSearchParams, status: ListFilter['status']): void {
   if (status === undefined) {
@@ -30,20 +30,22 @@ function appendAttributeFilters(
   }
 
   for (const attribute of attributes) {
+    const key = searchAttributeName(attribute.key);
+
     if (attribute.value !== undefined) {
-      params.set(`attr.${attribute.key}`, String(attribute.value));
+      params.set(`attr.${key}`, String(attribute.value));
     }
     if (attribute.gt !== undefined) {
-      params.set(`attr.${attribute.key}.gt`, String(attribute.gt));
+      params.set(`attr.${key}.gt`, String(attribute.gt));
     }
     if (attribute.lt !== undefined) {
-      params.set(`attr.${attribute.key}.lt`, String(attribute.lt));
+      params.set(`attr.${key}.lt`, String(attribute.lt));
     }
     if (attribute.gte !== undefined) {
-      params.set(`attr.${attribute.key}.gte`, String(attribute.gte));
+      params.set(`attr.${key}.gte`, String(attribute.gte));
     }
     if (attribute.lte !== undefined) {
-      params.set(`attr.${attribute.key}.lte`, String(attribute.lte));
+      params.set(`attr.${key}.lte`, String(attribute.lte));
     }
   }
 }

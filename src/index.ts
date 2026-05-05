@@ -40,9 +40,15 @@ export {
   DEFAULT_MAX_NESTING_DEPTH,
   DEFAULT_RETRY_POLICY,
   DEFAULT_VISIBILITY_TIMEOUT_MS,
+  query,
+  schedule,
+  signal,
+  update,
+  workflow,
 } from './core/types';
 export type {
   ActivityCallOptions,
+  ActivityCallable,
   ActivityContext,
   ActivityDefinition,
   ActivityFunction,
@@ -66,20 +72,26 @@ export type {
   NormalizedRetentionPolicy,
   PaginatedResult,
   PurgeResult,
+  QueryDefinition,
+  RegisteredWorkflowDefinition,
   RetentionOverview,
   RetentionPolicy,
   RetryPolicy,
   ReviewDecision,
   ScheduleAccessOptions,
+  ScheduleDefinition,
   ScheduleFilter,
   ScheduleOptions,
   ScheduleOverlapPolicy,
   ScheduleState,
   ScheduleStatus,
   ScheduleSummary,
+  SearchAttributeDefinition,
+  SearchAttributeHandle,
   SearchAttributeSchema,
   SearchAttributeValue,
   Serializer,
+  SignalDefinition,
   StandardJSONSchemaV1,
   StandardJSONSchemaV1Converter,
   StandardJSONSchemaV1Options,
@@ -103,6 +115,7 @@ export type {
   TenantQuotaUsage,
   TenantWorkflowCreationRateLimit,
   TenantWorkflowCreationRateUsage,
+  UpdateDefinition,
   WorkflowAtomicState,
   WorkflowAtomicStateOptions,
   WorkflowContext,
@@ -253,7 +266,11 @@ export { StepContext, compileStepWorkflow, isAsyncGeneratorFunction } from './co
 export type { StepWorkflowContext, StepWorkflowFunction } from './core/types';
 
 // Interceptors
-export { composeActivityInterceptors, composeWorkflowInterceptors } from './core/interceptor';
+export {
+  composeActivityInterceptors,
+  composeWorkflowInterceptors,
+  interceptor,
+} from './core/interceptor';
 export type {
   ActivityExecutionInterception,
   ActivityInterception,
@@ -276,6 +293,7 @@ export {
   buildIndexOperations,
   decodeAttributeValue,
   encodeAttributeValue,
+  searchAttribute,
 } from './core/search-attributes';
 
 // Updates
@@ -369,7 +387,7 @@ export type {
 export { createChildHeaders, debate, handoff, supervise } from './ai/coordination/index.ts';
 
 // Declaration
-export { defineAgent, isAgentDefinition } from './ai/declaration';
+export { agent, isAgentDefinition } from './ai/declaration';
 export type { AgentDefinition, AgentToolDefinition, ToolIdentityResult } from './ai/declaration';
 
 // Human Review

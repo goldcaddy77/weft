@@ -111,7 +111,6 @@ export type OperationRouterCallbacks = {
  * The worker protocol produces `OperationRequest` (with `kind`). This function
  * normalizes both shapes so `processOperation` can switch on `type`.
  */
-// oxlint-disable-next-line complexity -- ID:core-engine-translate-operation-request-complexity
 export function translateOperationRequest(
   _internals: EngineInternals,
   operationRequest: unknown,
@@ -148,7 +147,7 @@ export function translateOperationRequest(
       type,
       operationId: (operation['id'] as string) ?? crypto.randomUUID(),
       activityName: (operation['activityName'] as string) ?? '',
-      args: operation['input'] !== undefined ? [operation['input']] : [],
+      input: operation['input'],
     } as ContextOperationRequest;
   }
 
