@@ -437,7 +437,9 @@ function shouldPreferLegacyRoute(bindingMatch: { readonly binding: UnknownRestBi
 
 # Entrypoint: ./service-worker
 const DEFAULT_PERIODIC_SYNC_TAG: "weft-timers"
+interface MinimalExtendableEvent { waitUntil(promise: Promise<unknown>): void }
 interface MinimalFetchEvent { request: Request; respondWith(response: Response | Promise<Response>): void }
+interface MinimalPeriodicSyncEvent { tag: string }
 interface ServiceWorkerOptions { engine: Engine; pathPrefix?: string }
 interface SetupServiceWorkerOptions { databaseName?: string; engine?: Engine; pathPrefix?: string; periodicSyncTag?: string; register?: (engine: Engine) => void | Promise<void>; storage?: WeftStorage }
 interface SetupServiceWorkerResult { engine: Engine; ready: Promise<void>; scheduler: ServiceWorkerScheduler; storage: WeftStorage }

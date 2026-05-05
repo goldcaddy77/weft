@@ -9,35 +9,20 @@
 
 import type { Engine } from '../core/engine';
 import { handleRequest } from '../server/handler';
-import {
-  buildDelegatedRequest,
-  DEFAULT_PERIODIC_SYNC_TAG,
-  normalizePathPrefix,
-} from './shared.ts';
-import type { MinimalFetchEvent } from './shared.ts';
 import type { ServiceWorkerScheduler } from './scheduler';
-
-export {
-  buildDelegatedRequest,
-  DEFAULT_PERIODIC_SYNC_TAG,
-  normalizePathPrefix,
+import type {
+  MinimalExtendableEvent,
+  MinimalFetchEvent,
+  MinimalPeriodicSyncEvent,
 } from './shared.ts';
-export type { MinimalFetchEvent } from './shared.ts';
+import { buildDelegatedRequest, DEFAULT_PERIODIC_SYNC_TAG, normalizePathPrefix } from './shared.ts';
 
-// ---------------------------------------------------------------------------
-// Minimal Service Worker type interfaces
-// (avoids conflicts between webworker and Bun type libs)
-// ---------------------------------------------------------------------------
-
-/** Minimal ExtendableEvent shape for Service Worker compatibility. */
-interface MinimalExtendableEvent {
-  waitUntil(promise: Promise<unknown>): void;
-}
-
-/** Periodic sync event shape. */
-interface MinimalPeriodicSyncEvent extends MinimalExtendableEvent {
-  tag: string;
-}
+export { buildDelegatedRequest, DEFAULT_PERIODIC_SYNC_TAG, normalizePathPrefix } from './shared.ts';
+export type {
+  MinimalExtendableEvent,
+  MinimalFetchEvent,
+  MinimalPeriodicSyncEvent,
+} from './shared.ts';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -73,7 +58,6 @@ export interface ServiceWorkerOptions {
 // ---------------------------------------------------------------------------
 // Default constants
 // ---------------------------------------------------------------------------
-
 
 // ---------------------------------------------------------------------------
 // createFetchHandler

@@ -6656,6 +6656,20 @@
     },
     {
       "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "MinimalExtendableEvent",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "MinimalExtendableEvent",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
       "sourceName": "MinimalFetchEvent",
       "kind": "type",
       "subKind": "interface",
@@ -6663,6 +6677,20 @@
         {
           "importPath": "weft/service-worker",
           "exportName": "MinimalFetchEvent",
+          "kind": "type"
+        }
+      ],
+      "classification": "example-required"
+    },
+    {
+      "sourceFile": "src/service-worker/shared.ts",
+      "sourceName": "MinimalPeriodicSyncEvent",
+      "kind": "type",
+      "subKind": "interface",
+      "publicFaces": [
+        {
+          "importPath": "weft/service-worker",
+          "exportName": "MinimalPeriodicSyncEvent",
           "kind": "type"
         }
       ],

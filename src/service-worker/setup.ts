@@ -12,15 +12,17 @@
  */
 
 import { Engine } from '../core/engine';
+import { handleRequest } from '../server/handler';
 import { IndexedDBStorage } from '../storage/indexeddb';
 import type { Storage as WeftStorage } from '../storage/interface';
-import { handleRequest } from '../server/handler';
 import { ServiceWorkerScheduler } from './scheduler';
 import {
   buildDelegatedRequest,
   DEFAULT_PERIODIC_SYNC_TAG,
   normalizePathPrefix,
+  type MinimalExtendableEvent,
   type MinimalFetchEvent,
+  type MinimalPeriodicSyncEvent,
 } from './shared.ts';
 
 const DEFAULT_DATABASE_NAME = 'weft';
@@ -101,14 +103,6 @@ type SetupState =
 
 const setupRegistry = new WeakMap<object, SetupState>();
 
-interface MinimalExtendableEvent {
-  waitUntil(promise: Promise<unknown>): void;
-}
-
-interface MinimalPeriodicSyncEvent extends MinimalExtendableEvent {
-  tag: string;
-}
-
 interface ServiceWorkerScope {
   addEventListener: (type: string, listener: (event: unknown) => void) => void;
   skipWaiting?: () => Promise<void>;
@@ -147,9 +141,10 @@ function checkExistingState(scope: ServiceWorkerScope): Promise<SetupServiceWork
   );
 }
 
-function resolveStorageAndEngine(
-  options: SetupServiceWorkerOptions,
-): { storage: WeftStorage; engine: Engine } {
+function resolveStorageAndEngine(options: SetupServiceWorkerOptions): {
+  storage: WeftStorage;
+  engine: Engine;
+} {
   if (options.engine !== undefined && options.storage !== undefined) {
     if (options.engine.storage !== options.storage) {
       throw new TypeError(

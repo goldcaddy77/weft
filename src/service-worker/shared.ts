@@ -43,6 +43,35 @@ export interface MinimalFetchEvent {
 }
 
 /**
+ * Minimal `ExtendableEvent` shape — accepted by `install`, `activate`, and
+ * any handler that wants to extend the event lifetime via `waitUntil`.
+ *
+ * @example
+ * ```ts
+ * import type { MinimalExtendableEvent } from 'weft/service-worker';
+ * declare const event: MinimalExtendableEvent;
+ * event.waitUntil(Promise.resolve());
+ * ```
+ */
+export interface MinimalExtendableEvent {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+/**
+ * Minimal `PeriodicSyncEvent` shape — accepted by `createPeriodicSyncHandler`.
+ *
+ * @example
+ * ```ts
+ * import type { MinimalPeriodicSyncEvent } from 'weft/service-worker';
+ * declare const event: MinimalPeriodicSyncEvent;
+ * if (event.tag === 'weft-timers') event.waitUntil(Promise.resolve());
+ * ```
+ */
+export interface MinimalPeriodicSyncEvent extends MinimalExtendableEvent {
+  tag: string;
+}
+
+/**
  * Normalize a service-worker path prefix: append a trailing slash if
  * missing. The default is `'/weft/'`.
  *
