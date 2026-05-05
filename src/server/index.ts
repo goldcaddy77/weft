@@ -115,7 +115,7 @@ export interface ServeOptions {
    * Optional {@link MetricsCollector} used as the default metrics source for
    * `/v1/metrics` when no `prometheusExporter` is supplied.
    *
-   * @deprecated Prefer `prometheusExporter` — wrap your metrics source (OTel
+   * @deprecated Prefer `prometheusExporter` — wrap your metrics source (OpenTelemetry
    * or otherwise) in a {@link PrometheusExporter} and pass it there. This
    * field remains for projects still using the legacy `MetricsCollector`
    * path and has lower precedence if both are set.

@@ -8,7 +8,7 @@ import {
   serializeCheckpoint,
   validateCheckpointRoundTrip,
 } from './checkpoint.ts';
-import type { Checkpoint, Serializer } from './types.ts';
+import { CURRENT_CHECKPOINT_SCHEMA_VERSION, type Checkpoint, type Serializer } from './types.ts';
 
 describe('createCheckpoint', () => {
   it('produces step 0, empty locals, empty signals, empty searchAttributes', () => {
@@ -195,6 +195,7 @@ describe('validateCheckpointRoundTrip', () => {
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -213,6 +214,7 @@ describe('validateCheckpointRoundTrip', () => {
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -286,6 +288,7 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     });
     expect(() => deserializeCheckpoint(bytes)).toThrow('workflowId');
@@ -300,6 +303,7 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     });
     expect(() => deserializeCheckpoint(bytes)).toThrow('step');
@@ -315,6 +319,7 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     });
     expect(() => deserializeCheckpoint(bytes)).toThrow('locals');
@@ -329,6 +334,7 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
       pendingSignals: 'not-an-array',
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     });
     expect(() => deserializeCheckpoint(bytes)).toThrow('pendingSignals');
@@ -344,6 +350,7 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     });
     expect(() => deserializeCheckpoint(bytes)).toThrow('accumulatedResults');
@@ -359,6 +366,7 @@ describe('validateCheckpointShape (via deserializeCheckpoint)', () => {
       pendingSignals: [],
       searchAttributes: null,
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     });
     expect(() => deserializeCheckpoint(bytes)).toThrow('searchAttributes');
@@ -421,6 +429,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -443,6 +452,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -467,6 +477,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -491,6 +502,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -515,6 +527,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -537,6 +550,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -559,6 +573,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -583,6 +598,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -602,6 +618,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -635,6 +652,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -668,6 +686,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -708,6 +727,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -742,6 +762,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -776,6 +797,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -811,6 +833,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -845,6 +868,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -868,6 +892,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 
@@ -891,6 +916,7 @@ describe('compareValues (via validateCheckpointRoundTrip with custom serializer)
       pendingSignals: [],
       searchAttributes: {},
       version: '1.0.0',
+      schemaVersion: CURRENT_CHECKPOINT_SCHEMA_VERSION,
       createdAt: Date.now(),
     };
 

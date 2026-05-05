@@ -6,7 +6,13 @@ import { MemoryStorage } from '../storage/memory.ts';
 import { serializeCheckpoint } from './checkpoint.ts';
 import type { Context } from './context.ts';
 import { Engine } from './engine.ts';
-import type { Checkpoint, CheckpointState, CheckpointSummary, WorkflowContext } from './types.ts';
+import {
+  CURRENT_CHECKPOINT_SCHEMA_VERSION,
+  type Checkpoint,
+  type CheckpointState,
+  type CheckpointSummary,
+  type WorkflowContext,
+} from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -37,6 +43,7 @@ function writeCheckpointHistory(
     pendingSignals: overrides?.pendingSignals ?? [],
     searchAttributes: overrides?.searchAttributes ?? {},
     version: overrides?.version ?? '1.0.0',
+    schemaVersion: overrides?.schemaVersion ?? CURRENT_CHECKPOINT_SCHEMA_VERSION,
     createdAt: overrides?.createdAt ?? 1000 + step * 100,
   };
   const serialized = serializeCheckpoint(checkpoint);
