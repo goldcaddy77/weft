@@ -35,6 +35,12 @@
       "import": "./dist/service-worker/index.js",
       "default": "./dist/service-worker/index.js"
     },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "bun": "./dist/testing/index.js",
+      "import": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
+    },
     "./storage": {
       "types": "./dist/storage/index.d.ts",
       "bun": "./dist/storage/index.js",

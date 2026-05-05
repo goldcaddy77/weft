@@ -278,7 +278,7 @@ const engine = new Engine({
 `TestEngine` swaps the production engine in tests and gives you a virtual clock. `engine.advanceTime('1 hour')` jumps timers forward without waiting; `engine.mock(activity, fake)` swaps in fake activity implementations with type-checked signatures, call recording, and per-call overrides.
 
 ```typescript
-import { TestEngine } from 'weft';
+import { TestEngine } from 'weft/testing';
 import { expect, test } from 'bun:test';
 
 test('onboarding completes after a day', async () => {
