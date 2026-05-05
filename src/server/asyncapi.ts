@@ -4,8 +4,6 @@
  * @module server/asyncapi
  */
 
-import { z } from 'zod';
-
 import {
   buildOperationEntry,
   buildSseChannel,
@@ -15,6 +13,12 @@ import {
 } from './asyncapi-channels.ts';
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
+import {
+  asPlainObject,
+  compareStrings,
+  isPlainObject,
+  zodToJsonSchema,
+} from './json-schema-utilities.ts';
 import { canonicalJson } from './openapi-canonical-json.ts';
 import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
 import { createLiveRestBindings, type UnknownRestBinding } from './rest-bindings.ts';
@@ -159,18 +163,6 @@ function operationNameForOperation(operation: ErasedOperation): string {
   return operation.name.replaceAll('.', '_');
 }
 
-function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
-  const result: unknown = z.toJSONSchema(schema, {
-    unrepresentable: 'any',
-  });
-  const object = asPlainObject(result);
-  if (!('$schema' in object)) return object;
-
-  const schemaWithoutDialect = { ...object };
-  delete schemaWithoutDialect['$schema'];
-  return schemaWithoutDialect;
-}
-
 function replaceMessageReferences(value: unknown, aliases: ReadonlyMap<string, string>): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => replaceMessageReferences(entry, aliases));
@@ -202,17 +194,4 @@ function serverHost(serverUrl: string): string {
 function normalizeJsonObject(value: unknown): Record<string, unknown> {
   const parsed: unknown = JSON.parse(canonicalJson(value));
   return asPlainObject(parsed);
-}
-
-function asPlainObject(value: unknown): Record<string, unknown> {
-  if (isPlainObject(value)) return value;
-  return {};
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function compareStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }

@@ -42,9 +42,9 @@ describe('DiscoveryInfo', () => {
         description: discoveryInfo.description,
         contact: discoveryInfo.contact,
         license: discoveryInfo.license,
-        externalDocs: discoveryInfo.externalDocs,
       }),
     );
+    expect(openApiDocument['externalDocs']).toEqual(discoveryInfo.externalDocs);
     expect(openRpcDocument['info']).toEqual(
       expect.objectContaining({
         description: discoveryInfo.description,
@@ -82,7 +82,10 @@ describe('DiscoveryInfo', () => {
       const openRpcResponse = await fetch(`${server.url}/openrpc.json`);
       const asyncApiResponse = await fetch(`${server.url}/asyncapi.json`);
 
-      const openApiDocument = (await openApiResponse.json()) as { info?: Record<string, unknown> };
+      const openApiDocument = (await openApiResponse.json()) as {
+        info?: Record<string, unknown>;
+        externalDocs?: unknown;
+      };
       const openRpcDocument = (await openRpcResponse.json()) as { info?: Record<string, unknown> };
       const asyncApiDocument = (await asyncApiResponse.json()) as {
         info?: Record<string, unknown>;
@@ -94,9 +97,9 @@ describe('DiscoveryInfo', () => {
           description: discoveryInfo.description,
           contact: discoveryInfo.contact,
           license: discoveryInfo.license,
-          externalDocs: discoveryInfo.externalDocs,
         }),
       );
+      expect(openApiDocument.externalDocs).toEqual(discoveryInfo.externalDocs);
       expect(openRpcDocument.info).toEqual(
         expect.objectContaining({
           description: discoveryInfo.description,

@@ -54,4 +54,15 @@ describe('buildErrorResponses', () => {
       expect(responseSchema(response)).toEqual({ $ref: '#/components/schemas/Error' });
     }
   });
+
+  it('merges multiple fault codes that share one HTTP status into a single response entry', () => {
+    const responses = buildErrorResponses(operation(['NotImplemented', 'UnsupportedTransport']));
+
+    expect(Object.keys(responses).toSorted()).toEqual(['400', '401', '403', '500', '501']);
+    expect(responses['501']).toEqual(
+      expect.objectContaining({
+        description: 'NotImplemented, UnsupportedTransport',
+      }),
+    );
+  });
 });

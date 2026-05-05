@@ -26,9 +26,14 @@ import { z } from 'zod';
 
 import { isDiscoverable } from './discovery-filter.ts';
 import { applyDiscoveryInfo, type DiscoveryInfo } from './discovery-info.ts';
+import { asPlainObject, compareStrings, zodToJsonSchema } from './json-schema-utilities.ts';
 import { OpenRpcDocumentSchema } from './openrpc-document-schema.ts';
 import { buildOpenRpcComponentsErrors } from './openrpc-errors.ts';
-import type { ErasedOperation, OperationRegistry } from './operation-catalog.ts';
+import {
+  UNIVERSAL_FAULT_DEFAULTS,
+  type ErasedOperation,
+  type OperationRegistry,
+} from './operation-catalog.ts';
 import type { FaultCode } from './operation-fault.ts';
 
 /** Transports that MAY be listed in `OpenRpcOptions.transports`. */
@@ -178,7 +183,7 @@ function buildMethod(operation: ErasedOperation): OpenRpcMethod {
   };
   if (operation.summary) method.summary = operation.summary;
   if (operation.tags.length > 0) {
-    method.tags = [...operation.tags].toSorted(byString).map((name) => ({ name }));
+    method.tags = [...operation.tags].toSorted(compareStrings).map((name) => ({ name }));
   }
   method.errors = buildMethodErrorReferences(operation);
   return method;
@@ -205,12 +210,7 @@ function buildDiscoverMethod(): OpenRpcMethod {
   };
 }
 
-const UNIVERSAL_FAULT_CODES = [
-  'Unauthorized',
-  'Forbidden',
-  'InvalidParams',
-  'EngineFailure',
-] as const satisfies ReadonlyArray<FaultCode>;
+const UNIVERSAL_FAULT_CODES: ReadonlyArray<FaultCode> = [...UNIVERSAL_FAULT_DEFAULTS];
 
 function buildMethodErrorReferences(operation: ErasedOperation): Array<{ $ref: string }> {
   const faultCodes = new Set<FaultCode>(UNIVERSAL_FAULT_CODES);
@@ -246,28 +246,6 @@ function zodObjectToJsonSchema(
   };
 }
 
-function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
-  // Zod 4 ships native JSON Schema conversion.
-  const result = z.toJSONSchema(schema, {
-    // The live registry uses `z.custom(...)` for a few trust-boundary
-    // types such as workflow statuses. OpenRPC still needs a document
-    // for those operations, so unrepresentable internals degrade to
-    // `{}` instead of taking down the entire discovery route.
-    unrepresentable: 'any',
-  }) as Record<string, unknown>;
-  // Strip the `$schema` key — it's noise inside a bigger OpenRPC
-  // document, and it's the same constant for every call.
-  if ('$schema' in result) {
-    const { $schema: _unused, ...rest } = result;
-    return rest;
-  }
-  return result;
-}
-
-function byString(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 function buildContentDescriptors(paramsSchema: Record<string, unknown>): ContentDescriptor[] {
   const properties = asPlainObject(paramsSchema['properties']);
   const requiredList = asStringArray(paramsSchema['required']);
@@ -278,20 +256,13 @@ function buildContentDescriptors(paramsSchema: Record<string, unknown>): Content
   // be emitted as a dangling reference under `params[].schema` while
   // only the sibling `x-weft-paramsSchema` extension remained valid.
   const defs = asPlainObjectOrUndefined(paramsSchema['$defs']);
-  const names = Object.keys(properties).toSorted(byString);
+  const names = Object.keys(properties).toSorted(compareStrings);
   const requiredSet = new Set(requiredList);
   return names.map((name) => {
     const baseSchema = asPlainObject(properties[name]);
     const schema = defs ? { ...baseSchema, $defs: defs } : baseSchema;
     return { name, schema, required: requiredSet.has(name) };
   });
-}
-
-function asPlainObject(value: unknown): Record<string, unknown> {
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return {};
 }
 
 function asPlainObjectOrUndefined(value: unknown): Record<string, unknown> | undefined {

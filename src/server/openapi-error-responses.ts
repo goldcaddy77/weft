@@ -31,11 +31,23 @@ export function buildErrorResponses(operation: ErasedOperation): Record<string, 
     ...(operation.producibleFaults ?? []),
   ]);
 
-  const responses: Record<string, unknown> = {};
+  const codesByStatus = new Map<string, FaultCode[]>();
   for (const code of codes) {
     const status = String(FAULT_CODE_TO_HTTP_STATUS[code]);
+    const existingCodes = codesByStatus.get(status);
+    if (existingCodes === undefined) {
+      codesByStatus.set(status, [code]);
+      continue;
+    }
+    existingCodes.push(code);
+  }
+
+  const responses: Record<string, unknown> = {};
+  for (const [status, statusCodes] of [...codesByStatus.entries()].toSorted(
+    ([left], [right]) => Number(left) - Number(right),
+  )) {
     responses[status] = {
-      description: code,
+      description: statusCodes.toSorted().join(', '),
       content: {
         'application/json': {
           schema: { $ref: '#/components/schemas/Error' },

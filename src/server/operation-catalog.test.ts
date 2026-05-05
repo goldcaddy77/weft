@@ -20,6 +20,7 @@
 import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
+import { WorkflowNotRegisteredError } from '../core/engine/errors.ts';
 import {
   classifyEngineError,
   createOperationRegistry,
@@ -587,6 +588,13 @@ describe('classifyEngineError', () => {
     expect(fault.code).toBe('Conflict');
     expect(fault.message).toBe('conflict');
     expect(fault.message).not.toContain('secret-tenant');
+  });
+
+  it('classifies WorkflowNotRegisteredError as InvalidParams instead of NotFound', () => {
+    const fault = classifyEngineError(new WorkflowNotRegisteredError('missing-workflow'));
+
+    expect(fault.code).toBe('InvalidParams');
+    expect(fault.message).toContain('missing-workflow');
   });
 
   it('classifies an Error with "timeout" message as Timeout with a generic message', () => {

@@ -387,6 +387,32 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     await session.close();
   });
 
+  it('rejects subscribe when the shared session is reused for stdio transport', async () => {
+    const emitter = makeEmitter();
+    const feed = createWorkflowEventFeed(createInMemoryEventBackend());
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([]),
+      engine: fakeEngine,
+      principal: subscribePrincipal(),
+      emitter,
+      feed,
+      transport: 'jsonRpcStdio',
+    });
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 'wf-1', selector: 'events' },
+        id: 'sub-stdio',
+      }),
+    );
+
+    const response = JSON.parse(emitter.sent[0]!);
+    expect(response.error.code).toBe(-32030);
+    expect(response.error.data.weftCode).toBe('UnsupportedTransport');
+    await session.close();
+  });
+
   it('rejects subscribe / unsubscribe frames missing jsonrpc: "2.0"', async () => {
     // Bugbot regression: session primitives bypassed the version
     // check other methods route through. Every frame must carry

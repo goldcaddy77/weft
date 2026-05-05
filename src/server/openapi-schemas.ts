@@ -7,6 +7,7 @@
 import { z } from 'zod';
 
 import { isDiscoverable } from './discovery-filter.ts';
+import { asPlainObject, compareStrings, zodToJsonSchema } from './json-schema-utilities.ts';
 import { canonicalJson } from './openapi-canonical-json.ts';
 import type { OperationRegistry } from './operation-catalog.ts';
 
@@ -120,10 +121,6 @@ function compareOwners(left: Owner, right: Owner): number {
   );
 }
 
-function compareStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 function operationSlotToComponentName(operationName: string, slot: OpenApiSchemaSlot): string {
   return (
     operationName
@@ -133,26 +130,7 @@ function operationSlotToComponentName(operationName: string, slot: OpenApiSchema
   );
 }
 
-function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
-  const result: unknown = z.toJSONSchema(schema, { unrepresentable: 'any' });
-  const object = asPlainObject(result);
-  if (!('$schema' in object)) return object;
-
-  const schemaWithoutDialect = { ...object };
-  delete schemaWithoutDialect['$schema'];
-  return schemaWithoutDialect;
-}
-
 function normalizeJsonObject(value: Record<string, unknown>): Record<string, unknown> {
   const parsed: unknown = JSON.parse(canonicalJson(value));
   return asPlainObject(parsed);
-}
-
-function asPlainObject(value: unknown): Record<string, unknown> {
-  if (isPlainObject(value)) return value;
-  return {};
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

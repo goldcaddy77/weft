@@ -147,7 +147,14 @@ export function classifyEngineError(
       data: { reason: 'resource already exists' },
     };
   }
-  if (error instanceof WorkflowNotFoundError || error instanceof WorkflowNotRegisteredError) {
+  if (error instanceof WorkflowNotRegisteredError) {
+    return {
+      code: 'InvalidParams',
+      message: error.message,
+      data: { issues: [] },
+    };
+  }
+  if (error instanceof WorkflowNotFoundError) {
     return {
       code: 'NotFound',
       message: 'not found',

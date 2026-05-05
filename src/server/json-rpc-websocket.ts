@@ -216,9 +216,10 @@ export function createJsonRpcWebSocketSession(
       {
         principal,
         engine: { feed },
-        // Subscribe is a WebSocket lifecycle primitive even when the stdio
-        // adapter reuses this session implementation.
-        transport: 'jsonRpcWebSocket',
+        // Subscribe is a session primitive, but the transport identity still
+        // needs to reflect the adapter reusing this implementation so
+        // availability checks enforce stdio-only and websocket-only policies.
+        transport,
         registry: subscriptionRegistry,
       },
     );

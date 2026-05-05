@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 
+import { compareStrings } from './json-schema-utilities.ts';
 import type { ErasedOperation } from './operation-catalog.ts';
 
 const JSON_RPC_VERSION = '2.0';
@@ -361,8 +362,4 @@ function eventJsonSchema(
 
 function jsonPointerEscape(value: string): string {
   return value.replaceAll('~', '~0').replaceAll('/', '~1');
-}
-
-function compareStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
