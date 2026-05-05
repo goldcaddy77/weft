@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import 'fake-indexeddb/auto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { HTTPStorage } from './http.ts';
 import { MemoryStorage } from './memory.ts';
@@ -43,6 +46,23 @@ function installWebExtensionStorageNamespace(): () => void {
 }
 
 describe('resolveStorage', () => {
+  let testTempDir: string;
+  let previousDefaultStoragePath: string | undefined;
+
+  beforeEach(() => {
+    testTempDir = mkdtempSync(join(tmpdir(), 'weft-resolve-test-'));
+    previousDefaultStoragePath = process.env['WEFT_DEFAULT_STORAGE_PATH'];
+  });
+
+  afterEach(() => {
+    if (previousDefaultStoragePath === undefined) {
+      delete process.env['WEFT_DEFAULT_STORAGE_PATH'];
+    } else {
+      process.env['WEFT_DEFAULT_STORAGE_PATH'] = previousDefaultStoragePath;
+    }
+    rmSync(testTempDir, { recursive: true, force: true });
+  });
+
   it('resolves memory storage', async () => {
     const storage = await resolveStorage({ type: 'memory' });
     expect(storage).toBeInstanceOf(MemoryStorage);
@@ -63,6 +83,19 @@ describe('resolveStorage', () => {
     const storage = await resolveStorage({ type: 'auto' });
     expect(storage.constructor.name).toBe('BunSQLiteStorage');
     storage[Symbol.dispose]();
+  });
+
+  it('resolves automatic server storage to the persistent default SQLite path', async () => {
+    const databasePath = join(testTempDir, 'nested', 'weft.db');
+    process.env['WEFT_DEFAULT_STORAGE_PATH'] = databasePath;
+
+    const storage = await resolveStorage({ type: 'auto' });
+    await storage.put('durable', new Uint8Array([1, 2, 3]));
+    storage[Symbol.dispose]?.();
+
+    const reopenedStorage = await resolveStorage({ type: 'sqlite', path: databasePath });
+    expect(await reopenedStorage.get('durable')).toEqual(new Uint8Array([1, 2, 3]));
+    reopenedStorage[Symbol.dispose]?.();
   });
 
   it('resolves WebExtension storage from configuration', async () => {

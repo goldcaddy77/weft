@@ -229,6 +229,7 @@ const WEB_EXTENSION_STORAGE_MODULE = storageModuleSpecifier(
   './web-extension.js',
 );
 const HTTP_STORAGE_MODULE = storageModuleSpecifier('./http.ts', './http.js');
+const AUTO_STORAGE_MODULE = storageModuleSpecifier('./auto.ts', './auto.js');
 
 function isBunRuntime(): boolean {
   return typeof Bun !== 'undefined';
@@ -274,7 +275,9 @@ async function resolveSQLiteStorage(path?: string): Promise<Storage> {
 
 async function resolveAutoStorage(): Promise<Storage> {
   if (isBunRuntime() || isNodeRuntime()) {
-    return resolveSQLiteStorage();
+    const { resolveDefaultStorage } =
+      await importStorageModule<typeof import('./auto.ts')>(AUTO_STORAGE_MODULE);
+    return resolveDefaultStorage();
   }
 
   if (hasWebExtensionStorage()) {
