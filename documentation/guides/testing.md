@@ -7,7 +7,7 @@ Durable workflows are inherently hard to test. They span time---sleeps, retries,
 `TestEngine` is a subclass of `Engine` backed by in-memory storage and a virtual clock. Everything behaves like the real engine, but you control time and can mock activities.
 
 ```typescript partial
-import { TestEngine } from 'weft';
+import { TestEngine } from 'weft/testing';
 
 const engine = new TestEngine();
 
@@ -55,7 +55,7 @@ console.log(engine.now); // milliseconds since epoch
 Under the hood, `TestEngine` uses a `TimeControl` instance. You can also use it directly if you need finer control.
 
 ```typescript
-import { TimeControl } from 'weft';
+import { TimeControl } from 'weft/testing';
 
 const clock = new TimeControl(1700000000000);
 console.log(clock.now); // 1700000000000
@@ -191,7 +191,7 @@ Here's a complete test combining everything:
 
 ```typescript partial
 import { describe, expect, it } from 'bun:test';
-import { TestEngine } from 'weft';
+import { TestEngine } from 'weft/testing';
 
 describe('order workflow', () => {
   it('processes an order end to end', async () => {

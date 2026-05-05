@@ -11,7 +11,7 @@ export interface HandoffOptions {
   parentConversation?: Message[];
   /** Abort signal propagated to the child agent. */
   signal?: AbortSignal | undefined;
-  /** Trace context headers from the parent workflow, used for OTel propagation. */
+  /** Trace context headers from the parent workflow, used for OpenTelemetry propagation. */
   headers?: Map<string, string> | undefined;
 }
 

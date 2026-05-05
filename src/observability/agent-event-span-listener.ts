@@ -4,15 +4,15 @@ import {
   AgentTurnCompletedEvent,
   AgentTurnStartedEvent,
 } from '../ai/events/index.ts';
-import type { OtelSpan } from './no-op-telemetry';
+import type { OpenTelemetrySpan } from './no-op-telemetry';
 import type { ObservabilityState } from './types';
 
 export class AgentEventSpanListener implements EventListenerObject {
   readonly #workflowId: string;
   readonly #state: ObservabilityState;
   readonly #agentContext: unknown;
-  readonly #turnSpans = new Map<number, OtelSpan>();
-  readonly #toolSpans = new Map<string, OtelSpan>();
+  readonly #turnSpans = new Map<number, OpenTelemetrySpan>();
+  readonly #toolSpans = new Map<string, OpenTelemetrySpan>();
 
   constructor(workflowId: string, state: ObservabilityState, agentContext: unknown) {
     this.#workflowId = workflowId;

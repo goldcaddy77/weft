@@ -80,8 +80,24 @@ export async function executeSubOperation(
     case 'memo':
       signal?.throwIfAborted();
       return callMemoFunction(operation.fn);
-    case 'parallel':
+    case 'parallel': {
       signal?.throwIfAborted();
+      // Nested ctx.all (inside ctx.race or another sub-op): partial
+      // persistence does NOT apply here. Top-level ctx.all writes its
+      // partial entry to the workflow's accumulatedResults at its own
+      // step; nested parallel operations are dispatched through this
+      // path, not through processParallelOperation, so they have no
+      // step of their own and no way to write a slot table back to
+      // workflow state.
+      //
+      // Public contract: partial-failure preservation is a top-level
+      // ctx.all / ctx.runAll feature only. Document this in the
+      // parallel-execution guide. Users with side-effecting nested
+      // branches must use idempotency keys.
+      //
+      // We still use Promise.all here so the outer parent receives the
+      // first rejection in its original shape (string, undefined,
+      // Error — whatever the branch threw).
       const subOperationPromises: Array<Promise<unknown>> = [];
       for (const subOperation of operation.operations) {
         subOperationPromises.push(
@@ -96,6 +112,7 @@ export async function executeSubOperation(
         );
       }
       return Promise.all(subOperationPromises);
+    }
     case 'race': {
       signal?.throwIfAborted();
       const controller = new AbortController();

@@ -8,8 +8,8 @@
  * @module metrics
  */
 
-import type { OtelMeter } from './no-op-telemetry';
-import { getOtelApi } from './no-op-telemetry';
+import type { OpenTelemetryMeter } from './no-op-telemetry';
+import { getOpenTelemetryApi } from './no-op-telemetry';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,22 +169,22 @@ export class MetricsCollector {
 }
 
 // ---------------------------------------------------------------------------
-// OTel metrics bridge
+// OpenTelemetry metrics bridge
 // ---------------------------------------------------------------------------
 
 /**
- * OTel instrument set for Weft metrics.
+ * OpenTelemetry instrument set for Weft metrics.
  *
  * @example
  * ```ts
- * import { createOtelMetrics, type OtelMetrics } from 'weft';
+ * import { createOpenTelemetryMetrics, type OpenTelemetryMetrics } from 'weft';
  *
- * const otelMetrics: OtelMetrics = createOtelMetrics('my-service');
- * otelMetrics.workflowDuration.record(120);
- * otelMetrics.activityAttempts.add(1);
+ * const openTelemetryMetrics: OpenTelemetryMetrics = createOpenTelemetryMetrics('my-service');
+ * openTelemetryMetrics.workflowDuration.record(120);
+ * openTelemetryMetrics.activityAttempts.add(1);
  * ```
  */
-export type OtelMetrics = {
+export type OpenTelemetryMetrics = {
   workflowDuration: {
     record(value: number, attributes?: Record<string, string | number | boolean>): void;
   };
@@ -200,30 +200,32 @@ export type OtelMetrics = {
 };
 
 /**
- * Create OTel instruments for the standard Weft metrics.
+ * Create OpenTelemetry instruments for the standard Weft metrics.
  *
- * Accepts an `OtelMeter` instance, a string meter name, or nothing. When
- * called without arguments it uses `getOtelApi().metrics.getMeter('weft')`,
+ * Accepts an `OpenTelemetryMeter` instance, a string meter name, or nothing. When
+ * called without arguments it uses `getOpenTelemetryApi().metrics.getMeter('weft')`,
  * which returns a no-op meter when `@opentelemetry/api` is not installed.
  *
  * @example
  * ```ts
- * import { createOtelMetrics } from 'weft';
+ * import { createOpenTelemetryMetrics } from 'weft';
  *
- * // Uses the auto-detected OTel API or no-op fallback
- * const instruments = createOtelMetrics('my-service');
+ * // Uses the auto-detected OpenTelemetry API or no-op fallback
+ * const instruments = createOpenTelemetryMetrics('my-service');
  * instruments.workflowDuration.record(250, { workflow_type: 'greet' });
  * instruments.activityAttempts.add(1, { activity: 'sendEmail' });
  * ```
  */
-export function createOtelMetrics(meterOrName?: OtelMeter | string): OtelMetrics {
-  let meter: OtelMeter;
+export function createOpenTelemetryMetrics(
+  meterOrName?: OpenTelemetryMeter | string,
+): OpenTelemetryMetrics {
+  let meter: OpenTelemetryMeter;
   if (typeof meterOrName === 'string') {
-    meter = getOtelApi().metrics.getMeter(meterOrName);
+    meter = getOpenTelemetryApi().metrics.getMeter(meterOrName);
   } else if (meterOrName) {
     meter = meterOrName;
   } else {
-    meter = getOtelApi().metrics.getMeter('weft');
+    meter = getOpenTelemetryApi().metrics.getMeter('weft');
   }
 
   return {
@@ -255,13 +257,13 @@ function sumNumbers(values: number[]): number {
 /**
  * Pluggable interface for producing Prometheus text-format output at
  * `/v1/metrics`. Weft ships with a default implementation that serializes a
- * {@link MetricsCollector} snapshot, but consumers who already use OTel can
+ * {@link MetricsCollector} snapshot, but consumers who already use OpenTelemetry can
  * adapt `@opentelemetry/exporter-prometheus` (or any other source) to this
  * interface and pass it via `HandlerOptions.prometheusExporter`.
  *
- * Keeping this as an interface rather than hard-wiring the OTel SDK avoids
+ * Keeping this as an interface rather than hard-wiring the OpenTelemetry SDK avoids
  * pulling `@opentelemetry/sdk-metrics` into the runtime footprint while still
- * giving projects that *do* want full OTel a clean plug point.
+ * giving projects that *do* want full OpenTelemetry a clean plug point.
  *
  * > [!WARNING] `/v1/metrics` is unauthenticated by default
  * > The Weft server treats `/v1/metrics` as a public path (see

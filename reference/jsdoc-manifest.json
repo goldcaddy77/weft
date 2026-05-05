@@ -2,6 +2,7 @@
   "publicEntryPoints": {
     "weft": "src/index.ts",
     "weft/service-worker": "src/service-worker/index.ts",
+    "weft/testing": "src/testing/index.ts",
     "weft/storage": "src/storage/index.ts",
     "weft/storage/interface": "src/storage/interface.ts",
     "weft/storage/memory": "src/storage/memory.ts",
@@ -4307,13 +4308,13 @@
     },
     {
       "sourceFile": "src/observability/metrics.ts",
-      "sourceName": "OtelMetrics",
+      "sourceName": "OpenTelemetryMetrics",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelMetrics",
+          "exportName": "OpenTelemetryMetrics",
           "kind": "type"
         }
       ],
@@ -4349,13 +4350,13 @@
     },
     {
       "sourceFile": "src/observability/metrics.ts",
-      "sourceName": "createOtelMetrics",
+      "sourceName": "createOpenTelemetryMetrics",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "createOtelMetrics",
+          "exportName": "createOpenTelemetryMetrics",
           "kind": "value"
         }
       ],
@@ -4379,13 +4380,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "OtelApi",
+      "sourceName": "OpenTelemetryApi",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelApi",
+          "exportName": "OpenTelemetryApi",
           "kind": "type"
         }
       ],
@@ -4393,13 +4394,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "OtelMeter",
+      "sourceName": "OpenTelemetryMeter",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelMeter",
+          "exportName": "OpenTelemetryMeter",
           "kind": "type"
         }
       ],
@@ -4407,13 +4408,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "OtelSpan",
+      "sourceName": "OpenTelemetrySpan",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelSpan",
+          "exportName": "OpenTelemetrySpan",
           "kind": "type"
         }
       ],
@@ -4421,13 +4422,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "OtelTracer",
+      "sourceName": "OpenTelemetryTracer",
       "kind": "type",
       "subKind": "type-alias",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "OtelTracer",
+          "exportName": "OpenTelemetryTracer",
           "kind": "type"
         }
       ],
@@ -4451,13 +4452,13 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "getOtelApi",
+      "sourceName": "getOpenTelemetryApi",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [
         {
           "importPath": "weft",
-          "exportName": "getOtelApi",
+          "exportName": "getOpenTelemetryApi",
           "kind": "value"
         }
       ],
@@ -4465,7 +4466,7 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "isSupportedOtelApi",
+      "sourceName": "isSupportedOpenTelemetryApi",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
@@ -4473,7 +4474,7 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "resetCachedOtelApiForTesting",
+      "sourceName": "resetCachedOpenTelemetryApiForTesting",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
@@ -4481,7 +4482,7 @@
     },
     {
       "sourceFile": "src/observability/no-op-telemetry.ts",
-      "sourceName": "resolveInstalledOtelApi",
+      "sourceName": "resolveInstalledOpenTelemetryApi",
       "kind": "value",
       "subKind": "function",
       "publicFaces": [],
@@ -6001,7 +6002,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ChaosNonRetryableError",
           "kind": "value"
         }
@@ -6015,7 +6016,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ChaosScenario",
           "kind": "type"
         }
@@ -6029,7 +6030,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ChaosTimeoutError",
           "kind": "value"
         }
@@ -6043,7 +6044,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ChaosTransientError",
           "kind": "value"
         }
@@ -6057,7 +6058,7 @@
       "subKind": "type-alias",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "FaultClass",
           "kind": "type"
         }
@@ -6071,7 +6072,7 @@
       "subKind": "function",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "withChaos",
           "kind": "value"
         }
@@ -6085,7 +6086,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "ActivityMockRegistry",
           "kind": "value"
         }
@@ -6099,7 +6100,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "MockCall",
           "kind": "type"
         }
@@ -6113,7 +6114,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "MockHandle",
           "kind": "type"
         }
@@ -6127,7 +6128,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "MockedActivity",
           "kind": "type"
         }
@@ -6141,7 +6142,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "RunNOptions",
           "kind": "type"
         }
@@ -6155,7 +6156,7 @@
       "subKind": "interface",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "RunNResult",
           "kind": "type"
         }
@@ -6169,7 +6170,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "TestEngine",
           "kind": "value"
         }
@@ -6183,7 +6184,7 @@
       "subKind": "class",
       "publicFaces": [
         {
-          "importPath": "weft",
+          "importPath": "weft/testing",
           "exportName": "TimeControl",
           "kind": "value"
         }

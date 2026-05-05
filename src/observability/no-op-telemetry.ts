@@ -3,7 +3,7 @@
  *
  * Attempts to load `@opentelemetry/api` at runtime. When the package is not
  * installed, returns lightweight no-op implementations that match the subset
- * of the OTel API that Weft uses. This ensures zero overhead when no SDK is
+ * of the OpenTelemetry API that Weft uses. This ensures zero overhead when no SDK is
  * configured—every method call is a no-op that the JIT can inline away.
  *
  * @module no-op-telemetry
@@ -33,21 +33,21 @@ type SpanStatus = {
 };
 
 /**
- * Minimal span interface matching the OTel API surface we use.
+ * Minimal span interface matching the OpenTelemetry API surface we use.
  *
  * @example
  * ```ts
- * import { getOtelApi, type OtelSpan } from 'weft';
+ * import { getOpenTelemetryApi, type OpenTelemetrySpan } from 'weft';
  *
- * const api = getOtelApi();
+ * const api = getOpenTelemetryApi();
  * const tracer = api.trace.getTracer('example');
- * const span: OtelSpan = tracer.startSpan('my-operation');
+ * const span: OpenTelemetrySpan = tracer.startSpan('my-operation');
  * span.setAttribute('user.id', 'u-123');
  * span.setStatus({ code: api.SpanStatusCode.OK });
  * span.end();
  * ```
  */
-export type OtelSpan = {
+export type OpenTelemetrySpan = {
   setAttribute(key: string, value: string | number | boolean): void;
   setStatus(status: SpanStatus): void;
   recordException(exception: Error | string): void;
@@ -66,16 +66,16 @@ type SpanOptions = {
  *
  * @example
  * ```ts
- * import { getOtelApi, type OtelTracer } from 'weft';
+ * import { getOpenTelemetryApi, type OpenTelemetryTracer } from 'weft';
  *
- * const api = getOtelApi();
- * const tracer: OtelTracer = api.trace.getTracer('my-service', '1.0.0');
+ * const api = getOpenTelemetryApi();
+ * const tracer: OpenTelemetryTracer = api.trace.getTracer('my-service', '1.0.0');
  * const span = tracer.startSpan('task', { attributes: { 'task.id': '42' } });
  * span.end();
  * ```
  */
-export type OtelTracer = {
-  startSpan(name: string, options?: SpanOptions, context?: unknown): OtelSpan;
+export type OpenTelemetryTracer = {
+  startSpan(name: string, options?: SpanOptions, context?: unknown): OpenTelemetrySpan;
 };
 
 type InstrumentOptions = {
@@ -83,15 +83,15 @@ type InstrumentOptions = {
   description?: string;
 };
 
-type OtelHistogram = {
+type OpenTelemetryHistogram = {
   record(value: number, attributes?: SpanAttributes): void;
 };
 
-type OtelCounter = {
+type OpenTelemetryCounter = {
   add(value: number, attributes?: SpanAttributes): void;
 };
 
-type OtelUpDownCounter = {
+type OpenTelemetryUpDownCounter = {
   add(value: number, attributes?: SpanAttributes): void;
 };
 
@@ -100,41 +100,41 @@ type OtelUpDownCounter = {
  *
  * @example
  * ```ts
- * import { getOtelApi, type OtelMeter } from 'weft';
+ * import { getOpenTelemetryApi, type OpenTelemetryMeter } from 'weft';
  *
- * const api = getOtelApi();
- * const meter: OtelMeter = api.metrics.getMeter('my-service');
+ * const api = getOpenTelemetryApi();
+ * const meter: OpenTelemetryMeter = api.metrics.getMeter('my-service');
  * const counter = meter.createCounter('requests.total');
  * counter.add(1, { route: '/api/start' });
  * ```
  */
-export type OtelMeter = {
-  createHistogram(name: string, options?: InstrumentOptions): OtelHistogram;
-  createCounter(name: string, options?: InstrumentOptions): OtelCounter;
-  createUpDownCounter(name: string, options?: InstrumentOptions): OtelUpDownCounter;
+export type OpenTelemetryMeter = {
+  createHistogram(name: string, options?: InstrumentOptions): OpenTelemetryHistogram;
+  createCounter(name: string, options?: InstrumentOptions): OpenTelemetryCounter;
+  createUpDownCounter(name: string, options?: InstrumentOptions): OpenTelemetryUpDownCounter;
 };
 
 /**
- * The resolved OTel API surface Weft consumes.
+ * The resolved OpenTelemetry API surface Weft consumes.
  *
  * @example
  * ```ts
- * import { getOtelApi, type OtelApi } from 'weft';
+ * import { getOpenTelemetryApi, type OpenTelemetryApi } from 'weft';
  *
- * const api: OtelApi = getOtelApi();
+ * const api: OpenTelemetryApi = getOpenTelemetryApi();
  * const tracer = api.trace.getTracer('my-app');
  * const span = tracer.startSpan('boot');
  * span.setStatus({ code: api.SpanStatusCode.OK });
  * span.end();
  * ```
  */
-export type OtelApi = {
+export type OpenTelemetryApi = {
   trace: {
-    getTracer(name: string, version?: string): OtelTracer;
-    setSpan(context: unknown, span: OtelSpan): unknown;
+    getTracer(name: string, version?: string): OpenTelemetryTracer;
+    setSpan(context: unknown, span: OpenTelemetrySpan): unknown;
   };
   metrics: {
-    getMeter(name: string, version?: string): OtelMeter;
+    getMeter(name: string, version?: string): OpenTelemetryMeter;
   };
   context: {
     ROOT_CONTEXT: unknown;
@@ -163,7 +163,7 @@ const NO_OP_SPAN_CONTEXT: SpanContext = {
 };
 
 /** Shared no-op span instance. All methods are no-ops, so one instance is safe to reuse. */
-const NO_OP_SPAN: OtelSpan = {
+const NO_OP_SPAN: OpenTelemetrySpan = {
   setAttribute() {},
   setStatus() {},
   recordException() {},
@@ -175,27 +175,27 @@ const NO_OP_SPAN: OtelSpan = {
 
 /** Shared no-op span methods for lightweight span adapters that only need a custom spanContext. */
 export const NO_OP_SPAN_METHODS = {
-  setAttribute: (...arguments_: Parameters<OtelSpan['setAttribute']>) =>
+  setAttribute: (...arguments_: Parameters<OpenTelemetrySpan['setAttribute']>) =>
     NO_OP_SPAN.setAttribute(...arguments_),
-  setStatus: (...arguments_: Parameters<OtelSpan['setStatus']>) =>
+  setStatus: (...arguments_: Parameters<OpenTelemetrySpan['setStatus']>) =>
     NO_OP_SPAN.setStatus(...arguments_),
-  recordException: (...arguments_: Parameters<OtelSpan['recordException']>) =>
+  recordException: (...arguments_: Parameters<OpenTelemetrySpan['recordException']>) =>
     NO_OP_SPAN.recordException(...arguments_),
-  end: (...arguments_: Parameters<OtelSpan['end']>) => NO_OP_SPAN.end(...arguments_),
+  end: (...arguments_: Parameters<OpenTelemetrySpan['end']>) => NO_OP_SPAN.end(...arguments_),
 } as const;
 
-const noOpTracer: OtelTracer = {
+const noOpTracer: OpenTelemetryTracer = {
   startSpan() {
     return NO_OP_SPAN;
   },
 };
 
-const noOpInstrument: OtelHistogram & OtelCounter & OtelUpDownCounter = {
+const noOpInstrument: OpenTelemetryHistogram & OpenTelemetryCounter & OpenTelemetryUpDownCounter = {
   record() {},
   add() {},
 };
 
-const noOpMeter: OtelMeter = {
+const noOpMeter: OpenTelemetryMeter = {
   createHistogram() {
     return noOpInstrument;
   },
@@ -209,7 +209,7 @@ const noOpMeter: OtelMeter = {
 
 const ROOT_CONTEXT = Symbol('ROOT_CONTEXT');
 
-const noOpApi: OtelApi = {
+const noOpApi: OpenTelemetryApi = {
   trace: {
     getTracer() {
       return noOpTracer;
@@ -240,14 +240,14 @@ const noOpApi: OtelApi = {
 // Loader
 // ---------------------------------------------------------------------------
 
-let cached: OtelApi | undefined;
+let cached: OpenTelemetryApi | undefined;
 
 /** Reset the cached API between tests so specific loader branches can be exercised deterministically. */
-export function resetCachedOtelApiForTesting(): void {
+export function resetCachedOpenTelemetryApiForTesting(): void {
   cached = undefined;
 }
 
-function resolveDefaultOtelLoader(): (moduleName: string) => unknown {
+function resolveDefaultOpenTelemetryLoader(): (moduleName: string) => unknown {
   const globalRequire = (globalThis as Record<PropertyKey, unknown>)['require'];
   if (typeof globalRequire === 'function') {
     return (moduleName: string) => globalRequire(moduleName);
@@ -257,7 +257,9 @@ function resolveDefaultOtelLoader(): (moduleName: string) => unknown {
 }
 
 /** Check whether a loaded module exposes the subset of the OpenTelemetry API Weft requires. */
-export function isSupportedOtelApi(value: Partial<OtelApi> | undefined): value is OtelApi {
+export function isSupportedOpenTelemetryApi(
+  value: Partial<OpenTelemetryApi> | undefined,
+): value is OpenTelemetryApi {
   return value?.trace?.getTracer != null && value.SpanStatusCode != null;
 }
 
@@ -265,12 +267,12 @@ export function isSupportedOtelApi(value: Partial<OtelApi> | undefined): value i
  * Resolve the installed OpenTelemetry API using an injectable loader.
  * Returns `undefined` when the module is unavailable or exposes the wrong shape.
  */
-export function resolveInstalledOtelApi(
-  loader: (moduleName: string) => unknown = resolveDefaultOtelLoader(),
-): OtelApi | undefined {
+export function resolveInstalledOpenTelemetryApi(
+  loader: (moduleName: string) => unknown = resolveDefaultOpenTelemetryLoader(),
+): OpenTelemetryApi | undefined {
   try {
-    const real = loader('@opentelemetry/api') as Partial<OtelApi>;
-    if (isSupportedOtelApi(real)) {
+    const real = loader('@opentelemetry/api') as Partial<OpenTelemetryApi>;
+    if (isSupportedOpenTelemetryApi(real)) {
       return real;
     }
   } catch {
@@ -284,25 +286,25 @@ export function resolveInstalledOtelApi(
  * Returns the `@opentelemetry/api` module if installed, otherwise returns
  * no-op implementations. The result is cached after the first call.
  *
- * This function is the single entry point for all OTel interactions in Weft.
+ * This function is the single entry point for all OpenTelemetry interactions in Weft.
  * When no SDK is configured the no-op implementations ensure zero overhead
  * because every method is an empty function the JIT can inline away.
  *
  * @example
  * ```ts
- * import { getOtelApi } from 'weft';
+ * import { getOpenTelemetryApi } from 'weft';
  *
  * // Works whether the OpenTelemetry API package is installed or not
- * const api = getOtelApi();
+ * const api = getOpenTelemetryApi();
  * const tracer = api.trace.getTracer('my-app');
  * const span = tracer.startSpan('startup');
  * span.end();
  * ```
  */
-export function getOtelApi(loader?: (moduleName: string) => unknown): OtelApi {
+export function getOpenTelemetryApi(loader?: (moduleName: string) => unknown): OpenTelemetryApi {
   if (cached) return cached;
 
-  const installed = resolveInstalledOtelApi(loader);
+  const installed = resolveInstalledOpenTelemetryApi(loader);
   if (installed) {
     cached = installed;
     return cached;
