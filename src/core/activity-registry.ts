@@ -85,9 +85,9 @@ export interface ActivityRegistrationOptions {
   description?: string;
   /** User-facing grouping tags for catalog and documentation surfaces. */
   tags?: ReadonlyArray<string>;
-  /** Optional input schema metadata for introspection; core execution validates shape but not input. */
+  /** Optional input schema metadata for introspection; registration validates metadata shape only. */
   inputSchema?: DefinitionSchema;
-  /** Optional output schema metadata for introspection; core execution validates shape but not output. */
+  /** Optional output schema metadata for introspection; registration validates metadata shape only. */
   outputSchema?: DefinitionSchema;
   /** Retry policy used when the activity fails. */
   retry?: RetryPolicy;
@@ -103,8 +103,8 @@ export interface ActivityRegistrationOptions {
 
 /**
  * Detect whether `fn` carries colocated metadata from the `activity()` helper.
- * The helper assigns `name`, `execute`, and optionally `retry`, `timeout`,
- * `queue`, and `idempotent` as own properties on the returned function.
+ * The helper assigns `name`, `execute`, and optional catalog and dispatch
+ * metadata as own properties on the returned function.
  */
 // oxlint-disable-next-line complexity -- ID:core-activity-registry-extract-definition-metadata-complexity
 function extractDefinitionMetadata(fn: object): Partial<ActivityRegistrationOptions> {

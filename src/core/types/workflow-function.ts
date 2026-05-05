@@ -454,9 +454,9 @@ export interface WorkflowRegistration<TInput = unknown, TOutput = unknown> {
   description?: string;
   /** User-facing grouping tags for catalog and documentation surfaces. */
   tags?: ReadonlyArray<string>;
-  /** Optional input schema metadata for introspection; core execution validates shape but not input. */
+  /** Optional input schema metadata for introspection; registration validates metadata shape only. */
   inputSchema?: DefinitionSchema<unknown, TInput>;
-  /** Optional output schema metadata for introspection; core execution validates shape but not output. */
+  /** Optional output schema metadata for introspection; registration validates metadata shape only. */
   outputSchema?: DefinitionSchema<unknown, TOutput>;
   /** Workflow generator function executed by the engine. */
   handler: WorkflowFunction<TInput, TOutput>;
