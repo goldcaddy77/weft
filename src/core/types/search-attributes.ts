@@ -66,25 +66,24 @@ export type SearchAttributeDefinition =
   | StringArraySearchAttributeDefinition
   | StringSearchAttributeDefinition;
 
-export type SearchAttributeValueForDefinition<TDefinition> = TDefinition extends 'string'
-  ? string
-  : TDefinition extends 'number' | 'integer'
-    ? number
-    : TDefinition extends 'boolean'
-      ? boolean
-      : TDefinition extends 'array'
-        ? string[]
-        : TDefinition extends { type: 'string'; format: 'date-time' }
-          ? Date
-          : TDefinition extends { type: 'string' }
-            ? string
-            : TDefinition extends { type: 'number' | 'integer' }
-              ? number
-              : TDefinition extends { type: 'boolean' }
-                ? boolean
-                : TDefinition extends { type: 'array' }
-                  ? string[]
-                  : SearchAttributeValue;
+export type SearchAttributePrimitiveValueMap = {
+  array: string[];
+  boolean: boolean;
+  integer: number;
+  number: number;
+  string: string;
+};
+
+export type SearchAttributeValueForDefinition<TDefinition> =
+  TDefinition extends keyof SearchAttributePrimitiveValueMap
+    ? SearchAttributePrimitiveValueMap[TDefinition]
+    : TDefinition extends { type: 'string'; format: 'date-time' }
+      ? Date
+      : TDefinition extends { type: infer TType }
+        ? TType extends keyof SearchAttributePrimitiveValueMap
+          ? SearchAttributePrimitiveValueMap[TType]
+          : SearchAttributeValue
+        : SearchAttributeValue;
 
 /**
  * Named search attribute handle returned by {@link searchAttribute}. The
