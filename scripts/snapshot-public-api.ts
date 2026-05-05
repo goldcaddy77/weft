@@ -70,6 +70,7 @@ function buildProgram(entryPath: string): ProgramBuild {
     noEmit: true,
     skipLibCheck: true,
     allowJs: false,
+    strictNullChecks: true,
   });
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(entryPath);
@@ -511,11 +512,11 @@ function memberType(
   member: ts.PropertySignature | ts.PropertyDeclaration,
   checker: ts.TypeChecker,
 ): string | null {
+  if (member.type) return typeString(checker, checker.getTypeFromTypeNode(member.type), member);
   const symbol = checker.getSymbolAtLocation(member.name);
   if (symbol) {
     return typeString(checker, checker.getTypeOfSymbolAtLocation(symbol, member), member);
   }
-  if (member.type) return typeString(checker, checker.getTypeFromTypeNode(member.type), member);
   return null;
 }
 
