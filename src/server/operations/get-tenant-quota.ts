@@ -37,6 +37,7 @@ export const getTenantQuotaOperation = defineOperation<GetTenantQuotaInput, GetT
     kind: 'scoped',
     scopes: { kind: 'anyOf', scopes: ['quota:read'] },
   },
+  producibleFaults: ['Conflict'],
   discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },

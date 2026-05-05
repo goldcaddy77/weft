@@ -56,6 +56,43 @@ const ALLOWED_FORWARDED_PROTOCOLS: ReadonlySet<string> = new Set(['http', 'https
 // `javascript:` schemes, the `@` userinfo trick, etc.) is rejected.
 const HOST_HEADER_PATTERN = /^(?:[A-Za-z0-9._-]+(?::\d+)?|\[[0-9A-Fa-f:.]+\](?::\d+)?)$/;
 
+let warnedAboutHeaderFallback = false;
+
+/**
+ * Reset the one-shot "publicOrigin not set" warning gate. **Test-only.**
+ * Production code never calls this; exported so tests can re-arm the
+ * warning between cases.
+ */
+export function resetPublicOriginWarningForTesting(): void {
+  warnedAboutHeaderFallback = false;
+}
+
+function emitPublicOriginWarning(): void {
+  if (warnedAboutHeaderFallback) return;
+  warnedAboutHeaderFallback = true;
+  // Operators running behind reverse proxies / TLS terminators MUST set
+  // `serve({ publicOrigin: '...' })`. Without it, the `/.well-known/api-catalog`
+  // route falls back to header-derived origins, which an attacker can poison
+  // with crafted `Host` / `X-Forwarded-Proto` headers. The warning fires once
+  // per process so production logs surface the misconfiguration prominently.
+  console.warn(
+    '[weft] /.well-known/api-catalog: `publicOrigin` is not configured. The ' +
+      'service-desc URLs will be derived from the incoming request, which is ' +
+      'safe for direct connections but vulnerable to Host-header poisoning ' +
+      'when running behind a reverse proxy. Set `serve({ publicOrigin: ' +
+      "'https://api.example.com' })` in production.",
+  );
+}
+
+/**
+ * Called by the route handler when `publicOrigin` was not configured. Emits
+ * a one-shot warning so production deployments are nudged toward the
+ * `publicOrigin` option that bypasses header-derived origins entirely.
+ */
+export function warnIfPublicOriginUnset(): void {
+  emitPublicOriginWarning();
+}
+
 /**
  * Extract the origin (scheme + host) from a `Request` object, validating
  * each header before trusting it.

@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from 'bun:test';
 
 import { Engine } from '../core/engine.ts';
 import { MemoryStorage } from '../storage/memory.ts';
-import { generateApiCatalog, originFromRequest } from './api-catalog.ts';
+import {
+  generateApiCatalog,
+  originFromRequest,
+  resetPublicOriginWarningForTesting,
+} from './api-catalog.ts';
 import { handleRequest } from './handler.ts';
 
 function createEngine(): Engine {
@@ -112,5 +116,45 @@ describe('API catalog linkset', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { linkset?: { anchor?: string }[] };
     expect(body.linkset?.[0]?.anchor).toBe('https://api.example.com');
+  });
+
+  it('warns once when publicOrigin is unset and the route falls back to request-derived origin', async () => {
+    engine = createEngine();
+    resetPublicOriginWarningForTesting();
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      await handleRequest(new Request('https://api.example.com/.well-known/api-catalog'), engine);
+      await handleRequest(new Request('https://api.example.com/.well-known/api-catalog'), engine);
+    } finally {
+      console.warn = originalWarn;
+    }
+    const matching = warnings.filter((line) =>
+      line.includes('/.well-known/api-catalog: `publicOrigin` is not configured'),
+    );
+    // One-shot warning: only the first call should log.
+    expect(matching).toHaveLength(1);
+  });
+
+  it('does not warn when publicOrigin is configured', async () => {
+    engine = createEngine();
+    resetPublicOriginWarningForTesting();
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      await handleRequest(new Request('https://api.example.com/.well-known/api-catalog'), engine, {
+        publicOrigin: 'https://api.example.com',
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+    const matching = warnings.filter((line) => line.includes('publicOrigin'));
+    expect(matching).toHaveLength(0);
   });
 });

@@ -61,7 +61,7 @@ export async function executeOperation<Output>(
       transport: context.transport,
     });
   } catch (error) {
-    return failure(classifyEngineError(error));
+    return failure(classifyEngineError(error, operation));
   }
   tracePipeline(pipelineTrace, 'invoked');
 

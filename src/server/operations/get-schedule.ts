@@ -37,7 +37,7 @@ export const getScheduleOperation = defineOperation<GetScheduleInput, GetSchedul
   inputSchema: getScheduleInput,
   outputSchema: getScheduleOutput as z.ZodType<GetScheduleOutput>,
   access: { kind: 'authenticated' },
-  producibleFaults: ['NotFound'],
+  producibleFaults: ['NotFound', 'Conflict'],
   discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },

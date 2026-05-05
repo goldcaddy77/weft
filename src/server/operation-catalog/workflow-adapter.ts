@@ -83,6 +83,10 @@ export function catalogWorkflow<Input>(
     inputSchema,
     outputSchema: StartHandleSchema,
     access: copyAccessPolicy(options.access),
+    // The adapter classifies engine errors into Conflict (workflow ID
+    // already exists) and RateLimited (tenant quota exceeded), in
+    // addition to the universal-default fault set.
+    producibleFaults: ['Conflict', 'RateLimited'],
     transports: { ...options.transports },
     unknownKeyPolicy: { ...options.unknownKeyPolicy },
     ...(options.authorize === undefined ? {} : { authorize: options.authorize }),

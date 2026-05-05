@@ -34,10 +34,13 @@ export type WorkflowEventsSubscriptionEnvelope = z.infer<typeof workflowEventsSu
  * subscriptions. This is documented as a known v1 constraint; per-event
  * filtering is a planned future refinement.
  *
- * Access is scoped to `workflows:read` rather than `public` to prevent
- * unauthenticated callers from observing event streams of arbitrary
- * workflows. Operators that need looser access can override the registry
- * with a custom operation definition.
+ * Access is `scoped: { workflows:read }` (NOT optionalAuth, NOT public).
+ * Anonymous callers and authenticated callers without `workflows:read` are
+ * both denied. The earlier policies allowed unauthenticated clients to
+ * subscribe to arbitrary workflow event streams — a real exposure the
+ * security committee flagged. Operators running `serve({ engine })`
+ * without auth must add an authentication layer before exposing this
+ * endpoint to untrusted networks.
  */
 export const workflowEventsSubscriptionOperation = defineOperation<
   WorkflowEventsSubscriptionInput,
@@ -59,21 +62,23 @@ export const workflowEventsSubscriptionOperation = defineOperation<
     emittedAtMs: z.number(),
     payload: z.unknown(),
   }),
-  // optionalAuth: matches the project's default-no-auth ergonomics for
-  // unauthenticated callers (so `serve({ engine })` keeps the live event
-  // surface usable in dev) while requiring `workflows:read` once a caller
-  // authenticates. Operators that need stricter behavior should configure
-  // `serve({ auth: ... })` and rely on the authentication layer rejecting
-  // the connection entirely; this access policy then enforces the
-  // workflows:read scope on the resulting authenticated principal.
+  // scoped + workflows:read: every caller (anonymous, api-key, jwt) must
+  // present a credential carrying the workflows:read scope. The earlier
+  // `public` and `optionalAuth` policies both allowed unauthenticated
+  // subscription to any workflow's event stream, which the security
+  // committee flagged as a real exposure (an attacker without credentials
+  // could subscribe with workflowId: <victim-id> and receive that
+  // workflow's events). Operators running without auth (`serve({ engine })`
+  // with no `auth` config) must add an authentication layer before
+  // exposing this endpoint to untrusted networks.
   access: {
-    kind: 'optionalAuth',
-    authenticatedScopes: { kind: 'anyOf', scopes: ['workflows:read'] },
+    kind: 'scoped',
+    scopes: { kind: 'anyOf', scopes: ['workflows:read'] },
   },
-  // optionalAuth is not public; explicitly mark this operation as
-  // discoverable so /openapi.json, /openrpc.json, and /asyncapi.json all
-  // include it. Without this flag the discovery filter hides the
-  // operation, which would break clients that introspect the API surface.
+  // Mark discoverable so /openapi.json, /openrpc.json, and /asyncapi.json
+  // all include the subscription channel. Without this flag the discovery
+  // filter would hide the operation, which would break clients that
+  // introspect the API surface.
   discoverable: true,
   transports: { http: false, jsonRpcHttp: false, jsonRpcWebSocket: true, jsonRpcStdio: false },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },

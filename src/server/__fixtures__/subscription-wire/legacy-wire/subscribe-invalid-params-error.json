@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": "sub-invalid",
+  "error": {
+    "code": -32602,
+    "message": "<error-message>",
+    "data": "<error-data>"
+  }
+}

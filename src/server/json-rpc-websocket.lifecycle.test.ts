@@ -4,7 +4,7 @@ import {
   createJsonRpcWebSocketSession,
   type JsonRpcWebSocketEmitter,
 } from './json-rpc-websocket.ts';
-import { anonymousPrincipal } from './principal.ts';
+import { principalFromApiKey } from './principal.ts';
 import { createLiveOperationRegistry } from './rest-bindings.ts';
 import {
   createInMemoryEventBackend,
@@ -89,7 +89,7 @@ function createSession(feed: WorkflowEventFeed, emitter = makeEmitter()) {
     session: createJsonRpcWebSocketSession({
       registry: createLiveOperationRegistry(),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: principalFromApiKey({ subject: 'test', scopes: ['workflows:read'] }),
       emitter,
       feed,
     }),

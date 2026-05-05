@@ -38,7 +38,7 @@ export async function executeStream<Element>(
 ): Promise<DispatchResult<AsyncIterable<Element>>> {
   const prepared = await prepareLongLivedOperation(operationName, rawInput, context, 'stream');
   if (!prepared.ok) return prepared;
-  const { operation, input } = prepared.value;
+  const { operation, input, eventSchema } = prepared.value;
 
   let invocation: unknown;
   try {
@@ -49,7 +49,7 @@ export async function executeStream<Element>(
       transport: context.transport,
     });
   } catch (error) {
-    return failure(classifyEngineError(error));
+    return failure(classifyEngineError(error, operation));
   }
   tracePipeline(context.pipelineTrace, 'invoked');
 
@@ -57,12 +57,10 @@ export async function executeStream<Element>(
     return failure({ code: 'EngineFailure', message: 'internal error', data: {} });
   }
 
-  const eventSchema = requireEventSchema(operation);
-  if (!eventSchema.ok) return eventSchema;
   tracePipeline(context.pipelineTrace, 'output-validated');
   return {
     ok: true,
-    value: validateElements<Element>(invocation, eventSchema.value),
+    value: validateElements<Element>(invocation, eventSchema),
   };
 }
 
@@ -88,7 +86,7 @@ export async function executeSubscription<Element, Envelope>(
     'subscription',
   );
   if (!prepared.ok) return prepared;
-  const { operation, input } = prepared.value;
+  const { operation, input, eventSchema } = prepared.value;
 
   let invocation: unknown;
   try {
@@ -99,7 +97,7 @@ export async function executeSubscription<Element, Envelope>(
       transport: context.transport,
     });
   } catch (error) {
-    return failure(classifyEngineError(error));
+    return failure(classifyEngineError(error, operation));
   }
   tracePipeline(context.pipelineTrace, 'invoked');
 
@@ -109,26 +107,38 @@ export async function executeSubscription<Element, Envelope>(
 
   const envelope = validateOutput<Envelope>(operation.outputSchema, invocation.envelope);
   if (!envelope.ok) return envelope;
-  const eventSchema = requireEventSchema(operation);
-  if (!eventSchema.ok) return eventSchema;
   tracePipeline(context.pipelineTrace, 'output-validated');
 
   return {
     ok: true,
     value: {
       envelope: envelope.value,
-      iterable: validateElements<Element>(invocation.iterable, eventSchema.value),
+      iterable: validateElements<Element>(invocation.iterable, eventSchema),
       close: invocation.close,
     },
   };
 }
+
+/**
+ * Result of preparing a long-lived (stream or subscription) operation for
+ * dispatch. The discriminated union on `OperationDefinition` guarantees
+ * `eventSchema` is present on stream/subscription operations, but
+ * `ErasedOperation` (the union of all three kinds) erases that proof at
+ * the function boundary. Returning `eventSchema` directly here carries
+ * the narrowed schema through to the caller without a runtime guard.
+ */
+type PreparedLongLivedOperation = {
+  readonly operation: ErasedOperation;
+  readonly input: unknown;
+  readonly eventSchema: z.ZodType;
+};
 
 async function prepareLongLivedOperation(
   operationName: string,
   rawInput: unknown,
   context: DispatchContext,
   expectedKind: 'stream' | 'subscription',
-): Promise<DispatchResult<{ operation: ErasedOperation; input: unknown }>> {
+): Promise<DispatchResult<PreparedLongLivedOperation>> {
   const pipelineTrace = context.pipelineTrace;
   const operation = context.registry.get(operationName);
   if (operation === undefined) {
@@ -147,6 +157,21 @@ async function prepareLongLivedOperation(
       data: { reason: `operation kind is "${operation.kind ?? 'unary'}"` },
     });
   }
+
+  // The discriminated union guarantees `eventSchema` is non-undefined on
+  // any operation whose kind is 'stream' or 'subscription'. The kind check
+  // above narrows to one of those two variants; if `eventSchema` is
+  // somehow still missing we fail loudly because that would mean the
+  // registry was assembled from a non-conforming source. A `defineOperation`
+  // caller cannot reach this branch — TypeScript rejects the literal.
+  if (operation.eventSchema === undefined) {
+    return failure({
+      code: 'EngineFailure',
+      message: 'internal error',
+      data: {},
+    });
+  }
+  const eventSchema = operation.eventSchema;
 
   const transportFailure = checkTransport(operation, context);
   if (transportFailure !== null) return transportFailure;
@@ -168,18 +193,7 @@ async function prepareLongLivedOperation(
   if (authorizationFailure !== null) return authorizationFailure;
   tracePipeline(pipelineTrace, 'authorized');
 
-  return { ok: true, value: { operation, input: parseOutcome.input } };
-}
-
-function requireEventSchema(operation: ErasedOperation): DispatchResult<z.ZodType> {
-  if (operation.eventSchema !== undefined) {
-    return { ok: true, value: operation.eventSchema };
-  }
-  return failure({
-    code: 'EngineFailure',
-    message: 'internal error',
-    data: {},
-  });
+  return { ok: true, value: { operation, input: parseOutcome.input, eventSchema } };
 }
 
 async function* validateElements<Element>(

@@ -58,8 +58,9 @@ const RAISE_FAULT_ALLOWLIST = new Set([
 // Shrink-ratchet upper bound. The allow-list represents legacy direct-throw
 // patterns; this number must DECREASE as files migrate to raiseFault. Never
 // raise it. If an honest migration shrinks the set below this number, lower
-// the constant in the same commit.
-const RAISE_FAULT_ALLOWLIST_MAX_SIZE = 47;
+// the constant in the same commit. The bound is set to the current size so
+// any new direct-throw operation file fails the ratchet immediately.
+const RAISE_FAULT_ALLOWLIST_MAX_SIZE = 46;
 
 describe('raiseFault canonical path', () => {
   it('all operations using direct throw patterns are tracked in the allow-list', () => {

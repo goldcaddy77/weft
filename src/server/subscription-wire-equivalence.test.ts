@@ -27,7 +27,7 @@ import {
 } from './operation-catalog.ts';
 import { defineOperation } from './operation-registry.ts';
 import { workflowEventsSubscriptionOperation } from './operations/workflow-events-subscription.ts';
-import { anonymousPrincipal } from './principal.ts';
+import { principalFromApiKey } from './principal.ts';
 import {
   createInMemoryEventBackend,
   createWorkflowEventFeed,
@@ -74,6 +74,28 @@ function normalize(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Error-response fixtures normalize the free-form `message` (Zod produces
+ * dynamic strings per validation case) and `data` (issues array shape
+ * drifts across Zod versions). The fixture pins the wire envelope shape
+ * (`jsonrpc`, `id`, `error.code`); the message and data carry test-
+ * version-specific detail.
+ */
+function normalizeErrorEnvelope(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  const v = value as Record<string, unknown>;
+  if (v['error'] === null || typeof v['error'] !== 'object') return value;
+  const error = v['error'] as Record<string, unknown>;
+  return {
+    ...v,
+    error: {
+      code: error['code'],
+      message: '<error-message>',
+      data: '<error-data>',
+    },
+  };
+}
+
 function makeEmitter(): JsonRpcWebSocketEmitter & { sent: string[] } {
   const sent: string[] = [];
   return {
@@ -104,7 +126,7 @@ describe('subscription wire-format fixtures — legacy-wire', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([workflowEventsSubscriptionOperation]),
       engine: {} as unknown,
-      principal: anonymousPrincipal(),
+      principal: principalFromApiKey({ subject: 'test', scopes: ['workflows:read'] }),
       emitter,
       feed,
     });
@@ -171,78 +193,210 @@ describe('subscription wire-format fixtures — legacy-wire', () => {
 
     await session.close();
   });
+
+  it('subscribe with invalid params emits the InvalidParams error envelope', async () => {
+    // Drive the live session through a malformed subscribe (missing
+    // `workflowId`). The session-level subscribe handler validates
+    // params and emits a JSON-RPC error response. The fixture pins the
+    // envelope shape (jsonrpc, id, error.code) — message and data are
+    // normalized because they carry Zod-version-specific detail.
+    const backend = createInMemoryEventBackend();
+    const feed = createWorkflowEventFeed(backend);
+    const emitter = makeEmitter();
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([workflowEventsSubscriptionOperation]),
+      engine: {} as unknown,
+      principal: principalFromApiKey({ subject: 'test', scopes: ['workflows:read'] }),
+      emitter,
+      feed,
+    });
+
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'sub-invalid',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 42 },
+      }),
+    );
+
+    await waitFor(() => emitter.sent.length > 0);
+    const errorFrame = emitter.sent.find((s) => {
+      const parsed = JSON.parse(s) as Record<string, unknown>;
+      return parsed['id'] === 'sub-invalid' && 'error' in parsed;
+    });
+    if (errorFrame === undefined) throw new Error('expected error frame for invalid subscribe');
+
+    expect(normalizeErrorEnvelope(JSON.parse(errorFrame))).toEqual(
+      loadFixture('legacy-wire', 'subscribe-invalid-params-error.json'),
+    );
+
+    await session.close();
+  });
 });
 
 describe('subscription wire-format fixtures — new-error-contract', () => {
-  it('terminated-validation-failed: element fails eventSchema', async () => {
-    // Build a custom subscription op whose eventSchema rejects everything.
+  it('terminated-validation-failed: drives a real session through eventSchema rejection', async () => {
+    // Override `weft.workflows.events` with a subscription operation whose
+    // eventSchema rejects every yielded element. The WebSocket session
+    // discovers operations by name from the registry, so registering a
+    // different operation under the same name makes the live session use
+    // it instead of the built-in one. This drives the actual pump catch
+    // path and captures the real terminated frame.
     const failingOp = defineOperation({
-      name: 'weft.test.failingsubscription',
+      name: 'weft.workflows.events',
       mcpExposable: false,
       kind: 'subscription',
-      summary: 'fixture',
-      inputSchema: z.object({ workflowId: z.string() }),
+      summary: 'fixture: rejects every element',
+      inputSchema: z.object({
+        workflowId: z.string().min(1),
+        selector: z.enum(['events', 'tokens']).optional().default('events'),
+        fromCursor: z.string().optional(),
+      }),
       outputSchema: z.object({ subscriptionId: z.string(), cursor: z.string() }),
       eventSchema: z.never(),
       access: { kind: 'public' },
       transports: { http: false, jsonRpcHttp: false, jsonRpcWebSocket: true, jsonRpcStdio: false },
       unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
       invoke: async () => ({
-        envelope: { subscriptionId: 'sub_test', cursor: '0' },
+        envelope: { subscriptionId: `sub_${crypto.randomUUID()}`, cursor: '0' },
         iterable: (async function* () {
-          // Yields trigger element-validation failure since eventSchema is never.
-          yield { invalid: 'envelope' };
+          // Any yield triggers element-validation failure since
+          // eventSchema is z.never() — the pump must catch
+          // SubscriptionElementValidationError and emit the
+          // validation-failed terminator.
+          yield { sequence: 0 };
         })(),
         close: async () => {},
       }),
     });
 
-    // Drive validateElements directly via the stream-pipeline and assert
-    // it throws SubscriptionElementValidationError. Then construct the
-    // wire frame the WebSocket pump WOULD emit for that error and pin it
-    // against the fixture.
-    const fault = {
-      code: 'EngineFailure' as const,
-      message: 'subscription element failed schema validation',
-      data: {} as Record<string, never>,
-    };
-    const error = new SubscriptionElementValidationError(fault);
+    const backend = createInMemoryEventBackend();
+    const feed = createWorkflowEventFeed(backend);
+    const emitter = makeEmitter();
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([failingOp]),
+      engine: {} as unknown,
+      principal: principalFromApiKey({ subject: 'test', scopes: ['workflows:read'] }),
+      emitter,
+      feed,
+    });
 
-    const wireFrame = {
-      jsonrpc: '2.0',
-      method: 'weft.events.terminated',
-      params: {
-        subscriptionId: '<subscription-id>',
-        reason: 'validation-failed',
-        fault: error.fault,
-      },
-    };
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'sub-validation',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 'wf-1', selector: 'events' },
+      }),
+    );
 
-    expect(normalize(wireFrame)).toEqual(
+    await waitFor(() =>
+      emitter.sent.some((s) => {
+        const parsed = JSON.parse(s) as Record<string, unknown>;
+        return (
+          parsed['method'] === 'weft.events.terminated' &&
+          (parsed['params'] as { reason?: unknown }).reason === 'validation-failed'
+        );
+      }),
+    );
+
+    const terminatedFrame = emitter.sent.find((s) => {
+      const parsed = JSON.parse(s) as Record<string, unknown>;
+      return (
+        parsed['method'] === 'weft.events.terminated' &&
+        (parsed['params'] as { reason?: unknown }).reason === 'validation-failed'
+      );
+    });
+    if (terminatedFrame === undefined) throw new Error('expected validation-failed terminator');
+
+    expect(normalize(JSON.parse(terminatedFrame))).toEqual(
       loadFixture('new-error-contract', 'terminated-validation-failed.json'),
     );
 
-    // Reference failingOp so it isn't unused (the type guarantees above
-    // exercise the eventSchema-required compile-time contract).
-    expect(failingOp.kind).toBe('subscription');
+    await session.close();
   });
 
-  it('terminated-engine-error: pump catches non-validation error', () => {
-    // The wire shape the pump emits in its catch-all branch when
-    // SubscriptionElementValidationError is NOT the thrown class.
-    const wireFrame = {
-      jsonrpc: '2.0',
-      method: 'weft.events.terminated',
-      params: {
-        subscriptionId: '<subscription-id>',
-        reason: 'server-closed',
-        fault: { code: 'EngineFailure', message: 'internal error', data: {} },
-      },
-    };
+  it('terminated-engine-error: drives a real session through a non-validation iterable throw', async () => {
+    // Override `weft.workflows.events` with an operation that throws a
+    // plain error mid-stream. The pump's catch path must classify this
+    // as `server-closed` (not validation-failed) with a sanitized
+    // EngineFailure fault.
+    const throwingOp = defineOperation({
+      name: 'weft.workflows.events',
+      mcpExposable: false,
+      kind: 'subscription',
+      summary: 'fixture: iterable throws',
+      inputSchema: z.object({
+        workflowId: z.string().min(1),
+        selector: z.enum(['events', 'tokens']).optional().default('events'),
+        fromCursor: z.string().optional(),
+      }),
+      outputSchema: z.object({ subscriptionId: z.string(), cursor: z.string() }),
+      eventSchema: z.unknown(),
+      access: { kind: 'public' },
+      transports: { http: false, jsonRpcHttp: false, jsonRpcWebSocket: true, jsonRpcStdio: false },
+      unknownKeyPolicy: { http: 'reject', jsonRpc: 'reject' },
+      invoke: async () => ({
+        envelope: { subscriptionId: `sub_${crypto.randomUUID()}`, cursor: '0' },
+        iterable: (async function* () {
+          throw new Error('subscription failed mid-stream');
+        })(),
+        close: async () => {},
+      }),
+    });
 
-    expect(normalize(wireFrame)).toEqual(
+    const backend = createInMemoryEventBackend();
+    const feed = createWorkflowEventFeed(backend);
+    const emitter = makeEmitter();
+    const session = createJsonRpcWebSocketSession({
+      registry: createOperationRegistry([throwingOp]),
+      engine: {} as unknown,
+      principal: principalFromApiKey({ subject: 'test', scopes: ['workflows:read'] }),
+      emitter,
+      feed,
+    });
+
+    await session.handleMessage(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'sub-throw',
+        method: 'weft.workflows.subscribe',
+        params: { workflowId: 'wf-1', selector: 'events' },
+      }),
+    );
+
+    await waitFor(() =>
+      emitter.sent.some((s) => {
+        const parsed = JSON.parse(s) as Record<string, unknown>;
+        return (
+          parsed['method'] === 'weft.events.terminated' &&
+          (parsed['params'] as { reason?: unknown }).reason === 'server-closed'
+        );
+      }),
+    );
+
+    const terminatedFrame = emitter.sent.find((s) => {
+      const parsed = JSON.parse(s) as Record<string, unknown>;
+      return (
+        parsed['method'] === 'weft.events.terminated' &&
+        (parsed['params'] as { reason?: unknown }).reason === 'server-closed'
+      );
+    });
+    if (terminatedFrame === undefined) throw new Error('expected server-closed terminator');
+
+    expect(normalize(JSON.parse(terminatedFrame))).toEqual(
       loadFixture('new-error-contract', 'terminated-engine-error.json'),
     );
+
+    await session.close();
+  });
+
+  // Defensive type-only reference: SubscriptionElementValidationError is
+  // exported from the catalog and used by stream-pipeline; keep the import
+  // anchored so an unused-import lint doesn't drift it out.
+  it('exports SubscriptionElementValidationError', () => {
+    expect(SubscriptionElementValidationError).toBeDefined();
   });
 });
 

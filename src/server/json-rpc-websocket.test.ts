@@ -24,7 +24,7 @@ import {
   type ErasedOperation,
   type OperationDefinition,
 } from './operation-catalog.ts';
-import { anonymousPrincipal } from './principal.ts';
+import { anonymousPrincipal, principalFromApiKey } from './principal.ts';
 import {
   createInMemoryEventBackend,
   createWorkflowEventFeed,
@@ -33,6 +33,16 @@ import {
 } from './workflow-event-feed.ts';
 
 const fakeEngine = {} as unknown;
+
+/**
+ * Subscribe-tests need an authenticated principal carrying `workflows:read`
+ * because `weft.workflows.events`'s access policy is `scoped: workflows:read`.
+ * Frame-dispatch tests (the first describe block) don't touch the
+ * subscription operation and continue to use `anonymousPrincipal()`.
+ */
+function subscribePrincipal() {
+  return principalFromApiKey({ subject: 'subscribe-test', scopes: ['workflows:read'] });
+}
 
 function makeOp<I, O>(
   overrides: Partial<OperationDefinition<I, O>> & {
@@ -263,7 +273,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -300,7 +310,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session1 = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter: emitter1,
       feed,
     });
@@ -322,7 +332,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session2 = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter: emitter2,
       feed,
     });
@@ -360,7 +370,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -386,7 +396,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -420,7 +430,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -473,7 +483,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -512,7 +522,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -586,7 +596,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -631,7 +641,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -659,7 +669,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -682,7 +692,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -706,7 +716,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -729,7 +739,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -752,7 +762,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -775,7 +785,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
       maxSubscriptions: 2,
@@ -815,7 +825,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -862,7 +872,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -901,7 +911,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
       maxFrameBytes: 100,
@@ -967,7 +977,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -996,7 +1006,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
       maxFrameBytes: 100,
@@ -1031,7 +1041,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -1063,7 +1073,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -1120,7 +1130,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });
@@ -1140,7 +1150,7 @@ describe('createJsonRpcWebSocketSession — subscribe / unsubscribe', () => {
     const session = createJsonRpcWebSocketSession({
       registry: createOperationRegistry([]),
       engine: fakeEngine,
-      principal: anonymousPrincipal(),
+      principal: subscribePrincipal(),
       emitter,
       feed,
     });

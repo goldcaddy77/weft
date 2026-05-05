@@ -85,6 +85,13 @@ export function flattenZodIssues(
   }));
 }
 
+const UNIVERSAL_PRODUCIBLE_FAULTS: ReadonlySet<string> = new Set([
+  'Unauthorized',
+  'Forbidden',
+  'InvalidParams',
+  'EngineFailure',
+]);
+
 /**
  * Translate a thrown value from `invoke` into a transport-neutral
  * OperationFault.
@@ -94,9 +101,28 @@ export function flattenZodIssues(
  * so the fault classification is robust against future error-message
  * rewording. Plain `Error` instances fall through to the message-pattern
  * heuristics, which exist as a last-resort generic catch-all.
+ *
+ * **Producible-faults enforcement.** When `operation` is supplied (the
+ * dispatch pipeline always supplies it), any direct `OperationFault`
+ * throw whose `code` is NOT in the operation's `producibleFaults` ∪
+ * universal-defaults set is logged as a declaration violation:
+ *
+ *   - Test/dev (`NODE_ENV !== 'production'` OR `WEFT_STRICT_FAULTS=1`):
+ *     console.error so the developer notices and either declares the
+ *     fault or migrates the throw to `raiseFault`.
+ *   - Production: silent log. The original fault is preserved on the
+ *     wire to keep clients' actionable semantics intact.
+ *
+ * This makes the producibleFaults declarations runtime-load-bearing for
+ * direct throws too — not just calls routed through the `raiseFault`
+ * helper.
  */
-export function classifyEngineError(error: unknown): OperationFault {
+export function classifyEngineError(
+  error: unknown,
+  operation?: { name: string; producibleFaults?: ReadonlyArray<string> },
+): OperationFault {
   if (isOperationFault(error)) {
+    enforceProducibleFaults(operation, error.code);
     return error;
   }
   if (error instanceof WorkflowAlreadyExistsError) {
@@ -117,6 +143,30 @@ export function classifyEngineError(error: unknown): OperationFault {
     return classifyErrorMessage(error);
   }
   return { code: 'EngineFailure', message: 'internal error', data: {} };
+}
+
+function enforceProducibleFaults(
+  operation: { name: string; producibleFaults?: ReadonlyArray<string> } | undefined,
+  code: string,
+): void {
+  if (operation === undefined) return;
+  if (UNIVERSAL_PRODUCIBLE_FAULTS.has(code)) return;
+  const declared = operation.producibleFaults;
+  if (declared !== undefined && declared.includes(code)) return;
+
+  // The operation produced a fault it didn't declare. In test/dev this is
+  // a developer-actionable violation; in production we log so it shows up
+  // in monitoring without breaking client contract.
+  const isStrict = Bun.env['WEFT_STRICT_FAULTS'] === '1' || Bun.env['NODE_ENV'] !== 'production';
+  const message =
+    `[weft] Operation "${operation.name}" raised undeclared fault "${code}". ` +
+    "Add it to the operation's `producibleFaults` array or migrate the throw to " +
+    '`raiseFault(operation, fault)`.';
+  if (isStrict) {
+    console.error(message);
+  } else {
+    console.warn(message);
+  }
 }
 
 function classifyErrorMessage(error: Error): OperationFault {

@@ -14,6 +14,7 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import { z } from 'zod';
 
+import { OpenRpcDocumentSchema } from './openrpc-document-schema.ts';
 import { generateOpenRpcDocument } from './openrpc.ts';
 import {
   createOperationRegistry,
@@ -21,6 +22,7 @@ import {
   type OperationRegistry,
   type RegistrableOperation,
 } from './operation-catalog.ts';
+import { createLiveOperationRegistry } from './rest-bindings.ts';
 
 function byString(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
@@ -645,5 +647,26 @@ describe('generateOpenRpcDocument — Codex regressions', () => {
         }),
       ]),
     ).toThrow(/weft\./);
+  });
+});
+
+describe('OpenRPC document schema round-trip', () => {
+  it('the live /openrpc.json output validates against the committed minimal OpenRpcDocument schema', () => {
+    // Drives the same generator the runtime route handler uses, then
+    // parses the result through `OpenRpcDocumentSchema`. If the schema
+    // drifts from the live shape (e.g. a generator change adds a field
+    // that the schema rejects), this test fails — pinning the schema as
+    // the canonical contract description.
+    const document = generateOpenRpcDocument({
+      registry: createLiveOperationRegistry(),
+      transports: ['http', 'websocket'],
+    });
+    const parsed = OpenRpcDocumentSchema.safeParse(document);
+    if (!parsed.success) {
+      throw new Error(
+        `OpenRpcDocument schema rejected the live document: ${JSON.stringify(parsed.error.issues)}`,
+      );
+    }
+    expect(parsed.success).toBe(true);
   });
 });

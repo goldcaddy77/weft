@@ -151,9 +151,22 @@ describe('OpenAPI hydration', () => {
     }
   });
 
-  it('does not include private operations in /openapi.json', () => {
-    // Drive the generator directly with a custom registry containing a
-    // single private operation. The discovery filter should skip it.
+  it('discovery filter excludes private operations while including their public siblings', () => {
+    // Two operations + two REST bindings drive the generator. The public
+    // operation MUST appear in the document; the private one MUST NOT.
+    // This exercises the filter directly — an `restBindings: []` test
+    // would be vacuously true because no paths are emitted at all.
+    const publicOperation = defineOperation({
+      name: 'weft.test.publicoperation',
+      summary: 'public fixture',
+      mcpExposable: false,
+      inputSchema: z.object({ value: z.string() }),
+      outputSchema: z.object({ ok: z.boolean() }),
+      access: { kind: 'public' },
+      transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
+      unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },
+      invoke: async () => ({ ok: true }),
+    });
     const privateOperation = defineOperation({
       name: 'weft.test.privateoperation',
       summary: 'private fixture',
@@ -168,16 +181,49 @@ describe('OpenAPI hydration', () => {
       invoke: async () => ({ ok: true }),
     });
 
-    const registry = createOperationRegistry([privateOperation]);
-    const document = generateOpenApiDocument({ registry, restBindings: [] });
+    const registry = createOperationRegistry([publicOperation, privateOperation]);
+    const restBindings = [
+      {
+        method: 'POST' as const,
+        path: '/v1/test/public',
+        pathParamNames: [] as readonly string[],
+        operationName: 'weft.test.publicoperation',
+        inputSources: { value: { kind: 'body-field' as const, bodyField: 'value' } },
+        extractInput: async (request: Request) => ({
+          value: ((await request.json()) as Record<string, unknown>)['value'],
+        }),
+        success: { kind: 'json' as const, status: 200 },
+      },
+      {
+        method: 'POST' as const,
+        path: '/v1/test/private',
+        pathParamNames: [] as readonly string[],
+        operationName: 'weft.test.privateoperation',
+        inputSources: { secret: { kind: 'body-field' as const, bodyField: 'secret' } },
+        extractInput: async (request: Request) => ({
+          secret: ((await request.json()) as Record<string, unknown>)['secret'],
+        }),
+        success: { kind: 'json' as const, status: 200 },
+      },
+    ];
+
+    const document = generateOpenApiDocument({ registry, restBindings });
     const paths = (document['paths'] as Record<string, unknown>) ?? {};
 
+    // The document must contain the PUBLIC binding (proving it isn't
+    // empty due to a different filter or bug) and must NOT contain the
+    // PRIVATE binding (proving the filter actually excludes it).
+    let sawPublic = false;
     for (const pathItem of Object.values(paths)) {
       const item = pathItem as Record<string, Record<string, unknown>>;
       for (const operation of Object.values(item)) {
+        if (operation['operationId'] === 'weft.test.publicoperation') {
+          sawPublic = true;
+        }
         expect(operation['operationId']).not.toBe('weft.test.privateoperation');
       }
     }
+    expect(sawPublic).toBe(true);
   });
 });
 

@@ -43,7 +43,7 @@ export const replayWorkflowOperation = defineOperation<ReplayWorkflowInput, Repl
     kind: 'scoped',
     scopes: { kind: 'anyOf', scopes: ['workflows:read'] },
   },
-  producibleFaults: ['NotFound'],
+  producibleFaults: ['NotFound', 'Conflict'],
   discoverable: true,
   transports: { http: true, jsonRpcHttp: true, jsonRpcWebSocket: true, jsonRpcStdio: true },
   unknownKeyPolicy: { http: 'strip', jsonRpc: 'reject' },

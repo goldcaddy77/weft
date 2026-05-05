@@ -534,6 +534,7 @@ describe('executeOperation — step 7+8: invoke + classify', () => {
         name: 'weft.test.notfoundthrow',
         inputSchema: z.object({}),
         outputSchema: z.object({}),
+        producibleFaults: ['NotFound'],
         invoke: async () => {
           throw {
             code: 'NotFound',

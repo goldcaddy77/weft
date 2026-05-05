@@ -95,9 +95,23 @@ function waitForWebSocketMessage(
   });
 }
 
+// `weft.workflows.events` requires `workflows:read`. Tests below that drive
+// subscriptions configure `serve({ auth: { apiKeys: [...] } })` and this
+// helper presents the matching key on the WebSocket Authorization header.
+const SUBSCRIBE_TEST_API_KEY = 'weft_test_track8_workflows_read_key_xxxxxxxxxxxxxxxx';
+const subscribeServeOptions = {
+  port: 0,
+  auth: {
+    apiKeys: [SUBSCRIBE_TEST_API_KEY],
+    defaultApiKeyScopes: ['workflows:read'] as const,
+  },
+};
+
 function openWebSocket(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, {
+      headers: { authorization: `Bearer ${SUBSCRIBE_TEST_API_KEY}` },
+    } as any);
     ws.addEventListener('open', () => resolve(ws));
     ws.addEventListener('error', (event) => reject(event));
   });
@@ -328,7 +342,7 @@ describe('Track 8 acceptance coverage', () => {
 
     const replayed = await collectReplayEvents(engine, handle.id);
     expect(replayed.length).toBeGreaterThan(0);
-    server = serve({ engine, port: 0 });
+    server = serve({ engine, ...subscribeServeOptions });
     const wireEnvelopes = await collectWebSocketDeliveredEnvelopes(
       server.url,
       handle.id,
@@ -462,7 +476,7 @@ describe('Track 8 acceptance coverage', () => {
     const replayed = await collectReplayEvents(engine, handle.id);
     expect(replayed.length).toBeGreaterThan(0);
 
-    server = serve({ engine, port: 0 });
+    server = serve({ engine, ...subscribeServeOptions });
     const wireEnvelopes = await collectWebSocketDeliveredEnvelopes(
       server.url,
       handle.id,

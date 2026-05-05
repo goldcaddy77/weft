@@ -4,7 +4,7 @@ import {
   type MetricsCollector,
   type PrometheusExporter,
 } from '../../observability/metrics.ts';
-import { generateApiCatalog, originFromRequest } from '../api-catalog.ts';
+import { generateApiCatalog, originFromRequest, warnIfPublicOriginUnset } from '../api-catalog.ts';
 import { generateAsyncApiDocument } from '../asyncapi.ts';
 import type { AuthContext } from '../authentication.ts';
 import type { DiscoveryInfo } from '../discovery-info.ts';
@@ -113,6 +113,8 @@ export interface HandlerOptions {
    * dispatch-audit suite to prove every transport drives the full
    * `executeOperation` pipeline. Production callers should not set this
    * — the parameter has no other effect on dispatch behavior.
+   *
+   * @internal
    */
   pipelineTrace?: PipelineTrace;
 }
@@ -152,9 +154,17 @@ export const ROUTE_EXECUTORS: Record<HandlerName, RouteExecutor> = {
     handleGetMetrics(options?.prometheusExporter, options?.metricsCollector),
   apiCatalog: async ({ request, options }) => {
     // Prefer an explicit operator-supplied origin over header-derived
-    // values to avoid Host-header injection. Falls back to header-based
-    // derivation only when no explicit origin is configured.
-    const origin = options?.publicOrigin ?? originFromRequest(request);
+    // values to avoid Host-header injection. When publicOrigin is unset,
+    // fall back to deriving the origin from the incoming request and warn
+    // (once per process) — header-derived origins are vulnerable to
+    // Host-header poisoning behind reverse proxies.
+    let origin: string;
+    if (options?.publicOrigin !== undefined) {
+      origin = options.publicOrigin;
+    } else {
+      warnIfPublicOriginUnset();
+      origin = originFromRequest(request);
+    }
     const body = generateApiCatalog({ origin });
     return new Response(JSON.stringify(body), {
       status: 200,
