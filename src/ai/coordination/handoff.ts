@@ -1,4 +1,4 @@
-import { executeAgentLoop } from '../agent.ts';
+import { executeAgentLoop } from '../agent/index.ts';
 import { summarizeConversation } from './conversation.ts';
 import type { HandoffOptions, HandoffResult } from './types.ts';
 
@@ -32,7 +32,6 @@ export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
     provider,
     forwardContext = 'none',
     parentConversation = [],
-    budget,
     signal,
   } = options;
 
@@ -66,7 +65,6 @@ export async function handoff(options: HandoffOptions): Promise<HandoffResult> {
       systemPrompt: agent.systemPrompt,
       tools: agent.tools,
       maxTurns: agent.maxTurns,
-      budget,
       signal,
     },
     effectiveInput,

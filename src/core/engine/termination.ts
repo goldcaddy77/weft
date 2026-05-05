@@ -27,7 +27,7 @@ import {
   updateWorkflowState,
   writeRetainedTerminalSearchAttributes,
 } from './attributes-tags.ts';
-import { TERMINAL_CLEANUP_DELAY_MS, releaseChargedAgentOperations } from './bulk-operations.ts';
+import { TERMINAL_CLEANUP_DELAY_MS } from './bulk-operations.ts';
 import { getWorkflowExecutionStartedAt } from './handles.ts';
 import { dropQueuedInlineWorkflowStart } from './inline-launch-queue.ts';
 import type { EngineInternals } from './internals.ts';
@@ -303,16 +303,12 @@ export async function cleanupWorkflowStorage(
  * is no longer blocked on storage cleanup. Durable scratch cleanup is
  * retried later through a persisted `terminal-cleanup` timer.
  *
- * Returns the storage deletes for non-workflow-scoped
- * `budget-charged:{operationId}` keys. Those keys are optional agent-only
- * scratch state, so their durable deletion is best-effort and must not
- * affect workflow completion.
  */
 export function cleanupTerminalWorkflowMemory(
   internals: EngineInternals,
   workflowId: string,
   callbacks: Pick<TerminationCallbacks, 'swallowPromiseRejection'>,
-): BatchOperation[] {
+): void {
   internals.workflowsNeedingTerminalCleanup.delete(workflowId);
   internals.checkpoints.delete(workflowId);
   internals.heartbeatDetails.delete(workflowId);
@@ -329,16 +325,6 @@ export function cleanupTerminalWorkflowMemory(
   internals.workflowFeedListeners.delete(workflowFeedListenerKey(workflowId, 'events'));
   internals.workflowFeedListeners.delete(workflowFeedListenerKey(workflowId, 'tokens'));
   cleanupWaiters(internals, workflowId, callbacks);
-
-  // Release the workflow's agent operation dedup entries via the reverse
-  // index. O(k) in this workflow's own agent operations rather than O(N)
-  // in the engine-wide set - important for long-lived engines that run
-  // many agents across many workflows.
-  //
-  // Also queue the per-operation `budget-charged:{operationId}` durable
-  // keys for deletion. These are not workflow-scoped in storage, so we
-  // have to build the batch from the reverse index before dropping it.
-  return releaseChargedAgentOperations(internals, workflowId);
 }
 
 export function cleanupTerminalWorkflowImmediately(
@@ -346,14 +332,7 @@ export function cleanupTerminalWorkflowImmediately(
   workflowId: string,
   callbacks: TerminationCallbacks,
 ): void {
-  const budgetChargedDeletes = cleanupTerminalWorkflowMemory(internals, workflowId, callbacks);
-  if (budgetChargedDeletes.length === 0) {
-    return;
-  }
-
-  void internals.storage.batch(budgetChargedDeletes).catch((error: unknown) => {
-    callbacks.handleCleanupError('cleanupBudgetChargedOperations', error, workflowId);
-  });
+  cleanupTerminalWorkflowMemory(internals, workflowId, callbacks);
 }
 
 export async function cleanupTerminalWorkflowSynchronously(
@@ -362,16 +341,13 @@ export async function cleanupTerminalWorkflowSynchronously(
   includeOutputArtifacts: boolean,
   callbacks: TerminationCallbacks,
 ): Promise<void> {
-  const budgetChargedDeletes = cleanupTerminalWorkflowMemory(internals, workflowId, callbacks);
+  cleanupTerminalWorkflowMemory(internals, workflowId, callbacks);
   await cleanupTerminalWorkflowDurableState(
     internals,
     workflowId,
     includeOutputArtifacts,
     callbacks,
   );
-  if (budgetChargedDeletes.length > 0) {
-    await internals.storage.batch(budgetChargedDeletes);
-  }
 }
 
 export async function cleanupTerminalWorkflowDurableState(

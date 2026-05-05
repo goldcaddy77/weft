@@ -1,7 +1,19 @@
-import { formatSSE } from '../../ai/streaming-agent.ts';
 import type { StoredStreamChunk } from '../../core/context.ts';
 
 const textEncoder = new TextEncoder();
+
+/** Format a single Server-Sent Events message. */
+function formatSSE(event: { id?: string; event?: string; data: string }): string {
+  const lines: string[] = [];
+  if (event.id !== undefined) lines.push(`id: ${event.id}`);
+  if (event.event !== undefined) lines.push(`event: ${event.event}`);
+  const dataLines = event.data.split('\n');
+  for (const line of dataLines) {
+    lines.push(`data: ${line}`);
+  }
+  lines.push('');
+  return lines.join('\n') + '\n';
+}
 
 /**
  * Wrap a list of stored stream chunks as a Server-Sent Events stream. Each

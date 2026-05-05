@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { sleepForTesting } from '../../testing/fake-timers.ts';
 
+import type { ChatResponse, LLMProvider } from '../../ai/agent/index.ts';
 import { defineAgent } from '../../ai/declaration.ts';
-import type { LLMProvider } from '../../ai/providers/interface.ts';
-import type { ChatResponse } from '../../ai/providers/types.ts';
 import { KEYS } from '../../storage/interface.ts';
 import { TestEngine } from '../../testing/test-engine.ts';
 import { deserializeCheckpoint } from '../checkpoint.ts';
@@ -400,12 +399,6 @@ describe('workflow forking', () => {
       name: 'fork-warmup-provider',
       async chat(): Promise<ChatResponse> {
         return createChatResponse('done');
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
       },
       async warmup() {
         warmupCalls.push('warmed');

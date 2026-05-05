@@ -1,4 +1,8 @@
-import type { ActivityInterceptor, Interceptor, WorkflowInterceptor } from './interceptor-interfaces.ts';
+import type {
+  ActivityInterceptor,
+  Interceptor,
+  WorkflowInterceptor,
+} from './interceptor-interfaces.ts';
 import { WORKFLOW_INTERCEPTOR_HOOKS } from './interceptor-interfaces.ts';
 
 /**

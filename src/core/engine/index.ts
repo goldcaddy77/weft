@@ -1,8 +1,7 @@
 /* oxlint-disable max-lines -- ID:core-engine-index-file-length */
-import type { BudgetPolicyOptions } from '../../ai/budget-policy.ts';
+import type { LLMProvider } from '../../ai/agent/index.ts';
 import type { AgentDefinition } from '../../ai/declaration.ts';
 import { ReviewCoordinator, type ReviewRequest } from '../../ai/human-review.ts';
-import type { LLMProvider } from '../../ai/providers/interface.ts';
 import { AlertManager } from '../../alerting/alert-manager.ts';
 import { CompressedStorage } from '../../storage/compressed-storage.ts';
 import type { Storage as WeftStorage } from '../../storage/interface.ts';
@@ -415,7 +414,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
       createHandleCacheFinalizer(getInternals(this).handleCache),
     );
     getInternals(this).options = resolvedOptions;
-    getInternals(this).defaultModelRouter = options?.defaultModelRouter;
     getInternals(this).scheduler = new Scheduler({
       storage,
       onTimerFired: (entry) =>
@@ -447,7 +445,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
         );
       };
     }
-    getInternals(this).budgetPolicyEnforcer = null;
     getInternals(this).tenantQuotaManager = new TenantQuotaManager(
       storage,
       getNow,
@@ -456,8 +453,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     getInternals(this).heartbeatDetails = new Map();
     getInternals(this).pendingStarts = new Set();
     getInternals(this).pendingScheduleCreations = new Set();
-    getInternals(this).chargedAgentOperations = new Set();
-    getInternals(this).chargedAgentOperationsByWorkflow = new Map();
     getInternals(this).workflowsNeedingTerminalCleanup = new Set();
     getInternals(this).reviewCoordinator = new ReviewCoordinator(storage, getNow);
     getInternals(this).reviewWaiters = new Map();
@@ -748,20 +743,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
   async query(workflowId: string, name: string): Promise<unknown> {
     return queryWorkflow(getInternals(this), workflowId, name);
   }
-  async setBudgetPolicy(options: BudgetPolicyOptions): Promise<void> {
-    const internals = getInternals(this);
-    if (!internals.budgetPolicyEnforcer) {
-      const { BudgetPolicyEnforcer } = await import('../../ai/budget-policy.ts');
-      internals.budgetPolicyEnforcer = new BudgetPolicyEnforcer(
-        internals.storage,
-        internals.options.getNow,
-      );
-    }
-    internals.budgetPolicyEnforcer.setPolicy(options);
-  }
-  async getBudgetPolicy(namespace: string): Promise<BudgetPolicyOptions | null> {
-    return getInternals(this).budgetPolicyEnforcer?.policies.get(namespace) ?? null;
-  }
   async getQuotaUsage(tenantId: string): Promise<TenantQuotaUsage> {
     return getInternals(this).tenantQuotaManager.getUsage(tenantId);
   }
@@ -937,8 +918,6 @@ export class Engine extends EventTarget implements Disposable, AsyncDisposable {
     internals.workflowHeaders.clear();
     internals.pendingStarts.clear();
     internals.pendingScheduleCreations.clear();
-    internals.chargedAgentOperations.clear();
-    internals.chargedAgentOperationsByWorkflow.clear();
     internals.agentWorkflowIds.clear();
     internals.eventLogHeads.clear();
     internals.pendingTimelineEntries.clear();

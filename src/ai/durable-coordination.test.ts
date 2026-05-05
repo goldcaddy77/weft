@@ -14,9 +14,8 @@ import { describe, expect, it } from 'bun:test';
 import type { Context } from '../core/context.ts';
 import type { WorkflowContext } from '../core/types.ts';
 import { TestEngine } from '../testing/test-engine.ts';
+import type { ChatResponse, LLMProvider } from './agent/types.ts';
 import { defineAgent, type AgentDefinition } from './declaration.ts';
-import type { LLMProvider } from './providers/interface.ts';
-import type { ChatResponse } from './providers/types.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -33,12 +32,6 @@ function createMockProvider(responses: ChatResponse[]): LLMProvider {
     name: 'mock',
     async chat(): Promise<ChatResponse> {
       return responses[callIndex++]!;
-    },
-    async stream() {
-      return new ReadableStream();
-    },
-    async countTokens(): Promise<number> {
-      return 100;
     },
   };
 }
@@ -102,12 +95,6 @@ describe('ctx.handoff() — durable handoff', () => {
         capturedMessages.push([...messages]);
         return createChatResponse('summary-result');
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     const childAgent = createAgentDefinition({ name: 'summary-agent' });
@@ -168,12 +155,6 @@ describe('ctx.handoff() — durable handoff', () => {
         callCount++;
         return createChatResponse(`handoff-result-${callCount}`);
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     const childAgent = createAgentDefinition({ name: 'resilient-agent' });
@@ -217,12 +198,6 @@ describe('ctx.debate() — durable debate', () => {
         }
         return createChatResponse('The advocate wins.');
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     const engine = new TestEngine();
@@ -261,12 +236,6 @@ describe('ctx.debate() — durable debate', () => {
         callCount++;
         return createChatResponse(`response-${callCount}`);
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     const engine = new TestEngine();
@@ -304,12 +273,6 @@ describe('ctx.debate() — durable debate', () => {
         if (callCount === 3) return createChatResponse('advocate-round-2');
         if (callCount === 4) return createChatResponse('critic-round-2');
         return createChatResponse('final-verdict');
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
       },
     };
 
@@ -354,12 +317,6 @@ describe('ctx.supervise() — durable supervision', () => {
       async chat(): Promise<ChatResponse> {
         return createChatResponse('The answer is 42');
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     const engine = new TestEngine();
@@ -399,12 +356,6 @@ describe('ctx.supervise() — durable supervision', () => {
         if (callCount <= 3) return createChatResponse(`worker-${callCount}-answer`);
         return createChatResponse('worker-2-answer is best');
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     const engine = new TestEngine();
@@ -443,12 +394,6 @@ describe('ctx.supervise() — durable supervision', () => {
         callCount++;
         if (callCount <= 2) return createChatResponse(`partial-${callCount}`);
         return createChatResponse('merged output combining partial-1 and partial-2');
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
       },
     };
 
@@ -493,12 +438,6 @@ describe('ctx.all() with agent branches and budget sharing', () => {
         callCount++;
         return createChatResponse(`agent-${callCount}-result`);
       },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
     };
 
     const engine = new TestEngine();
@@ -529,50 +468,6 @@ describe('ctx.all() with agent branches and budget sharing', () => {
 
     // All three agents should have produced results
     expect(result).toHaveLength(3);
-  });
-
-  it('budget exhaustion aborts all branches via AbortSignal', async () => {
-    let callCount = 0;
-    const provider: LLMProvider = {
-      name: 'mock',
-      async chat(): Promise<ChatResponse> {
-        callCount++;
-        return createChatResponse(`result-${callCount}`);
-      },
-      async stream() {
-        return new ReadableStream();
-      },
-      async countTokens(): Promise<number> {
-        return 100;
-      },
-    };
-
-    const engine = new TestEngine();
-
-    engine.register('budget-agents', async function* (ctx: WorkflowContext) {
-      (ctx as Context).setBudget({
-        maxTokens: 100,
-        models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
-      });
-
-      const agentResult = yield* (ctx as Context).agent({
-        model: 'test-model',
-        prompt: 'Use budget',
-        provider,
-        budget: {
-          maxTokens: 100,
-          models: { 'test-model': { inputCostPer1K: 0.01, outputCostPer1K: 0.03 } },
-        },
-      });
-
-      return agentResult;
-    });
-
-    const handle = await engine.start('budget-agents', null);
-    const result = await handle.result();
-
-    // Agent should have completed (mock produces immediate responses)
-    expect(result).toBeDefined();
   });
 });
 

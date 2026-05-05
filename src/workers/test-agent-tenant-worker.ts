@@ -3,15 +3,15 @@
  *
  * Wires a single workflow type `tenant-guarded` through
  * `initializeWorkerMessageLoop` from `workflow-worker-entry.ts`. The
- * registered handler mirrors the shape the engine builds from an
- * {@link AgentDefinition} at `src/core/engine.ts` — it runs `validateInput`
- * and `toolsForTenant` against the worker-side `ctx.tenant` and then invokes
- * a stub provider to record which tools the per-tenant resolver returned.
+ * registered handler exercises the post-shrinkage tenant-tool pattern —
+ * the workflow author scopes tools by `ctx.tenant` before invoking the
+ * stub provider, matching the recommended pattern in
+ * `documentation/agents/what-weft-owns.md`.
  *
  * The handler bypasses `ctx.agent()` (which only exists on the engine-side
  * `Context` class) and calls the stub provider directly. This narrows the
- * test surface to exactly what Item 1 fixed: the worker protocol carries
- * tenant context, and worker-side handlers can read it from their ctx arg.
+ * test surface to: the worker protocol carries tenant context, and
+ * worker-side handlers can read it from their ctx arg.
  *
  * @module workers/test-agent-tenant-worker
  */
@@ -32,10 +32,11 @@ interface FixtureTool {
 }
 
 /**
- * Per-tenant tool resolver for the fixture agent. Mirrors the
- * `toolsForTenant` hook shape of the real `AgentDefinition`.
+ * Per-tenant tool resolver for the fixture agent. The workflow author
+ * scopes tools by `ctx.tenant` before invoking the agent — this is the
+ * post-shrinkage pattern described in `documentation/agents/what-weft-owns.md`.
  */
-function toolsForTenant(tenant: TenantContext | undefined): FixtureTool[] {
+function pickToolsForTenant(tenant: TenantContext | undefined): FixtureTool[] {
   if (tenant?.id === 'tenant-a') return [{ name: 'toolA' }];
   if (tenant?.id === 'tenant-b') return [{ name: 'toolB' }];
   return [];
@@ -43,9 +44,10 @@ function toolsForTenant(tenant: TenantContext | undefined): FixtureTool[] {
 
 /**
  * Per-tenant input validator. Fails the workflow synchronously for any
- * tenant outside the allow-list, matching the real `validateInput` hook.
+ * tenant outside the allow-list. The workflow author runs this guard
+ * directly inside the handler.
  */
-function validateInput(_input: unknown, tenant: TenantContext | undefined): void {
+function assertAllowedTenant(_input: unknown, tenant: TenantContext | undefined): void {
   if (tenant?.id !== 'tenant-a' && tenant?.id !== 'tenant-b') {
     throw new Error(`bad tenant: ${tenant?.id ?? 'undefined'}`);
   }
@@ -82,8 +84,8 @@ const registrations = new Map<
  * worker without needing cross-thread state sharing.
  */
 registrations.set('tenant-guarded', async function* (ctx, input) {
-  validateInput(input, ctx.tenant);
-  const effectiveTools = toolsForTenant(ctx.tenant);
+  assertAllowedTenant(input, ctx.tenant);
+  const effectiveTools = pickToolsForTenant(ctx.tenant);
   stubProviderChat(effectiveTools);
   const lastCall = capturedToolsPerCall.at(-1) ?? [];
   return { tenantId: ctx.tenant?.id, tools: lastCall };

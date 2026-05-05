@@ -1,8 +1,5 @@
-import type { AgentResult } from '../agent/types.ts';
-import type { BudgetTracker } from '../budget.ts';
+import type { AgentResult, LLMProvider, Message } from '../agent/types.ts';
 import type { AgentDefinition } from '../declaration.ts';
-import type { LLMProvider } from '../providers/interface.ts';
-import type { Message } from '../providers/types.ts';
 
 export type ForwardContext = 'full' | 'summary' | 'none';
 
@@ -12,8 +9,6 @@ export interface HandoffOptions {
   provider: LLMProvider;
   forwardContext?: ForwardContext;
   parentConversation?: Message[];
-  /** Shared budget tracker. Child agent usage accumulates here. */
-  budget?: BudgetTracker | undefined;
   /** Abort signal propagated to the child agent. */
   signal?: AbortSignal | undefined;
   /** Trace context headers from the parent workflow, used for OpenTelemetry propagation. */
@@ -28,8 +23,6 @@ export interface DebateOptions {
   /** Number of advocate-critic rounds before the judge renders a verdict. */
   rounds: number;
   provider: LLMProvider;
-  /** Shared budget tracker. All round usage accumulates here. */
-  budget?: BudgetTracker | undefined;
   /** Abort signal propagated to all agents. */
   signal?: AbortSignal | undefined;
 }
@@ -40,15 +33,12 @@ export interface SuperviseOptions {
   input: string;
   strategy: 'consensus' | 'best-of-n' | 'merge';
   provider: LLMProvider;
-  /** Shared budget tracker. All worker usage accumulates here. */
-  budget?: BudgetTracker | undefined;
   /** Abort signal propagated to all workers and supervisor. */
   signal?: AbortSignal | undefined;
   /**
    * Voting algorithm used during the `consensus` strategy.
-   * - `'naive'` (default): workers must produce identical strings to agree.
-   * - `'confidence-weighted'`: groups by exact content; winner is the group
-   *   with the highest total confidence weight.
+   * The shrunken agent result no longer carries confidence, so both options
+   * currently require exact-string agreement.
    */
   voting?: 'naive' | 'confidence-weighted' | undefined;
   /**
